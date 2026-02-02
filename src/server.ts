@@ -6,30 +6,26 @@ import { createAgent } from "./lib/agent.js";
 import { selfModifyTools, cleanupAll } from "./lib/self-modify-tools.js";
 import type { ChatMessage } from "./lib/types.js";
 
-function getSoulPath(): string {
+function parseArgs() {
   const args = process.argv.slice(2);
+  let soul = "SOUL.md";
+  let port = 4100;
+
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--soul" && args[i + 1]) {
-      return args[i + 1];
-    }
-    if (!args[i].startsWith("-")) {
-      return args[i];
-    }
-  }
-  return "SOUL.md";
-}
-
-function getPort(): number {
-  const args = process.argv.slice(2);
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--port" && args[i + 1]) {
-      return parseInt(args[i + 1], 10);
+      soul = args[++i];
+    } else if (args[i] === "--port" && args[i + 1]) {
+      port = parseInt(args[++i], 10);
+    } else if (!args[i].startsWith("-")) {
+      soul = args[i];
     }
   }
-  return 4100;
+
+  return { soul, port };
 }
 
-const soulPath = resolve(getSoulPath());
+const { soul, port } = parseArgs();
+const soulPath = resolve(soul);
 let systemPrompt: string;
 try {
   systemPrompt = readFileSync(soulPath, "utf-8");
@@ -85,8 +81,6 @@ setInterval(() => {
     }
   }
 }, 5000);
-
-const port = getPort();
 
 Bun.serve({
   port,
