@@ -1,4 +1,8 @@
-import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query,
+  type SDKUserMessage,
+  type McpServerConfig,
+} from "@anthropic-ai/claude-agent-sdk";
 import type { ChatMessage } from "./types.js";
 
 type Listener = (msg: ChatMessage) => void;
@@ -43,6 +47,7 @@ export function createAgent(options: {
   systemPrompt: string;
   cwd: string;
   abortController: AbortController;
+  mcpServers?: Record<string, McpServerConfig>;
 }) {
   const channel = createMessageChannel();
   const listeners = new Set<Listener>();
@@ -55,6 +60,7 @@ export function createAgent(options: {
       allowDangerouslySkipPermissions: true,
       cwd: options.cwd,
       abortController: options.abortController,
+      mcpServers: options.mcpServers,
     },
   });
 

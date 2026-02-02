@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import { createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import { createAgent } from "./lib/agent.js";
+import { selfModifyTools, cleanupAll } from "./lib/self-modify-tools.js";
 import type { ChatMessage } from "./lib/types.js";
 
 function getSoulPath(): string {
@@ -36,11 +38,17 @@ try {
   process.exit(1);
 }
 
+const selfModifyServer = createSdkMcpServer({
+  name: "self-modify",
+  tools: selfModifyTools,
+});
+
 const abortController = new AbortController();
 const agent = createAgent({
   systemPrompt,
   cwd: process.cwd(),
   abortController,
+  mcpServers: { "self-modify": selfModifyServer },
 });
 
 type SSEClient = {
@@ -117,3 +125,10 @@ Bun.serve({
 });
 
 console.log(`molt agent listening on :${port}`);
+
+function shutdown() {
+  cleanupAll();
+  process.exit(0);
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
