@@ -4,6 +4,7 @@ import {
   type McpServerConfig,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { ChatMessage } from "./types.js";
+import { log } from "./logger.js";
 
 type Listener = (msg: ChatMessage) => void;
 
@@ -66,44 +67,63 @@ export function createAgent(options: {
 
   function broadcast(msg: ChatMessage) {
     for (const listener of listeners) {
-      listener(msg);
+      try {
+        listener(msg);
+      } catch (err) {
+        log("agent", "listener threw during broadcast:", err);
+      }
     }
   }
 
   // Consume the SDK stream and broadcast ChatMessage events
   (async () => {
-    for await (const msg of stream) {
-      if (msg.type === "assistant") {
-        const textBlocks = msg.message.content.filter(
-          (b: { type: string }) => b.type === "text",
-        );
-        const text = textBlocks
-          .map((b: { text: string }) => b.text)
-          .join("");
+    log("agent", "stream consumer started");
+    try {
+      for await (const msg of stream) {
+        if (msg.type === "assistant") {
+          const textBlocks = msg.message.content.filter(
+            (b: { type: string }) => b.type === "text",
+          );
+          const text = textBlocks
+            .map((b: { text: string }) => b.text)
+            .join("");
 
-        const toolBlocks = msg.message.content.filter(
-          (b: { type: string }) => b.type === "tool_use",
-        );
-        const toolCalls = toolBlocks.map(
-          (b: { name: string; input: unknown }) => ({
-            name: b.name,
-            input: b.input,
-          }),
-        );
+          const toolBlocks = msg.message.content.filter(
+            (b: { type: string }) => b.type === "tool_use",
+          );
+          const toolCalls = toolBlocks.map(
+            (b: { name: string; input: unknown }) => ({
+              name: b.name,
+              input: b.input,
+            }),
+          );
 
-        if (text || toolCalls.length > 0) {
-          broadcast({
-            role: "assistant",
-            content: text,
-            toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-            timestamp: Date.now(),
-          });
+          if (text || toolCalls.length > 0) {
+            log(
+              "agent",
+              "assistant msg:",
+              text ? text.slice(0, 120) : "(no text)",
+              toolCalls.length > 0
+                ? `tools=[${toolCalls.map((t: { name: string }) => t.name).join(",")}]`
+                : "",
+            );
+            broadcast({
+              role: "assistant",
+              content: text,
+              toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+              timestamp: Date.now(),
+            });
+          }
         }
       }
+    } catch (err) {
+      log("agent", "stream consumer error:", err);
     }
+    log("agent", "stream consumer ended");
   })();
 
   function sendMessage(text: string) {
+    log("agent", "sendMessage:", text.slice(0, 120));
     channel.push({
       type: "user",
       session_id: "",

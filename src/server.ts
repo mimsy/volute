@@ -5,6 +5,7 @@ import { createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import { createAgent } from "./lib/agent.js";
 import { selfModifyTools, cleanupAll } from "./lib/self-modify-tools.js";
 import type { ChatMessage } from "./lib/types.js";
+import { log } from "./lib/logger.js";
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -92,8 +93,10 @@ Bun.serve({
         start(controller) {
           const client: SSEClient = { controller };
           sseClients.add(client);
+          log("server", `SSE client connected (total: ${sseClients.size})`);
           req.signal.addEventListener("abort", () => {
             removeClient(client);
+            log("server", `SSE client disconnected (total: ${sseClients.size})`);
           });
         },
       });
@@ -109,6 +112,7 @@ Bun.serve({
 
     if (req.method === "POST" && url.pathname === "/message") {
       return req.json().then((body: { content: string }) => {
+        log("server", "POST /message:", body.content.slice(0, 120));
         agent.sendMessage(body.content);
         return new Response("OK", { status: 200 });
       });
@@ -118,9 +122,10 @@ Bun.serve({
   },
 });
 
-console.log(`molt agent listening on :${port}`);
+log("server", `listening on :${port}`);
 
 function shutdown() {
+  log("server", "shutdown signal received");
   cleanupAll();
   process.exit(0);
 }

@@ -9,6 +9,7 @@ import {
   type SDKMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
+import { log } from "./logger.js";
 
 // --- State maps ---
 
@@ -81,6 +82,7 @@ export const createWorktree = tool(
     branch: z.string().describe("Branch name to create"),
   },
   async ({ branch }) => {
+    log("tools", `create_worktree: branch=${branch}`);
     const id = generateId();
     const worktreeDir = resolve(projectRoot, ".worktrees", id);
     const parentDir = resolve(projectRoot, ".worktrees");
@@ -96,6 +98,7 @@ export const createWorktree = tool(
       });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
+      log("tools", `create_worktree: git worktree add failed:`, msg);
       return { content: [{ type: "text" as const, text: `Failed to create worktree: ${msg}` }], isError: true };
     }
 
@@ -103,6 +106,7 @@ export const createWorktree = tool(
       execSync("bun install", { cwd: worktreeDir, stdio: "pipe" });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
+      log("tools", `create_worktree: bun install failed:`, msg);
       return { content: [{ type: "text" as const, text: `Worktree created but bun install failed: ${msg}` }], isError: true };
     }
 
@@ -126,6 +130,7 @@ export const startClaudeSession = tool(
     worktree_id: z.string().describe("ID of the worktree to use as cwd"),
   },
   async ({ worktree_id }) => {
+    log("tools", `start_claude_session: worktree_id=${worktree_id}`);
     const wt = worktrees.get(worktree_id);
     if (!wt) {
       return { content: [{ type: "text" as const, text: `Unknown worktree: ${worktree_id}` }], isError: true };
@@ -152,6 +157,7 @@ export const startClaudeSession = tool(
       abortController,
     });
 
+    log("tools", `start_claude_session: created session=${sessionId}`);
     return {
       content: [
         { type: "text" as const, text: JSON.stringify({ session_id: sessionId, worktree_path: wt.path }) },
@@ -168,6 +174,7 @@ export const sendToClaudeSession = tool(
     message: z.string().describe("Message to send to Claude"),
   },
   async ({ session_id, message }) => {
+    log("tools", `send_to_claude_session: session=${session_id} msg=${message.slice(0, 80)}`);
     const session = claudeSessions.get(session_id);
     if (!session) {
       return { content: [{ type: "text" as const, text: `Unknown session: ${session_id}` }], isError: true };
@@ -185,19 +192,24 @@ export const sendToClaudeSession = tool(
 
     // Drain stream until we get a result message
     const textParts: string[] = [];
-    for await (const msg of session.stream) {
-      if (msg.type === "assistant") {
-        const text = msg.message.content
-          .filter((b: { type: string }) => b.type === "text")
-          .map((b: { text: string }) => b.text)
-          .join("");
-        if (text) textParts.push(text);
+    try {
+      for await (const msg of session.stream) {
+        if (msg.type === "assistant") {
+          const text = msg.message.content
+            .filter((b: { type: string }) => b.type === "text")
+            .map((b: { text: string }) => b.text)
+            .join("");
+          if (text) textParts.push(text);
+        }
+        if (msg.type === "result") {
+          break;
+        }
       }
-      if (msg.type === "result") {
-        break;
-      }
+    } catch (err) {
+      log("tools", `send_to_claude_session: stream error for session=${session_id}:`, err);
     }
 
+    log("tools", `send_to_claude_session: done session=${session_id} parts=${textParts.length}`);
     return {
       content: [
         { type: "text" as const, text: textParts.join("\n") || "(no text response)" },
@@ -213,6 +225,7 @@ export const endClaudeSession = tool(
     session_id: z.string().describe("Session ID to end"),
   },
   async ({ session_id }) => {
+    log("tools", `end_claude_session: session=${session_id}`);
     const session = claudeSessions.get(session_id);
     if (!session) {
       return { content: [{ type: "text" as const, text: `Unknown session: ${session_id}` }], isError: true };
@@ -235,6 +248,7 @@ export const startWorktreeServer = tool(
     port: z.number().describe("Port number for the server"),
   },
   async ({ worktree_id, port }) => {
+    log("tools", `start_worktree_server: worktree=${worktree_id} port=${port}`);
     const wt = worktrees.get(worktree_id);
     if (!wt) {
       return { content: [{ type: "text" as const, text: `Unknown worktree: ${worktree_id}` }], isError: true };
@@ -247,6 +261,8 @@ export const startWorktreeServer = tool(
       stdio: ["ignore", "pipe", "pipe"],
     });
 
+    log("tools", `start_worktree_server: spawned child pid=${child.pid}`);
+
     // Wait for "listening on" in stdout
     const ready = await new Promise<boolean>((resolve) => {
       const timeout = setTimeout(() => resolve(false), 15000);
@@ -258,22 +274,26 @@ export const startWorktreeServer = tool(
         }
       });
 
-      child.on("error", () => {
+      child.on("error", (err) => {
+        log("tools", `start_worktree_server: child error:`, err);
         clearTimeout(timeout);
         resolve(false);
       });
 
-      child.on("exit", () => {
+      child.on("exit", (code) => {
+        log("tools", `start_worktree_server: child exited code=${code}`);
         clearTimeout(timeout);
         resolve(false);
       });
     });
 
     if (!ready) {
+      log("tools", `start_worktree_server: server failed to start`);
       child.kill();
       return { content: [{ type: "text" as const, text: "Server failed to start within timeout" }], isError: true };
     }
 
+    log("tools", `start_worktree_server: server ready id=${serverId}`);
     worktreeServers.set(serverId, { process: child, port, worktreeId: worktree_id });
 
     return {
@@ -292,6 +312,7 @@ export const sendToWorktreeServer = tool(
     message: z.string().describe("Message to send"),
   },
   async ({ server_id, message }) => {
+    log("tools", `send_to_worktree_server: server=${server_id} msg=${message.slice(0, 80)}`);
     const server = worktreeServers.get(server_id);
     if (!server) {
       return { content: [{ type: "text" as const, text: `Unknown server: ${server_id}` }], isError: true };
@@ -301,6 +322,7 @@ export const sendToWorktreeServer = tool(
     const parts: string[] = [];
 
     // Connect SSE first
+    log("tools", `send_to_worktree_server: connecting SSE to ${baseUrl}/events`);
     const sseResponse = await fetch(`${baseUrl}/events`);
     const reader = sseResponse.body?.getReader();
     if (!reader) {
@@ -308,6 +330,7 @@ export const sendToWorktreeServer = tool(
     }
 
     // Send the message
+    log("tools", `send_to_worktree_server: sending message`);
     await fetch(`${baseUrl}/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -350,6 +373,7 @@ export const sendToWorktreeServer = tool(
       reader.cancel().catch(() => {});
     }
 
+    log("tools", `send_to_worktree_server: done server=${server_id} parts=${parts.length}`);
     return {
       content: [
         { type: "text" as const, text: parts.join("\n") || "(no response received)" },
@@ -365,6 +389,7 @@ export const cleanupWorktree = tool(
     worktree_id: z.string().describe("ID of the worktree to clean up"),
   },
   async ({ worktree_id }) => {
+    log("tools", `cleanup_worktree: worktree_id=${worktree_id}`);
     const wt = worktrees.get(worktree_id);
     if (!wt) {
       return { content: [{ type: "text" as const, text: `Unknown worktree: ${worktree_id}` }], isError: true };
@@ -373,6 +398,7 @@ export const cleanupWorktree = tool(
     // Kill any servers in this worktree
     for (const [id, server] of worktreeServers) {
       if (server.worktreeId === worktree_id) {
+        log("tools", `cleanup_worktree: killing server ${id}`);
         server.process.kill();
         worktreeServers.delete(id);
       }
@@ -387,8 +413,8 @@ export const cleanupWorktree = tool(
         cwd: projectRoot,
         stdio: "pipe",
       });
-    } catch {
-      // Best effort
+    } catch (e) {
+      log("tools", `cleanup_worktree: git worktree remove failed:`, e);
     }
 
     // Delete the branch
@@ -397,8 +423,8 @@ export const cleanupWorktree = tool(
         cwd: projectRoot,
         stdio: "pipe",
       });
-    } catch {
-      // Best effort
+    } catch (e) {
+      log("tools", `cleanup_worktree: git branch -D failed:`, e);
     }
 
     worktrees.delete(worktree_id);
@@ -424,6 +450,8 @@ export const selfModifyTools = [
 // --- Cleanup ---
 
 export function cleanupAll() {
+  log("cleanup", `aborting ${claudeSessions.size} sessions, killing ${worktreeServers.size} servers, removing ${worktrees.size} worktrees`);
+
   for (const [, session] of claudeSessions) {
     session.abortController.abort();
   }
@@ -440,16 +468,16 @@ export function cleanupAll() {
         cwd: projectRoot,
         stdio: "pipe",
       });
-    } catch {
-      // Best effort
+    } catch (e) {
+      log("cleanup", `git worktree remove failed:`, e);
     }
     try {
       execSync(`git branch -D ${wt.branch}`, {
         cwd: projectRoot,
         stdio: "pipe",
       });
-    } catch {
-      // Best effort
+    } catch (e) {
+      log("cleanup", `git branch -D failed:`, e);
     }
   }
   worktrees.clear();
