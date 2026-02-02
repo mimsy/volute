@@ -1,72 +1,59 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Box, useApp } from "ink";
-import { createAgent } from "./lib/agent.js";
 import type { ChatMessage as ChatMessageType } from "./lib/types.js";
 import { MessageList } from "./components/MessageList.js";
 import { InputBar } from "./components/InputBar.js";
 
-export function App({ systemPrompt }: { systemPrompt: string }) {
+export function App({ serverUrl }: { serverUrl: string }) {
   const { exit } = useApp();
   const [messages, setMessages] = useState<ChatMessageType[]>([]);
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [agent, setAgent] = useState<ReturnType<typeof createAgent> | null>(
-    null,
-  );
 
   useEffect(() => {
     const abortController = new AbortController();
-    const agentHandle = createAgent({
-      systemPrompt,
-      cwd: process.cwd(),
-      abortController,
-    });
-    setAgent(agentHandle);
 
-    (async () => {
-      for await (const msg of agentHandle.stream) {
-        if (msg.type === "assistant") {
-          const textBlocks = msg.message.content.filter(
-            (b: { type: string }) => b.type === "text",
-          );
-          const text = textBlocks
-            .map((b: { text: string }) => b.text)
-            .join("");
+    async function connectSSE() {
+      while (!abortController.signal.aborted) {
+        try {
+          const res = await fetch(`${serverUrl}/events`, {
+            signal: abortController.signal,
+          });
+          const reader = res.body!.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
 
-          const toolBlocks = msg.message.content.filter(
-            (b: { type: string }) => b.type === "tool_use",
-          );
-          const toolCalls = toolBlocks.map(
-            (b: { name: string; input: unknown }) => ({
-              name: b.name,
-              input: b.input,
-            }),
-          );
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-          setStreamingContent(null);
-          setIsLoading(false);
-          if (text || toolCalls.length > 0) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "assistant",
-                content: text,
-                toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-                timestamp: Date.now(),
-              },
-            ]);
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop()!;
+
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                const msg: ChatMessageType = JSON.parse(line.slice(6));
+                setStreamingContent(null);
+                setIsLoading(false);
+                setMessages((prev) => [...prev, msg]);
+              }
+            }
           }
-        } else if (msg.type === "result") {
-          setIsLoading(false);
-          setStreamingContent(null);
+        } catch (err: unknown) {
+          if (err instanceof Error && err.name === "AbortError") return;
         }
+        // Connection dropped — wait briefly then reconnect
+        await new Promise((r) => setTimeout(r, 1000));
       }
-    })();
+    }
+
+    connectSSE();
 
     return () => {
       abortController.abort();
     };
-  }, [systemPrompt]);
+  }, [serverUrl]);
 
   const handleSubmit = useCallback(
     (text: string) => {
@@ -74,16 +61,22 @@ export function App({ systemPrompt }: { systemPrompt: string }) {
         exit();
         return;
       }
-      if (!agent) return;
 
       setMessages((prev) => [
         ...prev,
         { role: "user", content: text, timestamp: Date.now() },
       ]);
       setIsLoading(true);
-      agent.sendMessage(text);
+      fetch(`${serverUrl}/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: text }),
+      }).catch((err) => {
+        console.error("Failed to send message:", err);
+        setIsLoading(false);
+      });
     },
-    [agent, exit],
+    [serverUrl, exit],
   );
 
   return (

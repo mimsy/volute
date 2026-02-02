@@ -1,4 +1,7 @@
 import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { ChatMessage } from "./types.js";
+
+type Listener = (msg: ChatMessage) => void;
 
 type MessageChannel = {
   push: (msg: SDKUserMessage) => void;
@@ -42,6 +45,7 @@ export function createAgent(options: {
   abortController: AbortController;
 }) {
   const channel = createMessageChannel();
+  const listeners = new Set<Listener>();
 
   const stream = query({
     prompt: channel.iterable,
@@ -53,6 +57,45 @@ export function createAgent(options: {
       abortController: options.abortController,
     },
   });
+
+  function broadcast(msg: ChatMessage) {
+    for (const listener of listeners) {
+      listener(msg);
+    }
+  }
+
+  // Consume the SDK stream and broadcast ChatMessage events
+  (async () => {
+    for await (const msg of stream) {
+      if (msg.type === "assistant") {
+        const textBlocks = msg.message.content.filter(
+          (b: { type: string }) => b.type === "text",
+        );
+        const text = textBlocks
+          .map((b: { text: string }) => b.text)
+          .join("");
+
+        const toolBlocks = msg.message.content.filter(
+          (b: { type: string }) => b.type === "tool_use",
+        );
+        const toolCalls = toolBlocks.map(
+          (b: { name: string; input: unknown }) => ({
+            name: b.name,
+            input: b.input,
+          }),
+        );
+
+        if (text || toolCalls.length > 0) {
+          broadcast({
+            role: "assistant",
+            content: text,
+            toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+            timestamp: Date.now(),
+          });
+        }
+      }
+    }
+  })();
 
   function sendMessage(text: string) {
     channel.push({
@@ -66,5 +109,10 @@ export function createAgent(options: {
     });
   }
 
-  return { stream, sendMessage };
+  function onMessage(listener: Listener): () => void {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  }
+
+  return { sendMessage, onMessage };
 }
