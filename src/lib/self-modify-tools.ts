@@ -190,10 +190,13 @@ export const sendToClaudeSession = tool(
       parent_tool_use_id: null,
     });
 
-    // Drain stream until we get a result message
+    // Manually call .next() instead of for-await to avoid closing the generator.
+    // for-await calls .return() on break, which permanently kills the generator.
     const textParts: string[] = [];
     try {
-      for await (const msg of session.stream) {
+      while (true) {
+        const { value: msg, done } = await session.stream.next();
+        if (done) break;
         if (msg.type === "assistant") {
           const text = msg.message.content
             .filter((b: { type: string }) => b.type === "text")
@@ -263,16 +266,19 @@ export const startWorktreeServer = tool(
 
     log("tools", `start_worktree_server: spawned child pid=${child.pid}`);
 
-    // Wait for "listening on" in stdout
+    // Wait for "listening on" in stdout or stderr
     const ready = await new Promise<boolean>((resolve) => {
       const timeout = setTimeout(() => resolve(false), 15000);
 
-      child.stdout?.on("data", (data: Buffer) => {
+      function checkOutput(data: Buffer) {
         if (data.toString().includes("listening on")) {
           clearTimeout(timeout);
           resolve(true);
         }
-      });
+      }
+
+      child.stdout?.on("data", checkOutput);
+      child.stderr?.on("data", checkOutput);
 
       child.on("error", (err) => {
         log("tools", `start_worktree_server: child error:`, err);
