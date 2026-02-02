@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "child_process";
 import { execSync } from "child_process";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import {
   tool,
@@ -22,6 +22,7 @@ type ClaudeSession = {
   push: (msg: SDKUserMessage) => void;
   stream: AsyncGenerator<SDKMessage>;
   abortController: AbortController;
+  worktreeId: string;
 };
 
 type WorktreeServer = {
@@ -77,12 +78,13 @@ function createMessageChannel() {
 
 export const createWorktree = tool(
   "create_worktree",
-  "Create a git worktree under .worktrees/ with a new branch. Runs bun install in the worktree. Returns worktree ID and path.",
+  "Create a git worktree under .worktrees/ with a new branch. Runs bun install in the worktree. Optionally writes a SOUL.md to customize the personality. Returns worktree ID and path.",
   {
     branch: z.string().describe("Branch name to create"),
+    soul: z.string().optional().describe("Content for SOUL.md in the worktree (customizes the server's personality)"),
   },
-  async ({ branch }) => {
-    log("tools", `create_worktree: branch=${branch}`);
+  async ({ branch, soul }) => {
+    log("tools", `create_worktree: branch=${branch} soul=${soul ? "yes" : "no"}`);
     const id = generateId();
     const worktreeDir = resolve(projectRoot, ".worktrees", id);
     const parentDir = resolve(projectRoot, ".worktrees");
@@ -110,6 +112,11 @@ export const createWorktree = tool(
       return { content: [{ type: "text" as const, text: `Worktree created but bun install failed: ${msg}` }], isError: true };
     }
 
+    if (soul) {
+      writeFileSync(resolve(worktreeDir, "SOUL.md"), soul);
+      log("tools", `create_worktree: wrote SOUL.md`);
+    }
+
     worktrees.set(id, { path: worktreeDir, branch });
 
     return {
@@ -125,7 +132,7 @@ export const createWorktree = tool(
 
 export const startClaudeSession = tool(
   "start_claude_session",
-  "Start an interactive Claude Code session with cwd in a worktree. Returns session_id for use with send_to_claude_session.",
+  "Start a Claude Code coding assistant session in a worktree to make code changes. Returns session_id for use with send_to_claude_session.",
   {
     worktree_id: z.string().describe("ID of the worktree to use as cwd"),
   },
@@ -155,6 +162,7 @@ export const startClaudeSession = tool(
       push: channel.push,
       stream,
       abortController,
+      worktreeId: worktree_id,
     });
 
     log("tools", `start_claude_session: created session=${sessionId}`);
@@ -245,13 +253,14 @@ export const endClaudeSession = tool(
 
 export const startWorktreeServer = tool(
   "start_worktree_server",
-  "Start the molt server in a worktree on a given port. Waits for it to be listening.",
+  "Start the molt server in a worktree to test a modified personality/behavior. Auto-assigns a port if not specified. Waits for it to be listening.",
   {
     worktree_id: z.string().describe("ID of the worktree"),
-    port: z.number().describe("Port number for the server"),
+    port: z.number().optional().describe("Port number for the server (auto-assigned if omitted)"),
   },
   async ({ worktree_id, port }) => {
-    log("tools", `start_worktree_server: worktree=${worktree_id} port=${port}`);
+    const requestedPort = port ?? 0;
+    log("tools", `start_worktree_server: worktree=${worktree_id} port=${requestedPort}`);
     const wt = worktrees.get(worktree_id);
     if (!wt) {
       return { content: [{ type: "text" as const, text: `Unknown worktree: ${worktree_id}` }], isError: true };
@@ -259,21 +268,22 @@ export const startWorktreeServer = tool(
 
     const serverId = generateId();
 
-    const child = spawn("bun", ["run", "src/server.ts", "--port", String(port)], {
+    const child = spawn("bun", ["run", "src/server.ts", "--port", String(requestedPort)], {
       cwd: wt.path,
       stdio: ["ignore", "pipe", "pipe"],
     });
 
     log("tools", `start_worktree_server: spawned child pid=${child.pid}`);
 
-    // Wait for "listening on" in stdout or stderr
-    const ready = await new Promise<boolean>((resolve) => {
-      const timeout = setTimeout(() => resolve(false), 15000);
+    // Wait for "listening on :PORT" in stdout or stderr and extract actual port
+    const actualPort = await new Promise<number | null>((resolve) => {
+      const timeout = setTimeout(() => resolve(null), 15000);
 
       function checkOutput(data: Buffer) {
-        if (data.toString().includes("listening on")) {
+        const match = data.toString().match(/listening on :(\d+)/);
+        if (match) {
           clearTimeout(timeout);
-          resolve(true);
+          resolve(parseInt(match[1], 10));
         }
       }
 
@@ -283,28 +293,28 @@ export const startWorktreeServer = tool(
       child.on("error", (err) => {
         log("tools", `start_worktree_server: child error:`, err);
         clearTimeout(timeout);
-        resolve(false);
+        resolve(null);
       });
 
       child.on("exit", (code) => {
         log("tools", `start_worktree_server: child exited code=${code}`);
         clearTimeout(timeout);
-        resolve(false);
+        resolve(null);
       });
     });
 
-    if (!ready) {
+    if (actualPort === null) {
       log("tools", `start_worktree_server: server failed to start`);
       child.kill();
       return { content: [{ type: "text" as const, text: "Server failed to start within timeout" }], isError: true };
     }
 
-    log("tools", `start_worktree_server: server ready id=${serverId}`);
-    worktreeServers.set(serverId, { process: child, port, worktreeId: worktree_id });
+    log("tools", `start_worktree_server: server ready id=${serverId} port=${actualPort}`);
+    worktreeServers.set(serverId, { process: child, port: actualPort, worktreeId: worktree_id });
 
     return {
       content: [
-        { type: "text" as const, text: JSON.stringify({ server_id: serverId, port }) },
+        { type: "text" as const, text: JSON.stringify({ server_id: serverId, port: actualPort }) },
       ],
     };
   },
@@ -465,10 +475,38 @@ export const cleanupWorktree = tool(
   },
 );
 
+export const listWorktrees = tool(
+  "list_worktrees",
+  "List all active worktrees with their branches, associated servers (id, port, pid), and Claude Code sessions.",
+  {},
+  async () => {
+    const result = [];
+    for (const [id, wt] of worktrees) {
+      const servers = [];
+      for (const [sId, srv] of worktreeServers) {
+        if (srv.worktreeId === id) {
+          servers.push({ id: sId, port: srv.port, pid: srv.process.pid });
+        }
+      }
+      const sessions = [];
+      for (const [sId, sess] of claudeSessions) {
+        if (sess.worktreeId === id) {
+          sessions.push({ id: sId });
+        }
+      }
+      result.push({ id, branch: wt.branch, path: wt.path, servers, sessions });
+    }
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+    };
+  },
+);
+
 // --- All tools array ---
 
 export const selfModifyTools = [
   createWorktree,
+  listWorktrees,
   startClaudeSession,
   sendToClaudeSession,
   endClaudeSession,

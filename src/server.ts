@@ -83,7 +83,7 @@ setInterval(() => {
   }
 }, 5000);
 
-Bun.serve({
+const server = Bun.serve({
   port,
   fetch(req) {
     const url = new URL(req.url);
@@ -122,7 +122,7 @@ Bun.serve({
   },
 });
 
-log("server", `listening on :${port}`);
+log("server", `listening on :${server.port}`);
 
 function shutdown() {
   log("server", "shutdown signal received");
