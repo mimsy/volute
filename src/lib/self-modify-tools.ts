@@ -343,19 +343,36 @@ export const sendToWorktreeServer = tool(
       body: JSON.stringify({ content: message }),
     });
 
-    // Read SSE events with inactivity timeout
+    // Read SSE events, tracking inactivity based on real data (not keepalives).
     const decoder = new TextDecoder();
     let buffer = "";
     const inactivityMs = 30000;
+    let lastRealData = Date.now();
+    let pendingRead: ReturnType<typeof reader.read> | null = null;
 
     try {
       while (true) {
-        const readPromise = reader.read();
-        const timeoutPromise = new Promise<{ done: true; value: undefined }>((resolve) =>
-          setTimeout(() => resolve({ done: true, value: undefined }), inactivityMs),
+        if (!pendingRead) {
+          pendingRead = reader.read();
+        }
+
+        const checkPromise = new Promise<null>((resolve) =>
+          setTimeout(() => resolve(null), 2000),
         );
 
-        const { done, value } = await Promise.race([readPromise, timeoutPromise]);
+        const result = await Promise.race([pendingRead, checkPromise]);
+
+        if (result === null) {
+          // Timer fired — check if we've been idle (no real data) long enough
+          if (parts.length > 0 && Date.now() - lastRealData > inactivityMs) {
+            log("tools", `send_to_worktree_server: inactivity timeout after ${inactivityMs}ms`);
+            break;
+          }
+          continue;
+        }
+
+        pendingRead = null;
+        const { done, value } = result;
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -364,6 +381,7 @@ export const sendToWorktreeServer = tool(
 
         for (const line of lines) {
           if (line.startsWith("data: ")) {
+            lastRealData = Date.now();
             try {
               const data = JSON.parse(line.slice(6));
               if (data.role === "assistant" && data.content) {
