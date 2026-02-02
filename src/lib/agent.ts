@@ -115,6 +115,15 @@ export function createAgent(options: {
             });
           }
         }
+        if (msg.type === "result") {
+          log("agent", "turn done");
+          broadcast({
+            role: "assistant",
+            content: "",
+            done: true,
+            timestamp: Date.now(),
+          });
+        }
       }
     } catch (err) {
       log("agent", "stream consumer error:", err);

@@ -379,11 +379,16 @@ export const sendToWorktreeServer = tool(
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
 
+        let gotDone = false;
         for (const line of lines) {
           if (line.startsWith("data: ")) {
             lastRealData = Date.now();
             try {
               const data = JSON.parse(line.slice(6));
+              if (data.done) {
+                gotDone = true;
+                break;
+              }
               if (data.role === "assistant" && data.content) {
                 parts.push(data.content);
               }
@@ -392,6 +397,7 @@ export const sendToWorktreeServer = tool(
             }
           }
         }
+        if (gotDone) break;
       }
     } finally {
       reader.cancel().catch(() => {});
