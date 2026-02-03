@@ -208,6 +208,15 @@ const server = createServer(async (req, res) => {
   res.end("Not Found");
 });
 
+server.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EADDRINUSE") {
+    log("server", `port ${port} in use, retrying in 1s...`);
+    setTimeout(() => server.listen(port), 1000);
+  } else {
+    throw err;
+  }
+});
+
 server.listen(port, () => {
   const addr = server.address();
   const actualPort = typeof addr === "object" && addr ? addr.port : port;

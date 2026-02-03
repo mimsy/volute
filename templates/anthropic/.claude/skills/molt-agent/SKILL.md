@@ -84,6 +84,10 @@ Two-tier memory with agent ownership:
 4. `merge_variant` — merge back, supervisor restarts with merge context
 5. After restart, agent receives orientation with merge details and updates memory
 
+## Development Mode
+
+Run `molt start --dev` to enable hot-reload. This uses `tsx watch` to automatically restart the server when source files change. SSE clients will disconnect on each reload — reconnect via `molt chat`.
+
 ## Development Notes
 
 - All child process execution in MCP tools must be async (never `execFileSync`) to avoid blocking the event loop and dropping SSE connections.

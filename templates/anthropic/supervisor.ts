@@ -22,7 +22,16 @@ function tsxBin(): string {
   return resolve(projectRoot, "node_modules", ".bin", "tsx");
 }
 
+const devMode = process.argv.includes("--dev");
+
 function startAgent(): ReturnType<typeof spawn> {
+  if (devMode) {
+    console.error(`[supervisor] starting agent server in dev mode (watching for changes)...`);
+    return spawn(tsxBin(), ["watch", "src/server.ts"], {
+      cwd: projectRoot,
+      stdio: "inherit",
+    });
+  }
   console.error(`[supervisor] starting agent server...`);
   return spawn(tsxBin(), ["src/server.ts"], {
     cwd: projectRoot,

@@ -2,7 +2,7 @@ import { spawn } from "child_process";
 import { existsSync } from "fs";
 import { resolve } from "path";
 
-export async function run(_args: string[]) {
+export async function run(args: string[]) {
   const supervisorPath = resolve(process.cwd(), "supervisor.ts");
 
   if (!existsSync(supervisorPath)) {
@@ -10,8 +10,10 @@ export async function run(_args: string[]) {
     process.exit(1);
   }
 
+  const dev = args.includes("--dev");
   const tsxBin = resolve(process.cwd(), "node_modules", ".bin", "tsx");
-  const child = spawn(tsxBin, [supervisorPath], {
+  const supervisorArgs = dev ? [supervisorPath, "--dev"] : [supervisorPath];
+  const child = spawn(tsxBin, supervisorArgs, {
     cwd: process.cwd(),
     stdio: "inherit",
   });
