@@ -1,48 +1,12 @@
 import {
   query,
-  type SDKUserMessage,
   type McpServerConfig,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { MoltMessage, MoltBlock } from "./types.js";
 import { log } from "./logger.js";
+import { createMessageChannel } from "./message-channel.js";
 
 type Listener = (msg: MoltMessage) => void;
-
-type MessageChannel = {
-  push: (msg: SDKUserMessage) => void;
-  iterable: AsyncIterable<SDKUserMessage>;
-};
-
-function createMessageChannel(): MessageChannel {
-  const queue: SDKUserMessage[] = [];
-  let resolve: ((value: IteratorResult<SDKUserMessage>) => void) | null = null;
-
-  return {
-    push(msg: SDKUserMessage) {
-      if (resolve) {
-        const r = resolve;
-        resolve = null;
-        r({ value: msg, done: false });
-      } else {
-        queue.push(msg);
-      }
-    },
-    iterable: {
-      [Symbol.asyncIterator]() {
-        return {
-          next(): Promise<IteratorResult<SDKUserMessage>> {
-            if (queue.length > 0) {
-              return Promise.resolve({ value: queue.shift()!, done: false });
-            }
-            return new Promise((r) => {
-              resolve = r;
-            });
-          },
-        };
-      },
-    },
-  };
-}
 
 export function createAgent(options: {
   systemPrompt: string;

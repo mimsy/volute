@@ -9,6 +9,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { log } from "./logger.js";
+import { createMessageChannel } from "./message-channel.js";
 
 // --- State ---
 
@@ -24,37 +25,6 @@ const claudeCodeSessions = new Map<string, ClaudeCodeSession>();
 
 function generateId(): string {
   return Math.random().toString(36).slice(2, 10);
-}
-
-function createMessageChannel() {
-  const queue: SDKUserMessage[] = [];
-  let waiting: ((value: IteratorResult<SDKUserMessage>) => void) | null = null;
-
-  return {
-    push(msg: SDKUserMessage) {
-      if (waiting) {
-        const r = waiting;
-        waiting = null;
-        r({ value: msg, done: false });
-      } else {
-        queue.push(msg);
-      }
-    },
-    iterable: {
-      [Symbol.asyncIterator]() {
-        return {
-          next(): Promise<IteratorResult<SDKUserMessage>> {
-            if (queue.length > 0) {
-              return Promise.resolve({ value: queue.shift()!, done: false });
-            }
-            return new Promise((r) => {
-              waiting = r;
-            });
-          },
-        };
-      },
-    },
-  };
 }
 
 function moltExecAsync(args: string[], cwd?: string): Promise<string> {
