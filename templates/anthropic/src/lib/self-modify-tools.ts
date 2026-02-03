@@ -116,15 +116,23 @@ export const mergeVariant = tool(
   "Merge a variant branch back into the main branch and restart. Appends context to MEMORY.md for continuity. This will exit the process — the supervisor will complete the merge and restart.",
   {
     name: z.string().describe("Name of the variant to merge"),
-    memory: z.string().describe("Context to append to MEMORY.md so you remember what happened after restart"),
+    summary: z.string().describe("Brief summary of what changes the variant made"),
+    justification: z.string().describe("Why this variant should be merged"),
+    memory: z.string().describe("Additional context to remember after restart"),
   },
-  async ({ name, memory }) => {
+  async ({ name, summary, justification, memory }) => {
     log("tools", `merge_variant: name=${name}`);
 
-    // Append context to MEMORY.md
+    // Append structured context to MEMORY.md
     const memoryPath = resolve(projectRoot, "MEMORY.md");
     const timestamp = new Date().toISOString();
-    appendFileSync(memoryPath, `\n## ${timestamp}\n\n${memory}\n`);
+    const entry = [
+      `\n## ${timestamp} — Merged variant: ${name}`,
+      `\n**Why:** ${justification}`,
+      `\n**Changes:** ${summary}`,
+      `\n**Context:** ${memory}\n`,
+    ].join("\n");
+    appendFileSync(memoryPath, entry);
     log("tools", `merge_variant: appended to MEMORY.md`);
 
     // Write restart signal for supervisor
