@@ -10,7 +10,7 @@ function tsxBin(cwd: string): string {
 /**
  * Spawn `tsx src/server.ts --port <port>` in the given path and wait for it to be listening.
  *
- * In detached mode: spawns with stdio ignored and polls /health to detect readiness.
+ * In detached mode: spawns with piped stdio to discover the port, then detaches.
  * The child survives parent exit. Use this when the CLI will exit immediately after.
  *
  * In attached mode (default): spawns with piped stdio and detects "listening on :PORT" in output.
@@ -59,58 +59,12 @@ function spawnAttached(cwd: string, port: number): Promise<SpawnResult> {
   });
 }
 
-function spawnDetached(cwd: string, port: number): Promise<SpawnResult> {
-  const child = spawn(tsxBin(cwd), ["src/server.ts", "--port", String(port)], {
-    cwd,
-    stdio: "ignore",
-    detached: true,
-  });
-
-  child.unref();
-
-  // If port is 0, we need to discover the actual port via stdout.
-  // For detached mode with port=0, fall back to attached mode temporarily.
-  if (port === 0) {
-    child.kill();
-    return spawnAttachedDetach(cwd, port);
-  }
-
-  // Poll /health until the server is ready
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      child.kill();
-      resolve(null);
-    }, 30000);
-
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch(`http://localhost:${port}/health`, {
-          signal: AbortSignal.timeout(1000),
-        });
-        if (res.ok) {
-          clearTimeout(timeout);
-          clearInterval(interval);
-          resolve({ child, actualPort: port });
-        }
-      } catch {
-        // Not ready yet
-      }
-    }, 500);
-
-    child.on("error", () => {
-      clearTimeout(timeout);
-      clearInterval(interval);
-      resolve(null);
-    });
-  });
-}
-
 /**
  * Spawn with pipes to discover the port, then let the child survive.
  * The child may get EPIPE on stderr after parent exits — the server
  * log function handles this gracefully.
  */
-function spawnAttachedDetach(cwd: string, port: number): Promise<SpawnResult> {
+function spawnDetached(cwd: string, port: number): Promise<SpawnResult> {
   const child = spawn(tsxBin(cwd), ["src/server.ts", "--port", String(port)], {
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
