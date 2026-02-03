@@ -1,4 +1,6 @@
-import { existsSync } from "fs";
+import { existsSync, writeFileSync, readFileSync, mkdirSync } from "fs";
+import { spawn } from "child_process";
+import { resolve } from "path";
 import { findVariant, removeVariant, validateBranchName } from "../lib/variants.js";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
@@ -85,4 +87,38 @@ export async function run(args: string[]) {
   }
 
   console.log(`Variant ${name} merged and cleaned up.`);
+
+  // If running under supervisor, it handles restart — just exit
+  if (process.env.MOLT_SUPERVISOR) return;
+
+  // Direct CLI flow: write merged.json for post-restart orientation
+  const moltDir = resolve(projectRoot, ".molt");
+  if (!existsSync(moltDir)) mkdirSync(moltDir, { recursive: true });
+  writeFileSync(resolve(moltDir, "merged.json"), JSON.stringify({ name }));
+
+  // Kill old supervisor if running
+  const pidPath = resolve(moltDir, "supervisor.pid");
+  if (existsSync(pidPath)) {
+    try {
+      const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
+      process.kill(pid);
+      console.log(`Killed old supervisor (pid ${pid})`);
+    } catch {
+      // Already dead or invalid
+    }
+  }
+
+  // Start new supervisor detached
+  const tsxBin = resolve(projectRoot, "node_modules", ".bin", "tsx");
+  const supervisorPath = resolve(projectRoot, "supervisor.ts");
+  if (existsSync(supervisorPath)) {
+    console.log("Starting new supervisor...");
+    const child = spawn(tsxBin, [supervisorPath], {
+      cwd: projectRoot,
+      stdio: "ignore",
+      detached: true,
+    });
+    child.unref();
+    console.log(`Supervisor started (pid ${child.pid})`);
+  }
 }

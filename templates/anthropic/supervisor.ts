@@ -1,9 +1,22 @@
 import { spawn, execFileSync } from "child_process";
-import { readFileSync, unlinkSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from "fs";
 import { resolve } from "path";
 
 const projectRoot = process.cwd();
-const restartSignalPath = resolve(projectRoot, ".molt/restart.json");
+const moltDir = resolve(projectRoot, ".molt");
+const restartSignalPath = resolve(moltDir, "restart.json");
+const pidPath = resolve(moltDir, "supervisor.pid");
+
+// Write PID file so CLI can find us
+if (!existsSync(moltDir)) mkdirSync(moltDir, { recursive: true });
+writeFileSync(pidPath, String(process.pid));
+
+function cleanupPidFile() {
+  try { unlinkSync(pidPath); } catch {}
+}
+process.on("exit", cleanupPidFile);
+process.on("SIGINT", () => { cleanupPidFile(); process.exit(0); });
+process.on("SIGTERM", () => { cleanupPidFile(); process.exit(0); });
 
 function tsxBin(): string {
   return resolve(projectRoot, "node_modules", ".bin", "tsx");
@@ -27,7 +40,16 @@ function handleRestart(): boolean {
     if (signal.action === "merge" && signal.name) {
       console.error(`[supervisor] merging variant: ${signal.name}`);
       try {
-        execFileSync("molt", ["merge", signal.name], { cwd: projectRoot, stdio: "inherit" });
+        execFileSync("molt", ["merge", signal.name], {
+          cwd: projectRoot,
+          stdio: "inherit",
+          env: { ...process.env, MOLT_SUPERVISOR: "1" },
+        });
+        // Write merged.json so the restarted server knows what was merged
+        writeFileSync(
+          resolve(moltDir, "merged.json"),
+          JSON.stringify({ name: signal.name }),
+        );
       } catch (e) {
         console.error(`[supervisor] molt merge failed:`, e);
         // still restart even if merge fails
