@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { spawn } from "child_process";
 import { appendFileSync, mkdirSync, writeFileSync, existsSync } from "fs";
 import { resolve } from "path";
 import {
@@ -57,10 +57,31 @@ function createMessageChannel() {
   };
 }
 
-function moltExec(args: string[], cwd?: string): string {
-  const cmd = `molt ${args.join(" ")}`;
-  log("tools", `exec: ${cmd}`);
-  return execSync(cmd, { encoding: "utf-8", cwd: cwd ?? projectRoot });
+function moltExecAsync(args: string[], cwd?: string): Promise<string> {
+  log("tools", `exec async: molt ${args.join(" ")}`);
+  return new Promise((resolve, reject) => {
+    const child = spawn("molt", args, {
+      cwd: cwd ?? projectRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const chunks: Buffer[] = [];
+    const errChunks: Buffer[] = [];
+
+    child.stdout?.on("data", (data: Buffer) => chunks.push(data));
+    child.stderr?.on("data", (data: Buffer) => errChunks.push(data));
+
+    child.on("error", reject);
+    child.on("close", (code) => {
+      const stdout = Buffer.concat(chunks).toString("utf-8");
+      if (code === 0) {
+        resolve(stdout);
+      } else {
+        const stderr = Buffer.concat(errChunks).toString("utf-8");
+        reject(new Error(stderr || stdout || `molt exited with code ${code}`));
+      }
+    });
+  });
 }
 
 // --- Thin wrappers around molt CLI ---
@@ -77,7 +98,7 @@ export const createVariant = tool(
     try {
       const args = ["fork", name, "--json"];
       if (soul) args.push("--soul", soul);
-      const result = moltExec(args);
+      const result = await moltExecAsync(args);
       return { content: [{ type: "text" as const, text: result }] };
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -96,7 +117,7 @@ export const sendToVariant = tool(
   async ({ port, message }) => {
     log("tools", `send_to_variant: port=${port} msg=${message.slice(0, 80)}`);
     try {
-      const result = moltExec(["send", "--port", String(port), JSON.stringify(message)]);
+      const result = await moltExecAsync(["send", "--port", String(port), message]);
       return { content: [{ type: "text" as const, text: result || "(no response)" }] };
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -111,7 +132,7 @@ export const listVariants = tool(
   {},
   async () => {
     try {
-      const result = moltExec(["variants", "--json"]);
+      const result = await moltExecAsync(["variants", "--json"]);
       return { content: [{ type: "text" as const, text: result }] };
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -165,7 +186,7 @@ export const updateWorktreeSoul = tool(
   async ({ name, soul }) => {
     log("tools", `update_worktree_soul: name=${name}`);
     try {
-      const result = moltExec(["variants", "--json"]);
+      const result = await moltExecAsync(["variants", "--json"]);
       const variants = JSON.parse(result);
       const variant = variants.find((v: { name: string }) => v.name === name);
       if (!variant) {
@@ -191,7 +212,7 @@ export const startClaudeCodeSession = tool(
   async ({ name }) => {
     log("tools", `start_claude_code_session: name=${name}`);
     try {
-      const result = moltExec(["variants", "--json"]);
+      const result = await moltExecAsync(["variants", "--json"]);
       const variants = JSON.parse(result);
       const variant = variants.find((v: { name: string }) => v.name === name);
       if (!variant) {

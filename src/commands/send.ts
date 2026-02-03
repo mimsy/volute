@@ -24,7 +24,8 @@ export async function run(args: string[]) {
   const baseUrl = `http://localhost:${port}`;
 
   // Connect SSE first
-  const sseResponse = await fetch(`${baseUrl}/events`);
+  const abortController = new AbortController();
+  const sseResponse = await fetch(`${baseUrl}/events`, { signal: abortController.signal });
   const reader = sseResponse.body?.getReader();
   if (!reader) {
     console.error("Failed to connect SSE");
@@ -47,7 +48,7 @@ export async function run(args: string[]) {
   // Read SSE events until done
   const decoder = new TextDecoder();
   let buffer = "";
-  const inactivityMs = 30000;
+  const inactivityMs = 5 * 60 * 1000; // 5 minutes — tools can take a while
   let lastRealData = Date.now();
   let pendingRead: ReturnType<typeof reader.read> | null = null;
 
@@ -104,6 +105,7 @@ export async function run(args: string[]) {
     }
   } finally {
     reader.cancel().catch(() => {});
+    abortController.abort();
   }
 
   // Ensure trailing newline

@@ -91,18 +91,13 @@ export async function run(args: string[]) {
   if (!noStart) {
     const requestedPort = port ?? 0;
     if (!json) console.log("Starting server...");
-    const result = await spawnServer(worktreeDir, requestedPort);
+    const result = await spawnServer(worktreeDir, requestedPort, { detached: true });
     if (!result) {
       console.error("Server failed to start within timeout");
       process.exit(1);
     }
     actualPort = result.actualPort;
     pid = result.child.pid ?? null;
-
-    // Detach the child so the CLI can exit while server runs
-    result.child.unref();
-    result.child.stdout?.destroy();
-    result.child.stderr?.destroy();
   }
 
   const variant = {
