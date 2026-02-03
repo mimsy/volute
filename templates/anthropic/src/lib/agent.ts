@@ -13,6 +13,9 @@ export function createAgent(options: {
   cwd: string;
   abortController: AbortController;
   mcpServers?: Record<string, McpServerConfig>;
+  resume?: string;
+  onSessionId?: (id: string) => void;
+  onStreamError?: (err: unknown) => void;
 }) {
   const channel = createMessageChannel();
   const listeners = new Set<Listener>();
@@ -26,6 +29,7 @@ export function createAgent(options: {
       cwd: options.cwd,
       abortController: options.abortController,
       mcpServers: options.mcpServers,
+      resume: options.resume,
     },
   });
 
@@ -44,6 +48,9 @@ export function createAgent(options: {
     log("agent", "stream consumer started");
     try {
       for await (const msg of stream) {
+        if ("session_id" in msg && msg.session_id && options.onSessionId) {
+          options.onSessionId(msg.session_id as string);
+        }
         if (msg.type === "assistant") {
           const blocks: MoltBlock[] = [];
 
@@ -83,6 +90,8 @@ export function createAgent(options: {
       }
     } catch (err) {
       log("agent", "stream consumer error:", err);
+      if (options.onStreamError) options.onStreamError(err);
+      process.exit(1);
     }
     log("agent", "stream consumer ended");
   })();

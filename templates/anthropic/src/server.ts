@@ -1,6 +1,6 @@
 import { createServer, type ServerResponse, type IncomingMessage } from "http";
-import { readFileSync, existsSync, unlinkSync } from "fs";
-import { resolve } from "path";
+import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from "fs";
+import { resolve, dirname } from "path";
 import { createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import { createAgent } from "./lib/agent.js";
 import { selfModifyTools, cleanupAll } from "./lib/self-modify-tools.js";
@@ -41,6 +41,29 @@ if (!soul) {
 const memory = loadFile(memoryPath);
 const systemPrompt = memory ? `${soul}\n\n## Memory\n\n${memory}` : soul;
 
+const sessionPath = resolve(".molt/session.json");
+
+function loadSessionId(): string | undefined {
+  try {
+    const data = JSON.parse(readFileSync(sessionPath, "utf-8"));
+    return data.sessionId;
+  } catch {
+    return undefined;
+  }
+}
+
+function saveSessionId(sessionId: string) {
+  mkdirSync(dirname(sessionPath), { recursive: true });
+  writeFileSync(sessionPath, JSON.stringify({ sessionId }));
+}
+
+function deleteSessionFile() {
+  try {
+    unlinkSync(sessionPath);
+    log("server", "deleted session file");
+  } catch {}
+}
+
 // Read name/version from package.json for health endpoint
 let pkgName = "unknown";
 let pkgVersion = "0.0.0";
@@ -56,11 +79,18 @@ const selfModifyServer = createSdkMcpServer({
 });
 
 const abortController = new AbortController();
+const savedSessionId = loadSessionId();
+if (savedSessionId) {
+  log("server", `resuming session: ${savedSessionId}`);
+}
 const agent = createAgent({
   systemPrompt,
   cwd: process.cwd(),
   abortController,
   mcpServers: { "self-modify": selfModifyServer },
+  resume: savedSessionId,
+  onSessionId: saveSessionId,
+  onStreamError: deleteSessionFile,
 });
 
 const sseClients = new Set<ServerResponse>();
