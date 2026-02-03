@@ -1,5 +1,5 @@
 import { createServer, type ServerResponse, type IncomingMessage } from "http";
-import { readFileSync } from "fs";
+import { readFileSync, existsSync, unlinkSync } from "fs";
 import { resolve } from "path";
 import { createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import { createAgent } from "./lib/agent.js";
@@ -151,6 +151,23 @@ server.listen(port, () => {
   const addr = server.address();
   const actualPort = typeof addr === "object" && addr ? addr.port : port;
   log("server", `listening on :${actualPort}`);
+
+  // Check for post-merge orientation
+  const mergedPath = resolve(".molt/merged.json");
+  if (existsSync(mergedPath)) {
+    try {
+      const merged = JSON.parse(readFileSync(mergedPath, "utf-8"));
+      unlinkSync(mergedPath);
+      agent.sendMessage(
+        `You have just been restarted after merging variant "${merged.name}". ` +
+        `Your SOUL.md and MEMORY.md have been updated with the merged changes. ` +
+        `Read your MEMORY.md to understand what happened and continue from where you left off.`,
+      );
+      log("server", `sent post-merge orientation for variant: ${merged.name}`);
+    } catch (e) {
+      log("server", "failed to process merged.json:", e);
+    }
+  }
 });
 
 function shutdown() {
