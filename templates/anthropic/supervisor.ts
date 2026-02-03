@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 import { spawn } from "child_process";
 import { readFileSync, unlinkSync, existsSync } from "fs";
 import { execSync } from "child_process";
@@ -7,9 +6,13 @@ import { resolve } from "path";
 const projectRoot = process.cwd();
 const restartSignalPath = resolve(projectRoot, ".molt/restart.json");
 
+function tsxBin(): string {
+  return resolve(projectRoot, "node_modules", ".bin", "tsx");
+}
+
 function startAgent(): ReturnType<typeof spawn> {
   console.error(`[supervisor] starting agent server...`);
-  return spawn("bun", ["run", "src/server.ts"], {
+  return spawn(tsxBin(), ["src/server.ts"], {
     cwd: projectRoot,
     stdio: "inherit",
   });

@@ -7,7 +7,9 @@ Built on the [Anthropic Claude Agent SDK](https://github.com/anthropics/claude-a
 ## Install
 
 ```sh
-bun install -g .
+npm install
+npm run build
+npm link
 ```
 
 ## Quick start

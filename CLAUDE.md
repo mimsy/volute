@@ -23,11 +23,12 @@ CLI framework for creating and managing self-modifying AI agents powered by the 
 
 ## Tech stack
 
-- **Runtime**: Bun (no build step, runs TypeScript directly)
+- **Runtime**: Node.js with tsx (esbuild-based TypeScript execution)
 - **Language**: TypeScript (strict, ES2022, NodeNext modules)
 - **TUI**: React/Ink (`src/components/`)
 - **Agent SDK**: `@anthropic-ai/claude-agent-sdk`
-- **Package manager**: Bun
+- **CLI build**: tsup (compiles CLI → `dist/cli.js`)
+- **Package manager**: npm
 
 ## Key patterns
 
@@ -41,9 +42,10 @@ CLI framework for creating and managing self-modifying AI agents powered by the 
 ## Development
 
 ```sh
-bun install              # install dependencies
-bun run dev              # run CLI in dev mode
+npm install              # install dependencies
+npm run dev              # run CLI in dev mode (via tsx)
+npm run build            # build CLI to dist/
 molt create test && cd test && molt start  # test end-to-end
 ```
 
-The CLI is installed globally via `bun link` or pointing `bin` at `src/cli.ts`.
+The CLI is installed globally via `npm link` (requires `npm run build` first) or run in dev mode via `tsx src/cli.ts`.

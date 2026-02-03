@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+import { createServer, type ServerResponse, type IncomingMessage } from "http";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
@@ -63,16 +63,12 @@ const agent = createAgent({
   mcpServers: { "self-modify": selfModifyServer },
 });
 
-type SSEClient = {
-  controller: ReadableStreamDefaultController;
-};
+const sseClients = new Set<ServerResponse>();
 
-const sseClients = new Set<SSEClient>();
-
-function removeClient(client: SSEClient) {
-  sseClients.delete(client);
+function removeClient(res: ServerResponse) {
+  sseClients.delete(res);
   try {
-    client.controller.close();
+    res.end();
   } catch {}
 }
 
@@ -80,68 +76,82 @@ agent.onMessage((msg: MoltMessage) => {
   const data = `data: ${JSON.stringify(msg)}\n\n`;
   for (const client of sseClients) {
     try {
-      client.controller.enqueue(data);
+      client.write(data);
     } catch {
       removeClient(client);
     }
   }
 });
 
-// Keep SSE connections alive so Bun doesn't idle-timeout them
+// Keep SSE connections alive
 setInterval(() => {
   for (const client of sseClients) {
     try {
-      client.controller.enqueue(": keepalive\n\n");
+      client.write(": keepalive\n\n");
     } catch {
       removeClient(client);
     }
   }
 }, 5000);
 
-const server = Bun.serve({
-  port,
-  fetch(req) {
-    const url = new URL(req.url);
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    req.on("error", reject);
+  });
+}
 
-    if (req.method === "GET" && url.pathname === "/health") {
-      return Response.json({ status: "ok", name: pkgName, version: pkgVersion });
+const server = createServer(async (req, res) => {
+  const url = new URL(req.url!, `http://localhost`);
+
+  if (req.method === "GET" && url.pathname === "/health") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "ok", name: pkgName, version: pkgVersion }));
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/events") {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+
+    sseClients.add(res);
+    log("server", `SSE client connected (total: ${sseClients.size})`);
+
+    req.on("close", () => {
+      removeClient(res);
+      log("server", `SSE client disconnected (total: ${sseClients.size})`);
+    });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/message") {
+    try {
+      const body = JSON.parse(await readBody(req)) as { content: string; source?: string };
+      log("server", "POST /message:", body.content.slice(0, 120));
+      agent.sendMessage(body.content, body.source);
+      res.writeHead(200);
+      res.end("OK");
+    } catch {
+      res.writeHead(400);
+      res.end("Bad Request");
     }
+    return;
+  }
 
-    if (req.method === "GET" && url.pathname === "/events") {
-      const stream = new ReadableStream({
-        start(controller) {
-          const client: SSEClient = { controller };
-          sseClients.add(client);
-          log("server", `SSE client connected (total: ${sseClients.size})`);
-          req.signal.addEventListener("abort", () => {
-            removeClient(client);
-            log("server", `SSE client disconnected (total: ${sseClients.size})`);
-          });
-        },
-      });
-
-      return new Response(stream, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-        },
-      });
-    }
-
-    if (req.method === "POST" && url.pathname === "/message") {
-      return req.json().then((body: { content: string; source?: string }) => {
-        log("server", "POST /message:", body.content.slice(0, 120));
-        agent.sendMessage(body.content, body.source);
-        return new Response("OK", { status: 200 });
-      });
-    }
-
-    return new Response("Not Found", { status: 404 });
-  },
+  res.writeHead(404);
+  res.end("Not Found");
 });
 
-log("server", `listening on :${server.port}`);
+server.listen(port, () => {
+  const addr = server.address();
+  const actualPort = typeof addr === "object" && addr ? addr.port : port;
+  log("server", `listening on :${actualPort}`);
+});
 
 function shutdown() {
   log("server", "shutdown signal received");

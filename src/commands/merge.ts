@@ -44,6 +44,19 @@ export async function run(args: string[]) {
     }
   }
 
+  // Auto-commit any uncommitted changes in the variant worktree
+  if (existsSync(variant.path)) {
+    const status = execSync("git status --porcelain", { cwd: variant.path, encoding: "utf-8" }).trim();
+    if (status) {
+      console.log("Committing uncommitted changes in variant...");
+      execSync("git add -A", { cwd: variant.path, stdio: "pipe" });
+      execSync('git commit -m "Auto-commit uncommitted changes before merge"', {
+        cwd: variant.path,
+        stdio: "pipe",
+      });
+    }
+  }
+
   // Merge branch
   console.log(`Merging branch: ${variant.branch}`);
   try {
@@ -84,9 +97,9 @@ export async function run(args: string[]) {
   // Reinstall dependencies
   console.log("Reinstalling dependencies...");
   try {
-    execSync("bun install", { cwd: projectRoot, stdio: "inherit" });
+    execSync("npm install", { cwd: projectRoot, stdio: "inherit" });
   } catch (e) {
-    console.error("bun install failed:", e);
+    console.error("npm install failed:", e);
   }
 
   console.log(`Variant ${name} merged and cleaned up.`);

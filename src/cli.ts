@@ -1,5 +1,3 @@
-#!/usr/bin/env bun
-
 const command = process.argv[2];
 const args = process.argv.slice(3);
 

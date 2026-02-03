@@ -1,9 +1,14 @@
 import { spawn, type ChildProcess } from "child_process";
+import { resolve } from "path";
 
 type SpawnResult = { child: ChildProcess; actualPort: number } | null;
 
+function tsxBin(cwd: string): string {
+  return resolve(cwd, "node_modules", ".bin", "tsx");
+}
+
 /**
- * Spawn `bun run src/server.ts --port <port>` in the given path and wait for it to be listening.
+ * Spawn `tsx src/server.ts --port <port>` in the given path and wait for it to be listening.
  *
  * In detached mode: spawns with stdio ignored and polls /health to detect readiness.
  * The child survives parent exit. Use this when the CLI will exit immediately after.
@@ -23,7 +28,7 @@ export function spawnServer(
 }
 
 function spawnAttached(cwd: string, port: number): Promise<SpawnResult> {
-  const child = spawn("bun", ["run", "src/server.ts", "--port", String(port)], {
+  const child = spawn(tsxBin(cwd), ["src/server.ts", "--port", String(port)], {
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -55,7 +60,7 @@ function spawnAttached(cwd: string, port: number): Promise<SpawnResult> {
 }
 
 function spawnDetached(cwd: string, port: number): Promise<SpawnResult> {
-  const child = spawn("bun", ["run", "src/server.ts", "--port", String(port)], {
+  const child = spawn(tsxBin(cwd), ["src/server.ts", "--port", String(port)], {
     cwd,
     stdio: "ignore",
     detached: true,
@@ -63,16 +68,9 @@ function spawnDetached(cwd: string, port: number): Promise<SpawnResult> {
 
   child.unref();
 
-  // If port is 0, we need a way to discover the actual port.
-  // We'll try a range of health checks. But with port=0, Bun picks a random port
-  // that we can't know without output. For detached mode, require a specific port
-  // or scan /health on probable ports.
-  //
-  // For simplicity: if port=0, we start with pipes temporarily to capture the port,
-  // then accept that the child will get EPIPE on stderr after parent exits.
-  // This is fine because the server catches write errors in its log function.
+  // If port is 0, we need to discover the actual port via stdout.
+  // For detached mode with port=0, fall back to attached mode temporarily.
   if (port === 0) {
-    // Fall back to attached mode — we need to discover the actual port
     child.kill();
     return spawnAttachedDetach(cwd, port);
   }
@@ -113,7 +111,7 @@ function spawnDetached(cwd: string, port: number): Promise<SpawnResult> {
  * log function handles this gracefully.
  */
 function spawnAttachedDetach(cwd: string, port: number): Promise<SpawnResult> {
-  const child = spawn("bun", ["run", "src/server.ts", "--port", String(port)], {
+  const child = spawn(tsxBin(cwd), ["src/server.ts", "--port", String(port)], {
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,

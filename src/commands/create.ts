@@ -15,13 +15,22 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  // Find the templates directory relative to this CLI file
-  // cli.ts is at src/commands/create.ts, templates are at ../../templates/
-  const cliDir = dirname(dirname(dirname(new URL(import.meta.url).pathname)));
-  const templateDir = resolve(cliDir, "templates", "anthropic");
+  // Find the templates directory by walking up from the current file
+  // Works in both dev (tsx src/commands/create.ts — 3 levels up) and
+  // built (dist/create-HASH.js — 1 level up) modes
+  let dir = dirname(new URL(import.meta.url).pathname);
+  let templateDir = "";
+  for (let i = 0; i < 5; i++) {
+    const candidate = resolve(dir, "templates", "anthropic");
+    if (existsSync(candidate)) {
+      templateDir = candidate;
+      break;
+    }
+    dir = dirname(dir);
+  }
 
-  if (!existsSync(templateDir)) {
-    console.error(`Template not found: ${templateDir}`);
+  if (!templateDir) {
+    console.error("Template not found. Searched up from:", dirname(new URL(import.meta.url).pathname));
     process.exit(1);
   }
 
@@ -38,14 +47,14 @@ export async function run(args: string[]) {
     writeFileSync(path, content.replaceAll("{{name}}", name));
   }
 
-  // git init + initial commit
+  // Install dependencies
+  console.log("Installing dependencies...");
+  execSync("npm install", { cwd: dest, stdio: "inherit" });
+
+  // git init + initial commit (after install so lockfile is included)
   execSync("git init", { cwd: dest, stdio: "pipe" });
   execSync("git add -A", { cwd: dest, stdio: "pipe" });
   execSync('git commit -m "initial commit"', { cwd: dest, stdio: "pipe" });
-
-  // Install dependencies
-  console.log("Installing dependencies...");
-  execSync("bun install", { cwd: dest, stdio: "inherit" });
 
   console.log(`\nCreated agent: ${name}`);
   console.log(`\n  cd ${name}`);

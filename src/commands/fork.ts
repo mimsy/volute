@@ -73,10 +73,10 @@ export async function run(args: string[]) {
   // Install dependencies
   if (!json) console.log("Installing dependencies...");
   try {
-    execSync("bun install", { cwd: worktreeDir, stdio: json ? "pipe" : "inherit" });
+    execSync("npm install", { cwd: worktreeDir, stdio: json ? "pipe" : "inherit" });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error(`bun install failed: ${msg}`);
+    console.error(`npm install failed: ${msg}`);
     process.exit(1);
   }
 

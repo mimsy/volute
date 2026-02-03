@@ -10,7 +10,8 @@ export async function run(_args: string[]) {
     process.exit(1);
   }
 
-  const child = spawn("bun", ["run", supervisorPath], {
+  const tsxBin = resolve(process.cwd(), "node_modules", ".bin", "tsx");
+  const child = spawn(tsxBin, [supervisorPath], {
     cwd: process.cwd(),
     stdio: "inherit",
   });
