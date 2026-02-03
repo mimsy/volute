@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import { appendFileSync, mkdirSync, writeFileSync, existsSync } from "fs";
+import { mkdirSync, writeFileSync, existsSync } from "fs";
 import { resolve } from "path";
 import {
   tool,
@@ -123,26 +123,14 @@ export const mergeVariant = tool(
   async ({ name, summary, justification, memory }) => {
     log("tools", `merge_variant: name=${name}`);
 
-    // Append structured context to MEMORY.md
-    const memoryPath = resolve(projectRoot, "MEMORY.md");
-    const timestamp = new Date().toISOString();
-    const entry = [
-      `\n## ${timestamp} — Merged variant: ${name}`,
-      `\n**Why:** ${justification}`,
-      `\n**Changes:** ${summary}`,
-      `\n**Context:** ${memory}\n`,
-    ].join("\n");
-    appendFileSync(memoryPath, entry);
-    log("tools", `merge_variant: appended to MEMORY.md`);
-
-    // Write restart signal for supervisor
+    // Write restart signal for supervisor (includes merge context for post-restart orientation)
     const moltDir = resolve(projectRoot, ".molt");
     if (!existsSync(moltDir)) {
       mkdirSync(moltDir, { recursive: true });
     }
     writeFileSync(
       resolve(moltDir, "restart.json"),
-      JSON.stringify({ action: "merge", name }),
+      JSON.stringify({ action: "merge", name, summary, justification, memory }),
     );
     log("tools", `merge_variant: wrote .molt/restart.json`);
 

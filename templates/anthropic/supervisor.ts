@@ -45,10 +45,15 @@ function handleRestart(): boolean {
           stdio: "inherit",
           env: { ...process.env, MOLT_SUPERVISOR: "1" },
         });
-        // Write merged.json so the restarted server knows what was merged
+        // Write merged.json with full context so the restarted server can orient the agent
         writeFileSync(
           resolve(moltDir, "merged.json"),
-          JSON.stringify({ name: signal.name }),
+          JSON.stringify({
+            name: signal.name,
+            summary: signal.summary,
+            justification: signal.justification,
+            memory: signal.memory,
+          }),
         );
       } catch (e) {
         console.error(`[supervisor] molt merge failed:`, e);

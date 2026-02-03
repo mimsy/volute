@@ -16,6 +16,7 @@ export function createAgent(options: {
   resume?: string;
   onSessionId?: (id: string) => void;
   onStreamError?: (err: unknown) => void;
+  onCompact?: () => void;
 }) {
   const channel = createMessageChannel();
   const listeners = new Set<Listener>();
@@ -86,6 +87,14 @@ export function createAgent(options: {
             done: true,
             timestamp: Date.now(),
           });
+        }
+        if (
+          msg.type === "system" &&
+          "subtype" in msg &&
+          msg.subtype === "compact_boundary"
+        ) {
+          log("agent", "compact boundary detected");
+          if (options.onCompact) options.onCompact();
         }
       }
     } catch (err) {

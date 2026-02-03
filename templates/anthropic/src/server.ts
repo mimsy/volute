@@ -4,6 +4,7 @@ import { resolve, dirname } from "path";
 import { createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import { createAgent } from "./lib/agent.js";
 import { selfModifyTools, cleanupAll } from "./lib/self-modify-tools.js";
+import { memoryTools, loadRecentDailyLogs } from "./lib/memory-tools.js";
 import type { MoltMessage } from "./lib/types.js";
 import { log } from "./lib/logger.js";
 
@@ -73,9 +74,9 @@ try {
   pkgVersion = pkg.version || pkgVersion;
 } catch {}
 
-const selfModifyServer = createSdkMcpServer({
+const mcpServer = createSdkMcpServer({
   name: "self-modify",
-  tools: selfModifyTools,
+  tools: [...selfModifyTools, ...memoryTools],
 });
 
 const abortController = new AbortController();
@@ -87,10 +88,17 @@ const agent = createAgent({
   systemPrompt,
   cwd: process.cwd(),
   abortController,
-  mcpServers: { "self-modify": selfModifyServer },
+  mcpServers: { "self-modify": mcpServer },
   resume: savedSessionId,
   onSessionId: saveSessionId,
   onStreamError: deleteSessionFile,
+  onCompact: () => {
+    log("server", "compact boundary — asking agent to update daily log");
+    agent.sendMessage(
+      "Conversation history was just compacted. Please update today's daily log with a summary of what we've discussed and accomplished so far, so context is preserved.",
+      "system",
+    );
+  },
 });
 
 const sseClients = new Set<ServerResponse>();
@@ -173,6 +181,29 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/command") {
+    try {
+      const body = JSON.parse(await readBody(req)) as { type: string; context?: string };
+      log("server", `POST /command: type=${body.type}`);
+
+      if (body.type === "update-memory" && body.context) {
+        agent.sendMessage(
+          `Please update your memory with the following context:\n\n${body.context}`,
+          "command",
+        );
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok" }));
+      } else {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Unknown command type" }));
+      }
+    } catch {
+      res.writeHead(400);
+      res.end("Bad Request");
+    }
+    return;
+  }
+
   res.writeHead(404);
   res.end("Not Found");
 });
@@ -182,19 +213,37 @@ server.listen(port, () => {
   const actualPort = typeof addr === "object" && addr ? addr.port : port;
   log("server", `listening on :${actualPort}`);
 
-  // Check for post-merge orientation
+  // Build orientation message parts
+  const orientationParts: string[] = [];
+
+  // Check for post-merge context
   const mergedPath = resolve(".molt/merged.json");
   if (existsSync(mergedPath)) {
     try {
       const merged = JSON.parse(readFileSync(mergedPath, "utf-8"));
       unlinkSync(mergedPath);
-      agent.sendMessage(
-        `Variant "${merged.name}" has been merged successfully and you have been restarted.`,
-      );
+
+      const parts = [`Variant "${merged.name}" has been merged successfully and you have been restarted.`];
+      if (merged.summary) parts.push(`Changes: ${merged.summary}`);
+      if (merged.justification) parts.push(`Why: ${merged.justification}`);
+      if (merged.memory) parts.push(`Context: ${merged.memory}`);
+      parts.push("Please update your memory with any relevant information from this merge.");
+
+      orientationParts.push(parts.join("\n"));
       log("server", `sent post-merge orientation for variant: ${merged.name}`);
     } catch (e) {
       log("server", "failed to process merged.json:", e);
     }
+  }
+
+  // Load recent daily logs for context
+  const recentLogs = loadRecentDailyLogs(2);
+  if (recentLogs) {
+    orientationParts.push(`## Recent daily logs\n\n${recentLogs}`);
+  }
+
+  if (orientationParts.length > 0) {
+    agent.sendMessage(orientationParts.join("\n\n---\n\n"));
   }
 });
 
