@@ -1,6 +1,6 @@
 import { cpSync, readFileSync, writeFileSync, renameSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
-import { execSync } from "child_process";
+import { exec, execInherit } from "../lib/exec.js";
 
 export async function run(args: string[]) {
   const name = args[0];
@@ -49,12 +49,12 @@ export async function run(args: string[]) {
 
   // Install dependencies
   console.log("Installing dependencies...");
-  execSync("npm install", { cwd: dest, stdio: "inherit" });
+  await execInherit("npm", ["install"], { cwd: dest });
 
   // git init + initial commit (after install so lockfile is included)
-  execSync("git init", { cwd: dest, stdio: "pipe" });
-  execSync("git add -A", { cwd: dest, stdio: "pipe" });
-  execSync('git commit -m "initial commit"', { cwd: dest, stdio: "pipe" });
+  await exec("git", ["init"], { cwd: dest });
+  await exec("git", ["add", "-A"], { cwd: dest });
+  await exec("git", ["commit", "-m", "initial commit"], { cwd: dest });
 
   console.log(`\nCreated agent: ${name}`);
   console.log(`\n  cd ${name}`);

@@ -1,4 +1,3 @@
-import { execSync } from "child_process";
 import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import {
@@ -6,6 +5,7 @@ import {
   validateBranchName,
 } from "../lib/variants.js";
 import { spawnServer } from "../lib/spawn-server.js";
+import { exec, execInherit } from "../lib/exec.js";
 
 function parseArgs(args: string[]) {
   let name: string | undefined;
@@ -60,10 +60,7 @@ export async function run(args: string[]) {
 
   // Create git worktree
   try {
-    execSync(`git worktree add -b ${name} ${worktreeDir}`, {
-      cwd: projectRoot,
-      stdio: "pipe",
-    });
+    await exec("git", ["worktree", "add", "-b", name, worktreeDir], { cwd: projectRoot });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`Failed to create worktree: ${msg}`);
@@ -73,7 +70,11 @@ export async function run(args: string[]) {
   // Install dependencies
   if (!json) console.log("Installing dependencies...");
   try {
-    execSync("npm install", { cwd: worktreeDir, stdio: json ? "pipe" : "inherit" });
+    if (json) {
+      await exec("npm", ["install"], { cwd: worktreeDir });
+    } else {
+      await execInherit("npm", ["install"], { cwd: worktreeDir });
+    }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`npm install failed: ${msg}`);
