@@ -1,0 +1,31 @@
+#!/usr/bin/env bun
+
+const command = process.argv[2];
+const args = process.argv.slice(3);
+
+switch (command) {
+  case "create":
+    await import("./commands/create.js").then((m) => m.run(args));
+    break;
+  case "start":
+    await import("./commands/start.js").then((m) => m.run(args));
+    break;
+  case "chat":
+    await import("./commands/chat.js").then((m) => m.run(args));
+    break;
+  case "status":
+    await import("./commands/status.js").then((m) => m.run(args));
+    break;
+  default:
+    console.log(`molt — create and manage AI agents
+
+Commands:
+  molt create <name>    Create a new agent project
+  molt start            Start the agent supervisor (run from agent dir)
+  molt chat             Chat with a running agent
+  molt status           Check agent health`);
+    if (command) {
+      console.error(`\nUnknown command: ${command}`);
+      process.exit(1);
+    }
+}

@@ -4,36 +4,51 @@ import { resolve } from "path";
 import { createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import { createAgent } from "./lib/agent.js";
 import { selfModifyTools, cleanupAll } from "./lib/self-modify-tools.js";
-import type { ChatMessage } from "./lib/types.js";
+import type { MoltMessage } from "./lib/types.js";
 import { log } from "./lib/logger.js";
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  let soul = "SOUL.md";
   let port = 4100;
 
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--soul" && args[i + 1]) {
-      soul = args[++i];
-    } else if (args[i] === "--port" && args[i + 1]) {
+    if (args[i] === "--port" && args[i + 1]) {
       port = parseInt(args[++i], 10);
-    } else if (!args[i].startsWith("-")) {
-      soul = args[i];
     }
   }
 
-  return { soul, port };
+  return { port };
 }
 
-const { soul, port } = parseArgs();
-const soulPath = resolve(soul);
-let systemPrompt: string;
-try {
-  systemPrompt = readFileSync(soulPath, "utf-8");
-} catch {
+function loadFile(path: string): string {
+  try {
+    return readFileSync(path, "utf-8");
+  } catch {
+    return "";
+  }
+}
+
+const { port } = parseArgs();
+const soulPath = resolve("SOUL.md");
+const memoryPath = resolve("MEMORY.md");
+
+const soul = loadFile(soulPath);
+if (!soul) {
   console.error(`Could not read soul file: ${soulPath}`);
   process.exit(1);
 }
+
+const memory = loadFile(memoryPath);
+const systemPrompt = memory ? `${soul}\n\n## Memory\n\n${memory}` : soul;
+
+// Read name/version from package.json for health endpoint
+let pkgName = "unknown";
+let pkgVersion = "0.0.0";
+try {
+  const pkg = JSON.parse(readFileSync(resolve("package.json"), "utf-8"));
+  pkgName = pkg.name || pkgName;
+  pkgVersion = pkg.version || pkgVersion;
+} catch {}
 
 const selfModifyServer = createSdkMcpServer({
   name: "self-modify",
@@ -61,7 +76,7 @@ function removeClient(client: SSEClient) {
   } catch {}
 }
 
-agent.onMessage((msg: ChatMessage) => {
+agent.onMessage((msg: MoltMessage) => {
   const data = `data: ${JSON.stringify(msg)}\n\n`;
   for (const client of sseClients) {
     try {
@@ -88,6 +103,10 @@ const server = Bun.serve({
   fetch(req) {
     const url = new URL(req.url);
 
+    if (req.method === "GET" && url.pathname === "/health") {
+      return Response.json({ status: "ok", name: pkgName, version: pkgVersion });
+    }
+
     if (req.method === "GET" && url.pathname === "/events") {
       const stream = new ReadableStream({
         start(controller) {
@@ -111,9 +130,9 @@ const server = Bun.serve({
     }
 
     if (req.method === "POST" && url.pathname === "/message") {
-      return req.json().then((body: { content: string }) => {
+      return req.json().then((body: { content: string; source?: string }) => {
         log("server", "POST /message:", body.content.slice(0, 120));
-        agent.sendMessage(body.content);
+        agent.sendMessage(body.content, body.source);
         return new Response("OK", { status: 200 });
       });
     }

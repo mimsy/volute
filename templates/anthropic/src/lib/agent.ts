@@ -3,10 +3,10 @@ import {
   type SDKUserMessage,
   type McpServerConfig,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { ChatMessage } from "./types.js";
+import type { MoltMessage, MoltBlock } from "./types.js";
 import { log } from "./logger.js";
 
-type Listener = (msg: ChatMessage) => void;
+type Listener = (msg: MoltMessage) => void;
 
 type MessageChannel = {
   push: (msg: SDKUserMessage) => void;
@@ -65,7 +65,7 @@ export function createAgent(options: {
     },
   });
 
-  function broadcast(msg: ChatMessage) {
+  function broadcast(msg: MoltMessage) {
     for (const listener of listeners) {
       try {
         listener(msg);
@@ -75,42 +75,34 @@ export function createAgent(options: {
     }
   }
 
-  // Consume the SDK stream and broadcast ChatMessage events
+  // Consume the SDK stream and broadcast MoltMessage events
   (async () => {
     log("agent", "stream consumer started");
     try {
       for await (const msg of stream) {
         if (msg.type === "assistant") {
-          const textBlocks = msg.message.content.filter(
-            (b: { type: string }) => b.type === "text",
-          );
-          const text = textBlocks
-            .map((b: { text: string }) => b.text)
-            .join("");
+          const blocks: MoltBlock[] = [];
 
-          const toolBlocks = msg.message.content.filter(
-            (b: { type: string }) => b.type === "tool_use",
-          );
-          const toolCalls = toolBlocks.map(
-            (b: { name: string; input: unknown }) => ({
-              name: b.name,
-              input: b.input,
-            }),
-          );
+          for (const b of msg.message.content) {
+            if (b.type === "thinking" && "thinking" in b && b.thinking) {
+              blocks.push({ type: "thinking", text: b.thinking as string });
+            } else if (b.type === "text") {
+              blocks.push({ type: "text", text: (b as { text: string }).text });
+            } else if (b.type === "tool_use") {
+              const tb = b as { id: string; name: string; input: unknown };
+              blocks.push({ type: "tool_use", id: tb.id, name: tb.name, input: tb.input });
+            }
+          }
 
-          if (text || toolCalls.length > 0) {
+          if (blocks.length > 0) {
             log(
               "agent",
               "assistant msg:",
-              text ? text.slice(0, 120) : "(no text)",
-              toolCalls.length > 0
-                ? `tools=[${toolCalls.map((t: { name: string }) => t.name).join(",")}]`
-                : "",
+              blocks.map((b) => b.type).join(","),
             );
             broadcast({
               role: "assistant",
-              content: text,
-              toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+              blocks,
               timestamp: Date.now(),
             });
           }
@@ -119,7 +111,7 @@ export function createAgent(options: {
           log("agent", "turn done");
           broadcast({
             role: "assistant",
-            content: "",
+            blocks: [],
             done: true,
             timestamp: Date.now(),
           });
@@ -131,8 +123,8 @@ export function createAgent(options: {
     log("agent", "stream consumer ended");
   })();
 
-  function sendMessage(text: string) {
-    log("agent", "sendMessage:", text.slice(0, 120));
+  function sendMessage(text: string, source?: string) {
+    log("agent", "sendMessage:", text.slice(0, 120), source ? `source=${source}` : "");
     channel.push({
       type: "user",
       session_id: "",

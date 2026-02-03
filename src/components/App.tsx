@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Box, useApp } from "ink";
-import type { ChatMessage as ChatMessageType } from "./types.js";
-import { MessageList } from "./components/MessageList.js";
-import { InputBar } from "./components/InputBar.js";
+import type { MoltMessage } from "../types.js";
+import { MessageList } from "./MessageList.js";
+import { InputBar } from "./InputBar.js";
 
 export function App({ serverUrl }: { serverUrl: string }) {
   const { exit } = useApp();
-  const [messages, setMessages] = useState<ChatMessageType[]>([]);
-  const [streamingContent, setStreamingContent] = useState<string | null>(null);
+  const [messages, setMessages] = useState<MoltMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
@@ -33,10 +32,11 @@ export function App({ serverUrl }: { serverUrl: string }) {
 
             for (const line of lines) {
               if (line.startsWith("data: ")) {
-                const msg: ChatMessageType = JSON.parse(line.slice(6));
-                setStreamingContent(null);
-                setIsLoading(false);
-                setMessages((prev) => [...prev, msg]);
+                try {
+                  const msg: MoltMessage = JSON.parse(line.slice(6));
+                  setIsLoading(false);
+                  setMessages((prev) => [...prev, msg]);
+                } catch {}
               }
             }
           }
@@ -64,13 +64,17 @@ export function App({ serverUrl }: { serverUrl: string }) {
 
       setMessages((prev) => [
         ...prev,
-        { role: "user", content: text, timestamp: Date.now() },
+        {
+          role: "user",
+          blocks: [{ type: "text", text }],
+          timestamp: Date.now(),
+        },
       ]);
       setIsLoading(true);
       fetch(`${serverUrl}/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: text }),
+        body: JSON.stringify({ content: text, source: "cli" }),
       }).catch((err) => {
         console.error("Failed to send message:", err);
         setIsLoading(false);
@@ -81,7 +85,7 @@ export function App({ serverUrl }: { serverUrl: string }) {
 
   return (
     <Box flexDirection="column" padding={1}>
-      <MessageList messages={messages} streamingContent={streamingContent} />
+      <MessageList messages={messages} />
       <InputBar onSubmit={handleSubmit} isLoading={isLoading} />
     </Box>
   );

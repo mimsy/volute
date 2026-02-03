@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "child_process";
 import { execSync } from "child_process";
-import { existsSync, mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } from "fs";
 import { resolve } from "path";
 import {
   tool,
@@ -39,6 +39,18 @@ const projectRoot = process.cwd();
 
 // --- Helpers ---
 
+const SAFE_BRANCH_RE = /^[a-zA-Z0-9._\-/]+$/;
+
+function validateBranch(branch: string): string | null {
+  if (!SAFE_BRANCH_RE.test(branch)) {
+    return `Invalid branch name: ${branch}. Only alphanumeric, '.', '_', '-', '/' allowed.`;
+  }
+  if (branch.includes("..")) {
+    return `Invalid branch name: ${branch}. '..' not allowed.`;
+  }
+  return null;
+}
+
 function generateId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -76,7 +88,7 @@ function createMessageChannel() {
 
 /** Spawn `bun run src/server.ts --port <port>` in the given worktree path and wait for it to be listening. */
 function spawnServer(wtPath: string, port: number): Promise<{ child: ChildProcess; actualPort: number } | null> {
-  const child = spawn("bun", ["run", "packages/agent/src/server.ts", "--port", String(port)], {
+  const child = spawn("bun", ["run", "src/server.ts", "--port", String(port)], {
     cwd: wtPath,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -122,6 +134,12 @@ export const createWorktree = tool(
   },
   async ({ branch, soul }) => {
     log("tools", `create_worktree: branch=${branch} soul=${soul ? "yes" : "no"}`);
+
+    const err = validateBranch(branch);
+    if (err) {
+      return { content: [{ type: "text" as const, text: err }], isError: true };
+    }
+
     const id = generateId();
     const worktreeDir = resolve(projectRoot, ".worktrees", id);
     const parentDir = resolve(projectRoot, ".worktrees");
@@ -400,8 +418,12 @@ export const sendToWorktreeServer = tool(
                 gotDone = true;
                 break;
               }
-              if (data.role === "assistant" && data.content) {
-                parts.push(data.content);
+              if (data.role === "assistant" && data.blocks) {
+                for (const block of data.blocks) {
+                  if (block.type === "text") {
+                    parts.push(block.text);
+                  }
+                }
               }
             } catch {
               // skip non-JSON lines (keepalive comments, etc.)
@@ -524,13 +546,16 @@ export const cleanupWorktree = tool(
     }
 
     // Delete the branch
-    try {
-      execSync(`git branch -D ${wt.branch}`, {
-        cwd: projectRoot,
-        stdio: "pipe",
-      });
-    } catch (e) {
-      log("tools", `cleanup_worktree: git branch -D failed:`, e);
+    const branchErr = validateBranch(wt.branch);
+    if (!branchErr) {
+      try {
+        execSync(`git branch -D ${wt.branch}`, {
+          cwd: projectRoot,
+          stdio: "pipe",
+        });
+      } catch (e) {
+        log("tools", `cleanup_worktree: git branch -D failed:`, e);
+      }
     }
 
     worktrees.delete(worktree_id);
@@ -568,6 +593,51 @@ export const listWorktrees = tool(
   },
 );
 
+export const mergeIntoSelf = tool(
+  "merge_into_self",
+  "Merge a worktree branch into the main branch, triggering a restart. Appends context to MEMORY.md for continuity after restart, writes a restart signal, and exits. The supervisor will perform the merge and restart the agent.",
+  {
+    worktree_id: z.string().describe("ID of the worktree whose branch to merge"),
+    memory: z.string().describe("Context to append to MEMORY.md so you remember what happened after restart"),
+  },
+  async ({ worktree_id, memory }) => {
+    log("tools", `merge_into_self: worktree_id=${worktree_id}`);
+    const wt = worktrees.get(worktree_id);
+    if (!wt) {
+      return { content: [{ type: "text" as const, text: `Unknown worktree: ${worktree_id}` }], isError: true };
+    }
+
+    const branchErr = validateBranch(wt.branch);
+    if (branchErr) {
+      return { content: [{ type: "text" as const, text: branchErr }], isError: true };
+    }
+
+    // Append context to MEMORY.md
+    const memoryPath = resolve(projectRoot, "MEMORY.md");
+    const timestamp = new Date().toISOString();
+    const entry = `\n## ${timestamp}\n\n${memory}\n`;
+    appendFileSync(memoryPath, entry);
+    log("tools", `merge_into_self: appended to MEMORY.md`);
+
+    // Write restart signal
+    const moltDir = resolve(projectRoot, ".molt");
+    if (!existsSync(moltDir)) {
+      mkdirSync(moltDir, { recursive: true });
+    }
+    writeFileSync(
+      resolve(moltDir, "restart.json"),
+      JSON.stringify({ action: "merge", branch: wt.branch, worktree_id }),
+    );
+    log("tools", `merge_into_self: wrote .molt/restart.json`);
+
+    // Clean up all worktree resources
+    cleanupAll();
+
+    // Exit — supervisor picks it up
+    process.exit(0);
+  },
+);
+
 // --- All tools array ---
 
 export const selfModifyTools = [
@@ -580,6 +650,7 @@ export const selfModifyTools = [
   sendToWorktreeServer,
   updateWorktreeSoul,
   cleanupWorktree,
+  mergeIntoSelf,
 ];
 
 // --- Cleanup ---
@@ -606,13 +677,16 @@ export function cleanupAll() {
     } catch (e) {
       log("cleanup", `git worktree remove failed:`, e);
     }
-    try {
-      execSync(`git branch -D ${wt.branch}`, {
-        cwd: projectRoot,
-        stdio: "pipe",
-      });
-    } catch (e) {
-      log("cleanup", `git branch -D failed:`, e);
+    const branchErr = validateBranch(wt.branch);
+    if (!branchErr) {
+      try {
+        execSync(`git branch -D ${wt.branch}`, {
+          cwd: projectRoot,
+          stdio: "pipe",
+        });
+      } catch (e) {
+        log("cleanup", `git branch -D failed:`, e);
+      }
     }
   }
   worktrees.clear();
