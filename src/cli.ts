@@ -16,6 +16,18 @@ switch (command) {
   case "status":
     await import("./commands/status.js").then((m) => m.run(args));
     break;
+  case "fork":
+    await import("./commands/fork.js").then((m) => m.run(args));
+    break;
+  case "variants":
+    await import("./commands/variants.js").then((m) => m.run(args));
+    break;
+  case "send":
+    await import("./commands/send.js").then((m) => m.run(args));
+    break;
+  case "merge":
+    await import("./commands/merge.js").then((m) => m.run(args));
+    break;
   default:
     console.log(`molt — create and manage AI agents
 
@@ -23,7 +35,11 @@ Commands:
   molt create <name>    Create a new agent project
   molt start            Start the agent supervisor (run from agent dir)
   molt chat             Chat with a running agent
-  molt status           Check agent health`);
+  molt status           Check agent health
+  molt fork <name>      Create a variant (worktree + server)
+  molt variants         List all variants
+  molt send             Send a message to a variant
+  molt merge <name>     Merge a variant back`);
     if (command) {
       console.error(`\nUnknown command: ${command}`);
       process.exit(1);

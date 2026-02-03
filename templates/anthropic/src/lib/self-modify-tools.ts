@@ -1,6 +1,5 @@
-import { spawn, type ChildProcess } from "child_process";
 import { execSync } from "child_process";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } from "fs";
+import { appendFileSync, mkdirSync, writeFileSync, existsSync } from "fs";
 import { resolve } from "path";
 import {
   tool,
@@ -11,45 +10,17 @@ import {
 import { z } from "zod";
 import { log } from "./logger.js";
 
-// --- State maps ---
+// --- State ---
 
-type WorktreeInfo = {
-  path: string;
-  branch: string;
-};
+const projectRoot = process.cwd();
 
 type ClaudeCodeSession = {
   push: (msg: SDKUserMessage) => void;
   stream: AsyncGenerator<SDKMessage>;
   abortController: AbortController;
-  worktreeId: string;
 };
 
-type WorktreeServer = {
-  process: ChildProcess;
-  port: number;
-  worktreeId: string;
-};
-
-const worktrees = new Map<string, WorktreeInfo>();
 const claudeCodeSessions = new Map<string, ClaudeCodeSession>();
-const worktreeServers = new Map<string, WorktreeServer>();
-
-const projectRoot = process.cwd();
-
-// --- Helpers ---
-
-const SAFE_BRANCH_RE = /^[a-zA-Z0-9._\-/]+$/;
-
-function validateBranch(branch: string): string | null {
-  if (!SAFE_BRANCH_RE.test(branch)) {
-    return `Invalid branch name: ${branch}. Only alphanumeric, '.', '_', '-', '/' allowed.`;
-  }
-  if (branch.includes("..")) {
-    return `Invalid branch name: ${branch}. '..' not allowed.`;
-  }
-  return null;
-}
 
 function generateId(): string {
   return Math.random().toString(36).slice(2, 10);
@@ -86,146 +57,178 @@ function createMessageChannel() {
   };
 }
 
-/** Spawn `bun run src/server.ts --port <port>` in the given worktree path and wait for it to be listening. */
-function spawnServer(wtPath: string, port: number): Promise<{ child: ChildProcess; actualPort: number } | null> {
-  const child = spawn("bun", ["run", "src/server.ts", "--port", String(port)], {
-    cwd: wtPath,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  log("tools", `spawnServer: spawned child pid=${child.pid} in ${wtPath}`);
-
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => resolve(null), 15000);
-
-    function checkOutput(data: Buffer) {
-      const match = data.toString().match(/listening on :(\d+)/);
-      if (match) {
-        clearTimeout(timeout);
-        resolve({ child, actualPort: parseInt(match[1], 10) });
-      }
-    }
-
-    child.stdout?.on("data", checkOutput);
-    child.stderr?.on("data", checkOutput);
-
-    child.on("error", (err) => {
-      log("tools", `spawnServer: child error:`, err);
-      clearTimeout(timeout);
-      resolve(null);
-    });
-
-    child.on("exit", (code) => {
-      log("tools", `spawnServer: child exited code=${code}`);
-      clearTimeout(timeout);
-      resolve(null);
-    });
-  });
+function moltExec(args: string[], cwd?: string): string {
+  const cmd = `molt ${args.join(" ")}`;
+  log("tools", `exec: ${cmd}`);
+  return execSync(cmd, { encoding: "utf-8", cwd: cwd ?? projectRoot });
 }
 
-// --- Tool definitions ---
+// --- Thin wrappers around molt CLI ---
 
-export const createWorktree = tool(
-  "create_worktree",
-  "Create a git worktree under .worktrees/ with a new branch. Runs bun install in the worktree. Optionally writes a SOUL.md to customize the personality. Returns worktree ID and path.",
+export const createVariant = tool(
+  "create_variant",
+  "Create a variant: git worktree + server. Optionally customize personality with a soul. Returns variant info including port.",
   {
-    branch: z.string().describe("Branch name to create"),
-    soul: z.string().optional().describe("Content for SOUL.md in the worktree (customizes the server's personality)"),
+    name: z.string().describe("Variant name (also used as branch name)"),
+    soul: z.string().optional().describe("Content for SOUL.md to customize the variant's personality"),
   },
-  async ({ branch, soul }) => {
-    log("tools", `create_worktree: branch=${branch} soul=${soul ? "yes" : "no"}`);
-
-    const err = validateBranch(branch);
-    if (err) {
-      return { content: [{ type: "text" as const, text: err }], isError: true };
-    }
-
-    const id = generateId();
-    const worktreeDir = resolve(projectRoot, ".worktrees", id);
-    const parentDir = resolve(projectRoot, ".worktrees");
-
-    if (!existsSync(parentDir)) {
-      mkdirSync(parentDir, { recursive: true });
-    }
-
+  async ({ name, soul }) => {
+    log("tools", `create_variant: name=${name} soul=${soul ? "yes" : "no"}`);
     try {
-      execSync(`git worktree add -b ${branch} ${worktreeDir}`, {
-        cwd: projectRoot,
-        stdio: "pipe",
-      });
+      const args = ["fork", name, "--json"];
+      if (soul) args.push("--soul", soul);
+      const result = moltExec(args);
+      return { content: [{ type: "text" as const, text: result }] };
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      log("tools", `create_worktree: git worktree add failed:`, msg);
-      return { content: [{ type: "text" as const, text: `Failed to create worktree: ${msg}` }], isError: true };
+      return { content: [{ type: "text" as const, text: msg }], isError: true };
     }
-
-    try {
-      execSync("bun install", { cwd: worktreeDir, stdio: "pipe" });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      log("tools", `create_worktree: bun install failed:`, msg);
-      return { content: [{ type: "text" as const, text: `Worktree created but bun install failed: ${msg}` }], isError: true };
-    }
-
-    if (soul) {
-      writeFileSync(resolve(worktreeDir, "SOUL.md"), soul);
-      log("tools", `create_worktree: wrote SOUL.md`);
-    }
-
-    worktrees.set(id, { path: worktreeDir, branch });
-
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: JSON.stringify({ id, path: worktreeDir, branch }),
-        },
-      ],
-    };
   },
 );
 
+export const sendToVariant = tool(
+  "send_to_variant",
+  "Send a message to a running variant server and get the response. The variant maintains conversation history across calls.",
+  {
+    port: z.number().describe("Port of the variant server"),
+    message: z.string().describe("Message to send"),
+  },
+  async ({ port, message }) => {
+    log("tools", `send_to_variant: port=${port} msg=${message.slice(0, 80)}`);
+    try {
+      const result = moltExec(["send", "--port", String(port), JSON.stringify(message)]);
+      return { content: [{ type: "text" as const, text: result || "(no response)" }] };
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { content: [{ type: "text" as const, text: msg }], isError: true };
+    }
+  },
+);
+
+export const listVariants = tool(
+  "list_variants",
+  "List all active variants with their ports, status, and branches.",
+  {},
+  async () => {
+    try {
+      const result = moltExec(["variants", "--json"]);
+      return { content: [{ type: "text" as const, text: result }] };
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { content: [{ type: "text" as const, text: msg }], isError: true };
+    }
+  },
+);
+
+export const mergeVariant = tool(
+  "merge_variant",
+  "Merge a variant branch back into the main branch and restart. Appends context to MEMORY.md for continuity. This will exit the process — the supervisor will complete the merge and restart.",
+  {
+    name: z.string().describe("Name of the variant to merge"),
+    memory: z.string().describe("Context to append to MEMORY.md so you remember what happened after restart"),
+  },
+  async ({ name, memory }) => {
+    log("tools", `merge_variant: name=${name}`);
+
+    // Append context to MEMORY.md
+    const memoryPath = resolve(projectRoot, "MEMORY.md");
+    const timestamp = new Date().toISOString();
+    appendFileSync(memoryPath, `\n## ${timestamp}\n\n${memory}\n`);
+    log("tools", `merge_variant: appended to MEMORY.md`);
+
+    // Write restart signal for supervisor
+    const moltDir = resolve(projectRoot, ".molt");
+    if (!existsSync(moltDir)) {
+      mkdirSync(moltDir, { recursive: true });
+    }
+    writeFileSync(
+      resolve(moltDir, "restart.json"),
+      JSON.stringify({ action: "merge", name }),
+    );
+    log("tools", `merge_variant: wrote .molt/restart.json`);
+
+    // Clean up Claude Code sessions
+    cleanupAll();
+
+    // Exit — supervisor picks it up
+    process.exit(0);
+  },
+);
+
+export const updateWorktreeSoul = tool(
+  "update_worktree_soul",
+  "Update SOUL.md in a variant's worktree. If the variant has a running server, you should restart it by creating a new variant.",
+  {
+    name: z.string().describe("Variant name"),
+    soul: z.string().describe("New content for SOUL.md"),
+  },
+  async ({ name, soul }) => {
+    log("tools", `update_worktree_soul: name=${name}`);
+    try {
+      const result = moltExec(["variants", "--json"]);
+      const variants = JSON.parse(result);
+      const variant = variants.find((v: { name: string }) => v.name === name);
+      if (!variant) {
+        return { content: [{ type: "text" as const, text: `Unknown variant: ${name}` }], isError: true };
+      }
+      writeFileSync(resolve(variant.path, "SOUL.md"), soul);
+      return { content: [{ type: "text" as const, text: `SOUL.md updated for variant ${name}.` }] };
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { content: [{ type: "text" as const, text: msg }], isError: true };
+    }
+  },
+);
+
+// --- Claude Code session tools (kept as-is, no CLI equivalent) ---
+
 export const startClaudeCodeSession = tool(
   "start_claude_code_session",
-  "Start a Claude Code coding assistant session in a worktree to make code changes. Returns session_id for use with send_to_claude_code_session.",
+  "Start a Claude Code coding assistant session in a variant's worktree to make code changes. Returns session_id for use with send_to_claude_code_session.",
   {
-    worktree_id: z.string().describe("ID of the worktree to use as cwd"),
+    name: z.string().describe("Variant name to use as cwd"),
   },
-  async ({ worktree_id }) => {
-    log("tools", `start_claude_code_session: worktree_id=${worktree_id}`);
-    const wt = worktrees.get(worktree_id);
-    if (!wt) {
-      return { content: [{ type: "text" as const, text: `Unknown worktree: ${worktree_id}` }], isError: true };
-    }
+  async ({ name }) => {
+    log("tools", `start_claude_code_session: name=${name}`);
+    try {
+      const result = moltExec(["variants", "--json"]);
+      const variants = JSON.parse(result);
+      const variant = variants.find((v: { name: string }) => v.name === name);
+      if (!variant) {
+        return { content: [{ type: "text" as const, text: `Unknown variant: ${name}` }], isError: true };
+      }
 
-    const sessionId = generateId();
-    const abortController = new AbortController();
-    const channel = createMessageChannel();
+      const sessionId = generateId();
+      const abortController = new AbortController();
+      const channel = createMessageChannel();
 
-    const stream = query({
-      prompt: channel.iterable,
-      options: {
-        systemPrompt: "You are a coding assistant. You are working in a git worktree. Make the requested changes.",
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
-        cwd: wt.path,
+      const stream = query({
+        prompt: channel.iterable,
+        options: {
+          systemPrompt: "You are a coding assistant. You are working in a git worktree. Make the requested changes.",
+          permissionMode: "bypassPermissions",
+          allowDangerouslySkipPermissions: true,
+          cwd: variant.path,
+          abortController,
+        },
+      });
+
+      claudeCodeSessions.set(sessionId, {
+        push: channel.push,
+        stream,
         abortController,
-      },
-    });
+      });
 
-    claudeCodeSessions.set(sessionId, {
-      push: channel.push,
-      stream,
-      abortController,
-      worktreeId: worktree_id,
-    });
-
-    log("tools", `start_claude_code_session: created session=${sessionId}`);
-    return {
-      content: [
-        { type: "text" as const, text: JSON.stringify({ session_id: sessionId, worktree_path: wt.path }) },
-      ],
-    };
+      log("tools", `start_claude_code_session: created session=${sessionId}`);
+      return {
+        content: [
+          { type: "text" as const, text: JSON.stringify({ session_id: sessionId, worktree_path: variant.path }) },
+        ],
+      };
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { content: [{ type: "text" as const, text: msg }], isError: true };
+    }
   },
 );
 
@@ -253,8 +256,6 @@ export const sendToClaudeCodeSession = tool(
       parent_tool_use_id: null,
     });
 
-    // Manually call .next() instead of for-await to avoid closing the generator.
-    // for-await calls .return() on break, which permanently kills the generator.
     const textParts: string[] = [];
     try {
       while (true) {
@@ -306,388 +307,26 @@ export const endClaudeCodeSession = tool(
   },
 );
 
-export const startWorktreeServer = tool(
-  "start_worktree_server",
-  "Start the molt server in a worktree to test a modified personality/behavior. Auto-assigns a port if not specified. Waits for it to be listening.",
-  {
-    worktree_id: z.string().describe("ID of the worktree"),
-    port: z.number().optional().describe("Port number for the server (auto-assigned if omitted)"),
-  },
-  async ({ worktree_id, port }) => {
-    const requestedPort = port ?? 0;
-    log("tools", `start_worktree_server: worktree=${worktree_id} port=${requestedPort}`);
-    const wt = worktrees.get(worktree_id);
-    if (!wt) {
-      return { content: [{ type: "text" as const, text: `Unknown worktree: ${worktree_id}` }], isError: true };
-    }
-
-    const result = await spawnServer(wt.path, requestedPort);
-    if (!result) {
-      log("tools", `start_worktree_server: server failed to start`);
-      return { content: [{ type: "text" as const, text: "Server failed to start within timeout" }], isError: true };
-    }
-
-    const serverId = generateId();
-    log("tools", `start_worktree_server: server ready id=${serverId} port=${result.actualPort}`);
-    worktreeServers.set(serverId, { process: result.child, port: result.actualPort, worktreeId: worktree_id });
-
-    return {
-      content: [
-        { type: "text" as const, text: JSON.stringify({ server_id: serverId, port: result.actualPort }) },
-      ],
-    };
-  },
-);
-
-export const sendToWorktreeServer = tool(
-  "send_to_worktree_server",
-  "Send a message to a running worktree server and collect the response. Connects via SSE and POST /message.",
-  {
-    server_id: z.string().describe("Server ID from start_worktree_server"),
-    message: z.string().describe("Message to send"),
-  },
-  async ({ server_id, message }) => {
-    log("tools", `send_to_worktree_server: server=${server_id} msg=${message.slice(0, 80)}`);
-    const server = worktreeServers.get(server_id);
-    if (!server) {
-      return { content: [{ type: "text" as const, text: `Unknown server: ${server_id}` }], isError: true };
-    }
-
-    const baseUrl = `http://localhost:${server.port}`;
-    const parts: string[] = [];
-
-    // Connect SSE first
-    log("tools", `send_to_worktree_server: connecting SSE to ${baseUrl}/events`);
-    const sseResponse = await fetch(`${baseUrl}/events`);
-    const reader = sseResponse.body?.getReader();
-    if (!reader) {
-      return { content: [{ type: "text" as const, text: "Failed to connect SSE" }], isError: true };
-    }
-
-    // Send the message
-    log("tools", `send_to_worktree_server: sending message`);
-    await fetch(`${baseUrl}/message`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: message }),
-    });
-
-    // Read SSE events, tracking inactivity based on real data (not keepalives).
-    const decoder = new TextDecoder();
-    let buffer = "";
-    const inactivityMs = 30000;
-    let lastRealData = Date.now();
-    let pendingRead: ReturnType<typeof reader.read> | null = null;
-
-    try {
-      while (true) {
-        if (!pendingRead) {
-          pendingRead = reader.read();
-        }
-
-        const checkPromise = new Promise<null>((resolve) =>
-          setTimeout(() => resolve(null), 2000),
-        );
-
-        const result = await Promise.race([pendingRead, checkPromise]);
-
-        if (result === null) {
-          // Timer fired — check if we've been idle (no real data) long enough
-          if (parts.length > 0 && Date.now() - lastRealData > inactivityMs) {
-            log("tools", `send_to_worktree_server: inactivity timeout after ${inactivityMs}ms`);
-            break;
-          }
-          continue;
-        }
-
-        pendingRead = null;
-        const { done, value } = result;
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        let gotDone = false;
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            lastRealData = Date.now();
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.done) {
-                gotDone = true;
-                break;
-              }
-              if (data.role === "assistant" && data.blocks) {
-                for (const block of data.blocks) {
-                  if (block.type === "text") {
-                    parts.push(block.text);
-                  }
-                }
-              }
-            } catch {
-              // skip non-JSON lines (keepalive comments, etc.)
-            }
-          }
-        }
-        if (gotDone) break;
-      }
-    } finally {
-      reader.cancel().catch(() => {});
-    }
-
-    log("tools", `send_to_worktree_server: done server=${server_id} parts=${parts.length}`);
-    return {
-      content: [
-        { type: "text" as const, text: parts.join("\n") || "(no response received)" },
-      ],
-    };
-  },
-);
-
-export const updateWorktreeSoul = tool(
-  "update_worktree_soul",
-  "Write a new SOUL.md to a worktree and restart any running servers in-place on the same ports. Enables hot reload of personality without cleanup/recreate.",
-  {
-    worktree_id: z.string().describe("ID of the worktree"),
-    soul: z.string().describe("New content for SOUL.md"),
-  },
-  async ({ worktree_id, soul }) => {
-    log("tools", `update_worktree_soul: worktree=${worktree_id}`);
-    const wt = worktrees.get(worktree_id);
-    if (!wt) {
-      return { content: [{ type: "text" as const, text: `Unknown worktree: ${worktree_id}` }], isError: true };
-    }
-
-    writeFileSync(resolve(wt.path, "SOUL.md"), soul);
-    log("tools", `update_worktree_soul: wrote SOUL.md`);
-
-    // Find and restart any running servers in this worktree
-    const restarted: { serverId: string; port: number }[] = [];
-    for (const [serverId, server] of worktreeServers) {
-      if (server.worktreeId !== worktree_id) continue;
-
-      const oldPort = server.port;
-      log("tools", `update_worktree_soul: restarting server ${serverId} on port ${oldPort}`);
-      server.process.kill();
-
-      // Wait for the old process to fully exit so the port is released
-      await new Promise<void>((resolve) => {
-        if (server.process.exitCode !== null) {
-          resolve();
-        } else {
-          server.process.on("exit", () => resolve());
-        }
-      });
-
-      const result = await spawnServer(wt.path, oldPort);
-      if (!result) {
-        log("tools", `update_worktree_soul: server ${serverId} failed to restart`);
-        worktreeServers.delete(serverId);
-        return {
-          content: [{ type: "text" as const, text: `SOUL.md updated but server ${serverId} failed to restart on port ${oldPort}` }],
-          isError: true,
-        };
-      }
-
-      worktreeServers.set(serverId, { process: result.child, port: result.actualPort, worktreeId: worktree_id });
-      restarted.push({ serverId, port: result.actualPort });
-    }
-
-    const msg = restarted.length > 0
-      ? `SOUL.md updated. Restarted servers: ${JSON.stringify(restarted)}`
-      : `SOUL.md updated. No servers were running in this worktree.`;
-
-    return {
-      content: [{ type: "text" as const, text: msg }],
-    };
-  },
-);
-
-export const cleanupWorktree = tool(
-  "cleanup_worktree",
-  "Kill any running server in the worktree, remove the worktree, and clean up all associated state.",
-  {
-    worktree_id: z.string().describe("ID of the worktree to clean up"),
-  },
-  async ({ worktree_id }) => {
-    log("tools", `cleanup_worktree: worktree_id=${worktree_id}`);
-    const wt = worktrees.get(worktree_id);
-    if (!wt) {
-      return { content: [{ type: "text" as const, text: `Unknown worktree: ${worktree_id}` }], isError: true };
-    }
-
-    // Kill any servers in this worktree
-    for (const [id, server] of worktreeServers) {
-      if (server.worktreeId === worktree_id) {
-        log("tools", `cleanup_worktree: killing server ${id}`);
-        server.process.kill();
-        worktreeServers.delete(id);
-      }
-    }
-
-    // End any claude code sessions in this worktree
-    for (const [id, session] of claudeCodeSessions) {
-      if (session.worktreeId === worktree_id) {
-        log("tools", `cleanup_worktree: ending session ${id}`);
-        session.abortController.abort();
-        claudeCodeSessions.delete(id);
-      }
-    }
-
-    // Remove the git worktree
-    try {
-      execSync(`git worktree remove --force ${wt.path}`, {
-        cwd: projectRoot,
-        stdio: "pipe",
-      });
-    } catch (e) {
-      log("tools", `cleanup_worktree: git worktree remove failed:`, e);
-    }
-
-    // Delete the branch
-    const branchErr = validateBranch(wt.branch);
-    if (!branchErr) {
-      try {
-        execSync(`git branch -D ${wt.branch}`, {
-          cwd: projectRoot,
-          stdio: "pipe",
-        });
-      } catch (e) {
-        log("tools", `cleanup_worktree: git branch -D failed:`, e);
-      }
-    }
-
-    worktrees.delete(worktree_id);
-
-    return {
-      content: [{ type: "text" as const, text: `Worktree ${worktree_id} cleaned up.` }],
-    };
-  },
-);
-
-export const listWorktrees = tool(
-  "list_worktrees",
-  "List all active worktrees with their branches, associated servers (id, port, pid), and Claude Code sessions.",
-  {},
-  async () => {
-    const result = [];
-    for (const [id, wt] of worktrees) {
-      const servers = [];
-      for (const [sId, srv] of worktreeServers) {
-        if (srv.worktreeId === id) {
-          servers.push({ id: sId, port: srv.port, pid: srv.process.pid });
-        }
-      }
-      const sessions = [];
-      for (const [sId, sess] of claudeCodeSessions) {
-        if (sess.worktreeId === id) {
-          sessions.push({ id: sId });
-        }
-      }
-      result.push({ id, branch: wt.branch, path: wt.path, servers, sessions });
-    }
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
-    };
-  },
-);
-
-export const mergeIntoSelf = tool(
-  "merge_into_self",
-  "Merge a worktree branch into the main branch, triggering a restart. Appends context to MEMORY.md for continuity after restart, writes a restart signal, and exits. The supervisor will perform the merge and restart the agent.",
-  {
-    worktree_id: z.string().describe("ID of the worktree whose branch to merge"),
-    memory: z.string().describe("Context to append to MEMORY.md so you remember what happened after restart"),
-  },
-  async ({ worktree_id, memory }) => {
-    log("tools", `merge_into_self: worktree_id=${worktree_id}`);
-    const wt = worktrees.get(worktree_id);
-    if (!wt) {
-      return { content: [{ type: "text" as const, text: `Unknown worktree: ${worktree_id}` }], isError: true };
-    }
-
-    const branchErr = validateBranch(wt.branch);
-    if (branchErr) {
-      return { content: [{ type: "text" as const, text: branchErr }], isError: true };
-    }
-
-    // Append context to MEMORY.md
-    const memoryPath = resolve(projectRoot, "MEMORY.md");
-    const timestamp = new Date().toISOString();
-    const entry = `\n## ${timestamp}\n\n${memory}\n`;
-    appendFileSync(memoryPath, entry);
-    log("tools", `merge_into_self: appended to MEMORY.md`);
-
-    // Write restart signal
-    const moltDir = resolve(projectRoot, ".molt");
-    if (!existsSync(moltDir)) {
-      mkdirSync(moltDir, { recursive: true });
-    }
-    writeFileSync(
-      resolve(moltDir, "restart.json"),
-      JSON.stringify({ action: "merge", branch: wt.branch, worktree_id }),
-    );
-    log("tools", `merge_into_self: wrote .molt/restart.json`);
-
-    // Clean up all worktree resources
-    cleanupAll();
-
-    // Exit — supervisor picks it up
-    process.exit(0);
-  },
-);
-
 // --- All tools array ---
 
 export const selfModifyTools = [
-  createWorktree,
-  listWorktrees,
+  createVariant,
+  listVariants,
+  sendToVariant,
+  mergeVariant,
+  updateWorktreeSoul,
   startClaudeCodeSession,
   sendToClaudeCodeSession,
   endClaudeCodeSession,
-  startWorktreeServer,
-  sendToWorktreeServer,
-  updateWorktreeSoul,
-  cleanupWorktree,
-  mergeIntoSelf,
 ];
 
 // --- Cleanup ---
 
 export function cleanupAll() {
-  log("cleanup", `aborting ${claudeCodeSessions.size} sessions, killing ${worktreeServers.size} servers, removing ${worktrees.size} worktrees`);
+  log("cleanup", `aborting ${claudeCodeSessions.size} sessions`);
 
   for (const [, session] of claudeCodeSessions) {
     session.abortController.abort();
   }
   claudeCodeSessions.clear();
-
-  for (const [, server] of worktreeServers) {
-    server.process.kill();
-  }
-  worktreeServers.clear();
-
-  for (const [, wt] of worktrees) {
-    try {
-      execSync(`git worktree remove --force ${wt.path}`, {
-        cwd: projectRoot,
-        stdio: "pipe",
-      });
-    } catch (e) {
-      log("cleanup", `git worktree remove failed:`, e);
-    }
-    const branchErr = validateBranch(wt.branch);
-    if (!branchErr) {
-      try {
-        execSync(`git branch -D ${wt.branch}`, {
-          cwd: projectRoot,
-          stdio: "pipe",
-        });
-      } catch (e) {
-        log("cleanup", `git branch -D failed:`, e);
-      }
-    }
-  }
-  worktrees.clear();
 }

@@ -22,31 +22,13 @@ function handleRestart(): boolean {
     const signal = JSON.parse(readFileSync(restartSignalPath, "utf-8"));
     unlinkSync(restartSignalPath);
 
-    if (signal.action === "merge" && signal.branch) {
-      console.error(`[supervisor] merging branch: ${signal.branch}`);
+    if (signal.action === "merge" && signal.name) {
+      console.error(`[supervisor] merging variant: ${signal.name}`);
       try {
-        execSync(`git merge ${signal.branch}`, { cwd: projectRoot, stdio: "inherit" });
+        execSync(`molt merge ${signal.name}`, { cwd: projectRoot, stdio: "inherit" });
       } catch (e) {
-        console.error(`[supervisor] merge failed:`, e);
-        return true; // still restart even if merge fails
-      }
-
-      // Clean up the worktree and branch
-      if (signal.worktree_id) {
-        const wtPath = resolve(projectRoot, ".worktrees", signal.worktree_id);
-        try {
-          execSync(`git worktree remove --force ${wtPath}`, { cwd: projectRoot, stdio: "pipe" });
-        } catch {}
-        try {
-          execSync(`git branch -D ${signal.branch}`, { cwd: projectRoot, stdio: "pipe" });
-        } catch {}
-      }
-
-      // Reinstall dependencies in case they changed
-      try {
-        execSync("bun install", { cwd: projectRoot, stdio: "inherit" });
-      } catch (e) {
-        console.error(`[supervisor] bun install failed:`, e);
+        console.error(`[supervisor] molt merge failed:`, e);
+        // still restart even if merge fails
       }
     }
 
