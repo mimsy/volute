@@ -1,6 +1,6 @@
 import React from "react";
 import { Box, Text } from "ink";
-import type { ChatMessage as ChatMessageType } from "../lib/types.js";
+import type { ChatMessage as ChatMessageType } from "../types.js";
 
 export function ChatMessage({ message }: { message: ChatMessageType }) {
   const isUser = message.role === "user";

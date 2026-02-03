@@ -1,6 +1,6 @@
 import React from "react";
 import { Static, Box } from "ink";
-import type { ChatMessage as ChatMessageType } from "../lib/types.js";
+import type { ChatMessage as ChatMessageType } from "../types.js";
 import { ChatMessage } from "./ChatMessage.js";
 
 export function MessageList({

@@ -76,7 +76,7 @@ function createMessageChannel() {
 
 /** Spawn `bun run src/server.ts --port <port>` in the given worktree path and wait for it to be listening. */
 function spawnServer(wtPath: string, port: number): Promise<{ child: ChildProcess; actualPort: number } | null> {
-  const child = spawn("bun", ["run", "src/server.ts", "--port", String(port)], {
+  const child = spawn("bun", ["run", "packages/agent/src/server.ts", "--port", String(port)], {
     cwd: wtPath,
     stdio: ["ignore", "pipe", "pipe"],
   });

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Box, useApp } from "ink";
-import type { ChatMessage as ChatMessageType } from "./lib/types.js";
+import type { ChatMessage as ChatMessageType } from "./types.js";
 import { MessageList } from "./components/MessageList.js";
 import { InputBar } from "./components/InputBar.js";
 
