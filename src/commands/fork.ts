@@ -6,33 +6,19 @@ import {
 } from "../lib/variants.js";
 import { spawnServer } from "../lib/spawn-server.js";
 import { exec, execInherit } from "../lib/exec.js";
-
-function parseArgs(args: string[]) {
-  let name: string | undefined;
-  let soul: string | undefined;
-  let port: number | undefined;
-  let noStart = false;
-  let json = false;
-
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--soul" && args[i + 1]) {
-      soul = args[++i];
-    } else if (args[i] === "--port" && args[i + 1]) {
-      port = parseInt(args[++i], 10);
-    } else if (args[i] === "--no-start") {
-      noStart = true;
-    } else if (args[i] === "--json") {
-      json = true;
-    } else if (!args[i].startsWith("-")) {
-      name = args[i];
-    }
-  }
-
-  return { name, soul, port, noStart, json };
-}
+import { parseArgs } from "../lib/parse-args.js";
 
 export async function run(args: string[]) {
-  const { name, soul, port, noStart, json } = parseArgs(args);
+  const { positional, flags } = parseArgs(args, {
+    soul: { type: "string" },
+    port: { type: "number" },
+    "no-start": { type: "boolean" },
+    json: { type: "boolean" },
+  });
+
+  const name = positional[0];
+  const { soul, port, json } = flags;
+  const noStart = flags["no-start"];
 
   if (!name) {
     console.error("Usage: molt fork <name> [--soul \"...\"] [--port N] [--no-start] [--json]");

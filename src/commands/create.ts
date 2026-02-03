@@ -1,11 +1,18 @@
 import { cpSync, readFileSync, writeFileSync, renameSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { exec, execInherit } from "../lib/exec.js";
+import { parseArgs } from "../lib/parse-args.js";
 
 export async function run(args: string[]) {
-  const name = args[0];
+  const { positional, flags } = parseArgs(args, {
+    template: { type: "string" },
+  });
+
+  const name = positional[0];
+  const template = flags.template ?? "anthropic";
+
   if (!name) {
-    console.error("Usage: molt create <name>");
+    console.error("Usage: molt create <name> [--template <name>]");
     process.exit(1);
   }
 
@@ -21,7 +28,7 @@ export async function run(args: string[]) {
   let dir = dirname(new URL(import.meta.url).pathname);
   let templateDir = "";
   for (let i = 0; i < 5; i++) {
-    const candidate = resolve(dir, "templates", "anthropic");
+    const candidate = resolve(dir, "templates", template);
     if (existsSync(candidate)) {
       templateDir = candidate;
       break;

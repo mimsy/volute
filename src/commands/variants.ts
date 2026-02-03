@@ -1,15 +1,12 @@
 import { readVariants, checkHealth, writeVariants, type Variant } from "../lib/variants.js";
-
-function parseArgs(args: string[]) {
-  let json = false;
-  for (const arg of args) {
-    if (arg === "--json") json = true;
-  }
-  return { json };
-}
+import { parseArgs } from "../lib/parse-args.js";
 
 export async function run(args: string[]) {
-  const { json } = parseArgs(args);
+  const { flags } = parseArgs(args, {
+    json: { type: "boolean" },
+  });
+
+  const { json } = flags;
   const projectRoot = process.cwd();
   const variants = readVariants(projectRoot);
 

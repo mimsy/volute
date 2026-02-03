@@ -1,11 +1,11 @@
-export async function run(args: string[]) {
-  let port = 4100;
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--port" && args[i + 1]) {
-      port = parseInt(args[i + 1], 10);
-    }
-  }
+import { parseArgs } from "../lib/parse-args.js";
 
+export async function run(args: string[]) {
+  const { flags } = parseArgs(args, {
+    port: { type: "number" },
+  });
+
+  const port = flags.port ?? 4100;
   const url = `http://localhost:${port}/health`;
 
   try {

@@ -1,20 +1,12 @@
-function parseArgs(args: string[]) {
-  let port: number | undefined;
-  let message: string | undefined;
-
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--port" && args[i + 1]) {
-      port = parseInt(args[++i], 10);
-    } else if (!args[i].startsWith("-")) {
-      message = args[i];
-    }
-  }
-
-  return { port, message };
-}
+import { parseArgs } from "../lib/parse-args.js";
 
 export async function run(args: string[]) {
-  const { port, message } = parseArgs(args);
+  const { positional, flags } = parseArgs(args, {
+    port: { type: "number" },
+  });
+
+  const port = flags.port;
+  const message = positional[0];
 
   if (!port || !message) {
     console.error('Usage: molt send --port <port> "<message>"');

@@ -1,20 +1,12 @@
 import { existsSync } from "fs";
 import { findVariant, removeVariant, validateBranchName } from "../lib/variants.js";
 import { exec, execInherit } from "../lib/exec.js";
-
-function parseArgs(args: string[]) {
-  let name: string | undefined;
-  for (const arg of args) {
-    if (!arg.startsWith("-")) {
-      name = arg;
-    }
-  }
-  return { name };
-}
+import { parseArgs } from "../lib/parse-args.js";
 
 export async function run(args: string[]) {
-  const { name } = parseArgs(args);
+  const { positional } = parseArgs(args, {});
 
+  const name = positional[0];
   if (!name) {
     console.error("Usage: molt merge <name>");
     process.exit(1);
