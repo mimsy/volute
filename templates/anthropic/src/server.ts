@@ -189,9 +189,7 @@ server.listen(port, () => {
       const merged = JSON.parse(readFileSync(mergedPath, "utf-8"));
       unlinkSync(mergedPath);
       agent.sendMessage(
-        `You have just been restarted after merging variant "${merged.name}". ` +
-        `Your SOUL.md and MEMORY.md have been updated with the merged changes. ` +
-        `Read your MEMORY.md to understand what happened and continue from where you left off.`,
+        `Variant "${merged.name}" has been merged successfully and you have been restarted.`,
       );
       log("server", `sent post-merge orientation for variant: ${merged.name}`);
     } catch (e) {
