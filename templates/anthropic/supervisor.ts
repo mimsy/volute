@@ -1,6 +1,5 @@
-import { spawn } from "child_process";
+import { spawn, execFileSync } from "child_process";
 import { readFileSync, unlinkSync, existsSync } from "fs";
-import { execSync } from "child_process";
 import { resolve } from "path";
 
 const projectRoot = process.cwd();
@@ -28,7 +27,7 @@ function handleRestart(): boolean {
     if (signal.action === "merge" && signal.name) {
       console.error(`[supervisor] merging variant: ${signal.name}`);
       try {
-        execSync(`molt merge ${signal.name}`, { cwd: projectRoot, stdio: "inherit" });
+        execFileSync("molt", ["merge", signal.name], { cwd: projectRoot, stdio: "inherit" });
       } catch (e) {
         console.error(`[supervisor] molt merge failed:`, e);
         // still restart even if merge fails
