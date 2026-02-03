@@ -29,6 +29,9 @@ switch (command) {
   case "memory":
     await import("./commands/memory.js").then((m) => m.run(args));
     break;
+  case "import":
+    await import("./commands/import.js").then((m) => m.run(args));
+    break;
   default:
     console.log(`molt — create and manage AI agents
 
@@ -41,7 +44,8 @@ Commands:
   molt variants         List all variants
   molt send             Send a message to a variant
   molt merge <name>     Merge a variant back
-  molt memory           Send context for the agent to remember`);
+  molt memory           Send context for the agent to remember
+  molt import <path>    Import an OpenClaw workspace`);
     if (command) {
       console.error(`\nUnknown command: ${command}`);
       process.exit(1);

@@ -1,0 +1,168 @@
+import {
+  cpSync,
+  readFileSync,
+  writeFileSync,
+  renameSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+} from "fs";
+import { resolve, dirname } from "path";
+import { exec, execInherit } from "../lib/exec.js";
+import { parseArgs } from "../lib/parse-args.js";
+import { convertSession } from "../lib/convert-session.js";
+
+export async function run(args: string[]) {
+  const { positional, flags } = parseArgs(args, {
+    name: { type: "string" },
+    session: { type: "string" },
+  });
+
+  const workspacePath = positional[0];
+  if (!workspacePath) {
+    console.error(
+      "Usage: molt import <openclaw-workspace-path> [--name <name>] [--session <session-jsonl-path>]",
+    );
+    process.exit(1);
+  }
+
+  const wsDir = resolve(workspacePath);
+
+  // Validate workspace
+  const soulPath = resolve(wsDir, "SOUL.md");
+  const identityPath = resolve(wsDir, "IDENTITY.md");
+  if (!existsSync(soulPath) || !existsSync(identityPath)) {
+    console.error(
+      "Not a valid OpenClaw workspace: missing SOUL.md or IDENTITY.md",
+    );
+    process.exit(1);
+  }
+
+  // Read workspace files
+  const soul = readFileSync(soulPath, "utf-8");
+  const identity = readFileSync(identityPath, "utf-8");
+  const userPath = resolve(wsDir, "USER.md");
+  const user = existsSync(userPath) ? readFileSync(userPath, "utf-8") : "";
+
+  // Parse name from IDENTITY.md if not provided
+  const name =
+    flags.name ?? parseNameFromIdentity(identity) ?? "imported-agent";
+  const dest = resolve(process.cwd(), name);
+
+  if (existsSync(dest)) {
+    console.error(`Directory already exists: ${dest}`);
+    process.exit(1);
+  }
+
+  // Find template directory (same logic as create.ts)
+  let dir = dirname(new URL(import.meta.url).pathname);
+  let templateDir = "";
+  for (let i = 0; i < 5; i++) {
+    const candidate = resolve(dir, "templates", "anthropic");
+    if (existsSync(candidate)) {
+      templateDir = candidate;
+      break;
+    }
+    dir = dirname(dir);
+  }
+
+  if (!templateDir) {
+    console.error(
+      "Template not found. Searched up from:",
+      dirname(new URL(import.meta.url).pathname),
+    );
+    process.exit(1);
+  }
+
+  // Copy template
+  console.log(`Creating project: ${name}`);
+  cpSync(templateDir, dest, { recursive: true });
+  renameSync(resolve(dest, "package.json.tmpl"), resolve(dest, "package.json"));
+
+  // Replace {{name}} in package.json
+  const pkgPath = resolve(dest, "package.json");
+  writeFileSync(
+    pkgPath,
+    readFileSync(pkgPath, "utf-8").replaceAll("{{name}}", name),
+  );
+
+  // Compose SOUL.md: Identity + Soul + User + Memory instructions
+  const memorySection = `## Memory
+
+Your long-term memory is in MEMORY.md (included below in your system prompt). Use your memory tools to manage it:
+
+- **MEMORY.md** — Long-term knowledge, key decisions, learned preferences. Use \`write_memory\` to update.
+- **Daily logs** (\`memory/YYYY-MM-DD.md\`) — Session-level context for the current day. Use \`write_daily_log\` to update.
+- When conversation is compacted, update today's daily log with a summary of what happened.
+- Periodically use \`consolidate_memory\` to promote important daily log entries to long-term memory.`;
+
+  const sections = [identity, soul];
+  if (user) sections.push(user);
+  sections.push(memorySection);
+  writeFileSync(resolve(dest, "SOUL.md"), sections.join("\n\n---\n\n") + "\n");
+
+  // Copy MEMORY.md if present in workspace
+  const wsMemoryPath = resolve(wsDir, "MEMORY.md");
+  if (existsSync(wsMemoryPath)) {
+    cpSync(wsMemoryPath, resolve(dest, "MEMORY.md"));
+    console.log("Copied MEMORY.md");
+  }
+
+  // Copy memory/*.md daily logs
+  const wsMemoryDir = resolve(wsDir, "memory");
+  if (existsSync(wsMemoryDir)) {
+    const destMemoryDir = resolve(dest, "memory");
+    const files = readdirSync(wsMemoryDir).filter((f) => f.endsWith(".md"));
+    for (const file of files) {
+      cpSync(resolve(wsMemoryDir, file), resolve(destMemoryDir, file));
+    }
+    if (files.length > 0) {
+      console.log(`Copied ${files.length} daily log(s)`);
+    }
+  }
+
+  // Install dependencies
+  console.log("Installing dependencies...");
+  await execInherit("npm", ["install"], { cwd: dest });
+
+  // git init + initial commit
+  await exec("git", ["init"], { cwd: dest });
+  await exec("git", ["add", "-A"], { cwd: dest });
+  await exec("git", ["commit", "-m", "import from OpenClaw"], { cwd: dest });
+
+  // Convert session if provided
+  if (flags.session) {
+    const sessionFile = resolve(flags.session);
+    if (!existsSync(sessionFile)) {
+      console.error(`Session file not found: ${sessionFile}`);
+      process.exit(1);
+    }
+
+    console.log("Converting session...");
+    const sessionId = convertSession({
+      sessionPath: sessionFile,
+      projectDir: dest,
+    });
+
+    // Write session ID so the agent can resume
+    const moltDir = resolve(dest, ".molt");
+    mkdirSync(moltDir, { recursive: true });
+    writeFileSync(
+      resolve(moltDir, "session.json"),
+      JSON.stringify({ sessionId }),
+    );
+
+  }
+
+  console.log(`\nImported agent: ${name}`);
+  console.log(`\n  cd ${name}`);
+  console.log(`  molt start`);
+}
+
+function parseNameFromIdentity(identity: string): string | undefined {
+  const match = identity.match(/\*\*Name:\*\*\s*(.+)/);
+  if (match) {
+    return match[1].trim().toLowerCase().replace(/\s+/g, "-");
+  }
+  return undefined;
+}
