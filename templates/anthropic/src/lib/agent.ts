@@ -1,7 +1,4 @@
-import {
-  query,
-  type McpServerConfig,
-} from "@anthropic-ai/claude-agent-sdk";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { MoltMessage, MoltBlock } from "./types.js";
 import { log } from "./logger.js";
 import { createMessageChannel } from "./message-channel.js";
@@ -12,7 +9,6 @@ export function createAgent(options: {
   systemPrompt: string;
   cwd: string;
   abortController: AbortController;
-  mcpServers?: Record<string, McpServerConfig>;
   resume?: string;
   onSessionId?: (id: string) => void;
   onStreamError?: (err: unknown) => void;
@@ -29,7 +25,6 @@ export function createAgent(options: {
       allowDangerouslySkipPermissions: true,
       cwd: options.cwd,
       abortController: options.abortController,
-      mcpServers: options.mcpServers,
       resume: options.resume,
     },
   });

@@ -1,24 +1,41 @@
 /**
- * One-shot memory consolidation: spins up an ephemeral agent with the soul
- * loaded, asks it to consolidate daily logs into MEMORY.md, then exits.
+ * One-shot memory consolidation: reads daily logs, asks an ephemeral agent
+ * to produce consolidated MEMORY.md content, then writes it.
  * Used by `molt import` when no MEMORY.md exists but daily logs are present.
  */
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, readdirSync } from "fs";
 import { resolve } from "path";
-import { query, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
-import { memoryTools } from "./lib/memory-tools.js";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createMessageChannel } from "./lib/message-channel.js";
 
 const projectRoot = process.cwd();
 const soulPath = resolve(projectRoot, "home/SOUL.md");
 const memoryPath = resolve(projectRoot, "home/MEMORY.md");
+const memoryDir = resolve(projectRoot, "home/memory");
 
 const soul = readFileSync(soulPath, "utf-8");
 
-const mcpServer = createSdkMcpServer({
-  name: "memory",
-  tools: memoryTools,
-});
+// Read all daily logs
+const logs: string[] = [];
+try {
+  const files = readdirSync(memoryDir)
+    .filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
+    .sort();
+  for (const filename of files) {
+    const date = filename.replace(".md", "");
+    const content = readFileSync(resolve(memoryDir, filename), "utf-8").trim();
+    if (content) {
+      logs.push(`### ${date}\n\n${content}`);
+    }
+  }
+} catch {
+  // No logs directory
+}
+
+if (logs.length === 0) {
+  console.log("No daily logs found.");
+  process.exit(0);
+}
 
 const abortController = new AbortController();
 const channel = createMessageChannel();
@@ -31,7 +48,15 @@ channel.push({
     content: [
       {
         type: "text",
-        text: "You have daily logs from a previous environment but no long-term memory file yet. Please use consolidate_memory (with days=0 so all logs are included) to review your daily logs, then use write_memory to create your MEMORY.md with the important long-term knowledge. Keep it concise and organized by topic.",
+        text: [
+          "You have daily logs from a previous environment but no long-term memory file yet.",
+          "Please review the daily logs below and produce consolidated MEMORY.md content.",
+          "Keep it concise and organized by topic. Output ONLY the markdown content for MEMORY.md, nothing else.",
+          "",
+          "## Daily logs",
+          "",
+          logs.join("\n\n"),
+        ].join("\n"),
       },
     ],
   },
@@ -48,15 +73,17 @@ const stream = query({
     allowDangerouslySkipPermissions: true,
     cwd: projectRoot,
     abortController,
-    mcpServers: { memory: mcpServer },
   },
 });
 
+const textParts: string[] = [];
 for await (const msg of stream) {
   if (msg.type === "assistant") {
     for (const b of msg.message.content) {
       if (b.type === "text" && "text" in b) {
-        console.log((b as { text: string }).text);
+        const text = (b as { text: string }).text;
+        textParts.push(text);
+        process.stdout.write(text);
       }
     }
   }
@@ -65,10 +92,12 @@ for await (const msg of stream) {
   }
 }
 
-if (existsSync(memoryPath)) {
-  console.log("MEMORY.md created successfully.");
+const content = textParts.join("").trim();
+if (content) {
+  writeFileSync(memoryPath, content + "\n");
+  console.log("\nMEMORY.md created successfully.");
 } else {
-  console.warn("Warning: MEMORY.md was not created.");
+  console.warn("\nWarning: No content produced.");
 }
 
 process.exit(0);

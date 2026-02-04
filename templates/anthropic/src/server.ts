@@ -1,10 +1,7 @@
 import { createServer, type ServerResponse, type IncomingMessage } from "http";
-import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from "fs";
+import { readFileSync, readdirSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from "fs";
 import { resolve, dirname } from "path";
-import { createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import { createAgent } from "./lib/agent.js";
-import { selfModifyTools, cleanupAll } from "./lib/self-modify-tools.js";
-import { memoryTools, loadRecentDailyLogs } from "./lib/memory-tools.js";
 import type { MoltMessage } from "./lib/types.js";
 import { log } from "./lib/logger.js";
 
@@ -24,6 +21,27 @@ function parseArgs() {
 function loadFile(path: string): string {
   try {
     return readFileSync(path, "utf-8");
+  } catch {
+    return "";
+  }
+}
+
+function loadRecentDailyLogs(count: number): string {
+  const memoryDir = resolve("home/memory");
+  try {
+    const logs = readdirSync(memoryDir)
+      .filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
+      .sort()
+      .slice(-count);
+    const parts: string[] = [];
+    for (const filename of logs) {
+      const date = filename.replace(".md", "");
+      const content = loadFile(resolve(memoryDir, filename));
+      if (content.trim()) {
+        parts.push(`### ${date}\n\n${content.trim()}`);
+      }
+    }
+    return parts.join("\n\n");
   } catch {
     return "";
   }
@@ -83,11 +101,6 @@ try {
   pkgVersion = pkg.version || pkgVersion;
 } catch {}
 
-const mcpServer = createSdkMcpServer({
-  name: "self-modify",
-  tools: [...selfModifyTools, ...memoryTools],
-});
-
 const abortController = new AbortController();
 const savedSessionId = loadSessionId();
 if (savedSessionId) {
@@ -97,7 +110,6 @@ const agent = createAgent({
   systemPrompt,
   cwd: process.cwd(),
   abortController,
-  mcpServers: { "self-modify": mcpServer },
   resume: savedSessionId,
   onSessionId: saveSessionId,
   onStreamError: deleteSessionFile,
@@ -274,7 +286,6 @@ server.listen(port, () => {
 
 function shutdown() {
   log("server", "shutdown signal received");
-  cleanupAll();
   process.exit(0);
 }
 process.on("SIGINT", shutdown);
