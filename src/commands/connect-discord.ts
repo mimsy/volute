@@ -84,10 +84,15 @@ export async function run(args: string[]) {
       text = text.replace(new RegExp(`<@!?${client.user!.id}>`, "g"), "").trim();
     }
 
+    const sender = message.author.displayName || message.author.username;
+    const channelName = "name" in message.channel ? message.channel.name : null;
+    const channelLabel = channelName
+      ? `#${channelName} in ${message.guild!.name}`
+      : "DM";
+    const context = `[Discord: ${sender} in ${channelLabel} — channel discord:${message.channelId}]`;
+
     const content: MoltContentPart[] = [];
-    if (text) {
-      content.push({ type: "text", text });
-    }
+    content.push({ type: "text", text: text ? `${context}\n${text}` : context });
 
     // Download image attachments
     for (const attachment of message.attachments.values()) {
@@ -140,6 +145,50 @@ async function handleAgentRequest(
 
   let accumulated = "";
   const pendingImages: { data: string; media_type: string }[] = [];
+  let replied = false;
+
+  async function flush() {
+    const text = accumulated.trim();
+    accumulated = "";
+    if (!text && pendingImages.length === 0) return;
+
+    const chunks = text ? splitMessage(text) : [];
+    const imageFiles = pendingImages.splice(0).map((img, i) => {
+      const ext = img.media_type.split("/")[1] || "png";
+      return new AttachmentBuilder(Buffer.from(img.data, "base64"), {
+        name: `image-${i}.${ext}`,
+      });
+    });
+
+    // If only images, send with zero-width space
+    if (chunks.length === 0 && imageFiles.length > 0) {
+      const sendFn = replied ? channel.send.bind(channel) : message.reply.bind(message);
+      await sendFn({ content: "\u200b", files: imageFiles }).catch((err: unknown) => {
+        console.error(`Failed to send message: ${err}`);
+      });
+      replied = true;
+      return;
+    }
+
+    for (let i = 0; i < chunks.length; i++) {
+      const isLast = i === chunks.length - 1;
+      const opts: { content: string; files?: AttachmentBuilder[] } = {
+        content: chunks[i],
+      };
+      if (isLast && imageFiles.length > 0) opts.files = imageFiles;
+
+      try {
+        if (!replied) {
+          await message.reply(opts);
+          replied = true;
+        } else {
+          await channel.send(opts);
+        }
+      } catch (err) {
+        console.error(`Failed to send message: ${err}`);
+      }
+    }
+  }
 
   try {
     const res = await fetch(`${baseUrl}/message`, {
@@ -171,42 +220,14 @@ async function handleAgentRequest(
           data: event.data,
           media_type: event.media_type,
         });
+      } else if (event.type === "tool_use") {
+        await flush();
       } else if (event.type === "done") {
         break;
       }
     }
 
-    // Send response as separate messages
-    const chunks = splitMessage(accumulated);
-    const imageFiles = pendingImages.map((img, i) => {
-      const ext = img.media_type.split("/")[1] || "png";
-      return new AttachmentBuilder(Buffer.from(img.data, "base64"), {
-        name: `image-${i}.${ext}`,
-      });
-    });
-
-    for (let i = 0; i < chunks.length; i++) {
-      const isLast = i === chunks.length - 1;
-      const opts: { content: string; files?: AttachmentBuilder[] } = {
-        content: chunks[i],
-      };
-      if (isLast && imageFiles.length > 0) opts.files = imageFiles;
-
-      try {
-        if (i === 0) {
-          await message.reply(opts);
-        } else {
-          await channel.send(opts);
-        }
-      } catch (err) {
-        console.error(`Failed to send message: ${err}`);
-      }
-    }
-
-    // If no text but we have images, send them
-    if (chunks.length === 0 && imageFiles.length > 0) {
-      await message.reply({ content: "\u200b", files: imageFiles });
-    }
+    await flush();
   } catch (err) {
     const errMsg =
       err instanceof TypeError && (err as any).cause?.code === "ECONNREFUSED"

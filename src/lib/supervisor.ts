@@ -51,7 +51,7 @@ export function runSupervisor(opts: SupervisorOptions): void {
 
   function startAgent(): ReturnType<typeof spawn> {
     const agentEnv = loadMergedEnv(agentDir);
-    const env = { ...process.env, ...agentEnv };
+    const env = { ...process.env, ...agentEnv, MOLT_AGENT: agentName };
 
     if (dev) {
       console.error(`[supervisor] starting agent server in dev mode (watching for changes)...`);

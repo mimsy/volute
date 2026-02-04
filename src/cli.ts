@@ -44,6 +44,9 @@ switch (command) {
   case "disconnect":
     await import("./commands/disconnect.js").then((m) => m.run(args));
     break;
+  case "channel":
+    await import("./commands/channel.js").then((m) => m.run(args));
+    break;
   default:
     console.log(`molt — create and manage AI agents
 
@@ -61,6 +64,8 @@ Commands:
   molt env <set|get|list|remove>   Manage environment variables
   molt connect discord <name>      Connect a Discord bot to an agent (daemonized)
   molt disconnect discord <name>   Stop a Discord bot connector
+  molt channel read <uri>          Read recent messages from a channel
+  molt channel send <uri> "<msg>"  Send a message to a channel
   molt delete <name> [--force]     Delete an agent (--force removes files)`);
     if (command) {
       console.error(`\nUnknown command: ${command}`);

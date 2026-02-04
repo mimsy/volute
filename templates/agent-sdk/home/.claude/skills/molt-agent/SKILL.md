@@ -1,6 +1,6 @@
 ---
 name: Molt CLI
-description: This skill should be used when working with the molt CLI, understanding variants, forking, merging, or managing the agent server. Covers "create variant", "merge variant", "send to variant", "fork", "molt CLI", "variant workflow", "agent server", "supervisor".
+description: This skill should be used when working with the molt CLI, understanding variants, forking, merging, or managing the agent server. Covers "create variant", "merge variant", "send to variant", "fork", "molt CLI", "variant workflow", "agent server", "supervisor", "channel", "discord", "send message", "read messages".
 ---
 
 # Molt CLI
@@ -19,6 +19,21 @@ Your server is managed by the `molt` CLI. Your user interacts with you through i
 | `molt fork <name> [--soul "..."] [--port N]` | Create variant (worktree + server) |
 | `molt variants` | List variants with health status |
 | `molt merge <name> [--summary "..." --memory "..."]` | Merge variant back and restart |
+| `molt channel read discord:<id> [--limit N]` | Read recent messages from a Discord channel |
+| `molt channel send discord:<id> "<msg>"` | Send a message to a Discord channel |
+
+## Channels
+
+Messages from connectors (e.g. Discord) include context like:
+```
+[Discord: username in #general in My Server — channel discord:123456789]
+```
+
+Use the channel URI from the context line to read or reply:
+- `molt channel read discord:<id>` — read recent messages (default 20)
+- `molt channel send discord:<id> "hello"` — send a message
+
+The `--agent` flag is not needed when running from within your process tree.
 
 ## Variant Workflow
 
