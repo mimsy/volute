@@ -18,13 +18,21 @@ export async function* readNdjson(
 
       for (const line of lines) {
         if (!line.trim()) continue;
-        yield JSON.parse(line) as MoltEvent;
+        try {
+          yield JSON.parse(line) as MoltEvent;
+        } catch {
+          console.error(`ndjson: skipping invalid line: ${line.slice(0, 100)}`);
+        }
       }
     }
 
     // Handle remaining buffer
     if (buffer.trim()) {
-      yield JSON.parse(buffer) as MoltEvent;
+      try {
+        yield JSON.parse(buffer) as MoltEvent;
+      } catch {
+        console.error(`ndjson: skipping invalid line: ${buffer.slice(0, 100)}`);
+      }
     }
   } finally {
     reader.releaseLock();
