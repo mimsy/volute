@@ -17,7 +17,7 @@ export async function run(args: string[]) {
     const nameW = Math.max(4, ...entries.map((e) => e.name.length));
     const portW = Math.max(4, ...entries.map((e) => String(e.port).length));
 
-    console.log(`${"NAME".padEnd(nameW)}  ${"PORT".padEnd(portW)}  STATUS`);
+    console.log(`${"NAME".padEnd(nameW)}  ${"PORT".padEnd(portW)}  STATUS    DISCORD`);
 
     for (const entry of entries) {
       const dir = agentDir(entry.name);
@@ -37,7 +37,20 @@ export async function run(args: string[]) {
         }
       }
 
-      console.log(`${entry.name.padEnd(nameW)}  ${String(entry.port).padEnd(portW)}  ${status}`);
+      // Check Discord connector PID
+      let discord = "-";
+      const discordPidPath = resolve(dir, ".molt", "discord.pid");
+      if (existsSync(discordPidPath)) {
+        const dpid = parseInt(readFileSync(discordPidPath, "utf-8").trim(), 10);
+        try {
+          process.kill(dpid, 0);
+          discord = "connected";
+        } catch {
+          // Stale PID
+        }
+      }
+
+      console.log(`${entry.name.padEnd(nameW)}  ${String(entry.port).padEnd(portW)}  ${status.padEnd(8)}  ${discord}`);
     }
     return;
   }
@@ -69,6 +82,23 @@ export async function run(args: string[]) {
   }
 
   console.log(`Supervisor: ${supervisorRunning ? `running (pid ${supervisorPid})` : "not running"}`);
+
+  // Check Discord connector PID
+  const discordPidPath = resolve(dir, ".molt", "discord.pid");
+  let discordRunning = false;
+  let discordPid: number | null = null;
+
+  if (existsSync(discordPidPath)) {
+    discordPid = parseInt(readFileSync(discordPidPath, "utf-8").trim(), 10);
+    try {
+      process.kill(discordPid, 0);
+      discordRunning = true;
+    } catch {
+      // Stale PID
+    }
+  }
+
+  console.log(`Discord: ${discordRunning ? `running (pid ${discordPid})` : "not connected"}`);
 
   // Check server health
   const url = `http://localhost:${port}/health`;

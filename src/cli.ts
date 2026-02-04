@@ -39,11 +39,10 @@ switch (command) {
     await import("./commands/env.js").then((m) => m.run(args));
     break;
   case "connect":
-    if (args[0] !== "discord") {
-      console.error("Usage: molt connect discord <agent>");
-      process.exit(1);
-    }
-    await import("./commands/connect-discord.js").then((m) => m.run(args.slice(1)));
+    await import("./commands/connect.js").then((m) => m.run(args));
+    break;
+  case "disconnect":
+    await import("./commands/disconnect.js").then((m) => m.run(args));
     break;
   default:
     console.log(`molt — create and manage AI agents
@@ -60,7 +59,8 @@ Commands:
   molt merge <name> <variant>      Merge a variant back
   molt import <path>               Import an OpenClaw workspace
   molt env <set|get|list|remove>   Manage environment variables
-  molt connect discord <name>      Bridge a Discord bot to an agent
+  molt connect discord <name>      Connect a Discord bot to an agent (daemonized)
+  molt disconnect discord <name>   Stop a Discord bot connector
   molt delete <name> [--force]     Delete an agent (--force removes files)`);
     if (command) {
       console.error(`\nUnknown command: ${command}`);

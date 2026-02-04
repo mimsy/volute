@@ -6,6 +6,8 @@ import {
   Message,
   AttachmentBuilder,
 } from "discord.js";
+import { writeFileSync, unlinkSync, mkdirSync } from "fs";
+import { resolve } from "path";
 import { resolveAgent } from "../lib/registry.js";
 import { loadMergedEnv } from "../lib/env.js";
 import { readNdjson } from "../lib/ndjson.js";
@@ -33,6 +35,16 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
+  // Write PID file
+  const moltDir = resolve(dir, ".molt");
+  const pidPath = resolve(moltDir, "discord.pid");
+  mkdirSync(moltDir, { recursive: true });
+  writeFileSync(pidPath, String(process.pid));
+
+  function cleanupPid() {
+    try { unlinkSync(pidPath); } catch {}
+  }
+
   const baseUrl = `http://localhost:${entry.port}`;
 
   const client = new Client({
@@ -44,6 +56,15 @@ export async function run(args: string[]) {
     ],
     partials: [Partials.Channel],
   });
+
+  function shutdown() {
+    client.destroy();
+    cleanupPid();
+    process.exit(0);
+  }
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 
   client.once(Events.ClientReady, (c) => {
     console.log(`Connected to Discord as ${c.user.tag}`);
