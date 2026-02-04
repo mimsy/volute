@@ -14,7 +14,6 @@ import { readNdjson } from "../lib/ndjson.js";
 import type { MoltContentPart } from "../types.js";
 
 const DISCORD_MAX_LENGTH = 2000;
-const EDIT_DEBOUNCE_MS = 1000;
 const TYPING_INTERVAL_MS = 8000;
 
 export async function run(args: string[]) {
@@ -114,12 +113,24 @@ export async function run(args: string[]) {
   client.login(token);
 }
 
+function splitMessage(text: string): string[] {
+  const chunks: string[] = [];
+  while (text.length > DISCORD_MAX_LENGTH) {
+    // Try to split at a newline near the limit
+    let splitAt = text.lastIndexOf("\n", DISCORD_MAX_LENGTH);
+    if (splitAt < DISCORD_MAX_LENGTH / 2) splitAt = DISCORD_MAX_LENGTH;
+    chunks.push(text.slice(0, splitAt));
+    text = text.slice(splitAt).replace(/^\n/, "");
+  }
+  if (text) chunks.push(text);
+  return chunks;
+}
+
 async function handleAgentRequest(
   message: Message,
   baseUrl: string,
   content: MoltContentPart[],
 ) {
-  // Start typing
   const channel = message.channel;
   if (!("sendTyping" in channel)) return;
   const typingInterval = setInterval(() => {
@@ -127,57 +138,8 @@ async function handleAgentRequest(
   }, TYPING_INTERVAL_MS);
   channel.sendTyping().catch(() => {});
 
-  let replyMsg: Message | null = null;
   let accumulated = "";
-  let pendingImages: { data: string; media_type: string }[] = [];
-  let editTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const flushEdit = async () => {
-    if (editTimer) {
-      clearTimeout(editTimer);
-      editTimer = null;
-    }
-    if (replyMsg && accumulated) {
-      const text = accumulated.slice(0, DISCORD_MAX_LENGTH);
-      try {
-        await replyMsg.edit(text);
-      } catch (err) {
-        console.error(`Failed to edit message: ${err}`);
-      }
-    }
-  };
-
-  const scheduleEdit = () => {
-    if (editTimer) return;
-    editTimer = setTimeout(() => {
-      editTimer = null;
-      flushEdit();
-    }, EDIT_DEBOUNCE_MS);
-  };
-
-  const sendChunk = async (text: string, final: boolean) => {
-    const files = final
-      ? pendingImages.map((img, i) => {
-          const ext = img.media_type.split("/")[1] || "png";
-          return new AttachmentBuilder(Buffer.from(img.data, "base64"), {
-            name: `image-${i}.${ext}`,
-          });
-        })
-      : [];
-
-    try {
-      if (!replyMsg) {
-        replyMsg = await message.reply({
-          content: text || "\u200b",
-          files,
-        });
-      } else {
-        await replyMsg.edit({ content: text || "\u200b", files });
-      }
-    } catch (err) {
-      console.error(`Failed to send/edit message: ${err}`);
-    }
-  };
+  const pendingImages: { data: string; media_type: string }[] = [];
 
   try {
     const res = await fetch(`${baseUrl}/message`, {
@@ -204,19 +166,6 @@ async function handleAgentRequest(
     for await (const event of readNdjson(res.body)) {
       if (event.type === "text") {
         accumulated += event.content;
-
-        // Check if we need to split
-        if (accumulated.length > DISCORD_MAX_LENGTH) {
-          const chunk = accumulated.slice(0, DISCORD_MAX_LENGTH);
-          accumulated = accumulated.slice(DISCORD_MAX_LENGTH);
-          await sendChunk(chunk, false);
-          replyMsg = null; // Next chunk becomes a new message
-        } else if (!replyMsg) {
-          // Send initial reply
-          await sendChunk(accumulated, false);
-        } else {
-          scheduleEdit();
-        }
       } else if (event.type === "image") {
         pendingImages.push({
           data: event.data,
@@ -227,28 +176,44 @@ async function handleAgentRequest(
       }
     }
 
-    // Final flush
-    await flushEdit();
-    if (pendingImages.length > 0 || accumulated) {
-      await sendChunk(accumulated || "\u200b", true);
+    // Send response as separate messages
+    const chunks = splitMessage(accumulated);
+    const imageFiles = pendingImages.map((img, i) => {
+      const ext = img.media_type.split("/")[1] || "png";
+      return new AttachmentBuilder(Buffer.from(img.data, "base64"), {
+        name: `image-${i}.${ext}`,
+      });
+    });
+
+    for (let i = 0; i < chunks.length; i++) {
+      const isLast = i === chunks.length - 1;
+      const opts: { content: string; files?: AttachmentBuilder[] } = {
+        content: chunks[i],
+      };
+      if (isLast && imageFiles.length > 0) opts.files = imageFiles;
+
+      try {
+        if (i === 0) {
+          await message.reply(opts);
+        } else {
+          await channel.send(opts);
+        }
+      } catch (err) {
+        console.error(`Failed to send message: ${err}`);
+      }
+    }
+
+    // If no text but we have images, send them
+    if (chunks.length === 0 && imageFiles.length > 0) {
+      await message.reply({ content: "\u200b", files: imageFiles });
     }
   } catch (err) {
     const errMsg =
       err instanceof TypeError && (err as any).cause?.code === "ECONNREFUSED"
         ? "Agent is not running"
         : `Error: ${err}`;
-    const lastReply = replyMsg as Message | null;
-    if (lastReply) {
-      try {
-        await lastReply.edit(`${accumulated}\n\n_${errMsg}_`);
-      } catch {
-        await message.reply(errMsg).catch(() => {});
-      }
-    } else {
-      await message.reply(errMsg).catch(() => {});
-    }
+    await message.reply(errMsg).catch(() => {});
   } finally {
     clearInterval(typingInterval);
-    if (editTimer) clearTimeout(editTimer);
   }
 }
