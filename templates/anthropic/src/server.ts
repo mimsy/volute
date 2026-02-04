@@ -217,9 +217,16 @@ const server = createServer(async (req, res) => {
   res.end("Not Found");
 });
 
+let retries = 0;
+const maxRetries = 5;
 server.on("error", (err: NodeJS.ErrnoException) => {
   if (err.code === "EADDRINUSE") {
-    log("server", `port ${port} in use, retrying in 1s...`);
+    retries++;
+    if (retries > maxRetries) {
+      log("server", `port ${port} in use after ${maxRetries} retries, exiting`);
+      process.exit(1);
+    }
+    log("server", `port ${port} in use, retrying in 1s... (${retries}/${maxRetries})`);
     setTimeout(() => server.listen(port), 1000);
   } else {
     throw err;

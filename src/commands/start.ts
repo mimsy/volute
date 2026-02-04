@@ -1,7 +1,19 @@
 import { spawn } from "child_process";
+import { createServer } from "net";
 import { existsSync, readFileSync, mkdirSync, openSync } from "fs";
 import { resolve } from "path";
 import { parseArgs } from "../lib/parse-args.js";
+
+function checkPort(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createServer();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port);
+  });
+}
 
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
@@ -30,6 +42,14 @@ export async function run(args: string[]) {
     } catch {
       // PID file is stale, continue
     }
+  }
+
+  // Check if port is available
+  const portFree = await checkPort(port);
+  if (!portFree) {
+    console.error(`Port ${port} is already in use.`);
+    console.error("Another agent or process may be running. Use 'molt stop' or check with: lsof -i :${port}");
+    process.exit(1);
   }
 
   const tsxBin = resolve(process.cwd(), "node_modules", ".bin", "tsx");

@@ -18,8 +18,15 @@ export async function run(_args: string[]) {
     process.exit(1);
   }
 
-  process.kill(pid, "SIGTERM");
-  console.log(`Sent SIGTERM to supervisor (pid ${pid})`);
+  // Kill the process group (supervisor + child server) by sending signal to negative PID
+  try {
+    process.kill(-pid, "SIGTERM");
+    console.log(`Sent SIGTERM to supervisor group (pid ${pid})`);
+  } catch {
+    // If group kill fails, fall back to killing just the supervisor
+    process.kill(pid, "SIGTERM");
+    console.log(`Sent SIGTERM to supervisor (pid ${pid})`);
+  }
 
   // Wait for PID file to be removed (supervisor cleans up on exit)
   const maxWait = 10_000;
@@ -35,9 +42,13 @@ export async function run(_args: string[]) {
 
   // Force kill
   try {
-    process.kill(pid, "SIGKILL");
-    console.error("Supervisor did not exit cleanly, sent SIGKILL.");
+    process.kill(-pid, "SIGKILL");
   } catch {
-    // Already dead
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Already dead
+    }
   }
+  console.error("Supervisor did not exit cleanly, sent SIGKILL.");
 }
