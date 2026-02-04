@@ -1,19 +1,16 @@
-import { parseArgs } from "../lib/parse-args.js";
+import { resolveAgent } from "../lib/registry.js";
 
 export async function run(args: string[]) {
-  const { positional, flags } = parseArgs(args, {
-    port: { type: "number" },
-  });
+  const name = args[0];
+  const context = args[1];
 
-  const port = flags.port ?? 4100;
-  const context = positional[0];
-
-  if (!context) {
-    console.error('Usage: molt memory --port <port> "<context to remember>"');
+  if (!name || !context) {
+    console.error('Usage: molt memory <name> "<context to remember>"');
     process.exit(1);
   }
 
-  const baseUrl = `http://localhost:${port}`;
+  const { entry } = resolveAgent(name);
+  const baseUrl = `http://localhost:${entry.port}`;
 
   const res = await fetch(`${baseUrl}/command`, {
     method: "POST",

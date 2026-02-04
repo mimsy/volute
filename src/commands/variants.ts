@@ -1,13 +1,20 @@
 import { readVariants, checkHealth, writeVariants, type Variant } from "../lib/variants.js";
 import { parseArgs } from "../lib/parse-args.js";
+import { resolveAgent } from "../lib/registry.js";
 
 export async function run(args: string[]) {
-  const { flags } = parseArgs(args, {
+  const { positional, flags } = parseArgs(args, {
     json: { type: "boolean" },
   });
 
+  const name = positional[0];
+  if (!name) {
+    console.error("Usage: molt variants <name>");
+    process.exit(1);
+  }
+
   const { json } = flags;
-  const projectRoot = process.cwd();
+  const { dir: projectRoot } = resolveAgent(name);
   const variants = readVariants(projectRoot);
 
   if (variants.length === 0) {

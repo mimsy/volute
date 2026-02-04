@@ -1,19 +1,16 @@
-import { parseArgs } from "../lib/parse-args.js";
+import { resolveAgent } from "../lib/registry.js";
 
 export async function run(args: string[]) {
-  const { positional, flags } = parseArgs(args, {
-    port: { type: "number" },
-  });
+  const name = args[0];
+  const message = args[1];
 
-  const port = flags.port;
-  const message = positional[0];
-
-  if (!port || !message) {
-    console.error('Usage: molt send --port <port> "<message>"');
+  if (!name || !message) {
+    console.error('Usage: molt send <name> "<message>"');
     process.exit(1);
   }
 
-  const baseUrl = `http://localhost:${port}`;
+  const { entry } = resolveAgent(name);
+  const baseUrl = `http://localhost:${entry.port}`;
 
   // Connect SSE first
   const abortController = new AbortController();

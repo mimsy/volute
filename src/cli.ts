@@ -42,18 +42,18 @@ switch (command) {
     console.log(`molt — create and manage AI agents
 
 Commands:
-  molt create <name>    Create a new agent project
-  molt start            Start the agent (daemonized)
-  molt stop             Stop the agent
-  molt status           Check agent status
-  molt logs             Tail agent logs
-  molt chat             Chat with a running agent
-  molt fork <name>      Create a variant (worktree + server)
-  molt variants         List all variants
-  molt send             Send a message to a variant
-  molt merge <name>     Merge a variant back
-  molt memory           Send context for the agent to remember
-  molt import <path>    Import an OpenClaw workspace`);
+  molt create <name>               Create a new agent
+  molt start <name>                Start an agent (daemonized)
+  molt stop <name>                 Stop an agent
+  molt status [<name>]             Check agent status (or list all)
+  molt logs <name>                 Tail agent logs
+  molt chat <name>                 Chat with a running agent
+  molt send <name> "<msg>"         Send a message to an agent
+  molt memory <name> "<context>"   Send context for the agent to remember
+  molt fork <name> <variant>       Create a variant (worktree + server)
+  molt variants <name>             List variants for an agent
+  molt merge <name> <variant>      Merge a variant back
+  molt import <path>               Import an OpenClaw workspace`);
     if (command) {
       console.error(`\nUnknown command: ${command}`);
       process.exit(1);

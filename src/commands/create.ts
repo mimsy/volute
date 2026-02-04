@@ -2,6 +2,7 @@ import { cpSync, readFileSync, writeFileSync, renameSync, existsSync } from "fs"
 import { resolve, dirname } from "path";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
+import { ensureMoltHome, addAgent, agentDir, nextPort } from "../lib/registry.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -16,9 +17,11 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  const dest = resolve(process.cwd(), name);
+  ensureMoltHome();
+  const dest = agentDir(name);
+
   if (existsSync(dest)) {
-    console.error(`Directory already exists: ${dest}`);
+    console.error(`Agent already exists: ${name}`);
     process.exit(1);
   }
 
@@ -54,6 +57,10 @@ export async function run(args: string[]) {
     writeFileSync(path, content.replaceAll("{{name}}", name));
   }
 
+  // Assign port and register
+  const port = nextPort();
+  addAgent(name, port);
+
   // Install dependencies
   console.log("Installing dependencies...");
   await execInherit("npm", ["install"], { cwd: dest });
@@ -63,7 +70,6 @@ export async function run(args: string[]) {
   await exec("git", ["add", "-A"], { cwd: dest });
   await exec("git", ["commit", "-m", "initial commit"], { cwd: dest });
 
-  console.log(`\nCreated agent: ${name}`);
-  console.log(`\n  cd ${name}`);
-  console.log(`  molt start`);
+  console.log(`\nCreated agent: ${name} (port ${port})`);
+  console.log(`\n  molt start ${name}`);
 }

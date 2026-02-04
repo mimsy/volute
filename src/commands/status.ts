@@ -1,16 +1,60 @@
 import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
-import { parseArgs } from "../lib/parse-args.js";
+import { readRegistry, agentDir } from "../lib/registry.js";
+import { checkHealth } from "../lib/variants.js";
 
 export async function run(args: string[]) {
-  const { flags } = parseArgs(args, {
-    port: { type: "number" },
-  });
+  const name = args[0];
 
-  const port = flags.port ?? 4100;
+  if (!name) {
+    // List all agents
+    const entries = readRegistry();
+    if (entries.length === 0) {
+      console.log("No agents registered. Create one with: molt create <name>");
+      return;
+    }
+
+    const nameW = Math.max(4, ...entries.map((e) => e.name.length));
+    const portW = Math.max(4, ...entries.map((e) => String(e.port).length));
+
+    console.log(`${"NAME".padEnd(nameW)}  ${"PORT".padEnd(portW)}  STATUS`);
+
+    for (const entry of entries) {
+      const dir = agentDir(entry.name);
+      let status = "stopped";
+
+      // Check supervisor PID
+      const pidPath = resolve(dir, ".molt", "supervisor.pid");
+      if (existsSync(pidPath)) {
+        const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
+        try {
+          process.kill(pid, 0);
+          // Supervisor is running, check server health
+          const health = await checkHealth(entry.port);
+          status = health.ok ? "running" : "starting";
+        } catch {
+          status = "stopped";
+        }
+      }
+
+      console.log(`${entry.name.padEnd(nameW)}  ${String(entry.port).padEnd(portW)}  ${status}`);
+    }
+    return;
+  }
+
+  // Single agent status
+  const entries = readRegistry();
+  const entry = entries.find((e) => e.name === name);
+  if (!entry) {
+    console.error(`Unknown agent: ${name}`);
+    process.exit(1);
+  }
+
+  const dir = agentDir(name);
+  const port = entry.port;
 
   // Check supervisor PID
-  const pidPath = resolve(process.cwd(), ".molt", "supervisor.pid");
+  const pidPath = resolve(dir, ".molt", "supervisor.pid");
   let supervisorRunning = false;
   let supervisorPid: number | null = null;
 
@@ -40,7 +84,7 @@ export async function run(args: string[]) {
   } catch {
     console.log(`Server: not responding on port ${port}`);
     if (!supervisorRunning) {
-      console.error("\nTry: molt start");
+      console.error(`\nTry: molt start ${name}`);
     }
     process.exit(1);
   }

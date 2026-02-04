@@ -1,8 +1,9 @@
 import { spawn } from "child_process";
 import { createServer } from "net";
 import { existsSync, readFileSync, mkdirSync, openSync } from "fs";
-import { resolve } from "path";
+import { resolve, dirname } from "path";
 import { parseArgs } from "../lib/parse-args.js";
+import { resolveAgent } from "../lib/registry.js";
 
 function checkPort(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -16,28 +17,27 @@ function checkPort(port: number): Promise<boolean> {
 }
 
 export async function run(args: string[]) {
-  const { flags } = parseArgs(args, {
+  const { positional, flags } = parseArgs(args, {
     foreground: { type: "boolean" },
     dev: { type: "boolean" },
-    port: { type: "number" },
   });
 
-  const supervisorPath = resolve(process.cwd(), "supervisor.ts");
-
-  if (!existsSync(supervisorPath)) {
-    console.error("No supervisor.ts found. Are you in an agent project directory?");
+  const name = positional[0];
+  if (!name) {
+    console.error("Usage: molt start <name> [--foreground] [--dev]");
     process.exit(1);
   }
 
-  const port = flags.port ?? 4100;
+  const { entry, dir } = resolveAgent(name);
+  const port = entry.port;
 
   // Check if already running
-  const pidPath = resolve(process.cwd(), ".molt", "supervisor.pid");
+  const pidPath = resolve(dir, ".molt", "supervisor.pid");
   if (existsSync(pidPath)) {
     try {
       const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
-      process.kill(pid, 0); // Check if process exists
-      console.error(`Supervisor already running (pid ${pid}). Use 'molt stop' first.`);
+      process.kill(pid, 0);
+      console.error(`${name} already running (pid ${pid}). Use 'molt stop ${name}' first.`);
       process.exit(1);
     } catch {
       // PID file is stale, continue
@@ -48,19 +48,43 @@ export async function run(args: string[]) {
   const portFree = await checkPort(port);
   if (!portFree) {
     console.error(`Port ${port} is already in use.`);
-    console.error("Another agent or process may be running. Use 'molt stop' or check with: lsof -i :${port}");
+    console.error(`Another agent or process may be running. Use 'molt stop ${name}' or check with: lsof -i :${port}`);
     process.exit(1);
   }
 
-  const tsxBin = resolve(process.cwd(), "node_modules", ".bin", "tsx");
-  const supervisorArgs = flags.dev ? [supervisorPath, "--dev"] : [supervisorPath];
-  if (flags.port) {
-    supervisorArgs.push("--port", String(flags.port));
+  // Find the supervisor module — run it via tsx from the molt CLI source
+  let supervisorModule = "";
+  let searchDir = dirname(new URL(import.meta.url).pathname);
+  for (let i = 0; i < 5; i++) {
+    const candidate = resolve(searchDir, "src", "lib", "supervisor.ts");
+    if (existsSync(candidate)) {
+      supervisorModule = candidate;
+      break;
+    }
+    searchDir = dirname(searchDir);
   }
 
+  // Fallback: look relative to current file for built mode
+  if (!supervisorModule) {
+    // In built mode, supervisor.ts is bundled — we spawn a small inline script
+    supervisorModule = resolve(dirname(new URL(import.meta.url).pathname), "..", "lib", "supervisor.ts");
+  }
+
+  // We spawn a small bootstrap script that imports and runs the supervisor
+  const tsxBin = resolve(dir, "node_modules", ".bin", "tsx");
+  const bootstrapCode = `
+    import { runSupervisor } from ${JSON.stringify(supervisorModule)};
+    runSupervisor({
+      agentName: ${JSON.stringify(name)},
+      agentDir: ${JSON.stringify(dir)},
+      port: ${port},
+      dev: ${flags.dev ? "true" : "false"},
+    });
+  `;
+
   if (flags.foreground) {
-    const child = spawn(tsxBin, supervisorArgs, {
-      cwd: process.cwd(),
+    const child = spawn(tsxBin, ["--eval", bootstrapCode], {
+      cwd: dir,
       stdio: "inherit",
     });
     child.on("exit", (code) => process.exit(code ?? 1));
@@ -68,14 +92,14 @@ export async function run(args: string[]) {
   }
 
   // Daemon mode: redirect output to log file
-  const logsDir = resolve(process.cwd(), ".molt", "logs");
+  const logsDir = resolve(dir, ".molt", "logs");
   mkdirSync(logsDir, { recursive: true });
 
   const logFile = resolve(logsDir, "supervisor.log");
   const logFd = openSync(logFile, "a");
 
-  const child = spawn(tsxBin, supervisorArgs, {
-    cwd: process.cwd(),
+  const child = spawn(tsxBin, ["--eval", bootstrapCode], {
+    cwd: dir,
     stdio: ["ignore", logFd, logFd],
     detached: true,
   });
@@ -92,7 +116,7 @@ export async function run(args: string[]) {
       if (res.ok) {
         const data = (await res.json()) as { name: string; version: string };
         console.log(`${data.name} running on port ${port} (pid ${child.pid})`);
-        console.log(`Logs: .molt/logs/supervisor.log`);
+        console.log(`Logs: molt logs ${name}`);
         return;
       }
     } catch {
@@ -102,6 +126,6 @@ export async function run(args: string[]) {
   }
 
   console.error("Supervisor started but server did not become healthy within 30s.");
-  console.error(`Check logs: .molt/logs/supervisor.log`);
+  console.error(`Check logs: molt logs ${name}`);
   process.exit(1);
 }

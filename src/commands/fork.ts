@@ -7,6 +7,7 @@ import {
 import { spawnServer } from "../lib/spawn-server.js";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
+import { resolveAgent } from "../lib/registry.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -16,23 +17,24 @@ export async function run(args: string[]) {
     json: { type: "boolean" },
   });
 
-  const name = positional[0];
+  const agentName = positional[0];
+  const variantName = positional[1];
   const { soul, port, json } = flags;
   const noStart = flags["no-start"];
 
-  if (!name) {
-    console.error("Usage: molt fork <name> [--soul \"...\"] [--port N] [--no-start] [--json]");
+  if (!agentName || !variantName) {
+    console.error("Usage: molt fork <agent> <variant> [--soul \"...\"] [--port N] [--no-start] [--json]");
     process.exit(1);
   }
 
-  const err = validateBranchName(name);
+  const err = validateBranchName(variantName);
   if (err) {
     console.error(err);
     process.exit(1);
   }
 
-  const projectRoot = process.cwd();
-  const worktreeDir = resolve(projectRoot, ".worktrees", name);
+  const { dir: projectRoot } = resolveAgent(agentName);
+  const worktreeDir = resolve(projectRoot, ".worktrees", variantName);
 
   if (existsSync(worktreeDir)) {
     console.error(`Worktree already exists: ${worktreeDir}`);
@@ -46,7 +48,7 @@ export async function run(args: string[]) {
 
   // Create git worktree
   try {
-    await exec("git", ["worktree", "add", "-b", name, worktreeDir], { cwd: projectRoot });
+    await exec("git", ["worktree", "add", "-b", variantName, worktreeDir], { cwd: projectRoot });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`Failed to create worktree: ${msg}`);
@@ -88,8 +90,8 @@ export async function run(args: string[]) {
   }
 
   const variant = {
-    name,
-    branch: name,
+    name: variantName,
+    branch: variantName,
     path: worktreeDir,
     port: actualPort ?? (port ?? 0),
     pid,
@@ -101,7 +103,7 @@ export async function run(args: string[]) {
   if (json) {
     console.log(JSON.stringify(variant, null, 2));
   } else {
-    console.log(`\nVariant created: ${name}`);
+    console.log(`\nVariant created: ${variantName}`);
     console.log(`  Branch: ${variant.branch}`);
     console.log(`  Path:   ${variant.path}`);
     if (actualPort) {

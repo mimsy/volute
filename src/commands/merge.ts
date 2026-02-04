@@ -1,9 +1,10 @@
 import { existsSync, writeFileSync, readFileSync, mkdirSync, openSync } from "fs";
 import { spawn } from "child_process";
-import { resolve } from "path";
+import { resolve, dirname } from "path";
 import { findVariant, removeVariant, validateBranchName } from "../lib/variants.js";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
+import { resolveAgent } from "../lib/registry.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -12,17 +13,18 @@ export async function run(args: string[]) {
     memory: { type: "string" },
   });
 
-  const name = positional[0];
-  if (!name) {
-    console.error("Usage: molt merge <name> [--summary '...'] [--justification '...'] [--memory '...']");
+  const agentName = positional[0];
+  const variantName = positional[1];
+  if (!agentName || !variantName) {
+    console.error("Usage: molt merge <agent> <variant> [--summary '...'] [--justification '...'] [--memory '...']");
     process.exit(1);
   }
 
-  const projectRoot = process.cwd();
-  const variant = findVariant(projectRoot, name);
+  const { dir: projectRoot } = resolveAgent(agentName);
+  const variant = findVariant(projectRoot, variantName);
 
   if (!variant) {
-    console.error(`Unknown variant: ${name}`);
+    console.error(`Unknown variant: ${variantName}`);
     process.exit(1);
   }
 
@@ -80,7 +82,7 @@ export async function run(args: string[]) {
   }
 
   // Remove from variants.json
-  removeVariant(projectRoot, name);
+  removeVariant(projectRoot, variantName);
 
   // Reinstall dependencies
   console.log("Reinstalling dependencies...");
@@ -90,7 +92,7 @@ export async function run(args: string[]) {
     console.error("npm install failed:", e);
   }
 
-  console.log(`Variant ${name} merged and cleaned up.`);
+  console.log(`Variant ${variantName} merged and cleaned up.`);
 
   // Write merged.json for post-restart orientation
   const moltDir = resolve(projectRoot, ".molt");
@@ -98,7 +100,7 @@ export async function run(args: string[]) {
   writeFileSync(
     resolve(moltDir, "merged.json"),
     JSON.stringify({
-      name,
+      name: variantName,
       ...(flags.summary && { summary: flags.summary }),
       ...(flags.justification && { justification: flags.justification }),
       ...(flags.memory && { memory: flags.memory }),
@@ -120,20 +122,45 @@ export async function run(args: string[]) {
     }
   }
 
-  // Start new supervisor detached with log redirection
+  // Restart supervisor
   const tsxBin = resolve(projectRoot, "node_modules", ".bin", "tsx");
-  const supervisorPath = resolve(projectRoot, "supervisor.ts");
-  if (existsSync(supervisorPath)) {
-    console.log("Starting new supervisor...");
-    const logsDir = resolve(projectRoot, ".molt", "logs");
-    mkdirSync(logsDir, { recursive: true });
-    const logFd = openSync(resolve(logsDir, "supervisor.log"), "a");
-    const child = spawn(tsxBin, [supervisorPath], {
-      cwd: projectRoot,
-      stdio: ["ignore", logFd, logFd],
-      detached: true,
-    });
-    child.unref();
-    console.log(`Supervisor started (pid ${child.pid})`);
+
+  // Find the supervisor module
+  let supervisorModule = "";
+  let searchDir = dirname(new URL(import.meta.url).pathname);
+  for (let i = 0; i < 5; i++) {
+    const candidate = resolve(searchDir, "src", "lib", "supervisor.ts");
+    if (existsSync(candidate)) {
+      supervisorModule = candidate;
+      break;
+    }
+    searchDir = dirname(searchDir);
   }
+  if (!supervisorModule) {
+    supervisorModule = resolve(dirname(new URL(import.meta.url).pathname), "..", "lib", "supervisor.ts");
+  }
+
+  const { entry } = resolveAgent(agentName);
+
+  console.log("Starting new supervisor...");
+  const logsDir = resolve(projectRoot, ".molt", "logs");
+  mkdirSync(logsDir, { recursive: true });
+  const logFd = openSync(resolve(logsDir, "supervisor.log"), "a");
+
+  const bootstrapCode = `
+    import { runSupervisor } from ${JSON.stringify(supervisorModule)};
+    runSupervisor({
+      agentName: ${JSON.stringify(agentName)},
+      agentDir: ${JSON.stringify(projectRoot)},
+      port: ${entry.port},
+    });
+  `;
+
+  const child = spawn(tsxBin, ["--eval", bootstrapCode], {
+    cwd: projectRoot,
+    stdio: ["ignore", logFd, logFd],
+    detached: true,
+  });
+  child.unref();
+  console.log(`Supervisor started (pid ${child.pid})`);
 }

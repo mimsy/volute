@@ -11,6 +11,7 @@ import { resolve, dirname } from "path";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { convertSession } from "../lib/convert-session.js";
+import { ensureMoltHome, addAgent, agentDir, nextPort } from "../lib/registry.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -47,10 +48,12 @@ export async function run(args: string[]) {
   // Parse name from IDENTITY.md if not provided
   const name =
     flags.name ?? parseNameFromIdentity(identity) ?? "imported-agent";
-  const dest = resolve(process.cwd(), name);
+
+  ensureMoltHome();
+  const dest = agentDir(name);
 
   if (existsSync(dest)) {
-    console.error(`Directory already exists: ${dest}`);
+    console.error(`Agent already exists: ${name}`);
     process.exit(1);
   }
 
@@ -130,6 +133,10 @@ Your long-term memory is in home/MEMORY.md (included below in your system prompt
     }
   }
 
+  // Assign port and register
+  const port = nextPort();
+  addAgent(name, port);
+
   // Install dependencies
   console.log("Installing dependencies...");
   await execInherit("npm", ["install"], { cwd: dest });
@@ -169,9 +176,8 @@ Your long-term memory is in home/MEMORY.md (included below in your system prompt
 
   }
 
-  console.log(`\nImported agent: ${name}`);
-  console.log(`\n  cd ${name}`);
-  console.log(`  molt start`);
+  console.log(`\nImported agent: ${name} (port ${port})`);
+  console.log(`\n  molt start ${name}`);
 }
 
 function parseNameFromIdentity(identity: string): string | undefined {

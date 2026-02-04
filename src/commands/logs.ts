@@ -2,17 +2,25 @@ import { spawn } from "child_process";
 import { existsSync } from "fs";
 import { resolve } from "path";
 import { parseArgs } from "../lib/parse-args.js";
+import { resolveAgent } from "../lib/registry.js";
 
 export async function run(args: string[]) {
-  const { flags } = parseArgs(args, {
+  const { positional, flags } = parseArgs(args, {
     follow: { type: "boolean" },
     n: { type: "number" },
   });
 
-  const logFile = resolve(process.cwd(), ".molt", "logs", "supervisor.log");
+  const name = positional[0];
+  if (!name) {
+    console.error("Usage: molt logs <name> [--follow] [-n N]");
+    process.exit(1);
+  }
+
+  const { dir } = resolveAgent(name);
+  const logFile = resolve(dir, ".molt", "logs", "supervisor.log");
 
   if (!existsSync(logFile)) {
-    console.error("No log file found. Has the agent been started?");
+    console.error(`No log file found. Has ${name} been started?`);
     process.exit(1);
   }
 
