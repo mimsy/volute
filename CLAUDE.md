@@ -13,9 +13,11 @@ CLI framework for creating and managing self-modifying AI agents powered by the 
 | Command | Purpose |
 |---------|---------|
 | `molt create <name>` | Create new agent project from template |
-| `molt start` | Start supervisor (run from agent dir) |
+| `molt start [--foreground] [--dev] [--port N]` | Start agent (daemonized by default) |
+| `molt stop` | Stop the agent |
+| `molt status [--port N]` | Check agent status (supervisor + server) |
+| `molt logs [--follow] [-n N]` | Tail agent logs |
 | `molt chat [--port N]` | Interactive TUI (default port 4100) |
-| `molt status [--port N]` | Health check |
 | `molt fork <name> [--soul "..."] [--port N] [--json]` | Create variant (worktree + server) |
 | `molt variants [--json]` | List variants with health status |
 | `molt send --port <N> "<msg>"` | Send message, stream SSE response |

@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync, readFileSync, mkdirSync } from "fs";
+import { existsSync, writeFileSync, readFileSync, mkdirSync, openSync } from "fs";
 import { spawn } from "child_process";
 import { resolve } from "path";
 import { findVariant, removeVariant, validateBranchName } from "../lib/variants.js";
@@ -108,14 +108,17 @@ export async function run(args: string[]) {
     }
   }
 
-  // Start new supervisor detached
+  // Start new supervisor detached with log redirection
   const tsxBin = resolve(projectRoot, "node_modules", ".bin", "tsx");
   const supervisorPath = resolve(projectRoot, "supervisor.ts");
   if (existsSync(supervisorPath)) {
     console.log("Starting new supervisor...");
+    const logsDir = resolve(projectRoot, ".molt", "logs");
+    mkdirSync(logsDir, { recursive: true });
+    const logFd = openSync(resolve(logsDir, "supervisor.log"), "a");
     const child = spawn(tsxBin, [supervisorPath], {
       cwd: projectRoot,
-      stdio: "ignore",
+      stdio: ["ignore", logFd, logFd],
       detached: true,
     });
     child.unref();

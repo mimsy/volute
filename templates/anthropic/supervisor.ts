@@ -23,17 +23,19 @@ function tsxBin(): string {
 }
 
 const devMode = process.argv.includes("--dev");
+const portIdx = process.argv.indexOf("--port");
+const portArg = portIdx !== -1 && process.argv[portIdx + 1] ? ["--port", process.argv[portIdx + 1]] : [];
 
 function startAgent(): ReturnType<typeof spawn> {
   if (devMode) {
     console.error(`[supervisor] starting agent server in dev mode (watching for changes)...`);
-    return spawn(tsxBin(), ["watch", "src/server.ts"], {
+    return spawn(tsxBin(), ["watch", "src/server.ts", ...portArg], {
       cwd: projectRoot,
       stdio: "inherit",
     });
   }
   console.error(`[supervisor] starting agent server...`);
-  return spawn(tsxBin(), ["src/server.ts"], {
+  return spawn(tsxBin(), ["src/server.ts", ...portArg], {
     cwd: projectRoot,
     stdio: "inherit",
   });

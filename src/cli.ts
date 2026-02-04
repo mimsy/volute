@@ -8,6 +8,12 @@ switch (command) {
   case "start":
     await import("./commands/start.js").then((m) => m.run(args));
     break;
+  case "stop":
+    await import("./commands/stop.js").then((m) => m.run(args));
+    break;
+  case "logs":
+    await import("./commands/logs.js").then((m) => m.run(args));
+    break;
   case "chat":
     await import("./commands/chat.js").then((m) => m.run(args));
     break;
@@ -37,9 +43,11 @@ switch (command) {
 
 Commands:
   molt create <name>    Create a new agent project
-  molt start            Start the agent supervisor (run from agent dir)
+  molt start            Start the agent (daemonized)
+  molt stop             Stop the agent
+  molt status           Check agent status
+  molt logs             Tail agent logs
   molt chat             Chat with a running agent
-  molt status           Check agent health
   molt fork <name>      Create a variant (worktree + server)
   molt variants         List all variants
   molt send             Send a message to a variant
