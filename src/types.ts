@@ -1,13 +1,16 @@
-export type MoltBlock =
+export type MoltContentPart =
   | { type: "text"; text: string }
-  | { type: "thinking"; text: string }
-  | { type: "tool_use"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; tool_use_id: string; output: string; is_error?: boolean }
   | { type: "image"; media_type: string; data: string }
 
-export type MoltMessage = {
-  role: "user" | "assistant" | "system"
-  blocks: MoltBlock[]
-  done?: boolean
-  timestamp: number
+export type MoltRequest = {
+  content: MoltContentPart[]
+  channel?: string
+  session?: string
 }
+
+export type MoltEvent =
+  | { type: "text"; content: string }
+  | { type: "image"; media_type: string; data: string }
+  | { type: "tool_use"; name: string; input: unknown }
+  | { type: "tool_result"; output: string; is_error?: boolean }
+  | { type: "done" }

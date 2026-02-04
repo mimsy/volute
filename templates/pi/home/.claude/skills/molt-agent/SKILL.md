@@ -15,9 +15,7 @@ Your server is managed by the `molt` CLI. Your user interacts with you through i
 | `molt stop` | Stop the agent |
 | `molt status` | Check agent status |
 | `molt logs [--follow] [-n N]` | Tail agent logs |
-| `molt chat` | Interactive TUI |
-| `molt send "<msg>"` | Send message, stream SSE response |
-| `molt memory "<context>"` | Send context for the agent to remember |
+| `molt send "<msg>"` | Send message, stream ndjson response |
 | `molt fork <name> [--soul "..."] [--port N]` | Create variant (worktree + server) |
 | `molt variants` | List variants with health status |
 | `molt merge <name> [--summary "..." --memory "..."]` | Merge variant back and restart |

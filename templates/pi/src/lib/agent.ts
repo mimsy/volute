@@ -7,10 +7,10 @@ import {
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
 import { getModel, getModels } from "@mariozechner/pi-ai";
-import type { MoltMessage, MoltBlock } from "./types.js";
+import type { MoltEvent, MoltContentPart } from "./types.js";
 import { log } from "./logger.js";
 
-type Listener = (msg: MoltMessage) => void;
+type Listener = (event: MoltEvent) => void;
 
 export async function createAgent(options: {
   systemPrompt: string;
@@ -74,77 +74,45 @@ export async function createAgent(options: {
     resourceLoader,
   });
 
-  function broadcast(msg: MoltMessage) {
+  function broadcast(event: MoltEvent) {
     for (const listener of listeners) {
       try {
-        listener(msg);
+        listener(event);
       } catch (err) {
         log("agent", "listener threw during broadcast:", err);
       }
     }
   }
 
-  // Track text/thinking blocks across streaming deltas to build complete messages
-  let currentBlocks: MoltBlock[] = [];
-
   session.subscribe((event) => {
     if (event.type === "message_update") {
       const ae = event.assistantMessageEvent;
       if (ae.type === "text_delta") {
-        currentBlocks.push({ type: "text", text: ae.delta });
-        broadcast({
-          role: "assistant",
-          blocks: [{ type: "text", text: ae.delta }],
-          timestamp: Date.now(),
-        });
+        broadcast({ type: "text", content: ae.delta });
       } else if (ae.type === "thinking_delta") {
-        currentBlocks.push({ type: "thinking", text: ae.delta });
-        broadcast({
-          role: "assistant",
-          blocks: [{ type: "thinking", text: ae.delta }],
-          timestamp: Date.now(),
-        });
+        log("agent", "thinking:", ae.delta.slice(0, 200));
       }
     }
 
     if (event.type === "tool_execution_start") {
-      const block: MoltBlock = {
+      broadcast({
         type: "tool_use",
-        id: event.toolCallId,
         name: event.toolName,
         input: event.input,
-      };
-      currentBlocks.push(block);
-      broadcast({
-        role: "assistant",
-        blocks: [block],
-        timestamp: Date.now(),
       });
     }
 
     if (event.type === "tool_execution_end") {
-      const block: MoltBlock = {
+      broadcast({
         type: "tool_result",
-        tool_use_id: event.toolCallId,
         output: typeof event.result === "string" ? event.result : JSON.stringify(event.result),
         is_error: event.isError,
-      };
-      broadcast({
-        role: "assistant",
-        blocks: [block],
-        timestamp: Date.now(),
       });
     }
 
     if (event.type === "agent_end") {
       log("agent", "turn done");
-      currentBlocks = [];
-      broadcast({
-        role: "assistant",
-        blocks: [],
-        done: true,
-        timestamp: Date.now(),
-      });
+      broadcast({ type: "done" });
     }
 
     if (event.type === "auto_compaction_end") {
@@ -153,8 +121,17 @@ export async function createAgent(options: {
     }
   });
 
-  function sendMessage(text: string, _source?: string) {
-    log("agent", "sendMessage:", text.slice(0, 120), _source ? `source=${_source}` : "");
+  function sendMessage(content: string | MoltContentPart[], _source?: string) {
+    const preview = typeof content === "string"
+      ? content.slice(0, 120)
+      : content.map((p) => p.type).join(",");
+    log("agent", "sendMessage:", preview, _source ? `source=${_source}` : "");
+
+    // Convert to text for pi agent (images not yet supported by pi)
+    const text = typeof content === "string"
+      ? content
+      : content.filter((p) => p.type === "text").map((p) => (p as { text: string }).text).join("\n");
+
     if (session.isStreaming) {
       session.prompt(text, { streamingBehavior: "followUp" });
     } else {

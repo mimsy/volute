@@ -7,7 +7,6 @@ CLI for creating and managing self-modifying AI agents powered by the Anthropic 
 - `src/cli.ts` - Entry point, dynamic command imports via switch statement
 - `src/commands/` - One file per command, each exports `async function run(args: string[])`
 - `src/lib/` - Shared libraries (registry, supervisor, arg parsing, exec wrappers, variant metadata)
-- `src/components/` - React/Ink TUI components for `molt chat`
 - `templates/agent-sdk/` - Default template (Claude Agent SDK) copied by `molt create`
 - `templates/pi/` - Alternative template using pi-coding-agent for multi-provider LLM support
 - All agents live in `~/.molt/agents/<name>/` with a centralized registry at `~/.molt/agents.json`
@@ -18,7 +17,7 @@ Each agent project (created from the template) has:
 
 ```
 <agent>/
-├── src/server.ts          # HTTP/SSE server, loads system prompt, creates SDK agent
+├── src/server.ts          # HTTP server with ndjson streaming, loads system prompt, creates SDK agent
 ├── src/lib/               # Agent SDK wrapper, logger, message channel, types
 ├── home/                  # Agent working directory (cwd for the SDK)
 │   ├── SOUL.md            # System prompt / personality
@@ -43,9 +42,7 @@ The SDK runs with `cwd: home/` so it picks up `CLAUDE.md` and `.claude/skills/` 
 | `molt delete <name> [--force]` | Remove from registry (--force deletes directory) |
 | `molt status [<name>]` | Check agent status, or list all agents |
 | `molt logs <name> [--follow] [-n N]` | Tail agent logs |
-| `molt chat <name>` | Interactive TUI |
-| `molt send <name> "<msg>"` | Send message, stream SSE response |
-| `molt memory <name> "<context>"` | Send context for the agent to remember |
+| `molt send <name> "<msg>"` | Send message, stream ndjson response |
 | `molt fork <name> <variant> [--soul "..."] [--port N] [--json]` | Create variant (worktree + server) |
 | `molt variants <name> [--json]` | List variants with health status |
 | `molt merge <name> <variant> [--summary "..." --memory "..."]` | Merge variant back and restart |
@@ -56,7 +53,6 @@ The SDK runs with `cwd: home/` so it picks up `CLAUDE.md` and `.claude/skills/` 
 
 - **Runtime**: Node.js with tsx
 - **Language**: TypeScript (strict, ES2022, NodeNext modules)
-- **TUI**: React/Ink (`src/components/`)
 - **Agent SDK**: `@anthropic-ai/claude-agent-sdk`
 - **CLI build**: tsup (compiles CLI → `dist/cli.js`)
 - **Package manager**: npm
@@ -65,9 +61,9 @@ The SDK runs with `cwd: home/` so it picks up `CLAUDE.md` and `.claude/skills/` 
 
 - Centralized registry at `~/.molt/agents.json` maps agent names to ports
 - Supervisor runs in the CLI process, spawns the agent server, handles crash recovery (3s delay) and merge-restart
-- Agent servers use HTTP + SSE for communication (`/health`, `/events`, `/message`, `/command`)
+- Agent servers use HTTP with ndjson streaming (`/health`, `POST /message` → ndjson response)
 - Variants use git worktrees with detached server processes; metadata in `<agentDir>/.molt/variants.json`
-- All child process execution must be async (never `execFileSync`) to avoid blocking the event loop and dropping SSE connections
+- All child process execution must be async (never `execFileSync`) to avoid blocking the event loop
 - Arg parsing via `src/lib/parse-args.ts` — type-safe with positional args and typed flags
 
 ## Development

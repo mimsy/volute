@@ -14,9 +14,6 @@ switch (command) {
   case "logs":
     await import("./commands/logs.js").then((m) => m.run(args));
     break;
-  case "chat":
-    await import("./commands/chat.js").then((m) => m.run(args));
-    break;
   case "status":
     await import("./commands/status.js").then((m) => m.run(args));
     break;
@@ -31,9 +28,6 @@ switch (command) {
     break;
   case "merge":
     await import("./commands/merge.js").then((m) => m.run(args));
-    break;
-  case "memory":
-    await import("./commands/memory.js").then((m) => m.run(args));
     break;
   case "import":
     await import("./commands/import.js").then((m) => m.run(args));
@@ -53,9 +47,7 @@ Commands:
   molt stop <name>                 Stop an agent
   molt status [<name>]             Check agent status (or list all)
   molt logs <name>                 Tail agent logs
-  molt chat <name>                 Chat with a running agent
   molt send <name> "<msg>"         Send a message to an agent
-  molt memory <name> "<context>"   Send context for the agent to remember
   molt fork <name> <variant>       Create a variant (worktree + server)
   molt variants <name>             List variants for an agent
   molt merge <name> <variant>      Merge a variant back
