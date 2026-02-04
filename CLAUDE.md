@@ -8,7 +8,8 @@ CLI for creating and managing self-modifying AI agents powered by the Anthropic 
 - `src/commands/` - One file per command, each exports `async function run(args: string[])`
 - `src/lib/` - Shared libraries (registry, supervisor, arg parsing, exec wrappers, variant metadata)
 - `src/components/` - React/Ink TUI components for `molt chat`
-- `templates/anthropic/` - Template copied by `molt create` for new agent projects
+- `templates/agent-sdk/` - Default template (Claude Agent SDK) copied by `molt create`
+- `templates/pi/` - Alternative template using pi-coding-agent for multi-provider LLM support
 - All agents live in `~/.molt/agents/<name>/` with a centralized registry at `~/.molt/agents.json`
 
 ### Agent project structure

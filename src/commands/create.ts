@@ -10,7 +10,7 @@ export async function run(args: string[]) {
   });
 
   const name = positional[0];
-  const template = flags.template ?? "anthropic";
+  const template = flags.template ?? "agent-sdk";
 
   if (!name) {
     console.error("Usage: molt create <name> [--template <name>]");

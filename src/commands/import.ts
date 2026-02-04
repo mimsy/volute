@@ -17,12 +17,13 @@ export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
     name: { type: "string" },
     session: { type: "string" },
+    template: { type: "string" },
   });
 
   const workspacePath = positional[0];
   if (!workspacePath) {
     console.error(
-      "Usage: molt import <openclaw-workspace-path> [--name <name>] [--session <session-jsonl-path>]",
+      "Usage: molt import <openclaw-workspace-path> [--name <name>] [--session <session-jsonl-path>] [--template <name>]",
     );
     process.exit(1);
   }
@@ -58,10 +59,11 @@ export async function run(args: string[]) {
   }
 
   // Find template directory (same logic as create.ts)
+  const template = flags.template ?? "agent-sdk";
   let dir = dirname(new URL(import.meta.url).pathname);
   let templateDir = "";
   for (let i = 0; i < 5; i++) {
-    const candidate = resolve(dir, "templates", "anthropic");
+    const candidate = resolve(dir, "templates", template);
     if (existsSync(candidate)) {
       templateDir = candidate;
       break;
@@ -142,8 +144,11 @@ export async function run(args: string[]) {
   await exec("git", ["add", "-A"], { cwd: dest });
   await exec("git", ["commit", "-m", "import from OpenClaw"], { cwd: dest });
 
-  // Convert session if provided
-  if (flags.session) {
+  // Convert session if provided (only supported for anthropic template)
+  if (flags.session && template !== "agent-sdk") {
+    console.warn("Warning: --session is only supported with the agent-sdk template, skipping session import");
+  }
+  if (flags.session && template === "agent-sdk") {
     const sessionFile = resolve(flags.session);
     if (!existsSync(sessionFile)) {
       console.error(`Session file not found: ${sessionFile}`);
