@@ -89,18 +89,8 @@ export async function run(args: string[]) {
     readFileSync(pkgPath, "utf-8").replaceAll("{{name}}", name),
   );
 
-  // Write SOUL.md (soul content + memory instructions) to home/
-  const memorySection = `## Memory
-
-Your long-term memory is in home/MEMORY.md (included below in your system prompt). Use your memory tools to manage it:
-
-- **home/MEMORY.md** — Long-term knowledge, key decisions, learned preferences. Use \`write_memory\` to update.
-- **Daily logs** (\`home/memory/YYYY-MM-DD.md\`) — Session-level context for the current day. Use \`write_daily_log\` to update.
-- When conversation is compacted, update today's daily log with a summary of what happened.
-- Periodically use \`consolidate_memory\` to promote important daily log entries to long-term memory.`;
-
-  const sections = [soul, memorySection];
-  writeFileSync(resolve(dest, "home/SOUL.md"), sections.join("\n\n---\n\n") + "\n");
+  // Write SOUL.md to home/
+  writeFileSync(resolve(dest, "home/SOUL.md"), soul + "\n");
 
   // Copy IDENTITY.md and USER.md as separate files in home/
   cpSync(identityPath, resolve(dest, "home/IDENTITY.md"));

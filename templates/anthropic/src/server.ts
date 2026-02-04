@@ -1,5 +1,5 @@
 import { createServer, type ServerResponse, type IncomingMessage } from "http";
-import { readFileSync, readdirSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from "fs";
 import { resolve, dirname } from "path";
 import { createAgent } from "./lib/agent.js";
 import type { MoltMessage } from "./lib/types.js";
@@ -21,27 +21,6 @@ function parseArgs() {
 function loadFile(path: string): string {
   try {
     return readFileSync(path, "utf-8");
-  } catch {
-    return "";
-  }
-}
-
-function loadRecentDailyLogs(count: number): string {
-  const memoryDir = resolve("home/memory");
-  try {
-    const logs = readdirSync(memoryDir)
-      .filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
-      .sort()
-      .slice(-count);
-    const parts: string[] = [];
-    for (const filename of logs) {
-      const date = filename.replace(".md", "");
-      const content = loadFile(resolve(memoryDir, filename));
-      if (content.trim()) {
-        parts.push(`### ${date}\n\n${content.trim()}`);
-      }
-    }
-    return parts.join("\n\n");
   } catch {
     return "";
   }
@@ -271,12 +250,6 @@ server.listen(port, () => {
     } catch (e) {
       log("server", "failed to process merged.json:", e);
     }
-  }
-
-  // Load recent daily logs for context
-  const recentLogs = loadRecentDailyLogs(2);
-  if (recentLogs) {
-    orientationParts.push(`## Recent daily logs\n\n${recentLogs}`);
   }
 
   if (orientationParts.length > 0) {
