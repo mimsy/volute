@@ -6,11 +6,15 @@ import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
 
 export async function run(args: string[]) {
-  const { positional } = parseArgs(args, {});
+  const { positional, flags } = parseArgs(args, {
+    summary: { type: "string" },
+    justification: { type: "string" },
+    memory: { type: "string" },
+  });
 
   const name = positional[0];
   if (!name) {
-    console.error("Usage: molt merge <name>");
+    console.error("Usage: molt merge <name> [--summary '...'] [--justification '...'] [--memory '...']");
     process.exit(1);
   }
 
@@ -88,13 +92,21 @@ export async function run(args: string[]) {
 
   console.log(`Variant ${name} merged and cleaned up.`);
 
-  // If running under supervisor, it handles restart — just exit
-  if (process.env.MOLT_SUPERVISOR) return;
-
-  // Direct CLI flow: write merged.json for post-restart orientation
+  // Write merged.json for post-restart orientation
   const moltDir = resolve(projectRoot, ".molt");
   if (!existsSync(moltDir)) mkdirSync(moltDir, { recursive: true });
-  writeFileSync(resolve(moltDir, "merged.json"), JSON.stringify({ name }));
+  writeFileSync(
+    resolve(moltDir, "merged.json"),
+    JSON.stringify({
+      name,
+      ...(flags.summary && { summary: flags.summary }),
+      ...(flags.justification && { justification: flags.justification }),
+      ...(flags.memory && { memory: flags.memory }),
+    }),
+  );
+
+  // If running under supervisor, it handles restart — just exit
+  if (process.env.MOLT_SUPERVISOR) return;
 
   // Kill old supervisor if running
   const pidPath = resolve(moltDir, "supervisor.pid");

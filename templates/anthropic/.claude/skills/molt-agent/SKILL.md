@@ -1,6 +1,6 @@
 ---
 name: Molt Agent
-description: This skill should be used when working in a molt agent project, understanding the agent's MCP tools, modifying agent behavior, working with variants, managing memory, or understanding the supervisor/server architecture. Covers "create variant", "merge variant", "send to variant", "memory tools", "daily logs", "SOUL.md", "MEMORY.md", "agent server", "supervisor", "Claude Code session", "agent tools", "MCP tools".
+description: This skill should be used when working in a molt agent project, understanding the agent architecture, working with variants, managing memory, or modifying agent behavior. Covers "create variant", "merge variant", "send to variant", "memory", "daily logs", "SOUL.md", "MEMORY.md", "agent server", "supervisor", "variant workflow", "molt CLI".
 ---
 
 # Molt Agent Project
@@ -12,47 +12,39 @@ A molt agent project is a self-modifying AI agent powered by the Anthropic Claud
 - **`supervisor.ts`** — Process manager. Starts the agent server, handles crash recovery (3s delay), and orchestrates merge-restart flows.
 - **`src/server.ts`** — HTTP server with SSE streaming. Loads home/SOUL.md, home/IDENTITY.md, home/USER.md, home/MEMORY.md into the system prompt, creates the agent, exposes endpoints.
 - **`src/lib/agent.ts`** — Agent wrapper around the SDK `query()` function. Handles message streaming, compact boundary detection.
-- **`src/lib/self-modify-tools.ts`** — MCP tools for variants and Claude Code sessions.
-- **`src/lib/memory-tools.ts`** — MCP tools for memory management.
 
-## MCP Tools Available to the Agent
+## CLI Commands
 
-### Variant Tools (self-modify)
+All agent operations are performed via the `molt` CLI.
 
-| Tool | Purpose |
-|------|---------|
-| `create_variant` | Create a git worktree + server. Optionally set a custom soul. Returns variant info including port. |
-| `list_variants` | List all active variants with ports, status, branches. |
-| `send_to_variant` | Send a message to a variant server. Variant maintains conversation history. |
-| `merge_variant` | Merge variant back into main branch. Exits process; supervisor handles merge and restart. |
-| `update_worktree_soul` | Update SOUL.md in a variant's worktree. |
+| Command | Purpose |
+|---------|---------|
+| `molt start [--foreground] [--dev] [--port N]` | Start agent (daemonized by default) |
+| `molt stop` | Stop the agent |
+| `molt status [--port N]` | Check agent status (supervisor + server) |
+| `molt logs [--follow] [-n N]` | Tail agent logs |
+| `molt chat [--port N]` | Interactive TUI (default port 4100) |
+| `molt fork <name> [--soul "..."] [--port N] [--json]` | Create variant (worktree + server) |
+| `molt variants [--json]` | List variants with health status |
+| `molt send --port <N> "<msg>"` | Send message to a variant, stream SSE response |
+| `molt merge <name> [--summary "..."] [--justification "..."] [--memory "..."]` | Merge variant back, write orientation context, restart |
 
-### Claude Code Session Tools (self-modify)
+## Variant Workflow
 
-| Tool | Purpose |
-|------|---------|
-| `start_claude_code_session` | Start a coding assistant in a variant's worktree. Returns session_id. |
-| `send_to_claude_code_session` | Send a message to a Claude Code session and get the response. |
-| `end_claude_code_session` | End a Claude Code session. |
-
-### Memory Tools
-
-| Tool | Purpose |
-|------|---------|
-| `read_memory` | Read MEMORY.md (long-term memory). |
-| `write_memory` | Overwrite MEMORY.md for reorganizing/consolidating. |
-| `read_daily_log` | Read a daily log file (defaults to today). |
-| `write_daily_log` | Write/overwrite today's daily log. |
-| `consolidate_memory` | Read old daily logs for review and promotion to long-term memory. |
+1. `molt fork <name>` — create an isolated git worktree with its own server
+2. Make code changes in the variant's worktree (directly or via `claude` in that directory)
+3. Use `molt send --port <N> "<msg>"` to test the variant's behavior
+4. `molt merge <name> --summary "..." --memory "..."` — merge back, supervisor restarts with orientation context
+5. After restart, agent receives orientation with merge details from `.molt/merged.json`
 
 ## Memory System
 
-Two-tier memory with agent ownership:
+Two-tier memory managed via direct file access:
 
-- **`home/MEMORY.md`** — Long-term knowledge included in the system prompt. Manage via `write_memory`.
-- **`home/memory/YYYY-MM-DD.md`** — Daily log files for session context. Manage via `write_daily_log`.
+- **`home/MEMORY.md`** — Long-term knowledge included in the system prompt.
+- **`home/memory/YYYY-MM-DD.md`** — Daily log files for session context.
 - On conversation compaction, the agent is prompted to update the daily log.
-- Periodically consolidate old daily logs into MEMORY.md via `consolidate_memory`.
+- Periodically consolidate old daily logs into MEMORY.md.
 
 ## Key Files
 
@@ -69,30 +61,12 @@ Two-tier memory with agent ownership:
 | `.molt/supervisor.pid` | Supervisor PID file |
 | `.molt/variants.json` | Variant metadata (managed by CLI) |
 
-## Server Endpoints
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/health` | GET | Health check — returns `{status, name, version}` |
-| `/events` | GET | SSE stream of agent messages |
-| `/message` | POST | Send message to agent — `{content, source?}` |
-| `/command` | POST | Command API — `{type: "update-memory", context: "..."}` |
-
-## Variant Workflow
-
-1. `create_variant` — create isolated git worktree + server
-2. Use `start_claude_code_session` to make code changes, or `send_to_variant` to test behavior
-3. Use `update_worktree_soul` to iterate on personality (no teardown needed)
-4. `merge_variant` — merge back, supervisor restarts with merge context
-5. After restart, agent receives orientation with merge details and updates memory
-
 ## Development Mode
 
-Run `molt start --dev` to enable hot-reload. This uses `tsx watch` to automatically restart the server when source files change. SSE clients will disconnect on each reload — reconnect via `molt chat`.
+Run `molt start --dev` to enable hot-reload. This uses `tsx watch` to automatically restart the server when source files change.
 
 ## Development Notes
 
 - All child process execution in MCP tools must be async (never `execFileSync`) to avoid blocking the event loop and dropping SSE connections.
 - The supervisor is the only place `execFileSync` is used (for `molt merge`), since it doesn't serve SSE.
-- Agent tools call the `molt` CLI via `spawn()` for fork/merge/send operations.
 - Session persistence uses SDK session resume — the session ID is saved to `.molt/session.json`.

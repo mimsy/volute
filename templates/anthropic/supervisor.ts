@@ -51,21 +51,15 @@ function handleRestart(): boolean {
     if (signal.action === "merge" && signal.name) {
       console.error(`[supervisor] merging variant: ${signal.name}`);
       try {
-        execFileSync("molt", ["merge", signal.name], {
+        const mergeArgs = ["merge", signal.name];
+        if (signal.summary) mergeArgs.push("--summary", signal.summary);
+        if (signal.justification) mergeArgs.push("--justification", signal.justification);
+        if (signal.memory) mergeArgs.push("--memory", signal.memory);
+        execFileSync("molt", mergeArgs, {
           cwd: projectRoot,
           stdio: "inherit",
           env: { ...process.env, MOLT_SUPERVISOR: "1" },
         });
-        // Write merged.json with full context so the restarted server can orient the agent
-        writeFileSync(
-          resolve(moltDir, "merged.json"),
-          JSON.stringify({
-            name: signal.name,
-            summary: signal.summary,
-            justification: signal.justification,
-            memory: signal.memory,
-          }),
-        );
       } catch (e) {
         console.error(`[supervisor] molt merge failed:`, e);
         // still restart even if merge fails
