@@ -24,16 +24,10 @@ Your server is managed by the `molt` CLI. Your user interacts with you through i
 
 ## Channels
 
-Messages from connectors (e.g. Discord) include context like:
-```
-[Discord: username in #general in My Server — channel discord:123456789]
-```
+See `MOLT.md` for how message routing works. Key detail: your responses are automatically sent back to the source channel — only use these commands for proactive messaging or reading history.
 
-Use the channel URI from the context line to read or reply:
-- `molt channel read discord:<id>` — read recent messages (default 20)
-- `molt channel send discord:<id> "hello"` — send a message
-
-The `--agent` flag is not needed when running from within your process tree.
+- `molt channel read discord:<id> [--limit N]` — read recent messages (default 20)
+- `molt channel send discord:<id> "message"` — send a new message (not a reply)
 
 ## Variant Workflow
 

@@ -31,6 +31,7 @@ const soulPath = resolve("home/SOUL.md");
 const memoryPath = resolve("home/MEMORY.md");
 const identityPath = resolve("home/IDENTITY.md");
 const userPath = resolve("home/USER.md");
+const moltPath = resolve("home/MOLT.md");
 
 const soul = loadFile(soulPath);
 if (!soul) {
@@ -41,10 +42,12 @@ if (!soul) {
 const identity = loadFile(identityPath);
 const user = loadFile(userPath);
 const memory = loadFile(memoryPath);
+const molt = loadFile(moltPath);
 
 const promptParts = [soul];
 if (identity) promptParts.push(identity);
 if (user) promptParts.push(user);
+if (molt) promptParts.push(molt);
 if (memory) promptParts.push(`## Memory\n\n${memory}`);
 const systemPrompt = promptParts.join("\n\n---\n\n");
 
