@@ -23,12 +23,24 @@ export function runSupervisor(opts: SupervisorOptions): void {
   mkdirSync(moltDir, { recursive: true });
   writeFileSync(pidPath, String(process.pid));
 
+  let shuttingDown = false;
+  let activeChild: ReturnType<typeof spawn> | null = null;
+
   function cleanupPidFile() {
     try { unlinkSync(pidPath); } catch {}
   }
+  function shutdown() {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    if (activeChild) {
+      try { activeChild.kill("SIGTERM"); } catch {}
+    }
+    cleanupPidFile();
+    process.exit(0);
+  }
   process.on("exit", cleanupPidFile);
-  process.on("SIGINT", () => { cleanupPidFile(); process.exit(0); });
-  process.on("SIGTERM", () => { cleanupPidFile(); process.exit(0); });
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 
   function tsxBin(): string {
     return resolve(agentDir, "node_modules", ".bin", "tsx");
@@ -83,8 +95,12 @@ export function runSupervisor(opts: SupervisorOptions): void {
 
   function run() {
     const child = startAgent();
+    activeChild = child;
 
     child.on("exit", (code) => {
+      activeChild = null;
+      if (shuttingDown) return;
+
       console.error(`[supervisor] agent exited with code ${code}`);
 
       const wasRestart = handleRestart();

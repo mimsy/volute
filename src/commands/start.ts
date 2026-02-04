@@ -125,6 +125,13 @@ export async function run(args: string[]) {
     await new Promise((r) => setTimeout(r, 500));
   }
 
+  // Kill the supervisor since the server never became healthy
+  if (child.pid) {
+    try { process.kill(-child.pid, "SIGTERM"); } catch {
+      try { process.kill(child.pid, "SIGTERM"); } catch {}
+    }
+  }
+
   console.error("Supervisor started but server did not become healthy within 30s.");
   console.error(`Check logs: molt logs ${name}`);
   process.exit(1);

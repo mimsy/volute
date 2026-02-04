@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, unlinkSync } from "fs";
 import { resolve } from "path";
 import { resolveAgent } from "../lib/registry.js";
 
@@ -22,8 +22,9 @@ export async function run(args: string[]) {
   try {
     process.kill(pid, 0); // Check if alive
   } catch {
-    console.error(`${name} not running (stale PID file for pid ${pid}).`);
-    process.exit(1);
+    try { unlinkSync(pidPath); } catch {}
+    console.log(`${name} was not running (cleaned up stale PID file).`);
+    return;
   }
 
   // Kill the process group (supervisor + child server) by sending signal to negative PID
