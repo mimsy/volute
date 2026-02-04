@@ -1,6 +1,7 @@
 import { spawn, execFile } from "child_process";
 import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from "fs";
 import { resolve } from "path";
+import { loadMergedEnv } from "./env.js";
 
 export type SupervisorOptions = {
   agentName: string;
@@ -49,17 +50,22 @@ export function runSupervisor(opts: SupervisorOptions): void {
   const portArgs = ["--port", String(port)];
 
   function startAgent(): ReturnType<typeof spawn> {
+    const agentEnv = loadMergedEnv(agentDir);
+    const env = { ...process.env, ...agentEnv };
+
     if (dev) {
       console.error(`[supervisor] starting agent server in dev mode (watching for changes)...`);
       return spawn(tsxBin(), ["watch", "src/server.ts", ...portArgs], {
         cwd: agentDir,
         stdio: "inherit",
+        env,
       });
     }
     console.error(`[supervisor] starting agent server...`);
     return spawn(tsxBin(), ["src/server.ts", ...portArgs], {
       cwd: agentDir,
       stdio: "inherit",
+      env,
     });
   }
 

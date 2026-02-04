@@ -41,6 +41,9 @@ switch (command) {
   case "delete":
     await import("./commands/delete.js").then((m) => m.run(args));
     break;
+  case "env":
+    await import("./commands/env.js").then((m) => m.run(args));
+    break;
   default:
     console.log(`molt — create and manage AI agents
 
@@ -57,6 +60,7 @@ Commands:
   molt variants <name>             List variants for an agent
   molt merge <name> <variant>      Merge a variant back
   molt import <path>               Import an OpenClaw workspace
+  molt env <set|get|list|remove>   Manage environment variables
   molt delete <name> [--force]     Delete an agent (--force removes files)`);
     if (command) {
       console.error(`\nUnknown command: ${command}`);

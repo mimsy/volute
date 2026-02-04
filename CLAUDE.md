@@ -49,6 +49,7 @@ The SDK runs with `cwd: home/` so it picks up `CLAUDE.md` and `.claude/skills/` 
 | `molt fork <name> <variant> [--soul "..."] [--port N] [--json]` | Create variant (worktree + server) |
 | `molt variants <name> [--json]` | List variants with health status |
 | `molt merge <name> <variant> [--summary "..." --memory "..."]` | Merge variant back and restart |
+| `molt env <set\|get\|list\|remove> [--agent <name>]` | Manage environment variables |
 | `molt import <path> [--name <name>] [--session <path>]` | Import an OpenClaw workspace |
 
 ## Tech stack
