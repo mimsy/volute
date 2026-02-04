@@ -26,9 +26,18 @@ interface SdkEvent {
   gitBranch: string;
   isSidechain: boolean;
   userType: string;
+  requestId?: string;
+  sourceToolAssistantUUID?: string;
+  toolUseResult?: string;
   message: {
     role: string;
     content: unknown[];
+    type?: string;
+    id?: string;
+    model?: string;
+    stop_reason?: string | null;
+    stop_sequence?: string | null;
+    usage?: Record<string, number>;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -97,6 +106,9 @@ export function convertSession(opts: {
         ? (idMap.get(event.parentId) ?? null)
         : null;
 
+      // Determine stop_reason from OpenClaw's stopReason
+      const stopReason = mapStopReason(msg.stopReason as string | undefined);
+
       const sdkEvent: SdkEvent = {
         uuid,
         parentUuid,
@@ -108,10 +120,16 @@ export function convertSession(opts: {
         isSidechain: false,
         userType: "external",
         type: "assistant",
+        requestId: `req_imported_${randomUUID()}`,
         message: {
-          ...msg,
           role: "assistant",
           content,
+          type: "message",
+          id: `msg_imported_${randomUUID()}`,
+          model: mapModel(msg.model as string | undefined),
+          stop_reason: stopReason,
+          stop_sequence: null,
+          usage: mapUsage(msg.usage as Record<string, number> | undefined),
         },
       };
       sdkEvents.push(JSON.stringify(sdkEvent));
@@ -159,6 +177,8 @@ export function convertSession(opts: {
         isSidechain: false,
         userType: "external",
         type: "user",
+        sourceToolAssistantUUID: lastSdkUuid ?? undefined,
+        toolUseResult: "imported",
         message: {
           role: "user",
           content: toolResults,
@@ -181,6 +201,43 @@ export function convertSession(opts: {
   return sessionId;
 }
 
+const MODEL_MAP: Record<string, string> = {
+  "claude-opus-4-5": "claude-opus-4-5-20251101",
+  "claude-sonnet-4": "claude-sonnet-4-20250514",
+};
+
+function mapModel(model: string | undefined): string {
+  if (!model) return "claude-opus-4-5-20251101";
+  return MODEL_MAP[model] ?? model;
+}
+
+function mapStopReason(
+  stopReason: string | undefined,
+): string | null {
+  if (!stopReason) return "end_turn";
+  const map: Record<string, string> = {
+    toolUse: "tool_use",
+    endTurn: "end_turn",
+    stop: "end_turn",
+    maxTokens: "max_tokens",
+  };
+  return map[stopReason] ?? stopReason;
+}
+
+function mapUsage(
+  usage: Record<string, number> | undefined,
+): Record<string, number> {
+  if (!usage) return { input_tokens: 0, output_tokens: 0 };
+  return {
+    input_tokens: usage.input ?? usage.input_tokens ?? 0,
+    output_tokens: usage.output ?? usage.output_tokens ?? 0,
+    cache_read_input_tokens:
+      usage.cacheRead ?? usage.cache_read_input_tokens ?? 0,
+    cache_creation_input_tokens:
+      usage.cacheWrite ?? usage.cache_creation_input_tokens ?? 0,
+  };
+}
+
 function convertAssistantContent(
   content: Record<string, unknown>[],
 ): Record<string, unknown>[] {
@@ -197,6 +254,7 @@ function convertAssistantContent(
         id: block.id,
         name: block.name,
         input: block.arguments ?? block.input ?? {},
+        caller: { type: "direct" },
       });
     } else {
       // text and other blocks pass through

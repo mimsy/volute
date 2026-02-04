@@ -100,6 +100,12 @@ describe("convertSession", () => {
     assert.equal(event.message.content.length, 1);
     assert.equal(event.message.content[0].type, "text");
     assert.equal(event.message.content[0].text, "Hello back!");
+
+    // SDK-required message fields
+    assert.equal(event.message.type, "message");
+    assert.ok(event.message.id.startsWith("msg_imported_"));
+    assert.equal(event.message.stop_sequence, null);
+    assert.ok(event.requestId.startsWith("req_imported_"));
   });
 
   it("converts toolCall to tool_use", () => {
@@ -141,6 +147,9 @@ describe("convertSession", () => {
     assert.equal(event.message.content[0].name, "read");
     assert.deepStrictEqual(event.message.content[0].input, {
       path: "/tmp/file.txt",
+    });
+    assert.deepStrictEqual(event.message.content[0].caller, {
+      type: "direct",
     });
   });
 
@@ -342,6 +351,84 @@ describe("convertSession", () => {
     assert.equal(toolResultEvent.message.content[0].tool_use_id, "toolu_1");
     assert.equal(toolResultEvent.message.content[1].tool_use_id, "toolu_2");
     assert.equal(toolResultEvent.message.content[2].tool_use_id, "toolu_3");
+  });
+
+  it("maps OpenClaw model, stopReason, and usage to SDK format", () => {
+    const sessionPath = resolve(scratchDir, "session.jsonl");
+    writeJsonl(sessionPath, [
+      {
+        type: "message",
+        id: "msg1",
+        parentId: null,
+        timestamp: "2026-01-31T01:00:00.000Z",
+        message: {
+          role: "assistant",
+          model: "claude-opus-4-5",
+          stopReason: "toolUse",
+          usage: { input: 100, output: 50, cacheRead: 10, cacheWrite: 5 },
+          content: [
+            { type: "toolCall", id: "toolu_1", name: "read", arguments: { path: "/a" } },
+          ],
+        },
+      },
+    ]);
+
+    const sessionId = convertSession({ sessionPath, projectDir: scratchDir });
+    const projectId = scratchDir.replace(/\//g, "-");
+    const sdkPath = resolve(homedir(), ".claude", "projects", projectId, `${sessionId}.jsonl`);
+    const lines = readFileSync(sdkPath, "utf-8").trim().split("\n");
+    const event = JSON.parse(lines[0]);
+
+    assert.equal(event.message.model, "claude-opus-4-5-20251101");
+    assert.equal(event.message.stop_reason, "tool_use");
+    assert.equal(event.message.stop_sequence, null);
+    assert.deepStrictEqual(event.message.usage, {
+      input_tokens: 100,
+      output_tokens: 50,
+      cache_read_input_tokens: 10,
+      cache_creation_input_tokens: 5,
+    });
+  });
+
+  it("adds sourceToolAssistantUUID to tool result messages", () => {
+    const sessionPath = resolve(scratchDir, "session.jsonl");
+    writeJsonl(sessionPath, [
+      {
+        type: "message",
+        id: "msg1",
+        parentId: null,
+        timestamp: "2026-01-31T01:00:00.000Z",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "toolCall", id: "toolu_1", name: "read", arguments: { path: "/a" } },
+          ],
+        },
+      },
+      {
+        type: "message",
+        id: "tr1",
+        parentId: "msg1",
+        timestamp: "2026-01-31T01:00:01.000Z",
+        message: {
+          role: "toolResult",
+          toolCallId: "toolu_1",
+          toolName: "read",
+          content: [{ type: "text", text: "content" }],
+          isError: false,
+        },
+      },
+    ]);
+
+    const sessionId = convertSession({ sessionPath, projectDir: scratchDir });
+    const projectId = scratchDir.replace(/\//g, "-");
+    const sdkPath = resolve(homedir(), ".claude", "projects", projectId, `${sessionId}.jsonl`);
+    const lines = readFileSync(sdkPath, "utf-8").trim().split("\n");
+    const assistantEvent = JSON.parse(lines[0]);
+    const toolResultEvent = JSON.parse(lines[1]);
+
+    assert.equal(toolResultEvent.sourceToolAssistantUUID, assistantEvent.uuid);
+    assert.equal(toolResultEvent.toolUseResult, "imported");
   });
 
   it("skips assistant messages that are only thinking", () => {
