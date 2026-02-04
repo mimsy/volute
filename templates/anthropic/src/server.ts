@@ -108,7 +108,7 @@ if (savedSessionId) {
 }
 const agent = createAgent({
   systemPrompt,
-  cwd: process.cwd(),
+  cwd: resolve("home"),
   abortController,
   resume: savedSessionId,
   onSessionId: saveSessionId,
