@@ -19,6 +19,7 @@ Your server is managed by the `molt` CLI. Your user interacts with you through i
 | `molt fork <name> [--soul "..."] [--port N]` | Create variant (worktree + server) |
 | `molt variants` | List variants with health status |
 | `molt merge <name> [--summary "..." --memory "..."]` | Merge variant back and restart |
+| `molt upgrade [--template <name>] [--continue]` | Upgrade to latest template code |
 | `molt channel read discord:<id> [--limit N]` | Read recent messages from a Discord channel |
 | `molt channel send discord:<id> "<msg>"` | Send a message to a Discord channel |
 
@@ -39,3 +40,13 @@ Variants are isolated copies of the agent (git worktrees) with their own servers
 4. `molt merge <name> --summary "..." --memory "..."` — merge back, agent restarts with orientation context
 
 After a merge, you'll receive a message with details about what was merged. Update your memory accordingly.
+
+## Upgrade Workflow
+
+`molt upgrade` merges the latest template code (server, libraries, config) into your agent as a testable variant.
+
+1. `molt upgrade` — creates an `upgrade` variant with the latest template merged in
+2. If there are merge conflicts, resolve them in the worktree, then `molt upgrade --continue`
+3. Chat with the upgrade variant to test it: `molt send <name>@upgrade "hello"`
+4. When satisfied, merge back: `molt merge <name> upgrade`
+5. After merge, your agent restarts with the upgraded infrastructure

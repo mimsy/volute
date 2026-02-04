@@ -1,8 +1,8 @@
-import { cpSync, readFileSync, writeFileSync, renameSync, existsSync } from "fs";
-import { resolve, dirname } from "path";
+import { existsSync } from "fs";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { ensureMoltHome, addAgent, agentDir, nextPort } from "../lib/registry.js";
+import { findTemplatesDir, copyTemplateToDir } from "../lib/template.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -25,37 +25,8 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  // Find the templates directory by walking up from the current file
-  // Works in both dev (tsx src/commands/create.ts — 3 levels up) and
-  // built (dist/create-HASH.js — 1 level up) modes
-  let dir = dirname(new URL(import.meta.url).pathname);
-  let templateDir = "";
-  for (let i = 0; i < 5; i++) {
-    const candidate = resolve(dir, "templates", template);
-    if (existsSync(candidate)) {
-      templateDir = candidate;
-      break;
-    }
-    dir = dirname(dir);
-  }
-
-  if (!templateDir) {
-    console.error("Template not found. Searched up from:", dirname(new URL(import.meta.url).pathname));
-    process.exit(1);
-  }
-
-  // Copy template
-  cpSync(templateDir, dest, { recursive: true });
-
-  // Rename package.json.tmpl → package.json
-  renameSync(resolve(dest, "package.json.tmpl"), resolve(dest, "package.json"));
-
-  // Replace {{name}} placeholders
-  for (const file of ["package.json", "home/SOUL.md"]) {
-    const path = resolve(dest, file);
-    const content = readFileSync(path, "utf-8");
-    writeFileSync(path, content.replaceAll("{{name}}", name));
-  }
+  const templateDir = findTemplatesDir(template);
+  copyTemplateToDir(templateDir, dest, name);
 
   // Assign port and register
   const port = nextPort();

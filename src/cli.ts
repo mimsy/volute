@@ -47,6 +47,9 @@ switch (command) {
   case "channel":
     await import("./commands/channel.js").then((m) => m.run(args));
     break;
+  case "upgrade":
+    await import("./commands/upgrade.js").then((m) => m.run(args));
+    break;
   default:
     console.log(`molt — create and manage AI agents
 
@@ -66,6 +69,7 @@ Commands:
   molt disconnect discord <name>   Stop a Discord bot connector
   molt channel read <uri>          Read recent messages from a channel
   molt channel send <uri> "<msg>"  Send a message to a channel
+  molt upgrade <name>              Upgrade agent to latest template
   molt delete <name> [--force]     Delete an agent (--force removes files)`);
     if (command) {
       console.error(`\nUnknown command: ${command}`);
