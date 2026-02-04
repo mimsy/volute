@@ -30,8 +30,10 @@ function loadFile(path: string): string {
 }
 
 const { port } = parseArgs();
-const soulPath = resolve("SOUL.md");
-const memoryPath = resolve("MEMORY.md");
+const soulPath = resolve("home/SOUL.md");
+const memoryPath = resolve("home/MEMORY.md");
+const identityPath = resolve("home/IDENTITY.md");
+const userPath = resolve("home/USER.md");
 
 const soul = loadFile(soulPath);
 if (!soul) {
@@ -39,8 +41,15 @@ if (!soul) {
   process.exit(1);
 }
 
+const identity = loadFile(identityPath);
+const user = loadFile(userPath);
 const memory = loadFile(memoryPath);
-const systemPrompt = memory ? `${soul}\n\n## Memory\n\n${memory}` : soul;
+
+const promptParts = [soul];
+if (identity) promptParts.push(identity);
+if (user) promptParts.push(user);
+if (memory) promptParts.push(`## Memory\n\n${memory}`);
+const systemPrompt = promptParts.join("\n\n---\n\n");
 
 const sessionPath = resolve(".molt/session.json");
 

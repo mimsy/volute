@@ -158,7 +158,7 @@ export const updateWorktreeSoul = tool(
       if (!variant) {
         return { content: [{ type: "text" as const, text: `Unknown variant: ${name}` }], isError: true };
       }
-      writeFileSync(resolve(variant.path, "SOUL.md"), soul);
+      writeFileSync(resolve(variant.path, "home/SOUL.md"), soul);
       return { content: [{ type: "text" as const, text: `SOUL.md updated for variant ${name}.` }] };
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);

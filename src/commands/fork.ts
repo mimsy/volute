@@ -69,7 +69,7 @@ export async function run(args: string[]) {
 
   // Write SOUL.md if provided
   if (soul) {
-    writeFileSync(resolve(worktreeDir, "SOUL.md"), soul);
+    writeFileSync(resolve(worktreeDir, "home/SOUL.md"), soul);
   }
 
   let actualPort: number | null = null;

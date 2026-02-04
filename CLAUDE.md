@@ -6,7 +6,7 @@ CLI framework for creating and managing self-modifying AI agents powered by the 
 
 - `src/` - CLI source (entry: `src/cli.ts`, commands in `src/commands/`)
 - `templates/anthropic/` - Template copied by `molt create` for new agent projects
-- Each agent project has: supervisor, HTTP/SSE server, SOUL.md, MEMORY.md
+- Each agent project has: supervisor, HTTP/SSE server, home/ (SOUL.md, MEMORY.md, IDENTITY.md, USER.md)
 
 ## Commands
 

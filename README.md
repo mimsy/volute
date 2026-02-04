@@ -19,7 +19,7 @@ npm link
 molt create my-agent
 cd my-agent
 
-# Edit SOUL.md to define its personality, then start it
+# Edit home/SOUL.md to define its personality, then start it
 molt start
 
 # Chat with it
@@ -63,5 +63,5 @@ Agents can also do this themselves — they have access to `create_variant`, `se
 
 - `molt create` copies a template into a new directory with a supervisor, HTTP server, and agent configuration.
 - The agent server exposes `/health`, `/events` (SSE), and `/message` (POST) endpoints.
-- `SOUL.md` defines the agent's personality and instructions. `MEMORY.md` persists context across restarts.
+- `home/SOUL.md` defines the agent's personality and instructions. `home/MEMORY.md` persists context across restarts.
 - Variants are git worktrees with their own server processes. The supervisor handles crash recovery and merge-restart coordination.

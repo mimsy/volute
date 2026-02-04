@@ -48,7 +48,7 @@ export async function run(args: string[]) {
   renameSync(resolve(dest, "package.json.tmpl"), resolve(dest, "package.json"));
 
   // Replace {{name}} placeholders
-  for (const file of ["package.json", "SOUL.md"]) {
+  for (const file of ["package.json", "home/SOUL.md"]) {
     const path = resolve(dest, file);
     const content = readFileSync(path, "utf-8");
     writeFileSync(path, content.replaceAll("{{name}}", name));

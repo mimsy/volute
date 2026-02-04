@@ -10,8 +10,8 @@ import { memoryTools } from "./lib/memory-tools.js";
 import { createMessageChannel } from "./lib/message-channel.js";
 
 const projectRoot = process.cwd();
-const soulPath = resolve(projectRoot, "SOUL.md");
-const memoryPath = resolve(projectRoot, "MEMORY.md");
+const soulPath = resolve(projectRoot, "home/SOUL.md");
+const memoryPath = resolve(projectRoot, "home/MEMORY.md");
 
 const soul = readFileSync(soulPath, "utf-8");
 

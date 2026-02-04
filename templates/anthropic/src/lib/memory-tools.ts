@@ -5,8 +5,8 @@ import { z } from "zod";
 import { log } from "./logger.js";
 
 const projectRoot = process.cwd();
-const memoryPath = resolve(projectRoot, "MEMORY.md");
-const memoryDir = resolve(projectRoot, "memory");
+const memoryPath = resolve(projectRoot, "home/MEMORY.md");
+const memoryDir = resolve(projectRoot, "home/memory");
 
 function todayString(): string {
   return new Date().toISOString().slice(0, 10);

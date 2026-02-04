@@ -86,26 +86,32 @@ export async function run(args: string[]) {
     readFileSync(pkgPath, "utf-8").replaceAll("{{name}}", name),
   );
 
-  // Compose SOUL.md: Identity + Soul + User + Memory instructions
+  // Write SOUL.md (soul content + memory instructions) to home/
   const memorySection = `## Memory
 
-Your long-term memory is in MEMORY.md (included below in your system prompt). Use your memory tools to manage it:
+Your long-term memory is in home/MEMORY.md (included below in your system prompt). Use your memory tools to manage it:
 
-- **MEMORY.md** — Long-term knowledge, key decisions, learned preferences. Use \`write_memory\` to update.
-- **Daily logs** (\`memory/YYYY-MM-DD.md\`) — Session-level context for the current day. Use \`write_daily_log\` to update.
+- **home/MEMORY.md** — Long-term knowledge, key decisions, learned preferences. Use \`write_memory\` to update.
+- **Daily logs** (\`home/memory/YYYY-MM-DD.md\`) — Session-level context for the current day. Use \`write_daily_log\` to update.
 - When conversation is compacted, update today's daily log with a summary of what happened.
 - Periodically use \`consolidate_memory\` to promote important daily log entries to long-term memory.`;
 
-  const sections = [identity, soul];
-  if (user) sections.push(user);
-  sections.push(memorySection);
-  writeFileSync(resolve(dest, "SOUL.md"), sections.join("\n\n---\n\n") + "\n");
+  const sections = [soul, memorySection];
+  writeFileSync(resolve(dest, "home/SOUL.md"), sections.join("\n\n---\n\n") + "\n");
+
+  // Copy IDENTITY.md and USER.md as separate files in home/
+  cpSync(identityPath, resolve(dest, "home/IDENTITY.md"));
+  console.log("Copied IDENTITY.md");
+  if (user) {
+    cpSync(userPath, resolve(dest, "home/USER.md"));
+    console.log("Copied USER.md");
+  }
 
   // Copy MEMORY.md if present in workspace
   const wsMemoryPath = resolve(wsDir, "MEMORY.md");
   const hasMemory = existsSync(wsMemoryPath);
   if (hasMemory) {
-    cpSync(wsMemoryPath, resolve(dest, "MEMORY.md"));
+    cpSync(wsMemoryPath, resolve(dest, "home/MEMORY.md"));
     console.log("Copied MEMORY.md");
   }
 
@@ -113,7 +119,7 @@ Your long-term memory is in MEMORY.md (included below in your system prompt). Us
   const wsMemoryDir = resolve(wsDir, "memory");
   let dailyLogCount = 0;
   if (existsSync(wsMemoryDir)) {
-    const destMemoryDir = resolve(dest, "memory");
+    const destMemoryDir = resolve(dest, "home/memory");
     const files = readdirSync(wsMemoryDir).filter((f) => f.endsWith(".md"));
     for (const file of files) {
       cpSync(resolve(wsMemoryDir, file), resolve(destMemoryDir, file));

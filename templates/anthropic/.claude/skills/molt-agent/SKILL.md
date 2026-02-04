@@ -10,7 +10,7 @@ A molt agent project is a self-modifying AI agent powered by the Anthropic Claud
 ## Architecture
 
 - **`supervisor.ts`** — Process manager. Starts the agent server, handles crash recovery (3s delay), and orchestrates merge-restart flows.
-- **`src/server.ts`** — HTTP server with SSE streaming. Loads SOUL.md + MEMORY.md into the system prompt, creates the agent, exposes endpoints.
+- **`src/server.ts`** — HTTP server with SSE streaming. Loads home/SOUL.md, home/IDENTITY.md, home/USER.md, home/MEMORY.md into the system prompt, creates the agent, exposes endpoints.
 - **`src/lib/agent.ts`** — Agent wrapper around the SDK `query()` function. Handles message streaming, compact boundary detection.
 - **`src/lib/self-modify-tools.ts`** — MCP tools for variants and Claude Code sessions.
 - **`src/lib/memory-tools.ts`** — MCP tools for memory management.
@@ -49,8 +49,8 @@ A molt agent project is a self-modifying AI agent powered by the Anthropic Claud
 
 Two-tier memory with agent ownership:
 
-- **`MEMORY.md`** — Long-term knowledge included in the system prompt. Manage via `write_memory`.
-- **`memory/YYYY-MM-DD.md`** — Daily log files for session context. Manage via `write_daily_log`.
+- **`home/MEMORY.md`** — Long-term knowledge included in the system prompt. Manage via `write_memory`.
+- **`home/memory/YYYY-MM-DD.md`** — Daily log files for session context. Manage via `write_daily_log`.
 - On conversation compaction, the agent is prompted to update the daily log.
 - Periodically consolidate old daily logs into MEMORY.md via `consolidate_memory`.
 
@@ -58,9 +58,11 @@ Two-tier memory with agent ownership:
 
 | File | Role |
 |------|------|
-| `SOUL.md` | Agent personality/instructions (system prompt) |
-| `MEMORY.md` | Long-term memory (appended to system prompt) |
-| `memory/` | Daily log directory |
+| `home/SOUL.md` | Agent personality/instructions (system prompt) |
+| `home/IDENTITY.md` | Agent identity (optional, included in system prompt) |
+| `home/USER.md` | User context (optional, included in system prompt) |
+| `home/MEMORY.md` | Long-term memory (appended to system prompt) |
+| `home/memory/` | Daily log directory |
 | `.molt/session.json` | SDK session ID for resume across restarts |
 | `.molt/restart.json` | Signal from agent to supervisor (e.g. merge request) |
 | `.molt/merged.json` | Post-merge context for agent orientation |
