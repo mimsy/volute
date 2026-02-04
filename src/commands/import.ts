@@ -103,27 +103,36 @@ Your long-term memory is in MEMORY.md (included below in your system prompt). Us
 
   // Copy MEMORY.md if present in workspace
   const wsMemoryPath = resolve(wsDir, "MEMORY.md");
-  if (existsSync(wsMemoryPath)) {
+  const hasMemory = existsSync(wsMemoryPath);
+  if (hasMemory) {
     cpSync(wsMemoryPath, resolve(dest, "MEMORY.md"));
     console.log("Copied MEMORY.md");
   }
 
   // Copy memory/*.md daily logs
   const wsMemoryDir = resolve(wsDir, "memory");
+  let dailyLogCount = 0;
   if (existsSync(wsMemoryDir)) {
     const destMemoryDir = resolve(dest, "memory");
     const files = readdirSync(wsMemoryDir).filter((f) => f.endsWith(".md"));
     for (const file of files) {
       cpSync(resolve(wsMemoryDir, file), resolve(destMemoryDir, file));
     }
-    if (files.length > 0) {
-      console.log(`Copied ${files.length} daily log(s)`);
+    dailyLogCount = files.length;
+    if (dailyLogCount > 0) {
+      console.log(`Copied ${dailyLogCount} daily log(s)`);
     }
   }
 
   // Install dependencies
   console.log("Installing dependencies...");
   await execInherit("npm", ["install"], { cwd: dest });
+
+  // Consolidate memory if no MEMORY.md but daily logs exist
+  if (!hasMemory && dailyLogCount > 0) {
+    console.log("No MEMORY.md — running memory consolidation...");
+    await execInherit("npx", ["tsx", "src/consolidate.ts"], { cwd: dest });
+  }
 
   // git init + initial commit
   await exec("git", ["init"], { cwd: dest });
