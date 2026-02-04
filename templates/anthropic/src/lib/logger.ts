@@ -1,5 +1,5 @@
 export function log(category: string, ...args: unknown[]) {
-  const ts = new Date().toISOString();
+  const ts = new Date().toLocaleString();
   try {
     console.error(`[${ts}] [${category}]`, ...args);
   } catch {

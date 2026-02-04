@@ -8,8 +8,8 @@ const projectRoot = process.cwd();
 const memoryPath = resolve(projectRoot, "home/MEMORY.md");
 const memoryDir = resolve(projectRoot, "home/memory");
 
-function todayString(): string {
-  return new Date().toISOString().slice(0, 10);
+function localDateString(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function dailyLogPath(date: string): string {
@@ -89,7 +89,7 @@ export const readDailyLog = tool(
       .describe("Date in YYYY-MM-DD format (defaults to today)"),
   },
   async ({ date }) => {
-    const d = date || todayString();
+    const d = date || localDateString();
     const content = loadFile(dailyLogPath(d));
     return {
       content: [{ type: "text" as const, text: content || `(no log for ${d})` }],
@@ -104,7 +104,7 @@ export const writeDailyLog = tool(
     content: z.string().describe("Content for today's daily log"),
   },
   async ({ content }) => {
-    const d = todayString();
+    const d = localDateString();
     log("memory", `write_daily_log: updating ${d}`);
     ensureMemoryDir();
     writeFileSync(dailyLogPath(d), content);
@@ -125,7 +125,7 @@ export const consolidateMemory = tool(
     const threshold = days ?? 3;
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - threshold);
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    const cutoffStr = localDateString(cutoff);
 
     const logs = listDailyLogs();
     const oldLogs = logs.filter((f) => f.replace(".md", "") <= cutoffStr);
