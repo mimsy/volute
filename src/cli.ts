@@ -38,6 +38,9 @@ switch (command) {
   case "import":
     await import("./commands/import.js").then((m) => m.run(args));
     break;
+  case "delete":
+    await import("./commands/delete.js").then((m) => m.run(args));
+    break;
   default:
     console.log(`molt — create and manage AI agents
 
@@ -53,7 +56,8 @@ Commands:
   molt fork <name> <variant>       Create a variant (worktree + server)
   molt variants <name>             List variants for an agent
   molt merge <name> <variant>      Merge a variant back
-  molt import <path>               Import an OpenClaw workspace`);
+  molt import <path>               Import an OpenClaw workspace
+  molt delete <name> [--force]     Delete an agent (--force removes files)`);
     if (command) {
       console.error(`\nUnknown command: ${command}`);
       process.exit(1);
