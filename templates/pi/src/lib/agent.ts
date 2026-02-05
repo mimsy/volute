@@ -8,7 +8,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { getModel, getModels } from "@mariozechner/pi-ai";
 import type { MoltEvent, MoltContentPart } from "./types.js";
-import { log } from "./logger.js";
+import { log, logThinking, logToolUse, logToolResult, logText, logMessage } from "./logger.js";
 
 type Listener = (event: MoltEvent) => void;
 
@@ -88,13 +88,15 @@ export async function createAgent(options: {
     if (event.type === "message_update") {
       const ae = event.assistantMessageEvent;
       if (ae.type === "text_delta") {
+        logText(ae.delta);
         broadcast({ type: "text", content: ae.delta });
       } else if (ae.type === "thinking_delta") {
-        log("agent", "thinking:", ae.delta.slice(0, 200));
+        logThinking(ae.delta);
       }
     }
 
     if (event.type === "tool_execution_start") {
+      logToolUse(event.toolName, event.input);
       broadcast({
         type: "tool_use",
         name: event.toolName,
@@ -103,9 +105,11 @@ export async function createAgent(options: {
     }
 
     if (event.type === "tool_execution_end") {
+      const output = typeof event.result === "string" ? event.result : JSON.stringify(event.result);
+      logToolResult(event.toolName, output, event.isError);
       broadcast({
         type: "tool_result",
-        output: typeof event.result === "string" ? event.result : JSON.stringify(event.result),
+        output,
         is_error: event.isError,
       });
     }
@@ -121,16 +125,12 @@ export async function createAgent(options: {
     }
   });
 
-  function sendMessage(content: string | MoltContentPart[], _source?: string) {
-    const preview = typeof content === "string"
-      ? content.slice(0, 120)
-      : content.map((p) => p.type).join(",");
-    log("agent", "sendMessage:", preview, _source ? `source=${_source}` : "");
-
+  function sendMessage(content: string | MoltContentPart[], source?: string) {
     // Convert to text for pi agent (images not yet supported by pi)
     const text = typeof content === "string"
       ? content
       : content.filter((p) => p.type === "text").map((p) => (p as { text: string }).text).join("\n");
+    logMessage("in", text, source);
 
     if (session.isStreaming) {
       session.prompt(text, { streamingBehavior: "followUp" });

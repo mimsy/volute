@@ -1,6 +1,6 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { MoltEvent, MoltContentPart } from "./types.js";
-import { log } from "./logger.js";
+import { log, logThinking, logToolUse, logToolResult, logText, logMessage } from "./logger.js";
 import { createMessageChannel } from "./message-channel.js";
 
 type Listener = (event: MoltEvent) => void;
@@ -50,19 +50,27 @@ export function createAgent(options: {
         if (msg.type === "assistant") {
           for (const b of msg.message.content) {
             if (b.type === "thinking" && "thinking" in b && b.thinking) {
-              log("agent", "thinking:", (b.thinking as string).slice(0, 200));
+              logThinking(b.thinking as string);
             } else if (b.type === "text") {
-              broadcast({ type: "text", content: (b as { text: string }).text });
+              const text = (b as { text: string }).text;
+              logText(text);
+              broadcast({ type: "text", content: text });
             } else if (b.type === "tool_use") {
               const tb = b as { name: string; input: unknown };
+              logToolUse(tb.name, tb.input);
               broadcast({ type: "tool_use", name: tb.name, input: tb.input });
             } else if (b.type === "image" && "source" in b) {
               const src = b.source as { type: string; media_type: string; data: string };
               if (src.type === "base64") {
+                log("agent", "image:", src.media_type, `${src.data.length} bytes`);
                 broadcast({ type: "image", media_type: src.media_type, data: src.data });
               }
             }
           }
+        }
+        if (msg.type === "tool_result") {
+          const tr = msg as { name?: string; content?: string; is_error?: boolean };
+          logToolResult(tr.name ?? "unknown", tr.content ?? "", tr.is_error);
         }
         if (msg.type === "result") {
           log("agent", "turn done");
@@ -86,10 +94,10 @@ export function createAgent(options: {
   })();
 
   function sendMessage(content: string | MoltContentPart[], source?: string) {
-    const preview = typeof content === "string"
-      ? content.slice(0, 120)
-      : content.map((p) => p.type).join(",");
-    log("agent", "sendMessage:", preview, source ? `source=${source}` : "");
+    const text = typeof content === "string"
+      ? content
+      : content.map((p) => p.type === "text" ? p.text : `[${p.type}]`).join(" ");
+    logMessage("in", text, source);
 
     const sdkContent = typeof content === "string"
       ? [{ type: "text" as const, text: content }]

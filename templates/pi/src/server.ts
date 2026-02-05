@@ -106,10 +106,6 @@ const server = createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/message") {
     try {
       const body = JSON.parse(await readBody(req)) as MoltRequest;
-      const preview = body.content.map((p) => p.type === "text" ? p.text : `[${p.type}]`).join(" ").slice(0, 120);
-      log("server", "POST /message:", preview);
-      if (body.channel) log("server", "channel:", body.channel);
-      if (body.session) log("server", "session:", body.session);
 
       res.writeHead(200, {
         "Content-Type": "application/x-ndjson",
@@ -133,7 +129,7 @@ const server = createServer(async (req, res) => {
         removeListener();
       });
 
-      agent.sendMessage(body.content);
+      agent.sendMessage(body.content, body.channel);
     } catch {
       res.writeHead(400);
       res.end("Bad Request");
