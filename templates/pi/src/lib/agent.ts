@@ -9,6 +9,7 @@ import {
 import { getModel, getModels } from "@mariozechner/pi-ai";
 import type { MoltEvent, MoltContentPart } from "./types.js";
 import { log, logThinking, logToolUse, logToolResult, logText, logMessage } from "./logger.js";
+import { commitFileChange } from "./auto-commit.js";
 
 type Listener = (event: MoltEvent) => void;
 
@@ -112,6 +113,14 @@ export async function createAgent(options: {
         output,
         is_error: event.isError,
       });
+
+      // Auto-commit file changes in home/
+      if ((event.toolName === "Edit" || event.toolName === "Write") && !event.isError) {
+        const filePath = (event.input as { file_path?: string })?.file_path;
+        if (filePath) {
+          commitFileChange(filePath, options.cwd);
+        }
+      }
     }
 
     if (event.type === "agent_end") {

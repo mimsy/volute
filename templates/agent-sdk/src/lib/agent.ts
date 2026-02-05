@@ -1,7 +1,8 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query, type HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import type { MoltEvent, MoltContentPart } from "./types.js";
 import { log, logThinking, logToolUse, logToolResult, logText, logMessage } from "./logger.js";
 import { createMessageChannel } from "./message-channel.js";
+import { commitFileChange } from "./auto-commit.js";
 
 type Listener = (event: MoltEvent) => void;
 
@@ -17,6 +18,15 @@ export function createAgent(options: {
   const channel = createMessageChannel();
   const listeners = new Set<Listener>();
 
+  // Hook to auto-commit file changes in home/
+  const autoCommitHook: HookCallback = async (input) => {
+    const filePath = (input as { tool_input?: { file_path?: string } }).tool_input?.file_path;
+    if (filePath) {
+      commitFileChange(filePath, options.cwd);
+    }
+    return {};
+  };
+
   const stream = query({
     prompt: channel.iterable,
     options: {
@@ -26,6 +36,9 @@ export function createAgent(options: {
       cwd: options.cwd,
       abortController: options.abortController,
       resume: options.resume,
+      hooks: {
+        PostToolUse: [{ matcher: "Edit|Write", hooks: [autoCommitHook] }],
+      },
     },
   });
 
