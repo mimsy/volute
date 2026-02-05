@@ -14,6 +14,8 @@
     "lint": "biome check src/ test/",
     "lint:fix": "biome check --write src/ test/",
     "format": "biome format --write src/ test/",
+    "typecheck": "tsc --noEmit",
+    "typecheck:web": "tsc --noEmit -p src/web/frontend/tsconfig.json",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

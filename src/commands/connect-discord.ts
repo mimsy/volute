@@ -170,6 +170,7 @@ async function handleAgentRequest(
 
     // If only images, send with zero-width space
     if (chunks.length === 0 && imageFiles.length > 0) {
+      // @ts-expect-error PartialGroupDMChannel excluded by sendTyping check above
       const sendFn = replied ? channel.send.bind(channel) : message.reply.bind(message);
       await sendFn({ content: "\u200b", files: imageFiles }).catch((err: unknown) => {
         console.error(`Failed to send message: ${err}`);
@@ -190,6 +191,7 @@ async function handleAgentRequest(
           await message.reply(opts);
           replied = true;
         } else {
+          // @ts-expect-error PartialGroupDMChannel excluded by sendTyping check above
           await channel.send(opts);
         }
       } catch (err) {
