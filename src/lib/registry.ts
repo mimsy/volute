@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { resolve } from "path";
 import { homedir } from "os";
+import { findVariant } from "./variants.js";
 
 export const MOLT_HOME = resolve(homedir(), ".molt");
 export const AGENTS_DIR = resolve(MOLT_HOME, "agents");
@@ -59,15 +60,28 @@ export function nextPort(): number {
 }
 
 export function resolveAgent(name: string): { entry: AgentEntry; dir: string } {
-  const entry = findAgent(name);
+  // Parse name@variant syntax
+  const [baseName, variantName] = name.split("@", 2);
+
+  const entry = findAgent(baseName);
   if (!entry) {
-    console.error(`Unknown agent: ${name}`);
+    console.error(`Unknown agent: ${baseName}`);
     process.exit(1);
   }
-  const dir = agentDir(name);
+  const dir = agentDir(baseName);
   if (!existsSync(dir)) {
     console.error(`Agent directory missing: ${dir}`);
     process.exit(1);
   }
+
+  if (variantName) {
+    const variant = findVariant(dir, variantName);
+    if (!variant) {
+      console.error(`Unknown variant: ${variantName} (agent: ${baseName})`);
+      process.exit(1);
+    }
+    return { entry: { ...entry, port: variant.port }, dir };
+  }
+
   return { entry, dir };
 }
