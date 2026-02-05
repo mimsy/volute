@@ -1,0 +1,200 @@
+import { Hono } from "hono";
+import { existsSync, readFileSync } from "fs";
+import { resolve } from "path";
+import { readRegistry, findAgent, agentDir } from "../../lib/registry.js";
+import { checkHealth } from "../../lib/variants.js";
+
+const app = new Hono();
+
+async function getAgentStatus(dir: string, port: number) {
+  let status = "stopped";
+  const pidPath = resolve(dir, ".molt", "supervisor.pid");
+  if (existsSync(pidPath)) {
+    const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
+    try {
+      process.kill(pid, 0);
+      const health = await checkHealth(port);
+      status = health.ok ? "running" : "starting";
+    } catch {
+      status = "stopped";
+    }
+  }
+
+  let discord = "disconnected";
+  const discordPidPath = resolve(dir, ".molt", "discord.pid");
+  if (existsSync(discordPidPath)) {
+    const dpid = parseInt(readFileSync(discordPidPath, "utf-8").trim(), 10);
+    try {
+      process.kill(dpid, 0);
+      discord = "connected";
+    } catch {
+      // Stale PID
+    }
+  }
+
+  return { status, discord };
+}
+
+// List all agents
+app.get("/", async (c) => {
+  const entries = readRegistry();
+  const agents = await Promise.all(
+    entries.map(async (entry) => {
+      const dir = agentDir(entry.name);
+      const { status, discord } = await getAgentStatus(dir, entry.port);
+      return { ...entry, status, discord };
+    }),
+  );
+  return c.json(agents);
+});
+
+// Get single agent
+app.get("/:name", async (c) => {
+  const name = c.req.param("name");
+  const entry = findAgent(name);
+  if (!entry) return c.json({ error: "Agent not found" }, 404);
+
+  const dir = agentDir(name);
+  if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
+
+  const { status, discord } = await getAgentStatus(dir, entry.port);
+  return c.json({ ...entry, status, discord });
+});
+
+// Start agent
+app.post("/:name/start", async (c) => {
+  const name = c.req.param("name");
+  const entry = findAgent(name);
+  if (!entry) return c.json({ error: "Agent not found" }, 404);
+
+  const dir = agentDir(name);
+  if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
+
+  // Check if already running
+  const pidPath = resolve(dir, ".molt", "supervisor.pid");
+  if (existsSync(pidPath)) {
+    const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
+    try {
+      process.kill(pid, 0);
+      return c.json({ error: "Agent already running" }, 409);
+    } catch {
+      // Stale PID, continue
+    }
+  }
+
+  // Spawn supervisor in background (same logic as start.ts)
+  const { spawn } = await import("child_process");
+  const { mkdirSync, openSync } = await import("fs");
+  const { dirname } = await import("path");
+
+  let supervisorModule = "";
+  let searchDir = dirname(new URL(import.meta.url).pathname);
+  for (let i = 0; i < 5; i++) {
+    const candidate = resolve(searchDir, "src", "lib", "supervisor.ts");
+    if (existsSync(candidate)) {
+      supervisorModule = candidate;
+      break;
+    }
+    searchDir = dirname(searchDir);
+  }
+  if (!supervisorModule) {
+    supervisorModule = resolve(
+      dirname(new URL(import.meta.url).pathname),
+      "..",
+      "..",
+      "lib",
+      "supervisor.ts",
+    );
+  }
+
+  const tsxBin = resolve(dir, "node_modules", ".bin", "tsx");
+  const bootstrapCode = `
+    import { runSupervisor } from ${JSON.stringify(supervisorModule)};
+    runSupervisor({
+      agentName: ${JSON.stringify(name)},
+      agentDir: ${JSON.stringify(dir)},
+      port: ${entry.port},
+      dev: false,
+    });
+  `;
+
+  const logsDir = resolve(dir, ".molt", "logs");
+  mkdirSync(logsDir, { recursive: true });
+  const logFile = resolve(logsDir, "supervisor.log");
+  const logFd = openSync(logFile, "a");
+
+  const child = spawn(tsxBin, ["--eval", bootstrapCode], {
+    cwd: dir,
+    stdio: ["ignore", logFd, logFd],
+    detached: true,
+  });
+  child.unref();
+
+  // Poll for health
+  const maxWait = 30_000;
+  const start = Date.now();
+  while (Date.now() - start < maxWait) {
+    try {
+      const res = await fetch(`http://localhost:${entry.port}/health`);
+      if (res.ok) {
+        return c.json({ ok: true, pid: child.pid });
+      }
+    } catch {
+      // Not ready yet
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  return c.json({ error: "Server did not become healthy within 30s" }, 504);
+});
+
+// Stop agent
+app.post("/:name/stop", async (c) => {
+  const name = c.req.param("name");
+  const entry = findAgent(name);
+  if (!entry) return c.json({ error: "Agent not found" }, 404);
+
+  const dir = agentDir(name);
+  const pidPath = resolve(dir, ".molt", "supervisor.pid");
+
+  if (!existsSync(pidPath)) {
+    return c.json({ error: "Agent is not running" }, 409);
+  }
+
+  const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
+
+  try {
+    process.kill(pid, 0);
+  } catch {
+    const { unlinkSync } = await import("fs");
+    try { unlinkSync(pidPath); } catch {}
+    return c.json({ ok: true, message: "Cleaned up stale PID" });
+  }
+
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    process.kill(pid, "SIGTERM");
+  }
+
+  // Wait for PID file to be removed
+  const maxWait = 10_000;
+  const start = Date.now();
+  while (Date.now() - start < maxWait) {
+    if (!existsSync(pidPath)) {
+      return c.json({ ok: true });
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+
+  // Force kill
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    try { process.kill(pid, "SIGKILL"); } catch {}
+  }
+
+  return c.json({ ok: true, message: "Force killed" });
+});
+
+export default app;
