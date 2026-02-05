@@ -54,14 +54,7 @@ export function AgentCard({ agent }: { agent: Agent }) {
       >
         <span>:{agent.port}</span>
         {agent.discord.status === "connected" && (
-          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <StatusBadge status="connected" />
-            {agent.discord.username && (
-              <span style={{ color: "var(--text-1)", fontSize: 11 }}>
-                {agent.discord.username}
-              </span>
-            )}
-          </span>
+          <StatusBadge status="connected" />
         )}
       </div>
     </a>
