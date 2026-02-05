@@ -92,12 +92,15 @@ export async function run(args: string[]) {
 
 /**
  * Update the molt/template orphan branch with the latest template files.
+ * Uses a temporary worktree to avoid touching the main working directory.
  */
 async function updateTemplateBranch(
   projectRoot: string,
   templateDir: string,
   agentName: string,
 ) {
+  const tempWorktree = resolve(projectRoot, ".worktrees", "_template_update");
+
   // Check if template branch exists
   let branchExists = false;
   try {
@@ -109,61 +112,75 @@ async function updateTemplateBranch(
     // branch doesn't exist
   }
 
-  // Save current branch
-  const currentBranch = (
-    await exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-      cwd: projectRoot,
-    })
-  ).trim();
+  // Clean up any existing temp worktree
+  try {
+    await exec("git", ["worktree", "remove", "--force", tempWorktree], { cwd: projectRoot });
+  } catch {
+    // doesn't exist, that's fine
+  }
+  if (existsSync(tempWorktree)) {
+    rmSync(tempWorktree, { recursive: true, force: true });
+  }
 
   try {
     if (branchExists) {
-      await exec("git", ["checkout", TEMPLATE_BRANCH], { cwd: projectRoot });
+      // Create worktree for existing branch
+      await exec("git", ["worktree", "add", tempWorktree, TEMPLATE_BRANCH], {
+        cwd: projectRoot,
+      });
     } else {
+      // Create orphan branch via worktree
+      // First create an empty commit to bootstrap the branch
+      await exec("git", ["worktree", "add", "--detach", tempWorktree], {
+        cwd: projectRoot,
+      });
       await exec("git", ["checkout", "--orphan", TEMPLATE_BRANCH], {
-        cwd: projectRoot,
+        cwd: tempWorktree,
       });
-      // Remove all tracked files from index on new orphan branch
-      await exec("git", ["rm", "-rf", "--cached", "."], { cwd: projectRoot });
-      // Clean working tree of tracked files (keep untracked like node_modules)
-      await exec("git", ["clean", "-fd", "-e", "node_modules", "-e", ".molt", "-e", ".worktrees"], {
-        cwd: projectRoot,
-      });
+      await exec("git", ["rm", "-rf", "--cached", "."], { cwd: tempWorktree });
+      await exec("git", ["clean", "-fd"], { cwd: tempWorktree });
     }
 
-    // Remove existing tracked files (but keep node_modules, .molt, .worktrees, .git)
+    // Remove existing tracked files in the worktree
     if (branchExists) {
-      await exec("git", ["rm", "-rf", "."], { cwd: projectRoot }).catch(() => {});
+      await exec("git", ["rm", "-rf", "."], { cwd: tempWorktree }).catch(() => {});
     }
 
-    // Copy template files
-    copyTemplateToDir(templateDir, projectRoot, agentName);
+    // Copy template files to the worktree
+    copyTemplateToDir(templateDir, tempWorktree, agentName);
 
     // Remove agent-only files (these should only exist on initial create)
     for (const file of AGENT_ONLY_FILES) {
-      const path = resolve(projectRoot, file);
+      const path = resolve(tempWorktree, file);
       if (existsSync(path)) {
         rmSync(path, { recursive: true, force: true });
       }
     }
 
     // Stage and commit
-    await exec("git", ["add", "-A"], { cwd: projectRoot });
+    await exec("git", ["add", "-A"], { cwd: tempWorktree });
 
     // Check if there are changes to commit
     try {
-      await exec("git", ["diff", "--cached", "--quiet"], { cwd: projectRoot });
+      await exec("git", ["diff", "--cached", "--quiet"], { cwd: tempWorktree });
       // No changes — template is already up to date
       console.log("Template branch is already up to date.");
     } catch {
       // There are changes to commit
       await exec("git", ["commit", "-m", "template update"], {
-        cwd: projectRoot,
+        cwd: tempWorktree,
       });
     }
   } finally {
-    // Switch back to original branch
-    await exec("git", ["checkout", currentBranch], { cwd: projectRoot });
+    // Clean up temp worktree
+    try {
+      await exec("git", ["worktree", "remove", "--force", tempWorktree], { cwd: projectRoot });
+    } catch {
+      // Best effort cleanup
+    }
+    if (existsSync(tempWorktree)) {
+      rmSync(tempWorktree, { recursive: true, force: true });
+    }
   }
 }
 
