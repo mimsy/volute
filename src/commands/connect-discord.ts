@@ -68,6 +68,13 @@ export async function run(args: string[]) {
   client.once(Events.ClientReady, (c) => {
     console.log(`Connected to Discord as ${c.user.tag}`);
     console.log(`Bridging to agent: ${name} (port ${entry.port})`);
+    // Write connection state
+    const statePath = resolve(moltDir, "discord.json");
+    writeFileSync(statePath, JSON.stringify({
+      username: c.user.tag,
+      userId: c.user.id,
+      connectedAt: new Date().toISOString(),
+    }, null, 2));
   });
 
   client.on(Events.MessageCreate, async (message) => {

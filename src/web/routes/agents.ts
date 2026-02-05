@@ -20,13 +20,24 @@ async function getAgentStatus(dir: string, port: number) {
     }
   }
 
-  let discord = "disconnected";
+  let discord: { status: string; username?: string; connectedAt?: string } = { status: "disconnected" };
   const discordPidPath = resolve(dir, ".molt", "discord.pid");
   if (existsSync(discordPidPath)) {
     const dpid = parseInt(readFileSync(discordPidPath, "utf-8").trim(), 10);
     try {
       process.kill(dpid, 0);
-      discord = "connected";
+      discord.status = "connected";
+      // Read connection details if available
+      const discordStatePath = resolve(dir, ".molt", "discord.json");
+      if (existsSync(discordStatePath)) {
+        try {
+          const state = JSON.parse(readFileSync(discordStatePath, "utf-8"));
+          discord.username = state.username;
+          discord.connectedAt = state.connectedAt;
+        } catch {
+          // Invalid JSON, ignore
+        }
+      }
     } catch {
       // Stale PID
     }

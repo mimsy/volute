@@ -3,7 +3,11 @@ export type Agent = {
   port: number;
   created: string;
   status: "running" | "stopped" | "starting";
-  discord: "connected" | "disconnected";
+  discord: {
+    status: "connected" | "disconnected";
+    username?: string;
+    connectedAt?: string;
+  };
 };
 
 export type MoltEvent =
