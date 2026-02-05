@@ -8,7 +8,11 @@ export function useChatStream(
   const abortRef = useRef<AbortController | null>(null);
 
   const send = useCallback(
-    async (message: string, conversationId?: string) => {
+    async (
+      message: string,
+      conversationId?: string,
+      images?: Array<{ media_type: string; data: string }>,
+    ) => {
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
@@ -16,7 +20,11 @@ export function useChatStream(
       const res = await fetch(`/api/agents/${name}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, conversationId }),
+        body: JSON.stringify({
+          message: message || undefined,
+          conversationId,
+          images: images && images.length > 0 ? images : undefined,
+        }),
         signal: controller.signal,
       });
 

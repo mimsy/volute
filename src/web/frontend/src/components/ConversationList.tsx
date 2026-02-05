@@ -24,7 +24,7 @@ export function ConversationList({
 
   useEffect(() => {
     refresh();
-  }, [name]);
+  }, [name, activeId]);
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();

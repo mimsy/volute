@@ -109,12 +109,18 @@ export type Conversation = {
   updated_at: string;
 };
 
+export type ContentBlock =
+  | { type: "text"; text: string }
+  | { type: "tool_use"; name: string; input: unknown }
+  | { type: "tool_result"; output: string; is_error?: boolean }
+  | { type: "image"; media_type: string; data: string };
+
 export type ConversationMessage = {
   id: number;
   conversation_id: string;
   role: string;
   sender_name: string | null;
-  content: string;
+  content: ContentBlock[] | string;
   created_at: string;
 };
 

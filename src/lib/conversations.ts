@@ -1,6 +1,12 @@
 import { randomUUID } from "crypto";
 import { getDb } from "./db.js";
 
+export type ContentBlock =
+  | { type: "text"; text: string }
+  | { type: "tool_use"; name: string; input: unknown }
+  | { type: "tool_result"; output: string; is_error?: boolean }
+  | { type: "image"; media_type: string; data: string };
+
 export type Conversation = {
   id: string;
   agent_name: string;
@@ -16,7 +22,7 @@ export type Message = {
   conversation_id: string;
   role: string;
   sender_name: string | null;
-  content: string;
+  content: ContentBlock[];
   created_at: string;
 };
 
@@ -81,20 +87,25 @@ export function addMessage(
   conversationId: string,
   role: string,
   senderName: string | null,
-  content: string,
+  content: ContentBlock[],
 ): Message {
   const db = getDb();
+  const serialized = JSON.stringify(content);
   const result = db.prepare(
     "INSERT INTO messages (conversation_id, role, sender_name, content) VALUES (?, ?, ?, ?)"
-  ).run(conversationId, role, senderName, content);
+  ).run(conversationId, role, senderName, serialized);
 
   // Update conversation's updated_at and set title from first message if unset
   db.prepare("UPDATE conversations SET updated_at = datetime('now') WHERE id = ?").run(conversationId);
 
   if (role === "user") {
-    db.prepare(
-      "UPDATE conversations SET title = ? WHERE id = ? AND title IS NULL"
-    ).run(content.slice(0, 80), conversationId);
+    const firstText = content.find((b) => b.type === "text");
+    const title = firstText ? (firstText as { text: string }).text.slice(0, 80) : "";
+    if (title) {
+      db.prepare(
+        "UPDATE conversations SET title = ? WHERE id = ? AND title IS NULL"
+      ).run(title, conversationId);
+    }
   }
 
   return {
@@ -109,9 +120,20 @@ export function addMessage(
 
 export function getMessages(conversationId: string): Message[] {
   const db = getDb();
-  return db.prepare(
+  const rows = db.prepare(
     "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC"
-  ).all(conversationId) as Message[];
+  ).all(conversationId) as Array<Omit<Message, "content"> & { content: string }>;
+
+  return rows.map((row) => {
+    let content: ContentBlock[];
+    try {
+      const parsed = JSON.parse(row.content);
+      content = Array.isArray(parsed) ? parsed : [{ type: "text", text: row.content }];
+    } catch {
+      content = [{ type: "text", text: row.content }];
+    }
+    return { ...row, content };
+  });
 }
 
 export function deleteConversation(id: string): void {

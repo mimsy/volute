@@ -6,9 +6,10 @@ import {
   createConversation,
   getConversation,
   addMessage,
+  type ContentBlock,
 } from "../../lib/conversations.js";
 import type { AuthEnv } from "../middleware/auth.js";
-import type { MoltEvent } from "../../types.js";
+import type { MoltEvent, MoltContentPart } from "../../types.js";
 
 const app = new Hono<AuthEnv>();
 
@@ -17,8 +18,14 @@ app.post("/:name/chat", async (c) => {
   const entry = findAgent(name);
   if (!entry) return c.json({ error: "Agent not found" }, 404);
 
-  const body = await c.req.json<{ message: string; conversationId?: string }>();
-  if (!body.message) return c.json({ error: "message required" }, 400);
+  const body = await c.req.json<{
+    message?: string;
+    conversationId?: string;
+    images?: Array<{ media_type: string; data: string }>;
+  }>();
+  if (!body.message && (!body.images || body.images.length === 0)) {
+    return c.json({ error: "message or images required" }, 400);
+  }
 
   const user = c.get("user");
 
@@ -28,21 +35,44 @@ app.post("/:name/chat", async (c) => {
     const conv = getConversation(conversationId);
     if (!conv) return c.json({ error: "Conversation not found" }, 404);
   } else {
+    const title = body.message ? body.message.slice(0, 80) : "Image message";
     const conv = createConversation(name, "web", {
       userId: user.id,
-      title: body.message.slice(0, 80),
+      title,
     });
     conversationId = conv.id;
   }
 
+  // Build user content blocks
+  const userContent: ContentBlock[] = [];
+  if (body.message) {
+    userContent.push({ type: "text", text: body.message });
+  }
+  if (body.images) {
+    for (const img of body.images) {
+      userContent.push({ type: "image", media_type: img.media_type, data: img.data });
+    }
+  }
+
   // Save user message
-  addMessage(conversationId, "user", user.username, body.message);
+  addMessage(conversationId, "user", user.username, userContent);
+
+  // Build content for agent server
+  const agentContent: MoltContentPart[] = [];
+  if (body.message) {
+    agentContent.push({ type: "text", text: body.message });
+  }
+  if (body.images) {
+    for (const img of body.images) {
+      agentContent.push({ type: "image", media_type: img.media_type, data: img.data });
+    }
+  }
 
   const res = await fetch(`http://localhost:${entry.port}/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      content: [{ type: "text", text: body.message }],
+      content: agentContent,
       channel: "web",
       sender: user.username,
     }),
@@ -65,20 +95,34 @@ app.post("/:name/chat", async (c) => {
       data: JSON.stringify({ type: "meta", conversationId }),
     });
 
-    let assistantText = "";
+    const assistantContent: ContentBlock[] = [];
 
     for await (const event of readNdjson(res.body!)) {
       const moltEvent = event as MoltEvent;
       await stream.writeSSE({ data: JSON.stringify(moltEvent) });
 
       if (moltEvent.type === "text") {
-        assistantText += moltEvent.content;
+        // Merge consecutive text blocks
+        const last = assistantContent[assistantContent.length - 1];
+        if (last && last.type === "text") {
+          last.text += moltEvent.content;
+        } else {
+          assistantContent.push({ type: "text", text: moltEvent.content });
+        }
+      } else if (moltEvent.type === "tool_use") {
+        assistantContent.push({ type: "tool_use", name: moltEvent.name, input: moltEvent.input });
+      } else if (moltEvent.type === "tool_result") {
+        assistantContent.push({
+          type: "tool_result",
+          output: moltEvent.output,
+          ...(moltEvent.is_error ? { is_error: true } : {}),
+        });
       }
 
       if (moltEvent.type === "done") {
         // Save assistant message
-        if (assistantText) {
-          addMessage(conversationId!, "assistant", name, assistantText);
+        if (assistantContent.length > 0) {
+          addMessage(conversationId!, "assistant", name, assistantContent);
         }
         break;
       }

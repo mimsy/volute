@@ -199,7 +199,7 @@ async function handleAgentRequest(
     .filter((p) => p.type === "text")
     .map((p) => (p as { text: string }).text)
     .join(" ");
-  addMessage(conv.id, "user", senderName, userText);
+  addMessage(conv.id, "user", senderName, [{ type: "text", text: userText }]);
 
   try {
     const res = await fetch(`${baseUrl}/message`, {
@@ -243,7 +243,7 @@ async function handleAgentRequest(
 
     await flush();
     if (fullResponse) {
-      addMessage(conv.id, "assistant", agentName, fullResponse);
+      addMessage(conv.id, "assistant", agentName, [{ type: "text", text: fullResponse }]);
     }
   } catch (err) {
     const errMsg =
