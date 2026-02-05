@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, rmSync } from "fs";
 import { resolve } from "path";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
@@ -10,6 +10,14 @@ import { checkHealth } from "../lib/variants.js";
 
 const TEMPLATE_BRANCH = "molt/template";
 const VARIANT_NAME = "upgrade";
+
+// Files that should only exist on initial create, never updated during upgrades
+const AGENT_ONLY_FILES = [
+  "home/MEMORY.md",
+  "home/SOUL.md",
+  "home/CLAUDE.md",
+  "home/memory",
+];
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -130,6 +138,14 @@ async function updateTemplateBranch(
 
     // Copy template files
     copyTemplateToDir(templateDir, projectRoot, agentName);
+
+    // Remove agent-only files (these should only exist on initial create)
+    for (const file of AGENT_ONLY_FILES) {
+      const path = resolve(projectRoot, file);
+      if (existsSync(path)) {
+        rmSync(path, { recursive: true, force: true });
+      }
+    }
 
     // Stage and commit
     await exec("git", ["add", "-A"], { cwd: projectRoot });
