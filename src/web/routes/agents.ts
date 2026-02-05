@@ -3,6 +3,16 @@ import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
 import { readRegistry, findAgent, agentDir } from "../../lib/registry.js";
 import { checkHealth } from "../../lib/variants.js";
+import { CHANNELS } from "../../lib/channels.js";
+
+type ChannelStatus = {
+  name: string;
+  displayName: string;
+  status: "connected" | "disconnected";
+  showToolCalls: boolean;
+  username?: string;
+  connectedAt?: string;
+};
 
 const app = new Hono();
 
@@ -20,20 +30,36 @@ async function getAgentStatus(dir: string, port: number) {
     }
   }
 
-  let discord: { status: string; username?: string; connectedAt?: string } = { status: "disconnected" };
+  const channels: ChannelStatus[] = [];
+
+  // Web channel is always available when agent is running
+  channels.push({
+    name: CHANNELS.web.name,
+    displayName: CHANNELS.web.displayName,
+    status: status === "running" ? "connected" : "disconnected",
+    showToolCalls: CHANNELS.web.showToolCalls,
+  });
+
+  // Check Discord connector status
+  const discordChannel: ChannelStatus = {
+    name: CHANNELS.discord.name,
+    displayName: CHANNELS.discord.displayName,
+    status: "disconnected",
+    showToolCalls: CHANNELS.discord.showToolCalls,
+  };
   const discordPidPath = resolve(dir, ".molt", "discord.pid");
   if (existsSync(discordPidPath)) {
     const dpid = parseInt(readFileSync(discordPidPath, "utf-8").trim(), 10);
     try {
       process.kill(dpid, 0);
-      discord.status = "connected";
+      discordChannel.status = "connected";
       // Read connection details if available
       const discordStatePath = resolve(dir, ".molt", "discord.json");
       if (existsSync(discordStatePath)) {
         try {
           const state = JSON.parse(readFileSync(discordStatePath, "utf-8"));
-          discord.username = state.username;
-          discord.connectedAt = state.connectedAt;
+          discordChannel.username = state.username;
+          discordChannel.connectedAt = state.connectedAt;
         } catch {
           // Invalid JSON, ignore
         }
@@ -42,8 +68,9 @@ async function getAgentStatus(dir: string, port: number) {
       // Stale PID
     }
   }
+  channels.push(discordChannel);
 
-  return { status, discord };
+  return { status, channels };
 }
 
 // List all agents
@@ -52,8 +79,8 @@ app.get("/", async (c) => {
   const agents = await Promise.all(
     entries.map(async (entry) => {
       const dir = agentDir(entry.name);
-      const { status, discord } = await getAgentStatus(dir, entry.port);
-      return { ...entry, status, discord };
+      const { status, channels } = await getAgentStatus(dir, entry.port);
+      return { ...entry, status, channels };
     }),
   );
   return c.json(agents);
@@ -68,8 +95,8 @@ app.get("/:name", async (c) => {
   const dir = agentDir(name);
   if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
 
-  const { status, discord } = await getAgentStatus(dir, entry.port);
-  return c.json({ ...entry, status, discord });
+  const { status, channels } = await getAgentStatus(dir, entry.port);
+  return c.json({ ...entry, status, channels });
 });
 
 // Start agent

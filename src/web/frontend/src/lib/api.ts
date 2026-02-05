@@ -1,13 +1,18 @@
+export type Channel = {
+  name: string;
+  displayName: string;
+  status: "connected" | "disconnected";
+  showToolCalls: boolean;
+  username?: string;
+  connectedAt?: string;
+};
+
 export type Agent = {
   name: string;
   port: number;
   created: string;
   status: "running" | "stopped" | "starting";
-  discord: {
-    status: "connected" | "disconnected";
-    username?: string;
-    connectedAt?: string;
-  };
+  channels: Channel[];
 };
 
 export type MoltEvent =

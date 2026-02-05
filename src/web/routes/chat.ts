@@ -16,7 +16,10 @@ app.post("/:name/chat", async (c) => {
   const res = await fetch(`http://localhost:${entry.port}/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content: [{ type: "text", text: body.message }] }),
+    body: JSON.stringify({
+      content: [{ type: "text", text: body.message }],
+      channel: "web",
+    }),
   });
 
   if (!res.ok) {

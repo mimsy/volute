@@ -95,9 +95,11 @@ export function AgentDetail({ name }: { name: string }) {
           <span style={{ color: "var(--text-2)", fontSize: 12 }}>
             :{agent.port}
           </span>
-          {agent.discord.status === "connected" && (
-            <StatusBadge status="connected" />
-          )}
+          {agent.channels
+            .filter((ch) => ch.name !== "web" && ch.status === "connected")
+            .map((ch) => (
+              <StatusBadge key={ch.name} status="connected" />
+            ))}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           {agent.status === "stopped" ? (
@@ -184,9 +186,12 @@ export function AgentDetail({ name }: { name: string }) {
 }
 
 function ConnectionsTab({ agent }: { agent: Agent }) {
-  const hasDiscord = agent.discord.status === "connected";
+  // Filter to external channels (not web) that are connected
+  const connectedChannels = agent.channels.filter(
+    (ch) => ch.name !== "web" && ch.status === "connected"
+  );
 
-  if (!hasDiscord) {
+  if (connectedChannels.length === 0) {
     return (
       <div style={{ color: "var(--text-2)", padding: 24, textAlign: "center" }}>
         No active connections.
@@ -195,60 +200,63 @@ function ConnectionsTab({ agent }: { agent: Agent }) {
   }
 
   return (
-    <div style={{ padding: "8px 0" }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          gap: 16,
-          padding: 16,
-          background: "var(--bg-2)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius-lg)",
-        }}
-      >
+    <div style={{ padding: "8px 0", display: "flex", flexDirection: "column", gap: 12 }}>
+      {connectedChannels.map((channel) => (
         <div
+          key={channel.name}
           style={{
-            width: 40,
-            height: 40,
-            borderRadius: "var(--radius)",
-            background: "var(--bg-3)",
             display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 18,
-            color: "#5865F2",
-            flexShrink: 0,
+            alignItems: "flex-start",
+            gap: 16,
+            padding: 16,
+            background: "var(--bg-2)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius-lg)",
           }}
         >
-          ⦿
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
           <div
             style={{
+              width: 40,
+              height: 40,
+              borderRadius: "var(--radius)",
+              background: "var(--bg-3)",
               display: "flex",
               alignItems: "center",
-              gap: 8,
-              marginBottom: 6,
+              justifyContent: "center",
+              fontSize: 18,
+              color: channel.name === "discord" ? "#5865F2" : "var(--accent)",
+              flexShrink: 0,
             }}
           >
-            <span style={{ fontWeight: 600, color: "var(--text-0)" }}>
-              Discord
-            </span>
-            <StatusBadge status="connected" />
+            ⦿
           </div>
-          {agent.discord.username && (
-            <div style={{ fontSize: 13, color: "var(--text-1)", marginBottom: 4 }}>
-              Bot: <span style={{ color: "var(--text-0)" }}>{agent.discord.username}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 6,
+              }}
+            >
+              <span style={{ fontWeight: 600, color: "var(--text-0)" }}>
+                {channel.displayName}
+              </span>
+              <StatusBadge status="connected" />
             </div>
-          )}
-          {agent.discord.connectedAt && (
-            <div style={{ fontSize: 11, color: "var(--text-2)" }}>
-              Connected {formatRelativeTime(agent.discord.connectedAt)}
-            </div>
-          )}
+            {channel.username && (
+              <div style={{ fontSize: 13, color: "var(--text-1)", marginBottom: 4 }}>
+                Bot: <span style={{ color: "var(--text-0)" }}>{channel.username}</span>
+              </div>
+            )}
+            {channel.connectedAt && (
+              <div style={{ fontSize: 11, color: "var(--text-2)" }}>
+                Connected {formatRelativeTime(channel.connectedAt)}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      ))}
     </div>
   );
 }

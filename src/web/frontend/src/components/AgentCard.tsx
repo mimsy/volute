@@ -53,9 +53,11 @@ export function AgentCard({ agent }: { agent: Agent }) {
         }}
       >
         <span>:{agent.port}</span>
-        {agent.discord.status === "connected" && (
-          <StatusBadge status="connected" />
-        )}
+        {agent.channels
+          .filter((ch) => ch.name !== "web" && ch.status === "connected")
+          .map((ch) => (
+            <StatusBadge key={ch.name} status="connected" />
+          ))}
       </div>
     </a>
   );
