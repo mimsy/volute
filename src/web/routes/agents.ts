@@ -1,9 +1,9 @@
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { Hono } from "hono";
-import { existsSync, readFileSync } from "fs";
-import { resolve } from "path";
-import { readRegistry, findAgent, agentDir } from "../../lib/registry.js";
-import { checkHealth } from "../../lib/variants.js";
 import { CHANNELS } from "../../lib/channels.js";
+import { agentDir, findAgent, readRegistry } from "../../lib/registry.js";
+import { checkHealth } from "../../lib/variants.js";
 
 type ChannelStatus = {
   name: string;
@@ -121,9 +121,9 @@ app.post("/:name/start", async (c) => {
   }
 
   // Spawn supervisor in background (same logic as start.ts)
-  const { spawn } = await import("child_process");
-  const { mkdirSync, openSync } = await import("fs");
-  const { dirname } = await import("path");
+  const { spawn } = await import("node:child_process");
+  const { mkdirSync, openSync } = await import("node:fs");
+  const { dirname } = await import("node:path");
 
   let supervisorModule = "";
   let searchDir = dirname(new URL(import.meta.url).pathname);
@@ -204,8 +204,10 @@ app.post("/:name/stop", async (c) => {
   try {
     process.kill(pid, 0);
   } catch {
-    const { unlinkSync } = await import("fs");
-    try { unlinkSync(pidPath); } catch {}
+    const { unlinkSync } = await import("node:fs");
+    try {
+      unlinkSync(pidPath);
+    } catch {}
     return c.json({ ok: true, message: "Cleaned up stale PID" });
   }
 
@@ -229,7 +231,9 @@ app.post("/:name/stop", async (c) => {
   try {
     process.kill(-pid, "SIGKILL");
   } catch {
-    try { process.kill(pid, "SIGKILL"); } catch {}
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
   }
 
   return c.json({ ok: true, message: "Force killed" });

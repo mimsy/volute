@@ -1,16 +1,18 @@
-import { useState, useEffect } from "react";
-import { fetchUsers, approveUser, type AuthUser } from "../lib/auth";
+import { useEffect, useState } from "react";
+import { type AuthUser, approveUser, fetchUsers } from "../lib/auth";
 
 export function UserManagement({ onClose }: { onClose: () => void }) {
   const [users, setUsers] = useState<AuthUser[]>([]);
 
   const refresh = () => {
-    fetchUsers().then(setUsers).catch(() => {});
+    fetchUsers()
+      .then(setUsers)
+      .catch(() => {});
   };
 
   useEffect(() => {
     refresh();
-  }, []);
+  }, [refresh]);
 
   const handleApprove = async (id: number) => {
     await approveUser(id);
@@ -55,9 +57,7 @@ export function UserManagement({ onClose }: { onClose: () => void }) {
             }}
           >
             <div>
-              <span style={{ color: "var(--text-0)", marginRight: 12 }}>
-                {u.username}
-              </span>
+              <span style={{ color: "var(--text-0)", marginRight: 12 }}>{u.username}</span>
               <span
                 style={{
                   fontSize: 11,

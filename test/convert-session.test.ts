@@ -1,14 +1,14 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, mkdirSync, rmSync, readFileSync, existsSync } from "fs";
-import { resolve } from "path";
-import { homedir } from "os";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import { convertSession } from "../src/lib/convert-session.js";
 
 const scratchDir = resolve("/tmp/convert-session-test");
 
 function writeJsonl(path: string, events: unknown[]) {
-  writeFileSync(path, events.map((e) => JSON.stringify(e)).join("\n") + "\n");
+  writeFileSync(path, `${events.map((e) => JSON.stringify(e)).join("\n")}\n`);
 }
 
 describe("convertSession", () => {
@@ -43,13 +43,7 @@ describe("convertSession", () => {
     assert.ok(sessionId);
 
     const projectId = scratchDir.replace(/\//g, "-");
-    const sdkPath = resolve(
-      homedir(),
-      ".claude",
-      "projects",
-      projectId,
-      `${sessionId}.jsonl`,
-    );
+    const sdkPath = resolve(homedir(), ".claude", "projects", projectId, `${sessionId}.jsonl`);
     assert.ok(existsSync(sdkPath));
 
     const lines = readFileSync(sdkPath, "utf-8").trim().split("\n");
@@ -61,9 +55,7 @@ describe("convertSession", () => {
     assert.equal(event.sessionId, sessionId);
     assert.equal(event.isSidechain, false);
     assert.equal(event.userType, "external");
-    assert.deepStrictEqual(event.message.content, [
-      { type: "text", text: "Hello" },
-    ]);
+    assert.deepStrictEqual(event.message.content, [{ type: "text", text: "Hello" }]);
   });
 
   it("strips thinking blocks from assistant messages", () => {
@@ -86,13 +78,7 @@ describe("convertSession", () => {
 
     const sessionId = convertSession({ sessionPath, projectDir: scratchDir });
     const projectId = scratchDir.replace(/\//g, "-");
-    const sdkPath = resolve(
-      homedir(),
-      ".claude",
-      "projects",
-      projectId,
-      `${sessionId}.jsonl`,
-    );
+    const sdkPath = resolve(homedir(), ".claude", "projects", projectId, `${sessionId}.jsonl`);
     const lines = readFileSync(sdkPath, "utf-8").trim().split("\n");
     const event = JSON.parse(lines[0]);
 
@@ -132,13 +118,7 @@ describe("convertSession", () => {
 
     const sessionId = convertSession({ sessionPath, projectDir: scratchDir });
     const projectId = scratchDir.replace(/\//g, "-");
-    const sdkPath = resolve(
-      homedir(),
-      ".claude",
-      "projects",
-      projectId,
-      `${sessionId}.jsonl`,
-    );
+    const sdkPath = resolve(homedir(), ".claude", "projects", projectId, `${sessionId}.jsonl`);
     const lines = readFileSync(sdkPath, "utf-8").trim().split("\n");
     const event = JSON.parse(lines[0]);
 
@@ -173,13 +153,7 @@ describe("convertSession", () => {
 
     const sessionId = convertSession({ sessionPath, projectDir: scratchDir });
     const projectId = scratchDir.replace(/\//g, "-");
-    const sdkPath = resolve(
-      homedir(),
-      ".claude",
-      "projects",
-      projectId,
-      `${sessionId}.jsonl`,
-    );
+    const sdkPath = resolve(homedir(), ".claude", "projects", projectId, `${sessionId}.jsonl`);
     const lines = readFileSync(sdkPath, "utf-8").trim().split("\n");
     const event = JSON.parse(lines[0]);
 
@@ -221,13 +195,7 @@ describe("convertSession", () => {
 
     const sessionId = convertSession({ sessionPath, projectDir: scratchDir });
     const projectId = scratchDir.replace(/\//g, "-");
-    const sdkPath = resolve(
-      homedir(),
-      ".claude",
-      "projects",
-      projectId,
-      `${sessionId}.jsonl`,
-    );
+    const sdkPath = resolve(homedir(), ".claude", "projects", projectId, `${sessionId}.jsonl`);
     const lines = readFileSync(sdkPath, "utf-8").trim().split("\n");
     assert.equal(lines.length, 1);
   });
@@ -259,13 +227,7 @@ describe("convertSession", () => {
 
     const sessionId = convertSession({ sessionPath, projectDir: scratchDir });
     const projectId = scratchDir.replace(/\//g, "-");
-    const sdkPath = resolve(
-      homedir(),
-      ".claude",
-      "projects",
-      projectId,
-      `${sessionId}.jsonl`,
-    );
+    const sdkPath = resolve(homedir(), ".claude", "projects", projectId, `${sessionId}.jsonl`);
     const lines = readFileSync(sdkPath, "utf-8").trim().split("\n");
     const event1 = JSON.parse(lines[0]);
     const event2 = JSON.parse(lines[1]);
@@ -334,13 +296,7 @@ describe("convertSession", () => {
 
     const sessionId = convertSession({ sessionPath, projectDir: scratchDir });
     const projectId = scratchDir.replace(/\//g, "-");
-    const sdkPath = resolve(
-      homedir(),
-      ".claude",
-      "projects",
-      projectId,
-      `${sessionId}.jsonl`,
-    );
+    const sdkPath = resolve(homedir(), ".claude", "projects", projectId, `${sessionId}.jsonl`);
     const lines = readFileSync(sdkPath, "utf-8").trim().split("\n");
     // Should be 2 events: 1 assistant + 1 batched user (not 4)
     assert.equal(lines.length, 2);
@@ -366,9 +322,7 @@ describe("convertSession", () => {
           model: "claude-opus-4-5",
           stopReason: "toolUse",
           usage: { input: 100, output: 50, cacheRead: 10, cacheWrite: 5 },
-          content: [
-            { type: "toolCall", id: "toolu_1", name: "read", arguments: { path: "/a" } },
-          ],
+          content: [{ type: "toolCall", id: "toolu_1", name: "read", arguments: { path: "/a" } }],
         },
       },
     ]);
@@ -400,9 +354,7 @@ describe("convertSession", () => {
         timestamp: "2026-01-31T01:00:00.000Z",
         message: {
           role: "assistant",
-          content: [
-            { type: "toolCall", id: "toolu_1", name: "read", arguments: { path: "/a" } },
-          ],
+          content: [{ type: "toolCall", id: "toolu_1", name: "read", arguments: { path: "/a" } }],
         },
       },
       {
@@ -441,22 +393,14 @@ describe("convertSession", () => {
         timestamp: "2026-01-31T01:00:00.000Z",
         message: {
           role: "assistant",
-          content: [
-            { type: "thinking", thinking: "hmm", thinkingSignature: "sig" },
-          ],
+          content: [{ type: "thinking", thinking: "hmm", thinkingSignature: "sig" }],
         },
       },
     ]);
 
     const sessionId = convertSession({ sessionPath, projectDir: scratchDir });
     const projectId = scratchDir.replace(/\//g, "-");
-    const sdkPath = resolve(
-      homedir(),
-      ".claude",
-      "projects",
-      projectId,
-      `${sessionId}.jsonl`,
-    );
+    const sdkPath = resolve(homedir(), ".claude", "projects", projectId, `${sessionId}.jsonl`);
     const lines = readFileSync(sdkPath, "utf-8").trim().split("\n");
     // Should be empty (only a blank line from the trailing newline)
     assert.equal(lines.filter((l: string) => l.trim()).length, 0);

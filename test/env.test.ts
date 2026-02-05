@@ -1,9 +1,9 @@
-import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "fs";
-import { join } from "path";
-import { tmpdir } from "os";
-import { readEnv, writeEnv, agentEnvPath, sharedEnvPath } from "../src/lib/env.js";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { beforeEach, describe, it } from "node:test";
+import { agentEnvPath, readEnv, sharedEnvPath, writeEnv } from "../src/lib/env.js";
 
 describe("env", () => {
   let tmp: string;

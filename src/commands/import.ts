@@ -1,18 +1,18 @@
 import {
   cpSync,
-  readFileSync,
-  writeFileSync,
-  renameSync,
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
+  renameSync,
   rmSync,
-} from "fs";
-import { resolve, dirname } from "path";
+  writeFileSync,
+} from "node:fs";
+import { dirname, resolve } from "node:path";
+import { convertSession } from "../lib/convert-session.js";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { convertSession } from "../lib/convert-session.js";
-import { ensureMoltHome, addAgent, agentDir, nextPort } from "../lib/registry.js";
+import { addAgent, agentDir, ensureMoltHome, nextPort } from "../lib/registry.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -35,9 +35,7 @@ export async function run(args: string[]) {
   const soulPath = resolve(wsDir, "SOUL.md");
   const identityPath = resolve(wsDir, "IDENTITY.md");
   if (!existsSync(soulPath) || !existsSync(identityPath)) {
-    console.error(
-      "Not a valid OpenClaw workspace: missing SOUL.md or IDENTITY.md",
-    );
+    console.error("Not a valid OpenClaw workspace: missing SOUL.md or IDENTITY.md");
     process.exit(1);
   }
 
@@ -48,8 +46,7 @@ export async function run(args: string[]) {
   const user = existsSync(userPath) ? readFileSync(userPath, "utf-8") : "";
 
   // Parse name from IDENTITY.md if not provided
-  const name =
-    flags.name ?? parseNameFromIdentity(identity) ?? "imported-agent";
+  const name = flags.name ?? parseNameFromIdentity(identity) ?? "imported-agent";
 
   ensureMoltHome();
   const dest = agentDir(name);
@@ -87,10 +84,7 @@ export async function run(args: string[]) {
 
   // Replace {{name}} in package.json
   const pkgPath = resolve(dest, "package.json");
-  writeFileSync(
-    pkgPath,
-    readFileSync(pkgPath, "utf-8").replaceAll("{{name}}", name),
-  );
+  writeFileSync(pkgPath, readFileSync(pkgPath, "utf-8").replaceAll("{{name}}", name));
 
   // Apply init files (CLAUDE.md, memory/.gitkeep, etc.) then remove .init/
   // We don't use applyInitFiles() because import overwrites SOUL.md/MEMORY.md below
@@ -102,7 +96,7 @@ export async function run(args: string[]) {
   }
 
   // Write SOUL.md to home/
-  writeFileSync(resolve(dest, "home/SOUL.md"), soul + "\n");
+  writeFileSync(resolve(dest, "home/SOUL.md"), `${soul}\n`);
 
   // Copy IDENTITY.md and USER.md as separate files in home/
   cpSync(identityPath, resolve(dest, "home/IDENTITY.md"));
@@ -156,7 +150,9 @@ export async function run(args: string[]) {
 
   // Convert session if provided (only supported for anthropic template)
   if (flags.session && template !== "agent-sdk") {
-    console.warn("Warning: --session is only supported with the agent-sdk template, skipping session import");
+    console.warn(
+      "Warning: --session is only supported with the agent-sdk template, skipping session import",
+    );
   }
   if (flags.session && template === "agent-sdk") {
     const sessionFile = resolve(flags.session);
@@ -174,11 +170,7 @@ export async function run(args: string[]) {
     // Write session ID so the agent can resume
     const moltDir = resolve(dest, ".molt");
     mkdirSync(moltDir, { recursive: true });
-    writeFileSync(
-      resolve(moltDir, "session.json"),
-      JSON.stringify({ sessionId }),
-    );
-
+    writeFileSync(resolve(moltDir, "session.json"), JSON.stringify({ sessionId }));
   }
 
   console.log(`\nImported agent: ${name} (port ${port})`);

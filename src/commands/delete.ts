@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, rmSync } from "fs";
-import { resolve } from "path";
-import { findAgent, removeAgent, agentDir } from "../lib/registry.js";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { resolve } from "node:path";
 import { parseArgs } from "../lib/parse-args.js";
+import { agentDir, findAgent, removeAgent } from "../lib/registry.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {

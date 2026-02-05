@@ -1,5 +1,5 @@
+import { resolve } from "node:path";
 import Database from "libsql";
-import { resolve } from "path";
 import { MOLT_HOME } from "./registry.js";
 
 let db: InstanceType<typeof Database> | null = null;

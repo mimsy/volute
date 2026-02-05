@@ -1,7 +1,7 @@
-import { spawn } from "child_process";
-import { createServer } from "net";
-import { existsSync, readFileSync, mkdirSync, openSync } from "fs";
-import { resolve, dirname } from "path";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { createServer } from "node:net";
+import { dirname, resolve } from "node:path";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgent } from "../lib/registry.js";
 
@@ -48,7 +48,9 @@ export async function run(args: string[]) {
   const portFree = await checkPort(port);
   if (!portFree) {
     console.error(`Port ${port} is already in use.`);
-    console.error(`Another agent or process may be running. Use 'molt stop ${name}' or check with: lsof -i :${port}`);
+    console.error(
+      `Another agent or process may be running. Use 'molt stop ${name}' or check with: lsof -i :${port}`,
+    );
     process.exit(1);
   }
 
@@ -67,7 +69,12 @@ export async function run(args: string[]) {
   // Fallback: look relative to current file for built mode
   if (!supervisorModule) {
     // In built mode, supervisor.ts is bundled — we spawn a small inline script
-    supervisorModule = resolve(dirname(new URL(import.meta.url).pathname), "..", "lib", "supervisor.ts");
+    supervisorModule = resolve(
+      dirname(new URL(import.meta.url).pathname),
+      "..",
+      "lib",
+      "supervisor.ts",
+    );
   }
 
   // We spawn a small bootstrap script that imports and runs the supervisor
@@ -127,8 +134,12 @@ export async function run(args: string[]) {
 
   // Kill the supervisor since the server never became healthy
   if (child.pid) {
-    try { process.kill(-child.pid, "SIGTERM"); } catch {
-      try { process.kill(child.pid, "SIGTERM"); } catch {}
+    try {
+      process.kill(-child.pid, "SIGTERM");
+    } catch {
+      try {
+        process.kill(child.pid, "SIGTERM");
+      } catch {}
     }
   }
 

@@ -1,11 +1,7 @@
 import { useState } from "react";
-import { login, register, type AuthUser } from "../lib/auth";
+import { type AuthUser, login, register } from "../lib/auth";
 
-export function LoginPage({
-  onAuth,
-}: {
-  onAuth: (user: AuthUser) => void;
-}) {
+export function LoginPage({ onAuth }: { onAuth: (user: AuthUser) => void }) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -46,9 +42,7 @@ export function LoginPage({
     return (
       <div style={containerStyle}>
         <div style={cardStyle}>
-          <div style={{ color: "var(--yellow)", marginBottom: 16 }}>
-            {pendingMessage}
-          </div>
+          <div style={{ color: "var(--yellow)", marginBottom: 16 }}>{pendingMessage}</div>
           <button
             onClick={() => {
               setPendingMessage("");
@@ -82,7 +76,6 @@ export function LoginPage({
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             style={inputStyle}
-            autoFocus
           />
           <input
             type="password"
@@ -91,11 +84,7 @@ export function LoginPage({
             onChange={(e) => setPassword(e.target.value)}
             style={{ ...inputStyle, marginTop: 8 }}
           />
-          {error && (
-            <div style={{ color: "var(--red)", fontSize: 12, marginTop: 8 }}>
-              {error}
-            </div>
-          )}
+          {error && <div style={{ color: "var(--red)", fontSize: 12, marginTop: 8 }}>{error}</div>}
           <button
             type="submit"
             disabled={loading || !username.trim() || !password.trim()}
@@ -117,9 +106,7 @@ export function LoginPage({
             }}
             style={linkBtnStyle}
           >
-            {mode === "login"
-              ? "Need an account? Register"
-              : "Have an account? Sign in"}
+            {mode === "login" ? "Need an account? Register" : "Have an account? Sign in"}
           </button>
         </div>
       </div>

@@ -1,7 +1,7 @@
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { Hono } from "hono";
-import { existsSync, readFileSync, writeFileSync, readdirSync } from "fs";
-import { resolve } from "path";
-import { findAgent, agentDir } from "../../lib/registry.js";
+import { agentDir, findAgent } from "../../lib/registry.js";
 
 const ALLOWED_FILES = new Set([
   "SOUL.md",
@@ -24,8 +24,7 @@ app.get("/:name/files", (c) => {
   const homeDir = resolve(dir, "home");
   if (!existsSync(homeDir)) return c.json({ error: "Home directory missing" }, 404);
 
-  const files = readdirSync(homeDir)
-    .filter((f) => f.endsWith(".md") && ALLOWED_FILES.has(f));
+  const files = readdirSync(homeDir).filter((f) => f.endsWith(".md") && ALLOWED_FILES.has(f));
 
   return c.json(files);
 });

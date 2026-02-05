@@ -1,9 +1,9 @@
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { spawn } from "child_process";
-import { existsSync } from "fs";
-import { resolve } from "path";
-import { findAgent, agentDir } from "../../lib/registry.js";
+import { agentDir, findAgent } from "../../lib/registry.js";
 
 const app = new Hono();
 

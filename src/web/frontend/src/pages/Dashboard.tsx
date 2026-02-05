@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
-import { fetchAgents, type Agent } from "../lib/api";
+import { useEffect, useState } from "react";
 import { AgentCard } from "../components/AgentCard";
+import { type Agent, fetchAgents } from "../lib/api";
 
 export function Dashboard() {
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -29,11 +29,7 @@ export function Dashboard() {
   }, []);
 
   if (error) {
-    return (
-      <div style={{ color: "var(--red)", padding: 40, textAlign: "center" }}>
-        {error}
-      </div>
-    );
+    return <div style={{ color: "var(--red)", padding: 40, textAlign: "center" }}>{error}</div>;
   }
 
   if (agents.length === 0) {

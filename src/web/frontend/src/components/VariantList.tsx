@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { fetchVariants, type Variant } from "../lib/api";
 import { StatusBadge } from "./StatusBadge";
 
@@ -7,7 +7,9 @@ export function VariantList({ name }: { name: string }) {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetchVariants(name).then(setVariants).catch(() => setError("Failed to load variants"));
+    fetchVariants(name)
+      .then(setVariants)
+      .catch(() => setError("Failed to load variants"));
   }, [name]);
 
   if (error) {
@@ -16,9 +18,7 @@ export function VariantList({ name }: { name: string }) {
 
   if (variants.length === 0) {
     return (
-      <div style={{ color: "var(--text-2)", padding: 24, textAlign: "center" }}>
-        No variants.
-      </div>
+      <div style={{ color: "var(--text-2)", padding: 24, textAlign: "center" }}>No variants.</div>
     );
   }
 
@@ -41,18 +41,10 @@ export function VariantList({ name }: { name: string }) {
               letterSpacing: "0.04em",
             }}
           >
-            <th style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>
-              Name
-            </th>
-            <th style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>
-              Branch
-            </th>
-            <th style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>
-              Port
-            </th>
-            <th style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>
-              Status
-            </th>
+            <th style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>Name</th>
+            <th style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>Branch</th>
+            <th style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>Port</th>
+            <th style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>Status</th>
           </tr>
         </thead>
         <tbody>

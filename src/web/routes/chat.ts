@@ -1,15 +1,15 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { findAgent } from "../../lib/registry.js";
-import { readNdjson } from "../../lib/ndjson.js";
 import {
-  createConversation,
-  getConversation,
   addMessage,
   type ContentBlock,
+  createConversation,
+  getConversation,
 } from "../../lib/conversations.js";
+import { readNdjson } from "../../lib/ndjson.js";
+import { findAgent } from "../../lib/registry.js";
+import type { MoltContentPart, MoltEvent } from "../../types.js";
 import type { AuthEnv } from "../middleware/auth.js";
-import type { MoltEvent, MoltContentPart } from "../../types.js";
 
 const app = new Hono<AuthEnv>();
 
@@ -79,10 +79,7 @@ app.post("/:name/chat", async (c) => {
   });
 
   if (!res.ok) {
-    return c.json(
-      { error: `Agent responded with ${res.status}` },
-      res.status as 500,
-    );
+    return c.json({ error: `Agent responded with ${res.status}` }, res.status as 500);
   }
 
   if (!res.body) {

@@ -1,6 +1,6 @@
-import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readRegistry, nextPort } from "../src/lib/registry.js";
+import { describe, it } from "node:test";
+import { nextPort, readRegistry } from "../src/lib/registry.js";
 
 describe("registry", () => {
   it("nextPort returns 4100 when registry is empty", () => {

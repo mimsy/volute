@@ -1,6 +1,6 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
-import { resolve } from "path";
-import { homedir } from "os";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import { findVariant } from "./variants.js";
 
 export const MOLT_HOME = resolve(homedir(), ".molt");
@@ -28,7 +28,7 @@ export function readRegistry(): AgentEntry[] {
 
 export function writeRegistry(entries: AgentEntry[]) {
   ensureMoltHome();
-  writeFileSync(REGISTRY_PATH, JSON.stringify(entries, null, 2) + "\n");
+  writeFileSync(REGISTRY_PATH, `${JSON.stringify(entries, null, 2)}\n`);
 }
 
 export function addAgent(name: string, port: number) {

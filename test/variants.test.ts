@@ -1,15 +1,15 @@
-import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, existsSync } from "fs";
-import { join } from "path";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { beforeEach, describe, it } from "node:test";
 import {
-  readVariants,
-  writeVariants,
   addVariant,
-  removeVariant,
   findVariant,
-  validateBranchName,
+  readVariants,
+  removeVariant,
   type Variant,
+  validateBranchName,
+  writeVariants,
 } from "../src/lib/variants.js";
 
 const tmpDir = join(import.meta.dirname, ".tmp-test");

@@ -1,9 +1,5 @@
 import { Hono } from "hono";
-import {
-  listConversations,
-  getMessages,
-  deleteConversation,
-} from "../../lib/conversations.js";
+import { deleteConversation, getMessages, listConversations } from "../../lib/conversations.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
 const app = new Hono<AuthEnv>();

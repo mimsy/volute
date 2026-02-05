@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, unlinkSync } from "fs";
-import { resolve } from "path";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { resolve } from "node:path";
 import { resolveAgent } from "../lib/registry.js";
 
 export async function run(args: string[]) {
@@ -28,7 +28,9 @@ export async function run(args: string[]) {
   try {
     process.kill(pid, 0);
   } catch {
-    try { unlinkSync(pidPath); } catch {}
+    try {
+      unlinkSync(pidPath);
+    } catch {}
     console.log(`Discord connector for ${name} was not running (cleaned up stale PID file).`);
     return;
   }
@@ -63,6 +65,8 @@ export async function run(args: string[]) {
       // Already dead
     }
   }
-  try { unlinkSync(pidPath); } catch {}
+  try {
+    unlinkSync(pidPath);
+  } catch {}
   console.error(`Discord connector for ${name} did not exit cleanly, sent SIGKILL.`);
 }

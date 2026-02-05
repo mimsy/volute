@@ -1,4 +1,4 @@
-import { execFile as execFileCb, spawn, type SpawnOptions } from "child_process";
+import { execFile as execFileCb, spawn } from "node:child_process";
 
 /** Promise wrapper around child_process.execFile. Returns stdout as a string. */
 export function exec(

@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { randomUUID } from "node:crypto";
 import { getDb } from "./db.js";
 
 export type ContentBlock =
@@ -34,7 +34,7 @@ export function createConversation(
   const db = getDb();
   const id = randomUUID();
   db.prepare(
-    "INSERT INTO conversations (id, agent_name, channel, user_id, title) VALUES (?, ?, ?, ?, ?)"
+    "INSERT INTO conversations (id, agent_name, channel, user_id, title) VALUES (?, ?, ?, ?, ?)",
   ).run(id, agentName, channel, opts?.userId ?? null, opts?.title ?? null);
 
   return {
@@ -54,9 +54,11 @@ export function getOrCreateConversation(
   opts?: { userId?: number },
 ): Conversation {
   const db = getDb();
-  const existing = db.prepare(
-    "SELECT * FROM conversations WHERE agent_name = ? AND channel = ? ORDER BY updated_at DESC LIMIT 1"
-  ).get(agentName, channel) as Conversation | undefined;
+  const existing = db
+    .prepare(
+      "SELECT * FROM conversations WHERE agent_name = ? AND channel = ? ORDER BY updated_at DESC LIMIT 1",
+    )
+    .get(agentName, channel) as Conversation | undefined;
 
   if (existing) return existing;
   return createConversation(agentName, channel, opts);
@@ -64,23 +66,24 @@ export function getOrCreateConversation(
 
 export function getConversation(id: string): Conversation | null {
   const db = getDb();
-  const row = db.prepare("SELECT * FROM conversations WHERE id = ?").get(id) as Conversation | undefined;
+  const row = db.prepare("SELECT * FROM conversations WHERE id = ?").get(id) as
+    | Conversation
+    | undefined;
   return row ?? null;
 }
 
-export function listConversations(
-  agentName: string,
-  opts?: { userId?: number },
-): Conversation[] {
+export function listConversations(agentName: string, opts?: { userId?: number }): Conversation[] {
   const db = getDb();
   if (opts?.userId != null) {
-    return db.prepare(
-      "SELECT * FROM conversations WHERE agent_name = ? AND user_id = ? ORDER BY updated_at DESC"
-    ).all(agentName, opts.userId) as Conversation[];
+    return db
+      .prepare(
+        "SELECT * FROM conversations WHERE agent_name = ? AND user_id = ? ORDER BY updated_at DESC",
+      )
+      .all(agentName, opts.userId) as Conversation[];
   }
-  return db.prepare(
-    "SELECT * FROM conversations WHERE agent_name = ? ORDER BY updated_at DESC"
-  ).all(agentName) as Conversation[];
+  return db
+    .prepare("SELECT * FROM conversations WHERE agent_name = ? ORDER BY updated_at DESC")
+    .all(agentName) as Conversation[];
 }
 
 export function addMessage(
@@ -91,20 +94,25 @@ export function addMessage(
 ): Message {
   const db = getDb();
   const serialized = JSON.stringify(content);
-  const result = db.prepare(
-    "INSERT INTO messages (conversation_id, role, sender_name, content) VALUES (?, ?, ?, ?)"
-  ).run(conversationId, role, senderName, serialized);
+  const result = db
+    .prepare(
+      "INSERT INTO messages (conversation_id, role, sender_name, content) VALUES (?, ?, ?, ?)",
+    )
+    .run(conversationId, role, senderName, serialized);
 
   // Update conversation's updated_at and set title from first message if unset
-  db.prepare("UPDATE conversations SET updated_at = datetime('now') WHERE id = ?").run(conversationId);
+  db.prepare("UPDATE conversations SET updated_at = datetime('now') WHERE id = ?").run(
+    conversationId,
+  );
 
   if (role === "user") {
     const firstText = content.find((b) => b.type === "text");
     const title = firstText ? (firstText as { text: string }).text.slice(0, 80) : "";
     if (title) {
-      db.prepare(
-        "UPDATE conversations SET title = ? WHERE id = ? AND title IS NULL"
-      ).run(title, conversationId);
+      db.prepare("UPDATE conversations SET title = ? WHERE id = ? AND title IS NULL").run(
+        title,
+        conversationId,
+      );
     }
   }
 
@@ -120,9 +128,9 @@ export function addMessage(
 
 export function getMessages(conversationId: string): Message[] {
   const db = getDb();
-  const rows = db.prepare(
-    "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC"
-  ).all(conversationId) as Array<Omit<Message, "content"> & { content: string }>;
+  const rows = db
+    .prepare("SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC")
+    .all(conversationId) as Array<Omit<Message, "content"> & { content: string }>;
 
   return rows.map((row) => {
     let content: ContentBlock[];

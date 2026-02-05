@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
-import { Dashboard } from "./pages/Dashboard";
-import { AgentDetail } from "./pages/AgentDetail";
+import { useEffect, useState } from "react";
 import { LoginPage } from "./components/LoginPage";
 import { UserManagement } from "./components/UserManagement";
-import { fetchMe, logout, type AuthUser } from "./lib/auth";
+import { type AuthUser, fetchMe, logout } from "./lib/auth";
+import { AgentDetail } from "./pages/AgentDetail";
+import { Dashboard } from "./pages/Dashboard";
 
 function parseHash(): { page: string; name?: string } {
   const hash = window.location.hash.slice(1) || "/";
@@ -41,9 +41,7 @@ export function App() {
       <>
         <style>{globalStyles}</style>
         <div className="app">
-          <div style={{ color: "var(--text-2)", padding: 24, textAlign: "center" }}>
-            Loading...
-          </div>
+          <div style={{ color: "var(--text-2)", padding: 24, textAlign: "center" }}>Loading...</div>
         </div>
       </>
     );
@@ -90,9 +88,7 @@ export function App() {
                 users
               </button>
             )}
-            <span style={{ color: "var(--text-2)", fontSize: 12 }}>
-              {user.username}
-            </span>
+            <span style={{ color: "var(--text-2)", fontSize: 12 }}>{user.username}</span>
             <button
               onClick={handleLogout}
               style={{
@@ -114,9 +110,7 @@ export function App() {
           ) : (
             <>
               {route.page === "dashboard" && <Dashboard />}
-              {route.page === "agent" && route.name && (
-                <AgentDetail name={route.name} />
-              )}
+              {route.page === "agent" && route.name && <AgentDetail name={route.name} />}
             </>
           )}
         </main>

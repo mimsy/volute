@@ -1,12 +1,11 @@
-import { existsSync, mkdirSync, rmSync } from "fs";
-import { resolve } from "path";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { resolve } from "node:path";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgent } from "../lib/registry.js";
-import { findTemplatesDir, copyTemplateToDir } from "../lib/template.js";
-import { addVariant } from "../lib/variants.js";
 import { spawnServer } from "../lib/spawn-server.js";
-import { checkHealth } from "../lib/variants.js";
+import { copyTemplateToDir, findTemplatesDir } from "../lib/template.js";
+import { addVariant, checkHealth } from "../lib/variants.js";
 
 const TEMPLATE_BRANCH = "molt/template";
 const VARIANT_NAME = "upgrade";
@@ -86,11 +85,7 @@ export async function run(args: string[]) {
  * Update the molt/template orphan branch with the latest template files.
  * Uses a temporary worktree to avoid touching the main working directory.
  */
-async function updateTemplateBranch(
-  projectRoot: string,
-  templateDir: string,
-  agentName: string,
-) {
+async function updateTemplateBranch(projectRoot: string, templateDir: string, agentName: string) {
   const tempWorktree = resolve(projectRoot, ".worktrees", "_template_update");
 
   // Check if template branch exists
@@ -206,10 +201,7 @@ async function mergeTemplateBranch(worktreeDir: string): Promise<boolean> {
 /**
  * Continue an upgrade after conflict resolution.
  */
-async function continueUpgrade(
-  agentName: string,
-  projectRoot: string,
-) {
+async function continueUpgrade(agentName: string, projectRoot: string) {
   const worktreeDir = resolve(projectRoot, ".worktrees", VARIANT_NAME);
 
   if (!existsSync(worktreeDir)) {
@@ -244,11 +236,7 @@ async function continueUpgrade(
 /**
  * Install dependencies, start the variant server, and run verification.
  */
-async function installAndVerify(
-  agentName: string,
-  projectRoot: string,
-  worktreeDir: string,
-) {
+async function installAndVerify(agentName: string, projectRoot: string, worktreeDir: string) {
   // Install dependencies
   console.log("Installing dependencies...");
   await execInherit("npm", ["install"], { cwd: worktreeDir });

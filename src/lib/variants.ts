@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
-import { resolve, dirname } from "path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
 export type Variant = {
   name: string;
@@ -30,7 +30,7 @@ export function writeVariants(projectRoot: string, variants: Variant[]) {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  writeFileSync(path, JSON.stringify(variants, null, 2) + "\n");
+  writeFileSync(path, `${JSON.stringify(variants, null, 2)}\n`);
 }
 
 export function addVariant(projectRoot: string, variant: Variant) {
@@ -49,16 +49,11 @@ export function removeVariant(projectRoot: string, name: string) {
   );
 }
 
-export function findVariant(
-  projectRoot: string,
-  name: string,
-): Variant | undefined {
+export function findVariant(projectRoot: string, name: string): Variant | undefined {
   return readVariants(projectRoot).find((v) => v.name === name);
 }
 
-export async function checkHealth(
-  port: number,
-): Promise<{ ok: boolean; name?: string }> {
+export async function checkHealth(port: number): Promise<{ ok: boolean; name?: string }> {
   try {
     const res = await fetch(`http://localhost:${port}/health`, {
       signal: AbortSignal.timeout(2000),

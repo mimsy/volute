@@ -1,12 +1,6 @@
+import { agentEnvPath, loadMergedEnv, readEnv, sharedEnvPath, writeEnv } from "../lib/env.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgent } from "../lib/registry.js";
-import {
-  readEnv,
-  writeEnv,
-  sharedEnvPath,
-  agentEnvPath,
-  loadMergedEnv,
-} from "../lib/env.js";
 
 function getEnvPath(agentName: string | undefined): string {
   if (agentName) {
@@ -24,11 +18,13 @@ async function promptValue(key: string): Promise<string> {
     let value = "";
     const onData = (buf: Buffer) => {
       for (const byte of buf) {
-        if (byte === 3) { // Ctrl-C
+        if (byte === 3) {
+          // Ctrl-C
           process.stderr.write("\n");
           process.exit(1);
         }
-        if (byte === 13 || byte === 10) { // Enter
+        if (byte === 13 || byte === 10) {
+          // Enter
           process.stderr.write("\n");
           if (process.stdin.isTTY) process.stdin.setRawMode(false);
           process.stdin.removeListener("data", onData);
@@ -36,7 +32,8 @@ async function promptValue(key: string): Promise<string> {
           resolve(value);
           return;
         }
-        if (byte === 127 || byte === 8) { // Backspace
+        if (byte === 127 || byte === 8) {
+          // Backspace
           value = value.slice(0, -1);
         } else {
           value += String.fromCharCode(byte);
@@ -104,10 +101,7 @@ export async function run(args: string[]) {
         const { dir } = resolveAgent(flags.agent);
         const shared = readEnv(sharedEnvPath());
         const agent = readEnv(agentEnvPath(dir));
-        const allKeys = new Set([
-          ...Object.keys(shared),
-          ...Object.keys(agent),
-        ]);
+        const allKeys = new Set([...Object.keys(shared), ...Object.keys(agent)]);
         if (allKeys.size === 0) {
           console.log("No environment variables set.");
           return;
@@ -134,9 +128,7 @@ export async function run(args: string[]) {
     case "remove": {
       const key = positional[1];
       if (!key) {
-        console.error(
-          "Usage: molt env remove <KEY> [--agent <name>]",
-        );
+        console.error("Usage: molt env remove <KEY> [--agent <name>]");
         process.exit(1);
       }
       const path = getEnvPath(flags.agent);

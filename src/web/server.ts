@@ -1,15 +1,15 @@
-import { Hono } from "hono";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, extname, resolve } from "node:path";
 import { serve } from "@hono/node-server";
-import { existsSync, readFileSync, statSync } from "fs";
-import { resolve, dirname, extname } from "path";
+import { Hono } from "hono";
+import { authMiddleware } from "./middleware/auth.js";
 import agents from "./routes/agents.js";
+import auth from "./routes/auth.js";
 import chat from "./routes/chat.js";
+import conversations from "./routes/conversations.js";
+import files from "./routes/files.js";
 import logs from "./routes/logs.js";
 import variants from "./routes/variants.js";
-import files from "./routes/files.js";
-import auth from "./routes/auth.js";
-import conversations from "./routes/conversations.js";
-import { authMiddleware } from "./middleware/auth.js";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",

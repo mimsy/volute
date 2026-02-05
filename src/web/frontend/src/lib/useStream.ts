@@ -1,10 +1,7 @@
-import { useRef, useCallback } from "react";
+import { useCallback, useRef } from "react";
 import type { MoltEvent } from "./api";
 
-export function useChatStream(
-  name: string,
-  onEvent: (event: MoltEvent) => void,
-) {
+export function useChatStream(name: string, onEvent: (event: MoltEvent) => void) {
   const abortRef = useRef<AbortController | null>(null);
 
   const send = useCallback(

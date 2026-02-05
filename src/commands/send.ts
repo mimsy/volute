@@ -1,7 +1,7 @@
-import { userInfo } from "os";
-import { resolveAgent } from "../lib/registry.js";
+import { userInfo } from "node:os";
+import { addMessage, getOrCreateConversation } from "../lib/conversations.js";
 import { readNdjson } from "../lib/ndjson.js";
-import { getOrCreateConversation, addMessage } from "../lib/conversations.js";
+import { resolveAgent } from "../lib/registry.js";
 
 export async function run(args: string[]) {
   const name = args[0];

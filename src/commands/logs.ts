@@ -1,6 +1,6 @@
-import { spawn } from "child_process";
-import { existsSync } from "fs";
-import { resolve } from "path";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgent } from "../lib/registry.js";
 
@@ -24,11 +24,7 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  const tailArgs = [
-    `-n`, String(flags.n ?? 50),
-    ...(flags.follow ? ["-f"] : []),
-    logFile,
-  ];
+  const tailArgs = [`-n`, String(flags.n ?? 50), ...(flags.follow ? ["-f"] : []), logFile];
 
   const child = spawn("tail", tailArgs, { stdio: "inherit" });
   child.on("exit", (code) => process.exit(code ?? 0));

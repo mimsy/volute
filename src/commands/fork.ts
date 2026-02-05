@@ -1,13 +1,10 @@
-import { existsSync, mkdirSync, writeFileSync } from "fs";
-import { resolve } from "path";
-import {
-  addVariant,
-  validateBranchName,
-} from "../lib/variants.js";
-import { spawnServer } from "../lib/spawn-server.js";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgent } from "../lib/registry.js";
+import { spawnServer } from "../lib/spawn-server.js";
+import { addVariant, validateBranchName } from "../lib/variants.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -23,7 +20,9 @@ export async function run(args: string[]) {
   const noStart = flags["no-start"];
 
   if (!agentName || !variantName) {
-    console.error("Usage: molt fork <agent> <variant> [--soul \"...\"] [--port N] [--no-start] [--json]");
+    console.error(
+      'Usage: molt fork <agent> <variant> [--soul "..."] [--port N] [--no-start] [--json]',
+    );
     process.exit(1);
   }
 
@@ -93,7 +92,7 @@ export async function run(args: string[]) {
     name: variantName,
     branch: variantName,
     path: worktreeDir,
-    port: actualPort ?? (port ?? 0),
+    port: actualPort ?? port ?? 0,
     pid,
     created: new Date().toISOString(),
   };

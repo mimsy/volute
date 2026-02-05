@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
-import { resolve, dirname } from "path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { MOLT_HOME } from "./registry.js";
 
 export function sharedEnvPath(): string {
@@ -21,7 +21,7 @@ export function readEnv(path: string): Record<string, string> {
 
 export function writeEnv(path: string, env: Record<string, string>): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(env, null, 2) + "\n");
+  writeFileSync(path, `${JSON.stringify(env, null, 2)}\n`);
 }
 
 export function loadMergedEnv(agentDir: string): Record<string, string> {

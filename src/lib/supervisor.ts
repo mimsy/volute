@@ -1,6 +1,6 @@
-import { spawn, execFile } from "child_process";
-import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from "fs";
-import { resolve } from "path";
+import { execFile, spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { loadMergedEnv } from "./env.js";
 
 export type SupervisorOptions = {
@@ -28,13 +28,17 @@ export function runSupervisor(opts: SupervisorOptions): void {
   let activeChild: ReturnType<typeof spawn> | null = null;
 
   function cleanupPidFile() {
-    try { unlinkSync(pidPath); } catch {}
+    try {
+      unlinkSync(pidPath);
+    } catch {}
   }
   function shutdown() {
     if (shuttingDown) return;
     shuttingDown = true;
     if (activeChild) {
-      try { activeChild.kill("SIGTERM"); } catch {}
+      try {
+        activeChild.kill("SIGTERM");
+      } catch {}
     }
     cleanupPidFile();
     process.exit(0);

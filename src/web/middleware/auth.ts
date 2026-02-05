@@ -1,5 +1,5 @@
-import { createMiddleware } from "hono/factory";
 import { getCookie } from "hono/cookie";
+import { createMiddleware } from "hono/factory";
 import { getUser, type User } from "../../lib/auth.js";
 
 export type AuthEnv = {

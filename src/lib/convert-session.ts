@@ -1,7 +1,7 @@
-import { readFileSync, writeFileSync, mkdirSync } from "fs";
-import { resolve } from "path";
-import { randomUUID } from "crypto";
-import { homedir } from "os";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 
 interface OpenClawEvent {
   type: string;
@@ -44,10 +44,7 @@ interface SdkEvent {
 }
 
 /** Convert an OpenClaw session JSONL to Claude Agent SDK format and install it. */
-export function convertSession(opts: {
-  sessionPath: string;
-  projectDir: string;
-}): string {
+export function convertSession(opts: { sessionPath: string; projectDir: string }): string {
   const lines = readFileSync(opts.sessionPath, "utf-8").trim().split("\n");
   const sessionId = randomUUID();
   const idMap = new Map<string, string>(); // OpenClaw id → SDK uuid
@@ -72,9 +69,7 @@ export function convertSession(opts: {
     if (msg.role === "user") {
       const uuid = randomUUID();
       idMap.set(event.id, uuid);
-      const parentUuid = event.parentId
-        ? (idMap.get(event.parentId) ?? null)
-        : null;
+      const parentUuid = event.parentId ? (idMap.get(event.parentId) ?? null) : null;
 
       const sdkEvent: SdkEvent = {
         uuid,
@@ -95,16 +90,12 @@ export function convertSession(opts: {
       sdkEvents.push(JSON.stringify(sdkEvent));
       lastSdkUuid = uuid;
     } else if (msg.role === "assistant") {
-      const content = convertAssistantContent(
-        msg.content as Record<string, unknown>[],
-      );
+      const content = convertAssistantContent(msg.content as Record<string, unknown>[]);
       if (content.length === 0) continue;
 
       const uuid = randomUUID();
       idMap.set(event.id, uuid);
-      const parentUuid = event.parentId
-        ? (idMap.get(event.parentId) ?? null)
-        : null;
+      const parentUuid = event.parentId ? (idMap.get(event.parentId) ?? null) : null;
 
       // Determine stop_reason from OpenClaw's stopReason
       const stopReason = mapStopReason(msg.stopReason as string | undefined);
@@ -162,9 +153,7 @@ export function convertSession(opts: {
       const uuid = randomUUID();
       idMap.set(lastToolResultId, uuid);
       // Point to the parent assistant message
-      const parentUuid = event.parentId
-        ? (idMap.get(event.parentId) ?? null)
-        : lastSdkUuid;
+      const parentUuid = event.parentId ? (idMap.get(event.parentId) ?? null) : lastSdkUuid;
 
       const sdkEvent: SdkEvent = {
         uuid,
@@ -195,7 +184,7 @@ export function convertSession(opts: {
   mkdirSync(sdkDir, { recursive: true });
 
   const sdkPath = resolve(sdkDir, `${sessionId}.jsonl`);
-  writeFileSync(sdkPath, sdkEvents.join("\n") + "\n");
+  writeFileSync(sdkPath, `${sdkEvents.join("\n")}\n`);
 
   console.log(`Converted ${sdkEvents.length} messages → ${sdkPath}`);
   return sessionId;
@@ -211,9 +200,7 @@ function mapModel(model: string | undefined): string {
   return MODEL_MAP[model] ?? model;
 }
 
-function mapStopReason(
-  stopReason: string | undefined,
-): string | null {
+function mapStopReason(stopReason: string | undefined): string | null {
   if (!stopReason) return "end_turn";
   const map: Record<string, string> = {
     toolUse: "tool_use",
@@ -224,29 +211,21 @@ function mapStopReason(
   return map[stopReason] ?? stopReason;
 }
 
-function mapUsage(
-  usage: Record<string, number> | undefined,
-): Record<string, number> {
+function mapUsage(usage: Record<string, number> | undefined): Record<string, number> {
   if (!usage) return { input_tokens: 0, output_tokens: 0 };
   return {
     input_tokens: usage.input ?? usage.input_tokens ?? 0,
     output_tokens: usage.output ?? usage.output_tokens ?? 0,
-    cache_read_input_tokens:
-      usage.cacheRead ?? usage.cache_read_input_tokens ?? 0,
-    cache_creation_input_tokens:
-      usage.cacheWrite ?? usage.cache_creation_input_tokens ?? 0,
+    cache_read_input_tokens: usage.cacheRead ?? usage.cache_read_input_tokens ?? 0,
+    cache_creation_input_tokens: usage.cacheWrite ?? usage.cache_creation_input_tokens ?? 0,
   };
 }
 
-function convertAssistantContent(
-  content: Record<string, unknown>[],
-): Record<string, unknown>[] {
+function convertAssistantContent(content: Record<string, unknown>[]): Record<string, unknown>[] {
   const result: Record<string, unknown>[] = [];
 
   for (const block of content) {
     if (block.type === "thinking") {
-      // Strip thinking blocks — signatures won't validate cross-session
-      continue;
     } else if (block.type === "toolCall") {
       // Convert toolCall → tool_use
       result.push({

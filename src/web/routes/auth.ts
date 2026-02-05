@@ -1,15 +1,21 @@
 import { Hono } from "hono";
-import { setCookie, deleteCookie, getCookie } from "hono/cookie";
+import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import {
-  createUser,
-  verifyUser,
-  getUser,
-  listUsers,
-  listPendingUsers,
   approveUser,
+  createUser,
+  getUser,
   getUserByUsername,
+  listPendingUsers,
+  listUsers,
+  verifyUser,
 } from "../../lib/auth.js";
-import { createSession, deleteSession, getSessionUserId, authMiddleware, type AuthEnv } from "../middleware/auth.js";
+import {
+  type AuthEnv,
+  authMiddleware,
+  createSession,
+  deleteSession,
+  getSessionUserId,
+} from "../middleware/auth.js";
 
 const app = new Hono();
 

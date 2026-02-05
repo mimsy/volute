@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from "fs";
-import { resolve } from "path";
-import { readRegistry, agentDir } from "../lib/registry.js";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { agentDir, readRegistry } from "../lib/registry.js";
 import { checkHealth } from "../lib/variants.js";
 
 export async function run(args: string[]) {
@@ -50,7 +50,9 @@ export async function run(args: string[]) {
         }
       }
 
-      console.log(`${entry.name.padEnd(nameW)}  ${String(entry.port).padEnd(portW)}  ${status.padEnd(8)}  ${discord}`);
+      console.log(
+        `${entry.name.padEnd(nameW)}  ${String(entry.port).padEnd(portW)}  ${status.padEnd(8)}  ${discord}`,
+      );
     }
     return;
   }
@@ -81,7 +83,9 @@ export async function run(args: string[]) {
     }
   }
 
-  console.log(`Supervisor: ${supervisorRunning ? `running (pid ${supervisorPid})` : "not running"}`);
+  console.log(
+    `Supervisor: ${supervisorRunning ? `running (pid ${supervisorPid})` : "not running"}`,
+  );
 
   // Check Discord connector PID
   const discordPidPath = resolve(dir, ".molt", "discord.pid");

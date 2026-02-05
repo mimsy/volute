@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { fetchFiles, fetchFile, saveFile } from "../lib/api";
+import { useEffect, useState } from "react";
+import { fetchFile, fetchFiles, saveFile } from "../lib/api";
 
 export function FileEditor({ name }: { name: string }) {
   const [files, setFiles] = useState<string[]>([]);
@@ -73,16 +73,11 @@ export function FileEditor({ name }: { name: string }) {
               width: "100%",
               padding: "6px 12px",
               textAlign: "left",
-              background:
-                f === selected ? "var(--accent-bg)" : "transparent",
-              color:
-                f === selected ? "var(--accent)" : "var(--text-1)",
+              background: f === selected ? "var(--accent-bg)" : "transparent",
+              color: f === selected ? "var(--accent)" : "var(--text-1)",
               fontSize: 12,
               fontFamily: "var(--mono)",
-              borderLeft:
-                f === selected
-                  ? "2px solid var(--accent)"
-                  : "2px solid transparent",
+              borderLeft: f === selected ? "2px solid var(--accent)" : "2px solid transparent",
               transition: "all 0.1s",
             }}
           >
@@ -114,11 +109,7 @@ export function FileEditor({ name }: { name: string }) {
             >
               <span style={{ color: "var(--text-1)" }}>
                 {selected}
-                {dirty && (
-                  <span style={{ color: "var(--yellow)", marginLeft: 6 }}>
-                    (modified)
-                  </span>
-                )}
+                {dirty && <span style={{ color: "var(--yellow)", marginLeft: 6 }}>(modified)</span>}
               </span>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 {saved && (
@@ -132,19 +123,13 @@ export function FileEditor({ name }: { name: string }) {
                     Saved
                   </span>
                 )}
-                {error && (
-                  <span style={{ color: "var(--red)", fontSize: 11 }}>
-                    {error}
-                  </span>
-                )}
+                {error && <span style={{ color: "var(--red)", fontSize: 11 }}>{error}</span>}
                 <button
                   onClick={handleSave}
                   disabled={!dirty || saving}
                   style={{
                     padding: "4px 12px",
-                    background: dirty
-                      ? "var(--accent-dim)"
-                      : "var(--bg-3)",
+                    background: dirty ? "var(--accent-dim)" : "var(--bg-3)",
                     color: dirty ? "var(--accent)" : "var(--text-2)",
                     borderRadius: "var(--radius)",
                     fontSize: 11,

@@ -1,6 +1,6 @@
-import { readVariants, checkHealth, writeVariants, type Variant } from "../lib/variants.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgent } from "../lib/registry.js";
+import { checkHealth, readVariants, type Variant, writeVariants } from "../lib/variants.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -51,9 +51,7 @@ export async function run(args: string[]) {
   const nameW = Math.max(4, ...results.map((r) => r.name.length));
   const portW = Math.max(4, ...results.map((r) => String(r.port || "-").length));
 
-  console.log(
-    `${"NAME".padEnd(nameW)}  ${"PORT".padEnd(portW)}  ${"STATUS".padEnd(10)}  BRANCH`,
-  );
+  console.log(`${"NAME".padEnd(nameW)}  ${"PORT".padEnd(portW)}  ${"STATUS".padEnd(10)}  BRANCH`);
   for (const r of results) {
     console.log(
       `${r.name.padEnd(nameW)}  ${String(r.port || "-").padEnd(portW)}  ${r.status.padEnd(10)}  ${r.branch}`,

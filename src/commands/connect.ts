@@ -1,9 +1,9 @@
-import { spawn } from "child_process";
-import { existsSync, readFileSync, mkdirSync, openSync } from "fs";
-import { resolve, dirname } from "path";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { loadMergedEnv } from "../lib/env.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgent } from "../lib/registry.js";
-import { loadMergedEnv } from "../lib/env.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -26,9 +26,7 @@ export async function run(args: string[]) {
   const env = loadMergedEnv(dir);
 
   if (!env.DISCORD_TOKEN) {
-    console.error(
-      "DISCORD_TOKEN not set. Run: molt env set DISCORD_TOKEN <token>",
-    );
+    console.error("DISCORD_TOKEN not set. Run: molt env set DISCORD_TOKEN <token>");
     process.exit(1);
   }
 

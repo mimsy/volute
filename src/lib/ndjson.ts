@@ -1,8 +1,6 @@
 import type { MoltEvent } from "../types.js";
 
-export async function* readNdjson(
-  body: ReadableStream<Uint8Array>,
-): AsyncGenerator<MoltEvent> {
+export async function* readNdjson(body: ReadableStream<Uint8Array>): AsyncGenerator<MoltEvent> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";

@@ -1,9 +1,5 @@
-import { useState, useEffect } from "react";
-import {
-  fetchConversations,
-  deleteConversation,
-  type Conversation,
-} from "../lib/api";
+import { useEffect, useState } from "react";
+import { type Conversation, deleteConversation, fetchConversations } from "../lib/api";
 
 export function ConversationList({
   name,
@@ -19,12 +15,14 @@ export function ConversationList({
   const [conversations, setConversations] = useState<Conversation[]>([]);
 
   const refresh = () => {
-    fetchConversations(name).then(setConversations).catch(() => {});
+    fetchConversations(name)
+      .then(setConversations)
+      .catch(() => {});
   };
 
   useEffect(() => {
     refresh();
-  }, [name, activeId]);
+  }, [refresh]);
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();

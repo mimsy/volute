@@ -1,5 +1,5 @@
-import { spawn, type ChildProcess } from "child_process";
-import { resolve } from "path";
+import { type ChildProcess, spawn } from "node:child_process";
+import { resolve } from "node:path";
 
 type SpawnResult = { child: ChildProcess; actualPort: number } | null;
 

@@ -1,10 +1,10 @@
-import { existsSync, writeFileSync, readFileSync, mkdirSync, openSync } from "fs";
-import { spawn } from "child_process";
-import { resolve, dirname } from "path";
-import { findVariant, removeVariant, validateBranchName } from "../lib/variants.js";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgent } from "../lib/registry.js";
+import { findVariant, removeVariant, validateBranchName } from "../lib/variants.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -16,7 +16,9 @@ export async function run(args: string[]) {
   const agentName = positional[0];
   const variantName = positional[1];
   if (!agentName || !variantName) {
-    console.error("Usage: molt merge <agent> <variant> [--summary '...'] [--justification '...'] [--memory '...']");
+    console.error(
+      "Usage: molt merge <agent> <variant> [--summary '...'] [--justification '...'] [--memory '...']",
+    );
     process.exit(1);
   }
 
@@ -137,7 +139,12 @@ export async function run(args: string[]) {
     searchDir = dirname(searchDir);
   }
   if (!supervisorModule) {
-    supervisorModule = resolve(dirname(new URL(import.meta.url).pathname), "..", "lib", "supervisor.ts");
+    supervisorModule = resolve(
+      dirname(new URL(import.meta.url).pathname),
+      "..",
+      "lib",
+      "supervisor.ts",
+    );
   }
 
   const { entry } = resolveAgent(agentName);

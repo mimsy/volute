@@ -1,11 +1,11 @@
-import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { describe, it } from "node:test";
 import {
-  createConversation,
   addMessage,
-  getMessages,
-  deleteConversation,
   type ContentBlock,
+  createConversation,
+  deleteConversation,
+  getMessages,
 } from "../src/lib/conversations.js";
 import { getDb } from "../src/lib/db.js";
 
@@ -40,9 +40,7 @@ describe("conversations", () => {
 
       const msgs = getMessages(conv.id);
       assert.equal(msgs.length, 1);
-      assert.deepEqual(msgs[0].content, [
-        { type: "text", text: "plain text response" },
-      ]);
+      assert.deepEqual(msgs[0].content, [{ type: "text", text: "plain text response" }]);
     } finally {
       deleteConversation(conv.id);
     }

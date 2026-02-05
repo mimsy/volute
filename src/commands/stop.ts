@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, unlinkSync } from "fs";
-import { resolve } from "path";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { resolve } from "node:path";
 import { resolveAgent } from "../lib/registry.js";
 
 export async function run(args: string[]) {
@@ -22,7 +22,9 @@ export async function run(args: string[]) {
   try {
     process.kill(pid, 0); // Check if alive
   } catch {
-    try { unlinkSync(pidPath); } catch {}
+    try {
+      unlinkSync(pidPath);
+    } catch {}
     console.log(`${name} was not running (cleaned up stale PID file).`);
     return;
   }

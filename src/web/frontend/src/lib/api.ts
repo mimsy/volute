@@ -77,20 +77,13 @@ export async function fetchFiles(name: string): Promise<string[]> {
   return res.json();
 }
 
-export async function fetchFile(
-  name: string,
-  filename: string,
-): Promise<FileContent> {
+export async function fetchFile(name: string, filename: string): Promise<FileContent> {
   const res = await fetch(`/api/agents/${name}/files/${filename}`);
   if (!res.ok) throw new Error("Failed to fetch file");
   return res.json();
 }
 
-export async function saveFile(
-  name: string,
-  filename: string,
-  content: string,
-): Promise<void> {
+export async function saveFile(name: string, filename: string, content: string): Promise<void> {
   const res = await fetch(`/api/agents/${name}/files/${filename}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },

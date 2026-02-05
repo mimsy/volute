@@ -1,18 +1,18 @@
+import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
+  AttachmentBuilder,
   Client,
   Events,
   GatewayIntentBits,
+  type Message,
   Partials,
-  Message,
-  AttachmentBuilder,
 } from "discord.js";
-import { writeFileSync, unlinkSync, mkdirSync } from "fs";
-import { resolve } from "path";
-import { resolveAgent } from "../lib/registry.js";
+import { addMessage, getOrCreateConversation } from "../lib/conversations.js";
 import { loadMergedEnv } from "../lib/env.js";
 import { readNdjson } from "../lib/ndjson.js";
+import { resolveAgent } from "../lib/registry.js";
 import type { MoltContentPart } from "../types.js";
-import { getOrCreateConversation, addMessage } from "../lib/conversations.js";
 
 const DISCORD_MAX_LENGTH = 2000;
 const TYPING_INTERVAL_MS = 8000;
@@ -29,9 +29,7 @@ export async function run(args: string[]) {
   const token = env.DISCORD_TOKEN;
 
   if (!token) {
-    console.error(
-      "DISCORD_TOKEN not set. Run: molt env set DISCORD_TOKEN <token>",
-    );
+    console.error("DISCORD_TOKEN not set. Run: molt env set DISCORD_TOKEN <token>");
     process.exit(1);
   }
 
@@ -42,7 +40,9 @@ export async function run(args: string[]) {
   writeFileSync(pidPath, String(process.pid));
 
   function cleanupPid() {
-    try { unlinkSync(pidPath); } catch {}
+    try {
+      unlinkSync(pidPath);
+    } catch {}
   }
 
   const baseUrl = `http://localhost:${entry.port}`;
@@ -71,19 +71,25 @@ export async function run(args: string[]) {
     console.log(`Bridging to agent: ${name} (port ${entry.port})`);
     // Write connection state
     const statePath = resolve(moltDir, "discord.json");
-    writeFileSync(statePath, JSON.stringify({
-      username: c.user.tag,
-      userId: c.user.id,
-      connectedAt: new Date().toISOString(),
-    }, null, 2));
+    writeFileSync(
+      statePath,
+      JSON.stringify(
+        {
+          username: c.user.tag,
+          userId: c.user.id,
+          connectedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+    );
   });
 
   client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot) return;
 
     const isDM = !message.guild;
-    const isMentioned =
-      !isDM && message.mentions.has(client.user!);
+    const isMentioned = !isDM && message.mentions.has(client.user!);
 
     if (!isDM && !isMentioned) return;
 

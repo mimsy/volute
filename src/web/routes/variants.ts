@@ -1,7 +1,7 @@
+import { existsSync } from "node:fs";
 import { Hono } from "hono";
-import { existsSync } from "fs";
-import { findAgent, agentDir } from "../../lib/registry.js";
-import { readVariants, checkHealth } from "../../lib/variants.js";
+import { agentDir, findAgent } from "../../lib/registry.js";
+import { checkHealth, readVariants } from "../../lib/variants.js";
 
 const app = new Hono();
 

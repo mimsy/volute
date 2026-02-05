@@ -1,10 +1,6 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { type ContentBlock, fetchConversationMessages, type MoltEvent } from "../lib/api";
 import { useChatStream } from "../lib/useStream";
-import {
-  fetchConversationMessages,
-  type MoltEvent,
-  type ContentBlock,
-} from "../lib/api";
 
 type ChatEntry = { role: "user" | "assistant"; blocks: ContentBlock[] };
 
@@ -110,12 +106,11 @@ export function Chat({
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const isNearBottom =
-      el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
     if (isNearBottom) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [entries]);
+  }, []);
 
   const handleSend = async () => {
     const message = input.trim();
@@ -151,11 +146,7 @@ export function Chat({
     setStreaming(true);
 
     try {
-      await send(
-        message,
-        convIdRef.current ?? undefined,
-        images.length > 0 ? images : undefined,
-      );
+      await send(message, convIdRef.current ?? undefined, images.length > 0 ? images : undefined);
     } catch {
       setStreaming(false);
     }
@@ -257,9 +248,7 @@ export function Chat({
                 }}
               />
               <button
-                onClick={() =>
-                  setPendingImages((prev) => prev.filter((_, j) => j !== i))
-                }
+                onClick={() => setPendingImages((prev) => prev.filter((_, j) => j !== i))}
                 style={{
                   position: "absolute",
                   top: -4,
@@ -339,12 +328,8 @@ export function Chat({
             outline: "none",
             transition: "border-color 0.15s",
           }}
-          onFocus={(e) =>
-            (e.currentTarget.style.borderColor = "var(--border-bright)")
-          }
-          onBlur={(e) =>
-            (e.currentTarget.style.borderColor = "var(--border)")
-          }
+          onFocus={(e) => (e.currentTarget.style.borderColor = "var(--border-bright)")}
+          onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
         />
         {streaming ? (
           <button
@@ -367,13 +352,8 @@ export function Chat({
             style={{
               padding: "0 16px",
               background:
-                input.trim() || pendingImages.length > 0
-                  ? "var(--accent-dim)"
-                  : "var(--bg-3)",
-              color:
-                input.trim() || pendingImages.length > 0
-                  ? "var(--accent)"
-                  : "var(--text-2)",
+                input.trim() || pendingImages.length > 0 ? "var(--accent-dim)" : "var(--bg-3)",
+              color: input.trim() || pendingImages.length > 0 ? "var(--accent)" : "var(--text-2)",
               borderRadius: "var(--radius)",
               fontSize: 12,
               fontWeight: 500,
@@ -407,10 +387,7 @@ function UserMessage({ blocks }: { blocks: ContentBlock[] }) {
         {blocks.map((block, i) => {
           if (block.type === "text") {
             return (
-              <div
-                key={i}
-                style={{ color: "var(--text-0)", whiteSpace: "pre-wrap" }}
-              >
+              <div key={i} style={{ color: "var(--text-0)", whiteSpace: "pre-wrap" }}>
                 {block.text}
               </div>
             );
@@ -583,9 +560,7 @@ function ToolUseBlock({ tool }: { tool: ToolBlock }) {
         }}
       >
         <span>
-          <span style={{ color: "var(--text-2)", marginRight: 6 }}>
-            {open ? "v" : ">"}
-          </span>
+          <span style={{ color: "var(--text-2)", marginRight: 6 }}>{open ? "v" : ">"}</span>
           {tool.name}
         </span>
         {tool.output !== undefined && (

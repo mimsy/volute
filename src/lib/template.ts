@@ -1,15 +1,15 @@
 import {
   cpSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-  renameSync,
   existsSync,
+  mkdirSync,
   readdirSync,
+  readFileSync,
+  renameSync,
   rmSync,
   statSync,
-} from "fs";
-import { resolve, dirname, relative, join } from "path";
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 
 /**
  * Find the templates directory by walking up from the calling module's location.
@@ -33,11 +33,7 @@ export function findTemplatesDir(template: string): string {
  * Copy template files to a destination directory with {{name}} substitution.
  * Handles package.json.tmpl → package.json rename.
  */
-export function copyTemplateToDir(
-  templateDir: string,
-  destDir: string,
-  agentName: string,
-) {
+export function copyTemplateToDir(templateDir: string, destDir: string, agentName: string) {
   cpSync(templateDir, destDir, { recursive: true });
 
   // Rename package.json.tmpl → package.json

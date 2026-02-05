@@ -1,18 +1,12 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import {
-  mkdirSync,
-  rmSync,
-  existsSync,
-  writeFileSync,
-  readFileSync,
-} from "fs";
-import { join } from "path";
-import { execFileSync } from "child_process";
-import {
-  findTemplatesDir,
-  copyTemplateToDir,
   applyInitFiles,
+  copyTemplateToDir,
+  findTemplatesDir,
   listFiles,
 } from "../src/lib/template.js";
 
@@ -249,10 +243,7 @@ describe("upgrade git operations", () => {
     git(["checkout", "main"], repoDir);
 
     // Merge template into main (simulating first upgrade)
-    git(
-      ["merge", "molt/template", "--allow-unrelated-histories", "-m", "first upgrade"],
-      repoDir,
-    );
+    git(["merge", "molt/template", "--allow-unrelated-histories", "-m", "first upgrade"], repoDir);
 
     // Now update template branch (simulating second upgrade)
     git(["checkout", "molt/template"], repoDir);
@@ -319,9 +310,15 @@ describe("upgrade git operations", () => {
     }
 
     // Agent identity files should be preserved (they were never in the template branch)
-    assert.equal(readFileSync(join(worktreeDir, "home", "SOUL.md"), "utf-8"), "I am a unique agent");
+    assert.equal(
+      readFileSync(join(worktreeDir, "home", "SOUL.md"), "utf-8"),
+      "I am a unique agent",
+    );
     assert.equal(readFileSync(join(worktreeDir, "home", "MEMORY.md"), "utf-8"), "my memories");
-    assert.equal(readFileSync(join(worktreeDir, "home", "memory", "2025-01-01.md"), "utf-8"), "day log");
+    assert.equal(
+      readFileSync(join(worktreeDir, "home", "memory", "2025-01-01.md"), "utf-8"),
+      "day log",
+    );
     // MOLT.md should be updated from template
     assert.equal(readFileSync(join(worktreeDir, "home", "MOLT.md"), "utf-8"), "molt info v2");
 

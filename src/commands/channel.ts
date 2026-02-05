@@ -1,7 +1,7 @@
+import * as discord from "../lib/channels/discord.js";
+import { loadMergedEnv } from "../lib/env.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgent } from "../lib/registry.js";
-import { loadMergedEnv } from "../lib/env.js";
-import * as discord from "../lib/channels/discord.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -22,9 +22,7 @@ export async function run(args: string[]) {
 
   const agentName = flags.agent || process.env.MOLT_AGENT;
   if (!agentName) {
-    console.error(
-      "No agent specified. Use --agent <name> or run from within an agent process.",
-    );
+    console.error("No agent specified. Use --agent <name> or run from within an agent process.");
     process.exit(1);
   }
 
@@ -43,9 +41,7 @@ export async function run(args: string[]) {
   if (platform === "discord") {
     const token = env.DISCORD_TOKEN;
     if (!token) {
-      console.error(
-        "DISCORD_TOKEN not set. Run: molt env set DISCORD_TOKEN <token>",
-      );
+      console.error("DISCORD_TOKEN not set. Run: molt env set DISCORD_TOKEN <token>");
       process.exit(1);
     }
 

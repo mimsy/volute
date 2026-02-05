@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLogStream } from "../lib/useStream";
 
 export function LogViewer({ name }: { name: string }) {
@@ -26,7 +26,7 @@ export function LogViewer({ name }: { name: string }) {
     if (autoScroll && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [lines, autoScroll]);
+  }, [autoScroll]);
 
   // Detect scroll position
   const handleScroll = () => {
@@ -93,9 +93,7 @@ export function LogViewer({ name }: { name: string }) {
           background: "var(--bg-0)",
         }}
       >
-        {lines.length === 0 && (
-          <span style={{ color: "var(--text-2)" }}>Waiting for logs...</span>
-        )}
+        {lines.length === 0 && <span style={{ color: "var(--text-2)" }}>Waiting for logs...</span>}
         {lines.map((line, i) => (
           <div key={i} style={{ animation: "fadeIn 0.1s ease both" }}>
             {line}

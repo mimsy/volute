@@ -1,17 +1,11 @@
-import { useState, useEffect } from "react";
-import {
-  fetchAgent,
-  startAgent,
-  stopAgent,
-  type Agent,
-  type Conversation,
-} from "../lib/api";
-import { StatusBadge } from "../components/StatusBadge";
+import { useEffect, useState } from "react";
 import { Chat } from "../components/Chat";
-import { LogViewer } from "../components/LogViewer";
-import { FileEditor } from "../components/FileEditor";
-import { VariantList } from "../components/VariantList";
 import { ConversationList } from "../components/ConversationList";
+import { FileEditor } from "../components/FileEditor";
+import { LogViewer } from "../components/LogViewer";
+import { StatusBadge } from "../components/StatusBadge";
+import { VariantList } from "../components/VariantList";
+import { type Agent, type Conversation, fetchAgent, startAgent, stopAgent } from "../lib/api";
 
 const TABS = ["Chat", "Logs", "Files", "Variants", "Connections"] as const;
 type Tab = (typeof TABS)[number];
@@ -36,7 +30,7 @@ export function AgentDetail({ name }: { name: string }) {
     refresh();
     const interval = setInterval(refresh, 5000);
     return () => clearInterval(interval);
-  }, [name]);
+  }, [refresh]);
 
   const handleStart = async () => {
     setActionLoading(true);
@@ -61,15 +55,11 @@ export function AgentDetail({ name }: { name: string }) {
   };
 
   if (error && !agent) {
-    return (
-      <div style={{ color: "var(--red)", padding: 24 }}>{error}</div>
-    );
+    return <div style={{ color: "var(--red)", padding: 24 }}>{error}</div>;
   }
 
   if (!agent) {
-    return (
-      <div style={{ color: "var(--text-2)", padding: 24 }}>Loading...</div>
-    );
+    return <div style={{ color: "var(--text-2)", padding: 24 }}>Loading...</div>;
   }
 
   return (
@@ -91,13 +81,9 @@ export function AgentDetail({ name }: { name: string }) {
           flexShrink: 0,
         }}
       >
-        <div
-          style={{ display: "flex", alignItems: "center", gap: 12 }}
-        >
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <StatusBadge status={agent.status} />
-          <span style={{ color: "var(--text-2)", fontSize: 12 }}>
-            :{agent.port}
-          </span>
+          <span style={{ color: "var(--text-2)", fontSize: 12 }}>:{agent.port}</span>
           {agent.channels
             .filter((ch) => ch.name !== "web" && ch.status === "connected")
             .map((ch) => (
@@ -163,10 +149,7 @@ export function AgentDetail({ name }: { name: string }) {
               color: t === tab ? "var(--accent)" : "var(--text-2)",
               fontSize: 12,
               fontWeight: 500,
-              borderBottom:
-                t === tab
-                  ? "2px solid var(--accent)"
-                  : "2px solid transparent",
+              borderBottom: t === tab ? "2px solid var(--accent)" : "2px solid transparent",
               transition: "all 0.15s",
               marginBottom: -1,
             }}
@@ -207,7 +190,7 @@ export function AgentDetail({ name }: { name: string }) {
 function ConnectionsTab({ agent }: { agent: Agent }) {
   // Filter to external channels (not web) that are connected
   const connectedChannels = agent.channels.filter(
-    (ch) => ch.name !== "web" && ch.status === "connected"
+    (ch) => ch.name !== "web" && ch.status === "connected",
   );
 
   if (connectedChannels.length === 0) {
@@ -258,9 +241,7 @@ function ConnectionsTab({ agent }: { agent: Agent }) {
                 marginBottom: 6,
               }}
             >
-              <span style={{ fontWeight: 600, color: "var(--text-0)" }}>
-                {channel.displayName}
-              </span>
+              <span style={{ fontWeight: 600, color: "var(--text-0)" }}>{channel.displayName}</span>
               <StatusBadge status="connected" />
             </div>
             {channel.username && (
