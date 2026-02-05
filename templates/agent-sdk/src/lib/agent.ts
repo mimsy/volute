@@ -108,27 +108,39 @@ export function createAgent(options: {
     log("agent", "stream consumer ended");
   })();
 
-  function sendMessage(content: string | MoltContentPart[], source?: string) {
+  function sendMessage(content: string | MoltContentPart[], source?: string, sender?: string) {
     const text = typeof content === "string"
       ? content
       : content.map((p) => p.type === "text" ? p.text : `[${p.type}]`).join(" ");
     logMessage("in", text, source);
 
-    const sdkContent = typeof content === "string"
-      ? [{ type: "text" as const, text: content }]
-      : content.map((part) => {
-          if (part.type === "text") {
-            return { type: "text" as const, text: part.text };
-          }
-          return {
-            type: "image" as const,
-            source: {
-              type: "base64" as const,
-              media_type: part.media_type,
-              data: part.data,
-            },
-          };
-        });
+    // Build context prefix from channel/sender metadata
+    const prefix = source && sender ? `[${source}: ${sender}]\n` : "";
+
+    let sdkContent: ({ type: "text"; text: string } | { type: "image"; source: { type: "base64"; media_type: string; data: string } })[];
+
+    if (typeof content === "string") {
+      sdkContent = [{ type: "text" as const, text: prefix + content }];
+    } else {
+      const hasText = content.some((p) => p.type === "text");
+      sdkContent = content.map((part, i) => {
+        if (part.type === "text") {
+          return { type: "text" as const, text: (i === 0 ? prefix : "") + part.text };
+        }
+        return {
+          type: "image" as const,
+          source: {
+            type: "base64" as const,
+            media_type: part.media_type,
+            data: part.data,
+          },
+        };
+      });
+      // If no text parts but we have a prefix, prepend a text part
+      if (prefix && !hasText) {
+        sdkContent.unshift({ type: "text" as const, text: prefix.trimEnd() });
+      }
+    }
 
     channel.push({
       type: "user",

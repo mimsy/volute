@@ -4,12 +4,14 @@ import {
   startAgent,
   stopAgent,
   type Agent,
+  type Conversation,
 } from "../lib/api";
 import { StatusBadge } from "../components/StatusBadge";
 import { Chat } from "../components/Chat";
 import { LogViewer } from "../components/LogViewer";
 import { FileEditor } from "../components/FileEditor";
 import { VariantList } from "../components/VariantList";
+import { ConversationList } from "../components/ConversationList";
 
 const TABS = ["Chat", "Logs", "Files", "Variants", "Connections"] as const;
 type Tab = (typeof TABS)[number];
@@ -19,6 +21,7 @@ export function AgentDetail({ name }: { name: string }) {
   const [tab, setTab] = useState<Tab>("Chat");
   const [error, setError] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
+  const [conversationId, setConversationId] = useState<string | null>(null);
 
   const refresh = () => {
     fetchAgent(name)
@@ -175,7 +178,23 @@ export function AgentDetail({ name }: { name: string }) {
 
       {/* Tab content */}
       <div style={{ flex: 1, overflow: "hidden", paddingTop: 12 }}>
-        {tab === "Chat" && <Chat name={name} />}
+        {tab === "Chat" && (
+          <div style={{ display: "flex", height: "100%" }}>
+            <ConversationList
+              name={name}
+              activeId={conversationId}
+              onSelect={(conv: Conversation) => setConversationId(conv.id)}
+              onNew={() => setConversationId(null)}
+            />
+            <div style={{ flex: 1, paddingLeft: 16, minWidth: 0 }}>
+              <Chat
+                name={name}
+                conversationId={conversationId}
+                onConversationId={setConversationId}
+              />
+            </div>
+          </div>
+        )}
         {tab === "Logs" && <LogViewer name={name} />}
         {tab === "Files" && <FileEditor name={name} />}
         {tab === "Variants" && <VariantList name={name} />}

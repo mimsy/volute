@@ -12,6 +12,7 @@ import { resolveAgent } from "../lib/registry.js";
 import { loadMergedEnv } from "../lib/env.js";
 import { readNdjson } from "../lib/ndjson.js";
 import type { MoltContentPart } from "../types.js";
+import { getOrCreateConversation, addMessage } from "../lib/conversations.js";
 
 const DISCORD_MAX_LENGTH = 2000;
 const TYPING_INTERVAL_MS = 8000;
@@ -91,15 +92,8 @@ export async function run(args: string[]) {
       text = text.replace(new RegExp(`<@!?${client.user!.id}>`, "g"), "").trim();
     }
 
-    const sender = message.author.displayName || message.author.username;
-    const channelName = "name" in message.channel ? message.channel.name : null;
-    const channelLabel = channelName
-      ? `#${channelName} in ${message.guild!.name}`
-      : "DM";
-    const context = `[Discord: ${sender} in ${channelLabel} — channel discord:${message.channelId}]`;
-
     const content: MoltContentPart[] = [];
-    content.push({ type: "text", text: text ? `${context}\n${text}` : context });
+    if (text) content.push({ type: "text", text });
 
     // Download image attachments
     for (const attachment of message.attachments.values()) {
@@ -119,7 +113,7 @@ export async function run(args: string[]) {
 
     if (content.length === 0) return;
 
-    await handleAgentRequest(message, baseUrl, content);
+    await handleAgentRequest(message, baseUrl, content, name);
   });
 
   client.login(token);
@@ -142,6 +136,7 @@ async function handleAgentRequest(
   message: Message,
   baseUrl: string,
   content: MoltContentPart[],
+  agentName: string,
 ) {
   const channel = message.channel;
   if (!("sendTyping" in channel)) return;
@@ -197,13 +192,23 @@ async function handleAgentRequest(
     }
   }
 
+  const senderName = message.author.displayName || message.author.username;
+  const channelKey = `discord:${message.channelId}`;
+  const conv = getOrCreateConversation(agentName, channelKey);
+  const userText = content
+    .filter((p) => p.type === "text")
+    .map((p) => (p as { text: string }).text)
+    .join(" ");
+  addMessage(conv.id, "user", senderName, userText);
+
   try {
     const res = await fetch(`${baseUrl}/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         content,
-        channel: `discord:${message.channelId}`,
+        channel: channelKey,
+        sender: senderName,
       }),
     });
 
@@ -219,9 +224,11 @@ async function handleAgentRequest(
       return;
     }
 
+    let fullResponse = "";
     for await (const event of readNdjson(res.body)) {
       if (event.type === "text") {
         accumulated += event.content;
+        fullResponse += event.content;
       } else if (event.type === "image") {
         pendingImages.push({
           data: event.data,
@@ -235,6 +242,9 @@ async function handleAgentRequest(
     }
 
     await flush();
+    if (fullResponse) {
+      addMessage(conv.id, "assistant", agentName, fullResponse);
+    }
   } catch (err) {
     const errMsg =
       err instanceof TypeError && (err as any).cause?.code === "ECONNREFUSED"

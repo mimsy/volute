@@ -134,12 +134,16 @@ export async function createAgent(options: {
     }
   });
 
-  function sendMessage(content: string | MoltContentPart[], source?: string) {
+  function sendMessage(content: string | MoltContentPart[], source?: string, sender?: string) {
     // Convert to text for pi agent (images not yet supported by pi)
-    const text = typeof content === "string"
+    const raw = typeof content === "string"
       ? content
       : content.filter((p) => p.type === "text").map((p) => (p as { text: string }).text).join("\n");
-    logMessage("in", text, source);
+    logMessage("in", raw, source);
+
+    // Build context prefix from channel/sender metadata
+    const prefix = source && sender ? `[${source}: ${sender}]\n` : "";
+    const text = prefix + raw;
 
     if (session.isStreaming) {
       session.prompt(text, { streamingBehavior: "followUp" });

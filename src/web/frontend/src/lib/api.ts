@@ -19,6 +19,7 @@ export type MoltEvent =
   | { type: "text"; content: string }
   | { type: "tool_use"; name: string; input: unknown }
   | { type: "tool_result"; output: string; is_error?: boolean }
+  | { type: "meta"; conversationId: string }
   | { type: "done" };
 
 export type Variant = {
@@ -96,4 +97,45 @@ export async function saveFile(
     body: JSON.stringify({ content }),
   });
   if (!res.ok) throw new Error("Failed to save file");
+}
+
+export type Conversation = {
+  id: string;
+  agent_name: string;
+  channel: string;
+  user_id: number | null;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ConversationMessage = {
+  id: number;
+  conversation_id: string;
+  role: string;
+  sender_name: string | null;
+  content: string;
+  created_at: string;
+};
+
+export async function fetchConversations(name: string): Promise<Conversation[]> {
+  const res = await fetch(`/api/agents/${name}/conversations`);
+  if (!res.ok) throw new Error("Failed to fetch conversations");
+  return res.json();
+}
+
+export async function fetchConversationMessages(
+  name: string,
+  conversationId: string,
+): Promise<ConversationMessage[]> {
+  const res = await fetch(`/api/agents/${name}/conversations/${conversationId}/messages`);
+  if (!res.ok) throw new Error("Failed to fetch messages");
+  return res.json();
+}
+
+export async function deleteConversation(name: string, conversationId: string): Promise<void> {
+  const res = await fetch(`/api/agents/${name}/conversations/${conversationId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Failed to delete conversation");
 }

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useChatStream } from "../lib/useStream";
-import type { MoltEvent } from "../lib/api";
+import { fetchConversationMessages, type MoltEvent } from "../lib/api";
 
 type ChatEntry =
   | { role: "user"; text: string }
@@ -13,12 +13,21 @@ type ToolBlock = {
   isError?: boolean;
 };
 
-export function Chat({ name }: { name: string }) {
+export function Chat({
+  name,
+  conversationId,
+  onConversationId,
+}: {
+  name: string;
+  conversationId: string | null;
+  onConversationId: (id: string) => void;
+}) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const convIdRef = useRef(conversationId);
 
   // Track current assistant entry being built
   const currentRef = useRef<{ text: string; tools: ToolBlock[] }>({
@@ -26,50 +35,78 @@ export function Chat({ name }: { name: string }) {
     tools: [],
   });
 
-  const onEvent = useCallback((event: MoltEvent) => {
-    const cur = currentRef.current;
-
-    if (event.type === "text") {
-      cur.text += event.content;
-      setEntries((prev) => {
-        const next = [...prev];
-        next[next.length - 1] = {
-          role: "assistant",
-          text: cur.text,
-          tools: [...cur.tools],
-        };
-        return next;
-      });
-    } else if (event.type === "tool_use") {
-      cur.tools.push({ name: event.name, input: event.input });
-      setEntries((prev) => {
-        const next = [...prev];
-        next[next.length - 1] = {
-          role: "assistant",
-          text: cur.text,
-          tools: [...cur.tools],
-        };
-        return next;
-      });
-    } else if (event.type === "tool_result") {
-      const last = cur.tools[cur.tools.length - 1];
-      if (last) {
-        last.output = event.output;
-        last.isError = event.is_error;
-      }
-      setEntries((prev) => {
-        const next = [...prev];
-        next[next.length - 1] = {
-          role: "assistant",
-          text: cur.text,
-          tools: [...cur.tools],
-        };
-        return next;
-      });
-    } else if (event.type === "done") {
-      setStreaming(false);
+  // Load existing messages when conversationId changes
+  useEffect(() => {
+    convIdRef.current = conversationId;
+    if (!conversationId) {
+      setEntries([]);
+      return;
     }
-  }, []);
+    fetchConversationMessages(name, conversationId)
+      .then((msgs) => {
+        const loaded: ChatEntry[] = msgs.map((m) =>
+          m.role === "user"
+            ? { role: "user" as const, text: m.content }
+            : { role: "assistant" as const, text: m.content, tools: [] },
+        );
+        setEntries(loaded);
+      })
+      .catch(() => {});
+  }, [name, conversationId]);
+
+  const onEvent = useCallback(
+    (event: MoltEvent) => {
+      if (event.type === "meta") {
+        convIdRef.current = event.conversationId;
+        onConversationId(event.conversationId);
+        return;
+      }
+
+      const cur = currentRef.current;
+
+      if (event.type === "text") {
+        cur.text += event.content;
+        setEntries((prev) => {
+          const next = [...prev];
+          next[next.length - 1] = {
+            role: "assistant",
+            text: cur.text,
+            tools: [...cur.tools],
+          };
+          return next;
+        });
+      } else if (event.type === "tool_use") {
+        cur.tools.push({ name: event.name, input: event.input });
+        setEntries((prev) => {
+          const next = [...prev];
+          next[next.length - 1] = {
+            role: "assistant",
+            text: cur.text,
+            tools: [...cur.tools],
+          };
+          return next;
+        });
+      } else if (event.type === "tool_result") {
+        const last = cur.tools[cur.tools.length - 1];
+        if (last) {
+          last.output = event.output;
+          last.isError = event.is_error;
+        }
+        setEntries((prev) => {
+          const next = [...prev];
+          next[next.length - 1] = {
+            role: "assistant",
+            text: cur.text,
+            tools: [...cur.tools],
+          };
+          return next;
+        });
+      } else if (event.type === "done") {
+        setStreaming(false);
+      }
+    },
+    [onConversationId],
+  );
 
   const { send, stop } = useChatStream(name, onEvent);
 
@@ -98,7 +135,7 @@ export function Chat({ name }: { name: string }) {
     setStreaming(true);
 
     try {
-      await send(message);
+      await send(message, convIdRef.current ?? undefined);
     } catch {
       setStreaming(false);
     }

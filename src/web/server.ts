@@ -7,6 +7,9 @@ import chat from "./routes/chat.js";
 import logs from "./routes/logs.js";
 import variants from "./routes/variants.js";
 import files from "./routes/files.js";
+import auth from "./routes/auth.js";
+import conversations from "./routes/conversations.js";
+import { authMiddleware } from "./middleware/auth.js";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",
@@ -21,12 +24,17 @@ const MIME_TYPES: Record<string, string> = {
 export function startServer({ port }: { port: number }) {
   const app = new Hono();
 
-  // API routes
+  // Auth routes (unprotected)
+  app.route("/api/auth", auth);
+
+  // Protected API routes
+  app.use("/api/agents/*", authMiddleware);
   app.route("/api/agents", agents);
   app.route("/api/agents", chat);
   app.route("/api/agents", logs);
   app.route("/api/agents", variants);
   app.route("/api/agents", files);
+  app.route("/api/agents", conversations);
 
   // Find built frontend assets
   let assetsDir = "";

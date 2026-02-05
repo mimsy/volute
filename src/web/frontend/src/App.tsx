@@ -1,6 +1,9 @@
 import { useState, useEffect } from "react";
 import { Dashboard } from "./pages/Dashboard";
 import { AgentDetail } from "./pages/AgentDetail";
+import { LoginPage } from "./components/LoginPage";
+import { UserManagement } from "./components/UserManagement";
+import { fetchMe, logout, type AuthUser } from "./lib/auth";
 
 function parseHash(): { page: string; name?: string } {
   const hash = window.location.hash.slice(1) || "/";
@@ -11,12 +14,51 @@ function parseHash(): { page: string; name?: string } {
 
 export function App() {
   const [route, setRoute] = useState(parseHash);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [showUsers, setShowUsers] = useState(false);
+
+  useEffect(() => {
+    fetchMe().then((u) => {
+      setUser(u);
+      setAuthChecked(true);
+    });
+  }, []);
 
   useEffect(() => {
     const handler = () => setRoute(parseHash());
     window.addEventListener("hashchange", handler);
     return () => window.removeEventListener("hashchange", handler);
   }, []);
+
+  const handleLogout = async () => {
+    await logout();
+    setUser(null);
+  };
+
+  if (!authChecked) {
+    return (
+      <>
+        <style>{globalStyles}</style>
+        <div className="app">
+          <div style={{ color: "var(--text-2)", padding: 24, textAlign: "center" }}>
+            Loading...
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  if (!user) {
+    return (
+      <>
+        <style>{globalStyles}</style>
+        <div className="app" style={{ height: "100%" }}>
+          <LoginPage onAuth={setUser} />
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -32,11 +74,50 @@ export function App() {
               <span className="breadcrumb-name">{route.name}</span>
             </nav>
           )}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+            {user.role === "admin" && (
+              <button
+                onClick={() => setShowUsers(!showUsers)}
+                style={{
+                  background: "transparent",
+                  color: "var(--text-2)",
+                  fontSize: 12,
+                  fontFamily: "var(--mono)",
+                  border: "none",
+                  cursor: "pointer",
+                }}
+              >
+                users
+              </button>
+            )}
+            <span style={{ color: "var(--text-2)", fontSize: 12 }}>
+              {user.username}
+            </span>
+            <button
+              onClick={handleLogout}
+              style={{
+                background: "transparent",
+                color: "var(--text-2)",
+                fontSize: 12,
+                fontFamily: "var(--mono)",
+                border: "none",
+                cursor: "pointer",
+              }}
+            >
+              logout
+            </button>
+          </div>
         </header>
         <main className="app-main">
-          {route.page === "dashboard" && <Dashboard />}
-          {route.page === "agent" && route.name && (
-            <AgentDetail name={route.name} />
+          {showUsers ? (
+            <UserManagement onClose={() => setShowUsers(false)} />
+          ) : (
+            <>
+              {route.page === "dashboard" && <Dashboard />}
+              {route.page === "agent" && route.name && (
+                <AgentDetail name={route.name} />
+              )}
+            </>
           )}
         </main>
       </div>

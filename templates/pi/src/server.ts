@@ -129,7 +129,7 @@ const server = createServer(async (req, res) => {
         removeListener();
       });
 
-      agent.sendMessage(body.content, body.channel);
+      agent.sendMessage(body.content, body.channel, body.sender);
     } catch {
       res.writeHead(400);
       res.end("Bad Request");

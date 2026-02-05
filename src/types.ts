@@ -6,6 +6,7 @@ export type MoltRequest = {
   content: MoltContentPart[]
   channel?: string
   session?: string
+  sender?: string
 }
 
 export type MoltEvent =
