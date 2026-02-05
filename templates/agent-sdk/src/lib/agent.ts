@@ -10,6 +10,7 @@ export function createAgent(options: {
   systemPrompt: string;
   cwd: string;
   abortController: AbortController;
+  model?: string;
   resume?: string;
   onSessionId?: (id: string) => void;
   onStreamError?: (err: unknown) => void;
@@ -35,6 +36,7 @@ export function createAgent(options: {
       allowDangerouslySkipPermissions: true,
       cwd: options.cwd,
       abortController: options.abortController,
+      model: options.model,
       resume: options.resume,
       hooks: {
         PostToolUse: [{ matcher: "Edit|Write", hooks: [autoCommitHook] }],

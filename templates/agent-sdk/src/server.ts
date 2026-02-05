@@ -15,7 +15,10 @@ function parseArgs() {
     }
   }
 
-  return { port };
+  // Model is configured via MOLT_MODEL env var (set with: molt env set --agent <name> MOLT_MODEL=...)
+  const model = process.env.MOLT_MODEL;
+
+  return { port, model };
 }
 
 function loadFile(path: string): string {
@@ -26,7 +29,10 @@ function loadFile(path: string): string {
   }
 }
 
-const { port } = parseArgs();
+const { port, model } = parseArgs();
+if (model) {
+  log("server", `using model: ${model}`);
+}
 const soulPath = resolve("home/SOUL.md");
 const memoryPath = resolve("home/MEMORY.md");
 const identityPath = resolve("home/IDENTITY.md");
@@ -92,6 +98,7 @@ const agent = createAgent({
   systemPrompt,
   cwd: resolve("home"),
   abortController,
+  model,
   resume: savedSessionId,
   onSessionId: saveSessionId,
   onStreamError: deleteSessionFile,
