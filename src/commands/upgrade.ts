@@ -284,7 +284,10 @@ async function verify(port: number): Promise<boolean> {
     const res = await fetch(`http://localhost:${port}/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: [{ type: "text", text: "ping" }] }),
+      body: JSON.stringify({
+        content: [{ type: "text", text: "ping" }],
+        channel: "system",
+      }),
       signal: AbortSignal.timeout(60000),
     });
 

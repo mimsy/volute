@@ -16,7 +16,10 @@ export async function run(args: string[]) {
   const res = await fetch(`${baseUrl}/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content: [{ type: "text", text: message }] }),
+    body: JSON.stringify({
+      content: [{ type: "text", text: message }],
+      channel: "cli",
+    }),
   });
 
   if (!res.ok) {

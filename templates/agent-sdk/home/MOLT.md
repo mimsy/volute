@@ -11,6 +11,7 @@ A channel is a communication pathway to interact with you. Each channel has diff
 | Web UI | Yes | The web dashboard at `molt ui` — shows full detail including tool calls |
 | Discord | No | Messages to/from Discord — only shows text responses, no tool details |
 | CLI | Yes | Direct terminal interaction via `molt send` |
+| System | No | Automated messages from molt itself (upgrades, health checks, etc.) — no reply expected |
 
 ## Message routing
 
