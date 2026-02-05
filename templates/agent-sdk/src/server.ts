@@ -4,7 +4,6 @@ import { resolve, dirname } from "path";
 import { createAgent } from "./lib/agent.js";
 import type { MoltRequest } from "./lib/types.js";
 import { log } from "./lib/logger.js";
-import { startAutoCommit } from "./lib/auto-commit.js";
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -181,9 +180,6 @@ server.listen(port, () => {
   const addr = server.address();
   const actualPort = typeof addr === "object" && addr ? addr.port : port;
   log("server", `listening on :${actualPort}`);
-
-  // Start auto-commit watcher for home/ directory
-  startAutoCommit(resolve("home"));
 
   // Build orientation message parts
   const orientationParts: string[] = [];
