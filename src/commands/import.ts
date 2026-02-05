@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  rmSync,
 } from "fs";
 import { resolve, dirname } from "path";
 import { exec, execInherit } from "../lib/exec.js";
@@ -90,6 +91,15 @@ export async function run(args: string[]) {
     pkgPath,
     readFileSync(pkgPath, "utf-8").replaceAll("{{name}}", name),
   );
+
+  // Apply init files (CLAUDE.md, memory/.gitkeep, etc.) then remove .init/
+  // We don't use applyInitFiles() because import overwrites SOUL.md/MEMORY.md below
+  const initDir = resolve(dest, ".init");
+  if (existsSync(initDir)) {
+    // Only copy non-SOUL/MEMORY files (like CLAUDE.md, memory/.gitkeep)
+    cpSync(initDir, resolve(dest, "home"), { recursive: true });
+    rmSync(initDir, { recursive: true, force: true });
+  }
 
   // Write SOUL.md to home/
   writeFileSync(resolve(dest, "home/SOUL.md"), soul + "\n");

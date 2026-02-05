@@ -11,14 +11,6 @@ import { checkHealth } from "../lib/variants.js";
 const TEMPLATE_BRANCH = "molt/template";
 const VARIANT_NAME = "upgrade";
 
-// Files that should only exist on initial create, never updated during upgrades
-const AGENT_ONLY_FILES = [
-  "home/MEMORY.md",
-  "home/SOUL.md",
-  "home/CLAUDE.md",
-  "home/memory",
-];
-
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
     template: { type: "string" },
@@ -149,12 +141,10 @@ async function updateTemplateBranch(
     // Copy template files to the worktree
     copyTemplateToDir(templateDir, tempWorktree, agentName);
 
-    // Remove agent-only files (these should only exist on initial create)
-    for (const file of AGENT_ONLY_FILES) {
-      const path = resolve(tempWorktree, file);
-      if (existsSync(path)) {
-        rmSync(path, { recursive: true, force: true });
-      }
+    // Remove .init/ — those files are only for agent creation, not upgrades
+    const initDir = resolve(tempWorktree, ".init");
+    if (existsSync(initDir)) {
+      rmSync(initDir, { recursive: true, force: true });
     }
 
     // Stage and commit

@@ -1,10 +1,12 @@
 import {
   cpSync,
+  mkdirSync,
   readFileSync,
   writeFileSync,
   renameSync,
   existsSync,
   readdirSync,
+  rmSync,
   statSync,
 } from "fs";
 import { resolve, dirname, relative, join } from "path";
@@ -45,13 +47,35 @@ export function copyTemplateToDir(
   }
 
   // Replace {{name}} placeholders
-  for (const file of ["package.json", "home/SOUL.md"]) {
+  for (const file of ["package.json", ".init/SOUL.md"]) {
     const path = resolve(destDir, file);
     if (existsSync(path)) {
       const content = readFileSync(path, "utf-8");
       writeFileSync(path, content.replaceAll("{{name}}", agentName));
     }
   }
+}
+
+/**
+ * Copy .init/ files into home/ and remove .init/.
+ * Called during agent creation (not during upgrades).
+ */
+export function applyInitFiles(destDir: string) {
+  const initDir = resolve(destDir, ".init");
+  if (!existsSync(initDir)) return;
+
+  const homeDir = resolve(destDir, "home");
+  for (const file of listFiles(initDir)) {
+    const src = resolve(initDir, file);
+    const dest = resolve(homeDir, file);
+    const parent = dirname(dest);
+    if (!existsSync(parent)) {
+      mkdirSync(parent, { recursive: true });
+    }
+    cpSync(src, dest);
+  }
+
+  rmSync(initDir, { recursive: true, force: true });
 }
 
 /**

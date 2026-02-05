@@ -12,6 +12,7 @@ import { execFileSync } from "child_process";
 import {
   findTemplatesDir,
   copyTemplateToDir,
+  applyInitFiles,
   listFiles,
 } from "../src/lib/template.js";
 
@@ -59,6 +60,50 @@ describe("template helpers", () => {
     const pkg = readFileSync(join(dest, "package.json"), "utf-8");
     assert.ok(pkg.includes("test-agent"));
     assert.ok(!pkg.includes("{{name}}"));
+
+    rmSync(dest, { recursive: true });
+  });
+
+  it("applyInitFiles copies .init/ contents into home/ and removes .init/", () => {
+    const dest = join(tmpDir, "init-test");
+    if (existsSync(dest)) rmSync(dest, { recursive: true });
+
+    // Set up a directory with .init/ and home/
+    mkdirSync(join(dest, ".init", "memory"), { recursive: true });
+    mkdirSync(join(dest, "home"), { recursive: true });
+    writeFileSync(join(dest, ".init", "SOUL.md"), "my soul");
+    writeFileSync(join(dest, ".init", "MEMORY.md"), "my memory");
+    writeFileSync(join(dest, ".init", "memory", ".gitkeep"), "");
+    writeFileSync(join(dest, "home", "MOLT.md"), "molt info");
+
+    applyInitFiles(dest);
+
+    // .init/ should be gone
+    assert.ok(!existsSync(join(dest, ".init")));
+    // Files should be in home/
+    assert.equal(readFileSync(join(dest, "home", "SOUL.md"), "utf-8"), "my soul");
+    assert.equal(readFileSync(join(dest, "home", "MEMORY.md"), "utf-8"), "my memory");
+    assert.ok(existsSync(join(dest, "home", "memory", ".gitkeep")));
+    // Existing home/ files should be preserved
+    assert.equal(readFileSync(join(dest, "home", "MOLT.md"), "utf-8"), "molt info");
+
+    rmSync(dest, { recursive: true });
+  });
+
+  it("copyTemplateToDir substitutes {{name}} in .init/SOUL.md", () => {
+    const dest = join(tmpDir, "subst-test");
+    if (existsSync(dest)) rmSync(dest, { recursive: true });
+
+    const templateDir = findTemplatesDir("agent-sdk");
+    copyTemplateToDir(templateDir, dest, "test-agent");
+
+    // .init/SOUL.md should have the name substituted
+    const soul = readFileSync(join(dest, ".init", "SOUL.md"), "utf-8");
+    assert.ok(soul.includes("test-agent"));
+    assert.ok(!soul.includes("{{name}}"));
+
+    // home/ should NOT have SOUL.md (it's in .init/)
+    assert.ok(!existsSync(join(dest, "home", "SOUL.md")));
 
     rmSync(dest, { recursive: true });
   });
@@ -228,5 +273,58 @@ describe("upgrade git operations", () => {
     assert.equal(config, "config-v1");
 
     git(["worktree", "remove", worktreeDir], repoDir);
+  });
+
+  it("template merge preserves agent home/ files when .init/ approach is used", () => {
+    // Simulate an agent created with the .init/ approach:
+    // main branch has SOUL.md/MEMORY.md in home/ (from applyInitFiles at creation)
+    // plus upgrade-safe files like MOLT.md
+    mkdirSync(join(repoDir, "src"), { recursive: true });
+    mkdirSync(join(repoDir, "home", "memory"), { recursive: true });
+    writeFileSync(join(repoDir, "src", "server.ts"), "server v1");
+    writeFileSync(join(repoDir, "home", "SOUL.md"), "I am a unique agent");
+    writeFileSync(join(repoDir, "home", "MEMORY.md"), "my memories");
+    writeFileSync(join(repoDir, "home", "MOLT.md"), "molt info v1");
+    writeFileSync(join(repoDir, "home", "memory", "2025-01-01.md"), "day log");
+    git(["add", "-A"], repoDir);
+    git(["commit", "-m", "agent files"], repoDir);
+
+    // Create orphan template branch with ONLY upgrade-safe files
+    // (no .init/, no SOUL.md/MEMORY.md — just what the template home/ has)
+    git(["checkout", "--orphan", "molt/template"], repoDir);
+    git(["rm", "-rf", "--cached", "."], repoDir);
+    git(["clean", "-fd"], repoDir);
+    mkdirSync(join(repoDir, "src"), { recursive: true });
+    mkdirSync(join(repoDir, "home"), { recursive: true });
+    writeFileSync(join(repoDir, "src", "server.ts"), "server v2");
+    writeFileSync(join(repoDir, "home", "MOLT.md"), "molt info v2");
+    git(["add", "-A"], repoDir);
+    git(["commit", "-m", "template update"], repoDir);
+    git(["checkout", "main"], repoDir);
+
+    // Create worktree and merge
+    const worktreeDir = join(repoDir, ".worktrees", "upgrade");
+    git(["worktree", "add", "-b", "upgrade", worktreeDir], repoDir);
+    try {
+      git(
+        ["merge", "molt/template", "--allow-unrelated-histories", "-m", "merge template"],
+        worktreeDir,
+      );
+    } catch {
+      // Auto-resolve conflicts
+      git(["checkout", "--theirs", "src/"], worktreeDir);
+      git(["checkout", "--theirs", "home/MOLT.md"], worktreeDir);
+      git(["add", "-A"], worktreeDir);
+      git(["commit", "-m", "merge template"], worktreeDir);
+    }
+
+    // Agent identity files should be preserved (they were never in the template branch)
+    assert.equal(readFileSync(join(worktreeDir, "home", "SOUL.md"), "utf-8"), "I am a unique agent");
+    assert.equal(readFileSync(join(worktreeDir, "home", "MEMORY.md"), "utf-8"), "my memories");
+    assert.equal(readFileSync(join(worktreeDir, "home", "memory", "2025-01-01.md"), "utf-8"), "day log");
+    // MOLT.md should be updated from template
+    assert.equal(readFileSync(join(worktreeDir, "home", "MOLT.md"), "utf-8"), "molt info v2");
+
+    git(["worktree", "remove", "--force", worktreeDir], repoDir);
   });
 });

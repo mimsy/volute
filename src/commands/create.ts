@@ -2,7 +2,7 @@ import { existsSync } from "fs";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { ensureMoltHome, addAgent, agentDir, nextPort } from "../lib/registry.js";
-import { findTemplatesDir, copyTemplateToDir } from "../lib/template.js";
+import { findTemplatesDir, copyTemplateToDir, applyInitFiles } from "../lib/template.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -27,6 +27,7 @@ export async function run(args: string[]) {
 
   const templateDir = findTemplatesDir(template);
   copyTemplateToDir(templateDir, dest, name);
+  applyInitFiles(dest);
 
   // Assign port and register
   const port = nextPort();
