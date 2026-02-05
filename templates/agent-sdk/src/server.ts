@@ -195,11 +195,10 @@ server.listen(port, () => {
       const merged = JSON.parse(readFileSync(mergedPath, "utf-8"));
       unlinkSync(mergedPath);
 
-      const parts = [`Variant "${merged.name}" has been merged successfully and you have been restarted.`];
+      const parts = [`[system] Variant "${merged.name}" has been merged and you have been restarted.`];
       if (merged.summary) parts.push(`Changes: ${merged.summary}`);
       if (merged.justification) parts.push(`Why: ${merged.justification}`);
       if (merged.memory) parts.push(`Context: ${merged.memory}`);
-      parts.push("Please update your memory with any relevant information from this merge.");
 
       orientationParts.push(parts.join("\n"));
       log("server", `sent post-merge orientation for variant: ${merged.name}`);
