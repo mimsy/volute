@@ -16,6 +16,7 @@
     "format": "biome format --write src/ test/",
     "typecheck": "tsc --noEmit",
     "typecheck:web": "tsc --noEmit -p src/web/frontend/tsconfig.json",
+    "prepare": "lefthook install",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -33,6 +34,7 @@
     "@types/react": "^19.2.11",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.3",
+    "lefthook": "^2.1.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "tsup": "^8.0.0",
