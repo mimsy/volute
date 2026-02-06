@@ -103,9 +103,9 @@ const agent = createAgent({
   onSessionId: saveSessionId,
   onStreamError: deleteSessionFile,
   onCompact: () => {
-    log("server", "compact boundary — asking agent to update daily log");
+    log("server", "pre-compact — asking agent to update daily log");
     agent.sendMessage(
-      "Conversation history was just compacted. Please update today's daily log with a summary of what we've discussed and accomplished so far, so context is preserved.",
+      "Conversation is about to be compacted. Please update today's daily log with a summary of what we've discussed and accomplished so far, so context is preserved before compaction.",
       "system",
     );
   },

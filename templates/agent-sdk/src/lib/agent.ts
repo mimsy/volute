@@ -28,6 +28,20 @@ export function createAgent(options: {
     return {};
   };
 
+  // Block compaction once so the agent can update its daily log with full context
+  let compactBlocked = false;
+  const preCompactHook: HookCallback = async () => {
+    if (!compactBlocked) {
+      compactBlocked = true;
+      log("agent", "blocking compaction — asking agent to update daily log first");
+      if (options.onCompact) options.onCompact();
+      return { decision: "block" };
+    }
+    compactBlocked = false;
+    log("agent", "allowing compaction");
+    return {};
+  };
+
   const stream = query({
     prompt: channel.iterable,
     options: {
@@ -40,6 +54,7 @@ export function createAgent(options: {
       resume: options.resume,
       hooks: {
         PostToolUse: [{ matcher: "Edit|Write", hooks: [autoCommitHook] }],
+        PreCompact: [{ hooks: [preCompactHook] }],
       },
     },
   });
@@ -90,10 +105,6 @@ export function createAgent(options: {
         if (msg.type === "result") {
           log("agent", "turn done");
           broadcast({ type: "done" });
-        }
-        if (msg.type === "system" && "subtype" in msg && msg.subtype === "compact_boundary") {
-          log("agent", "compact boundary detected");
-          if (options.onCompact) options.onCompact();
         }
       }
     } catch (err) {

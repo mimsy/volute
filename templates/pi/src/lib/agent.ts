@@ -3,6 +3,7 @@ import {
   AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
+  type ExtensionFactory,
   ModelRegistry,
   SessionManager,
   SettingsManager,
@@ -22,6 +23,21 @@ export async function createAgent(options: {
   onCompact?: () => void;
 }) {
   const listeners = new Set<Listener>();
+
+  // Block compaction once so the agent can update its daily log with full context
+  let compactBlocked = false;
+  const preCompactExtension: ExtensionFactory = (pi) => {
+    pi.on("session_before_compact", () => {
+      if (!compactBlocked) {
+        compactBlocked = true;
+        log("agent", "blocking compaction — asking agent to update daily log first");
+        if (options.onCompact) options.onCompact();
+        return { cancel: true };
+      }
+      compactBlocked = false;
+      log("agent", "allowing compaction");
+    });
+  };
 
   // Parse model string: "provider:model-id" or use default
   const modelStr = options.model || process.env.PI_MODEL || "anthropic:claude-sonnet-4-20250514";
@@ -65,6 +81,7 @@ export async function createAgent(options: {
     cwd: options.cwd,
     settingsManager,
     systemPrompt: options.systemPrompt,
+    extensionFactories: [preCompactExtension],
   });
   await resourceLoader.reload();
 
@@ -130,11 +147,6 @@ export async function createAgent(options: {
     if (event.type === "agent_end") {
       log("agent", "turn done");
       broadcast({ type: "done" });
-    }
-
-    if (event.type === "auto_compaction_end") {
-      log("agent", "compaction completed");
-      if (options.onCompact) options.onCompact();
     }
   });
 
