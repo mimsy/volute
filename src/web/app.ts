@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { csrf } from "hono/csrf";
+import { HTTPException } from "hono/http-exception";
 import log from "../lib/logger.js";
 import { authMiddleware } from "./middleware/auth.js";
 import agents from "./routes/agents.js";
@@ -15,6 +16,9 @@ const app = new Hono();
 
 // Global error handler
 app.onError((err, c) => {
+  if (err instanceof HTTPException) {
+    return err.getResponse();
+  }
   log.error("Unhandled error", {
     path: c.req.path,
     method: c.req.method,
