@@ -14,6 +14,7 @@ type TrackedAgent = {
 
 export class AgentManager {
   private agents = new Map<string, TrackedAgent>();
+  private stopping = new Set<string>();
   private shuttingDown = false;
 
   async startAgent(name: string): Promise<void> {
@@ -55,6 +56,7 @@ export class AgentManager {
     const child = spawn(tsxBin, ["src/server.ts", "--port", String(port)], {
       cwd: dir,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
       env,
     });
 
@@ -109,7 +111,7 @@ export class AgentManager {
   private setupCrashRecovery(name: string, child: ChildProcess, dir: string): void {
     child.on("exit", async (code) => {
       this.agents.delete(name);
-      if (this.shuttingDown) return;
+      if (this.shuttingDown || this.stopping.has(name)) return;
 
       console.error(`[daemon] agent ${name} exited with code ${code}`);
 
@@ -162,25 +164,28 @@ export class AgentManager {
     const tracked = this.agents.get(name);
     if (!tracked) return;
 
+    this.stopping.add(name);
     const { child } = tracked;
     this.agents.delete(name);
 
     await new Promise<void>((resolve) => {
       child.on("exit", () => resolve());
       try {
-        child.kill("SIGTERM");
+        // Kill the entire process group (tsx + node child)
+        process.kill(-child.pid!, "SIGTERM");
       } catch {
         resolve();
       }
       // Force kill after 5s
       setTimeout(() => {
         try {
-          child.kill("SIGKILL");
+          process.kill(-child.pid!, "SIGKILL");
         } catch {}
         resolve();
       }, 5000);
     });
 
+    this.stopping.delete(name);
     setAgentRunning(name, false);
     console.error(`[daemon] stopped agent ${name}`);
   }
@@ -208,9 +213,23 @@ export class AgentManager {
 async function killProcessOnPort(port: number): Promise<void> {
   try {
     const { stdout } = await execFileAsync("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"]);
-    for (const pid of stdout.trim().split("\n").filter(Boolean)) {
+    const pids = new Set<number>();
+    for (const line of stdout.trim().split("\n").filter(Boolean)) {
+      const pid = parseInt(line, 10);
+      pids.add(pid);
+      // Find the process group to kill supervisors/wrappers too
       try {
-        process.kill(parseInt(pid, 10), "SIGTERM");
+        const { stdout: psOut } = await execFileAsync("ps", ["-p", String(pid), "-o", "pgid="]);
+        const pgid = parseInt(psOut.trim(), 10);
+        if (pgid > 1) pids.add(pgid);
+      } catch {}
+    }
+    for (const pid of pids) {
+      try {
+        process.kill(-pid, "SIGTERM");
+      } catch {}
+      try {
+        process.kill(pid, "SIGTERM");
       } catch {}
     }
   } catch {}

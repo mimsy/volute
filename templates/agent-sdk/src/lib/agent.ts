@@ -28,23 +28,6 @@ export function createAgent(options: {
     if (options.onCompact) options.onCompact();
   });
 
-  const stream = query({
-    prompt: channel.iterable,
-    options: {
-      systemPrompt: options.systemPrompt,
-      permissionMode: "bypassPermissions",
-      allowDangerouslySkipPermissions: true,
-      cwd: options.cwd,
-      abortController: options.abortController,
-      model: options.model,
-      resume: options.resume,
-      hooks: {
-        PostToolUse: [{ matcher: "Edit|Write", hooks: [autoCommit.hook, identityReload.hook] }],
-        PreCompact: [{ hooks: [preCompact.hook] }],
-      },
-    },
-  });
-
   function broadcast(event: VoluteEvent) {
     for (const listener of listeners) {
       try {
@@ -55,53 +38,87 @@ export function createAgent(options: {
     }
   }
 
+  function createStream(resume?: string) {
+    return query({
+      prompt: channel.iterable,
+      options: {
+        systemPrompt: options.systemPrompt,
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        cwd: options.cwd,
+        abortController: options.abortController,
+        model: options.model,
+        resume,
+        hooks: {
+          PostToolUse: [{ matcher: "Edit|Write", hooks: [autoCommit.hook, identityReload.hook] }],
+          PreCompact: [{ hooks: [preCompact.hook] }],
+        },
+      },
+    });
+  }
+
+  async function consumeStream(stream: ReturnType<typeof query>) {
+    for await (const msg of stream) {
+      if ("session_id" in msg && msg.session_id && options.onSessionId) {
+        options.onSessionId(msg.session_id as string);
+      }
+      if (msg.type === "assistant") {
+        for (const b of msg.message.content) {
+          if (b.type === "thinking" && "thinking" in b && b.thinking) {
+            logThinking(b.thinking as string);
+          } else if (b.type === "text") {
+            const text = (b as { text: string }).text;
+            logText(text);
+            broadcast({ type: "text", content: text });
+          } else if (b.type === "tool_use") {
+            const tb = b as { name: string; input: unknown };
+            logToolUse(tb.name, tb.input);
+            broadcast({ type: "tool_use", name: tb.name, input: tb.input });
+          } else if (b.type === "image" && "source" in b) {
+            const src = b.source as { type: string; media_type: string; data: string };
+            if (src.type === "base64") {
+              log("agent", "image:", src.media_type, `${src.data.length} bytes`);
+              broadcast({ type: "image", media_type: src.media_type, data: src.data });
+            }
+          }
+        }
+      }
+      if (msg.type === "tool_result") {
+        const tr = msg as { name?: string; content?: string; is_error?: boolean };
+        const output = tr.content ?? "";
+        logToolResult(tr.name ?? "unknown", output, tr.is_error);
+        broadcast({ type: "tool_result", output, is_error: tr.is_error });
+      }
+      if (msg.type === "result") {
+        log("agent", "turn done");
+        broadcast({ type: "done" });
+        if (identityReload.needsReload()) {
+          options.onIdentityReload?.();
+        }
+      }
+    }
+  }
+
   // Consume the SDK stream and broadcast VoluteEvent events
   (async () => {
     log("agent", "stream consumer started");
     try {
-      for await (const msg of stream) {
-        if ("session_id" in msg && msg.session_id && options.onSessionId) {
-          options.onSessionId(msg.session_id as string);
-        }
-        if (msg.type === "assistant") {
-          for (const b of msg.message.content) {
-            if (b.type === "thinking" && "thinking" in b && b.thinking) {
-              logThinking(b.thinking as string);
-            } else if (b.type === "text") {
-              const text = (b as { text: string }).text;
-              logText(text);
-              broadcast({ type: "text", content: text });
-            } else if (b.type === "tool_use") {
-              const tb = b as { name: string; input: unknown };
-              logToolUse(tb.name, tb.input);
-              broadcast({ type: "tool_use", name: tb.name, input: tb.input });
-            } else if (b.type === "image" && "source" in b) {
-              const src = b.source as { type: string; media_type: string; data: string };
-              if (src.type === "base64") {
-                log("agent", "image:", src.media_type, `${src.data.length} bytes`);
-                broadcast({ type: "image", media_type: src.media_type, data: src.data });
-              }
-            }
-          }
-        }
-        if (msg.type === "tool_result") {
-          const tr = msg as { name?: string; content?: string; is_error?: boolean };
-          const output = tr.content ?? "";
-          logToolResult(tr.name ?? "unknown", output, tr.is_error);
-          broadcast({ type: "tool_result", output, is_error: tr.is_error });
-        }
-        if (msg.type === "result") {
-          log("agent", "turn done");
-          broadcast({ type: "done" });
-          if (identityReload.needsReload()) {
-            options.onIdentityReload?.();
-          }
-        }
-      }
+      await consumeStream(createStream(options.resume));
     } catch (err) {
-      log("agent", "stream consumer error:", err);
-      if (options.onStreamError) options.onStreamError(err);
-      process.exit(1);
+      if (options.resume) {
+        log("agent", "session resume failed, starting fresh:", err);
+        if (options.onStreamError) options.onStreamError(err);
+        try {
+          await consumeStream(createStream());
+        } catch (retryErr) {
+          log("agent", "stream consumer error:", retryErr);
+          process.exit(1);
+        }
+      } else {
+        log("agent", "stream consumer error:", err);
+        if (options.onStreamError) options.onStreamError(err);
+        process.exit(1);
+      }
     }
     log("agent", "stream consumer ended");
   })();

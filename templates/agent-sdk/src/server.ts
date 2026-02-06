@@ -67,7 +67,10 @@ function saveSessionId(sessionId: string) {
   writeFileSync(sessionPath, JSON.stringify({ sessionId }));
 }
 
+let shuttingDown = false;
+
 function deleteSessionFile() {
+  if (shuttingDown) return;
   try {
     unlinkSync(sessionPath);
     log("server", "deleted session file");
@@ -211,6 +214,7 @@ server.listen(port, () => {
 });
 
 function shutdown() {
+  shuttingDown = true;
   log("server", "shutdown signal received");
   process.exit(0);
 }
