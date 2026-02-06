@@ -35,8 +35,6 @@ function loadFile(path: string): string {
 const { port, model, thinkingLevel } = parseArgs();
 const soulPath = resolve("home/SOUL.md");
 const memoryPath = resolve("home/MEMORY.md");
-const identityPath = resolve("home/IDENTITY.md");
-const userPath = resolve("home/USER.md");
 const volutePath = resolve("home/VOLUTE.md");
 
 const soul = loadFile(soulPath);
@@ -45,14 +43,10 @@ if (!soul) {
   process.exit(1);
 }
 
-const identity = loadFile(identityPath);
-const user = loadFile(userPath);
 const memory = loadFile(memoryPath);
 const volute = loadFile(volutePath);
 
 const promptParts = [soul];
-if (identity) promptParts.push(identity);
-if (user) promptParts.push(user);
 if (volute) promptParts.push(volute);
 if (memory) promptParts.push(`## Memory\n\n${memory}`);
 const systemPrompt = promptParts.join("\n\n---\n\n");

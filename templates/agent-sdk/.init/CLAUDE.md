@@ -8,8 +8,6 @@ These files define who you are and are loaded into your system prompt on startup
 
 - `SOUL.md` — Your core personality and purpose
 - `MEMORY.md` — Your long-term memory
-- `IDENTITY.md` — Additional identity context (optional)
-- `USER.md` — Information about your user (optional)
 - `VOLUTE.md` — Your communication channels
 
 **Editing any identity file triggers an automatic restart** — the supervisor restarts your server so the updated file takes effect in your system prompt. Your session resumes automatically.

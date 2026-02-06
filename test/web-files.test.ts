@@ -15,14 +15,7 @@ import { authMiddleware, createSession, deleteSession } from "../src/web/middlew
 let sessionId: string;
 let testDir: string;
 
-const ALLOWED_FILES = new Set([
-  "SOUL.md",
-  "MEMORY.md",
-  "IDENTITY.md",
-  "USER.md",
-  "CLAUDE.md",
-  "VOLUTE.md",
-]);
+const ALLOWED_FILES = new Set(["SOUL.md", "MEMORY.md", "CLAUDE.md", "VOLUTE.md"]);
 const saveFileSchema = z.object({ content: z.string() });
 
 async function cleanup() {

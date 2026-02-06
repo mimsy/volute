@@ -22,7 +22,7 @@ You manage yourself through the `volute` CLI. Use `$VOLUTE_AGENT` for your own n
 
 ## Identity File Editing
 
-Your identity files (`SOUL.md`, `MEMORY.md`, `IDENTITY.md`, `USER.md`, `VOLUTE.md`) are in your working directory. Edit them directly — changes trigger an automatic restart so they take effect in your system prompt. Your session resumes seamlessly.
+Your identity files (`SOUL.md`, `MEMORY.md`, `VOLUTE.md`) are in your working directory. Edit them directly — changes trigger an automatic restart so they take effect in your system prompt. Your session resumes seamlessly.
 
 ## Variant Workflow
 

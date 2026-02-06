@@ -48,6 +48,10 @@ export async function run(args: string[]) {
   // Parse name from IDENTITY.md if not provided
   const name = flags.name ?? parseNameFromIdentity(identity) ?? "imported-agent";
 
+  // Merge IDENTITY.md into SOUL.md and USER.md into MEMORY.md
+  const mergedSoul = `${soul.trimEnd()}\n\n---\n\n${identity.trimEnd()}\n`;
+  const mergedMemoryExtra = user ? `\n\n---\n\n${user.trimEnd()}\n` : "";
+
   ensureVoluteHome();
   const dest = agentDir(name);
 
@@ -95,23 +99,23 @@ export async function run(args: string[]) {
     rmSync(initDir, { recursive: true, force: true });
   }
 
-  // Write SOUL.md to home/
-  writeFileSync(resolve(dest, "home/SOUL.md"), `${soul}\n`);
+  // Write SOUL.md (with IDENTITY.md merged in)
+  writeFileSync(resolve(dest, "home/SOUL.md"), mergedSoul);
+  console.log("Wrote SOUL.md (merged with IDENTITY.md)");
 
-  // Copy IDENTITY.md and USER.md as separate files in home/
-  cpSync(identityPath, resolve(dest, "home/IDENTITY.md"));
-  console.log("Copied IDENTITY.md");
-  if (user) {
-    cpSync(userPath, resolve(dest, "home/USER.md"));
-    console.log("Copied USER.md");
-  }
-
-  // Copy MEMORY.md if present in workspace
+  // Copy or create MEMORY.md (with USER.md merged in if present)
   const wsMemoryPath = resolve(wsDir, "MEMORY.md");
   const hasMemory = existsSync(wsMemoryPath);
   if (hasMemory) {
-    cpSync(wsMemoryPath, resolve(dest, "home/MEMORY.md"));
-    console.log("Copied MEMORY.md");
+    const existingMemory = readFileSync(wsMemoryPath, "utf-8");
+    writeFileSync(
+      resolve(dest, "home/MEMORY.md"),
+      `${existingMemory.trimEnd()}${mergedMemoryExtra}`,
+    );
+    console.log(user ? "Wrote MEMORY.md (merged with USER.md)" : "Copied MEMORY.md");
+  } else if (user) {
+    writeFileSync(resolve(dest, "home/MEMORY.md"), `${user.trimEnd()}\n`);
+    console.log("Wrote MEMORY.md (from USER.md)");
   }
 
   // Copy memory/*.md daily logs

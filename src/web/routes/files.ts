@@ -6,14 +6,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { agentDir, findAgent } from "../../lib/registry.js";
 
-const ALLOWED_FILES = new Set([
-  "SOUL.md",
-  "MEMORY.md",
-  "IDENTITY.md",
-  "USER.md",
-  "CLAUDE.md",
-  "VOLUTE.md",
-]);
+const ALLOWED_FILES = new Set(["SOUL.md", "MEMORY.md", "CLAUDE.md", "VOLUTE.md"]);
 
 const saveFileSchema = z.object({ content: z.string() });
 

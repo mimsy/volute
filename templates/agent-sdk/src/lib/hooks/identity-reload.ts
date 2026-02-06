@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import type { HookCallback } from "@anthropic-ai/claude-agent-sdk";
 
-const IDENTITY_FILES = ["SOUL.md", "MEMORY.md", "IDENTITY.md", "USER.md", "VOLUTE.md"];
+const IDENTITY_FILES = ["SOUL.md", "MEMORY.md", "VOLUTE.md"];
 
 export function createIdentityReloadHook(cwd: string) {
   let reloadNeeded = false;

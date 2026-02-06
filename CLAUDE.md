@@ -31,8 +31,6 @@ Each agent project (created from the template) has:
 │   ├── SOUL.md                # System prompt / personality
 │   ├── MEMORY.md              # Long-term memory (included in system prompt)
 │   ├── CLAUDE.md              # Agent mechanics (sessions, memory instructions)
-│   ├── IDENTITY.md            # Agent identity (optional)
-│   ├── USER.md                # User context (optional)
 │   ├── VOLUTE.md              # Channel routing documentation
 │   ├── memory/                # Daily logs (YYYY-MM-DD.md)
 │   └── .claude/skills/        # Skills (volute CLI reference, memory system)
@@ -147,7 +145,7 @@ Templates have a `.init/` directory containing identity files (SOUL.md, MEMORY.m
 - All child process execution must be async (never `execFileSync`) to avoid blocking the event loop
 - Arg parsing via `src/lib/parse-args.ts` — type-safe with positional args and typed flags
 - Channel abstraction routes messages between web, Discord, CLI, and system sources
-- Agent system prompt built from: SOUL.md + IDENTITY.md + USER.md + VOLUTE.md + MEMORY.md
+- Agent system prompt built from: SOUL.md + VOLUTE.md + MEMORY.md
 - Model configurable via `VOLUTE_MODEL` env var
 - Auto-commit hooks track file changes in agent `home/` directory
 
