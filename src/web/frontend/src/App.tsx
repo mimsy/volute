@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { LoginPage } from "./components/LoginPage";
+import { SystemLogs } from "./components/SystemLogs";
 import { UserManagement } from "./components/UserManagement";
 import { type AuthUser, fetchMe, logout } from "./lib/auth";
 import { AgentDetail } from "./pages/AgentDetail";
@@ -7,6 +8,7 @@ import { Dashboard } from "./pages/Dashboard";
 
 function parseHash(): { page: string; name?: string } {
   const hash = window.location.hash.slice(1) || "/";
+  if (hash === "/logs") return { page: "logs" };
   const match = hash.match(/^\/agent\/(.+)$/);
   if (match) return { page: "agent", name: match[1] };
   return { page: "dashboard" };
@@ -72,7 +74,25 @@ export function App() {
               <span className="breadcrumb-name">{route.name}</span>
             </nav>
           )}
+          {route.page === "logs" && (
+            <nav className="breadcrumb">
+              <span className="breadcrumb-sep">/</span>
+              <span className="breadcrumb-name">system logs</span>
+            </nav>
+          )}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+            {user.role === "admin" && (
+              <a
+                href="#/logs"
+                style={{
+                  color: route.page === "logs" ? "var(--accent)" : "var(--text-2)",
+                  fontSize: 12,
+                  fontFamily: "var(--mono)",
+                }}
+              >
+                logs
+              </a>
+            )}
             {user.role === "admin" && (
               <button
                 onClick={() => setShowUsers(!showUsers)}
@@ -111,6 +131,7 @@ export function App() {
             <>
               {route.page === "dashboard" && <Dashboard />}
               {route.page === "agent" && route.name && <AgentDetail name={route.name} />}
+              {route.page === "logs" && <SystemLogs />}
             </>
           )}
         </main>

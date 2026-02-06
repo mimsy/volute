@@ -8,6 +8,7 @@ import chat from "./routes/chat.js";
 import conversations from "./routes/conversations.js";
 import files from "./routes/files.js";
 import logs from "./routes/logs.js";
+import system from "./routes/system.js";
 import variants from "./routes/variants.js";
 
 const app = new Hono();
@@ -44,10 +45,12 @@ app.use("/api/*", csrf());
 
 // Protected API routes
 app.use("/api/agents/*", authMiddleware);
+app.use("/api/system/*", authMiddleware);
 
 // Chain route registrations to capture types
 const routes = app
   .route("/api/auth", auth)
+  .route("/api/system", system)
   .route("/api/agents", agents)
   .route("/api/agents", chat)
   .route("/api/agents", logs)

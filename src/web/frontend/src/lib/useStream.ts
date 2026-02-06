@@ -106,3 +106,48 @@ export function useLogStream(
 
   return { start, stop };
 }
+
+export function useSystemLogStream(onLine: (line: string) => void): {
+  start: () => void;
+  stop: () => void;
+} {
+  const abortRef = useRef<AbortController | null>(null);
+
+  const start = useCallback(() => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    fetch("/api/system/logs", { signal: controller.signal })
+      .then(async (res) => {
+        if (!res.ok || !res.body) return;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const data = line.slice(6);
+            if (data) onLine(data);
+          }
+        }
+      })
+      .catch(() => {
+        // Stream ended or aborted
+      });
+  }, [onLine]);
+
+  const stop = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
+  return { start, stop };
+}
