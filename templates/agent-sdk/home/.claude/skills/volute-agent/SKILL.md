@@ -3,50 +3,51 @@ name: Volute CLI
 description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the agent server. Covers "create variant", "merge variant", "send to variant", "fork", "volute CLI", "variant workflow", "agent server", "supervisor", "channel", "discord", "send message", "read messages".
 ---
 
-# Volute CLI
+# Self-Management
 
-Your server is managed by the `volute` CLI. Your user interacts with you through it.
+You manage yourself through the `volute` CLI. Use `$VOLUTE_AGENT` for your own name in commands.
 
 ## Commands
 
 | Command | Purpose |
 |---------|---------|
-| `volute start [--foreground] [--dev]` | Start agent (daemonized by default) |
-| `volute stop` | Stop the agent |
-| `volute status` | Check agent status |
-| `volute logs [--follow] [-n N]` | Tail agent logs |
-| `volute send "<msg>"` | Send message, stream ndjson response |
-| `volute fork <name> [--soul "..."] [--port N]` | Create variant (worktree + server) |
-| `volute variants` | List variants with health status |
-| `volute merge <name> [--summary "..." --memory "..."]` | Merge variant back and restart |
-| `volute upgrade [--template <name>] [--continue]` | Upgrade to latest template code |
-| `volute channel read discord:<id> [--limit N]` | Read recent messages from a Discord channel |
-| `volute channel send discord:<id> "<msg>"` | Send a message to a Discord channel |
+| `volute status` | Check your status |
+| `volute logs [--follow] [-n N]` | Read your own logs |
+| `volute fork <name> [--soul "..."] [--port N]` | Create a variant for testing changes |
+| `volute variants` | List your variants |
+| `volute merge <name> [--summary "..." --memory "..."]` | Merge a variant back |
+| `volute upgrade [--template <name>] [--continue]` | Upgrade your server code |
+| `volute channel read discord:<id> [--limit N]` | Read channel history |
+| `volute channel send discord:<id> "<msg>"` | Send a message proactively |
 
-## Channels
+## Identity File Editing
 
-See `VOLUTE.md` for how message routing works. Key detail: your responses are automatically sent back to the source channel — only use these commands for proactive messaging or reading history.
-
-- `volute channel read discord:<id> [--limit N]` — read recent messages (default 20)
-- `volute channel send discord:<id> "message"` — send a new message (not a reply)
+Your identity files (`SOUL.md`, `MEMORY.md`, `IDENTITY.md`, `USER.md`, `VOLUTE.md`) are in your working directory. Edit them directly — changes trigger an automatic restart so they take effect in your system prompt. Your session resumes seamlessly.
 
 ## Variant Workflow
 
-Variants are isolated copies of the agent (git worktrees) with their own servers, used for experimentation.
+For changes to your server code (`src/`), use variants to test safely:
 
-1. `volute fork <name>` — create a variant with its own server
-2. Make changes in the variant's worktree
-3. `volute send --port <N> "<msg>"` — test the variant
-4. `volute merge <name> --summary "..." --memory "..."` — merge back, agent restarts with orientation context
+1. `volute fork experiment` — creates an isolated copy with its own server
+2. Make changes in the variant's worktree (at `../.worktrees/experiment/`)
+3. Test: `volute send $VOLUTE_AGENT@experiment "hello"`
+4. `volute merge experiment --summary "..." --memory "..."` — merges back after verification
 
-After a merge, you'll receive a message with details about what was merged. Update your memory accordingly.
+After a merge, you receive orientation context about what changed. Update your memory accordingly.
 
 ## Upgrade Workflow
 
-`volute upgrade` merges the latest template code (server, libraries, config) into your agent as a testable variant.
+`volute upgrade` merges the latest template code into a testable variant:
 
-1. `volute upgrade` — creates an `upgrade` variant with the latest template merged in
-2. If there are merge conflicts, resolve them in the worktree, then `volute upgrade --continue`
-3. Chat with the upgrade variant to test it: `volute send <name>@upgrade "hello"`
-4. When satisfied, merge back: `volute merge <name> upgrade`
-5. After merge, your agent restarts with the upgraded infrastructure
+1. `volute upgrade` — creates an `upgrade` variant
+2. Resolve any merge conflicts if prompted, then `volute upgrade --continue`
+3. Test: `volute send $VOLUTE_AGENT@upgrade "hello"`
+4. `volute merge upgrade` — merge back
+
+## Git Introspection
+
+Your cwd is `home/`, so use `git -C ..` for project-level operations:
+
+- `git -C .. log --oneline -10` — recent project history
+- `git -C .. diff` — current changes
+- `git log -- MEMORY.md` — history of your memory changes

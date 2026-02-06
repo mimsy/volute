@@ -1,5 +1,7 @@
-import { type HookCallback, query } from "@anthropic-ai/claude-agent-sdk";
-import { commitFileChange } from "./auto-commit.js";
+import { query } from "@anthropic-ai/claude-agent-sdk";
+import { createAutoCommitHook } from "./hooks/auto-commit.js";
+import { createIdentityReloadHook } from "./hooks/identity-reload.js";
+import { createPreCompactHook } from "./hooks/pre-compact.js";
 import { log, logMessage, logText, logThinking, logToolResult, logToolUse } from "./logger.js";
 import { createMessageChannel } from "./message-channel.js";
 import type { VoluteContentPart, VoluteEvent } from "./types.js";
@@ -15,32 +17,16 @@ export function createAgent(options: {
   onSessionId?: (id: string) => void;
   onStreamError?: (err: unknown) => void;
   onCompact?: () => void;
+  onIdentityReload?: () => void;
 }) {
   const channel = createMessageChannel();
   const listeners = new Set<Listener>();
 
-  // Hook to auto-commit file changes in home/
-  const autoCommitHook: HookCallback = async (input) => {
-    const filePath = (input as { tool_input?: { file_path?: string } }).tool_input?.file_path;
-    if (filePath) {
-      commitFileChange(filePath, options.cwd);
-    }
-    return {};
-  };
-
-  // Block compaction once so the agent can update its daily log with full context
-  let compactBlocked = false;
-  const preCompactHook: HookCallback = async () => {
-    if (!compactBlocked) {
-      compactBlocked = true;
-      log("agent", "blocking compaction — asking agent to update daily log first");
-      if (options.onCompact) options.onCompact();
-      return { decision: "block" };
-    }
-    compactBlocked = false;
-    log("agent", "allowing compaction");
-    return {};
-  };
+  const autoCommit = createAutoCommitHook(options.cwd);
+  const identityReload = createIdentityReloadHook(options.cwd);
+  const preCompact = createPreCompactHook(() => {
+    if (options.onCompact) options.onCompact();
+  });
 
   const stream = query({
     prompt: channel.iterable,
@@ -53,8 +39,8 @@ export function createAgent(options: {
       model: options.model,
       resume: options.resume,
       hooks: {
-        PostToolUse: [{ matcher: "Edit|Write", hooks: [autoCommitHook] }],
-        PreCompact: [{ hooks: [preCompactHook] }],
+        PostToolUse: [{ matcher: "Edit|Write", hooks: [autoCommit.hook, identityReload.hook] }],
+        PreCompact: [{ hooks: [preCompact.hook] }],
       },
     },
   });
@@ -107,6 +93,9 @@ export function createAgent(options: {
         if (msg.type === "result") {
           log("agent", "turn done");
           broadcast({ type: "done" });
+          if (identityReload.needsReload()) {
+            options.onIdentityReload?.();
+          }
         }
       }
     } catch (err) {
@@ -171,5 +160,5 @@ export function createAgent(options: {
     return () => listeners.delete(listener);
   }
 
-  return { sendMessage, onMessage };
+  return { sendMessage, onMessage, waitForCommits: autoCommit.waitForCommits };
 }

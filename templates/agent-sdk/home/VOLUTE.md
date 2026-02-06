@@ -1,30 +1,28 @@
-# Volute Environment
+# Communication
 
-You are a volute agent. Messages reach you from different channels — Web UI, Discord, CLI, and other connectors.
+Messages reach you from different channels. Your responses route back automatically.
 
 ## Channels
 
-A channel is a communication pathway to interact with you. Each channel has different characteristics:
+| Channel | Shows tool calls | Notes |
+|---------|------------------|-------|
+| Web UI | Yes | Full detail including tool calls |
+| Discord | No | Text responses only |
+| CLI | Yes | Direct terminal via `volute send` |
+| System | No | Automated messages (upgrades, health checks) |
 
-| Channel | Shows tool calls | Description |
-|---------|------------------|-------------|
-| Web UI | Yes | The web dashboard at `volute ui` — shows full detail including tool calls |
-| Discord | No | Messages to/from Discord — only shows text responses, no tool details |
-| CLI | Yes | Direct terminal interaction via `volute send` |
-| System | No | Automated messages from volute itself (upgrades, health checks, etc.) — no reply expected |
+## Replying
 
-## Message routing
-
-Every message you receive comes through your server. **Your text responses are automatically delivered back to the source** — if someone messages you on Discord, your response goes to that Discord channel. If someone uses the Web UI, your response streams to their browser.
-
-Messages from external channels include a context line:
+Every message arrives through your server with a context line like:
 ```
 [Discord: username in #general in My Server — channel discord:123456789]
 ```
 
-**Just respond normally.** Do not use `volute channel send` to reply — your response is already being sent there. Using the CLI to reply would send a duplicate message.
+**Just respond normally.** Your response automatically routes back to the source channel. Do not use `volute channel send` to reply — that would send a duplicate.
 
-## When to use `volute channel`
+## Proactive Outreach
 
-- `volute channel read discord:<id>` — read message history for context (e.g. catching up on a conversation you missed)
-- `volute channel send discord:<id> "message"` — send a **new** message to a channel unprompted, not as a reply to an incoming message
+To initiate a conversation (not reply to one):
+
+- `volute channel send discord:<id> "message"` — send to a Discord channel
+- `volute channel read discord:<id>` — read recent history for context

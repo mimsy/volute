@@ -4,20 +4,23 @@ import { dirname, resolve } from "node:path";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgent } from "../lib/registry.js";
+import { spawnServer } from "../lib/spawn-server.js";
 import { findVariant, removeVariant, validateBranchName } from "../lib/variants.js";
+import { verify } from "../lib/verify.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
     summary: { type: "string" },
     justification: { type: "string" },
     memory: { type: "string" },
+    "skip-verify": { type: "boolean" },
   });
 
   const agentName = positional[0];
   const variantName = positional[1];
   if (!agentName || !variantName) {
     console.error(
-      "Usage: volute merge <agent> <variant> [--summary '...'] [--justification '...'] [--memory '...']",
+      "Usage: volute merge <agent> <variant> [--summary '...'] [--justification '...'] [--memory '...'] [--skip-verify]",
     );
     process.exit(1);
   }
@@ -36,16 +39,6 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  // Kill server if running
-  if (variant.pid) {
-    try {
-      process.kill(variant.pid);
-      console.log(`Killed server (pid ${variant.pid})`);
-    } catch {
-      // Already dead
-    }
-  }
-
   // Auto-commit any uncommitted changes in the variant worktree
   if (existsSync(variant.path)) {
     const status = (await exec("git", ["status", "--porcelain"], { cwd: variant.path })).trim();
@@ -55,6 +48,63 @@ export async function run(args: string[]) {
       await exec("git", ["commit", "-m", "Auto-commit uncommitted changes before merge"], {
         cwd: variant.path,
       });
+    }
+  }
+
+  // Verify variant before merge
+  if (!flags["skip-verify"]) {
+    console.log("Verifying variant...");
+
+    let port = variant.port;
+    let tempServerPid: number | undefined;
+
+    // Check if variant server is running
+    let running = false;
+    if (variant.pid) {
+      try {
+        process.kill(variant.pid, 0);
+        running = true;
+      } catch {
+        // not running
+      }
+    }
+
+    // Start temp server if needed
+    if (!running) {
+      console.log("Starting temporary server for verification...");
+      const result = await spawnServer(variant.path, 0, { detached: true });
+      if (!result) {
+        console.error("Failed to start server for verification. Use --skip-verify to skip.");
+        process.exit(1);
+      }
+      port = result.actualPort;
+      tempServerPid = result.child.pid!;
+    }
+
+    const verified = await verify(port);
+
+    // Kill temp server if we started one
+    if (tempServerPid) {
+      try {
+        process.kill(tempServerPid);
+      } catch {}
+    }
+
+    if (!verified) {
+      console.error("Verification failed. Fix issues or use --skip-verify to proceed anyway.");
+      process.exit(1);
+    }
+
+    console.log("Verification passed.");
+  }
+
+  // Kill variant server if running
+  if (variant.pid) {
+    try {
+      process.kill(variant.pid);
+      console.log(`Killed server (pid ${variant.pid})`);
+    } catch {
+      // Already dead
     }
   }
 

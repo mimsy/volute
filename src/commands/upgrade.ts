@@ -5,7 +5,7 @@ import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgent } from "../lib/registry.js";
 import { spawnServer } from "../lib/spawn-server.js";
 import { copyTemplateToDir, findTemplatesDir } from "../lib/template.js";
-import { addVariant, checkHealth } from "../lib/variants.js";
+import { addVariant } from "../lib/variants.js";
 
 const TEMPLATE_BRANCH = "volute/template";
 const VARIANT_NAME = "upgrade";
@@ -262,93 +262,8 @@ async function installAndVerify(agentName: string, projectRoot: string, worktree
     created: new Date().toISOString(),
   });
 
-  // Verify
-  console.log("Verifying upgrade...");
-  const verified = await verify(actualPort);
-
-  if (verified) {
-    console.log("\nUpgrade variant is healthy and responding.");
-  } else {
-    console.log("\nWarning: Verification failed. The variant may need attention.");
-  }
-
   console.log(`\nUpgrade variant running on port ${actualPort}`);
   console.log(`\nNext steps:`);
   console.log(`  volute send ${agentName}@${VARIANT_NAME} "hello"    # chat with upgraded variant`);
   console.log(`  volute merge ${agentName} ${VARIANT_NAME}           # merge back when satisfied`);
-}
-
-/**
- * Verify the upgrade variant by checking health and sending a test message.
- */
-async function verify(port: number): Promise<boolean> {
-  // Health check
-  const health = await checkHealth(port);
-  if (!health.ok) {
-    console.error("Health check failed");
-    return false;
-  }
-  console.log("  Health check: OK");
-
-  // Send test message
-  try {
-    const res = await fetch(`http://localhost:${port}/message`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        content: [{ type: "text", text: "ping" }],
-        channel: "system",
-      }),
-      signal: AbortSignal.timeout(60000),
-    });
-
-    if (!res.ok || !res.body) {
-      console.error("  Test message: failed to send");
-      return false;
-    }
-
-    // Read ndjson stream looking for a done event
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let gotDone = false;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const event = JSON.parse(line);
-          if (event.type === "done") {
-            gotDone = true;
-          }
-        } catch {
-          // skip invalid lines
-        }
-      }
-
-      if (gotDone) {
-        reader.cancel();
-        break;
-      }
-    }
-
-    if (gotDone) {
-      console.log("  Test message: OK");
-      return true;
-    } else {
-      console.error("  Test message: no done event received");
-      return false;
-    }
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error(`  Test message: ${msg}`);
-    return false;
-  }
 }

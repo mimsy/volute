@@ -109,6 +109,12 @@ const agent = createAgent({
       "system",
     );
   },
+  onIdentityReload: async () => {
+    log("server", "identity file changed — restarting to reload");
+    await agent.waitForCommits();
+    server.close();
+    process.exit(0);
+  },
 });
 
 function readBody(req: IncomingMessage): Promise<string> {
