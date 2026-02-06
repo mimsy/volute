@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { initAgentManager } from "./lib/agent-manager.js";
 import { initConnectorManager } from "./lib/connector-manager.js";
@@ -12,21 +12,34 @@ const DAEMON_JSON_PATH = resolve(VOLUTE_HOME, "daemon.json");
 
 export async function startDaemon(opts: { port: number; foreground: boolean }): Promise<void> {
   const { port } = opts;
+  const myPid = String(process.pid);
 
   mkdirSync(VOLUTE_HOME, { recursive: true });
 
-  // Generate internal auth token for CLI-to-daemon communication
-  const token = randomBytes(32).toString("hex");
-
-  // Write PID and config (including internal token)
-  writeFileSync(DAEMON_PID_PATH, String(process.pid));
-  writeFileSync(DAEMON_JSON_PATH, `${JSON.stringify({ port, token }, null, 2)}\n`);
+  // Use existing token if set (for testing), otherwise generate one
+  const token = process.env.VOLUTE_DAEMON_TOKEN || randomBytes(32).toString("hex");
 
   // Set token in environment so auth middleware can check it
   process.env.VOLUTE_DAEMON_TOKEN = token;
 
-  // Start web server
-  const server = startServer({ port });
+  // Start web server — must succeed before writing PID/config files,
+  // otherwise a failed startup (e.g. EADDRINUSE) would overwrite files
+  // belonging to a running daemon.
+  let server: Awaited<ReturnType<typeof startServer>>;
+  try {
+    server = await startServer({ port });
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    if (e.code === "EADDRINUSE") {
+      console.error(`[daemon] port ${port} is already in use`);
+      process.exit(1);
+    }
+    throw err;
+  }
+
+  // Server is listening — safe to write PID and config
+  writeFileSync(DAEMON_PID_PATH, myPid);
+  writeFileSync(DAEMON_JSON_PATH, `${JSON.stringify({ port, token }, null, 2)}\n`);
 
   // Start agent manager, connector manager, and scheduler
   const manager = initAgentManager();
@@ -48,12 +61,14 @@ export async function startDaemon(opts: { port: number; foreground: boolean }): 
     }
   }
 
-  console.error(`[daemon] running on port ${port}, pid ${process.pid}`);
+  console.error(`[daemon] running on port ${port}, pid ${myPid}`);
 
-  // Graceful shutdown
+  // Only delete PID/config files if they still belong to this process
   function cleanup() {
     try {
-      unlinkSync(DAEMON_PID_PATH);
+      if (readFileSync(DAEMON_PID_PATH, "utf-8").trim() === myPid) {
+        unlinkSync(DAEMON_PID_PATH);
+      }
     } catch {}
     try {
       unlinkSync(DAEMON_JSON_PATH);

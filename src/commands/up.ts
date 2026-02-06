@@ -25,6 +25,19 @@ export async function run(args: string[]) {
     }
   }
 
+  // Check if port is already responding (catches orphaned daemons with missing PID files)
+  try {
+    const res = await fetch(`http://localhost:${port}/api/health`);
+    if (res.ok) {
+      console.error(
+        `Port ${port} is already in use by a Volute daemon. Use 'volute down' first, or kill the process on that port.`,
+      );
+      process.exit(1);
+    }
+  } catch {
+    // Port not responding — good, we can proceed
+  }
+
   if (flags.foreground) {
     const { startDaemon } = await import("../daemon.js");
     await startDaemon({ port, foreground: true });

@@ -6,6 +6,24 @@ export async function run(_args: string[]) {
   const pidPath = resolve(VOLUTE_HOME, "daemon.pid");
 
   if (!existsSync(pidPath)) {
+    // Check if a daemon is running without a PID file (orphan)
+    const configPath = resolve(VOLUTE_HOME, "daemon.json");
+    let port = 4200;
+    if (existsSync(configPath)) {
+      try {
+        port = JSON.parse(readFileSync(configPath, "utf-8")).port ?? 4200;
+      } catch {}
+    }
+    try {
+      const res = await fetch(`http://localhost:${port}/api/health`);
+      if (res.ok) {
+        console.error(`Daemon appears to be running on port ${port} but PID file is missing.`);
+        console.error(`Kill the process manually: lsof -ti :${port} | xargs kill`);
+        process.exit(1);
+      }
+    } catch {
+      // Not responding either
+    }
     console.error("Daemon is not running (no PID file found).");
     process.exit(1);
   }

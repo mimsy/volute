@@ -13,6 +13,11 @@ export async function run(args: string[]) {
   if (!name) {
     // List all agents
     const res = await daemonFetch("/api/agents");
+    if (!res.ok) {
+      const data = (await res.json()) as { error?: string };
+      console.error(data.error ?? `Failed to get status: ${res.status}`);
+      process.exit(1);
+    }
     const agents = (await res.json()) as AgentInfo[];
 
     if (agents.length === 0) {

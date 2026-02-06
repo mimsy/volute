@@ -9,9 +9,12 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  const res = await daemonFetch(`/api/agents/${name}/connectors/${type}`, {
-    method: "DELETE",
-  });
+  const res = await daemonFetch(
+    `/api/agents/${encodeURIComponent(name)}/connectors/${encodeURIComponent(type)}`,
+    {
+      method: "DELETE",
+    },
+  );
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: "Unknown error" }));

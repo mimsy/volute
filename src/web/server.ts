@@ -16,7 +16,7 @@ const MIME_TYPES: Record<string, string> = {
   ".ico": "image/x-icon",
 };
 
-export function startServer({ port }: { port: number }): ServerType {
+export async function startServer({ port }: { port: number }): Promise<ServerType> {
   // Find built frontend assets
   let assetsDir = "";
   let searchDir = dirname(new URL(import.meta.url).pathname);
@@ -54,7 +54,18 @@ export function startServer({ port }: { port: number }): ServerType {
     });
   }
 
-  log.info("Volute UI running", { port });
+  const server = serve({ fetch: app.fetch, port });
 
-  return serve({ fetch: app.fetch, port });
+  // Wait for the server to start listening (or fail with EADDRINUSE)
+  await new Promise<void>((resolve, reject) => {
+    server.on("listening", () => {
+      log.info("Volute UI running", { port });
+      resolve();
+    });
+    server.on("error", (err: NodeJS.ErrnoException) => {
+      reject(err);
+    });
+  });
+
+  return server;
 }

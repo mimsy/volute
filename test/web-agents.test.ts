@@ -86,6 +86,45 @@ describe("web agents routes", () => {
     assert.equal(res.status, 401);
   });
 
+  it("GET / — Bearer token auth works for CLI requests", async () => {
+    const token = "test-daemon-token";
+    const prev = process.env.VOLUTE_DAEMON_TOKEN;
+    process.env.VOLUTE_DAEMON_TOKEN = token;
+    try {
+      const { default: app } = await import("../src/web/app.js");
+      const res = await app.request("/api/agents", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.ok(Array.isArray(body));
+    } finally {
+      if (prev !== undefined) {
+        process.env.VOLUTE_DAEMON_TOKEN = prev;
+      } else {
+        delete process.env.VOLUTE_DAEMON_TOKEN;
+      }
+    }
+  });
+
+  it("GET / — Bearer token rejects invalid token", async () => {
+    const prev = process.env.VOLUTE_DAEMON_TOKEN;
+    process.env.VOLUTE_DAEMON_TOKEN = "real-token";
+    try {
+      const { default: app } = await import("../src/web/app.js");
+      const res = await app.request("/api/agents", {
+        headers: { Authorization: "Bearer wrong-token" },
+      });
+      assert.equal(res.status, 401);
+    } finally {
+      if (prev !== undefined) {
+        process.env.VOLUTE_DAEMON_TOKEN = prev;
+      } else {
+        delete process.env.VOLUTE_DAEMON_TOKEN;
+      }
+    }
+  });
+
   it("POST /:name/start — blocked by CSRF without origin", async () => {
     const { default: app } = await import("../src/web/app.js");
 
