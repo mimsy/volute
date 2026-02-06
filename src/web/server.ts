@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, resolve } from "node:path";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
+import log from "../lib/logger.js";
 import { authMiddleware } from "./middleware/auth.js";
 import agents from "./routes/agents.js";
 import auth from "./routes/auth.js";
@@ -23,6 +24,33 @@ const MIME_TYPES: Record<string, string> = {
 
 export function startServer({ port }: { port: number }) {
   const app = new Hono();
+
+  // Global error handler
+  app.onError((err, c) => {
+    log.error("Unhandled error", {
+      path: c.req.path,
+      method: c.req.method,
+      error: err.message,
+    });
+    return c.json({ error: "Internal server error" }, 500);
+  });
+
+  app.notFound((c) => {
+    return c.json({ error: "Not found" }, 404);
+  });
+
+  // Request logging
+  app.use("*", async (c, next) => {
+    const start = Date.now();
+    await next();
+    const duration = Date.now() - start;
+    log.info("request", {
+      method: c.req.method,
+      path: c.req.path,
+      status: c.res.status,
+      duration,
+    });
+  });
 
   // Auth routes (unprotected)
   app.route("/api/auth", auth);
@@ -71,7 +99,7 @@ export function startServer({ port }: { port: number }) {
     });
   }
 
-  console.log(`Molt UI running at http://localhost:${port}`);
+  log.info("Molt UI running", { port });
 
   serve({ fetch: app.fetch, port });
 }
