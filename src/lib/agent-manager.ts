@@ -1,8 +1,11 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
+import { promisify } from "node:util";
 import { loadMergedEnv } from "./env.js";
 import { agentDir, findAgent, setAgentRunning } from "./registry.js";
+
+const execFileAsync = promisify(execFile);
 
 type TrackedAgent = {
   child: ChildProcess;
@@ -25,6 +28,19 @@ export class AgentManager {
     if (!existsSync(dir)) throw new Error(`Agent directory missing: ${dir}`);
 
     const port = entry.port;
+
+    // Kill any orphan process on this port from a previous daemon session
+    try {
+      const res = await fetch(`http://localhost:${port}/health`);
+      if (res.ok) {
+        console.error(`[daemon] killing orphan process on port ${port}`);
+        await killProcessOnPort(port);
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    } catch {
+      // Port not in use — good
+    }
+
     const voluteDir = resolve(dir, ".volute");
     const logsDir = resolve(voluteDir, "logs");
     mkdirSync(logsDir, { recursive: true });
@@ -49,31 +65,39 @@ export class AgentManager {
     child.stderr?.pipe(logStream);
 
     // Wait for "listening on :PORT" or timeout
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error(`Agent ${name} did not start within 30s`));
-      }, 30000);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error(`Agent ${name} did not start within 30s`));
+        }, 30000);
 
-      function checkOutput(data: Buffer) {
-        if (data.toString().match(/listening on :\d+/)) {
-          clearTimeout(timeout);
-          resolve();
+        function checkOutput(data: Buffer) {
+          if (data.toString().match(/listening on :\d+/)) {
+            clearTimeout(timeout);
+            resolve();
+          }
         }
-      }
 
-      child.stdout?.on("data", checkOutput);
-      child.stderr?.on("data", checkOutput);
+        child.stdout?.on("data", checkOutput);
+        child.stderr?.on("data", checkOutput);
 
-      child.on("error", (err) => {
-        clearTimeout(timeout);
-        reject(err);
+        child.on("error", (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        });
+
+        child.on("exit", (code) => {
+          clearTimeout(timeout);
+          reject(new Error(`Agent ${name} exited with code ${code} during startup`));
+        });
       });
-
-      child.on("exit", (code) => {
-        clearTimeout(timeout);
-        reject(new Error(`Agent ${name} exited with code ${code} during startup`));
-      });
-    });
+    } catch (err) {
+      this.agents.delete(name);
+      try {
+        child.kill();
+      } catch {}
+      throw err;
+    }
 
     // Set up crash recovery after successful start
     this.setupCrashRecovery(name, child, dir);
@@ -83,13 +107,13 @@ export class AgentManager {
   }
 
   private setupCrashRecovery(name: string, child: ChildProcess, dir: string): void {
-    child.on("exit", (code) => {
+    child.on("exit", async (code) => {
       this.agents.delete(name);
       if (this.shuttingDown) return;
 
       console.error(`[daemon] agent ${name} exited with code ${code}`);
 
-      const wasRestart = this.handleRestart(name, dir);
+      const wasRestart = await this.handleRestart(name, dir);
       if (wasRestart) {
         console.error(`[daemon] restarting ${name} immediately after merge`);
         this.startAgent(name).catch((err) => {
@@ -107,7 +131,7 @@ export class AgentManager {
     });
   }
 
-  private handleRestart(name: string, dir: string): boolean {
+  private async handleRestart(name: string, dir: string): Promise<boolean> {
     const restartPath = resolve(dir, ".volute", "restart.json");
     if (!existsSync(restartPath)) return false;
 
@@ -117,23 +141,19 @@ export class AgentManager {
 
       if (signal.action === "merge" && signal.name) {
         console.error(`[daemon] merging variant for ${name}: ${signal.name}`);
-        try {
-          const mergeArgs = ["merge", name, signal.name];
-          if (signal.summary) mergeArgs.push("--summary", signal.summary);
-          if (signal.justification) mergeArgs.push("--justification", signal.justification);
-          if (signal.memory) mergeArgs.push("--memory", signal.memory);
-          execFile("volute", mergeArgs, {
-            cwd: dir,
-            env: { ...process.env, VOLUTE_SUPERVISOR: "1" },
-          });
-        } catch (e) {
-          console.error(`[daemon] volute merge failed for ${name}:`, e);
-        }
+        const mergeArgs = ["merge", name, signal.name];
+        if (signal.summary) mergeArgs.push("--summary", signal.summary);
+        if (signal.justification) mergeArgs.push("--justification", signal.justification);
+        if (signal.memory) mergeArgs.push("--memory", signal.memory);
+        await execFileAsync("volute", mergeArgs, {
+          cwd: dir,
+          env: { ...process.env, VOLUTE_SUPERVISOR: "1" },
+        });
       }
 
       return true;
     } catch (e) {
-      console.error(`[daemon] failed to read restart signal for ${name}:`, e);
+      console.error(`[daemon] failed to handle restart for ${name}:`, e);
       return false;
     }
   }
@@ -183,6 +203,17 @@ export class AgentManager {
   getRunningAgents(): string[] {
     return [...this.agents.keys()];
   }
+}
+
+async function killProcessOnPort(port: number): Promise<void> {
+  try {
+    const { stdout } = await execFileAsync("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"]);
+    for (const pid of stdout.trim().split("\n").filter(Boolean)) {
+      try {
+        process.kill(parseInt(pid, 10), "SIGTERM");
+      } catch {}
+    }
+  } catch {}
 }
 
 let instance: AgentManager | null = null;

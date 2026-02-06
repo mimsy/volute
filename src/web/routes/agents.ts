@@ -115,6 +115,32 @@ const app = new Hono()
       return c.json({ error: err instanceof Error ? err.message : "Failed to start agent" }, 500);
     }
   })
+  // Restart agent (stop if running, then start)
+  .post("/:name/restart", async (c) => {
+    const name = c.req.param("name");
+    const entry = findAgent(name);
+    if (!entry) return c.json({ error: "Agent not found" }, 404);
+
+    const dir = agentDir(name);
+    if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
+
+    const manager = getAgentManager();
+    const connectorManager = getConnectorManager();
+
+    try {
+      if (manager.isRunning(name)) {
+        await connectorManager.stopConnectors(name);
+        await manager.stopAgent(name);
+      }
+
+      await manager.startAgent(name);
+      setAgentRunning(name, true);
+      await connectorManager.startConnectors(name, dir, entry.port);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : "Failed to restart agent" }, 500);
+    }
+  })
   // Stop agent
   .post("/:name/stop", async (c) => {
     const name = c.req.param("name");

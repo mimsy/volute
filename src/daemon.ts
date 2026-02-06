@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { initAgentManager } from "./lib/agent-manager.js";
 import { initConnectorManager } from "./lib/connector-manager.js";
-import { agentDir, readRegistry, VOLUTE_HOME } from "./lib/registry.js";
+import { agentDir, readRegistry, setAgentRunning, VOLUTE_HOME } from "./lib/registry.js";
 import { getScheduler } from "./lib/scheduler.js";
 import { startServer } from "./web/server.js";
 
@@ -58,6 +58,7 @@ export async function startDaemon(opts: { port: number; foreground: boolean }): 
       scheduler.loadSchedules(entry.name);
     } catch (err) {
       console.error(`[daemon] failed to start agent ${entry.name}:`, err);
+      setAgentRunning(entry.name, false);
     }
   }
 

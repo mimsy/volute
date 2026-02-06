@@ -165,7 +165,7 @@ export async function run(args: string[]) {
   try {
     const { daemonFetch } = await import("../lib/daemon-client.js");
     console.log("Restarting agent via daemon...");
-    const res = await daemonFetch(`/api/agents/${encodeURIComponent(agentName)}/start`, {
+    const res = await daemonFetch(`/api/agents/${encodeURIComponent(agentName)}/restart`, {
       method: "POST",
     });
     if (res.ok) {
