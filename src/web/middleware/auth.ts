@@ -9,11 +9,12 @@ export type AuthEnv = {
 };
 
 // In-memory session store (sessions don't survive server restart — acceptable for local tool)
-const sessions = new Map<string, number>();
+const SESSION_MAX_AGE = 86400000; // 24 hours
+const sessions = new Map<string, { userId: number; createdAt: number }>();
 
 export function createSession(userId: number): string {
   const sessionId = crypto.randomUUID();
-  sessions.set(sessionId, userId);
+  sessions.set(sessionId, { userId, createdAt: Date.now() });
   return sessionId;
 }
 
@@ -22,14 +23,20 @@ export function deleteSession(sessionId: string): void {
 }
 
 export function getSessionUserId(sessionId: string): number | undefined {
-  return sessions.get(sessionId);
+  const session = sessions.get(sessionId);
+  if (!session) return undefined;
+  if (Date.now() - session.createdAt > SESSION_MAX_AGE) {
+    sessions.delete(sessionId);
+    return undefined;
+  }
+  return session.userId;
 }
 
 export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   const sessionId = getCookie(c, "molt_session");
   if (!sessionId) return c.json({ error: "Unauthorized" }, 401);
 
-  const userId = sessions.get(sessionId);
+  const userId = getSessionUserId(sessionId);
   if (userId == null) return c.json({ error: "Unauthorized" }, 401);
 
   const user = await getUser(userId);

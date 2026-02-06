@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import { CHANNELS } from "../../lib/channels.js";
@@ -20,7 +21,7 @@ async function getAgentStatus(dir: string, port: number) {
   let status = "stopped";
   const pidPath = resolve(dir, ".molt", "supervisor.pid");
   if (existsSync(pidPath)) {
-    const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
+    const pid = parseInt((await readFile(pidPath, "utf-8")).trim(), 10);
     try {
       process.kill(pid, 0);
       const health = await checkHealth(port);
@@ -49,7 +50,7 @@ async function getAgentStatus(dir: string, port: number) {
   };
   const discordPidPath = resolve(dir, ".molt", "discord.pid");
   if (existsSync(discordPidPath)) {
-    const dpid = parseInt(readFileSync(discordPidPath, "utf-8").trim(), 10);
+    const dpid = parseInt((await readFile(discordPidPath, "utf-8")).trim(), 10);
     try {
       process.kill(dpid, 0);
       discordChannel.status = "connected";
@@ -57,7 +58,7 @@ async function getAgentStatus(dir: string, port: number) {
       const discordStatePath = resolve(dir, ".molt", "discord.json");
       if (existsSync(discordStatePath)) {
         try {
-          const state = JSON.parse(readFileSync(discordStatePath, "utf-8"));
+          const state = JSON.parse(await readFile(discordStatePath, "utf-8"));
           discordChannel.username = state.username;
           discordChannel.connectedAt = state.connectedAt;
         } catch {
@@ -111,7 +112,7 @@ app.post("/:name/start", async (c) => {
   // Check if already running
   const pidPath = resolve(dir, ".molt", "supervisor.pid");
   if (existsSync(pidPath)) {
-    const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
+    const pid = parseInt((await readFile(pidPath, "utf-8")).trim(), 10);
     try {
       process.kill(pid, 0);
       return c.json({ error: "Agent already running" }, 409);
@@ -199,7 +200,7 @@ app.post("/:name/stop", async (c) => {
     return c.json({ error: "Agent is not running" }, 409);
   }
 
-  const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
+  const pid = parseInt((await readFile(pidPath, "utf-8")).trim(), 10);
 
   try {
     process.kill(pid, 0);

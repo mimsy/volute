@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import { agentDir, findAgent } from "../../lib/registry.js";
@@ -15,7 +16,7 @@ const ALLOWED_FILES = new Set([
 const app = new Hono();
 
 // List markdown files in home/
-app.get("/:name/files", (c) => {
+app.get("/:name/files", async (c) => {
   const name = c.req.param("name");
   const entry = findAgent(name);
   if (!entry) return c.json({ error: "Agent not found" }, 404);
@@ -24,13 +25,14 @@ app.get("/:name/files", (c) => {
   const homeDir = resolve(dir, "home");
   if (!existsSync(homeDir)) return c.json({ error: "Home directory missing" }, 404);
 
-  const files = readdirSync(homeDir).filter((f) => f.endsWith(".md") && ALLOWED_FILES.has(f));
+  const allFiles = await readdir(homeDir);
+  const files = allFiles.filter((f) => f.endsWith(".md") && ALLOWED_FILES.has(f));
 
   return c.json(files);
 });
 
 // Read a file
-app.get("/:name/files/:filename", (c) => {
+app.get("/:name/files/:filename", async (c) => {
   const name = c.req.param("name");
   const filename = c.req.param("filename");
 
@@ -48,7 +50,7 @@ app.get("/:name/files/:filename", (c) => {
     return c.json({ error: "File not found" }, 404);
   }
 
-  const content = readFileSync(filePath, "utf-8");
+  const content = await readFile(filePath, "utf-8");
   return c.json({ filename, content });
 });
 
@@ -68,7 +70,7 @@ app.put("/:name/files/:filename", async (c) => {
   const filePath = resolve(dir, "home", filename);
 
   const body = await c.req.json<{ content: string }>();
-  writeFileSync(filePath, body.content);
+  await writeFile(filePath, body.content);
 
   return c.json({ ok: true });
 });

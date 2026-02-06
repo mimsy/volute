@@ -1,7 +1,9 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { dirname, extname, resolve } from "node:path";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
+import { csrf } from "hono/csrf";
 import log from "../lib/logger.js";
 import { authMiddleware } from "./middleware/auth.js";
 import agents from "./routes/agents.js";
@@ -52,6 +54,9 @@ export function startServer({ port }: { port: number }) {
     });
   });
 
+  // CSRF protection for API mutation requests
+  app.use("/api/*", csrf());
+
   // Auth routes (unprotected)
   app.route("/api/auth", auth);
 
@@ -78,21 +83,23 @@ export function startServer({ port }: { port: number }) {
 
   if (assetsDir) {
     // Serve static files and SPA fallback
-    app.get("*", (c) => {
+    app.get("*", async (c) => {
       const urlPath = new URL(c.req.url).pathname;
       // Try exact file first (with path traversal guard)
       const filePath = resolve(assetsDir, urlPath.slice(1));
       if (!filePath.startsWith(assetsDir)) return c.text("Forbidden", 403);
-      if (existsSync(filePath) && statSync(filePath).isFile()) {
+      const s = await stat(filePath).catch(() => null);
+      if (s?.isFile()) {
         const ext = extname(filePath);
         const mime = MIME_TYPES[ext] || "application/octet-stream";
-        const body = readFileSync(filePath);
+        const body = await readFile(filePath);
         return c.body(body, 200, { "Content-Type": mime });
       }
       // SPA fallback
       const indexPath = resolve(assetsDir, "index.html");
-      if (existsSync(indexPath)) {
-        const body = readFileSync(indexPath, "utf-8");
+      const indexStat = await stat(indexPath).catch(() => null);
+      if (indexStat?.isFile()) {
+        const body = await readFile(indexPath, "utf-8");
         return c.html(body);
       }
       return c.text("Not found", 404);
