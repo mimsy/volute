@@ -6,9 +6,11 @@ import { authMiddleware } from "./middleware/auth.js";
 import agents from "./routes/agents.js";
 import auth from "./routes/auth.js";
 import chat from "./routes/chat.js";
+import connectors from "./routes/connectors.js";
 import conversations from "./routes/conversations.js";
 import files from "./routes/files.js";
 import logs from "./routes/logs.js";
+import schedules from "./routes/schedules.js";
 import system from "./routes/system.js";
 import variants from "./routes/variants.js";
 
@@ -44,6 +46,11 @@ app.use("*", async (c, next) => {
   });
 });
 
+// Daemon health (unauthenticated)
+app.get("/api/health", (c) => {
+  return c.json({ ok: true, version: "0.1.0" });
+});
+
 // CSRF protection for API mutation requests
 app.use("/api/*", csrf());
 
@@ -57,6 +64,8 @@ const routes = app
   .route("/api/system", system)
   .route("/api/agents", agents)
   .route("/api/agents", chat)
+  .route("/api/agents", connectors)
+  .route("/api/agents", schedules)
   .route("/api/agents", logs)
   .route("/api/agents", variants)
   .route("/api/agents", files)

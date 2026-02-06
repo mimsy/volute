@@ -1,0 +1,126 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { Hono } from "hono";
+import { agentDir, findAgent } from "../../lib/registry.js";
+import { getScheduler } from "../../lib/scheduler.js";
+
+type Schedule = {
+  id: string;
+  cron: string;
+  message: string;
+  enabled: boolean;
+};
+
+function schedulesPath(name: string): string {
+  return resolve(agentDir(name), ".volute", "schedules.json");
+}
+
+function readSchedules(name: string): Schedule[] {
+  const path = schedulesPath(name);
+  if (!existsSync(path)) return [];
+  try {
+    return JSON.parse(readFileSync(path, "utf-8")) as Schedule[];
+  } catch {
+    return [];
+  }
+}
+
+function writeSchedules(name: string, schedules: Schedule[]): void {
+  const path = schedulesPath(name);
+  mkdirSync(resolve(agentDir(name), ".volute"), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(schedules, null, 2)}\n`);
+  getScheduler().loadSchedules(name);
+}
+
+const app = new Hono()
+  // List schedules
+  .get("/:name/schedules", (c) => {
+    const name = c.req.param("name");
+    if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
+    return c.json(readSchedules(name));
+  })
+  // Add schedule
+  .post("/:name/schedules", async (c) => {
+    const name = c.req.param("name");
+    if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
+
+    const body = (await c.req.json()) as Partial<Schedule>;
+    if (!body.cron || !body.message) {
+      return c.json({ error: "cron and message are required" }, 400);
+    }
+
+    const schedules = readSchedules(name);
+    const id = body.id || `schedule-${Date.now()}`;
+
+    if (schedules.some((s) => s.id === id)) {
+      return c.json({ error: `Schedule "${id}" already exists` }, 409);
+    }
+
+    schedules.push({ id, cron: body.cron, message: body.message, enabled: body.enabled ?? true });
+    writeSchedules(name, schedules);
+    return c.json({ ok: true, id }, 201);
+  })
+  // Update schedule
+  .put("/:name/schedules/:id", async (c) => {
+    const name = c.req.param("name");
+    const id = c.req.param("id");
+    if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
+
+    const schedules = readSchedules(name);
+    const idx = schedules.findIndex((s) => s.id === id);
+    if (idx === -1) return c.json({ error: "Schedule not found" }, 404);
+
+    const body = (await c.req.json()) as Partial<Schedule>;
+    if (body.cron !== undefined) schedules[idx].cron = body.cron;
+    if (body.message !== undefined) schedules[idx].message = body.message;
+    if (body.enabled !== undefined) schedules[idx].enabled = body.enabled;
+
+    writeSchedules(name, schedules);
+    return c.json({ ok: true });
+  })
+  // Delete schedule
+  .delete("/:name/schedules/:id", (c) => {
+    const name = c.req.param("name");
+    const id = c.req.param("id");
+    if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
+
+    const schedules = readSchedules(name);
+    const filtered = schedules.filter((s) => s.id !== id);
+    if (filtered.length === schedules.length) {
+      return c.json({ error: "Schedule not found" }, 404);
+    }
+
+    writeSchedules(name, filtered);
+    return c.json({ ok: true });
+  })
+  // Webhook endpoint
+  .post("/:name/webhook/:event", async (c) => {
+    const name = c.req.param("name");
+    const event = c.req.param("event");
+    const entry = findAgent(name);
+    if (!entry) return c.json({ error: "Agent not found" }, 404);
+
+    const body = await c.req.text();
+    const message = `[webhook: ${event}] ${body}`;
+
+    try {
+      const res = await fetch(`http://localhost:${entry.port}/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: [{ type: "text", text: message }],
+          channel: "system:webhook",
+          sender: "webhook",
+        }),
+      });
+
+      if (!res.ok) {
+        return c.json({ error: `Agent responded with ${res.status}` }, 502);
+      }
+      return c.json({ ok: true });
+    } catch {
+      return c.json({ error: "Failed to reach agent" }, 502);
+    }
+  });
+
+export default app;

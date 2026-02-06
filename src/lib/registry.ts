@@ -11,6 +11,7 @@ export type AgentEntry = {
   name: string;
   port: number;
   created: string;
+  running: boolean;
 };
 
 export function ensureVoluteHome() {
@@ -20,7 +21,10 @@ export function ensureVoluteHome() {
 export function readRegistry(): AgentEntry[] {
   if (!existsSync(REGISTRY_PATH)) return [];
   try {
-    return JSON.parse(readFileSync(REGISTRY_PATH, "utf-8"));
+    const entries = JSON.parse(readFileSync(REGISTRY_PATH, "utf-8")) as Array<
+      Omit<AgentEntry, "running"> & { running?: boolean }
+    >;
+    return entries.map((e) => ({ ...e, running: e.running ?? false }));
   } catch {
     return [];
   }
@@ -34,13 +38,22 @@ export function writeRegistry(entries: AgentEntry[]) {
 export function addAgent(name: string, port: number) {
   const entries = readRegistry();
   const filtered = entries.filter((e) => e.name !== name);
-  filtered.push({ name, port, created: new Date().toISOString() });
+  filtered.push({ name, port, created: new Date().toISOString(), running: false });
   writeRegistry(filtered);
 }
 
 export function removeAgent(name: string) {
   const entries = readRegistry();
   writeRegistry(entries.filter((e) => e.name !== name));
+}
+
+export function setAgentRunning(name: string, running: boolean) {
+  const entries = readRegistry();
+  const entry = entries.find((e) => e.name === name);
+  if (entry) {
+    entry.running = running;
+    writeRegistry(entries);
+  }
 }
 
 export function findAgent(name: string): AgentEntry | undefined {

@@ -27,6 +27,23 @@ export const conversations = sqliteTable(
   ],
 );
 
+export const agentMessages = sqliteTable(
+  "agent_messages",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    agent: text("agent").notNull(),
+    channel: text("channel").notNull(),
+    role: text("role").notNull(),
+    sender: text("sender"),
+    content: text("content").notNull(),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    index("idx_agent_messages_agent").on(table.agent),
+    index("idx_agent_messages_channel").on(table.agent, table.channel),
+  ],
+);
+
 export const messages = sqliteTable(
   "messages",
   {

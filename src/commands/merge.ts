@@ -1,6 +1,5 @@
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgent } from "../lib/registry.js";
@@ -159,65 +158,23 @@ export async function run(args: string[]) {
     }),
   );
 
-  // If running under supervisor, it handles restart — just exit
+  // If running under daemon (VOLUTE_SUPERVISOR env), the daemon handles restart
   if (process.env.VOLUTE_SUPERVISOR) return;
 
-  // Kill old supervisor if running
-  const pidPath = resolve(voluteDir, "supervisor.pid");
-  if (existsSync(pidPath)) {
-    try {
-      const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
-      process.kill(pid);
-      console.log(`Killed old supervisor (pid ${pid})`);
-    } catch {
-      // Already dead or invalid
-    }
-  }
-
-  // Restart supervisor
-  const tsxBin = resolve(projectRoot, "node_modules", ".bin", "tsx");
-
-  // Find the supervisor module
-  let supervisorModule = "";
-  let searchDir = dirname(new URL(import.meta.url).pathname);
-  for (let i = 0; i < 5; i++) {
-    const candidate = resolve(searchDir, "src", "lib", "supervisor.ts");
-    if (existsSync(candidate)) {
-      supervisorModule = candidate;
-      break;
-    }
-    searchDir = dirname(searchDir);
-  }
-  if (!supervisorModule) {
-    supervisorModule = resolve(
-      dirname(new URL(import.meta.url).pathname),
-      "..",
-      "lib",
-      "supervisor.ts",
-    );
-  }
-
-  const { entry } = resolveAgent(agentName);
-
-  console.log("Starting new supervisor...");
-  const logsDir = resolve(projectRoot, ".volute", "logs");
-  mkdirSync(logsDir, { recursive: true });
-  const logFd = openSync(resolve(logsDir, "supervisor.log"), "a");
-
-  const bootstrapCode = `
-    import { runSupervisor } from ${JSON.stringify(supervisorModule)};
-    runSupervisor({
-      agentName: ${JSON.stringify(agentName)},
-      agentDir: ${JSON.stringify(projectRoot)},
-      port: ${entry.port},
+  // Restart agent via daemon API
+  try {
+    const { daemonFetch } = await import("../lib/daemon-client.js");
+    console.log("Restarting agent via daemon...");
+    const res = await daemonFetch(`/api/agents/${encodeURIComponent(agentName)}/start`, {
+      method: "POST",
     });
-  `;
-
-  const child = spawn(tsxBin, ["--eval", bootstrapCode], {
-    cwd: projectRoot,
-    stdio: ["ignore", logFd, logFd],
-    detached: true,
-  });
-  child.unref();
-  console.log(`Supervisor started (pid ${child.pid})`);
+    if (res.ok) {
+      console.log(`${agentName} restarted.`);
+    } else {
+      const data = (await res.json()) as { error?: string };
+      console.error(`Failed to restart: ${data.error ?? "unknown error"}`);
+    }
+  } catch {
+    console.log(`Daemon not running. Start the agent manually: volute start ${agentName}`);
+  }
 }

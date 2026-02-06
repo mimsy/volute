@@ -11,7 +11,7 @@ const app = new Hono().get("/:name/logs", async (c) => {
   if (!entry) return c.json({ error: "Agent not found" }, 404);
 
   const dir = agentDir(name);
-  const logFile = resolve(dir, ".volute", "logs", "supervisor.log");
+  const logFile = resolve(dir, ".volute", "logs", "agent.log");
 
   if (!existsSync(logFile)) {
     return c.json({ error: "No log file found" }, 404);

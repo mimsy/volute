@@ -17,7 +17,7 @@ export async function run(args: string[]) {
   }
 
   const { dir } = resolveAgent(name);
-  const logFile = resolve(dir, ".volute", "logs", "supervisor.log");
+  const logFile = resolve(dir, ".volute", "logs", "agent.log");
 
   if (!existsSync(logFile)) {
     console.error(`No log file found. Has ${name} been started?`);

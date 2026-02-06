@@ -33,6 +33,17 @@ export function getSessionUserId(sessionId: string): number | undefined {
 }
 
 export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
+  // Allow internal CLI-to-daemon requests via bearer token
+  const authHeader = c.req.header("Authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.slice(7);
+    if (token && token === process.env.VOLUTE_DAEMON_TOKEN) {
+      c.set("user", { id: 0, username: "cli", role: "admin" } as User);
+      await next();
+      return;
+    }
+  }
+
   const sessionId = getCookie(c, "volute_session");
   if (!sessionId) return c.json({ error: "Unauthorized" }, 401);
 

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { dirname, extname, resolve } from "node:path";
+import type { ServerType } from "@hono/node-server";
 import { serve } from "@hono/node-server";
 import log from "../lib/logger.js";
 import app from "./app.js";
@@ -15,7 +16,7 @@ const MIME_TYPES: Record<string, string> = {
   ".ico": "image/x-icon",
 };
 
-export function startServer({ port }: { port: number }) {
+export function startServer({ port }: { port: number }): ServerType {
   // Find built frontend assets
   let assetsDir = "";
   let searchDir = dirname(new URL(import.meta.url).pathname);
@@ -55,5 +56,5 @@ export function startServer({ port }: { port: number }) {
 
   log.info("Volute UI running", { port });
 
-  serve({ fetch: app.fetch, port });
+  return serve({ fetch: app.fetch, port });
 }

@@ -1,7 +1,6 @@
 import { userInfo } from "node:os";
-import { addMessage, getOrCreateConversation } from "../lib/conversations.js";
+import { daemonFetch } from "../lib/daemon-client.js";
 import { readNdjson } from "../lib/ndjson.js";
-import { resolveAgent } from "../lib/registry.js";
 
 export async function run(args: string[]) {
   const name = args[0];
@@ -12,14 +11,9 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  const { entry } = resolveAgent(name);
-  const baseUrl = `http://localhost:${entry.port}`;
   const sender = userInfo().username;
 
-  const conv = await getOrCreateConversation(name, "cli");
-  await addMessage(conv.id, "user", sender, [{ type: "text", text: message }]);
-
-  const res = await fetch(`${baseUrl}/message`, {
+  const res = await daemonFetch(`/api/agents/${encodeURIComponent(name)}/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -30,7 +24,8 @@ export async function run(args: string[]) {
   });
 
   if (!res.ok) {
-    console.error(`Failed to send message: ${res.status} ${res.statusText}`);
+    const data = (await res.json()) as { error?: string };
+    console.error(data.error ?? `Failed to send message: ${res.status}`);
     process.exit(1);
   }
 
@@ -39,19 +34,13 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  let fullResponse = "";
   for await (const event of readNdjson(res.body)) {
     if (event.type === "text") {
       process.stdout.write(event.content);
-      fullResponse += event.content;
     }
     if (event.type === "done") {
       break;
     }
-  }
-
-  if (fullResponse) {
-    await addMessage(conv.id, "assistant", name, [{ type: "text", text: fullResponse }]);
   }
 
   process.stdout.write("\n");

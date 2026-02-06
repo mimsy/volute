@@ -1,5 +1,4 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, rmSync } from "node:fs";
 import { parseArgs } from "../lib/parse-args.js";
 import { agentDir, findAgent, removeAgent } from "../lib/registry.js";
 
@@ -20,34 +19,20 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  const dir = agentDir(name);
-
-  // Stop if running
-  const pidPath = resolve(dir, ".volute", "supervisor.pid");
-  if (existsSync(pidPath)) {
-    const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
-    try {
-      process.kill(pid, 0);
-      console.log(`Stopping ${name}...`);
-      try {
-        process.kill(-pid, "SIGTERM");
-      } catch {
-        process.kill(pid, "SIGTERM");
-      }
-      // Wait for shutdown
-      const start = Date.now();
-      while (Date.now() - start < 5_000) {
-        try {
-          process.kill(pid, 0);
-          await new Promise((r) => setTimeout(r, 200));
-        } catch {
-          break;
-        }
-      }
-    } catch {
-      // Not running
+  // Stop via daemon if running
+  try {
+    const { daemonFetch } = await import("../lib/daemon-client.js");
+    const res = await daemonFetch(`/api/agents/${encodeURIComponent(name)}/stop`, {
+      method: "POST",
+    });
+    if (res.ok) {
+      console.log(`Stopped ${name}.`);
     }
+  } catch {
+    // Daemon not running, that's fine
   }
+
+  const dir = agentDir(name);
 
   // Remove from registry
   removeAgent(name);

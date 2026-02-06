@@ -50,8 +50,14 @@ switch (command) {
   case "upgrade":
     await import("./commands/upgrade.js").then((m) => m.run(args));
     break;
-  case "ui":
-    await import("./commands/ui.js").then((m) => m.run(args));
+  case "up":
+    await import("./commands/up.js").then((m) => m.run(args));
+    break;
+  case "down":
+    await import("./commands/down.js").then((m) => m.run(args));
+    break;
+  case "schedule":
+    await import("./commands/schedule.js").then((m) => m.run(args));
     break;
   default:
     console.log(`volute — create and manage AI agents
@@ -68,11 +74,15 @@ Commands:
   volute merge <name> <variant>      Merge a variant back
   volute import <path>               Import an OpenClaw workspace
   volute env <set|get|list|remove>   Manage environment variables
-  volute connect discord <name>      Connect a Discord bot to an agent (daemonized)
-  volute disconnect discord <name>   Stop a Discord bot connector
+  volute connect <type> <name>        Enable a connector for an agent
+  volute disconnect <type> <name>    Disable a connector for an agent
   volute channel read <uri>          Read recent messages from a channel
   volute channel send <uri> "<msg>"  Send a message to a channel
-  volute ui [--port N]               Open web dashboard (default: 4200)
+  volute schedule list <agent>       List schedules for an agent
+  volute schedule add <agent> ...    Add a cron schedule
+  volute schedule remove <agent> ... Remove a schedule
+  volute up [--port N]               Start the daemon (default: 4200)
+  volute down                        Stop the daemon
   volute upgrade <name>              Upgrade agent to latest template
   volute delete <name> [--force]     Delete an agent (--force removes files)`);
     if (command) {

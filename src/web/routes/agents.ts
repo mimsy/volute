@@ -1,9 +1,19 @@
-import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { existsSync, rmSync } from "node:fs";
+import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
+import { stream } from "hono/streaming";
+import { getAgentManager } from "../../lib/agent-manager.js";
 import { CHANNELS } from "../../lib/channels.js";
-import { agentDir, findAgent, readRegistry } from "../../lib/registry.js";
+import { getConnectorManager } from "../../lib/connector-manager.js";
+import { getDb } from "../../lib/db.js";
+import {
+  agentDir,
+  findAgent,
+  readRegistry,
+  removeAgent,
+  setAgentRunning,
+} from "../../lib/registry.js";
+import { agentMessages } from "../../lib/schema.js";
 import { checkHealth } from "../../lib/variants.js";
 
 type ChannelStatus = {
@@ -11,22 +21,15 @@ type ChannelStatus = {
   displayName: string;
   status: "connected" | "disconnected";
   showToolCalls: boolean;
-  username?: string;
-  connectedAt?: string;
 };
 
-async function getAgentStatus(dir: string, port: number) {
+async function getAgentStatus(name: string, _dir: string, port: number) {
+  const manager = getAgentManager();
   let status: "running" | "stopped" | "starting" = "stopped";
-  const pidPath = resolve(dir, ".volute", "supervisor.pid");
-  if (existsSync(pidPath)) {
-    const pid = parseInt((await readFile(pidPath, "utf-8")).trim(), 10);
-    try {
-      process.kill(pid, 0);
-      const health = await checkHealth(port);
-      status = health.ok ? "running" : "starting";
-    } catch {
-      status = "stopped";
-    }
+
+  if (manager.isRunning(name)) {
+    const health = await checkHealth(port);
+    status = health.ok ? "running" : "starting";
   }
 
   const channels: ChannelStatus[] = [];
@@ -39,35 +42,27 @@ async function getAgentStatus(dir: string, port: number) {
     showToolCalls: CHANNELS.web.showToolCalls,
   });
 
-  // Check Discord connector status
-  const discordChannel: ChannelStatus = {
-    name: CHANNELS.discord.name,
-    displayName: CHANNELS.discord.displayName,
-    status: "disconnected",
-    showToolCalls: CHANNELS.discord.showToolCalls,
-  };
-  const discordPidPath = resolve(dir, ".volute", "discord.pid");
-  if (existsSync(discordPidPath)) {
-    const dpid = parseInt((await readFile(discordPidPath, "utf-8")).trim(), 10);
-    try {
-      process.kill(dpid, 0);
-      discordChannel.status = "connected";
-      // Read connection details if available
-      const discordStatePath = resolve(dir, ".volute", "discord.json");
-      if (existsSync(discordStatePath)) {
-        try {
-          const state = JSON.parse(await readFile(discordStatePath, "utf-8"));
-          discordChannel.username = state.username;
-          discordChannel.connectedAt = state.connectedAt;
-        } catch {
-          // Invalid JSON, ignore
-        }
-      }
-    } catch {
-      // Stale PID
+  // Check connector status via ConnectorManager
+  const connectorManager = getConnectorManager();
+  const connectorStatuses = connectorManager.getConnectorStatus(name);
+  for (const cs of connectorStatuses) {
+    const channelConfig = CHANNELS[cs.type];
+    if (channelConfig) {
+      channels.push({
+        name: channelConfig.name,
+        displayName: channelConfig.displayName,
+        status: cs.running ? "connected" : "disconnected",
+        showToolCalls: channelConfig.showToolCalls,
+      });
+    } else {
+      channels.push({
+        name: cs.type,
+        displayName: cs.type,
+        status: cs.running ? "connected" : "disconnected",
+        showToolCalls: false,
+      });
     }
   }
-  channels.push(discordChannel);
 
   return { status, channels };
 }
@@ -79,7 +74,7 @@ const app = new Hono()
     const agents = await Promise.all(
       entries.map(async (entry) => {
         const dir = agentDir(entry.name);
-        const { status, channels } = await getAgentStatus(dir, entry.port);
+        const { status, channels } = await getAgentStatus(entry.name, dir, entry.port);
         return { ...entry, status, channels };
       }),
     );
@@ -94,7 +89,7 @@ const app = new Hono()
     const dir = agentDir(name);
     if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
 
-    const { status, channels } = await getAgentStatus(dir, entry.port);
+    const { status, channels } = await getAgentStatus(name, dir, entry.port);
     return c.json({ ...entry, status, channels });
   })
   // Start agent
@@ -106,82 +101,19 @@ const app = new Hono()
     const dir = agentDir(name);
     if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
 
-    // Check if already running
-    const pidPath = resolve(dir, ".volute", "supervisor.pid");
-    if (existsSync(pidPath)) {
-      const pid = parseInt((await readFile(pidPath, "utf-8")).trim(), 10);
-      try {
-        process.kill(pid, 0);
-        return c.json({ error: "Agent already running" }, 409);
-      } catch {
-        // Stale PID, continue
-      }
+    const manager = getAgentManager();
+    if (manager.isRunning(name)) {
+      return c.json({ error: "Agent already running" }, 409);
     }
 
-    // Spawn supervisor in background (same logic as start.ts)
-    const { spawn } = await import("node:child_process");
-    const { mkdirSync, openSync } = await import("node:fs");
-    const { dirname } = await import("node:path");
-
-    let supervisorModule = "";
-    let searchDir = dirname(new URL(import.meta.url).pathname);
-    for (let i = 0; i < 5; i++) {
-      const candidate = resolve(searchDir, "src", "lib", "supervisor.ts");
-      if (existsSync(candidate)) {
-        supervisorModule = candidate;
-        break;
-      }
-      searchDir = dirname(searchDir);
+    try {
+      await manager.startAgent(name);
+      setAgentRunning(name, true);
+      await getConnectorManager().startConnectors(name, dir, entry.port);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : "Failed to start agent" }, 500);
     }
-    if (!supervisorModule) {
-      supervisorModule = resolve(
-        dirname(new URL(import.meta.url).pathname),
-        "..",
-        "..",
-        "lib",
-        "supervisor.ts",
-      );
-    }
-
-    const tsxBin = resolve(dir, "node_modules", ".bin", "tsx");
-    const bootstrapCode = `
-    import { runSupervisor } from ${JSON.stringify(supervisorModule)};
-    runSupervisor({
-      agentName: ${JSON.stringify(name)},
-      agentDir: ${JSON.stringify(dir)},
-      port: ${entry.port},
-      dev: false,
-    });
-  `;
-
-    const logsDir = resolve(dir, ".volute", "logs");
-    mkdirSync(logsDir, { recursive: true });
-    const logFile = resolve(logsDir, "supervisor.log");
-    const logFd = openSync(logFile, "a");
-
-    const child = spawn(tsxBin, ["--eval", bootstrapCode], {
-      cwd: dir,
-      stdio: ["ignore", logFd, logFd],
-      detached: true,
-    });
-    child.unref();
-
-    // Poll for health
-    const maxWait = 30_000;
-    const start = Date.now();
-    while (Date.now() - start < maxWait) {
-      try {
-        const res = await fetch(`http://localhost:${entry.port}/health`);
-        if (res.ok) {
-          return c.json({ ok: true, pid: child.pid });
-        }
-      } catch {
-        // Not ready yet
-      }
-      await new Promise((r) => setTimeout(r, 500));
-    }
-
-    return c.json({ error: "Server did not become healthy within 30s" }, 504);
   })
   // Stop agent
   .post("/:name/stop", async (c) => {
@@ -189,51 +121,172 @@ const app = new Hono()
     const entry = findAgent(name);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
-    const dir = agentDir(name);
-    const pidPath = resolve(dir, ".volute", "supervisor.pid");
-
-    if (!existsSync(pidPath)) {
+    const manager = getAgentManager();
+    if (!manager.isRunning(name)) {
       return c.json({ error: "Agent is not running" }, 409);
     }
 
-    const pid = parseInt((await readFile(pidPath, "utf-8")).trim(), 10);
-
     try {
-      process.kill(pid, 0);
+      await getConnectorManager().stopConnectors(name);
+      await manager.stopAgent(name);
+      setAgentRunning(name, false);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : "Failed to stop agent" }, 500);
+    }
+  })
+  // Delete agent
+  .delete("/:name", async (c) => {
+    const name = c.req.param("name");
+    const entry = findAgent(name);
+    if (!entry) return c.json({ error: "Agent not found" }, 404);
+
+    const dir = agentDir(name);
+    const force = c.req.query("force") === "true";
+
+    // Stop connectors and agent if running
+    const manager = getAgentManager();
+    if (manager.isRunning(name)) {
+      await getConnectorManager().stopConnectors(name);
+      await manager.stopAgent(name);
+    }
+
+    removeAgent(name);
+
+    if (force && existsSync(dir)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+
+    return c.json({ ok: true });
+  })
+  // Proxy message to agent
+  .post("/:name/message", async (c) => {
+    const name = c.req.param("name");
+    const entry = findAgent(name);
+    if (!entry) return c.json({ error: "Agent not found" }, 404);
+
+    const manager = getAgentManager();
+    if (!manager.isRunning(name)) {
+      return c.json({ error: "Agent is not running" }, 409);
+    }
+
+    const body = await c.req.text();
+
+    // Record inbound message
+    const db = await getDb();
+    try {
+      const parsed = JSON.parse(body);
+      const channel = parsed.channel ?? "unknown";
+      const sender = parsed.sender ?? null;
+      const content =
+        typeof parsed.content === "string" ? parsed.content : JSON.stringify(parsed.content);
+      await db.insert(agentMessages).values({
+        agent: name,
+        channel,
+        role: "user",
+        sender,
+        content,
+      });
     } catch {
-      const { unlinkSync } = await import("node:fs");
+      // Don't block the request if persistence fails
+    }
+
+    const res = await fetch(`http://localhost:${entry.port}/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+
+    if (!res.ok) {
+      return c.json({ error: `Agent responded with ${res.status}` }, res.status as 500);
+    }
+
+    if (!res.body) {
+      return c.json({ error: "No response body from agent" }, 502);
+    }
+
+    // Stream NDJSON response back, accumulating text for persistence
+    c.header("Content-Type", "application/x-ndjson");
+    return stream(c, async (s) => {
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      const textParts: string[] = [];
+      let channel = "unknown";
+
       try {
-        unlinkSync(pidPath);
-      } catch {}
-      return c.json({ ok: true, message: "Cleaned up stale PID" });
-    }
+        // Extract channel from the original request
+        try {
+          channel = JSON.parse(body).channel ?? "unknown";
+        } catch {}
 
-    try {
-      process.kill(-pid, "SIGTERM");
-    } catch {
-      process.kill(pid, "SIGTERM");
-    }
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          await s.write(value);
 
-    // Wait for PID file to be removed
-    const maxWait = 10_000;
-    const start = Date.now();
-    while (Date.now() - start < maxWait) {
-      if (!existsSync(pidPath)) {
-        return c.json({ ok: true });
+          // Parse NDJSON lines to accumulate text events
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const event = JSON.parse(line);
+              if (event.type === "text") {
+                textParts.push(event.content);
+              }
+            } catch {}
+          }
+        }
+
+        // Handle remaining buffer
+        if (buffer.trim()) {
+          try {
+            const event = JSON.parse(buffer);
+            if (event.type === "text") {
+              textParts.push(event.content);
+            }
+          } catch {}
+        }
+
+        // Record assistant response
+        if (textParts.length > 0) {
+          const db = await getDb();
+          await db.insert(agentMessages).values({
+            agent: name,
+            channel,
+            role: "assistant",
+            content: textParts.join(""),
+          });
+        }
+      } finally {
+        reader.releaseLock();
       }
-      await new Promise((r) => setTimeout(r, 200));
+    });
+  })
+  // Get message history
+  .get("/:name/history", async (c) => {
+    const name = c.req.param("name");
+    const channel = c.req.query("channel");
+    const limit = parseInt(c.req.query("limit") ?? "50", 10);
+    const offset = parseInt(c.req.query("offset") ?? "0", 10);
+
+    const db = await getDb();
+    const conditions = [eq(agentMessages.agent, name)];
+    if (channel) {
+      conditions.push(eq(agentMessages.channel, channel));
     }
 
-    // Force kill
-    try {
-      process.kill(-pid, "SIGKILL");
-    } catch {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {}
-    }
+    const rows = await db
+      .select()
+      .from(agentMessages)
+      .where(and(...conditions))
+      .orderBy(desc(agentMessages.created_at))
+      .limit(limit)
+      .offset(offset);
 
-    return c.json({ ok: true, message: "Force killed" });
+    return c.json(rows);
   });
 
 export default app;
