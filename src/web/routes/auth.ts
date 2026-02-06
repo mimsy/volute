@@ -25,12 +25,12 @@ app.post("/register", async (c) => {
     return c.json({ error: "Username and password required" }, 400);
   }
 
-  const existing = getUserByUsername(body.username);
+  const existing = await getUserByUsername(body.username);
   if (existing) {
     return c.json({ error: "Username already taken" }, 409);
   }
 
-  const user = createUser(body.username, body.password);
+  const user = await createUser(body.username, body.password);
 
   if (user.role === "admin") {
     // Auto-login first user
@@ -47,7 +47,7 @@ app.post("/login", async (c) => {
     return c.json({ error: "Username and password required" }, 400);
   }
 
-  const user = verifyUser(body.username, body.password);
+  const user = await verifyUser(body.username, body.password);
   if (!user) {
     return c.json({ error: "Invalid credentials" }, 401);
   }
@@ -66,14 +66,14 @@ app.post("/logout", (c) => {
   return c.json({ ok: true });
 });
 
-app.get("/me", (c) => {
+app.get("/me", async (c) => {
   const sessionId = getCookie(c, "molt_session");
   if (!sessionId) return c.json({ error: "Not logged in" }, 401);
 
   const userId = getSessionUserId(sessionId);
   if (userId == null) return c.json({ error: "Not logged in" }, 401);
 
-  const user = getUser(userId);
+  const user = await getUser(userId);
   if (!user) return c.json({ error: "Not logged in" }, 401);
 
   return c.json({ id: user.id, username: user.username, role: user.role });
@@ -83,23 +83,23 @@ app.get("/me", (c) => {
 const admin = new Hono<AuthEnv>();
 admin.use(authMiddleware);
 
-admin.get("/users", (c) => {
+admin.get("/users", async (c) => {
   const user = c.get("user");
   if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
-  return c.json(listUsers());
+  return c.json(await listUsers());
 });
 
-admin.get("/users/pending", (c) => {
+admin.get("/users/pending", async (c) => {
   const user = c.get("user");
   if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
-  return c.json(listPendingUsers());
+  return c.json(await listPendingUsers());
 });
 
-admin.post("/users/:id/approve", (c) => {
+admin.post("/users/:id/approve", async (c) => {
   const user = c.get("user");
   if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
   const id = parseInt(c.req.param("id"), 10);
-  approveUser(id);
+  await approveUser(id);
   return c.json({ ok: true });
 });
 

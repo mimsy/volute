@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "./db.js";
+import { conversations, messages } from "./schema.js";
 
 export type ContentBlock =
   | { type: "text"; text: string }
@@ -26,16 +28,20 @@ export type Message = {
   created_at: string;
 };
 
-export function createConversation(
+export async function createConversation(
   agentName: string,
   channel: string,
   opts?: { userId?: number; title?: string },
-): Conversation {
-  const db = getDb();
+): Promise<Conversation> {
+  const db = await getDb();
   const id = randomUUID();
-  db.prepare(
-    "INSERT INTO conversations (id, agent_name, channel, user_id, title) VALUES (?, ?, ?, ?, ?)",
-  ).run(id, agentName, channel, opts?.userId ?? null, opts?.title ?? null);
+  await db.insert(conversations).values({
+    id,
+    agent_name: agentName,
+    channel,
+    user_id: opts?.userId ?? null,
+    title: opts?.title ?? null,
+  });
 
   return {
     id,
@@ -48,89 +54,100 @@ export function createConversation(
   };
 }
 
-export function getOrCreateConversation(
+export async function getOrCreateConversation(
   agentName: string,
   channel: string,
   opts?: { userId?: number },
-): Conversation {
-  const db = getDb();
-  const existing = db
-    .prepare(
-      "SELECT * FROM conversations WHERE agent_name = ? AND channel = ? ORDER BY updated_at DESC LIMIT 1",
-    )
-    .get(agentName, channel) as Conversation | undefined;
+): Promise<Conversation> {
+  const db = await getDb();
+  const existing = await db
+    .select()
+    .from(conversations)
+    .where(and(eq(conversations.agent_name, agentName), eq(conversations.channel, channel)))
+    .orderBy(desc(conversations.updated_at))
+    .limit(1)
+    .get();
 
-  if (existing) return existing;
+  if (existing) return existing as Conversation;
   return createConversation(agentName, channel, opts);
 }
 
-export function getConversation(id: string): Conversation | null {
-  const db = getDb();
-  const row = db.prepare("SELECT * FROM conversations WHERE id = ?").get(id) as
-    | Conversation
-    | undefined;
-  return row ?? null;
+export async function getConversation(id: string): Promise<Conversation | null> {
+  const db = await getDb();
+  const row = await db.select().from(conversations).where(eq(conversations.id, id)).get();
+  return (row as Conversation) ?? null;
 }
 
-export function listConversations(agentName: string, opts?: { userId?: number }): Conversation[] {
-  const db = getDb();
+export async function listConversations(
+  agentName: string,
+  opts?: { userId?: number },
+): Promise<Conversation[]> {
+  const db = await getDb();
   if (opts?.userId != null) {
     return db
-      .prepare(
-        "SELECT * FROM conversations WHERE agent_name = ? AND user_id = ? ORDER BY updated_at DESC",
-      )
-      .all(agentName, opts.userId) as Conversation[];
+      .select()
+      .from(conversations)
+      .where(and(eq(conversations.agent_name, agentName), eq(conversations.user_id, opts.userId)))
+      .orderBy(desc(conversations.updated_at))
+      .all() as Promise<Conversation[]>;
   }
   return db
-    .prepare("SELECT * FROM conversations WHERE agent_name = ? ORDER BY updated_at DESC")
-    .all(agentName) as Conversation[];
+    .select()
+    .from(conversations)
+    .where(eq(conversations.agent_name, agentName))
+    .orderBy(desc(conversations.updated_at))
+    .all() as Promise<Conversation[]>;
 }
 
-export function addMessage(
+export async function addMessage(
   conversationId: string,
   role: string,
   senderName: string | null,
   content: ContentBlock[],
-): Message {
-  const db = getDb();
+): Promise<Message> {
+  const db = await getDb();
   const serialized = JSON.stringify(content);
-  const result = db
-    .prepare(
-      "INSERT INTO messages (conversation_id, role, sender_name, content) VALUES (?, ?, ?, ?)",
-    )
-    .run(conversationId, role, senderName, serialized);
+  const [result] = await db
+    .insert(messages)
+    .values({ conversation_id: conversationId, role, sender_name: senderName, content: serialized })
+    .returning({ id: messages.id, created_at: messages.created_at });
 
-  // Update conversation's updated_at and set title from first message if unset
-  db.prepare("UPDATE conversations SET updated_at = datetime('now') WHERE id = ?").run(
-    conversationId,
-  );
+  // Update conversation's updated_at
+  await db
+    .update(conversations)
+    .set({ updated_at: sql`datetime('now')` })
+    .where(eq(conversations.id, conversationId));
 
+  // Set title from first user text block if unset
   if (role === "user") {
     const firstText = content.find((b) => b.type === "text");
     const title = firstText ? (firstText as { text: string }).text.slice(0, 80) : "";
     if (title) {
-      db.prepare("UPDATE conversations SET title = ? WHERE id = ? AND title IS NULL").run(
-        title,
-        conversationId,
-      );
+      await db
+        .update(conversations)
+        .set({ title })
+        .where(and(eq(conversations.id, conversationId), isNull(conversations.title)));
     }
   }
 
   return {
-    id: Number(result.lastInsertRowid),
+    id: result.id,
     conversation_id: conversationId,
     role,
     sender_name: senderName,
     content,
-    created_at: new Date().toISOString(),
+    created_at: result.created_at,
   };
 }
 
-export function getMessages(conversationId: string): Message[] {
-  const db = getDb();
-  const rows = db
-    .prepare("SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC")
-    .all(conversationId) as Array<Omit<Message, "content"> & { content: string }>;
+export async function getMessages(conversationId: string): Promise<Message[]> {
+  const db = await getDb();
+  const rows = await db
+    .select()
+    .from(messages)
+    .where(eq(messages.conversation_id, conversationId))
+    .orderBy(messages.created_at)
+    .all();
 
   return rows.map((row) => {
     let content: ContentBlock[];
@@ -144,7 +161,7 @@ export function getMessages(conversationId: string): Message[] {
   });
 }
 
-export function deleteConversation(id: string): void {
-  const db = getDb();
-  db.prepare("DELETE FROM conversations WHERE id = ?").run(id);
+export async function deleteConversation(id: string): Promise<void> {
+  const db = await getDb();
+  await db.delete(conversations).where(eq(conversations.id, id));
 }

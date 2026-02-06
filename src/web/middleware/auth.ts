@@ -32,7 +32,7 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   const userId = sessions.get(sessionId);
   if (userId == null) return c.json({ error: "Unauthorized" }, 401);
 
-  const user = getUser(userId);
+  const user = await getUser(userId);
   if (!user) return c.json({ error: "Unauthorized" }, 401);
   if (user.role === "pending") return c.json({ error: "Account pending approval" }, 403);
 

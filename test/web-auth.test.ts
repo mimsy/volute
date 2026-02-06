@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { Hono } from "hono";
 import { getDb } from "../src/lib/db.js";
+import { conversations, messages, users } from "../src/lib/schema.js";
 import { deleteSession } from "../src/web/middleware/auth.js";
 import auth from "../src/web/routes/auth.js";
 
@@ -11,11 +12,11 @@ function createApp() {
   return app;
 }
 
-function cleanup() {
-  const db = getDb();
-  db.prepare("DELETE FROM messages").run();
-  db.prepare("DELETE FROM conversations").run();
-  db.prepare("DELETE FROM users").run();
+async function cleanup() {
+  const db = await getDb();
+  await db.delete(messages);
+  await db.delete(conversations);
+  await db.delete(users);
 }
 
 function extractCookie(res: Response, name: string): string | undefined {

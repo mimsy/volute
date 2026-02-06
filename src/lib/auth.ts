@@ -1,5 +1,7 @@
 import { compareSync, hashSync } from "bcryptjs";
+import { and, count, eq } from "drizzle-orm";
 import { getDb } from "./db.js";
+import { users } from "./schema.js";
 
 export type User = {
   id: number;
@@ -8,72 +10,99 @@ export type User = {
   created_at: string;
 };
 
-type UserRow = User & { password_hash: string };
-
-export function createUser(username: string, password: string): User {
-  const db = getDb();
+export async function createUser(username: string, password: string): Promise<User> {
+  const db = await getDb();
   const hash = hashSync(password, 10);
 
   // First user becomes admin automatically
-  const count = db.prepare("SELECT COUNT(*) as count FROM users").get() as { count: number };
-  const role = count.count === 0 ? "admin" : "pending";
+  const [{ value }] = await db.select({ value: count() }).from(users);
+  const role = value === 0 ? "admin" : "pending";
 
-  const result = db
-    .prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)")
-    .run(username, hash, role);
+  const [result] = await db
+    .insert(users)
+    .values({ username, password_hash: hash, role })
+    .returning({
+      id: users.id,
+      username: users.username,
+      role: users.role,
+      created_at: users.created_at,
+    });
 
-  return {
-    id: Number(result.lastInsertRowid),
-    username,
-    role: role as User["role"],
-    created_at: new Date().toISOString(),
-  };
+  return result as User;
 }
 
-export function verifyUser(username: string, password: string): User | null {
-  const db = getDb();
-  const row = db.prepare("SELECT * FROM users WHERE username = ?").get(username) as
-    | UserRow
-    | undefined;
+export async function verifyUser(username: string, password: string): Promise<User | null> {
+  const db = await getDb();
+  const row = await db.select().from(users).where(eq(users.username, username)).get();
   if (!row) return null;
   if (!compareSync(password, row.password_hash)) return null;
   const { password_hash: _, ...user } = row;
-  return user;
+  return user as User;
 }
 
-export function getUser(id: number): User | null {
-  const db = getDb();
-  const row = db.prepare("SELECT id, username, role, created_at FROM users WHERE id = ?").get(id) as
-    | User
-    | undefined;
-  return row ?? null;
+export async function getUser(id: number): Promise<User | null> {
+  const db = await getDb();
+  const row = await db
+    .select({
+      id: users.id,
+      username: users.username,
+      role: users.role,
+      created_at: users.created_at,
+    })
+    .from(users)
+    .where(eq(users.id, id))
+    .get();
+  return (row as User) ?? null;
 }
 
-export function getUserByUsername(username: string): User | null {
-  const db = getDb();
-  const row = db
-    .prepare("SELECT id, username, role, created_at FROM users WHERE username = ?")
-    .get(username) as User | undefined;
-  return row ?? null;
+export async function getUserByUsername(username: string): Promise<User | null> {
+  const db = await getDb();
+  const row = await db
+    .select({
+      id: users.id,
+      username: users.username,
+      role: users.role,
+      created_at: users.created_at,
+    })
+    .from(users)
+    .where(eq(users.username, username))
+    .get();
+  return (row as User) ?? null;
 }
 
-export function listUsers(): User[] {
-  const db = getDb();
+export async function listUsers(): Promise<User[]> {
+  const db = await getDb();
   return db
-    .prepare("SELECT id, username, role, created_at FROM users ORDER BY created_at")
-    .all() as User[];
+    .select({
+      id: users.id,
+      username: users.username,
+      role: users.role,
+      created_at: users.created_at,
+    })
+    .from(users)
+    .orderBy(users.created_at)
+    .all() as Promise<User[]>;
 }
 
-export function listPendingUsers(): User[] {
-  const db = getDb();
+export async function listPendingUsers(): Promise<User[]> {
+  const db = await getDb();
   return db
-    .prepare(
-      "SELECT id, username, role, created_at FROM users WHERE role = 'pending' ORDER BY created_at",
-    )
-    .all() as User[];
+    .select({
+      id: users.id,
+      username: users.username,
+      role: users.role,
+      created_at: users.created_at,
+    })
+    .from(users)
+    .where(eq(users.role, "pending"))
+    .orderBy(users.created_at)
+    .all() as Promise<User[]>;
 }
 
-export function approveUser(id: number): void {
-  const db = getDb();
-  db.prepare("UPDATE users SET role = 'user' WHERE id = ? AND role = 'pending'").run(id);
+export async function approveUser(id: number): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(users)
+    .set({ role: "user" })
+    .where(and(eq(users.id, id), eq(users.role, "pending")));
 }

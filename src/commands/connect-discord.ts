@@ -202,12 +202,12 @@ async function handleAgentRequest(
 
   const senderName = message.author.displayName || message.author.username;
   const channelKey = `discord:${message.channelId}`;
-  const conv = getOrCreateConversation(agentName, channelKey);
+  const conv = await getOrCreateConversation(agentName, channelKey);
   const userText = content
     .filter((p) => p.type === "text")
     .map((p) => (p as { text: string }).text)
     .join(" ");
-  addMessage(conv.id, "user", senderName, [{ type: "text", text: userText }]);
+  await addMessage(conv.id, "user", senderName, [{ type: "text", text: userText }]);
 
   try {
     const res = await fetch(`${baseUrl}/message`, {
@@ -251,7 +251,7 @@ async function handleAgentRequest(
 
     await flush();
     if (fullResponse) {
-      addMessage(conv.id, "assistant", agentName, [{ type: "text", text: fullResponse }]);
+      await addMessage(conv.id, "assistant", agentName, [{ type: "text", text: fullResponse }]);
     }
   } catch (err) {
     const errMsg =

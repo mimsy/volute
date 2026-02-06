@@ -16,8 +16,8 @@ export async function run(args: string[]) {
   const baseUrl = `http://localhost:${entry.port}`;
   const sender = userInfo().username;
 
-  const conv = getOrCreateConversation(name, "cli");
-  addMessage(conv.id, "user", sender, [{ type: "text", text: message }]);
+  const conv = await getOrCreateConversation(name, "cli");
+  await addMessage(conv.id, "user", sender, [{ type: "text", text: message }]);
 
   const res = await fetch(`${baseUrl}/message`, {
     method: "POST",
@@ -51,7 +51,7 @@ export async function run(args: string[]) {
   }
 
   if (fullResponse) {
-    addMessage(conv.id, "assistant", name, [{ type: "text", text: fullResponse }]);
+    await addMessage(conv.id, "assistant", name, [{ type: "text", text: fullResponse }]);
   }
 
   process.stdout.write("\n");

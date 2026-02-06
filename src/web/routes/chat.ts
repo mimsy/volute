@@ -32,11 +32,11 @@ app.post("/:name/chat", async (c) => {
   // Resolve or create conversation
   let conversationId = body.conversationId;
   if (conversationId) {
-    const conv = getConversation(conversationId);
+    const conv = await getConversation(conversationId);
     if (!conv) return c.json({ error: "Conversation not found" }, 404);
   } else {
     const title = body.message ? body.message.slice(0, 80) : "Image message";
-    const conv = createConversation(name, "web", {
+    const conv = await createConversation(name, "web", {
       userId: user.id,
       title,
     });
@@ -55,7 +55,7 @@ app.post("/:name/chat", async (c) => {
   }
 
   // Save user message
-  addMessage(conversationId, "user", user.username, userContent);
+  await addMessage(conversationId, "user", user.username, userContent);
 
   // Build content for agent server
   const agentContent: MoltContentPart[] = [];
@@ -119,7 +119,7 @@ app.post("/:name/chat", async (c) => {
       if (moltEvent.type === "done") {
         // Save assistant message
         if (assistantContent.length > 0) {
-          addMessage(conversationId!, "assistant", name, assistantContent);
+          await addMessage(conversationId!, "assistant", name, assistantContent);
         }
         break;
       }

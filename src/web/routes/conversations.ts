@@ -4,22 +4,22 @@ import type { AuthEnv } from "../middleware/auth.js";
 
 const app = new Hono<AuthEnv>();
 
-app.get("/:name/conversations", (c) => {
+app.get("/:name/conversations", async (c) => {
   const name = c.req.param("name");
   const user = c.get("user");
-  const conversations = listConversations(name, { userId: user.id });
-  return c.json(conversations);
+  const convs = await listConversations(name, { userId: user.id });
+  return c.json(convs);
 });
 
-app.get("/:name/conversations/:id/messages", (c) => {
+app.get("/:name/conversations/:id/messages", async (c) => {
   const id = c.req.param("id");
-  const messages = getMessages(id);
-  return c.json(messages);
+  const msgs = await getMessages(id);
+  return c.json(msgs);
 });
 
-app.delete("/:name/conversations/:id", (c) => {
+app.delete("/:name/conversations/:id", async (c) => {
   const id = c.req.param("id");
-  deleteConversation(id);
+  await deleteConversation(id);
   return c.json({ ok: true });
 });
 
