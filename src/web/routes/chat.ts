@@ -8,8 +8,10 @@ import {
   createConversation,
   getConversation,
 } from "../../lib/conversations.js";
+import { getDb } from "../../lib/db.js";
 import { readNdjson } from "../../lib/ndjson.js";
 import { findAgent } from "../../lib/registry.js";
+import { agentMessages } from "../../lib/schema.js";
 import type { VoluteContentPart, VoluteEvent } from "../../types.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
@@ -65,6 +67,17 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
 
   // Save user message
   await addMessage(conversationId, "user", user.username, userContent);
+
+  // Record in agent_messages
+  const userText = body.message ?? "[image]";
+  const db = await getDb();
+  await db.insert(agentMessages).values({
+    agent: name,
+    channel: "web",
+    role: "user",
+    sender: user.username,
+    content: userText,
+  });
 
   // Build content for agent server
   const agentContent: VoluteContentPart[] = [];
@@ -133,6 +146,20 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
         // Save assistant message
         if (assistantContent.length > 0) {
           await addMessage(conversationId!, "assistant", name, assistantContent);
+
+          // Record in agent_messages
+          const textParts = assistantContent
+            .filter((b): b is ContentBlock & { type: "text" } => b.type === "text")
+            .map((b) => b.text);
+          if (textParts.length > 0) {
+            const db = await getDb();
+            await db.insert(agentMessages).values({
+              agent: name,
+              channel: "web",
+              role: "assistant",
+              content: textParts.join(""),
+            });
+          }
         }
         break;
       }
