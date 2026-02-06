@@ -131,7 +131,9 @@ export function createAgent(options: {
     logMessage("in", text, source);
 
     // Build context prefix from channel/sender metadata
-    const prefix = source && sender ? `[${source}: ${sender}]\n` : "";
+    const time = new Date().toLocaleString();
+    const parts = [source, sender].filter(Boolean);
+    const prefix = parts.length > 0 ? `[${parts.join(": ")} — ${time}]\n` : "";
 
     let sdkContent: (
       | { type: "text"; text: string }
