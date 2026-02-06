@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, unlinkSync } from "fs";
-import { createServer, type IncomingMessage } from "http";
-import { resolve } from "path";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { createServer, type IncomingMessage } from "node:http";
+import { resolve } from "node:path";
 import { createAgent } from "./lib/agent.js";
 import { log } from "./lib/logger.js";
 import type { VoluteRequest } from "./lib/types.js";
@@ -37,6 +37,7 @@ const soulPath = resolve("home/SOUL.md");
 const memoryPath = resolve("home/MEMORY.md");
 const identityPath = resolve("home/IDENTITY.md");
 const userPath = resolve("home/USER.md");
+const volutePath = resolve("home/VOLUTE.md");
 
 const soul = loadFile(soulPath);
 if (!soul) {
@@ -47,10 +48,12 @@ if (!soul) {
 const identity = loadFile(identityPath);
 const user = loadFile(userPath);
 const memory = loadFile(memoryPath);
+const volute = loadFile(volutePath);
 
 const promptParts = [soul];
 if (identity) promptParts.push(identity);
 if (user) promptParts.push(user);
+if (volute) promptParts.push(volute);
 if (memory) promptParts.push(`## Memory\n\n${memory}`);
 const systemPrompt = promptParts.join("\n\n---\n\n");
 
@@ -115,7 +118,7 @@ const server = createServer(async (req, res) => {
 
       const removeListener = agent.onMessage((event) => {
         try {
-          res.write(JSON.stringify(event) + "\n");
+          res.write(`${JSON.stringify(event)}\n`);
           if (event.type === "done") {
             removeListener();
             res.end();
@@ -162,9 +165,6 @@ server.listen(port, () => {
   const actualPort = typeof addr === "object" && addr ? addr.port : port;
   log("server", `listening on :${actualPort}`);
 
-  // Build orientation message parts
-  const orientationParts: string[] = [];
-
   // Check for post-merge context
   const mergedPath = resolve(".volute/merged.json");
   if (existsSync(mergedPath)) {
@@ -179,15 +179,11 @@ server.listen(port, () => {
       if (merged.justification) parts.push(`Why: ${merged.justification}`);
       if (merged.memory) parts.push(`Context: ${merged.memory}`);
 
-      orientationParts.push(parts.join("\n"));
+      agent.sendMessage(parts.join("\n"));
       log("server", `sent post-merge orientation for variant: ${merged.name}`);
     } catch (e) {
       log("server", "failed to process merged.json:", e);
     }
-  }
-
-  if (orientationParts.length > 0) {
-    agent.sendMessage(orientationParts.join("\n\n---\n\n"));
   }
 });
 

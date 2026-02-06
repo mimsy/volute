@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
-import { createServer, type IncomingMessage } from "http";
-import { dirname, resolve } from "path";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { createServer, type IncomingMessage } from "node:http";
+import { dirname, resolve } from "node:path";
 import { createAgent } from "./lib/agent.js";
 import { log } from "./lib/logger.js";
 import type { VoluteRequest } from "./lib/types.js";
@@ -141,7 +141,7 @@ const server = createServer(async (req, res) => {
 
       const removeListener = agent.onMessage((event) => {
         try {
-          res.write(JSON.stringify(event) + "\n");
+          res.write(`${JSON.stringify(event)}\n`);
           if (event.type === "done") {
             removeListener();
             res.end();
@@ -188,9 +188,6 @@ server.listen(port, () => {
   const actualPort = typeof addr === "object" && addr ? addr.port : port;
   log("server", `listening on :${actualPort}`);
 
-  // Build orientation message parts
-  const orientationParts: string[] = [];
-
   // Check for post-merge context
   const mergedPath = resolve(".volute/merged.json");
   if (existsSync(mergedPath)) {
@@ -205,15 +202,11 @@ server.listen(port, () => {
       if (merged.justification) parts.push(`Why: ${merged.justification}`);
       if (merged.memory) parts.push(`Context: ${merged.memory}`);
 
-      orientationParts.push(parts.join("\n"));
+      agent.sendMessage(parts.join("\n"));
       log("server", `sent post-merge orientation for variant: ${merged.name}`);
     } catch (e) {
       log("server", "failed to process merged.json:", e);
     }
-  }
-
-  if (orientationParts.length > 0) {
-    agent.sendMessage(orientationParts.join("\n\n---\n\n"));
   }
 });
 

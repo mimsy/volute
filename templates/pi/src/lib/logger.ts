@@ -1,5 +1,9 @@
 const DEBUG = process.env.VOLUTE_DEBUG === "1";
 
+function truncate(str: string, maxLen = 200): string {
+  return str.length > maxLen ? `${str.slice(0, maxLen)}...` : str;
+}
+
 export function log(category: string, ...args: unknown[]) {
   const ts = new Date().toLocaleString();
   try {
@@ -15,53 +19,27 @@ export function debug(category: string, ...args: unknown[]) {
 }
 
 export function logThinking(thinking: string) {
-  if (DEBUG) {
-    log("thinking", thinking);
-  } else {
-    // Show first 200 chars in normal mode
-    log("thinking", thinking.slice(0, 200) + (thinking.length > 200 ? "..." : ""));
-  }
+  log("thinking", DEBUG ? thinking : truncate(thinking));
 }
 
 export function logToolUse(name: string, input: unknown) {
-  if (DEBUG) {
-    log("tool", `${name}:`, JSON.stringify(input, null, 2));
-  } else {
-    // Compact view in normal mode
-    const inputStr = JSON.stringify(input);
-    const preview = inputStr.length > 100 ? inputStr.slice(0, 100) + "..." : inputStr;
-    log("tool", `${name}: ${preview}`);
-  }
+  const inputStr = DEBUG ? JSON.stringify(input, null, 2) : truncate(JSON.stringify(input), 100);
+  log("tool", `${name}: ${inputStr}`);
 }
 
 export function logToolResult(name: string, output: string, isError?: boolean) {
   const prefix = isError ? "error" : "result";
-  if (DEBUG) {
-    log("tool", `${name} ${prefix}:`, output);
-  } else {
-    const preview = output.length > 200 ? output.slice(0, 200) + "..." : output;
-    log("tool", `${name} ${prefix}: ${preview}`);
-  }
+  log("tool", `${name} ${prefix}: ${DEBUG ? output : truncate(output)}`);
 }
 
 export function logText(text: string) {
-  if (DEBUG) {
-    log("text", text);
-  } else {
-    const preview = text.length > 200 ? text.slice(0, 200) + "..." : text;
-    log("text", preview);
-  }
+  log("text", DEBUG ? text : truncate(text));
 }
 
 export function logMessage(direction: "in" | "out", content: string, channel?: string) {
   const arrow = direction === "in" ? "<<" : ">>";
   const channelStr = channel ? ` [${channel}]` : "";
-  if (DEBUG) {
-    log("msg", `${arrow}${channelStr}`, content);
-  } else {
-    const preview = content.length > 200 ? content.slice(0, 200) + "..." : content;
-    log("msg", `${arrow}${channelStr}`, preview);
-  }
+  log("msg", `${arrow}${channelStr}`, DEBUG ? content : truncate(content));
 }
 
 // Prevent EPIPE on stderr from crashing the process (detached variant mode)

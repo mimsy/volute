@@ -100,7 +100,9 @@ export function createAgent(options: {
         }
         if (msg.type === "tool_result") {
           const tr = msg as { name?: string; content?: string; is_error?: boolean };
-          logToolResult(tr.name ?? "unknown", tr.content ?? "", tr.is_error);
+          const output = tr.content ?? "";
+          logToolResult(tr.name ?? "unknown", output, tr.is_error);
+          broadcast({ type: "tool_result", output, is_error: tr.is_error });
         }
         if (msg.type === "result") {
           log("agent", "turn done");
