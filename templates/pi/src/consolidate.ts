@@ -4,15 +4,16 @@
  * Used by `volute import` when no MEMORY.md exists but daily logs are present.
  */
 
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   AuthStorage,
   createAgentSession,
+  DefaultResourceLoader,
   ModelRegistry,
   SessionManager,
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
-import { readdirSync, readFileSync, writeFileSync } from "fs";
-import { resolve } from "path";
 
 const projectRoot = process.cwd();
 const soulPath = resolve(projectRoot, "home/SOUL.md");
@@ -48,15 +49,21 @@ console.log("Consolidating memory from daily logs...");
 const authStorage = new AuthStorage();
 const modelRegistry = new ModelRegistry(authStorage);
 
+const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false } });
+const resourceLoader = new DefaultResourceLoader({
+  cwd: projectRoot,
+  settingsManager,
+  systemPrompt: soul,
+});
+await resourceLoader.reload();
+
 const { session } = await createAgentSession({
   cwd: projectRoot,
-  systemPrompt: soul,
   authStorage,
   modelRegistry,
   sessionManager: SessionManager.inMemory(),
-  settingsManager: SettingsManager.inMemory({
-    compaction: { enabled: false },
-  }),
+  settingsManager,
+  resourceLoader,
 });
 
 const textParts: string[] = [];
@@ -86,7 +93,7 @@ await session.agent.waitForIdle();
 
 const content = textParts.join("").trim();
 if (content) {
-  writeFileSync(memoryPath, content + "\n");
+  writeFileSync(memoryPath, `${content}\n`);
   console.log("\nMEMORY.md created successfully.");
 } else {
   console.warn("\nWarning: No content produced.");

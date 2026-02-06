@@ -6,6 +6,8 @@ pre-commit:
       run: npx biome check --write {staged_files} && git add {staged_files}
     typecheck:
       run: npx tsc --noEmit
+    typecheck-templates:
+      run: npx tsc --noEmit -p templates/agent-sdk/tsconfig.json && npx tsc --noEmit -p templates/pi/tsconfig.json
 
 pre-push:
   commands:

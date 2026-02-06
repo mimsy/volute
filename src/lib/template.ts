@@ -31,15 +31,17 @@ export function findTemplatesDir(template: string): string {
 
 /**
  * Copy template files to a destination directory with {{name}} substitution.
- * Handles package.json.tmpl → package.json rename.
+ * Handles .tmpl → actual name renames (package.json, biome.json).
  */
 export function copyTemplateToDir(templateDir: string, destDir: string, agentName: string) {
   cpSync(templateDir, destDir, { recursive: true });
 
-  // Rename package.json.tmpl → package.json
-  const tmplPath = resolve(destDir, "package.json.tmpl");
-  if (existsSync(tmplPath)) {
-    renameSync(tmplPath, resolve(destDir, "package.json"));
+  // Rename .tmpl files → actual names
+  for (const name of ["package.json", "biome.json"]) {
+    const tmplPath = resolve(destDir, `${name}.tmpl`);
+    if (existsSync(tmplPath)) {
+      renameSync(tmplPath, resolve(destDir, name));
+    }
   }
 
   // Replace {{name}} placeholders

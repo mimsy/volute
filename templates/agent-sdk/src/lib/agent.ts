@@ -2,7 +2,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createAutoCommitHook } from "./hooks/auto-commit.js";
 import { createIdentityReloadHook } from "./hooks/identity-reload.js";
 import { createPreCompactHook } from "./hooks/pre-compact.js";
-import { log, logMessage, logText, logThinking, logToolResult, logToolUse } from "./logger.js";
+import { log, logMessage, logText, logThinking, logToolUse } from "./logger.js";
 import { createMessageChannel } from "./message-channel.js";
 import type { VoluteContentPart, VoluteEvent } from "./types.js";
 
@@ -75,20 +75,8 @@ export function createAgent(options: {
             const tb = b as { name: string; input: unknown };
             logToolUse(tb.name, tb.input);
             broadcast({ type: "tool_use", name: tb.name, input: tb.input });
-          } else if (b.type === "image" && "source" in b) {
-            const src = b.source as { type: string; media_type: string; data: string };
-            if (src.type === "base64") {
-              log("agent", "image:", src.media_type, `${src.data.length} bytes`);
-              broadcast({ type: "image", media_type: src.media_type, data: src.data });
-            }
           }
         }
-      }
-      if (msg.type === "tool_result") {
-        const tr = msg as { name?: string; content?: string; is_error?: boolean };
-        const output = tr.content ?? "";
-        logToolResult(tr.name ?? "unknown", output, tr.is_error);
-        broadcast({ type: "tool_result", output, is_error: tr.is_error });
       }
       if (msg.type === "result") {
         log("agent", "turn done");
@@ -138,7 +126,14 @@ export function createAgent(options: {
 
     let sdkContent: (
       | { type: "text"; text: string }
-      | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
+      | {
+          type: "image";
+          source: {
+            type: "base64";
+            media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+            data: string;
+          };
+        }
     )[];
 
     if (typeof content === "string") {
@@ -153,7 +148,7 @@ export function createAgent(options: {
           type: "image" as const,
           source: {
             type: "base64" as const,
-            media_type: part.media_type,
+            media_type: part.media_type as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
             data: part.data,
           },
         };

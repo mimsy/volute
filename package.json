@@ -15,6 +15,8 @@
     "lint:fix": "biome check --write src/ test/",
     "format": "biome format --write src/ test/",
     "typecheck": "tsc --noEmit",
+    "typecheck:templates": "tsc --noEmit -p templates/agent-sdk/tsconfig.json && tsc --noEmit -p templates/pi/tsconfig.json",
+    "lint:templates": "biome check templates/",
     "typecheck:web": "tsc --noEmit -p src/web/frontend/tsconfig.json",
     "prepare": "lefthook install",
     "prepublishOnly": "npm run build",

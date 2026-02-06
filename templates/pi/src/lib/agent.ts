@@ -45,13 +45,14 @@ export async function createAgent(options: {
   const modelId = rest.join(":");
 
   // Try exact match first, then prefix match against available models
-  let model = getModel(provider, modelId);
+  let model = getModel(provider as any, modelId as any);
   if (!model) {
-    const available = getModels(provider);
-    model = available.find((m) => m.id.startsWith(modelId)) ?? null;
+    const available = getModels(provider as any);
+    const found = available.find((m) => m.id.startsWith(modelId));
+    if (found) model = found;
   }
   if (!model) {
-    const available = getModels(provider);
+    const available = getModels(provider as any);
     throw new Error(
       `Model not found: ${modelStr}\nAvailable ${provider} models: ${available.map((m) => m.id).join(", ")}`,
     );
@@ -106,6 +107,8 @@ export async function createAgent(options: {
     }
   }
 
+  const toolArgs = new Map<string, any>();
+
   session.subscribe((event) => {
     if (event.type === "message_update") {
       const ae = event.assistantMessageEvent;
@@ -118,11 +121,12 @@ export async function createAgent(options: {
     }
 
     if (event.type === "tool_execution_start") {
-      logToolUse(event.toolName, event.input);
+      toolArgs.set(event.toolCallId, event.args);
+      logToolUse(event.toolName, event.args);
       broadcast({
         type: "tool_use",
         name: event.toolName,
-        input: event.input,
+        input: event.args,
       });
     }
 
@@ -137,11 +141,13 @@ export async function createAgent(options: {
 
       // Auto-commit file changes in home/
       if ((event.toolName === "Edit" || event.toolName === "Write") && !event.isError) {
-        const filePath = (event.input as { file_path?: string })?.file_path;
+        const args = toolArgs.get(event.toolCallId);
+        const filePath = (args as { file_path?: string })?.file_path;
         if (filePath) {
           commitFileChange(filePath, options.cwd);
         }
       }
+      toolArgs.delete(event.toolCallId);
     }
 
     if (event.type === "agent_end") {

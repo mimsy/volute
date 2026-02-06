@@ -4,9 +4,9 @@
  * Used by `volute import` when no MEMORY.md exists but daily logs are present.
  */
 
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { readdirSync, readFileSync, writeFileSync } from "fs";
-import { resolve } from "path";
 import { createMessageChannel } from "./lib/message-channel.js";
 
 const projectRoot = process.cwd();
@@ -95,7 +95,7 @@ for await (const msg of stream) {
 
 const content = textParts.join("").trim();
 if (content) {
-  writeFileSync(memoryPath, content + "\n");
+  writeFileSync(memoryPath, `${content}\n`);
   console.log("\nMEMORY.md created successfully.");
 } else {
   console.warn("\nWarning: No content produced.");
