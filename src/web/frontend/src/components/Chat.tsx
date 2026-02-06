@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type ContentBlock, fetchConversationMessages, type MoltEvent } from "../lib/api";
+import { type ContentBlock, fetchConversationMessages, type VoluteEvent } from "../lib/api";
 import { useChatStream } from "../lib/useStream";
 
 type ChatEntry = { role: "user" | "assistant"; blocks: ContentBlock[] };
@@ -58,7 +58,7 @@ export function Chat({
   }, [name, conversationId]);
 
   const onEvent = useCallback(
-    (event: MoltEvent) => {
+    (event: VoluteEvent) => {
       if (event.type === "meta") {
         convIdRef.current = event.conversationId;
         onConversationId(event.conversationId);

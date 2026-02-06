@@ -58,7 +58,7 @@ describe("web variants routes", () => {
     const app = createApp();
 
     const res = await app.request("/api/agents/nonexistent-agent/variants", {
-      headers: { Cookie: `molt_session=${cookie}` },
+      headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 404);
   });
@@ -66,15 +66,15 @@ describe("web variants routes", () => {
   it("GET /:name/variants — lists variants for existing agent (empty)", async () => {
     const cookie = await setupAuth();
 
-    testDir = resolve(tmpdir(), `molt-test-variants-${Date.now()}`);
-    const moltDir = resolve(testDir, ".molt");
-    mkdirSync(moltDir, { recursive: true });
-    writeFileSync(resolve(moltDir, "variants.json"), "[]");
+    testDir = resolve(tmpdir(), `volute-test-variants-${Date.now()}`);
+    const voluteDir = resolve(testDir, ".volute");
+    mkdirSync(voluteDir, { recursive: true });
+    writeFileSync(resolve(voluteDir, "variants.json"), "[]");
 
     const app = createApp(testDir);
 
     const res = await app.request("/api/agents/test-agent/variants", {
-      headers: { Cookie: `molt_session=${cookie}` },
+      headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
     const body = await res.json();

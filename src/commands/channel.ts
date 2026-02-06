@@ -15,12 +15,12 @@ export async function run(args: string[]) {
 
   if (!subcommand || !uri || (subcommand === "send" && !message)) {
     console.error(`Usage:
-  molt channel read <channel-uri> [--limit N] [--agent <name>]
-  molt channel send <channel-uri> "<message>" [--agent <name>]`);
+  volute channel read <channel-uri> [--limit N] [--agent <name>]
+  volute channel send <channel-uri> "<message>" [--agent <name>]`);
     process.exit(1);
   }
 
-  const agentName = flags.agent || process.env.MOLT_AGENT;
+  const agentName = flags.agent || process.env.VOLUTE_AGENT;
   if (!agentName) {
     console.error("No agent specified. Use --agent <name> or run from within an agent process.");
     process.exit(1);
@@ -41,7 +41,7 @@ export async function run(args: string[]) {
   if (platform === "discord") {
     const token = env.DISCORD_TOKEN;
     if (!token) {
-      console.error("DISCORD_TOKEN not set. Run: molt env set DISCORD_TOKEN <token>");
+      console.error("DISCORD_TOKEN not set. Run: volute env set DISCORD_TOKEN <token>");
       process.exit(1);
     }
 

@@ -62,7 +62,7 @@ export function LoginPage({ onAuth }: { onAuth: (user: AuthUser) => void }) {
       <div style={cardStyle}>
         <div style={{ marginBottom: 24, textAlign: "center" as const }}>
           <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 4 }}>
-            <span style={{ color: "var(--accent)" }}>&gt;</span> molt
+            <span style={{ color: "var(--accent)" }}>&gt;</span> volute
           </div>
           <div style={{ color: "var(--text-2)", fontSize: 12 }}>
             {mode === "login" ? "Sign in to continue" : "Create an account"}

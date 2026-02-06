@@ -11,7 +11,7 @@ export type Variant = {
 };
 
 function variantsPath(projectRoot: string): string {
-  return resolve(projectRoot, ".molt", "variants.json");
+  return resolve(projectRoot, ".volute", "variants.json");
 }
 
 export function readVariants(projectRoot: string): Variant[] {

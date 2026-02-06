@@ -53,7 +53,7 @@ export function startServer({ port }: { port: number }) {
     });
   }
 
-  log.info("Molt UI running", { port });
+  log.info("Volute UI running", { port });
 
   serve({ fetch: app.fetch, port });
 }

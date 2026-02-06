@@ -10,7 +10,7 @@ export async function run(args: string[]) {
     // List all agents
     const entries = readRegistry();
     if (entries.length === 0) {
-      console.log("No agents registered. Create one with: molt create <name>");
+      console.log("No agents registered. Create one with: volute create <name>");
       return;
     }
 
@@ -24,7 +24,7 @@ export async function run(args: string[]) {
       let status = "stopped";
 
       // Check supervisor PID
-      const pidPath = resolve(dir, ".molt", "supervisor.pid");
+      const pidPath = resolve(dir, ".volute", "supervisor.pid");
       if (existsSync(pidPath)) {
         const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
         try {
@@ -39,7 +39,7 @@ export async function run(args: string[]) {
 
       // Check Discord connector PID
       let discord = "-";
-      const discordPidPath = resolve(dir, ".molt", "discord.pid");
+      const discordPidPath = resolve(dir, ".volute", "discord.pid");
       if (existsSync(discordPidPath)) {
         const dpid = parseInt(readFileSync(discordPidPath, "utf-8").trim(), 10);
         try {
@@ -69,7 +69,7 @@ export async function run(args: string[]) {
   const port = entry.port;
 
   // Check supervisor PID
-  const pidPath = resolve(dir, ".molt", "supervisor.pid");
+  const pidPath = resolve(dir, ".volute", "supervisor.pid");
   let supervisorRunning = false;
   let supervisorPid: number | null = null;
 
@@ -88,7 +88,7 @@ export async function run(args: string[]) {
   );
 
   // Check Discord connector PID
-  const discordPidPath = resolve(dir, ".molt", "discord.pid");
+  const discordPidPath = resolve(dir, ".volute", "discord.pid");
   let discordRunning = false;
   let discordPid: number | null = null;
 
@@ -118,7 +118,7 @@ export async function run(args: string[]) {
   } catch {
     console.log(`Server: not responding on port ${port}`);
     if (!supervisorRunning) {
-      console.error(`\nTry: molt start ${name}`);
+      console.error(`\nTry: volute start ${name}`);
     }
     process.exit(1);
   }

@@ -5,18 +5,18 @@ import { resolveAgent } from "../lib/registry.js";
 export async function run(args: string[]) {
   const connector = args[0];
   if (connector !== "discord") {
-    console.error("Usage: molt disconnect discord <agent>");
+    console.error("Usage: volute disconnect discord <agent>");
     process.exit(1);
   }
 
   const name = args[1];
   if (!name) {
-    console.error("Usage: molt disconnect discord <agent>");
+    console.error("Usage: volute disconnect discord <agent>");
     process.exit(1);
   }
 
   const { dir } = resolveAgent(name);
-  const pidPath = resolve(dir, ".molt", "discord.pid");
+  const pidPath = resolve(dir, ".volute", "discord.pid");
 
   if (!existsSync(pidPath)) {
     console.error(`Discord connector for ${name} is not running (no PID file found).`);

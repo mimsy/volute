@@ -56,7 +56,7 @@ export async function run(args: string[]) {
     case "set": {
       const key = positional[1];
       if (!key) {
-        console.error("Usage: molt env set <KEY> [<VALUE>] [--agent <name>]");
+        console.error("Usage: volute env set <KEY> [<VALUE>] [--agent <name>]");
         process.exit(1);
       }
       const value = positional[2] ?? (await promptValue(key));
@@ -72,7 +72,7 @@ export async function run(args: string[]) {
     case "get": {
       const key = positional[1];
       if (!key) {
-        console.error("Usage: molt env get <KEY> [--agent <name>]");
+        console.error("Usage: volute env get <KEY> [--agent <name>]");
         process.exit(1);
       }
       if (flags.agent) {
@@ -128,7 +128,7 @@ export async function run(args: string[]) {
     case "remove": {
       const key = positional[1];
       if (!key) {
-        console.error("Usage: molt env remove <KEY> [--agent <name>]");
+        console.error("Usage: volute env remove <KEY> [--agent <name>]");
         process.exit(1);
       }
       const path = getEnvPath(flags.agent);
@@ -146,7 +146,7 @@ export async function run(args: string[]) {
     }
 
     default:
-      console.error(`Usage: molt env <set|get|list|remove> [--agent <name>]`);
+      console.error(`Usage: volute env <set|get|list|remove> [--agent <name>]`);
       if (subcommand) {
         console.error(`\nUnknown subcommand: ${subcommand}`);
       }

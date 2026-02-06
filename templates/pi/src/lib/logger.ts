@@ -1,4 +1,4 @@
-const DEBUG = process.env.MOLT_DEBUG === "1";
+const DEBUG = process.env.VOLUTE_DEBUG === "1";
 
 export function log(category: string, ...args: unknown[]) {
   const ts = new Date().toLocaleString();

@@ -12,7 +12,7 @@ import { addMessage, getOrCreateConversation } from "../lib/conversations.js";
 import { loadMergedEnv } from "../lib/env.js";
 import { readNdjson } from "../lib/ndjson.js";
 import { resolveAgent } from "../lib/registry.js";
-import type { MoltContentPart } from "../types.js";
+import type { VoluteContentPart } from "../types.js";
 
 const DISCORD_MAX_LENGTH = 2000;
 const TYPING_INTERVAL_MS = 8000;
@@ -20,7 +20,7 @@ const TYPING_INTERVAL_MS = 8000;
 export async function run(args: string[]) {
   const name = args[0];
   if (!name) {
-    console.error("Usage: molt connect discord <agent>");
+    console.error("Usage: volute connect discord <agent>");
     process.exit(1);
   }
 
@@ -29,14 +29,14 @@ export async function run(args: string[]) {
   const token = env.DISCORD_TOKEN;
 
   if (!token) {
-    console.error("DISCORD_TOKEN not set. Run: molt env set DISCORD_TOKEN <token>");
+    console.error("DISCORD_TOKEN not set. Run: volute env set DISCORD_TOKEN <token>");
     process.exit(1);
   }
 
   // Write PID file
-  const moltDir = resolve(dir, ".molt");
-  const pidPath = resolve(moltDir, "discord.pid");
-  mkdirSync(moltDir, { recursive: true });
+  const voluteDir = resolve(dir, ".volute");
+  const pidPath = resolve(voluteDir, "discord.pid");
+  mkdirSync(voluteDir, { recursive: true });
   writeFileSync(pidPath, String(process.pid));
 
   function cleanupPid() {
@@ -70,7 +70,7 @@ export async function run(args: string[]) {
     console.log(`Connected to Discord as ${c.user.tag}`);
     console.log(`Bridging to agent: ${name} (port ${entry.port})`);
     // Write connection state
-    const statePath = resolve(moltDir, "discord.json");
+    const statePath = resolve(voluteDir, "discord.json");
     writeFileSync(
       statePath,
       JSON.stringify(
@@ -98,7 +98,7 @@ export async function run(args: string[]) {
       text = text.replace(new RegExp(`<@!?${client.user!.id}>`, "g"), "").trim();
     }
 
-    const content: MoltContentPart[] = [];
+    const content: VoluteContentPart[] = [];
     if (text) content.push({ type: "text", text });
 
     // Download image attachments
@@ -141,7 +141,7 @@ function splitMessage(text: string): string[] {
 async function handleAgentRequest(
   message: Message,
   baseUrl: string,
-  content: MoltContentPart[],
+  content: VoluteContentPart[],
   agentName: string,
 ) {
   const channel = message.channel;

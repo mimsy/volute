@@ -1,10 +1,9 @@
 /**
  * One-shot memory consolidation: reads daily logs, asks an ephemeral agent
  * to produce consolidated MEMORY.md content, then writes it.
- * Used by `molt import` when no MEMORY.md exists but daily logs are present.
+ * Used by `volute import` when no MEMORY.md exists but daily logs are present.
  */
-import { readFileSync, writeFileSync, readdirSync } from "fs";
-import { resolve } from "path";
+
 import {
   AuthStorage,
   createAgentSession,
@@ -12,6 +11,8 @@ import {
   SessionManager,
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
+import { readdirSync, readFileSync, writeFileSync } from "fs";
+import { resolve } from "path";
 
 const projectRoot = process.cwd();
 const soulPath = resolve(projectRoot, "home/SOUL.md");

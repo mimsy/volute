@@ -16,12 +16,12 @@ export type SupervisorOptions = {
  */
 export function runSupervisor(opts: SupervisorOptions): void {
   const { agentName, agentDir, port, dev } = opts;
-  const moltDir = resolve(agentDir, ".molt");
-  const restartSignalPath = resolve(moltDir, "restart.json");
-  const pidPath = resolve(moltDir, "supervisor.pid");
+  const voluteDir = resolve(agentDir, ".volute");
+  const restartSignalPath = resolve(voluteDir, "restart.json");
+  const pidPath = resolve(voluteDir, "supervisor.pid");
 
   // Write PID file
-  mkdirSync(moltDir, { recursive: true });
+  mkdirSync(voluteDir, { recursive: true });
   writeFileSync(pidPath, String(process.pid));
 
   let shuttingDown = false;
@@ -55,7 +55,7 @@ export function runSupervisor(opts: SupervisorOptions): void {
 
   function startAgent(): ReturnType<typeof spawn> {
     const agentEnv = loadMergedEnv(agentDir);
-    const env = { ...process.env, ...agentEnv, MOLT_AGENT: agentName };
+    const env = { ...process.env, ...agentEnv, VOLUTE_AGENT: agentName };
 
     if (dev) {
       console.error(`[supervisor] starting agent server in dev mode (watching for changes)...`);
@@ -87,12 +87,12 @@ export function runSupervisor(opts: SupervisorOptions): void {
           if (signal.summary) mergeArgs.push("--summary", signal.summary);
           if (signal.justification) mergeArgs.push("--justification", signal.justification);
           if (signal.memory) mergeArgs.push("--memory", signal.memory);
-          execFile("molt", mergeArgs, {
+          execFile("volute", mergeArgs, {
             cwd: agentDir,
-            env: { ...process.env, MOLT_SUPERVISOR: "1" },
+            env: { ...process.env, VOLUTE_SUPERVISOR: "1" },
           });
         } catch (e) {
-          console.error(`[supervisor] molt merge failed:`, e);
+          console.error(`[supervisor] volute merge failed:`, e);
         }
       }
 

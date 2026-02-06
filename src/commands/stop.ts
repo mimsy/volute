@@ -5,12 +5,12 @@ import { resolveAgent } from "../lib/registry.js";
 export async function run(args: string[]) {
   const name = args[0];
   if (!name) {
-    console.error("Usage: molt stop <name>");
+    console.error("Usage: volute stop <name>");
     process.exit(1);
   }
 
   const { dir } = resolveAgent(name);
-  const pidPath = resolve(dir, ".molt", "supervisor.pid");
+  const pidPath = resolve(dir, ".volute", "supervisor.pid");
 
   if (!existsSync(pidPath)) {
     console.error(`${name} is not running (no PID file found).`);

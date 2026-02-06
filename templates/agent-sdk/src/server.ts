@@ -1,9 +1,9 @@
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { createServer, type IncomingMessage } from "http";
-import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from "fs";
-import { resolve, dirname } from "path";
+import { dirname, resolve } from "path";
 import { createAgent } from "./lib/agent.js";
-import type { MoltRequest } from "./lib/types.js";
 import { log } from "./lib/logger.js";
+import type { VoluteRequest } from "./lib/types.js";
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -15,8 +15,8 @@ function parseArgs() {
     }
   }
 
-  // Model is configured via MOLT_MODEL env var (set with: molt env set --agent <name> MOLT_MODEL=...)
-  const model = process.env.MOLT_MODEL;
+  // Model is configured via VOLUTE_MODEL env var (set with: volute env set --agent <name> VOLUTE_MODEL=...)
+  const model = process.env.VOLUTE_MODEL;
 
   return { port, model };
 }
@@ -37,7 +37,7 @@ const soulPath = resolve("home/SOUL.md");
 const memoryPath = resolve("home/MEMORY.md");
 const identityPath = resolve("home/IDENTITY.md");
 const userPath = resolve("home/USER.md");
-const moltPath = resolve("home/MOLT.md");
+const volutePath = resolve("home/VOLUTE.md");
 
 const soul = loadFile(soulPath);
 if (!soul) {
@@ -48,16 +48,16 @@ if (!soul) {
 const identity = loadFile(identityPath);
 const user = loadFile(userPath);
 const memory = loadFile(memoryPath);
-const molt = loadFile(moltPath);
+const volute = loadFile(volutePath);
 
 const promptParts = [soul];
 if (identity) promptParts.push(identity);
 if (user) promptParts.push(user);
-if (molt) promptParts.push(molt);
+if (volute) promptParts.push(volute);
 if (memory) promptParts.push(`## Memory\n\n${memory}`);
 const systemPrompt = promptParts.join("\n\n---\n\n");
 
-const sessionPath = resolve(".molt/session.json");
+const sessionPath = resolve(".volute/session.json");
 
 function loadSessionId(): string | undefined {
   try {
@@ -131,7 +131,7 @@ const server = createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/message") {
     try {
-      const body = JSON.parse(await readBody(req)) as MoltRequest;
+      const body = JSON.parse(await readBody(req)) as VoluteRequest;
 
       res.writeHead(200, {
         "Content-Type": "application/x-ndjson",
@@ -192,13 +192,15 @@ server.listen(port, () => {
   const orientationParts: string[] = [];
 
   // Check for post-merge context
-  const mergedPath = resolve(".molt/merged.json");
+  const mergedPath = resolve(".volute/merged.json");
   if (existsSync(mergedPath)) {
     try {
       const merged = JSON.parse(readFileSync(mergedPath, "utf-8"));
       unlinkSync(mergedPath);
 
-      const parts = [`[system] Variant "${merged.name}" has been merged and you have been restarted.`];
+      const parts = [
+        `[system] Variant "${merged.name}" has been merged and you have been restarted.`,
+      ];
       if (merged.summary) parts.push(`Changes: ${merged.summary}`);
       if (merged.justification) parts.push(`Why: ${merged.justification}`);
       if (merged.memory) parts.push(`Context: ${merged.memory}`);

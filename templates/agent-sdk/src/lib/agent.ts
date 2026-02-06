@@ -1,10 +1,10 @@
-import { query, type HookCallback } from "@anthropic-ai/claude-agent-sdk";
-import type { MoltEvent, MoltContentPart } from "./types.js";
-import { log, logThinking, logToolUse, logToolResult, logText, logMessage } from "./logger.js";
-import { createMessageChannel } from "./message-channel.js";
+import { type HookCallback, query } from "@anthropic-ai/claude-agent-sdk";
 import { commitFileChange } from "./auto-commit.js";
+import { log, logMessage, logText, logThinking, logToolResult, logToolUse } from "./logger.js";
+import { createMessageChannel } from "./message-channel.js";
+import type { VoluteContentPart, VoluteEvent } from "./types.js";
 
-type Listener = (event: MoltEvent) => void;
+type Listener = (event: VoluteEvent) => void;
 
 export function createAgent(options: {
   systemPrompt: string;
@@ -44,7 +44,7 @@ export function createAgent(options: {
     },
   });
 
-  function broadcast(event: MoltEvent) {
+  function broadcast(event: VoluteEvent) {
     for (const listener of listeners) {
       try {
         listener(event);
@@ -54,7 +54,7 @@ export function createAgent(options: {
     }
   }
 
-  // Consume the SDK stream and broadcast MoltEvent events
+  // Consume the SDK stream and broadcast VoluteEvent events
   (async () => {
     log("agent", "stream consumer started");
     try {
@@ -91,11 +91,7 @@ export function createAgent(options: {
           log("agent", "turn done");
           broadcast({ type: "done" });
         }
-        if (
-          msg.type === "system" &&
-          "subtype" in msg &&
-          msg.subtype === "compact_boundary"
-        ) {
+        if (msg.type === "system" && "subtype" in msg && msg.subtype === "compact_boundary") {
           log("agent", "compact boundary detected");
           if (options.onCompact) options.onCompact();
         }
@@ -108,16 +104,20 @@ export function createAgent(options: {
     log("agent", "stream consumer ended");
   })();
 
-  function sendMessage(content: string | MoltContentPart[], source?: string, sender?: string) {
-    const text = typeof content === "string"
-      ? content
-      : content.map((p) => p.type === "text" ? p.text : `[${p.type}]`).join(" ");
+  function sendMessage(content: string | VoluteContentPart[], source?: string, sender?: string) {
+    const text =
+      typeof content === "string"
+        ? content
+        : content.map((p) => (p.type === "text" ? p.text : `[${p.type}]`)).join(" ");
     logMessage("in", text, source);
 
     // Build context prefix from channel/sender metadata
     const prefix = source && sender ? `[${source}: ${sender}]\n` : "";
 
-    let sdkContent: ({ type: "text"; text: string } | { type: "image"; source: { type: "base64"; media_type: string; data: string } })[];
+    let sdkContent: (
+      | { type: "text"; text: string }
+      | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
+    )[];
 
     if (typeof content === "string") {
       sdkContent = [{ type: "text" as const, text: prefix + content }];

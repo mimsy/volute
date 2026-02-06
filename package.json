@@ -1,9 +1,9 @@
 {
-  "name": "molt",
+  "name": "volute",
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "molt": "dist/cli.js"
+    "volute": "dist/cli.js"
   },
   "scripts": {
     "dev": "tsx src/cli.ts",

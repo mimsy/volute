@@ -17,7 +17,7 @@ type ChannelStatus = {
 
 async function getAgentStatus(dir: string, port: number) {
   let status: "running" | "stopped" | "starting" = "stopped";
-  const pidPath = resolve(dir, ".molt", "supervisor.pid");
+  const pidPath = resolve(dir, ".volute", "supervisor.pid");
   if (existsSync(pidPath)) {
     const pid = parseInt((await readFile(pidPath, "utf-8")).trim(), 10);
     try {
@@ -46,14 +46,14 @@ async function getAgentStatus(dir: string, port: number) {
     status: "disconnected",
     showToolCalls: CHANNELS.discord.showToolCalls,
   };
-  const discordPidPath = resolve(dir, ".molt", "discord.pid");
+  const discordPidPath = resolve(dir, ".volute", "discord.pid");
   if (existsSync(discordPidPath)) {
     const dpid = parseInt((await readFile(discordPidPath, "utf-8")).trim(), 10);
     try {
       process.kill(dpid, 0);
       discordChannel.status = "connected";
       // Read connection details if available
-      const discordStatePath = resolve(dir, ".molt", "discord.json");
+      const discordStatePath = resolve(dir, ".volute", "discord.json");
       if (existsSync(discordStatePath)) {
         try {
           const state = JSON.parse(await readFile(discordStatePath, "utf-8"));
@@ -107,7 +107,7 @@ const app = new Hono()
     if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
 
     // Check if already running
-    const pidPath = resolve(dir, ".molt", "supervisor.pid");
+    const pidPath = resolve(dir, ".volute", "supervisor.pid");
     if (existsSync(pidPath)) {
       const pid = parseInt((await readFile(pidPath, "utf-8")).trim(), 10);
       try {
@@ -154,7 +154,7 @@ const app = new Hono()
     });
   `;
 
-    const logsDir = resolve(dir, ".molt", "logs");
+    const logsDir = resolve(dir, ".volute", "logs");
     mkdirSync(logsDir, { recursive: true });
     const logFile = resolve(logsDir, "supervisor.log");
     const logFd = openSync(logFile, "a");
@@ -190,7 +190,7 @@ const app = new Hono()
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
     const dir = agentDir(name);
-    const pidPath = resolve(dir, ".molt", "supervisor.pid");
+    const pidPath = resolve(dir, ".volute", "supervisor.pid");
 
     if (!existsSync(pidPath)) {
       return c.json({ error: "Agent is not running" }, 409);

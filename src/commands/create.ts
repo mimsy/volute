@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { addAgent, agentDir, ensureMoltHome, nextPort } from "../lib/registry.js";
+import { addAgent, agentDir, ensureVoluteHome, nextPort } from "../lib/registry.js";
 import { applyInitFiles, copyTemplateToDir, findTemplatesDir } from "../lib/template.js";
 
 export async function run(args: string[]) {
@@ -13,11 +13,11 @@ export async function run(args: string[]) {
   const template = flags.template ?? "agent-sdk";
 
   if (!name) {
-    console.error("Usage: molt create <name> [--template <name>]");
+    console.error("Usage: volute create <name> [--template <name>]");
     process.exit(1);
   }
 
-  ensureMoltHome();
+  ensureVoluteHome();
   const dest = agentDir(name);
 
   if (existsSync(dest)) {
@@ -43,5 +43,5 @@ export async function run(args: string[]) {
   await exec("git", ["commit", "-m", "initial commit"], { cwd: dest });
 
   console.log(`\nCreated agent: ${name} (port ${port})`);
-  console.log(`\n  molt start ${name}`);
+  console.log(`\n  volute start ${name}`);
 }

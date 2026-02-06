@@ -1,13 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { MOLT_HOME } from "./registry.js";
+import { VOLUTE_HOME } from "./registry.js";
 
 export function sharedEnvPath(): string {
-  return resolve(MOLT_HOME, "env.json");
+  return resolve(VOLUTE_HOME, "env.json");
 }
 
 export function agentEnvPath(agentDir: string): string {
-  return resolve(agentDir, ".molt", "env.json");
+  return resolve(agentDir, ".volute", "env.json");
 }
 
 export function readEnv(path: string): Record<string, string> {

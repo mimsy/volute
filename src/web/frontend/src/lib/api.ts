@@ -20,7 +20,7 @@ export type Agent = {
   channels: Channel[];
 };
 
-export type MoltEvent =
+export type VoluteEvent =
   | { type: "text"; content: string }
   | { type: "tool_use"; name: string; input: unknown }
   | { type: "tool_result"; output: string; is_error?: boolean }

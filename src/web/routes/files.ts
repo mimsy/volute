@@ -12,7 +12,7 @@ const ALLOWED_FILES = new Set([
   "IDENTITY.md",
   "USER.md",
   "CLAUDE.md",
-  "MOLT.md",
+  "VOLUTE.md",
 ]);
 
 const saveFileSchema = z.object({ content: z.string() });

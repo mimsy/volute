@@ -33,7 +33,7 @@ export function getSessionUserId(sessionId: string): number | undefined {
 }
 
 export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
-  const sessionId = getCookie(c, "molt_session");
+  const sessionId = getCookie(c, "volute_session");
   if (!sessionId) return c.json({ error: "Unauthorized" }, 401);
 
   const userId = getSessionUserId(sessionId);

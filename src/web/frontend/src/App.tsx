@@ -66,7 +66,7 @@ export function App() {
       <div className="app">
         <header className="app-header">
           <a href="#/" className="logo">
-            <span className="logo-symbol">&gt;</span> molt
+            <span className="logo-symbol">&gt;</span> volute
           </a>
           {route.page === "agent" && route.name && (
             <nav className="breadcrumb">

@@ -9,7 +9,7 @@ export async function run(args: string[]) {
 
   const name = positional[0];
   if (!name) {
-    console.error("Usage: molt variants <name>");
+    console.error("Usage: volute variants <name>");
     process.exit(1);
   }
 

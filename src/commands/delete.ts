@@ -10,7 +10,7 @@ export async function run(args: string[]) {
 
   const name = positional[0];
   if (!name) {
-    console.error("Usage: molt delete <name> [--force]");
+    console.error("Usage: volute delete <name> [--force]");
     process.exit(1);
   }
 
@@ -23,7 +23,7 @@ export async function run(args: string[]) {
   const dir = agentDir(name);
 
   // Stop if running
-  const pidPath = resolve(dir, ".molt", "supervisor.pid");
+  const pidPath = resolve(dir, ".volute", "supervisor.pid");
   if (existsSync(pidPath)) {
     const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
     try {

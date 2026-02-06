@@ -42,7 +42,7 @@ describe("web auth routes", () => {
     assert.equal(body.role, "admin");
     assert.equal(body.username, "admin");
     // First user gets auto-login session cookie
-    const cookie = extractCookie(res, "molt_session");
+    const cookie = extractCookie(res, "volute_session");
     assert.ok(cookie, "should set session cookie for admin");
     if (cookie) deleteSession(cookie);
   });
@@ -79,7 +79,7 @@ describe("web auth routes", () => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.username, "loginuser");
-    const cookie = extractCookie(res, "molt_session");
+    const cookie = extractCookie(res, "volute_session");
     assert.ok(cookie, "should set session cookie");
     if (cookie) deleteSession(cookie);
   });
@@ -112,11 +112,11 @@ describe("web auth routes", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "meuser", password: "pass" }),
     });
-    const cookie = extractCookie(loginRes, "molt_session");
+    const cookie = extractCookie(loginRes, "volute_session");
     assert.ok(cookie);
 
     const res = await app.request("/api/auth/me", {
-      headers: { Cookie: `molt_session=${cookie}` },
+      headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
     const body = await res.json();
@@ -142,18 +142,18 @@ describe("web auth routes", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "logoutuser", password: "pass" }),
     });
-    const cookie = extractCookie(loginRes, "molt_session");
+    const cookie = extractCookie(loginRes, "volute_session");
     assert.ok(cookie);
 
     const logoutRes = await app.request("/api/auth/logout", {
       method: "POST",
-      headers: { Cookie: `molt_session=${cookie}` },
+      headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(logoutRes.status, 200);
 
     // Session should be invalid now
     const meRes = await app.request("/api/auth/me", {
-      headers: { Cookie: `molt_session=${cookie}` },
+      headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(meRes.status, 401);
   });

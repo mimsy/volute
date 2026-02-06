@@ -21,7 +21,7 @@ export async function run(args: string[]) {
 
   if (!agentName || !variantName) {
     console.error(
-      'Usage: molt fork <agent> <variant> [--soul "..."] [--port N] [--no-start] [--json]',
+      'Usage: volute fork <agent> <variant> [--soul "..."] [--port N] [--no-start] [--json]',
     );
     process.exit(1);
   }

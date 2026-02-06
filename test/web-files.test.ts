@@ -21,7 +21,7 @@ const ALLOWED_FILES = new Set([
   "IDENTITY.md",
   "USER.md",
   "CLAUDE.md",
-  "MOLT.md",
+  "VOLUTE.md",
 ]);
 const saveFileSchema = z.object({ content: z.string() });
 
@@ -41,7 +41,7 @@ async function setupAuth() {
 }
 
 function setupTestDir() {
-  testDir = resolve(tmpdir(), `molt-test-files-${Date.now()}`);
+  testDir = resolve(tmpdir(), `volute-test-files-${Date.now()}`);
   const homeDir = resolve(testDir, "home");
   mkdirSync(homeDir, { recursive: true });
   writeFileSync(resolve(homeDir, "SOUL.md"), "# Soul\nTest soul");
@@ -94,7 +94,7 @@ describe("web files routes", () => {
     const app = createApp(dir);
 
     const res = await app.request("/api/agents/test-agent/files", {
-      headers: { Cookie: `molt_session=${cookie}` },
+      headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
     const body = await res.json();
@@ -110,7 +110,7 @@ describe("web files routes", () => {
     const app = createApp(dir);
 
     const res = await app.request("/api/agents/test-agent/files/SOUL.md", {
-      headers: { Cookie: `molt_session=${cookie}` },
+      headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
     const body = await res.json();
@@ -124,7 +124,7 @@ describe("web files routes", () => {
     const app = createApp(dir);
 
     const res = await app.request("/api/agents/test-agent/files/secret.txt", {
-      headers: { Cookie: `molt_session=${cookie}` },
+      headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 403);
     const body = await res.json();
@@ -139,7 +139,7 @@ describe("web files routes", () => {
     const res = await app.request("/api/agents/test-agent/files/SOUL.md", {
       method: "PUT",
       headers: {
-        Cookie: `molt_session=${cookie}`,
+        Cookie: `volute_session=${cookie}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ content: "# Updated Soul\nNew content" }),
@@ -160,7 +160,7 @@ describe("web files routes", () => {
     const res = await app.request("/api/agents/test-agent/files/secret.txt", {
       method: "PUT",
       headers: {
-        Cookie: `molt_session=${cookie}`,
+        Cookie: `volute_session=${cookie}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ content: "hacked" }),

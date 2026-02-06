@@ -51,7 +51,7 @@ describe("web conversations routes", () => {
     await addMessage(conv.id, "user", "conv-admin", [{ type: "text", text: "Hello" }]);
 
     const res = await app.request("/api/agents/test-agent/conversations", {
-      headers: { Cookie: `molt_session=${cookie}` },
+      headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
     const body = await res.json();
@@ -72,7 +72,7 @@ describe("web conversations routes", () => {
     await addMessage(conv.id, "assistant", "test-agent", [{ type: "text", text: "Response" }]);
 
     const res = await app.request(`/api/agents/test-agent/conversations/${conv.id}/messages`, {
-      headers: { Cookie: `molt_session=${cookie}` },
+      headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
     const body = await res.json();
@@ -93,7 +93,7 @@ describe("web conversations routes", () => {
 
     const res = await app.request(`/api/agents/test-agent/conversations/${conv.id}`, {
       method: "DELETE",
-      headers: { Cookie: `molt_session=${cookie}` },
+      headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
     const body = await res.json();
@@ -101,7 +101,7 @@ describe("web conversations routes", () => {
 
     // Verify messages are gone (cascade delete)
     const msgsRes = await app.request(`/api/agents/test-agent/conversations/${conv.id}/messages`, {
-      headers: { Cookie: `molt_session=${cookie}` },
+      headers: { Cookie: `volute_session=${cookie}` },
     });
     const msgs = await msgsRes.json();
     assert.equal(msgs.length, 0);

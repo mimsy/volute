@@ -55,7 +55,7 @@ describe("security", () => {
       body: JSON.stringify({ username: "expuser", password: "pass" }),
     });
     const setCookie = loginRes.headers.get("set-cookie") ?? "";
-    const match = setCookie.match(/molt_session=([^;]+)/);
+    const match = setCookie.match(/volute_session=([^;]+)/);
     assert.ok(match);
     const sessionId = match![1];
 
@@ -63,7 +63,7 @@ describe("security", () => {
     deleteSession(sessionId);
 
     const meRes = await app.request("/api/auth/me", {
-      headers: { Cookie: `molt_session=${sessionId}` },
+      headers: { Cookie: `volute_session=${sessionId}` },
     });
     assert.equal(meRes.status, 401);
   });

@@ -54,27 +54,27 @@ switch (command) {
     await import("./commands/ui.js").then((m) => m.run(args));
     break;
   default:
-    console.log(`molt — create and manage AI agents
+    console.log(`volute — create and manage AI agents
 
 Commands:
-  molt create <name>               Create a new agent
-  molt start <name>                Start an agent (daemonized)
-  molt stop <name>                 Stop an agent
-  molt status [<name>]             Check agent status (or list all)
-  molt logs <name>                 Tail agent logs
-  molt send <name> "<msg>"         Send a message to an agent
-  molt fork <name> <variant>       Create a variant (worktree + server)
-  molt variants <name>             List variants for an agent
-  molt merge <name> <variant>      Merge a variant back
-  molt import <path>               Import an OpenClaw workspace
-  molt env <set|get|list|remove>   Manage environment variables
-  molt connect discord <name>      Connect a Discord bot to an agent (daemonized)
-  molt disconnect discord <name>   Stop a Discord bot connector
-  molt channel read <uri>          Read recent messages from a channel
-  molt channel send <uri> "<msg>"  Send a message to a channel
-  molt ui [--port N]               Open web dashboard (default: 4200)
-  molt upgrade <name>              Upgrade agent to latest template
-  molt delete <name> [--force]     Delete an agent (--force removes files)`);
+  volute create <name>               Create a new agent
+  volute start <name>                Start an agent (daemonized)
+  volute stop <name>                 Stop an agent
+  volute status [<name>]             Check agent status (or list all)
+  volute logs <name>                 Tail agent logs
+  volute send <name> "<msg>"         Send a message to an agent
+  volute fork <name> <variant>       Create a variant (worktree + server)
+  volute variants <name>             List variants for an agent
+  volute merge <name> <variant>      Merge a variant back
+  volute import <path>               Import an OpenClaw workspace
+  volute env <set|get|list|remove>   Manage environment variables
+  volute connect discord <name>      Connect a Discord bot to an agent (daemonized)
+  volute disconnect discord <name>   Stop a Discord bot connector
+  volute channel read <uri>          Read recent messages from a channel
+  volute channel send <uri> "<msg>"  Send a message to a channel
+  volute ui [--port N]               Open web dashboard (default: 4200)
+  volute upgrade <name>              Upgrade agent to latest template
+  volute delete <name> [--force]     Delete an agent (--force removes files)`);
     if (command) {
       console.error(`\nUnknown command: ${command}`);
       process.exit(1);

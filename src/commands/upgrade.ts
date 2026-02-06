@@ -7,7 +7,7 @@ import { spawnServer } from "../lib/spawn-server.js";
 import { copyTemplateToDir, findTemplatesDir } from "../lib/template.js";
 import { addVariant, checkHealth } from "../lib/variants.js";
 
-const TEMPLATE_BRANCH = "molt/template";
+const TEMPLATE_BRANCH = "volute/template";
 const VARIANT_NAME = "upgrade";
 
 export async function run(args: string[]) {
@@ -18,7 +18,7 @@ export async function run(args: string[]) {
 
   const agentName = positional[0];
   if (!agentName) {
-    console.error("Usage: molt upgrade <name> [--template <name>] [--continue]");
+    console.error("Usage: volute upgrade <name> [--template <name>] [--continue]");
     process.exit(1);
   }
 
@@ -73,7 +73,7 @@ export async function run(args: string[]) {
     console.log("\nMerge conflicts detected. Resolve them in:");
     console.log(`  ${worktreeDir}`);
     console.log(`\nThen run:`);
-    console.log(`  molt upgrade ${agentName} --continue`);
+    console.log(`  volute upgrade ${agentName} --continue`);
     return;
   }
 
@@ -82,7 +82,7 @@ export async function run(args: string[]) {
 }
 
 /**
- * Update the molt/template orphan branch with the latest template files.
+ * Update the volute/template orphan branch with the latest template files.
  * Uses a temporary worktree to avoid touching the main working directory.
  */
 async function updateTemplateBranch(projectRoot: string, templateDir: string, agentName: string) {
@@ -205,7 +205,7 @@ async function continueUpgrade(agentName: string, projectRoot: string) {
   const worktreeDir = resolve(projectRoot, ".worktrees", VARIANT_NAME);
 
   if (!existsSync(worktreeDir)) {
-    console.error("No upgrade in progress. Run `molt upgrade` first.");
+    console.error("No upgrade in progress. Run `volute upgrade` first.");
     process.exit(1);
   }
 
@@ -274,8 +274,8 @@ async function installAndVerify(agentName: string, projectRoot: string, worktree
 
   console.log(`\nUpgrade variant running on port ${actualPort}`);
   console.log(`\nNext steps:`);
-  console.log(`  molt send ${agentName}@${VARIANT_NAME} "hello"    # chat with upgraded variant`);
-  console.log(`  molt merge ${agentName} ${VARIANT_NAME}           # merge back when satisfied`);
+  console.log(`  volute send ${agentName}@${VARIANT_NAME} "hello"    # chat with upgraded variant`);
+  console.log(`  volute merge ${agentName} ${VARIANT_NAME}           # merge back when satisfied`);
 }
 
 /**

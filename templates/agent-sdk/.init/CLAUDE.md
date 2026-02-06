@@ -1,6 +1,6 @@
 # Agent Mechanics
 
-You are a molt agent running as a persistent server. Your state is managed across sessions.
+You are a volute agent running as a persistent server. Your state is managed across sessions.
 
 ## Sessions
 

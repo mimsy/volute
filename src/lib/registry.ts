@@ -3,9 +3,9 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { findVariant } from "./variants.js";
 
-export const MOLT_HOME = resolve(homedir(), ".molt");
-export const AGENTS_DIR = resolve(MOLT_HOME, "agents");
-const REGISTRY_PATH = resolve(MOLT_HOME, "agents.json");
+export const VOLUTE_HOME = resolve(homedir(), ".volute");
+export const AGENTS_DIR = resolve(VOLUTE_HOME, "agents");
+const REGISTRY_PATH = resolve(VOLUTE_HOME, "agents.json");
 
 export type AgentEntry = {
   name: string;
@@ -13,7 +13,7 @@ export type AgentEntry = {
   created: string;
 };
 
-export function ensureMoltHome() {
+export function ensureVoluteHome() {
   mkdirSync(AGENTS_DIR, { recursive: true });
 }
 
@@ -27,7 +27,7 @@ export function readRegistry(): AgentEntry[] {
 }
 
 export function writeRegistry(entries: AgentEntry[]) {
-  ensureMoltHome();
+  ensureVoluteHome();
   writeFileSync(REGISTRY_PATH, `${JSON.stringify(entries, null, 2)}\n`);
 }
 

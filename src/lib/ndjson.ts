@@ -1,7 +1,7 @@
-import type { MoltEvent } from "../types.js";
+import type { VoluteEvent } from "../types.js";
 import log from "./logger.js";
 
-export async function* readNdjson(body: ReadableStream<Uint8Array>): AsyncGenerator<MoltEvent> {
+export async function* readNdjson(body: ReadableStream<Uint8Array>): AsyncGenerator<VoluteEvent> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -18,7 +18,7 @@ export async function* readNdjson(body: ReadableStream<Uint8Array>): AsyncGenera
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
-          yield JSON.parse(line) as MoltEvent;
+          yield JSON.parse(line) as VoluteEvent;
         } catch {
           log.warn("ndjson: skipping invalid line", { line: line.slice(0, 100) });
         }
@@ -28,7 +28,7 @@ export async function* readNdjson(body: ReadableStream<Uint8Array>): AsyncGenera
     // Handle remaining buffer
     if (buffer.trim()) {
       try {
-        yield JSON.parse(buffer) as MoltEvent;
+        yield JSON.parse(buffer) as VoluteEvent;
       } catch {
         log.warn("ndjson: skipping invalid line", { line: buffer.slice(0, 100) });
       }

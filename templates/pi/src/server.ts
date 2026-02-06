@@ -1,9 +1,9 @@
+import { existsSync, readFileSync, unlinkSync } from "fs";
 import { createServer, type IncomingMessage } from "http";
-import { readFileSync, existsSync, unlinkSync } from "fs";
 import { resolve } from "path";
 import { createAgent } from "./lib/agent.js";
-import type { MoltRequest } from "./lib/types.js";
 import { log } from "./lib/logger.js";
+import type { VoluteRequest } from "./lib/types.js";
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -105,7 +105,7 @@ const server = createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/message") {
     try {
-      const body = JSON.parse(await readBody(req)) as MoltRequest;
+      const body = JSON.parse(await readBody(req)) as VoluteRequest;
 
       res.writeHead(200, {
         "Content-Type": "application/x-ndjson",
@@ -166,13 +166,15 @@ server.listen(port, () => {
   const orientationParts: string[] = [];
 
   // Check for post-merge context
-  const mergedPath = resolve(".molt/merged.json");
+  const mergedPath = resolve(".volute/merged.json");
   if (existsSync(mergedPath)) {
     try {
       const merged = JSON.parse(readFileSync(mergedPath, "utf-8"));
       unlinkSync(mergedPath);
 
-      const parts = [`[system] Variant "${merged.name}" has been merged and you have been restarted.`];
+      const parts = [
+        `[system] Variant "${merged.name}" has been merged and you have been restarted.`,
+      ];
       if (merged.summary) parts.push(`Changes: ${merged.summary}`);
       if (merged.justification) parts.push(`Why: ${merged.justification}`);
       if (merged.memory) parts.push(`Context: ${merged.memory}`);

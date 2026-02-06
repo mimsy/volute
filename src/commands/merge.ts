@@ -17,7 +17,7 @@ export async function run(args: string[]) {
   const variantName = positional[1];
   if (!agentName || !variantName) {
     console.error(
-      "Usage: molt merge <agent> <variant> [--summary '...'] [--justification '...'] [--memory '...']",
+      "Usage: volute merge <agent> <variant> [--summary '...'] [--justification '...'] [--memory '...']",
     );
     process.exit(1);
   }
@@ -97,10 +97,10 @@ export async function run(args: string[]) {
   console.log(`Variant ${variantName} merged and cleaned up.`);
 
   // Write merged.json for post-restart orientation
-  const moltDir = resolve(projectRoot, ".molt");
-  if (!existsSync(moltDir)) mkdirSync(moltDir, { recursive: true });
+  const voluteDir = resolve(projectRoot, ".volute");
+  if (!existsSync(voluteDir)) mkdirSync(voluteDir, { recursive: true });
   writeFileSync(
-    resolve(moltDir, "merged.json"),
+    resolve(voluteDir, "merged.json"),
     JSON.stringify({
       name: variantName,
       ...(flags.summary && { summary: flags.summary }),
@@ -110,10 +110,10 @@ export async function run(args: string[]) {
   );
 
   // If running under supervisor, it handles restart — just exit
-  if (process.env.MOLT_SUPERVISOR) return;
+  if (process.env.VOLUTE_SUPERVISOR) return;
 
   // Kill old supervisor if running
-  const pidPath = resolve(moltDir, "supervisor.pid");
+  const pidPath = resolve(voluteDir, "supervisor.pid");
   if (existsSync(pidPath)) {
     try {
       const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
@@ -150,7 +150,7 @@ export async function run(args: string[]) {
   const { entry } = resolveAgent(agentName);
 
   console.log("Starting new supervisor...");
-  const logsDir = resolve(projectRoot, ".molt", "logs");
+  const logsDir = resolve(projectRoot, ".volute", "logs");
   mkdirSync(logsDir, { recursive: true });
   const logFd = openSync(resolve(logsDir, "supervisor.log"), "a");
 

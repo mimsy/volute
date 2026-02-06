@@ -1,7 +1,7 @@
 import { useCallback, useRef } from "react";
-import type { MoltEvent } from "./api";
+import type { VoluteEvent } from "./api";
 
-export function useChatStream(name: string, onEvent: (event: MoltEvent) => void) {
+export function useChatStream(name: string, onEvent: (event: VoluteEvent) => void) {
   const abortRef = useRef<AbortController | null>(null);
 
   const send = useCallback(
@@ -44,7 +44,7 @@ export function useChatStream(name: string, onEvent: (event: MoltEvent) => void)
           const json = line.slice(6);
           if (!json) continue;
           try {
-            const event = JSON.parse(json) as MoltEvent;
+            const event = JSON.parse(json) as VoluteEvent;
             onEvent(event);
           } catch {
             // skip invalid

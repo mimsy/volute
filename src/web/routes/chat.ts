@@ -10,7 +10,7 @@ import {
 } from "../../lib/conversations.js";
 import { readNdjson } from "../../lib/ndjson.js";
 import { findAgent } from "../../lib/registry.js";
-import type { MoltContentPart, MoltEvent } from "../../types.js";
+import type { VoluteContentPart, VoluteEvent } from "../../types.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
 const chatSchema = z.object({
@@ -67,7 +67,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   await addMessage(conversationId, "user", user.username, userContent);
 
   // Build content for agent server
-  const agentContent: MoltContentPart[] = [];
+  const agentContent: VoluteContentPart[] = [];
   if (body.message) {
     agentContent.push({ type: "text", text: body.message });
   }
@@ -104,28 +104,32 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     const assistantContent: ContentBlock[] = [];
 
     for await (const event of readNdjson(res.body!)) {
-      const moltEvent = event as MoltEvent;
-      await stream.writeSSE({ data: JSON.stringify(moltEvent) });
+      const voluteEvent = event as VoluteEvent;
+      await stream.writeSSE({ data: JSON.stringify(voluteEvent) });
 
-      if (moltEvent.type === "text") {
+      if (voluteEvent.type === "text") {
         // Merge consecutive text blocks
         const last = assistantContent[assistantContent.length - 1];
         if (last && last.type === "text") {
-          last.text += moltEvent.content;
+          last.text += voluteEvent.content;
         } else {
-          assistantContent.push({ type: "text", text: moltEvent.content });
+          assistantContent.push({ type: "text", text: voluteEvent.content });
         }
-      } else if (moltEvent.type === "tool_use") {
-        assistantContent.push({ type: "tool_use", name: moltEvent.name, input: moltEvent.input });
-      } else if (moltEvent.type === "tool_result") {
+      } else if (voluteEvent.type === "tool_use") {
+        assistantContent.push({
+          type: "tool_use",
+          name: voluteEvent.name,
+          input: voluteEvent.input,
+        });
+      } else if (voluteEvent.type === "tool_result") {
         assistantContent.push({
           type: "tool_result",
-          output: moltEvent.output,
-          ...(moltEvent.is_error ? { is_error: true } : {}),
+          output: voluteEvent.output,
+          ...(voluteEvent.is_error ? { is_error: true } : {}),
         });
       }
 
-      if (moltEvent.type === "done") {
+      if (voluteEvent.type === "done") {
         // Save assistant message
         if (assistantContent.length > 0) {
           await addMessage(conversationId!, "assistant", name, assistantContent);

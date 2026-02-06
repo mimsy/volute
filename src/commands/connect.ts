@@ -12,13 +12,13 @@ export async function run(args: string[]) {
 
   const connector = positional[0];
   if (connector !== "discord") {
-    console.error("Usage: molt connect discord <agent> [--foreground]");
+    console.error("Usage: volute connect discord <agent> [--foreground]");
     process.exit(1);
   }
 
   const name = positional[1];
   if (!name) {
-    console.error("Usage: molt connect discord <agent> [--foreground]");
+    console.error("Usage: volute connect discord <agent> [--foreground]");
     process.exit(1);
   }
 
@@ -26,18 +26,18 @@ export async function run(args: string[]) {
   const env = loadMergedEnv(dir);
 
   if (!env.DISCORD_TOKEN) {
-    console.error("DISCORD_TOKEN not set. Run: molt env set DISCORD_TOKEN <token>");
+    console.error("DISCORD_TOKEN not set. Run: volute env set DISCORD_TOKEN <token>");
     process.exit(1);
   }
 
   // Check if already running
-  const pidPath = resolve(dir, ".molt", "discord.pid");
+  const pidPath = resolve(dir, ".volute", "discord.pid");
   if (existsSync(pidPath)) {
     try {
       const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
       process.kill(pid, 0);
       console.error(
-        `Discord connector for ${name} already running (pid ${pid}). Use 'molt disconnect discord ${name}' first.`,
+        `Discord connector for ${name} already running (pid ${pid}). Use 'volute disconnect discord ${name}' first.`,
       );
       process.exit(1);
     } catch {
@@ -79,7 +79,7 @@ export async function run(args: string[]) {
   `;
 
   // Daemon mode: redirect output to log file
-  const logsDir = resolve(dir, ".molt", "logs");
+  const logsDir = resolve(dir, ".volute", "logs");
   mkdirSync(logsDir, { recursive: true });
 
   const logFile = resolve(logsDir, "discord.log");

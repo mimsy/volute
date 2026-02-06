@@ -1,15 +1,15 @@
-export type MoltContentPart =
+export type VoluteContentPart =
   | { type: "text"; text: string }
   | { type: "image"; media_type: string; data: string };
 
-export type MoltRequest = {
-  content: MoltContentPart[];
+export type VoluteRequest = {
+  content: VoluteContentPart[];
   channel?: string;
   session?: string;
   sender?: string;
 };
 
-export type MoltEvent =
+export type VoluteEvent =
   | { type: "text"; content: string }
   | { type: "image"; media_type: string; data: string }
   | { type: "tool_use"; name: string; input: unknown }

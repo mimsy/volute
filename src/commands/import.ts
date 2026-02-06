@@ -12,7 +12,7 @@ import { dirname, resolve } from "node:path";
 import { convertSession } from "../lib/convert-session.js";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { addAgent, agentDir, ensureMoltHome, nextPort } from "../lib/registry.js";
+import { addAgent, agentDir, ensureVoluteHome, nextPort } from "../lib/registry.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -24,7 +24,7 @@ export async function run(args: string[]) {
   const workspacePath = positional[0];
   if (!workspacePath) {
     console.error(
-      "Usage: molt import <openclaw-workspace-path> [--name <name>] [--session <session-jsonl-path>] [--template <name>]",
+      "Usage: volute import <openclaw-workspace-path> [--name <name>] [--session <session-jsonl-path>] [--template <name>]",
     );
     process.exit(1);
   }
@@ -48,7 +48,7 @@ export async function run(args: string[]) {
   // Parse name from IDENTITY.md if not provided
   const name = flags.name ?? parseNameFromIdentity(identity) ?? "imported-agent";
 
-  ensureMoltHome();
+  ensureVoluteHome();
   const dest = agentDir(name);
 
   if (existsSync(dest)) {
@@ -168,13 +168,13 @@ export async function run(args: string[]) {
     });
 
     // Write session ID so the agent can resume
-    const moltDir = resolve(dest, ".molt");
-    mkdirSync(moltDir, { recursive: true });
-    writeFileSync(resolve(moltDir, "session.json"), JSON.stringify({ sessionId }));
+    const voluteDir = resolve(dest, ".volute");
+    mkdirSync(voluteDir, { recursive: true });
+    writeFileSync(resolve(voluteDir, "session.json"), JSON.stringify({ sessionId }));
   }
 
   console.log(`\nImported agent: ${name} (port ${port})`);
-  console.log(`\n  molt start ${name}`);
+  console.log(`\n  volute start ${name}`);
 }
 
 function parseNameFromIdentity(identity: string): string | undefined {

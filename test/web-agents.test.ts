@@ -24,7 +24,7 @@ async function setupAuth(): Promise<string> {
 // Helper to build POST request headers that pass CSRF
 function postHeaders(cookie: string) {
   return {
-    Cookie: `molt_session=${cookie}`,
+    Cookie: `volute_session=${cookie}`,
     Origin: "http://localhost",
   };
 }
@@ -38,7 +38,7 @@ describe("web agents routes", () => {
     const { default: app } = await import("../src/web/app.js");
 
     const res = await app.request("/api/agents", {
-      headers: { Cookie: `molt_session=${cookie}` },
+      headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
     const body = await res.json();
@@ -50,7 +50,7 @@ describe("web agents routes", () => {
     const { default: app } = await import("../src/web/app.js");
 
     const res = await app.request("/api/agents/nonexistent-agent-xyz", {
-      headers: { Cookie: `molt_session=${cookie}` },
+      headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 404);
     const body = await res.json();

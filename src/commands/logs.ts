@@ -12,12 +12,12 @@ export async function run(args: string[]) {
 
   const name = positional[0];
   if (!name) {
-    console.error("Usage: molt logs <name> [--follow] [-n N]");
+    console.error("Usage: volute logs <name> [--follow] [-n N]");
     process.exit(1);
   }
 
   const { dir } = resolveAgent(name);
-  const logFile = resolve(dir, ".molt", "logs", "supervisor.log");
+  const logFile = resolve(dir, ".volute", "logs", "supervisor.log");
 
   if (!existsSync(logFile)) {
     console.error(`No log file found. Has ${name} been started?`);

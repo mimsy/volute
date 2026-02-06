@@ -24,7 +24,7 @@ export async function run(args: string[]) {
 
   const name = positional[0];
   if (!name) {
-    console.error("Usage: molt start <name> [--foreground] [--dev]");
+    console.error("Usage: volute start <name> [--foreground] [--dev]");
     process.exit(1);
   }
 
@@ -32,12 +32,12 @@ export async function run(args: string[]) {
   const port = entry.port;
 
   // Check if already running
-  const pidPath = resolve(dir, ".molt", "supervisor.pid");
+  const pidPath = resolve(dir, ".volute", "supervisor.pid");
   if (existsSync(pidPath)) {
     try {
       const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
       process.kill(pid, 0);
-      console.error(`${name} already running (pid ${pid}). Use 'molt stop ${name}' first.`);
+      console.error(`${name} already running (pid ${pid}). Use 'volute stop ${name}' first.`);
       process.exit(1);
     } catch {
       // PID file is stale, continue
@@ -49,12 +49,12 @@ export async function run(args: string[]) {
   if (!portFree) {
     console.error(`Port ${port} is already in use.`);
     console.error(
-      `Another agent or process may be running. Use 'molt stop ${name}' or check with: lsof -i :${port}`,
+      `Another agent or process may be running. Use 'volute stop ${name}' or check with: lsof -i :${port}`,
     );
     process.exit(1);
   }
 
-  // Find the supervisor module — run it via tsx from the molt CLI source
+  // Find the supervisor module — run it via tsx from the volute CLI source
   let supervisorModule = "";
   let searchDir = dirname(new URL(import.meta.url).pathname);
   for (let i = 0; i < 5; i++) {
@@ -99,7 +99,7 @@ export async function run(args: string[]) {
   }
 
   // Daemon mode: redirect output to log file
-  const logsDir = resolve(dir, ".molt", "logs");
+  const logsDir = resolve(dir, ".volute", "logs");
   mkdirSync(logsDir, { recursive: true });
 
   const logFile = resolve(logsDir, "supervisor.log");
@@ -123,7 +123,7 @@ export async function run(args: string[]) {
       if (res.ok) {
         const data = (await res.json()) as { name: string; version: string };
         console.log(`${data.name} running on port ${port} (pid ${child.pid})`);
-        console.log(`Logs: molt logs ${name}`);
+        console.log(`Logs: volute logs ${name}`);
         return;
       }
     } catch {
@@ -144,6 +144,6 @@ export async function run(args: string[]) {
   }
 
   console.error("Supervisor started but server did not become healthy within 30s.");
-  console.error(`Check logs: molt logs ${name}`);
+  console.error(`Check logs: volute logs ${name}`);
   process.exit(1);
 }

@@ -1,3 +1,4 @@
+import { getModel, getModels } from "@mariozechner/pi-ai";
 import {
   AuthStorage,
   createAgentSession,
@@ -6,12 +7,11 @@ import {
   SessionManager,
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
-import { getModel, getModels } from "@mariozechner/pi-ai";
-import type { MoltEvent, MoltContentPart } from "./types.js";
-import { log, logThinking, logToolUse, logToolResult, logText, logMessage } from "./logger.js";
 import { commitFileChange } from "./auto-commit.js";
+import { log, logMessage, logText, logThinking, logToolResult, logToolUse } from "./logger.js";
+import type { VoluteContentPart, VoluteEvent } from "./types.js";
 
-type Listener = (event: MoltEvent) => void;
+type Listener = (event: VoluteEvent) => void;
 
 export async function createAgent(options: {
   systemPrompt: string;
@@ -41,9 +41,13 @@ export async function createAgent(options: {
     );
   }
 
-  const thinkingLevel = (options.thinkingLevel ||
-    process.env.PI_THINKING_LEVEL ||
-    "medium") as "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  const thinkingLevel = (options.thinkingLevel || process.env.PI_THINKING_LEVEL || "medium") as
+    | "off"
+    | "minimal"
+    | "low"
+    | "medium"
+    | "high"
+    | "xhigh";
 
   const authStorage = new AuthStorage();
   const modelRegistry = new ModelRegistry(authStorage);
@@ -75,7 +79,7 @@ export async function createAgent(options: {
     resourceLoader,
   });
 
-  function broadcast(event: MoltEvent) {
+  function broadcast(event: VoluteEvent) {
     for (const listener of listeners) {
       try {
         listener(event);
@@ -134,11 +138,15 @@ export async function createAgent(options: {
     }
   });
 
-  function sendMessage(content: string | MoltContentPart[], source?: string, sender?: string) {
+  function sendMessage(content: string | VoluteContentPart[], source?: string, sender?: string) {
     // Convert to text for pi agent (images not yet supported by pi)
-    const raw = typeof content === "string"
-      ? content
-      : content.filter((p) => p.type === "text").map((p) => (p as { text: string }).text).join("\n");
+    const raw =
+      typeof content === "string"
+        ? content
+        : content
+            .filter((p) => p.type === "text")
+            .map((p) => (p as { text: string }).text)
+            .join("\n");
     logMessage("in", raw, source);
 
     // Build context prefix from channel/sender metadata
