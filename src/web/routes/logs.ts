@@ -5,9 +5,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { agentDir, findAgent } from "../../lib/registry.js";
 
-const app = new Hono();
-
-app.get("/:name/logs", async (c) => {
+const app = new Hono().get("/:name/logs", async (c) => {
   const name = c.req.param("name");
   const entry = findAgent(name);
   if (!entry) return c.json({ error: "Agent not found" }, 404);

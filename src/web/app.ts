@@ -42,17 +42,18 @@ app.use("*", async (c, next) => {
 // CSRF protection for API mutation requests
 app.use("/api/*", csrf());
 
-// Auth routes (unprotected)
-app.route("/api/auth", auth);
-
 // Protected API routes
 app.use("/api/agents/*", authMiddleware);
-app.route("/api/agents", agents);
-app.route("/api/agents", chat);
-app.route("/api/agents", logs);
-app.route("/api/agents", variants);
-app.route("/api/agents", files);
-app.route("/api/agents", conversations);
+
+// Chain route registrations to capture types
+const routes = app
+  .route("/api/auth", auth)
+  .route("/api/agents", agents)
+  .route("/api/agents", chat)
+  .route("/api/agents", logs)
+  .route("/api/agents", variants)
+  .route("/api/agents", files)
+  .route("/api/agents", conversations);
 
 export default app;
-export type AppType = typeof app;
+export type AppType = typeof routes;

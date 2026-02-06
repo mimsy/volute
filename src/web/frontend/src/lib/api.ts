@@ -1,3 +1,8 @@
+import { hc } from "hono/client";
+import type { AppType } from "../../../app.js";
+
+const client = hc<AppType>("/");
+
 export type Channel = {
   name: string;
   displayName: string;
@@ -38,56 +43,57 @@ export type FileContent = {
 };
 
 export async function fetchAgents(): Promise<Agent[]> {
-  const res = await fetch("/api/agents");
+  const res = await client.api.agents.$get();
   if (!res.ok) throw new Error("Failed to fetch agents");
   return res.json();
 }
 
 export async function fetchAgent(name: string): Promise<Agent> {
-  const res = await fetch(`/api/agents/${name}`);
+  const res = await client.api.agents[":name"].$get({ param: { name } });
   if (!res.ok) throw new Error("Failed to fetch agent");
   return res.json();
 }
 
 export async function startAgent(name: string): Promise<void> {
-  const res = await fetch(`/api/agents/${name}/start`, { method: "POST" });
+  const res = await client.api.agents[":name"].start.$post({ param: { name } });
   if (!res.ok) {
-    const data = await res.json();
+    const data = (await res.json()) as { error?: string };
     throw new Error(data.error || "Failed to start");
   }
 }
 
 export async function stopAgent(name: string): Promise<void> {
-  const res = await fetch(`/api/agents/${name}/stop`, { method: "POST" });
+  const res = await client.api.agents[":name"].stop.$post({ param: { name } });
   if (!res.ok) {
-    const data = await res.json();
+    const data = (await res.json()) as { error?: string };
     throw new Error(data.error || "Failed to stop");
   }
 }
 
 export async function fetchVariants(name: string): Promise<Variant[]> {
-  const res = await fetch(`/api/agents/${name}/variants`);
+  const res = await client.api.agents[":name"].variants.$get({ param: { name } });
   if (!res.ok) throw new Error("Failed to fetch variants");
   return res.json();
 }
 
 export async function fetchFiles(name: string): Promise<string[]> {
-  const res = await fetch(`/api/agents/${name}/files`);
+  const res = await client.api.agents[":name"].files.$get({ param: { name } });
   if (!res.ok) throw new Error("Failed to fetch files");
   return res.json();
 }
 
 export async function fetchFile(name: string, filename: string): Promise<FileContent> {
-  const res = await fetch(`/api/agents/${name}/files/${filename}`);
+  const res = await client.api.agents[":name"].files[":filename"].$get({
+    param: { name, filename },
+  });
   if (!res.ok) throw new Error("Failed to fetch file");
   return res.json();
 }
 
 export async function saveFile(name: string, filename: string, content: string): Promise<void> {
-  const res = await fetch(`/api/agents/${name}/files/${filename}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
+  const res = await client.api.agents[":name"].files[":filename"].$put({
+    param: { name, filename },
+    json: { content },
   });
   if (!res.ok) throw new Error("Failed to save file");
 }
@@ -118,7 +124,7 @@ export type ConversationMessage = {
 };
 
 export async function fetchConversations(name: string): Promise<Conversation[]> {
-  const res = await fetch(`/api/agents/${name}/conversations`);
+  const res = await client.api.agents[":name"].conversations.$get({ param: { name } });
   if (!res.ok) throw new Error("Failed to fetch conversations");
   return res.json();
 }
@@ -127,14 +133,16 @@ export async function fetchConversationMessages(
   name: string,
   conversationId: string,
 ): Promise<ConversationMessage[]> {
-  const res = await fetch(`/api/agents/${name}/conversations/${conversationId}/messages`);
+  const res = await client.api.agents[":name"].conversations[":id"].messages.$get({
+    param: { name, id: conversationId },
+  });
   if (!res.ok) throw new Error("Failed to fetch messages");
   return res.json();
 }
 
 export async function deleteConversation(name: string, conversationId: string): Promise<void> {
-  const res = await fetch(`/api/agents/${name}/conversations/${conversationId}`, {
-    method: "DELETE",
+  const res = await client.api.agents[":name"].conversations[":id"].$delete({
+    param: { name, id: conversationId },
   });
   if (!res.ok) throw new Error("Failed to delete conversation");
 }

@@ -26,9 +26,7 @@ const chatSchema = z.object({
     .optional(),
 });
 
-const app = new Hono<AuthEnv>();
-
-app.post("/:name/chat", zValidator("json", chatSchema), async (c) => {
+const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchema), async (c) => {
   const name = c.req.param("name");
   const entry = findAgent(name);
   if (!entry) return c.json({ error: "Agent not found" }, 404);
