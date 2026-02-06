@@ -1,5 +1,7 @@
+import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import { z } from "zod";
 import {
   approveUser,
   createUser,
@@ -17,20 +19,22 @@ import {
   getSessionUserId,
 } from "../middleware/auth.js";
 
+const credentialsSchema = z.object({
+  username: z.string().min(1),
+  password: z.string().min(1),
+});
+
 const app = new Hono();
 
-app.post("/register", async (c) => {
-  const body = await c.req.json<{ username: string; password: string }>();
-  if (!body.username || !body.password) {
-    return c.json({ error: "Username and password required" }, 400);
-  }
+app.post("/register", zValidator("json", credentialsSchema), async (c) => {
+  const { username, password } = c.req.valid("json");
 
-  const existing = await getUserByUsername(body.username);
+  const existing = await getUserByUsername(username);
   if (existing) {
     return c.json({ error: "Username already taken" }, 409);
   }
 
-  const user = await createUser(body.username, body.password);
+  const user = await createUser(username, password);
 
   if (user.role === "admin") {
     // Auto-login first user
@@ -41,13 +45,10 @@ app.post("/register", async (c) => {
   return c.json({ id: user.id, username: user.username, role: user.role });
 });
 
-app.post("/login", async (c) => {
-  const body = await c.req.json<{ username: string; password: string }>();
-  if (!body.username || !body.password) {
-    return c.json({ error: "Username and password required" }, 400);
-  }
+app.post("/login", zValidator("json", credentialsSchema), async (c) => {
+  const { username, password } = c.req.valid("json");
 
-  const user = await verifyUser(body.username, body.password);
+  const user = await verifyUser(username, password);
   if (!user) {
     return c.json({ error: "Invalid credentials" }, 401);
   }

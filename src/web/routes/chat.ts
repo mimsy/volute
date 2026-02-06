@@ -1,5 +1,7 @@
+import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { z } from "zod";
 import {
   addMessage,
   type ContentBlock,
@@ -11,18 +13,27 @@ import { findAgent } from "../../lib/registry.js";
 import type { MoltContentPart, MoltEvent } from "../../types.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
+const chatSchema = z.object({
+  message: z.string().optional(),
+  conversationId: z.string().optional(),
+  images: z
+    .array(
+      z.object({
+        media_type: z.string(),
+        data: z.string(),
+      }),
+    )
+    .optional(),
+});
+
 const app = new Hono<AuthEnv>();
 
-app.post("/:name/chat", async (c) => {
+app.post("/:name/chat", zValidator("json", chatSchema), async (c) => {
   const name = c.req.param("name");
   const entry = findAgent(name);
   if (!entry) return c.json({ error: "Agent not found" }, 404);
 
-  const body = await c.req.json<{
-    message?: string;
-    conversationId?: string;
-    images?: Array<{ media_type: string; data: string }>;
-  }>();
+  const body = c.req.valid("json");
   if (!body.message && (!body.images || body.images.length === 0)) {
     return c.json({ error: "message or images required" }, 400);
   }

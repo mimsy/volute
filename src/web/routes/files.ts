@@ -1,7 +1,9 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
+import { z } from "zod";
 import { agentDir, findAgent } from "../../lib/registry.js";
 
 const ALLOWED_FILES = new Set([
@@ -12,6 +14,8 @@ const ALLOWED_FILES = new Set([
   "CLAUDE.md",
   "MOLT.md",
 ]);
+
+const saveFileSchema = z.object({ content: z.string() });
 
 const app = new Hono();
 
@@ -55,7 +59,7 @@ app.get("/:name/files/:filename", async (c) => {
 });
 
 // Write a file
-app.put("/:name/files/:filename", async (c) => {
+app.put("/:name/files/:filename", zValidator("json", saveFileSchema), async (c) => {
   const name = c.req.param("name");
   const filename = c.req.param("filename");
 
@@ -69,8 +73,8 @@ app.put("/:name/files/:filename", async (c) => {
   const dir = agentDir(name);
   const filePath = resolve(dir, "home", filename);
 
-  const body = await c.req.json<{ content: string }>();
-  await writeFile(filePath, body.content);
+  const { content } = c.req.valid("json");
+  await writeFile(filePath, content);
 
   return c.json({ ok: true });
 });
