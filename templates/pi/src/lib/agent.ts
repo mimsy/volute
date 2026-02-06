@@ -1,4 +1,4 @@
-import { getModel, getModels } from "@mariozechner/pi-ai";
+import { getModel, getModels, type ImageContent } from "@mariozechner/pi-ai";
 import {
   AuthStorage,
   createAgentSession,
@@ -151,7 +151,6 @@ export async function createAgent(options: {
   });
 
   function sendMessage(content: string | VoluteContentPart[], source?: string, sender?: string) {
-    // Convert to text for pi agent (images not yet supported by pi)
     const raw =
       typeof content === "string"
         ? content
@@ -165,10 +164,20 @@ export async function createAgent(options: {
     const prefix = source && sender ? `[${source}: ${sender}]\n` : "";
     const text = prefix + raw;
 
+    // Convert image parts to pi-ai ImageContent format
+    const images: ImageContent[] | undefined =
+      typeof content === "string"
+        ? undefined
+        : content
+            .filter((p) => p.type === "image")
+            .map((p) => ({ type: "image" as const, mimeType: p.media_type, data: p.data }));
+
+    const opts = images?.length ? { images } : {};
+
     if (session.isStreaming) {
-      session.prompt(text, { streamingBehavior: "followUp" });
+      session.prompt(text, { streamingBehavior: "followUp", ...opts });
     } else {
-      session.prompt(text);
+      session.prompt(text, opts);
     }
   }
 

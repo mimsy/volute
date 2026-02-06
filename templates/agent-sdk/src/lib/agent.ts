@@ -45,6 +45,7 @@ export function createAgent(options: {
         systemPrompt: options.systemPrompt,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
+        settingSources: ["project"],
         cwd: options.cwd,
         abortController: options.abortController,
         model: options.model,
