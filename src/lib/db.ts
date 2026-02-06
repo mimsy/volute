@@ -19,7 +19,7 @@ let db: DbInstance | null = null;
 
 export async function getDb(): Promise<DbInstance> {
   if (db) return db;
-  const dbPath = resolve(VOLUTE_HOME, "volute.db");
+  const dbPath = process.env.VOLUTE_DB_PATH || resolve(VOLUTE_HOME, "volute.db");
   db = drizzle({ connection: { url: `file:${dbPath}` }, schema });
   try {
     await migrate(db, { migrationsFolder });

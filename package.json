@@ -10,7 +10,7 @@
     "build": "tsup && npm run build:web",
     "build:web": "vite build --config src/web/frontend/vite.config.ts",
     "dev:web": "vite --config src/web/frontend/vite.config.ts",
-    "test": "node --import tsx --test --test-concurrency=1 test/*.test.ts",
+    "test": "node --import tsx --import ./test/setup.ts --test --test-concurrency=1 test/*.test.ts",
     "lint": "biome check src/ test/",
     "lint:fix": "biome check --write src/ test/",
     "format": "biome format --write src/ test/",
