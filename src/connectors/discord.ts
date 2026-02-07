@@ -206,6 +206,8 @@ async function handleAgentRequest(message: Message, content: ContentPart[]) {
 
   const senderName = message.author.displayName || message.author.username;
   const channelKey = `discord:${message.channelId}`;
+  const isDM = !message.guild;
+  const channelName = !isDM && "name" in message.channel ? message.channel.name : null;
 
   try {
     const res = await fetch(`${baseUrl}/message`, {
@@ -215,6 +217,10 @@ async function handleAgentRequest(message: Message, content: ContentPart[]) {
         content,
         channel: channelKey,
         sender: senderName,
+        platform: "Discord",
+        ...(isDM ? { isDM: true } : {}),
+        ...(channelName ? { channelName } : {}),
+        ...(message.guild?.name ? { guildName: message.guild.name } : {}),
       }),
     });
 

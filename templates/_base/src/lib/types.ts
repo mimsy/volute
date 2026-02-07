@@ -2,12 +2,19 @@ export type VoluteContentPart =
   | { type: "text"; text: string }
   | { type: "image"; media_type: string; data: string };
 
+export type ChannelMeta = {
+  channel?: string;
+  sender?: string;
+  platform?: string;
+  isDM?: boolean;
+  channelName?: string;
+  guildName?: string;
+};
+
 export type VoluteRequest = {
   content: VoluteContentPart[];
-  channel?: string;
   session?: string;
-  sender?: string;
-};
+} & ChannelMeta;
 
 export type VoluteEvent =
   | { type: "text"; content: string }

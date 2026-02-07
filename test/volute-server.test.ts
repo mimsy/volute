@@ -16,8 +16,8 @@ describe("volute server HTTP contract", () => {
   const calls: { content: unknown; channel?: string; sender?: string }[] = [];
 
   const mockAgent: VoluteAgent = {
-    sendMessage(content, channel, sender) {
-      calls.push({ content, channel, sender });
+    sendMessage(content, meta) {
+      calls.push({ content, channel: meta?.channel, sender: meta?.sender });
     },
     onMessage(listener) {
       // Emit canned response asynchronously

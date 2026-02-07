@@ -1,9 +1,9 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { log } from "./logger.js";
-import type { VoluteContentPart, VoluteEvent, VoluteRequest } from "./types.js";
+import type { ChannelMeta, VoluteContentPart, VoluteEvent, VoluteRequest } from "./types.js";
 
 export type VoluteAgent = {
-  sendMessage: (content: string | VoluteContentPart[], channel?: string, sender?: string) => void;
+  sendMessage: (content: string | VoluteContentPart[], meta?: ChannelMeta) => void;
   onMessage: (listener: (event: VoluteEvent) => void) => () => void;
 };
 
@@ -59,7 +59,14 @@ export function createVoluteServer(options: {
           removeListener();
         });
 
-        agent.sendMessage(body.content, body.channel, body.sender);
+        agent.sendMessage(body.content, {
+          channel: body.channel,
+          sender: body.sender,
+          platform: body.platform,
+          isDM: body.isDM,
+          channelName: body.channelName,
+          guildName: body.guildName,
+        });
       } catch {
         res.writeHead(400);
         res.end("Bad Request");

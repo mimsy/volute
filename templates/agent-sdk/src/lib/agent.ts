@@ -4,9 +4,30 @@ import { createIdentityReloadHook } from "./hooks/identity-reload.js";
 import { createPreCompactHook } from "./hooks/pre-compact.js";
 import { log, logMessage, logText, logThinking, logToolUse } from "./logger.js";
 import { createMessageChannel } from "./message-channel.js";
-import type { VoluteContentPart, VoluteEvent } from "./types.js";
+import type { ChannelMeta, VoluteContentPart, VoluteEvent } from "./types.js";
 
 type Listener = (event: VoluteEvent) => void;
+
+function formatPrefix(meta: ChannelMeta | undefined, time: string): string {
+  if (!meta?.channel && !meta?.sender) return "";
+  // Use explicit platform name or capitalize from channel URI prefix
+  const platform =
+    meta.platform ??
+    (() => {
+      const n = (meta.channel ?? "").split(":")[0];
+      return n.charAt(0).toUpperCase() + n.slice(1);
+    })();
+  // Build sender context (e.g., "χθ in DM" or "χθ in #general in My Server")
+  let sender = meta.sender ?? "";
+  if (meta.isDM) {
+    sender += " in DM";
+  } else if (meta.channelName) {
+    sender += ` in #${meta.channelName}`;
+    if (meta.guildName) sender += ` in ${meta.guildName}`;
+  }
+  const parts = [platform, sender].filter(Boolean);
+  return parts.length > 0 ? `[${parts.join(": ")} — ${time}]\n` : "";
+}
 
 export function createAgent(options: {
   systemPrompt: string;
@@ -112,17 +133,16 @@ export function createAgent(options: {
     log("agent", "stream consumer ended");
   })();
 
-  function sendMessage(content: string | VoluteContentPart[], source?: string, sender?: string) {
+  function sendMessage(content: string | VoluteContentPart[], meta?: ChannelMeta) {
     const text =
       typeof content === "string"
         ? content
         : content.map((p) => (p.type === "text" ? p.text : `[${p.type}]`)).join(" ");
-    logMessage("in", text, source);
+    logMessage("in", text, meta?.channel);
 
-    // Build context prefix from channel/sender metadata
+    // Build context prefix from channel metadata
     const time = new Date().toLocaleString();
-    const parts = [source, sender].filter(Boolean);
-    const prefix = parts.length > 0 ? `[${parts.join(": ")} — ${time}]\n` : "";
+    const prefix = formatPrefix(meta, time);
 
     let sdkContent: (
       | { type: "text"; text: string }

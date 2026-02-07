@@ -10,9 +10,28 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { commitFileChange } from "./auto-commit.js";
 import { log, logMessage, logText, logThinking, logToolResult, logToolUse } from "./logger.js";
-import type { VoluteContentPart, VoluteEvent } from "./types.js";
+import type { ChannelMeta, VoluteContentPart, VoluteEvent } from "./types.js";
 
 type Listener = (event: VoluteEvent) => void;
+
+function formatPrefix(meta: ChannelMeta | undefined): string {
+  if (!meta?.channel && !meta?.sender) return "";
+  const platform =
+    meta.platform ??
+    (() => {
+      const n = (meta.channel ?? "").split(":")[0];
+      return n.charAt(0).toUpperCase() + n.slice(1);
+    })();
+  let sender = meta.sender ?? "";
+  if (meta.isDM) {
+    sender += " in DM";
+  } else if (meta.channelName) {
+    sender += ` in #${meta.channelName}`;
+    if (meta.guildName) sender += ` in ${meta.guildName}`;
+  }
+  const parts = [platform, sender].filter(Boolean);
+  return parts.length > 0 ? `[${parts.join(": ")}]\n` : "";
+}
 
 export async function createAgent(options: {
   systemPrompt: string;
@@ -146,7 +165,7 @@ export async function createAgent(options: {
     }
   });
 
-  function sendMessage(content: string | VoluteContentPart[], source?: string, sender?: string) {
+  function sendMessage(content: string | VoluteContentPart[], meta?: ChannelMeta) {
     const raw =
       typeof content === "string"
         ? content
@@ -154,10 +173,10 @@ export async function createAgent(options: {
             .filter((p) => p.type === "text")
             .map((p) => (p as { text: string }).text)
             .join("\n");
-    logMessage("in", raw, source);
+    logMessage("in", raw, meta?.channel);
 
-    // Build context prefix from channel/sender metadata
-    const prefix = source && sender ? `[${source}: ${sender}]\n` : "";
+    // Build context prefix from channel metadata
+    const prefix = formatPrefix(meta);
     const text = prefix + raw;
 
     // Convert image parts to pi-ai ImageContent format
