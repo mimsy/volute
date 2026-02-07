@@ -71,7 +71,7 @@ export class Scheduler {
         body: JSON.stringify({
           content: [{ type: "text", text: schedule.message }],
           channel: "system:scheduler",
-          sender: "scheduler",
+          sender: schedule.id,
         }),
       });
       console.error(`[scheduler] fired "${schedule.id}" for ${agentName}`);

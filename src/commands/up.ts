@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { parseArgs } from "../lib/parse-args.js";
-import { VOLUTE_HOME } from "../lib/registry.js";
+import { voluteHome } from "../lib/registry.js";
 
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
@@ -11,7 +11,8 @@ export async function run(args: string[]) {
   });
 
   const port = flags.port ?? 4200;
-  const pidPath = resolve(VOLUTE_HOME, "daemon.pid");
+  const home = voluteHome();
+  const pidPath = resolve(home, "daemon.pid");
 
   // Check for stale PID file
   if (existsSync(pidPath)) {
@@ -79,8 +80,8 @@ export async function run(args: string[]) {
   }
 
   // Spawn daemon as detached child process
-  mkdirSync(VOLUTE_HOME, { recursive: true });
-  const logFile = resolve(VOLUTE_HOME, "daemon.log");
+  mkdirSync(home, { recursive: true });
+  const logFile = resolve(home, "daemon.log");
   const logFd = openSync(logFile, "a");
 
   const child = spawn(tsxBin, [daemonModule, "--port", String(port)], {

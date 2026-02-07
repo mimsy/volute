@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { VOLUTE_HOME } from "./registry.js";
+import { voluteHome } from "./registry.js";
 
 export function sharedEnvPath(): string {
-  return resolve(VOLUTE_HOME, "env.json");
+  return resolve(voluteHome(), "env.json");
 }
 
 export function agentEnvPath(agentDir: string): string {

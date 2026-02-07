@@ -1,10 +1,11 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { log } from "./logger.js";
+import { loadSessionConfig, resolveSession } from "./sessions.js";
 import type { ChannelMeta, VoluteContentPart, VoluteEvent, VoluteRequest } from "./types.js";
 
 export type VoluteAgent = {
   sendMessage: (content: string | VoluteContentPart[], meta?: ChannelMeta) => void;
-  onMessage: (listener: (event: VoluteEvent) => void) => () => void;
+  onMessage: (listener: (event: VoluteEvent) => void, sessionName?: string) => () => void;
 };
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -21,6 +22,7 @@ export function createVoluteServer(options: {
   port: number;
   name: string;
   version: string;
+  sessionsConfigPath?: string;
 }): Server {
   const { agent, port, name, version } = options;
 
@@ -36,6 +38,19 @@ export function createVoluteServer(options: {
     if (req.method === "POST" && url.pathname === "/message") {
       try {
         const body = JSON.parse(await readBody(req)) as VoluteRequest;
+
+        // Resolve session from routing config (re-read on each request for hot-reload)
+        let sessionName = "main";
+        if (options.sessionsConfigPath) {
+          const sessionConfig = loadSessionConfig(options.sessionsConfigPath);
+          sessionName = resolveSession(sessionConfig, {
+            channel: body.channel,
+            sender: body.sender,
+          });
+        }
+        if (sessionName === "$new") {
+          sessionName = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        }
 
         res.writeHead(200, {
           "Content-Type": "application/x-ndjson",
@@ -53,7 +68,7 @@ export function createVoluteServer(options: {
           } catch {
             removeListener();
           }
-        });
+        }, sessionName);
 
         res.on("close", () => {
           removeListener();
@@ -66,6 +81,7 @@ export function createVoluteServer(options: {
           isDM: body.isDM,
           channelName: body.channelName,
           guildName: body.guildName,
+          sessionName,
         });
       } catch {
         res.writeHead(400);

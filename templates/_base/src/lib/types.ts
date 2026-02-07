@@ -9,6 +9,7 @@ export type ChannelMeta = {
   isDM?: boolean;
   channelName?: string;
   guildName?: string;
+  sessionName?: string;
 };
 
 export type VoluteRequest = {
@@ -22,3 +23,5 @@ export type VoluteEvent =
   | { type: "tool_use"; name: string; input: unknown }
   | { type: "tool_result"; output: string; is_error?: boolean }
   | { type: "done" };
+
+export type Listener = (event: VoluteEvent) => void;

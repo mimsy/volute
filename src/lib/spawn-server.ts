@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { closeSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 type SpawnResult = { child: ChildProcess; actualPort: number } | null;
@@ -10,8 +11,8 @@ function tsxBin(cwd: string): string {
 /**
  * Spawn `tsx src/server.ts --port <port>` in the given path and wait for it to be listening.
  *
- * In detached mode: spawns with piped stdio to discover the port, then detaches.
- * The child survives parent exit. Use this when the CLI will exit immediately after.
+ * In detached mode: spawns with stdout/stderr going to a log file. The child survives parent exit.
+ * Use this when the CLI will exit immediately after (e.g. `volute fork`).
  *
  * In attached mode (default): spawns with piped stdio and detects "listening on :PORT" in output.
  * Use this when the parent stays alive (e.g. within another server process).
@@ -60,43 +61,50 @@ function spawnAttached(cwd: string, port: number): Promise<SpawnResult> {
 }
 
 /**
- * Spawn with pipes to discover the port, then let the child survive.
- * The child may get EPIPE on stderr after parent exits — the server
- * log function handles this gracefully.
+ * Spawn with stdout/stderr redirected to a log file, then detect the port
+ * by reading the log. The child survives parent exit and continues logging.
  */
 function spawnDetached(cwd: string, port: number): Promise<SpawnResult> {
+  const logsDir = resolve(cwd, ".volute", "logs");
+  mkdirSync(logsDir, { recursive: true });
+  const logPath = resolve(logsDir, "agent.log");
+  const logFd = openSync(logPath, "w");
+
   const child = spawn(tsxBin(cwd), ["src/server.ts", "--port", String(port)], {
     cwd,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", logFd, logFd],
     detached: true,
   });
+  child.unref();
+  closeSync(logFd);
 
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => resolve(null), 30000);
+  // Detect port by polling the log file for "listening on :PORT"
+  return new Promise((res) => {
+    let done = false;
 
-    function checkOutput(data: Buffer) {
-      const match = data.toString().match(/listening on :(\d+)/);
-      if (match) {
-        clearTimeout(timeout);
-        // Close pipes so parent can exit
-        child.stdout?.destroy();
-        child.stderr?.destroy();
-        child.unref();
-        resolve({ child, actualPort: parseInt(match[1], 10) });
-      }
+    function finish(result: SpawnResult) {
+      if (done) return;
+      done = true;
+      clearInterval(interval);
+      clearTimeout(timeout);
+      res(result);
     }
 
-    child.stdout?.on("data", checkOutput);
-    child.stderr?.on("data", checkOutput);
+    const interval = setInterval(() => {
+      try {
+        const content = readFileSync(logPath, "utf-8");
+        const match = content.match(/listening on :(\d+)/);
+        if (match) {
+          finish({ child, actualPort: parseInt(match[1], 10) });
+        }
+      } catch {
+        // File not ready yet
+      }
+    }, 100);
 
-    child.on("error", () => {
-      clearTimeout(timeout);
-      resolve(null);
-    });
+    const timeout = setTimeout(() => finish(null), 30000);
 
-    child.on("exit", () => {
-      clearTimeout(timeout);
-      resolve(null);
-    });
+    child.on("error", () => finish(null));
+    child.on("exit", () => finish(null));
   });
 }

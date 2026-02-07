@@ -22,7 +22,7 @@ You manage yourself through the `volute` CLI. Use `$VOLUTE_AGENT` for your own n
 
 ## Configuration
 
-Your `volute.json` (at `../volute.json` from your cwd) controls your model and other settings.
+Your `.config/volute.json` controls your model and other settings.
 
 ## Variant Workflow
 
