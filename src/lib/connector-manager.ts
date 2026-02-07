@@ -48,17 +48,17 @@ export class ConnectorManager {
     const builtinConnector = this.resolveBuiltinConnector(type);
 
     let connectorScript: string;
-    let tsxBin: string;
+    let runtime: string;
 
     if (existsSync(agentConnector)) {
       connectorScript = agentConnector;
-      tsxBin = resolve(agentDir, "node_modules", ".bin", "tsx");
+      runtime = resolve(agentDir, "node_modules", ".bin", "tsx");
     } else if (existsSync(userConnector)) {
       connectorScript = userConnector;
-      tsxBin = this.resolveVoluteTsx();
+      runtime = this.resolveVoluteTsx();
     } else if (builtinConnector && existsSync(builtinConnector)) {
       connectorScript = builtinConnector;
-      tsxBin = this.resolveVoluteTsx();
+      runtime = process.execPath;
     } else {
       throw new Error(`No connector code found for type: ${type}`);
     }
@@ -75,7 +75,7 @@ export class ConnectorManager {
       Object.entries(agentEnv).filter(([k]) => k.startsWith(prefix)),
     );
 
-    const child = spawn(tsxBin, [connectorScript], {
+    const child = spawn(runtime, [connectorScript], {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
@@ -175,10 +175,10 @@ export class ConnectorManager {
   }
 
   private resolveBuiltinConnector(type: string): string | null {
-    // Search up from this module's location for connectors/<type>/index.ts
+    // Search up from this module's location for connectors/<type>.js
     let searchDir = dirname(new URL(import.meta.url).pathname);
     for (let i = 0; i < 5; i++) {
-      const candidate = resolve(searchDir, "connectors", type, "index.ts");
+      const candidate = resolve(searchDir, "connectors", `${type}.js`);
       if (existsSync(candidate)) return candidate;
       searchDir = dirname(searchDir);
     }
