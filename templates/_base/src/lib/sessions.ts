@@ -30,7 +30,7 @@ function globMatch(pattern: string, value: string): boolean {
 
 /**
  * Resolve which session a message should route to based on the config.
- * Returns the session name (with template variables expanded).
+ * Returns the session name (with template variables expanded, path-safe).
  */
 export function resolveSession(
   config: SessionConfig,
@@ -41,17 +41,20 @@ export function resolveSession(
 
   for (const rule of config.rules) {
     if (ruleMatches(rule, meta)) {
-      return expandTemplate(rule.session, meta);
+      return sanitizeSessionName(expandTemplate(rule.session, meta));
     }
   }
 
   return fallback;
 }
 
+const MATCH_KEYS = new Set(["channel", "sender"]);
+
 function ruleMatches(rule: SessionRule, meta: { channel?: string; sender?: string }): boolean {
   for (const [key, pattern] of Object.entries(rule)) {
     if (key === "session") continue;
-    const value = (meta as Record<string, string | undefined>)[key] ?? "";
+    if (!MATCH_KEYS.has(key)) return false;
+    const value = meta[key as keyof typeof meta] ?? "";
     if (!globMatch(pattern, value)) return false;
   }
   return true;
@@ -61,4 +64,8 @@ function expandTemplate(template: string, meta: { channel?: string; sender?: str
   return template
     .replace(/\$\{sender\}/g, meta.sender ?? "unknown")
     .replace(/\$\{channel\}/g, meta.channel ?? "unknown");
+}
+
+function sanitizeSessionName(name: string): string {
+  return name.replace(/[/\\]/g, "-").replace(/\.\./g, "-");
 }

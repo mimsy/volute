@@ -1,4 +1,4 @@
-import { existsSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { resolve } from "node:path";
 import { createAgent } from "./agent.js";
 import { log } from "./lib/logger.js";
@@ -22,7 +22,6 @@ const sessionsDir = resolve(".volute/sessions");
 // Migrate old single session.json → sessions/main.json
 const oldSessionPath = resolve(".volute/session.json");
 if (existsSync(oldSessionPath) && !existsSync(resolve(sessionsDir, "main.json"))) {
-  const { mkdirSync } = await import("node:fs");
   mkdirSync(sessionsDir, { recursive: true });
   renameSync(oldSessionPath, resolve(sessionsDir, "main.json"));
   log("server", "migrated session.json → sessions/main.json");

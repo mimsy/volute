@@ -2,6 +2,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
+function voluteHome(): string {
+  return process.env.VOLUTE_HOME || resolve(homedir(), ".volute");
+}
+
 export type Variant = {
   name: string;
   branch: string;
@@ -12,8 +16,7 @@ export type Variant = {
 };
 
 function variantsPath(): string {
-  const home = process.env.VOLUTE_HOME || resolve(homedir(), ".volute");
-  return resolve(home, "variants.json");
+  return resolve(voluteHome(), "variants.json");
 }
 
 function readAllVariants(): Record<string, Variant[]> {
@@ -27,8 +30,7 @@ function readAllVariants(): Record<string, Variant[]> {
 }
 
 function writeAllVariants(all: Record<string, Variant[]>) {
-  const home = process.env.VOLUTE_HOME || resolve(homedir(), ".volute");
-  mkdirSync(home, { recursive: true });
+  mkdirSync(voluteHome(), { recursive: true });
   writeFileSync(variantsPath(), `${JSON.stringify(all, null, 2)}\n`);
 }
 

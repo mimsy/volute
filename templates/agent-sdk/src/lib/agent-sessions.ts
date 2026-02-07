@@ -28,10 +28,13 @@ export function createSessionManager(options: {
     options.compactionMessage ??
     "Conversation is about to be compacted. Please update today's daily log with a summary of what we've discussed and accomplished so far, so context is preserved before compaction.";
 
+  function sessionFilePath(sessionName: string): string {
+    return resolve(options.sessionsDir, `${sessionName}.json`);
+  }
+
   function loadSessionId(sessionName: string): string | undefined {
     try {
-      const path = resolve(options.sessionsDir, `${sessionName}.json`);
-      const data = JSON.parse(readFileSync(path, "utf-8"));
+      const data = JSON.parse(readFileSync(sessionFilePath(sessionName), "utf-8"));
       return data.sessionId;
     } catch {
       return undefined;
@@ -40,15 +43,16 @@ export function createSessionManager(options: {
 
   function saveSessionId(sessionName: string, sessionId: string) {
     mkdirSync(options.sessionsDir, { recursive: true });
-    const path = resolve(options.sessionsDir, `${sessionName}.json`);
-    writeFileSync(path, JSON.stringify({ sessionId }));
+    writeFileSync(sessionFilePath(sessionName), JSON.stringify({ sessionId }));
   }
 
   function deleteSessionId(sessionName: string) {
     try {
-      const path = resolve(options.sessionsDir, `${sessionName}.json`);
+      const path = sessionFilePath(sessionName);
       if (existsSync(path)) unlinkSync(path);
-    } catch {}
+    } catch (err) {
+      log("agent", `failed to delete session file for "${sessionName}":`, err);
+    }
   }
 
   function broadcastToSession(session: Session, event: VoluteEvent) {
@@ -136,10 +140,12 @@ export function createSessionManager(options: {
             await consumeStream(createStream(session), session);
           } catch (retryErr) {
             log("agent", `session "${session.name}": stream consumer error:`, retryErr);
+            broadcastToSession(session, { type: "done" });
             sessions.delete(session.name);
           }
         } else {
           log("agent", `session "${session.name}": stream consumer error:`, err);
+          broadcastToSession(session, { type: "done" });
           sessions.delete(session.name);
         }
       }

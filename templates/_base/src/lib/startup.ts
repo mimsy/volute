@@ -23,6 +23,14 @@ export function loadConfig(): { model?: string } {
   }
 }
 
+function loadFile(path: string): string {
+  try {
+    return readFileSync(path, "utf-8");
+  } catch {
+    return "";
+  }
+}
+
 export function loadSystemPrompt(): string {
   const soulPath = resolve("home/SOUL.md");
   const memoryPath = resolve("home/MEMORY.md");
@@ -81,12 +89,4 @@ export function setupShutdown(): void {
   }
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
-}
-
-function loadFile(path: string): string {
-  try {
-    return readFileSync(path, "utf-8");
-  } catch {
-    return "";
-  }
 }

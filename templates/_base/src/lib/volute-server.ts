@@ -40,14 +40,16 @@ export function createVoluteServer(options: {
         const body = JSON.parse(await readBody(req)) as VoluteRequest;
 
         // Resolve session from routing config (re-read on each request for hot-reload)
-        const sessionConfig = options.sessionsConfigPath
-          ? loadSessionConfig(options.sessionsConfigPath)
-          : undefined;
-        let sessionName = sessionConfig
-          ? resolveSession(sessionConfig, { channel: body.channel, sender: body.sender })
-          : "main";
+        let sessionName = "main";
+        if (options.sessionsConfigPath) {
+          const sessionConfig = loadSessionConfig(options.sessionsConfigPath);
+          sessionName = resolveSession(sessionConfig, {
+            channel: body.channel,
+            sender: body.sender,
+          });
+        }
         if (sessionName === "$new") {
-          sessionName = `new-${Date.now()}`;
+          sessionName = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         }
 
         res.writeHead(200, {

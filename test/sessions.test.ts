@@ -166,4 +166,46 @@ describe("resolveSession", () => {
     assert.equal(resolveSession(config, { channel: "web", sender: "alice" }), "catch-all");
     assert.equal(resolveSession(config, {}), "catch-all");
   });
+
+  it("ignores unknown rule keys (no match)", () => {
+    const config: SessionConfig = {
+      rules: [{ chanel: "web", session: "typo-rule" }],
+      default: "main",
+    };
+    // Unknown key "chanel" causes rule to not match
+    assert.equal(resolveSession(config, { channel: "web", sender: "alice" }), "main");
+  });
+
+  it("sanitizes path traversal in sender template", () => {
+    const config: SessionConfig = {
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: testing literal config syntax
+      rules: [{ channel: "discord:*", session: "discord-${sender}" }],
+      default: "main",
+    };
+    const result = resolveSession(config, { channel: "discord:123", sender: "../../etc/passwd" });
+    assert.ok(!result.includes("/"), `session name should not contain /: ${result}`);
+    assert.ok(!result.includes(".."), `session name should not contain ..: ${result}`);
+  });
+
+  it("sanitizes path traversal in channel template", () => {
+    const config: SessionConfig = {
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: testing literal config syntax
+      rules: [{ sender: "alice", session: "chan-${channel}" }],
+      default: "main",
+    };
+    const result = resolveSession(config, { channel: "../../home/SOUL", sender: "alice" });
+    assert.ok(!result.includes("/"), `session name should not contain /: ${result}`);
+    assert.ok(!result.includes(".."), `session name should not contain ..: ${result}`);
+  });
+
+  it("sanitizes backslashes in session names", () => {
+    const config: SessionConfig = {
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: testing literal config syntax
+      rules: [{ channel: "*", session: "s-${sender}" }],
+      default: "main",
+    };
+    const result = resolveSession(config, { channel: "web", sender: "..\\..\\etc\\passwd" });
+    assert.ok(!result.includes("\\"), `session name should not contain \\: ${result}`);
+    assert.ok(!result.includes(".."), `session name should not contain ..: ${result}`);
+  });
 });

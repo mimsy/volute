@@ -68,7 +68,7 @@ function spawnDetached(cwd: string, port: number): Promise<SpawnResult> {
   const logsDir = resolve(cwd, ".volute", "logs");
   mkdirSync(logsDir, { recursive: true });
   const logPath = resolve(logsDir, "agent.log");
-  const logFd = openSync(logPath, "a");
+  const logFd = openSync(logPath, "w");
 
   const child = spawn(tsxBin(cwd), ["src/server.ts", "--port", String(port)], {
     cwd,

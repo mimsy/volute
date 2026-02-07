@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
 export type Schedule = {
   id: string;
@@ -35,5 +35,6 @@ export function readVoluteConfig(agentDir: string): VoluteConfig {
 
 export function writeVoluteConfig(agentDir: string, config: VoluteConfig) {
   const path = resolve(agentDir, "home/.config/volute.json");
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
 }
