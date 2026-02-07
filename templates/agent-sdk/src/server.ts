@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, readFileSync, renameSync, unlinkSync } from "node:fs";
+import { resolve } from "node:path";
 import { createAgent } from "./lib/agent.js";
 import { log } from "./lib/logger.js";
 import { createVoluteServer } from "./lib/volute-server.js";
@@ -57,30 +57,15 @@ if (volute) promptParts.push(volute);
 if (memory) promptParts.push(`## Memory\n\n${memory}`);
 const systemPrompt = promptParts.join("\n\n---\n\n");
 
-const sessionPath = resolve(".volute/session.json");
+const sessionsDir = resolve(".volute/sessions");
 
-function loadSessionId(): string | undefined {
-  try {
-    const data = JSON.parse(readFileSync(sessionPath, "utf-8"));
-    return data.sessionId;
-  } catch {
-    return undefined;
-  }
-}
-
-function saveSessionId(sessionId: string) {
-  mkdirSync(dirname(sessionPath), { recursive: true });
-  writeFileSync(sessionPath, JSON.stringify({ sessionId }));
-}
-
-let shuttingDown = false;
-
-function deleteSessionFile() {
-  if (shuttingDown) return;
-  try {
-    unlinkSync(sessionPath);
-    log("server", "deleted session file");
-  } catch {}
+// Migrate old single session.json → sessions/main.json
+const oldSessionPath = resolve(".volute/session.json");
+if (existsSync(oldSessionPath) && !existsSync(resolve(sessionsDir, "main.json"))) {
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(sessionsDir, { recursive: true });
+  renameSync(oldSessionPath, resolve(sessionsDir, "main.json"));
+  log("server", "migrated session.json → sessions/main.json");
 }
 
 // Read name/version from package.json for health endpoint
@@ -93,25 +78,12 @@ try {
 } catch {}
 
 const abortController = new AbortController();
-const savedSessionId = loadSessionId();
-if (savedSessionId) {
-  log("server", `resuming session: ${savedSessionId}`);
-}
 const agent = createAgent({
   systemPrompt,
   cwd: resolve("home"),
   abortController,
   model,
-  resume: savedSessionId,
-  onSessionId: saveSessionId,
-  onStreamError: deleteSessionFile,
-  onCompact: () => {
-    log("server", "pre-compact — asking agent to update daily log");
-    agent.sendMessage(
-      "Conversation is about to be compacted. Please update today's daily log with a summary of what we've discussed and accomplished so far, so context is preserved before compaction.",
-      "system",
-    );
-  },
+  sessionsDir,
   onIdentityReload: async () => {
     log("server", "identity file changed — restarting to reload");
     await agent.waitForCommits();
@@ -120,7 +92,13 @@ const agent = createAgent({
   },
 });
 
-const server = createVoluteServer({ agent, port, name: pkgName, version: pkgVersion });
+const server = createVoluteServer({
+  agent,
+  port,
+  name: pkgName,
+  version: pkgVersion,
+  sessionsConfigPath: resolve("home/sessions.json"),
+});
 
 server.listen(port, () => {
   const addr = server.address();
@@ -150,7 +128,6 @@ server.listen(port, () => {
 });
 
 function shutdown() {
-  shuttingDown = true;
   log("server", "shutdown signal received");
   process.exit(0);
 }

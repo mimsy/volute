@@ -84,7 +84,13 @@ const agent = await createAgent({
   },
 });
 
-const server = createVoluteServer({ agent, port, name: pkgName, version: pkgVersion });
+const server = createVoluteServer({
+  agent,
+  port,
+  name: pkgName,
+  version: pkgVersion,
+  sessionsConfigPath: resolve("home/sessions.json"),
+});
 
 server.listen(port, () => {
   const addr = server.address();

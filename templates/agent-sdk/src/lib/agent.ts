@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createAutoCommitHook } from "./hooks/auto-commit.js";
 import { createIdentityReloadHook } from "./hooks/identity-reload.js";
@@ -8,6 +10,12 @@ import type { ChannelMeta, VoluteContentPart, VoluteEvent } from "./types.js";
 
 type Listener = (event: VoluteEvent) => void;
 
+type Session = {
+  name: string;
+  channel: ReturnType<typeof createMessageChannel>;
+  listeners: Set<Listener>;
+};
+
 function formatPrefix(meta: ChannelMeta | undefined, time: string): string {
   if (!meta?.channel && !meta?.sender) return "";
   // Use explicit platform name or capitalize from channel URI prefix
@@ -17,7 +25,7 @@ function formatPrefix(meta: ChannelMeta | undefined, time: string): string {
       const n = (meta.channel ?? "").split(":")[0];
       return n.charAt(0).toUpperCase() + n.slice(1);
     })();
-  // Build sender context (e.g., "χθ in DM" or "χθ in #general in My Server")
+  // Build sender context (e.g., "alice in DM" or "alice in #general in My Server")
   let sender = meta.sender ?? "";
   if (meta.isDM) {
     sender += " in DM";
@@ -26,7 +34,10 @@ function formatPrefix(meta: ChannelMeta | undefined, time: string): string {
     if (meta.guildName) sender += ` in ${meta.guildName}`;
   }
   const parts = [platform, sender].filter(Boolean);
-  return parts.length > 0 ? `[${parts.join(": ")} — ${time}]\n` : "";
+  // Include session name if not the default
+  const sessionPart =
+    meta.sessionName && meta.sessionName !== "main" ? ` — session: ${meta.sessionName}` : "";
+  return parts.length > 0 ? `[${parts.join(": ")}${sessionPart} — ${time}]\n` : "";
 }
 
 export function createAgent(options: {
@@ -34,23 +45,64 @@ export function createAgent(options: {
   cwd: string;
   abortController: AbortController;
   model?: string;
-  resume?: string;
-  onSessionId?: (id: string) => void;
-  onStreamError?: (err: unknown) => void;
-  onCompact?: () => void;
-  onIdentityReload?: () => void;
+  sessionsDir: string;
+  onIdentityReload?: () => Promise<void>;
 }) {
-  const channel = createMessageChannel();
-  const listeners = new Set<Listener>();
+  const sessions = new Map<string, Session>();
 
+  // Shared hooks (operate on the filesystem, not per-session)
   const autoCommit = createAutoCommitHook(options.cwd);
   const identityReload = createIdentityReloadHook(options.cwd);
-  const preCompact = createPreCompactHook(() => {
-    if (options.onCompact) options.onCompact();
-  });
 
-  function broadcast(event: VoluteEvent) {
-    for (const listener of listeners) {
+  function loadSessionId(sessionName: string): string | undefined {
+    try {
+      const path = resolve(options.sessionsDir, `${sessionName}.json`);
+      const data = JSON.parse(readFileSync(path, "utf-8"));
+      return data.sessionId;
+    } catch {
+      return undefined;
+    }
+  }
+
+  function saveSessionId(sessionName: string, sessionId: string) {
+    mkdirSync(options.sessionsDir, { recursive: true });
+    const path = resolve(options.sessionsDir, `${sessionName}.json`);
+    writeFileSync(path, JSON.stringify({ sessionId }));
+  }
+
+  function deleteSessionId(sessionName: string) {
+    try {
+      const path = resolve(options.sessionsDir, `${sessionName}.json`);
+      if (existsSync(path)) unlinkSync(path);
+    } catch {}
+  }
+
+  function getOrCreateSession(name: string): Session {
+    const existing = sessions.get(name);
+    if (existing) return existing;
+
+    const session: Session = {
+      name,
+      channel: createMessageChannel(),
+      listeners: new Set(),
+    };
+    sessions.set(name, session);
+
+    // Don't try to resume ephemeral ($new) sessions
+    const isEphemeral = name.startsWith("new-");
+    const savedSessionId = isEphemeral ? undefined : loadSessionId(name);
+    if (savedSessionId) {
+      log("agent", `session "${name}": resuming ${savedSessionId}`);
+    } else {
+      log("agent", `session "${name}": starting fresh`);
+    }
+
+    startSession(session, savedSessionId);
+    return session;
+  }
+
+  function broadcastToSession(session: Session, event: VoluteEvent) {
+    for (const listener of session.listeners) {
       try {
         listener(event);
       } catch (err) {
@@ -59,9 +111,27 @@ export function createAgent(options: {
     }
   }
 
-  function createStream(resume?: string) {
+  function createStream(session: Session, resume?: string) {
+    // Pre-compact hook sends directly to this session's channel
+    const preCompact = createPreCompactHook(() => {
+      session.channel.push({
+        type: "user",
+        session_id: "",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Conversation is about to be compacted. Please update today's daily log with a summary of what we've discussed and accomplished so far, so context is preserved before compaction.",
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+      });
+    });
+
     return query({
-      prompt: channel.iterable,
+      prompt: session.channel.iterable,
       options: {
         systemPrompt: options.systemPrompt,
         permissionMode: "bypassPermissions",
@@ -79,10 +149,13 @@ export function createAgent(options: {
     });
   }
 
-  async function consumeStream(stream: ReturnType<typeof query>) {
+  async function consumeStream(stream: ReturnType<typeof query>, session: Session) {
     for await (const msg of stream) {
-      if ("session_id" in msg && msg.session_id && options.onSessionId) {
-        options.onSessionId(msg.session_id as string);
+      if ("session_id" in msg && msg.session_id) {
+        // Don't persist ephemeral session IDs
+        if (!session.name.startsWith("new-")) {
+          saveSessionId(session.name, msg.session_id as string);
+        }
       }
       if (msg.type === "assistant") {
         for (const b of msg.message.content) {
@@ -91,17 +164,17 @@ export function createAgent(options: {
           } else if (b.type === "text") {
             const text = (b as { text: string }).text;
             logText(text);
-            broadcast({ type: "text", content: text });
+            broadcastToSession(session, { type: "text", content: text });
           } else if (b.type === "tool_use") {
             const tb = b as { name: string; input: unknown };
             logToolUse(tb.name, tb.input);
-            broadcast({ type: "tool_use", name: tb.name, input: tb.input });
+            broadcastToSession(session, { type: "tool_use", name: tb.name, input: tb.input });
           }
         }
       }
       if (msg.type === "result") {
-        log("agent", "turn done");
-        broadcast({ type: "done" });
+        log("agent", `session "${session.name}": turn done`);
+        broadcastToSession(session, { type: "done" });
         if (identityReload.needsReload()) {
           options.onIdentityReload?.();
         }
@@ -109,31 +182,34 @@ export function createAgent(options: {
     }
   }
 
-  // Consume the SDK stream and broadcast VoluteEvent events
-  (async () => {
-    log("agent", "stream consumer started");
-    try {
-      await consumeStream(createStream(options.resume));
-    } catch (err) {
-      if (options.resume) {
-        log("agent", "session resume failed, starting fresh:", err);
-        if (options.onStreamError) options.onStreamError(err);
-        try {
-          await consumeStream(createStream());
-        } catch (retryErr) {
-          log("agent", "stream consumer error:", retryErr);
-          process.exit(1);
+  function startSession(session: Session, savedSessionId?: string) {
+    (async () => {
+      log("agent", `session "${session.name}": stream consumer started`);
+      try {
+        await consumeStream(createStream(session, savedSessionId), session);
+      } catch (err) {
+        if (savedSessionId) {
+          log("agent", `session "${session.name}": resume failed, starting fresh:`, err);
+          deleteSessionId(session.name);
+          try {
+            await consumeStream(createStream(session), session);
+          } catch (retryErr) {
+            log("agent", `session "${session.name}": stream consumer error:`, retryErr);
+            sessions.delete(session.name);
+          }
+        } else {
+          log("agent", `session "${session.name}": stream consumer error:`, err);
+          sessions.delete(session.name);
         }
-      } else {
-        log("agent", "stream consumer error:", err);
-        if (options.onStreamError) options.onStreamError(err);
-        process.exit(1);
       }
-    }
-    log("agent", "stream consumer ended");
-  })();
+      log("agent", `session "${session.name}": stream consumer ended`);
+    })();
+  }
 
   function sendMessage(content: string | VoluteContentPart[], meta?: ChannelMeta) {
+    const sessionName = meta?.sessionName ?? "main";
+    const session = getOrCreateSession(sessionName);
+
     const text =
       typeof content === "string"
         ? content
@@ -179,7 +255,7 @@ export function createAgent(options: {
       }
     }
 
-    channel.push({
+    session.channel.push({
       type: "user",
       session_id: "",
       message: {
@@ -190,9 +266,11 @@ export function createAgent(options: {
     });
   }
 
-  function onMessage(listener: Listener): () => void {
-    listeners.add(listener);
-    return () => listeners.delete(listener);
+  function onMessage(listener: Listener, sessionName?: string): () => void {
+    const name = sessionName ?? "main";
+    const session = getOrCreateSession(name);
+    session.listeners.add(listener);
+    return () => session.listeners.delete(listener);
   }
 
   return { sendMessage, onMessage, waitForCommits: autoCommit.waitForCommits };

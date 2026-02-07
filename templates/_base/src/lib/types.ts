@@ -9,6 +9,7 @@ export type ChannelMeta = {
   isDM?: boolean;
   channelName?: string;
   guildName?: string;
+  sessionName?: string;
 };
 
 export type VoluteRequest = {
