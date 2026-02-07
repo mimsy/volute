@@ -28,15 +28,15 @@ export async function run(args: string[]) {
     const nameW = Math.max(4, ...agents.map((a) => a.name.length));
     const portW = Math.max(4, ...agents.map((a) => String(a.port).length));
 
-    console.log(`${"NAME".padEnd(nameW)}  ${"PORT".padEnd(portW)}  STATUS    DISCORD`);
+    console.log(`${"NAME".padEnd(nameW)}  ${"PORT".padEnd(portW)}  STATUS    CONNECTORS`);
 
     for (const agent of agents) {
-      const discord =
-        agent.channels.find((ch) => ch.name === "discord")?.status === "connected"
-          ? "connected"
-          : "-";
+      const connected = agent.channels
+        .filter((ch) => ch.status === "connected")
+        .map((ch) => ch.name);
+      const connectors = connected.length > 0 ? connected.join(", ") : "-";
       console.log(
-        `${agent.name.padEnd(nameW)}  ${String(agent.port).padEnd(portW)}  ${agent.status.padEnd(8)}  ${discord}`,
+        `${agent.name.padEnd(nameW)}  ${String(agent.port).padEnd(portW)}  ${agent.status.padEnd(8)}  ${connectors}`,
       );
     }
     return;
