@@ -1,34 +1,17 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { Hono } from "hono";
 import { agentDir, findAgent } from "../../lib/registry.js";
 import { getScheduler } from "../../lib/scheduler.js";
-
-type Schedule = {
-  id: string;
-  cron: string;
-  message: string;
-  enabled: boolean;
-};
-
-function schedulesPath(name: string): string {
-  return resolve(agentDir(name), ".volute", "schedules.json");
-}
+import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../../lib/volute-config.js";
 
 function readSchedules(name: string): Schedule[] {
-  const path = schedulesPath(name);
-  if (!existsSync(path)) return [];
-  try {
-    return JSON.parse(readFileSync(path, "utf-8")) as Schedule[];
-  } catch {
-    return [];
-  }
+  return readVoluteConfig(agentDir(name)).schedules ?? [];
 }
 
 function writeSchedules(name: string, schedules: Schedule[]): void {
-  const path = schedulesPath(name);
-  mkdirSync(resolve(agentDir(name), ".volute"), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(schedules, null, 2)}\n`);
+  const dir = agentDir(name);
+  const config = readVoluteConfig(dir);
+  config.schedules = schedules.length > 0 ? schedules : undefined;
+  writeVoluteConfig(dir, config);
   getScheduler().loadSchedules(name);
 }
 

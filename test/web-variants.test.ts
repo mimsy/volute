@@ -1,17 +1,14 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { Hono } from "hono";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
 import { conversations, messages, users } from "../src/lib/schema.js";
-import { readVariants } from "../src/lib/variants.js";
+import { readVariants, removeAllVariants } from "../src/lib/variants.js";
 import { authMiddleware, createSession, deleteSession } from "../src/web/middleware/auth.js";
 
 let sessionId: string;
-let testDir: string;
+const testAgent = `web-variants-test-${Date.now()}`;
 
 async function cleanup() {
   const db = await getDb();
@@ -19,7 +16,7 @@ async function cleanup() {
   await db.delete(conversations);
   await db.delete(users);
   if (sessionId) deleteSession(sessionId);
-  if (testDir && existsSync(testDir)) rmSync(testDir, { recursive: true });
+  removeAllVariants(testAgent);
 }
 
 async function setupAuth() {
@@ -28,16 +25,15 @@ async function setupAuth() {
   return sessionId;
 }
 
-// Build a test app that mirrors the variants route but uses our test directory
-function createApp(agentDir?: string) {
+// Build a test app that mirrors the variants route but uses agent name lookup
+function createApp(agentExists: boolean) {
   const app = new Hono();
   app.use("/api/agents/*", authMiddleware);
 
   app.get("/api/agents/:name/variants", async (c) => {
-    if (!agentDir) return c.json({ error: "Agent not found" }, 404);
-    if (!existsSync(agentDir)) return c.json({ error: "Agent directory missing" }, 404);
+    if (!agentExists) return c.json({ error: "Agent not found" }, 404);
 
-    const variants = readVariants(agentDir);
+    const variants = readVariants(testAgent);
     const results = variants.map((v) => ({
       ...v,
       status: v.port ? "no-server" : "no-server",
@@ -54,8 +50,7 @@ describe("web variants routes", () => {
 
   it("GET /:name/variants — 404 for missing agent", async () => {
     const cookie = await setupAuth();
-    // App created without agentDir simulates missing agent
-    const app = createApp();
+    const app = createApp(false);
 
     const res = await app.request("/api/agents/nonexistent-agent/variants", {
       headers: { Cookie: `volute_session=${cookie}` },
@@ -65,13 +60,7 @@ describe("web variants routes", () => {
 
   it("GET /:name/variants — lists variants for existing agent (empty)", async () => {
     const cookie = await setupAuth();
-
-    testDir = resolve(tmpdir(), `volute-test-variants-${Date.now()}`);
-    const voluteDir = resolve(testDir, ".volute");
-    mkdirSync(voluteDir, { recursive: true });
-    writeFileSync(resolve(voluteDir, "variants.json"), "[]");
-
-    const app = createApp(testDir);
+    const app = createApp(true);
 
     const res = await app.request("/api/agents/test-agent/variants", {
       headers: { Cookie: `volute_session=${cookie}` },
@@ -83,7 +72,7 @@ describe("web variants routes", () => {
   });
 
   it("GET /:name/variants — requires auth", async () => {
-    const app = createApp();
+    const app = createApp(false);
     const res = await app.request("/api/agents/test-agent/variants");
     assert.equal(res.status, 401);
   });

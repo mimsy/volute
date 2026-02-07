@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 
 export type Variant = {
   name: string;
@@ -10,47 +11,60 @@ export type Variant = {
   created: string;
 };
 
-function variantsPath(projectRoot: string): string {
-  return resolve(projectRoot, ".volute", "variants.json");
-}
+const VOLUTE_HOME = resolve(homedir(), ".volute");
+const VARIANTS_PATH = resolve(VOLUTE_HOME, "variants.json");
 
-export function readVariants(projectRoot: string): Variant[] {
-  const path = variantsPath(projectRoot);
-  if (!existsSync(path)) return [];
+function readAllVariants(): Record<string, Variant[]> {
+  if (!existsSync(VARIANTS_PATH)) return {};
   try {
-    return JSON.parse(readFileSync(path, "utf-8"));
+    return JSON.parse(readFileSync(VARIANTS_PATH, "utf-8"));
   } catch {
-    return [];
+    return {};
   }
 }
 
-export function writeVariants(projectRoot: string, variants: Variant[]) {
-  const path = variantsPath(projectRoot);
-  const dir = dirname(path);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  writeFileSync(path, `${JSON.stringify(variants, null, 2)}\n`);
+function writeAllVariants(all: Record<string, Variant[]>) {
+  mkdirSync(VOLUTE_HOME, { recursive: true });
+  writeFileSync(VARIANTS_PATH, `${JSON.stringify(all, null, 2)}\n`);
 }
 
-export function addVariant(projectRoot: string, variant: Variant) {
-  const variants = readVariants(projectRoot);
-  // Remove any existing entry with the same name
+export function readVariants(agentName: string): Variant[] {
+  return readAllVariants()[agentName] ?? [];
+}
+
+export function writeVariants(agentName: string, variants: Variant[]) {
+  const all = readAllVariants();
+  if (variants.length === 0) {
+    delete all[agentName];
+  } else {
+    all[agentName] = variants;
+  }
+  writeAllVariants(all);
+}
+
+export function addVariant(agentName: string, variant: Variant) {
+  const variants = readVariants(agentName);
   const filtered = variants.filter((v) => v.name !== variant.name);
   filtered.push(variant);
-  writeVariants(projectRoot, filtered);
+  writeVariants(agentName, filtered);
 }
 
-export function removeVariant(projectRoot: string, name: string) {
-  const variants = readVariants(projectRoot);
+export function removeVariant(agentName: string, name: string) {
+  const variants = readVariants(agentName);
   writeVariants(
-    projectRoot,
+    agentName,
     variants.filter((v) => v.name !== name),
   );
 }
 
-export function findVariant(projectRoot: string, name: string): Variant | undefined {
-  return readVariants(projectRoot).find((v) => v.name === name);
+export function findVariant(agentName: string, name: string): Variant | undefined {
+  return readVariants(agentName).find((v) => v.name === name);
+}
+
+export function removeAllVariants(agentName: string) {
+  const all = readAllVariants();
+  delete all[agentName];
+  writeAllVariants(all);
 }
 
 export async function checkHealth(port: number): Promise<{ ok: boolean; name?: string }> {

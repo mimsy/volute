@@ -97,7 +97,7 @@ export async function run(args: string[]) {
     created: new Date().toISOString(),
   };
 
-  addVariant(projectRoot, variant);
+  addVariant(agentName, variant);
 
   if (json) {
     console.log(JSON.stringify(variant, null, 2));

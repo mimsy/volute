@@ -1,6 +1,5 @@
-import { existsSync } from "node:fs";
 import { Hono } from "hono";
-import { agentDir, findAgent } from "../../lib/registry.js";
+import { findAgent } from "../../lib/registry.js";
 import { checkHealth, readVariants } from "../../lib/variants.js";
 
 const app = new Hono().get("/:name/variants", async (c) => {
@@ -8,10 +7,7 @@ const app = new Hono().get("/:name/variants", async (c) => {
   const entry = findAgent(name);
   if (!entry) return c.json({ error: "Agent not found" }, 404);
 
-  const dir = agentDir(name);
-  if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
-
-  const variants = readVariants(dir);
+  const variants = readVariants(name);
   const results = await Promise.all(
     variants.map(async (v) => {
       if (!v.port) return { ...v, status: "no-server" };

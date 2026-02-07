@@ -1,14 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
 import { agentDir, findAgent } from "./registry.js";
-
-type Schedule = {
-  id: string;
-  cron: string;
-  message: string;
-  enabled: boolean;
-};
+import { readVoluteConfig, type Schedule } from "./volute-config.js";
 
 export class Scheduler {
   private schedules = new Map<string, Schedule[]>();
@@ -25,13 +17,12 @@ export class Scheduler {
 
   loadSchedules(agentName: string): void {
     const dir = agentDir(agentName);
-    const path = resolve(dir, ".volute", "schedules.json");
-    if (!existsSync(path)) return;
-    try {
-      const data = JSON.parse(readFileSync(path, "utf-8")) as Schedule[];
-      this.schedules.set(agentName, data);
-    } catch {
-      // invalid JSON, skip
+    const config = readVoluteConfig(dir);
+    const schedules = config.schedules ?? [];
+    if (schedules.length > 0) {
+      this.schedules.set(agentName, schedules);
+    } else {
+      this.schedules.delete(agentName);
     }
   }
 

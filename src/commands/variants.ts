@@ -14,8 +14,8 @@ export async function run(args: string[]) {
   }
 
   const { json } = flags;
-  const { dir: projectRoot } = resolveAgent(name);
-  const variants = readVariants(projectRoot);
+  resolveAgent(name); // validate agent exists
+  const variants = readVariants(name);
 
   if (variants.length === 0) {
     if (json) {
@@ -40,7 +40,7 @@ export async function run(args: string[]) {
     ...v,
     pid: status === "dead" ? null : v.pid,
   }));
-  writeVariants(projectRoot, updated);
+  writeVariants(name, updated);
 
   if (json) {
     console.log(JSON.stringify(results, null, 2));

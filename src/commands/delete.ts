@@ -1,6 +1,7 @@
 import { existsSync, rmSync } from "node:fs";
 import { parseArgs } from "../lib/parse-args.js";
 import { agentDir, findAgent, removeAgent } from "../lib/registry.js";
+import { removeAllVariants } from "../lib/variants.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -34,7 +35,8 @@ export async function run(args: string[]) {
 
   const dir = agentDir(name);
 
-  // Remove from registry
+  // Remove from registry and clean up variant tracking
+  removeAllVariants(name);
   removeAgent(name);
   console.log(`Removed ${name} from registry.`);
 

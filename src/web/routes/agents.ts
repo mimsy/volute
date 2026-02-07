@@ -14,7 +14,7 @@ import {
   setAgentRunning,
 } from "../../lib/registry.js";
 import { agentMessages } from "../../lib/schema.js";
-import { checkHealth } from "../../lib/variants.js";
+import { checkHealth, removeAllVariants } from "../../lib/variants.js";
 
 type ChannelStatus = {
   name: string;
@@ -177,6 +177,7 @@ const app = new Hono()
       await manager.stopAgent(name);
     }
 
+    removeAllVariants(name);
     removeAgent(name);
 
     if (force && existsSync(dir)) {

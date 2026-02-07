@@ -88,7 +88,7 @@ export function resolveAgent(name: string): { entry: AgentEntry; dir: string } {
   }
 
   if (variantName) {
-    const variant = findVariant(dir, variantName);
+    const variant = findVariant(baseName, variantName);
     if (!variant) {
       console.error(`Unknown variant: ${variantName} (agent: ${baseName})`);
       process.exit(1);

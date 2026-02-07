@@ -1,7 +1,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
+import { loadMergedEnv } from "./env.js";
+import { readVoluteConfig } from "./volute-config.js";
 
 type TrackedConnector = {
   child: ChildProcess;
@@ -14,17 +16,10 @@ export class ConnectorManager {
   private shuttingDown = false;
 
   async startConnectors(agentName: string, agentDir: string, agentPort: number): Promise<void> {
-    const connectorsDir = resolve(agentDir, ".volute", "connectors");
-    if (!existsSync(connectorsDir)) return;
+    const config = readVoluteConfig(agentDir);
+    const types = config.connectors ?? [];
 
-    const entries = readdirSync(connectorsDir);
-    for (const type of entries) {
-      const typeDir = resolve(connectorsDir, type);
-      if (!statSync(typeDir).isDirectory()) continue;
-
-      const configPath = resolve(typeDir, "config.json");
-      if (!existsSync(configPath)) continue;
-
+    for (const type of types) {
       try {
         await this.startConnector(agentName, agentDir, agentPort, type);
       } catch (err) {
@@ -47,13 +42,8 @@ export class ConnectorManager {
       } catch {}
     }
 
-    const configPath = resolve(agentDir, ".volute", "connectors", type, "config.json");
-    if (!existsSync(configPath)) {
-      throw new Error(`No config.json found for connector ${type} on agent ${agentName}`);
-    }
-
     // Resolve connector code: agent-specific > user-shared > built-in
-    const agentConnector = resolve(agentDir, ".volute", "connectors", type, "index.ts");
+    const agentConnector = resolve(agentDir, "connectors", type, "index.ts");
     const userConnector = resolve(homedir(), ".volute", "connectors", type, "index.ts");
     const builtinConnector = this.resolveBuiltinConnector(type);
 
@@ -78,13 +68,20 @@ export class ConnectorManager {
     mkdirSync(logsDir, { recursive: true });
     const logStream = createWriteStream(resolve(logsDir, `${type}.log`), { flags: "a" });
 
+    // Pass connector-specific env vars from agent env
+    const agentEnv = loadMergedEnv(agentDir);
+    const prefix = `${type.toUpperCase()}_`;
+    const connectorEnv = Object.fromEntries(
+      Object.entries(agentEnv).filter(([k]) => k.startsWith(prefix)),
+    );
+
     const child = spawn(tsxBin, [connectorScript], {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
         VOLUTE_AGENT_PORT: String(agentPort),
         VOLUTE_AGENT_NAME: agentName,
-        VOLUTE_CONNECTOR_CONFIG: configPath,
+        ...connectorEnv,
       },
     });
 

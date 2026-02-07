@@ -25,7 +25,7 @@ export async function run(args: string[]) {
   }
 
   const { dir: projectRoot } = resolveAgent(agentName);
-  const variant = findVariant(projectRoot, variantName);
+  const variant = findVariant(agentName, variantName);
 
   if (!variant) {
     console.error(`Unknown variant: ${variantName}`);
@@ -133,7 +133,7 @@ export async function run(args: string[]) {
   }
 
   // Remove from variants.json
-  removeVariant(projectRoot, variantName);
+  removeVariant(agentName, variantName);
 
   // Reinstall dependencies
   console.log("Reinstalling dependencies...");

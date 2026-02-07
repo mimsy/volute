@@ -16,16 +16,13 @@ export async function run(args: string[]) {
 
   const { dir } = resolveAgent(name);
 
-  // Build config from env vars based on connector type
-  let config: Record<string, string>;
+  // Validate required env vars for the connector type
   if (type === "discord") {
     const env = loadMergedEnv(dir);
     if (!env.DISCORD_TOKEN) {
       console.error("DISCORD_TOKEN not set. Run: volute env set DISCORD_TOKEN <token>");
       process.exit(1);
     }
-    config = { token: env.DISCORD_TOKEN };
-    if (env.DISCORD_GUILD_ID) config.guildId = env.DISCORD_GUILD_ID;
   } else {
     console.error(`Unknown connector type: ${type}`);
     process.exit(1);
@@ -33,11 +30,7 @@ export async function run(args: string[]) {
 
   const res = await daemonFetch(
     `/api/agents/${encodeURIComponent(name)}/connectors/${encodeURIComponent(type)}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(config),
-    },
+    { method: "POST" },
   );
 
   if (!res.ok) {

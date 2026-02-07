@@ -22,22 +22,19 @@ type NdjsonEvent =
 
 const agentPort = process.env.VOLUTE_AGENT_PORT;
 const agentName = process.env.VOLUTE_AGENT_NAME;
-const configPath = process.env.VOLUTE_CONNECTOR_CONFIG;
+const token = process.env.DISCORD_TOKEN;
 
-if (!agentPort || !agentName || !configPath) {
-  console.error(
-    "Missing required env vars: VOLUTE_AGENT_PORT, VOLUTE_AGENT_NAME, VOLUTE_CONNECTOR_CONFIG",
-  );
+if (!agentPort || !agentName) {
+  console.error("Missing required env vars: VOLUTE_AGENT_PORT, VOLUTE_AGENT_NAME");
   process.exit(1);
 }
 
-const { readFileSync } = await import("node:fs");
-const config = JSON.parse(readFileSync(configPath, "utf-8")) as { token: string; guildId?: string };
-
-if (!config.token) {
-  console.error("Config missing required field: token");
+if (!token) {
+  console.error("Missing required env var: DISCORD_TOKEN");
   process.exit(1);
 }
+
+const guildId = process.env.DISCORD_GUILD_ID;
 
 const baseUrl = `http://localhost:${agentPort}`;
 
@@ -101,7 +98,7 @@ client.on(Events.MessageCreate, async (message) => {
   await handleAgentRequest(message, content);
 });
 
-client.login(config.token);
+client.login(token);
 
 function splitMessage(text: string): string[] {
   const chunks: string[] = [];

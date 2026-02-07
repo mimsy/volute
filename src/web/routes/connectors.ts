@@ -1,8 +1,7 @@
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { Hono } from "hono";
 import { getConnectorManager } from "../../lib/connector-manager.js";
 import { agentDir, findAgent } from "../../lib/registry.js";
+import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
 
 const app = new Hono()
   // List connectors + status
@@ -12,20 +11,11 @@ const app = new Hono()
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
     const dir = agentDir(name);
-    const connectorsDir = resolve(dir, ".volute", "connectors");
+    const config = readVoluteConfig(dir);
+    const configured = config.connectors ?? [];
+
     const manager = getConnectorManager();
     const runningStatus = manager.getConnectorStatus(name);
-
-    // List configured connectors from disk
-    const configured: string[] = [];
-    if (existsSync(connectorsDir)) {
-      for (const entry of readdirSync(connectorsDir)) {
-        const typeDir = resolve(connectorsDir, entry);
-        if (statSync(typeDir).isDirectory() && existsSync(resolve(typeDir, "config.json"))) {
-          configured.push(entry);
-        }
-      }
-    }
 
     const connectors = configured.map((type) => {
       const status = runningStatus.find((s) => s.type === type);
@@ -42,11 +32,13 @@ const app = new Hono()
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
     const dir = agentDir(name);
-    const connectorDir = resolve(dir, ".volute", "connectors", type);
-    mkdirSync(connectorDir, { recursive: true });
+    const config = readVoluteConfig(dir);
+    const connectors = config.connectors ?? [];
 
-    const config = await c.req.json();
-    writeFileSync(resolve(connectorDir, "config.json"), `${JSON.stringify(config, null, 2)}\n`);
+    if (!connectors.includes(type)) {
+      config.connectors = [...connectors, type];
+      writeVoluteConfig(dir, config);
+    }
 
     const manager = getConnectorManager();
     try {
@@ -67,14 +59,12 @@ const app = new Hono()
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
     const dir = agentDir(name);
-    const connectorDir = resolve(dir, ".volute", "connectors", type);
-
     const manager = getConnectorManager();
     await manager.stopConnector(name, type);
 
-    if (existsSync(connectorDir)) {
-      rmSync(connectorDir, { recursive: true, force: true });
-    }
+    const config = readVoluteConfig(dir);
+    config.connectors = (config.connectors ?? []).filter((t) => t !== type);
+    writeVoluteConfig(dir, config);
 
     return c.json({ ok: true });
   });
