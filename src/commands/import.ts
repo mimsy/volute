@@ -4,15 +4,16 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
+import { consolidateMemory } from "../lib/consolidate.js";
 import { convertSession } from "../lib/convert-session.js";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { addAgent, agentDir, ensureVoluteHome, nextPort } from "../lib/registry.js";
+import { composeTemplate, copyTemplateToDir, findTemplatesRoot } from "../lib/template.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -60,41 +61,22 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  // Find template directory (same logic as create.ts)
+  // Compose and copy template
   const template = flags.template ?? "agent-sdk";
-  let dir = dirname(new URL(import.meta.url).pathname);
-  let templateDir = "";
-  for (let i = 0; i < 5; i++) {
-    const candidate = resolve(dir, "templates", template);
-    if (existsSync(candidate)) {
-      templateDir = candidate;
-      break;
-    }
-    dir = dirname(dir);
+  const templatesRoot = findTemplatesRoot();
+  const { composedDir, manifest } = composeTemplate(templatesRoot, template);
+
+  try {
+    console.log(`Creating project: ${name}`);
+    copyTemplateToDir(composedDir, dest, name, manifest);
+  } finally {
+    rmSync(composedDir, { recursive: true, force: true });
   }
-
-  if (!templateDir) {
-    console.error(
-      "Template not found. Searched up from:",
-      dirname(new URL(import.meta.url).pathname),
-    );
-    process.exit(1);
-  }
-
-  // Copy template
-  console.log(`Creating project: ${name}`);
-  cpSync(templateDir, dest, { recursive: true });
-  renameSync(resolve(dest, "package.json.tmpl"), resolve(dest, "package.json"));
-
-  // Replace {{name}} in package.json
-  const pkgPath = resolve(dest, "package.json");
-  writeFileSync(pkgPath, readFileSync(pkgPath, "utf-8").replaceAll("{{name}}", name));
 
   // Apply init files (CLAUDE.md, memory/.gitkeep, etc.) then remove .init/
-  // We don't use applyInitFiles() because import overwrites SOUL.md/MEMORY.md below
+  // We copy all init files, then overwrite SOUL.md/MEMORY.md below
   const initDir = resolve(dest, ".init");
   if (existsSync(initDir)) {
-    // Only copy non-SOUL/MEMORY files (like CLAUDE.md, memory/.gitkeep)
     cpSync(initDir, resolve(dest, "home"), { recursive: true });
     rmSync(initDir, { recursive: true, force: true });
   }
@@ -144,7 +126,7 @@ export async function run(args: string[]) {
   // Consolidate memory if no MEMORY.md but daily logs exist
   if (!hasMemory && dailyLogCount > 0) {
     console.log("No MEMORY.md — running memory consolidation...");
-    await execInherit("npx", ["tsx", "src/consolidate.ts"], { cwd: dest });
+    await consolidateMemory(dest);
   }
 
   // git init + initial commit

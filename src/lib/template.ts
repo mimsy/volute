@@ -9,43 +9,126 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 
+export type TemplateManifest = {
+  rename: Record<string, string>;
+  substitute: string[];
+  skillsDir: string;
+};
+
 /**
- * Find the templates directory by walking up from the calling module's location.
- * Works in both dev (tsx) and built (dist/) modes.
+ * Find the templates root directory by walking up from the calling module's location.
+ * Returns the parent `templates/` directory (not a specific template).
  */
-export function findTemplatesDir(template: string): string {
+export function findTemplatesRoot(): string {
   let dir = dirname(new URL(import.meta.url).pathname);
   for (let i = 0; i < 5; i++) {
-    const candidate = resolve(dir, "templates", template);
-    if (existsSync(candidate)) return candidate;
+    const candidate = resolve(dir, "templates");
+    if (existsSync(resolve(candidate, "_base"))) return candidate;
     dir = dirname(dir);
   }
   console.error(
-    "Template not found. Searched up from:",
+    "Templates directory not found. Searched up from:",
     dirname(new URL(import.meta.url).pathname),
   );
   process.exit(1);
 }
 
 /**
- * Copy template files to a destination directory with {{name}} substitution.
- * Handles .tmpl → actual name renames (package.json, biome.json).
+ * Backwards-compatible: find a specific template directory.
  */
-export function copyTemplateToDir(templateDir: string, destDir: string, agentName: string) {
-  cpSync(templateDir, destDir, { recursive: true });
+export function findTemplatesDir(template: string): string {
+  const root = findTemplatesRoot();
+  const dir = resolve(root, template);
+  if (!existsSync(dir)) {
+    console.error(`Template not found: ${template}`);
+    process.exit(1);
+  }
+  return dir;
+}
 
-  // Rename .tmpl files → actual names
-  for (const name of ["package.json", "biome.json"]) {
-    const tmplPath = resolve(destDir, `${name}.tmpl`);
-    if (existsSync(tmplPath)) {
-      renameSync(tmplPath, resolve(destDir, name));
+/**
+ * Compose a template by layering _base + template-specific files into a temp directory.
+ * Returns the composed dir path and parsed manifest.
+ */
+export function composeTemplate(
+  templatesRoot: string,
+  templateName: string,
+): { composedDir: string; manifest: TemplateManifest } {
+  const baseDir = resolve(templatesRoot, "_base");
+  const templateDir = resolve(templatesRoot, templateName);
+
+  if (!existsSync(baseDir)) {
+    console.error("Base template not found:", baseDir);
+    process.exit(1);
+  }
+  if (!existsSync(templateDir)) {
+    console.error(`Template not found: ${templateName}`);
+    process.exit(1);
+  }
+
+  // Create temp staging directory
+  const composedDir = resolve(tmpdir(), `volute-template-${Date.now()}`);
+  mkdirSync(composedDir, { recursive: true });
+
+  // Copy _base first
+  cpSync(baseDir, composedDir, { recursive: true });
+
+  // Overlay template-specific files (overwriting base files where they conflict)
+  for (const file of listFiles(templateDir)) {
+    const src = resolve(templateDir, file);
+    const dest = resolve(composedDir, file);
+    mkdirSync(dirname(dest), { recursive: true });
+    cpSync(src, dest);
+  }
+
+  // Read manifest
+  const manifestPath = resolve(composedDir, "volute-template.json");
+  if (!existsSync(manifestPath)) {
+    rmSync(composedDir, { recursive: true, force: true });
+    console.error(`Template manifest not found: ${templateName}/volute-template.json`);
+    process.exit(1);
+  }
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as TemplateManifest;
+
+  // Map _skills/ → skillsDir
+  const skillsSrc = resolve(composedDir, "_skills");
+  if (existsSync(skillsSrc)) {
+    const skillsDest = resolve(composedDir, manifest.skillsDir);
+    mkdirSync(skillsDest, { recursive: true });
+    cpSync(skillsSrc, skillsDest, { recursive: true });
+    rmSync(skillsSrc, { recursive: true, force: true });
+  }
+
+  // Remove manifest from composed output
+  rmSync(manifestPath);
+
+  return { composedDir, manifest };
+}
+
+/**
+ * Copy a composed template to the destination directory with name substitution.
+ */
+export function copyTemplateToDir(
+  composedDir: string,
+  destDir: string,
+  agentName: string,
+  manifest: TemplateManifest,
+) {
+  cpSync(composedDir, destDir, { recursive: true });
+
+  // Rename files per manifest
+  for (const [from, to] of Object.entries(manifest.rename)) {
+    const fromPath = resolve(destDir, from);
+    if (existsSync(fromPath)) {
+      renameSync(fromPath, resolve(destDir, to));
     }
   }
 
-  // Replace {{name}} placeholders
-  for (const file of ["package.json", ".init/SOUL.md"]) {
+  // Replace {{name}} placeholders in specified files
+  for (const file of manifest.substitute) {
     const path = resolve(destDir, file);
     if (existsSync(path)) {
       const content = readFileSync(path, "utf-8");

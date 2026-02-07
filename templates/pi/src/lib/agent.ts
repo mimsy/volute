@@ -18,7 +18,6 @@ export async function createAgent(options: {
   systemPrompt: string;
   cwd: string;
   model?: string;
-  thinkingLevel?: string;
   resume?: boolean;
   onCompact?: () => void;
 }) {
@@ -58,14 +57,6 @@ export async function createAgent(options: {
     );
   }
 
-  const thinkingLevel = (options.thinkingLevel || process.env.PI_THINKING_LEVEL || "medium") as
-    | "off"
-    | "minimal"
-    | "low"
-    | "medium"
-    | "high"
-    | "xhigh";
-
   const authStorage = new AuthStorage();
   const modelRegistry = new ModelRegistry(authStorage);
 
@@ -89,7 +80,6 @@ export async function createAgent(options: {
   const { session } = await createAgentSession({
     cwd: options.cwd,
     model,
-    thinkingLevel,
     authStorage,
     modelRegistry,
     sessionManager,

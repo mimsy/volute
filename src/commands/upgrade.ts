@@ -4,7 +4,7 @@ import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgent } from "../lib/registry.js";
 import { spawnServer } from "../lib/spawn-server.js";
-import { copyTemplateToDir, findTemplatesDir } from "../lib/template.js";
+import { composeTemplate, copyTemplateToDir, findTemplatesRoot } from "../lib/template.js";
 import { addVariant } from "../lib/variants.js";
 
 const TEMPLATE_BRANCH = "volute/template";
@@ -30,7 +30,6 @@ export async function run(args: string[]) {
     return;
   }
 
-  const templateDir = findTemplatesDir(template);
   const worktreeDir = resolve(projectRoot, ".worktrees", VARIANT_NAME);
 
   if (existsSync(worktreeDir)) {
@@ -52,7 +51,7 @@ export async function run(args: string[]) {
 
   // Step 1: Update the template tracking branch
   console.log("Updating template branch...");
-  await updateTemplateBranch(projectRoot, templateDir, agentName);
+  await updateTemplateBranch(projectRoot, template, agentName);
 
   // Step 2: Create upgrade worktree
   console.log("Creating upgrade variant...");
@@ -85,7 +84,7 @@ export async function run(args: string[]) {
  * Update the volute/template orphan branch with the latest template files.
  * Uses a temporary worktree to avoid touching the main working directory.
  */
-async function updateTemplateBranch(projectRoot: string, templateDir: string, agentName: string) {
+async function updateTemplateBranch(projectRoot: string, template: string, agentName: string) {
   const tempWorktree = resolve(projectRoot, ".worktrees", "_template_update");
 
   // Check if template branch exists
@@ -108,6 +107,10 @@ async function updateTemplateBranch(projectRoot: string, templateDir: string, ag
   if (existsSync(tempWorktree)) {
     rmSync(tempWorktree, { recursive: true, force: true });
   }
+
+  // Compose template
+  const templatesRoot = findTemplatesRoot();
+  const { composedDir, manifest } = composeTemplate(templatesRoot, template);
 
   try {
     if (branchExists) {
@@ -133,8 +136,8 @@ async function updateTemplateBranch(projectRoot: string, templateDir: string, ag
       await exec("git", ["rm", "-rf", "."], { cwd: tempWorktree }).catch(() => {});
     }
 
-    // Copy template files to the worktree
-    copyTemplateToDir(templateDir, tempWorktree, agentName);
+    // Copy composed template files to the worktree
+    copyTemplateToDir(composedDir, tempWorktree, agentName, manifest);
 
     // Remove .init/ — those files are only for agent creation, not upgrades
     const initDir = resolve(tempWorktree, ".init");
@@ -166,6 +169,8 @@ async function updateTemplateBranch(projectRoot: string, templateDir: string, ag
     if (existsSync(tempWorktree)) {
       rmSync(tempWorktree, { recursive: true, force: true });
     }
+    // Clean up composed template
+    rmSync(composedDir, { recursive: true, force: true });
   }
 }
 

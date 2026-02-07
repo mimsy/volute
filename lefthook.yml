@@ -7,7 +7,7 @@ pre-commit:
     typecheck:
       run: npx tsc --noEmit
     typecheck-templates:
-      run: npx tsc --noEmit -p templates/agent-sdk/tsconfig.json && npx tsc --noEmit -p templates/pi/tsconfig.json
+      run: npx tsc --noEmit -p templates/_base/tsconfig.json
 
 pre-push:
   commands:

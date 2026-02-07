@@ -5,8 +5,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
   applyInitFiles,
+  composeTemplate,
   copyTemplateToDir,
   findTemplatesDir,
+  findTemplatesRoot,
   listFiles,
 } from "../src/lib/template.js";
 
@@ -43,8 +45,13 @@ describe("template helpers", () => {
     const dest = join(tmpDir, "copy-test");
     if (existsSync(dest)) rmSync(dest, { recursive: true });
 
-    const templateDir = findTemplatesDir("agent-sdk");
-    copyTemplateToDir(templateDir, dest, "test-agent");
+    const templatesRoot = findTemplatesRoot();
+    const { composedDir, manifest } = composeTemplate(templatesRoot, "agent-sdk");
+    try {
+      copyTemplateToDir(composedDir, dest, "test-agent", manifest);
+    } finally {
+      rmSync(composedDir, { recursive: true, force: true });
+    }
 
     // package.json should exist (renamed from .tmpl)
     assert.ok(existsSync(join(dest, "package.json")));
@@ -88,8 +95,13 @@ describe("template helpers", () => {
     const dest = join(tmpDir, "subst-test");
     if (existsSync(dest)) rmSync(dest, { recursive: true });
 
-    const templateDir = findTemplatesDir("agent-sdk");
-    copyTemplateToDir(templateDir, dest, "test-agent");
+    const templatesRoot = findTemplatesRoot();
+    const { composedDir, manifest } = composeTemplate(templatesRoot, "agent-sdk");
+    try {
+      copyTemplateToDir(composedDir, dest, "test-agent", manifest);
+    } finally {
+      rmSync(composedDir, { recursive: true, force: true });
+    }
 
     // .init/SOUL.md should have the name substituted
     const soul = readFileSync(join(dest, ".init", "SOUL.md"), "utf-8");

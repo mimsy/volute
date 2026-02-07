@@ -14,10 +14,15 @@ function parseArgs() {
     }
   }
 
-  // Model is configured via VOLUTE_MODEL env var (set with: volute env set --agent <name> VOLUTE_MODEL=...)
-  const model = process.env.VOLUTE_MODEL;
+  return { port };
+}
 
-  return { port, model };
+function loadConfig(): { model?: string } {
+  try {
+    return JSON.parse(readFileSync(resolve("volute.json"), "utf-8"));
+  } catch {
+    return {};
+  }
 }
 
 function loadFile(path: string): string {
@@ -28,7 +33,9 @@ function loadFile(path: string): string {
   }
 }
 
-const { port, model } = parseArgs();
+const { port } = parseArgs();
+const config = loadConfig();
+const model = config.model;
 if (model) {
   log("server", `using model: ${model}`);
 }

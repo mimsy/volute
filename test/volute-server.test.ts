@@ -1,27 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import type { AddressInfo, Server } from "node:net";
-import { resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { findTemplatesDir } from "../src/lib/template.js";
-import {
-  createVoluteServer,
-  type VoluteAgent,
-} from "../templates/agent-sdk/src/lib/volute-server.js";
-
-// --- File conformance ---
-
-describe("volute-server conformance", () => {
-  const agentSdkDir = findTemplatesDir("agent-sdk");
-  const piDir = findTemplatesDir("pi");
-
-  it("agent-sdk and pi volute-server.ts are identical", () => {
-    const agentSdk = readFileSync(resolve(agentSdkDir, "src/lib/volute-server.ts"), "utf-8");
-    const pi = readFileSync(resolve(piDir, "src/lib/volute-server.ts"), "utf-8");
-    assert.equal(agentSdk, pi);
-  });
-});
+import { createVoluteServer, type VoluteAgent } from "../templates/_base/src/lib/volute-server.js";
 
 // --- HTTP contract tests ---
 

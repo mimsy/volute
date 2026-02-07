@@ -1,0 +1,102 @@
+import assert from "node:assert/strict";
+import { existsSync, rmSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, it } from "node:test";
+import { composeTemplate, findTemplatesRoot } from "../src/lib/template.js";
+
+describe("template composition", () => {
+  const templatesRoot = findTemplatesRoot();
+
+  it("composes agent-sdk template with all expected files", () => {
+    const { composedDir, manifest } = composeTemplate(templatesRoot, "agent-sdk");
+    try {
+      // Base files
+      assert.ok(existsSync(resolve(composedDir, ".gitignore")));
+      assert.ok(existsSync(resolve(composedDir, "biome.json.tmpl")));
+      assert.ok(existsSync(resolve(composedDir, "tsconfig.json")));
+      assert.ok(existsSync(resolve(composedDir, "volute.json.tmpl")));
+
+      // Base shared source
+      assert.ok(existsSync(resolve(composedDir, "src/lib/types.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/logger.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/volute-server.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/auto-commit.ts")));
+
+      // Template-specific source
+      assert.ok(existsSync(resolve(composedDir, "src/server.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/agent.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/message-channel.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/hooks/auto-commit.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/hooks/pre-compact.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/hooks/identity-reload.ts")));
+
+      // Init files (from base + template)
+      assert.ok(existsSync(resolve(composedDir, ".init/SOUL.md")));
+      assert.ok(existsSync(resolve(composedDir, ".init/MEMORY.md")));
+      assert.ok(existsSync(resolve(composedDir, ".init/CLAUDE.md")));
+      assert.ok(existsSync(resolve(composedDir, ".init/memory/.gitkeep")));
+
+      // Skills mapped to skillsDir
+      assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "volute-agent/SKILL.md")));
+      assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "memory/SKILL.md")));
+      assert.ok(!existsSync(resolve(composedDir, "_skills")), "_skills should be removed");
+
+      // Manifest should be removed from composed output
+      assert.ok(!existsSync(resolve(composedDir, "volute-template.json")));
+
+      // Home dir with VOLUTE.md
+      assert.ok(existsSync(resolve(composedDir, "home/VOLUTE.md")));
+
+      // Package.json template
+      assert.ok(existsSync(resolve(composedDir, "package.json.tmpl")));
+
+      // Manifest shape
+      assert.deepEqual(Object.keys(manifest.rename).sort(), [
+        "biome.json.tmpl",
+        "package.json.tmpl",
+        "volute.json.tmpl",
+      ]);
+      assert.ok(manifest.substitute.includes("package.json"));
+      assert.ok(manifest.substitute.includes(".init/SOUL.md"));
+    } finally {
+      rmSync(composedDir, { recursive: true, force: true });
+    }
+  });
+
+  it("composes pi template with all expected files", () => {
+    const { composedDir, manifest } = composeTemplate(templatesRoot, "pi");
+    try {
+      // Base files
+      assert.ok(existsSync(resolve(composedDir, ".gitignore")));
+      assert.ok(existsSync(resolve(composedDir, "tsconfig.json")));
+
+      // Base shared source
+      assert.ok(existsSync(resolve(composedDir, "src/lib/types.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/logger.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/volute-server.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/auto-commit.ts")));
+
+      // Template-specific source
+      assert.ok(existsSync(resolve(composedDir, "src/server.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/agent.ts")));
+
+      // No agent-sdk-specific files
+      assert.ok(!existsSync(resolve(composedDir, "src/lib/message-channel.ts")));
+      assert.ok(!existsSync(resolve(composedDir, "src/lib/hooks")));
+
+      // Init files
+      assert.ok(existsSync(resolve(composedDir, ".init/SOUL.md")));
+      assert.ok(existsSync(resolve(composedDir, ".init/MEMORY.md")));
+      assert.ok(existsSync(resolve(composedDir, ".init/AGENTS.md")));
+
+      // Pi overrides volute.json.tmpl with provider-prefixed model
+      assert.ok(existsSync(resolve(composedDir, "volute.json.tmpl")));
+
+      // Skills mapped to skillsDir
+      assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "volute-agent/SKILL.md")));
+      assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "memory/SKILL.md")));
+    } finally {
+      rmSync(composedDir, { recursive: true, force: true });
+    }
+  });
+});

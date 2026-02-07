@@ -1,8 +1,13 @@
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { addAgent, agentDir, ensureVoluteHome, nextPort } from "../lib/registry.js";
-import { applyInitFiles, copyTemplateToDir, findTemplatesDir } from "../lib/template.js";
+import {
+  applyInitFiles,
+  composeTemplate,
+  copyTemplateToDir,
+  findTemplatesRoot,
+} from "../lib/template.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -25,9 +30,15 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  const templateDir = findTemplatesDir(template);
-  copyTemplateToDir(templateDir, dest, name);
-  applyInitFiles(dest);
+  const templatesRoot = findTemplatesRoot();
+  const { composedDir, manifest } = composeTemplate(templatesRoot, template);
+
+  try {
+    copyTemplateToDir(composedDir, dest, name, manifest);
+    applyInitFiles(dest);
+  } finally {
+    rmSync(composedDir, { recursive: true, force: true });
+  }
 
   // Assign port and register
   const port = nextPort();

@@ -20,9 +20,9 @@ You manage yourself through the `volute` CLI. Use `$VOLUTE_AGENT` for your own n
 | `volute channel read discord:<id> [--limit N]` | Read channel history |
 | `volute channel send discord:<id> "<msg>"` | Send a message proactively |
 
-## Identity File Editing
+## Configuration
 
-Your identity files (`SOUL.md`, `MEMORY.md`, `VOLUTE.md`) are in your working directory. Edit them directly — changes trigger an automatic restart so they take effect in your system prompt. Your session resumes seamlessly.
+Your `volute.json` (at `../volute.json` from your cwd) controls your model and other settings.
 
 ## Variant Workflow
 

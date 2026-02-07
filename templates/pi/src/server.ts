@@ -7,20 +7,22 @@ import { createVoluteServer } from "./lib/volute-server.js";
 function parseArgs() {
   const args = process.argv.slice(2);
   let port = 4100;
-  let model: string | undefined;
-  let thinkingLevel: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--port" && args[i + 1]) {
       port = parseInt(args[++i], 10);
-    } else if (args[i] === "--model" && args[i + 1]) {
-      model = args[++i];
-    } else if (args[i] === "--thinking-level" && args[i + 1]) {
-      thinkingLevel = args[++i];
     }
   }
 
-  return { port, model, thinkingLevel };
+  return { port };
+}
+
+function loadConfig(): { model?: string } {
+  try {
+    return JSON.parse(readFileSync(resolve("volute.json"), "utf-8"));
+  } catch {
+    return {};
+  }
 }
 
 function loadFile(path: string): string {
@@ -31,7 +33,9 @@ function loadFile(path: string): string {
   }
 }
 
-const { port, model, thinkingLevel } = parseArgs();
+const { port } = parseArgs();
+const config = loadConfig();
+const model = config.model;
 const soulPath = resolve("home/SOUL.md");
 const memoryPath = resolve("home/MEMORY.md");
 const volutePath = resolve("home/VOLUTE.md");
@@ -70,7 +74,6 @@ const agent = await createAgent({
   systemPrompt,
   cwd: resolve("home"),
   model,
-  thinkingLevel,
   resume: hasExistingSession,
   onCompact: () => {
     log("server", "pre-compact — asking agent to update daily log");

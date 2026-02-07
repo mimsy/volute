@@ -4,8 +4,8 @@ import { log } from "./logger.js";
 
 function exec(cmd: string, args: string[], cwd: string): Promise<{ code: number }> {
   return new Promise((r) => {
-    execFile(cmd, args, { cwd }, (_err, _stdout, _stderr) => {
-      r({ code: _err ? ((_err as NodeJS.ErrnoException).code ? 1 : 1) : 0 });
+    execFile(cmd, args, { cwd }, (_err) => {
+      r({ code: _err ? 1 : 0 });
     });
   });
 }
@@ -39,4 +39,8 @@ export function commitFileChange(filePath: string, cwd: string): void {
       log("auto-commit", message);
     }
   });
+}
+
+export function waitForCommits(): Promise<void> {
+  return pending.then(() => {});
 }
