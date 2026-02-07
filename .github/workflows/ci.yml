@@ -28,8 +28,7 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npx tsc --noEmit -p src/web/frontend/tsconfig.json
-      - run: npx tsc --noEmit -p templates/agent-sdk/tsconfig.json
-      - run: npx tsc --noEmit -p templates/pi/tsconfig.json
+      - run: npx tsc --noEmit -p templates/_base/tsconfig.json
 
   test:
     runs-on: ubuntu-latest
