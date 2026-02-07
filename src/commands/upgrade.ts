@@ -77,7 +77,7 @@ export async function run(args: string[]) {
   }
 
   // Step 4: Install, start, verify
-  await installAndVerify(agentName, projectRoot, worktreeDir);
+  await installAndVerify(agentName, worktreeDir);
 }
 
 /**
@@ -235,13 +235,13 @@ async function continueUpgrade(agentName: string, projectRoot: string) {
     // commit may already be done if user committed manually
   }
 
-  await installAndVerify(agentName, projectRoot, worktreeDir);
+  await installAndVerify(agentName, worktreeDir);
 }
 
 /**
  * Install dependencies, start the variant server, and run verification.
  */
-async function installAndVerify(agentName: string, projectRoot: string, worktreeDir: string) {
+async function installAndVerify(agentName: string, worktreeDir: string) {
   // Install dependencies
   console.log("Installing dependencies...");
   await execInherit("npm", ["install"], { cwd: worktreeDir });
@@ -258,7 +258,7 @@ async function installAndVerify(agentName: string, projectRoot: string, worktree
   const pid = child.pid ?? null;
 
   // Register variant
-  addVariant(projectRoot, {
+  addVariant(agentName, {
     name: VARIANT_NAME,
     branch: VARIANT_NAME,
     path: worktreeDir,
