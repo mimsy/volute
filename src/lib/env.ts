@@ -21,7 +21,7 @@ export function readEnv(path: string): Record<string, string> {
 
 export function writeEnv(path: string, env: Record<string, string>): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(env, null, 2)}\n`);
+  writeFileSync(path, `${JSON.stringify(env, null, 2)}\n`, { mode: 0o600 });
 }
 
 export function loadMergedEnv(agentDir: string): Record<string, string> {

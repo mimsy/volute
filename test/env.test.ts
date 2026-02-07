@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, it } from "node:test";
@@ -65,5 +65,12 @@ describe("env", () => {
   it("sharedEnvPath returns path under VOLUTE_HOME", () => {
     const path = sharedEnvPath();
     assert.ok(path.endsWith("/env.json"));
+  });
+
+  it("writeEnv sets file permissions to 0600", () => {
+    const path = join(tmp, "secure.json");
+    writeEnv(path, { SECRET: "value" });
+    const mode = statSync(path).mode & 0o777;
+    assert.equal(mode, 0o600);
   });
 });

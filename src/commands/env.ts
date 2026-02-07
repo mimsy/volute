@@ -45,9 +45,15 @@ async function promptValue(key: string): Promise<string> {
   });
 }
 
+function maskValue(value: string): string {
+  if (value.length <= 6) return "***";
+  return `${value.slice(0, 3)}...${value.slice(-3)}`;
+}
+
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
     agent: { type: "string" },
+    reveal: { type: "boolean" },
   });
 
   const subcommand = positional[0];
@@ -108,7 +114,8 @@ export async function run(args: string[]) {
         }
         for (const key of [...allKeys].sort()) {
           const scope = key in agent ? "agent" : "shared";
-          const value = key in agent ? agent[key] : shared[key];
+          const raw = key in agent ? agent[key] : shared[key];
+          const value = flags.reveal ? raw : maskValue(raw);
           console.log(`${key}=${value} [${scope}]`);
         }
       } else {
@@ -119,7 +126,8 @@ export async function run(args: string[]) {
           return;
         }
         for (const key of keys.sort()) {
-          console.log(`${key}=${env[key]} [shared]`);
+          const value = flags.reveal ? env[key] : maskValue(env[key]);
+          console.log(`${key}=${value} [shared]`);
         }
       }
       break;
