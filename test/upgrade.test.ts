@@ -20,7 +20,7 @@ function git(args: string[], cwd: string): string {
 
 function setupGitRepo(dir: string) {
   mkdirSync(dir, { recursive: true });
-  git(["init"], dir);
+  git(["init", "-b", "main"], dir);
   git(["config", "user.email", "test@test.com"], dir);
   git(["config", "user.name", "Test"], dir);
   writeFileSync(join(dir, "README.md"), "# Test Agent\n");
