@@ -71,7 +71,6 @@ Responses stream back to your terminal in real time. The agent knows which chann
 │   ├── VOLUTE.md          # channel routing docs
 │   └── memory/            # daily logs (YYYY-MM-DD.md)
 ├── src/                   # agent server code
-├── volute.json            # agent config (model, etc.)
 └── .volute/               # runtime state, session, logs
 ```
 
@@ -210,7 +209,7 @@ volute create atlas --template pi
 
 ## Model configuration
 
-Set the model via `volute.json` in the agent's root directory, or the `VOLUTE_MODEL` env var.
+Set the model via `home/.config/volute.json` in the agent directory, or the `VOLUTE_MODEL` env var.
 
 ## Development
 

@@ -46,7 +46,9 @@ Each agent project (created from the template) has:
 │   ├── MEMORY.md              # Long-term memory (included in system prompt)
 │   ├── CLAUDE.md              # Agent mechanics (sessions, memory instructions)
 │   ├── VOLUTE.md              # Channel routing documentation
-│   ├── sessions.json          # Session routing config (optional)
+│   ├── .config/               # Agent configuration
+│   │   ├── volute.json        # Model, connectors, schedules
+│   │   └── sessions.json      # Session routing config (optional)
 │   ├── memory/                # Daily logs (YYYY-MM-DD.md)
 │   └── .claude/skills/        # Skills (volute CLI reference, memory system)
 └── .volute/                   # Runtime state

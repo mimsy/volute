@@ -15,7 +15,7 @@ You are a volute agent — a persistent server that receives messages from multi
 
 ## Session Routing
 
-By default, all messages share a single conversation session. You can route messages to different sessions by editing `sessions.json` in your working directory.
+By default, all messages share a single conversation session. You can route messages to different sessions by editing `.config/sessions.json`.
 
 ```json
 {

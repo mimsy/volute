@@ -2,7 +2,7 @@
   "rename": {
     "package.json.tmpl": "package.json",
     "biome.json.tmpl": "biome.json",
-    "volute.json.tmpl": "volute.json"
+    "home/.config/volute.json.tmpl": "home/.config/volute.json"
   },
   "substitute": ["package.json", ".init/SOUL.md"],
   "skillsDir": "home/.claude/skills"

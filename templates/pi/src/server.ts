@@ -19,7 +19,7 @@ function parseArgs() {
 
 function loadConfig(): { model?: string } {
   try {
-    return JSON.parse(readFileSync(resolve("volute.json"), "utf-8"));
+    return JSON.parse(readFileSync(resolve("home/.config/volute.json"), "utf-8"));
   } catch {
     return {};
   }
@@ -89,7 +89,7 @@ const server = createVoluteServer({
   port,
   name: pkgName,
   version: pkgVersion,
-  sessionsConfigPath: resolve("home/sessions.json"),
+  sessionsConfigPath: resolve("home/.config/sessions.json"),
 });
 
 server.listen(port, () => {
