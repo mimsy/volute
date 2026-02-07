@@ -5,6 +5,7 @@ import { initAgentManager } from "./lib/agent-manager.js";
 import { initConnectorManager } from "./lib/connector-manager.js";
 import { agentDir, readRegistry, setAgentRunning, voluteHome } from "./lib/registry.js";
 import { getScheduler } from "./lib/scheduler.js";
+import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
 import { startServer } from "./web/server.js";
 
 export async function startDaemon(opts: { port: number; foreground: boolean }): Promise<void> {
@@ -60,6 +61,18 @@ export async function startDaemon(opts: { port: number; foreground: boolean }): 
     } catch (err) {
       console.error(`[daemon] failed to start agent ${entry.name}:`, err);
       setAgentRunning(entry.name, false);
+    }
+  }
+
+  // Restore running variants
+  const runningVariants = getAllRunningVariants();
+  for (const { agentName, variant } of runningVariants) {
+    const compositeKey = `${agentName}@${variant.name}`;
+    try {
+      await manager.startAgent(compositeKey);
+    } catch (err) {
+      console.error(`[daemon] failed to start variant ${compositeKey}:`, err);
+      setVariantRunning(agentName, variant.name, false);
     }
   }
 

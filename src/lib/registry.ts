@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { findVariant } from "./variants.js";
+import { findVariant, readVariants } from "./variants.js";
 
 export function voluteHome(): string {
   return process.env.VOLUTE_HOME || resolve(homedir(), ".volute");
@@ -69,6 +69,12 @@ export function agentDir(name: string): string {
 export function nextPort(): number {
   const entries = readRegistry();
   const usedPorts = new Set(entries.map((e) => e.port));
+  // Also reserve ports used by variants
+  for (const entry of entries) {
+    for (const v of readVariants(entry.name)) {
+      if (v.port) usedPorts.add(v.port);
+    }
+  }
   let port = 4100;
   while (usedPorts.has(port)) port++;
   return port;

@@ -14,7 +14,7 @@ import {
   setAgentRunning,
 } from "../../lib/registry.js";
 import { agentMessages } from "../../lib/schema.js";
-import { checkHealth, findVariant, removeAllVariants } from "../../lib/variants.js";
+import { checkHealth, findVariant, readVariants, removeAllVariants } from "../../lib/variants.js";
 
 type ChannelStatus = {
   name: string;
@@ -90,16 +90,39 @@ const app = new Hono()
     if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
 
     const { status, channels } = await getAgentStatus(name, dir, entry.port);
-    return c.json({ ...entry, status, channels });
+
+    // Include variant info
+    const variants = readVariants(name);
+    const variantStatuses = await Promise.all(
+      variants.map(async (v) => {
+        const manager = getAgentManager();
+        const compositeKey = `${name}@${v.name}`;
+        let variantStatus: "running" | "stopped" | "starting" = "stopped";
+        if (manager.isRunning(compositeKey)) {
+          const health = await checkHealth(v.port);
+          variantStatus = health.ok ? "running" : "starting";
+        }
+        return { name: v.name, port: v.port, status: variantStatus };
+      }),
+    );
+
+    return c.json({ ...entry, status, channels, variants: variantStatuses });
   })
-  // Start agent
+  // Start agent (supports name@variant)
   .post("/:name/start", async (c) => {
     const name = c.req.param("name");
-    const entry = findAgent(name);
+    const [baseName, variantName] = name.split("@", 2);
+
+    const entry = findAgent(baseName);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
-    const dir = agentDir(name);
-    if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
+    if (variantName) {
+      const variant = findVariant(baseName, variantName);
+      if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
+    } else {
+      const dir = agentDir(baseName);
+      if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
+    }
 
     const manager = getAgentManager();
     if (manager.isRunning(name)) {
@@ -108,44 +131,65 @@ const app = new Hono()
 
     try {
       await manager.startAgent(name);
-      setAgentRunning(name, true);
-      await getConnectorManager().startConnectors(name, dir, entry.port);
+      // Only start connectors/schedules for base agents, not variants
+      if (!variantName) {
+        setAgentRunning(baseName, true);
+        const dir = agentDir(baseName);
+        await getConnectorManager().startConnectors(baseName, dir, entry.port);
+      }
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to start agent" }, 500);
     }
   })
-  // Restart agent (stop if running, then start)
+  // Restart agent (supports name@variant)
   .post("/:name/restart", async (c) => {
     const name = c.req.param("name");
-    const entry = findAgent(name);
+    const [baseName, variantName] = name.split("@", 2);
+
+    const entry = findAgent(baseName);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
-    const dir = agentDir(name);
-    if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
+    if (variantName) {
+      const variant = findVariant(baseName, variantName);
+      if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
+    } else {
+      const dir = agentDir(baseName);
+      if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
+    }
 
     const manager = getAgentManager();
     const connectorManager = getConnectorManager();
 
     try {
       if (manager.isRunning(name)) {
-        await connectorManager.stopConnectors(name);
+        if (!variantName) await connectorManager.stopConnectors(baseName);
         await manager.stopAgent(name);
       }
 
       await manager.startAgent(name);
-      setAgentRunning(name, true);
-      await connectorManager.startConnectors(name, dir, entry.port);
+      if (!variantName) {
+        setAgentRunning(baseName, true);
+        const dir = agentDir(baseName);
+        await connectorManager.startConnectors(baseName, dir, entry.port);
+      }
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to restart agent" }, 500);
     }
   })
-  // Stop agent
+  // Stop agent (supports name@variant)
   .post("/:name/stop", async (c) => {
     const name = c.req.param("name");
-    const entry = findAgent(name);
+    const [baseName, variantName] = name.split("@", 2);
+
+    const entry = findAgent(baseName);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
+
+    if (variantName) {
+      const variant = findVariant(baseName, variantName);
+      if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
+    }
 
     const manager = getAgentManager();
     if (!manager.isRunning(name)) {
@@ -153,9 +197,9 @@ const app = new Hono()
     }
 
     try {
-      await getConnectorManager().stopConnectors(name);
+      if (!variantName) await getConnectorManager().stopConnectors(baseName);
       await manager.stopAgent(name);
-      setAgentRunning(name, false);
+      if (!variantName) setAgentRunning(baseName, false);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to stop agent" }, 500);

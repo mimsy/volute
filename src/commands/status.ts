@@ -1,10 +1,17 @@
 import { daemonFetch } from "../lib/daemon-client.js";
 
+type VariantInfo = {
+  name: string;
+  port: number;
+  status: "running" | "stopped" | "starting";
+};
+
 type AgentInfo = {
   name: string;
   port: number;
   status: "running" | "stopped" | "starting";
   channels: Array<{ name: string; status: string }>;
+  variants?: VariantInfo[];
 };
 
 export async function run(args: string[]) {
@@ -59,5 +66,13 @@ export async function run(args: string[]) {
 
   for (const ch of agent.channels) {
     console.log(`${ch.name}: ${ch.status}`);
+  }
+
+  if (agent.variants && agent.variants.length > 0) {
+    console.log("");
+    console.log("Variants:");
+    for (const v of agent.variants) {
+      console.log(`  ${v.name}  port=${v.port}  ${v.status}`);
+    }
   }
 }

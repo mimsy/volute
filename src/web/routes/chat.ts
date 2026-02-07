@@ -12,6 +12,7 @@ import { getDb } from "../../lib/db.js";
 import { readNdjson } from "../../lib/ndjson.js";
 import { findAgent } from "../../lib/registry.js";
 import { agentMessages } from "../../lib/schema.js";
+import { findVariant } from "../../lib/variants.js";
 import type { VoluteContentPart, VoluteEvent } from "../../types.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
@@ -30,8 +31,17 @@ const chatSchema = z.object({
 
 const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchema), async (c) => {
   const name = c.req.param("name");
-  const entry = findAgent(name);
+  const [baseName, variantName] = name.split("@", 2);
+
+  const entry = findAgent(baseName);
   if (!entry) return c.json({ error: "Agent not found" }, 404);
+
+  let port = entry.port;
+  if (variantName) {
+    const variant = findVariant(baseName, variantName);
+    if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
+    port = variant.port;
+  }
 
   const body = c.req.valid("json");
   if (!body.message && (!body.images || body.images.length === 0)) {
@@ -47,7 +57,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     if (!conv) return c.json({ error: "Conversation not found" }, 404);
   } else {
     const title = body.message ? body.message.slice(0, 80) : "Image message";
-    const conv = await createConversation(name, "web", {
+    const conv = await createConversation(baseName, "web", {
       userId: user.id,
       title,
     });
@@ -72,7 +82,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   const userText = body.message ?? "[image]";
   const db = await getDb();
   await db.insert(agentMessages).values({
-    agent: name,
+    agent: baseName,
     channel: "web",
     role: "user",
     sender: user.username,
@@ -90,7 +100,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     }
   }
 
-  const res = await fetch(`http://localhost:${entry.port}/message`, {
+  const res = await fetch(`http://localhost:${port}/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -145,7 +155,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
       if (voluteEvent.type === "done") {
         // Save assistant message
         if (assistantContent.length > 0) {
-          await addMessage(conversationId!, "assistant", name, assistantContent);
+          await addMessage(conversationId!, "assistant", baseName, assistantContent);
 
           // Record in agent_messages
           const textParts = assistantContent
@@ -154,7 +164,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
           if (textParts.length > 0) {
             const db = await getDb();
             await db.insert(agentMessages).values({
-              agent: name,
+              agent: baseName,
               channel: "web",
               role: "assistant",
               content: textParts.join(""),
