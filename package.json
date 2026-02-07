@@ -1,7 +1,23 @@
 {
   "name": "volute",
   "version": "0.1.0",
+  "description": "CLI for creating and managing self-modifying AI agents powered by the Claude Agent SDK",
   "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mimsy/volute.git"
+  },
+  "keywords": [
+    "cli",
+    "ai",
+    "agents",
+    "claude",
+    "anthropic"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
     "volute": "dist/cli.js"
   },
