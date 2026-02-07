@@ -1,8 +1,16 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync } from "node:fs";
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { loadMergedEnv } from "./env.js";
+import { agentDir as getAgentDir } from "./registry.js";
 import { readVoluteConfig } from "./volute-config.js";
 
 type TrackedConnector = {
@@ -34,13 +42,28 @@ export class ConnectorManager {
     agentPort: number,
     type: string,
   ): Promise<void> {
-    // Stop existing connector of this type if running
+    // Stop existing connector of this type if running (wait for exit)
     const existing = this.connectors.get(agentName)?.get(type);
     if (existing) {
-      try {
-        existing.child.kill("SIGTERM");
-      } catch {}
+      await new Promise<void>((res) => {
+        existing.child.on("exit", () => res());
+        try {
+          existing.child.kill("SIGTERM");
+        } catch {
+          res();
+        }
+        setTimeout(() => {
+          try {
+            existing.child.kill("SIGKILL");
+          } catch {}
+          res();
+        }, 3000);
+      });
+      this.connectors.get(agentName)?.delete(type);
     }
+
+    // Kill orphan connector from a previous daemon session
+    this.killOrphanConnector(agentDir, type);
 
     // Resolve connector code: agent-specific > user-shared > built-in
     const agentConnector = resolve(agentDir, "connectors", type, "index.ts");
@@ -87,6 +110,11 @@ export class ConnectorManager {
 
     child.stdout?.pipe(logStream);
     child.stderr?.pipe(logStream);
+
+    // Track PID so orphans can be killed on next daemon startup
+    if (child.pid) {
+      this.saveConnectorPid(agentDir, type, child.pid);
+    }
 
     if (!this.connectors.has(agentName)) {
       this.connectors.set(agentName, new Map());
@@ -147,6 +175,9 @@ export class ConnectorManager {
     });
 
     this.stopping.delete(stopKey);
+    try {
+      this.removeConnectorPid(getAgentDir(agentName), type);
+    } catch {}
     console.error(`[daemon] stopped connector ${type} for ${agentName}`);
   }
 
@@ -172,6 +203,37 @@ export class ConnectorManager {
       type,
       running: !tracked.child.killed,
     }));
+  }
+
+  private connectorPidPath(agentDir: string, type: string): string {
+    return resolve(agentDir, ".volute", "connectors", `${type}.pid`);
+  }
+
+  private saveConnectorPid(agentDir: string, type: string, pid: number): void {
+    const pidPath = this.connectorPidPath(agentDir, type);
+    mkdirSync(dirname(pidPath), { recursive: true });
+    writeFileSync(pidPath, String(pid));
+  }
+
+  private removeConnectorPid(agentDir: string, type: string): void {
+    try {
+      unlinkSync(this.connectorPidPath(agentDir, type));
+    } catch {}
+  }
+
+  private killOrphanConnector(agentDir: string, type: string): void {
+    const pidPath = this.connectorPidPath(agentDir, type);
+    if (!existsSync(pidPath)) return;
+    try {
+      const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
+      if (pid > 0) {
+        process.kill(pid, "SIGTERM");
+        console.error(`[daemon] killed orphan connector ${type} (pid ${pid})`);
+      }
+    } catch {}
+    try {
+      unlinkSync(pidPath);
+    } catch {}
   }
 
   private resolveBuiltinConnector(type: string): string | null {
