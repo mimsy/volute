@@ -6,13 +6,7 @@ import { getAgentManager } from "../../lib/agent-manager.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { getConnectorManager } from "../../lib/connector-manager.js";
 import { getDb } from "../../lib/db.js";
-import {
-  agentDir,
-  findAgent,
-  readRegistry,
-  removeAgent,
-  setAgentRunning,
-} from "../../lib/registry.js";
+import { agentDir, findAgent, readRegistry, removeAgent } from "../../lib/registry.js";
 import { agentMessages } from "../../lib/schema.js";
 import { checkHealth, findVariant, readVariants, removeAllVariants } from "../../lib/variants.js";
 
@@ -133,7 +127,6 @@ const app = new Hono()
       await manager.startAgent(name);
       // Only start connectors/schedules for base agents, not variants
       if (!variantName) {
-        setAgentRunning(baseName, true);
         const dir = agentDir(baseName);
         await getConnectorManager().startConnectors(baseName, dir, entry.port);
       }
@@ -169,7 +162,6 @@ const app = new Hono()
 
       await manager.startAgent(name);
       if (!variantName) {
-        setAgentRunning(baseName, true);
         const dir = agentDir(baseName);
         await connectorManager.startConnectors(baseName, dir, entry.port);
       }
@@ -199,7 +191,6 @@ const app = new Hono()
     try {
       if (!variantName) await getConnectorManager().stopConnectors(baseName);
       await manager.stopAgent(name);
-      if (!variantName) setAgentRunning(baseName, false);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to stop agent" }, 500);
@@ -243,11 +234,10 @@ const app = new Hono()
       const variant = findVariant(baseName, variantName);
       if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
       port = variant.port;
-    } else {
-      const manager = getAgentManager();
-      if (!manager.isRunning(baseName)) {
-        return c.json({ error: "Agent is not running" }, 409);
-      }
+    }
+
+    if (!getAgentManager().isRunning(name)) {
+      return c.json({ error: "Agent is not running" }, 409);
     }
 
     const body = await c.req.text();

@@ -43,6 +43,11 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     port = variant.port;
   }
 
+  const { getAgentManager } = await import("../../lib/agent-manager.js");
+  if (!getAgentManager().isRunning(name)) {
+    return c.json({ error: "Agent is not running" }, 409);
+  }
+
   const body = c.req.valid("json");
   if (!body.message && (!body.images || body.images.length === 0)) {
     return c.json({ error: "message or images required" }, 400);

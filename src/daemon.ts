@@ -40,8 +40,8 @@ export async function startDaemon(opts: { port: number; foreground: boolean }): 
   }
 
   // Server is listening — safe to write PID and config
-  writeFileSync(DAEMON_PID_PATH, myPid);
-  writeFileSync(DAEMON_JSON_PATH, `${JSON.stringify({ port, token }, null, 2)}\n`);
+  writeFileSync(DAEMON_PID_PATH, myPid, { mode: 0o600 });
+  writeFileSync(DAEMON_JSON_PATH, `${JSON.stringify({ port, token }, null, 2)}\n`, { mode: 0o600 });
 
   // Start agent manager, connector manager, and scheduler
   const manager = initAgentManager();

@@ -11,7 +11,6 @@ export type Variant = {
   branch: string;
   path: string;
   port: number;
-  pid: number | null;
   created: string;
   running?: boolean;
 };

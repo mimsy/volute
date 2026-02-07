@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { loadMergedEnv } from "./env.js";
 import { agentDir, findAgent, setAgentRunning } from "./registry.js";
-import { findVariant, setVariantRunning } from "./variants.js";
+import { findVariant, setVariantRunning, validateBranchName } from "./variants.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -172,6 +172,11 @@ export class AgentManager {
       unlinkSync(restartPath);
 
       if (signal.action === "merge" && signal.name) {
+        const err = validateBranchName(signal.name);
+        if (err) {
+          console.error(`[daemon] invalid variant name in restart.json for ${name}: ${err}`);
+          return false;
+        }
         console.error(`[daemon] merging variant for ${name}: ${signal.name}`);
         const mergeArgs = ["merge", name, signal.name];
         if (signal.summary) mergeArgs.push("--summary", signal.summary);

@@ -254,8 +254,7 @@ async function installAndVerify(agentName: string, worktreeDir: string) {
     process.exit(1);
   }
 
-  const { actualPort, child } = result;
-  const pid = child.pid ?? null;
+  const { actualPort } = result;
 
   // Register variant
   addVariant(agentName, {
@@ -263,7 +262,6 @@ async function installAndVerify(agentName: string, worktreeDir: string) {
     branch: VARIANT_NAME,
     path: worktreeDir,
     port: actualPort,
-    pid,
     created: new Date().toISOString(),
   });
 

@@ -77,6 +77,7 @@ export function nextPort(): number {
   }
   let port = 4100;
   while (usedPorts.has(port)) port++;
+  if (port > 65535) throw new Error("No available ports — all ports 4100-65535 are allocated");
   return port;
 }
 

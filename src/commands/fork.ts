@@ -80,7 +80,6 @@ export async function run(args: string[]) {
     branch: variantName,
     path: variantDir,
     port: variantPort,
-    pid: null,
     created: new Date().toISOString(),
   };
 
