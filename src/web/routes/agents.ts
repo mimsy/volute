@@ -14,7 +14,7 @@ import {
   setAgentRunning,
 } from "../../lib/registry.js";
 import { agentMessages } from "../../lib/schema.js";
-import { checkHealth, removeAllVariants } from "../../lib/variants.js";
+import { checkHealth, findVariant, removeAllVariants } from "../../lib/variants.js";
 
 type ChannelStatus = {
   name: string;
@@ -189,12 +189,21 @@ const app = new Hono()
   // Proxy message to agent
   .post("/:name/message", async (c) => {
     const name = c.req.param("name");
-    const entry = findAgent(name);
+    const [baseName, variantName] = name.split("@", 2);
+
+    const entry = findAgent(baseName);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
-    const manager = getAgentManager();
-    if (!manager.isRunning(name)) {
-      return c.json({ error: "Agent is not running" }, 409);
+    let port = entry.port;
+    if (variantName) {
+      const variant = findVariant(baseName, variantName);
+      if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
+      port = variant.port;
+    } else {
+      const manager = getAgentManager();
+      if (!manager.isRunning(baseName)) {
+        return c.json({ error: "Agent is not running" }, 409);
+      }
     }
 
     const body = await c.req.text();
@@ -208,7 +217,7 @@ const app = new Hono()
       const content =
         typeof parsed.content === "string" ? parsed.content : JSON.stringify(parsed.content);
       await db.insert(agentMessages).values({
-        agent: name,
+        agent: baseName,
         channel,
         role: "user",
         sender,
@@ -218,7 +227,7 @@ const app = new Hono()
       // Don't block the request if persistence fails
     }
 
-    const res = await fetch(`http://localhost:${entry.port}/message`, {
+    const res = await fetch(`http://localhost:${port}/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,
@@ -281,7 +290,7 @@ const app = new Hono()
         if (textParts.length > 0) {
           const db = await getDb();
           await db.insert(agentMessages).values({
-            agent: name,
+            agent: baseName,
             channel,
             role: "assistant",
             content: textParts.join(""),

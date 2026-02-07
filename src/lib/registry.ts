@@ -93,7 +93,7 @@ export function resolveAgent(name: string): { entry: AgentEntry; dir: string } {
       console.error(`Unknown variant: ${variantName} (agent: ${baseName})`);
       process.exit(1);
     }
-    return { entry: { ...entry, port: variant.port }, dir };
+    return { entry: { ...entry, port: variant.port }, dir: variant.path };
   }
 
   return { entry, dir };
