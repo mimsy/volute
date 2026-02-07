@@ -35,8 +35,9 @@ Each agent project (created from the template) has:
 │   ├── server.ts              # HTTP server with /health and POST /message (ndjson streaming)
 │   ├── consolidate.ts         # Memory consolidation script
 │   └── lib/
-│       ├── agent.ts           # SDK wrapper, broadcasts VoluteEvent, auto-commits file changes
+│       ├── agent.ts           # SDK wrapper, multi-session support, auto-commits file changes
 │       ├── auto-commit.ts     # Auto-commits file changes in home/ via SDK hooks
+│       ├── sessions.ts        # Session routing config loader and matcher
 │       ├── logger.ts          # Logging utilities
 │       ├── message-channel.ts # Async iterable for agent communication
 │       └── types.ts           # VoluteRequest, VoluteContentPart types
@@ -45,10 +46,11 @@ Each agent project (created from the template) has:
 │   ├── MEMORY.md              # Long-term memory (included in system prompt)
 │   ├── CLAUDE.md              # Agent mechanics (sessions, memory instructions)
 │   ├── VOLUTE.md              # Channel routing documentation
+│   ├── sessions.json          # Session routing config (optional)
 │   ├── memory/                # Daily logs (YYYY-MM-DD.md)
 │   └── .claude/skills/        # Skills (volute CLI reference, memory system)
 └── .volute/                   # Runtime state
-    ├── session.json           # Session ID for resume
+    ├── sessions/              # Per-session SDK state (e.g. sessions/main.json)
     ├── connectors/            # Connector configs (e.g. connectors/discord/config.json)
     ├── schedules.json         # Cron schedules for this agent
     ├── variants.json          # Variant metadata
