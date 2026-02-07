@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { findVariant } from "./variants.js";
 
-export const VOLUTE_HOME = resolve(homedir(), ".volute");
+export const VOLUTE_HOME = process.env.VOLUTE_HOME || resolve(homedir(), ".volute");
 export const AGENTS_DIR = resolve(VOLUTE_HOME, "agents");
 const REGISTRY_PATH = resolve(VOLUTE_HOME, "agents.json");
 

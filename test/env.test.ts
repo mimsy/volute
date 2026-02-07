@@ -64,6 +64,6 @@ describe("env", () => {
 
   it("sharedEnvPath returns path under VOLUTE_HOME", () => {
     const path = sharedEnvPath();
-    assert.ok(path.endsWith(".volute/env.json"));
+    assert.ok(path.endsWith("/env.json"));
   });
 });

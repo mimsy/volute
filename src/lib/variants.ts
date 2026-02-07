@@ -11,7 +11,7 @@ export type Variant = {
   created: string;
 };
 
-const VOLUTE_HOME = resolve(homedir(), ".volute");
+const VOLUTE_HOME = process.env.VOLUTE_HOME || resolve(homedir(), ".volute");
 const VARIANTS_PATH = resolve(VOLUTE_HOME, "variants.json");
 
 function readAllVariants(): Record<string, Variant[]> {
