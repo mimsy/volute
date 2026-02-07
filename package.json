@@ -5,6 +5,11 @@
   "bin": {
     "volute": "dist/cli.js"
   },
+  "files": [
+    "dist/",
+    "connectors/",
+    "templates/"
+  ],
   "scripts": {
     "dev": "tsx src/cli.ts",
     "build": "tsup && npm run build:web",
