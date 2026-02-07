@@ -1,9 +1,8 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { createServer, type IncomingMessage } from "node:http";
 import { resolve } from "node:path";
 import { createAgent } from "./lib/agent.js";
 import { log } from "./lib/logger.js";
-import type { VoluteRequest } from "./lib/types.js";
+import { createVoluteServer } from "./lib/volute-server.js";
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -82,77 +81,7 @@ const agent = await createAgent({
   },
 });
 
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString()));
-    req.on("error", reject);
-  });
-}
-
-const server = createServer(async (req, res) => {
-  const url = new URL(req.url!, `http://localhost`);
-
-  if (req.method === "GET" && url.pathname === "/health") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", name: pkgName, version: pkgVersion }));
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/message") {
-    try {
-      const body = JSON.parse(await readBody(req)) as VoluteRequest;
-
-      res.writeHead(200, {
-        "Content-Type": "application/x-ndjson",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      });
-
-      const removeListener = agent.onMessage((event) => {
-        try {
-          res.write(`${JSON.stringify(event)}\n`);
-          if (event.type === "done") {
-            removeListener();
-            res.end();
-          }
-        } catch {
-          removeListener();
-        }
-      });
-
-      req.on("close", () => {
-        removeListener();
-      });
-
-      agent.sendMessage(body.content, body.channel, body.sender);
-    } catch {
-      res.writeHead(400);
-      res.end("Bad Request");
-    }
-    return;
-  }
-
-  res.writeHead(404);
-  res.end("Not Found");
-});
-
-let retries = 0;
-const maxRetries = 5;
-server.on("error", (err: NodeJS.ErrnoException) => {
-  if (err.code === "EADDRINUSE") {
-    retries++;
-    if (retries > maxRetries) {
-      log("server", `port ${port} in use after ${maxRetries} retries, exiting`);
-      process.exit(1);
-    }
-    log("server", `port ${port} in use, retrying in 1s... (${retries}/${maxRetries})`);
-    setTimeout(() => server.listen(port), 1000);
-  } else {
-    throw err;
-  }
-});
+const server = createVoluteServer({ agent, port, name: pkgName, version: pkgVersion });
 
 server.listen(port, () => {
   const addr = server.address();
