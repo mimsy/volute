@@ -33,14 +33,17 @@ Each agent project (created from the template) has:
 <agent>/
 ├── src/
 │   ├── server.ts              # HTTP server with /health and POST /message (ndjson streaming)
+│   ├── agent.ts               # Agent customization surface (hooks, message formatting)
 │   ├── consolidate.ts         # Memory consolidation script
 │   └── lib/
-│       ├── agent.ts           # SDK wrapper, multi-session support, auto-commits file changes
+│       ├── agent-sessions.ts  # Session lifecycle framework (extracted from agent.ts)
 │       ├── auto-commit.ts     # Auto-commits file changes in home/ via SDK hooks
+│       ├── format-prefix.ts   # Shared message formatting (channel/sender/time prefix)
+│       ├── startup.ts         # Shared server.ts boilerplate (parseArgs, loadConfig, etc.)
 │       ├── sessions.ts        # Session routing config loader and matcher
 │       ├── logger.ts          # Logging utilities
 │       ├── message-channel.ts # Async iterable for agent communication
-│       └── types.ts           # VoluteRequest, VoluteContentPart types
+│       └── types.ts           # VoluteRequest, VoluteContentPart, Listener types
 ├── home/                      # Agent working directory (cwd for the SDK)
 │   ├── SOUL.md                # System prompt / personality
 │   ├── MEMORY.md              # Long-term memory (included in system prompt)

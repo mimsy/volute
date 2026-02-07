@@ -23,3 +23,5 @@ export type VoluteEvent =
   | { type: "tool_use"; name: string; input: unknown }
   | { type: "tool_result"; output: string; is_error?: boolean }
   | { type: "done" };
+
+export type Listener = (event: VoluteEvent) => void;

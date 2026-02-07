@@ -1,62 +1,22 @@
-import { existsSync, readFileSync, renameSync, unlinkSync } from "node:fs";
+import { existsSync, renameSync } from "node:fs";
 import { resolve } from "node:path";
-import { createAgent } from "./lib/agent.js";
+import { createAgent } from "./agent.js";
 import { log } from "./lib/logger.js";
+import {
+  handleMergeContext,
+  loadConfig,
+  loadPackageInfo,
+  loadSystemPrompt,
+  parseArgs,
+  setupShutdown,
+} from "./lib/startup.js";
 import { createVoluteServer } from "./lib/volute-server.js";
-
-function parseArgs() {
-  const args = process.argv.slice(2);
-  let port = 4100;
-
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--port" && args[i + 1]) {
-      port = parseInt(args[++i], 10);
-    }
-  }
-
-  return { port };
-}
-
-function loadConfig(): { model?: string } {
-  try {
-    return JSON.parse(readFileSync(resolve("home/.config/volute.json"), "utf-8"));
-  } catch {
-    return {};
-  }
-}
-
-function loadFile(path: string): string {
-  try {
-    return readFileSync(path, "utf-8");
-  } catch {
-    return "";
-  }
-}
 
 const { port } = parseArgs();
 const config = loadConfig();
-const model = config.model;
-if (model) {
-  log("server", `using model: ${model}`);
-}
-const soulPath = resolve("home/SOUL.md");
-const memoryPath = resolve("home/MEMORY.md");
-const volutePath = resolve("home/VOLUTE.md");
+if (config.model) log("server", `using model: ${config.model}`);
 
-const soul = loadFile(soulPath);
-if (!soul) {
-  console.error(`Could not read soul file: ${soulPath}`);
-  process.exit(1);
-}
-
-const memory = loadFile(memoryPath);
-const volute = loadFile(volutePath);
-
-const promptParts = [soul];
-if (volute) promptParts.push(volute);
-if (memory) promptParts.push(`## Memory\n\n${memory}`);
-const systemPrompt = promptParts.join("\n\n---\n\n");
-
+const systemPrompt = loadSystemPrompt();
 const sessionsDir = resolve(".volute/sessions");
 
 // Migrate old single session.json → sessions/main.json
@@ -68,21 +28,13 @@ if (existsSync(oldSessionPath) && !existsSync(resolve(sessionsDir, "main.json"))
   log("server", "migrated session.json → sessions/main.json");
 }
 
-// Read name/version from package.json for health endpoint
-let pkgName = "unknown";
-let pkgVersion = "0.0.0";
-try {
-  const pkg = JSON.parse(readFileSync(resolve("package.json"), "utf-8"));
-  pkgName = pkg.name || pkgName;
-  pkgVersion = pkg.version || pkgVersion;
-} catch {}
-
+const pkg = loadPackageInfo();
 const abortController = new AbortController();
 const agent = createAgent({
   systemPrompt,
   cwd: resolve("home"),
   abortController,
-  model,
+  model: config.model,
   sessionsDir,
   onIdentityReload: async () => {
     log("server", "identity file changed — restarting to reload");
@@ -95,8 +47,8 @@ const agent = createAgent({
 const server = createVoluteServer({
   agent,
   port,
-  name: pkgName,
-  version: pkgVersion,
+  name: pkg.name,
+  version: pkg.version,
   sessionsConfigPath: resolve("home/.config/sessions.json"),
 });
 
@@ -104,32 +56,7 @@ server.listen(port, () => {
   const addr = server.address();
   const actualPort = typeof addr === "object" && addr ? addr.port : port;
   log("server", `listening on :${actualPort}`);
-
-  // Check for post-merge context
-  const mergedPath = resolve(".volute/merged.json");
-  if (existsSync(mergedPath)) {
-    try {
-      const merged = JSON.parse(readFileSync(mergedPath, "utf-8"));
-      unlinkSync(mergedPath);
-
-      const parts = [
-        `[system] Variant "${merged.name}" has been merged and you have been restarted.`,
-      ];
-      if (merged.summary) parts.push(`Changes: ${merged.summary}`);
-      if (merged.justification) parts.push(`Why: ${merged.justification}`);
-      if (merged.memory) parts.push(`Context: ${merged.memory}`);
-
-      agent.sendMessage(parts.join("\n"));
-      log("server", `sent post-merge orientation for variant: ${merged.name}`);
-    } catch (e) {
-      log("server", "failed to process merged.json:", e);
-    }
-  }
+  handleMergeContext((content) => agent.sendMessage(content));
 });
 
-function shutdown() {
-  log("server", "shutdown signal received");
-  process.exit(0);
-}
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+setupShutdown();
