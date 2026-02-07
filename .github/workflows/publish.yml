@@ -18,6 +18,10 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
       - run: npm ci
+      - name: Configure git identity
+        run: |
+          git config --global user.email "ci@test.com"
+          git config --global user.name "CI"
       - run: npm test
       - run: npm publish --provenance --access public
         env:
