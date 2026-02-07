@@ -1,11 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { VOLUTE_HOME } from "./registry.js";
+import { voluteHome } from "./registry.js";
 
 type DaemonConfig = { port: number; token?: string };
 
 function readDaemonConfig(): DaemonConfig {
-  const configPath = resolve(VOLUTE_HOME, "daemon.json");
+  const configPath = resolve(voluteHome(), "daemon.json");
   if (!existsSync(configPath)) {
     console.error("Volute is not running. Start with: volute up");
     process.exit(1);

@@ -3,9 +3,9 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { findVariant } from "./variants.js";
 
-export const VOLUTE_HOME = process.env.VOLUTE_HOME || resolve(homedir(), ".volute");
-export const AGENTS_DIR = resolve(VOLUTE_HOME, "agents");
-const REGISTRY_PATH = resolve(VOLUTE_HOME, "agents.json");
+export function voluteHome(): string {
+  return process.env.VOLUTE_HOME || resolve(homedir(), ".volute");
+}
 
 export type AgentEntry = {
   name: string;
@@ -15,13 +15,14 @@ export type AgentEntry = {
 };
 
 export function ensureVoluteHome() {
-  mkdirSync(AGENTS_DIR, { recursive: true });
+  mkdirSync(resolve(voluteHome(), "agents"), { recursive: true });
 }
 
 export function readRegistry(): AgentEntry[] {
-  if (!existsSync(REGISTRY_PATH)) return [];
+  const registryPath = resolve(voluteHome(), "agents.json");
+  if (!existsSync(registryPath)) return [];
   try {
-    const entries = JSON.parse(readFileSync(REGISTRY_PATH, "utf-8")) as Array<
+    const entries = JSON.parse(readFileSync(registryPath, "utf-8")) as Array<
       Omit<AgentEntry, "running"> & { running?: boolean }
     >;
     return entries.map((e) => ({ ...e, running: e.running ?? false }));
@@ -32,7 +33,8 @@ export function readRegistry(): AgentEntry[] {
 
 export function writeRegistry(entries: AgentEntry[]) {
   ensureVoluteHome();
-  writeFileSync(REGISTRY_PATH, `${JSON.stringify(entries, null, 2)}\n`);
+  const registryPath = resolve(voluteHome(), "agents.json");
+  writeFileSync(registryPath, `${JSON.stringify(entries, null, 2)}\n`);
 }
 
 export function addAgent(name: string, port: number) {
@@ -61,7 +63,7 @@ export function findAgent(name: string): AgentEntry | undefined {
 }
 
 export function agentDir(name: string): string {
-  return resolve(AGENTS_DIR, name);
+  return resolve(voluteHome(), "agents", name);
 }
 
 export function nextPort(): number {

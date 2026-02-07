@@ -3,18 +3,19 @@ import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { initAgentManager } from "./lib/agent-manager.js";
 import { initConnectorManager } from "./lib/connector-manager.js";
-import { agentDir, readRegistry, setAgentRunning, VOLUTE_HOME } from "./lib/registry.js";
+import { agentDir, readRegistry, setAgentRunning, voluteHome } from "./lib/registry.js";
 import { getScheduler } from "./lib/scheduler.js";
 import { startServer } from "./web/server.js";
-
-const DAEMON_PID_PATH = resolve(VOLUTE_HOME, "daemon.pid");
-const DAEMON_JSON_PATH = resolve(VOLUTE_HOME, "daemon.json");
 
 export async function startDaemon(opts: { port: number; foreground: boolean }): Promise<void> {
   const { port } = opts;
   const myPid = String(process.pid);
 
-  mkdirSync(VOLUTE_HOME, { recursive: true });
+  const home = voluteHome();
+  const DAEMON_PID_PATH = resolve(home, "daemon.pid");
+  const DAEMON_JSON_PATH = resolve(home, "daemon.json");
+
+  mkdirSync(home, { recursive: true });
 
   // Use existing token if set (for testing), otherwise generate one
   const token = process.env.VOLUTE_DAEMON_TOKEN || randomBytes(32).toString("hex");

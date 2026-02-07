@@ -1,13 +1,14 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
-import { VOLUTE_HOME } from "../lib/registry.js";
+import { voluteHome } from "../lib/registry.js";
 
 export async function run(_args: string[]) {
-  const pidPath = resolve(VOLUTE_HOME, "daemon.pid");
+  const home = voluteHome();
+  const pidPath = resolve(home, "daemon.pid");
 
   if (!existsSync(pidPath)) {
     // Check if a daemon is running without a PID file (orphan)
-    const configPath = resolve(VOLUTE_HOME, "daemon.json");
+    const configPath = resolve(home, "daemon.json");
     let port = 4200;
     if (existsSync(configPath)) {
       try {

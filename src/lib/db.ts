@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
-import { VOLUTE_HOME } from "./registry.js";
+import { voluteHome } from "./registry.js";
 import * as schema from "./schema.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -19,7 +19,7 @@ let db: DbInstance | null = null;
 
 export async function getDb(): Promise<DbInstance> {
   if (db) return db;
-  const dbPath = process.env.VOLUTE_DB_PATH || resolve(VOLUTE_HOME, "volute.db");
+  const dbPath = process.env.VOLUTE_DB_PATH || resolve(voluteHome(), "volute.db");
   db = drizzle({ connection: { url: `file:${dbPath}` }, schema });
   try {
     await migrate(db, { migrationsFolder });

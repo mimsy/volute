@@ -11,21 +11,25 @@ export type Variant = {
   created: string;
 };
 
-const VOLUTE_HOME = process.env.VOLUTE_HOME || resolve(homedir(), ".volute");
-const VARIANTS_PATH = resolve(VOLUTE_HOME, "variants.json");
+function variantsPath(): string {
+  const home = process.env.VOLUTE_HOME || resolve(homedir(), ".volute");
+  return resolve(home, "variants.json");
+}
 
 function readAllVariants(): Record<string, Variant[]> {
-  if (!existsSync(VARIANTS_PATH)) return {};
+  const path = variantsPath();
+  if (!existsSync(path)) return {};
   try {
-    return JSON.parse(readFileSync(VARIANTS_PATH, "utf-8"));
+    return JSON.parse(readFileSync(path, "utf-8"));
   } catch {
     return {};
   }
 }
 
 function writeAllVariants(all: Record<string, Variant[]>) {
-  mkdirSync(VOLUTE_HOME, { recursive: true });
-  writeFileSync(VARIANTS_PATH, `${JSON.stringify(all, null, 2)}\n`);
+  const home = process.env.VOLUTE_HOME || resolve(homedir(), ".volute");
+  mkdirSync(home, { recursive: true });
+  writeFileSync(variantsPath(), `${JSON.stringify(all, null, 2)}\n`);
 }
 
 export function readVariants(agentName: string): Variant[] {
