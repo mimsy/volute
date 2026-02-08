@@ -11,8 +11,8 @@ export type Variant = {
   branch: string;
   path: string;
   port: number;
-  pid: number | null;
   created: string;
+  running?: boolean;
 };
 
 function variantsPath(): string {
@@ -65,6 +65,30 @@ export function removeVariant(agentName: string, name: string) {
 
 export function findVariant(agentName: string, name: string): Variant | undefined {
   return readVariants(agentName).find((v) => v.name === name);
+}
+
+export function setVariantRunning(agentName: string, variantName: string, running: boolean) {
+  const all = readAllVariants();
+  const variants = all[agentName] ?? [];
+  const variant = variants.find((v) => v.name === variantName);
+  if (variant) {
+    variant.running = running;
+    all[agentName] = variants;
+    writeAllVariants(all);
+  }
+}
+
+export function getAllRunningVariants(): Array<{ agentName: string; variant: Variant }> {
+  const all = readAllVariants();
+  const result: Array<{ agentName: string; variant: Variant }> = [];
+  for (const [agentName, variants] of Object.entries(all)) {
+    for (const variant of variants) {
+      if (variant.running) {
+        result.push({ agentName, variant });
+      }
+    }
+  }
+  return result;
 }
 
 export function removeAllVariants(agentName: string) {

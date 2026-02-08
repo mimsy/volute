@@ -35,10 +35,10 @@ export async function run(args: string[]) {
     }),
   );
 
-  // Update variants.json to clear dead PIDs
+  // Update variants.json to clear running status for dead variants
   const updated = results.map(({ status, ...v }) => ({
     ...v,
-    pid: status === "dead" ? null : v.pid,
+    running: status === "running",
   }));
   writeVariants(name, updated);
 

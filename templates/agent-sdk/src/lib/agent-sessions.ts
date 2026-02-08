@@ -20,7 +20,7 @@ export function createSessionManager(options: {
   model?: string;
   sessionsDir: string;
   postToolUseHooks: { matcher: string; hooks: HookCallback[] }[];
-  onTurnDone?: (session: Session) => void;
+  onTurnDone?: () => void;
   compactionMessage?: string;
 }) {
   const sessions = new Map<string, Session>();
@@ -122,7 +122,7 @@ export function createSessionManager(options: {
       if (msg.type === "result") {
         log("agent", `session "${session.name}": turn done`);
         broadcastToSession(session, { type: "done" });
-        options.onTurnDone?.(session);
+        options.onTurnDone?.();
       }
     }
   }

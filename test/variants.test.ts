@@ -3,9 +3,11 @@ import { afterEach, describe, it } from "node:test";
 import {
   addVariant,
   findVariant,
+  getAllRunningVariants,
   readVariants,
   removeAllVariants,
   removeVariant,
+  setVariantRunning,
   type Variant,
   validateBranchName,
   writeVariants,
@@ -89,6 +91,51 @@ describe("variants CRUD", () => {
     addVariant(testAgent, makeVariant("b"));
     removeAllVariants(testAgent);
     assert.deepStrictEqual(readVariants(testAgent), []);
+  });
+});
+
+describe("variant running state", () => {
+  afterEach(() => {
+    removeAllVariants(testAgent);
+  });
+
+  it("setVariantRunning sets running to true", () => {
+    addVariant(testAgent, makeVariant("a"));
+    setVariantRunning(testAgent, "a", true);
+    const v = findVariant(testAgent, "a");
+    assert.equal(v?.running, true);
+  });
+
+  it("setVariantRunning sets running to false", () => {
+    addVariant(testAgent, makeVariant("a", { running: true }));
+    setVariantRunning(testAgent, "a", false);
+    const v = findVariant(testAgent, "a");
+    assert.equal(v?.running, false);
+  });
+
+  it("setVariantRunning is no-op for nonexistent variant", () => {
+    addVariant(testAgent, makeVariant("a"));
+    setVariantRunning(testAgent, "nonexistent", true);
+    const v = findVariant(testAgent, "a");
+    assert.equal(v?.running, undefined);
+  });
+
+  it("getAllRunningVariants returns running variants", () => {
+    addVariant(testAgent, makeVariant("a", { running: true }));
+    addVariant(testAgent, makeVariant("b", { running: false }));
+    addVariant(testAgent, makeVariant("c", { running: true }));
+    const running = getAllRunningVariants();
+    const forAgent = running.filter((r) => r.agentName === testAgent);
+    assert.equal(forAgent.length, 2);
+    const names = forAgent.map((r) => r.variant.name).sort();
+    assert.deepStrictEqual(names, ["a", "c"]);
+  });
+
+  it("getAllRunningVariants returns empty when none running", () => {
+    addVariant(testAgent, makeVariant("a"));
+    const running = getAllRunningVariants();
+    const forAgent = running.filter((r) => r.agentName === testAgent);
+    assert.equal(forAgent.length, 0);
   });
 });
 

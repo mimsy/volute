@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { loadMergedEnv } from "./env.js";
 import { agentDir, findAgent, setAgentRunning } from "./registry.js";
+import { findVariant, setVariantRunning, validateBranchName } from "./variants.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,18 +18,37 @@ export class AgentManager {
   private stopping = new Set<string>();
   private shuttingDown = false;
 
+  private resolveTarget(name: string): {
+    dir: string;
+    port: number;
+    isVariant: boolean;
+    baseName: string;
+    variantName?: string;
+  } {
+    const [baseName, variantName] = name.split("@", 2);
+
+    const entry = findAgent(baseName);
+    if (!entry) throw new Error(`Unknown agent: ${baseName}`);
+
+    if (variantName) {
+      const variant = findVariant(baseName, variantName);
+      if (!variant) throw new Error(`Unknown variant: ${variantName} (agent: ${baseName})`);
+      return { dir: variant.path, port: variant.port, isVariant: true, baseName, variantName };
+    }
+
+    const dir = agentDir(baseName);
+    if (!existsSync(dir)) throw new Error(`Agent directory missing: ${dir}`);
+    return { dir, port: entry.port, isVariant: false, baseName };
+  }
+
   async startAgent(name: string): Promise<void> {
     if (this.agents.has(name)) {
       throw new Error(`Agent ${name} is already running`);
     }
 
-    const entry = findAgent(name);
-    if (!entry) throw new Error(`Unknown agent: ${name}`);
-
-    const dir = agentDir(name);
-    if (!existsSync(dir)) throw new Error(`Agent directory missing: ${dir}`);
-
-    const port = entry.port;
+    const target = this.resolveTarget(name);
+    const { dir, isVariant, baseName, variantName } = target;
+    const port = target.port;
 
     // Kill any orphan process on this port from a previous daemon session
     try {
@@ -102,20 +122,30 @@ export class AgentManager {
     }
 
     // Set up crash recovery after successful start
-    this.setupCrashRecovery(name, child, dir);
-    setAgentRunning(name, true);
+    this.setupCrashRecovery(name, child, dir, isVariant);
+    if (isVariant) {
+      setVariantRunning(baseName, variantName!, true);
+    } else {
+      setAgentRunning(name, true);
+    }
 
     console.error(`[daemon] started agent ${name} on port ${port}`);
   }
 
-  private setupCrashRecovery(name: string, child: ChildProcess, dir: string): void {
+  private setupCrashRecovery(
+    name: string,
+    child: ChildProcess,
+    dir: string,
+    isVariant: boolean,
+  ): void {
     child.on("exit", async (code) => {
       this.agents.delete(name);
       if (this.shuttingDown || this.stopping.has(name)) return;
 
       console.error(`[daemon] agent ${name} exited with code ${code}`);
 
-      const wasRestart = await this.handleRestart(name, dir);
+      // Variants don't support merge-restart
+      const wasRestart = isVariant ? false : await this.handleRestart(name, dir);
       if (wasRestart) {
         console.error(`[daemon] restarting ${name} immediately after merge`);
         this.startAgent(name).catch((err) => {
@@ -142,6 +172,11 @@ export class AgentManager {
       unlinkSync(restartPath);
 
       if (signal.action === "merge" && signal.name) {
+        const err = validateBranchName(signal.name);
+        if (err) {
+          console.error(`[daemon] invalid variant name in restart.json for ${name}: ${err}`);
+          return false;
+        }
         console.error(`[daemon] merging variant for ${name}: ${signal.name}`);
         const mergeArgs = ["merge", name, signal.name];
         if (signal.summary) mergeArgs.push("--summary", signal.summary);
@@ -186,7 +221,14 @@ export class AgentManager {
     });
 
     this.stopping.delete(name);
-    setAgentRunning(name, false);
+
+    const [baseName, variantName] = name.split("@", 2);
+    if (variantName) {
+      setVariantRunning(baseName, variantName, false);
+    } else {
+      setAgentRunning(name, false);
+    }
+
     console.error(`[daemon] stopped agent ${name}`);
   }
 

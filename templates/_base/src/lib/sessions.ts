@@ -67,5 +67,5 @@ function expandTemplate(template: string, meta: { channel?: string; sender?: str
 }
 
 function sanitizeSessionName(name: string): string {
-  return name.replace(/[/\\]/g, "-").replace(/\.\./g, "-");
+  return name.replace(/\0/g, "").replace(/[/\\]/g, "-").replace(/\.\./g, "-").slice(0, 100);
 }

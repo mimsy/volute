@@ -54,40 +54,18 @@ export async function run(args: string[]) {
   if (!flags["skip-verify"]) {
     console.log("Verifying variant...");
 
-    let port = variant.port;
-    let tempServerPid: number | undefined;
-
-    // Check if variant server is running
-    let running = false;
-    if (variant.pid) {
-      try {
-        process.kill(variant.pid, 0);
-        running = true;
-      } catch {
-        // not running
-      }
+    console.log("Starting temporary server for verification...");
+    const result = await spawnServer(variant.path, 0, { detached: true });
+    if (!result) {
+      console.error("Failed to start server for verification. Use --skip-verify to skip.");
+      process.exit(1);
     }
 
-    // Start temp server if needed
-    if (!running) {
-      console.log("Starting temporary server for verification...");
-      const result = await spawnServer(variant.path, 0, { detached: true });
-      if (!result) {
-        console.error("Failed to start server for verification. Use --skip-verify to skip.");
-        process.exit(1);
-      }
-      port = result.actualPort;
-      tempServerPid = result.child.pid!;
-    }
+    const verified = await verify(result.actualPort);
 
-    const verified = await verify(port);
-
-    // Kill temp server if we started one
-    if (tempServerPid) {
-      try {
-        process.kill(tempServerPid);
-      } catch {}
-    }
+    try {
+      process.kill(result.child.pid!);
+    } catch {}
 
     if (!verified) {
       console.error("Verification failed. Fix issues or use --skip-verify to proceed anyway.");
@@ -95,16 +73,6 @@ export async function run(args: string[]) {
     }
 
     console.log("Verification passed.");
-  }
-
-  // Kill variant server if running
-  if (variant.pid) {
-    try {
-      process.kill(variant.pid);
-      console.log(`Killed server (pid ${variant.pid})`);
-    } catch {
-      // Already dead
-    }
   }
 
   // Merge branch
