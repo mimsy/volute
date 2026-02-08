@@ -30,6 +30,11 @@ export async function getDb(): Promise<DbInstance> {
   // Restrict database file permissions to owner only
   try {
     chmodSync(dbPath, 0o600);
-  } catch {}
+  } catch (err) {
+    console.error(
+      `[volute] WARNING: Failed to restrict database file permissions on ${dbPath}:`,
+      err,
+    );
+  }
   return db;
 }

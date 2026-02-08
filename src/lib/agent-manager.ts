@@ -163,6 +163,12 @@ export class AgentManager {
         const attempts = this.restartAttempts.get(name) ?? 0;
         if (attempts >= MAX_RESTART_ATTEMPTS) {
           console.error(`[daemon] ${name} crashed ${attempts} times — giving up on restart`);
+          const [base, variant] = name.split("@", 2);
+          if (variant) {
+            setVariantRunning(base, variant, false);
+          } else {
+            setAgentRunning(name, false);
+          }
           return;
         }
         const delay = Math.min(BASE_RESTART_DELAY * 2 ** attempts, MAX_RESTART_DELAY);
@@ -199,9 +205,10 @@ export class AgentManager {
         if (signal.summary) mergeArgs.push("--summary", signal.summary);
         if (signal.justification) mergeArgs.push("--justification", signal.justification);
         if (signal.memory) mergeArgs.push("--memory", signal.memory);
+        const { VOLUTE_DAEMON_TOKEN: _t, ...mergeEnv } = process.env;
         await execFileAsync("volute", mergeArgs, {
           cwd: dir,
-          env: { ...process.env, VOLUTE_SUPERVISOR: "1" },
+          env: { ...mergeEnv, VOLUTE_SUPERVISOR: "1" },
         });
       }
 
