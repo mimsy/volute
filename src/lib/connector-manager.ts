@@ -44,7 +44,7 @@ export class ConnectorManager {
     agentPort: number,
     daemonPort?: number,
   ): Promise<void> {
-    const config = readVoluteConfig(agentDir);
+    const config = readVoluteConfig(agentDir) ?? {};
     const types = config.connectors ?? [];
 
     for (const type of types) {

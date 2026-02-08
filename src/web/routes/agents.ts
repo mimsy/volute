@@ -261,8 +261,8 @@ const app = new Hono<AuthEnv>()
           sender,
           content,
         });
-      } catch {
-        // Don't block the request if persistence fails
+      } catch (err) {
+        console.error(`[daemon] failed to persist inbound message for ${baseName}:`, err);
       }
     }
 
@@ -321,12 +321,16 @@ const app = new Hono<AuthEnv>()
 
         // Record assistant response
         if (textParts.length > 0) {
-          await db.insert(agentMessages).values({
-            agent: baseName,
-            channel,
-            role: "assistant",
-            content: textParts.join(""),
-          });
+          try {
+            await db.insert(agentMessages).values({
+              agent: baseName,
+              channel,
+              role: "assistant",
+              content: textParts.join(""),
+            });
+          } catch (err) {
+            console.error(`[daemon] failed to persist assistant response for ${baseName}:`, err);
+          }
         }
       } finally {
         reader.releaseLock();

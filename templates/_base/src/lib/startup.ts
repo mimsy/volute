@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { log } from "./logger.js";
@@ -85,25 +85,32 @@ export function handleMergeContext(sendMessage: (content: string) => void): bool
   }
 }
 
-export function handleStartupContext(sendMessage: (content: string) => void): void {
+export async function handleStartupContext(sendMessage: (content: string) => void): Promise<void> {
   const scriptPath = resolve("home/.config/hooks/startup-context.sh");
   if (!existsSync(scriptPath)) return;
 
   try {
-    const output = execFileSync("bash", [scriptPath], {
-      input: JSON.stringify({ source: "startup" }),
-      encoding: "utf-8",
-      timeout: 5000,
+    const stdout = await new Promise<string>((resolve, reject) => {
+      const child = spawn("bash", [scriptPath], { timeout: 5000 });
+      let out = "";
+      child.stdout.on("data", (d: Buffer) => {
+        out += d.toString();
+      });
+      child.stdin.end(JSON.stringify({ source: "startup" }));
+      child.on("close", (code) =>
+        code === 0 ? resolve(out) : reject(new Error(`exit code ${code}`)),
+      );
+      child.on("error", reject);
     });
 
     // Try to parse as JSON hook output
     let context: string | null = null;
     try {
-      const parsed = JSON.parse(output);
+      const parsed = JSON.parse(stdout);
       context = parsed?.hookSpecificOutput?.additionalContext ?? null;
     } catch {
       // Fall back to plain text
-      context = output.trim();
+      context = stdout.trim();
     }
 
     if (context) {

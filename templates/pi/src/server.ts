@@ -34,13 +34,13 @@ const server = createVoluteServer({
   sessionsConfigPath: resolve("home/.config/sessions.json"),
 });
 
-server.listen(port, () => {
+server.listen(port, async () => {
   const addr = server.address();
   const actualPort = typeof addr === "object" && addr ? addr.port : port;
   log("server", `listening on :${actualPort}`);
   const hasMerge = handleMergeContext((content) => agent.sendMessage(content));
   if (!hasMerge) {
-    handleStartupContext((content) => agent.sendMessage(content));
+    await handleStartupContext((content) => agent.sendMessage(content));
   }
 });
 

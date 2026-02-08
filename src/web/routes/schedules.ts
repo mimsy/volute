@@ -5,12 +5,12 @@ import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../../lib/vo
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 function readSchedules(name: string): Schedule[] {
-  return readVoluteConfig(agentDir(name)).schedules ?? [];
+  return readVoluteConfig(agentDir(name))?.schedules ?? [];
 }
 
 function writeSchedules(name: string, schedules: Schedule[]): void {
   const dir = agentDir(name);
-  const config = readVoluteConfig(dir);
+  const config = readVoluteConfig(dir) ?? {};
   config.schedules = schedules.length > 0 ? schedules : undefined;
   writeVoluteConfig(dir, config);
   getScheduler().loadSchedules(name);

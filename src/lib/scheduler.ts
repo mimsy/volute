@@ -22,6 +22,7 @@ export class Scheduler {
   loadSchedules(agentName: string): void {
     const dir = agentDir(agentName);
     const config = readVoluteConfig(dir);
+    if (!config) return; // Config read failed — keep existing schedules
     const schedules = config.schedules ?? [];
     if (schedules.length > 0) {
       this.schedules.set(agentName, schedules);
@@ -64,7 +65,11 @@ export class Scheduler {
         return true;
       }
       return false;
-    } catch {
+    } catch (err) {
+      console.error(
+        `[scheduler] invalid cron "${schedule.cron}" for ${agent}:${schedule.id}:`,
+        err,
+      );
       return false;
     }
   }
@@ -80,10 +85,11 @@ export class Scheduler {
     });
 
     try {
+      let res: Response;
       if (this.daemonPort && this.daemonToken) {
         // Route through daemon so messages are recorded in agent_messages
         const daemonUrl = `http://localhost:${this.daemonPort}`;
-        await fetch(`${daemonUrl}/api/agents/${encodeURIComponent(agentName)}/message`, {
+        res = await fetch(`${daemonUrl}/api/agents/${encodeURIComponent(agentName)}/message`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -94,13 +100,17 @@ export class Scheduler {
         });
       } else {
         // Fallback to direct agent fetch
-        await fetch(`http://localhost:${entry.port}/message`, {
+        res = await fetch(`http://localhost:${entry.port}/message`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body,
         });
       }
-      console.error(`[scheduler] fired "${schedule.id}" for ${agentName}`);
+      if (!res.ok) {
+        console.error(`[scheduler] "${schedule.id}" for ${agentName} got HTTP ${res.status}`);
+      } else {
+        console.error(`[scheduler] fired "${schedule.id}" for ${agentName}`);
+      }
     } catch (err) {
       console.error(`[scheduler] failed to fire "${schedule.id}" for ${agentName}:`, err);
     }

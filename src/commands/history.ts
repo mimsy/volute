@@ -24,8 +24,12 @@ export async function run(args: string[]) {
   const res = await daemonFetch(path);
 
   if (!res.ok) {
-    const data = (await res.json()) as { error?: string };
-    console.error(data.error ?? `Failed to get history: ${res.status}`);
+    let errorMsg = `Failed to get history: ${res.status}`;
+    try {
+      const data = (await res.json()) as { error?: string };
+      if (data.error) errorMsg = data.error;
+    } catch {}
+    console.error(errorMsg);
     process.exit(1);
   }
 
@@ -37,7 +41,7 @@ export async function run(args: string[]) {
     created_at: string;
   }[];
 
-  // Display in reverse chronological order (API returns newest first)
+  // Display in chronological order (API returns newest first, so reverse)
   for (const row of rows.reverse()) {
     const time = new Date(row.created_at).toLocaleString();
     const sender = row.sender ?? row.role;
