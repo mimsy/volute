@@ -23,7 +23,7 @@ type PiSession = {
 };
 
 const DEFAULT_COMPACTION_MESSAGE =
-  "Conversation is about to be compacted. Please update today's daily log with a summary of what we've discussed and accomplished so far, so context is preserved before compaction.";
+  "Your conversation is approaching its context limit. Please update today's journal entry to preserve important context before the conversation is compacted.";
 
 function resolveModel(modelStr: string) {
   const [provider, ...rest] = modelStr.split(":");

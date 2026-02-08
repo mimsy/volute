@@ -11,6 +11,7 @@ export function createAgent(options: {
   abortController: AbortController;
   model?: string;
   sessionsDir: string;
+  compactionMessage?: string;
   onIdentityReload?: () => Promise<void>;
 }) {
   const autoCommit = createAutoCommitHook(options.cwd);
@@ -22,6 +23,7 @@ export function createAgent(options: {
     abortController: options.abortController,
     model: options.model,
     sessionsDir: options.sessionsDir,
+    compactionMessage: options.compactionMessage,
     postToolUseHooks: [{ matcher: "Edit|Write", hooks: [autoCommit.hook, identityReload.hook] }],
     onTurnDone: () => {
       if (identityReload.needsReload()) {

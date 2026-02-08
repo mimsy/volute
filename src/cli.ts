@@ -59,6 +59,9 @@ switch (command) {
   case "schedule":
     await import("./commands/schedule.js").then((m) => m.run(args));
     break;
+  case "history":
+    await import("./commands/history.js").then((m) => m.run(args));
+    break;
   default:
     console.log(`volute — create and manage AI agents
 
@@ -81,6 +84,7 @@ Commands:
   volute schedule list <agent>       List schedules for an agent
   volute schedule add <agent> ...    Add a cron schedule
   volute schedule remove <agent> ... Remove a schedule
+  volute history [<agent>]            View message history
   volute up [--port N]               Start the daemon (default: 4200)
   volute down                        Stop the daemon
   volute upgrade <name>              Upgrade agent to latest template

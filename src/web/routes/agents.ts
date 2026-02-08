@@ -1,4 +1,5 @@
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { resolve } from "node:path";
 import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
@@ -6,10 +7,19 @@ import { getAgentManager } from "../../lib/agent-manager.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { getConnectorManager } from "../../lib/connector-manager.js";
 import { getDb } from "../../lib/db.js";
-import { agentDir, findAgent, readRegistry, removeAgent } from "../../lib/registry.js";
+import { agentDir, findAgent, readRegistry, removeAgent, voluteHome } from "../../lib/registry.js";
 import { agentMessages } from "../../lib/schema.js";
 import { checkHealth, findVariant, readVariants, removeAllVariants } from "../../lib/variants.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
+
+function getDaemonPort(): number | undefined {
+  try {
+    const data = JSON.parse(readFileSync(resolve(voluteHome(), "daemon.json"), "utf-8"));
+    return data.port;
+  } catch {
+    return undefined;
+  }
+}
 
 type ChannelStatus = {
   name: string;
@@ -117,7 +127,7 @@ const app = new Hono<AuthEnv>()
       // Only start connectors/schedules for base agents, not variants
       if (!variantName) {
         const dir = agentDir(baseName);
-        await getConnectorManager().startConnectors(baseName, dir, entry.port);
+        await getConnectorManager().startConnectors(baseName, dir, entry.port, getDaemonPort());
       }
       return c.json({ ok: true });
     } catch (err) {
@@ -152,7 +162,7 @@ const app = new Hono<AuthEnv>()
       await manager.startAgent(name);
       if (!variantName) {
         const dir = agentDir(baseName);
-        await connectorManager.startConnectors(baseName, dir, entry.port);
+        await connectorManager.startConnectors(baseName, dir, entry.port, getDaemonPort());
       }
       return c.json({ ok: true });
     } catch (err) {

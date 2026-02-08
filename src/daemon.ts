@@ -51,7 +51,7 @@ export async function startDaemon(opts: {
   const manager = initAgentManager();
   const connectors = initConnectorManager();
   const scheduler = getScheduler();
-  scheduler.start();
+  scheduler.start(port, token);
 
   // Start all agents that were previously running, then their connectors and schedules
   const registry = readRegistry();
@@ -60,7 +60,7 @@ export async function startDaemon(opts: {
     try {
       await manager.startAgent(entry.name);
       const dir = agentDir(entry.name);
-      await connectors.startConnectors(entry.name, dir, entry.port);
+      await connectors.startConnectors(entry.name, dir, entry.port, port);
       scheduler.loadSchedules(entry.name);
     } catch (err) {
       console.error(`[daemon] failed to start agent ${entry.name}:`, err);

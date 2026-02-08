@@ -26,7 +26,7 @@ export function createSessionManager(options: {
   const sessions = new Map<string, Session>();
   const compactionMessage =
     options.compactionMessage ??
-    "Conversation is about to be compacted. Please update today's daily log with a summary of what we've discussed and accomplished so far, so context is preserved before compaction.";
+    "Your conversation is approaching its context limit. Please update today's journal entry to preserve important context before the conversation is compacted.";
 
   function sessionFilePath(sessionName: string): string {
     return resolve(options.sessionsDir, `${sessionName}.json`);

@@ -38,13 +38,18 @@ export class ConnectorManager {
   private shuttingDown = false;
   private restartAttempts = new Map<string, number>(); // "agent:type" -> count
 
-  async startConnectors(agentName: string, agentDir: string, agentPort: number): Promise<void> {
+  async startConnectors(
+    agentName: string,
+    agentDir: string,
+    agentPort: number,
+    daemonPort?: number,
+  ): Promise<void> {
     const config = readVoluteConfig(agentDir);
     const types = config.connectors ?? [];
 
     for (const type of types) {
       try {
-        await this.startConnector(agentName, agentDir, agentPort, type);
+        await this.startConnector(agentName, agentDir, agentPort, type, daemonPort);
       } catch (err) {
         console.error(`[daemon] failed to start connector ${type} for ${agentName}:`, err);
       }
@@ -56,6 +61,7 @@ export class ConnectorManager {
     agentDir: string,
     agentPort: number,
     type: string,
+    daemonPort?: number,
   ): Promise<void> {
     // Stop existing connector of this type if running (wait for exit)
     const existing = this.connectors.get(agentName)?.get(type);
@@ -113,13 +119,18 @@ export class ConnectorManager {
       Object.entries(agentEnv).filter(([k]) => k.startsWith(prefix)),
     );
 
-    const { VOLUTE_DAEMON_TOKEN: _, ...parentEnv } = process.env;
     const child = spawn(runtime, [connectorScript], {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
-        ...parentEnv,
+        ...process.env,
         VOLUTE_AGENT_PORT: String(agentPort),
         VOLUTE_AGENT_NAME: agentName,
+        ...(daemonPort
+          ? {
+              VOLUTE_DAEMON_URL: `http://localhost:${daemonPort}`,
+              VOLUTE_DAEMON_TOKEN: process.env.VOLUTE_DAEMON_TOKEN,
+            }
+          : {}),
         ...connectorEnv,
       },
     });
@@ -167,7 +178,7 @@ export class ConnectorManager {
       );
       setTimeout(() => {
         if (this.shuttingDown || this.stopping.has(stopKey)) return;
-        this.startConnector(agentName, agentDir, agentPort, type).catch((err) => {
+        this.startConnector(agentName, agentDir, agentPort, type, daemonPort).catch((err) => {
           console.error(`[daemon] failed to restart connector ${type} for ${agentName}:`, err);
         });
       }, delay);

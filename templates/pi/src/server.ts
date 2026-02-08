@@ -3,6 +3,7 @@ import { createAgent } from "./agent.js";
 import { log } from "./lib/logger.js";
 import {
   handleMergeContext,
+  handleStartupContext,
   loadConfig,
   loadPackageInfo,
   loadSystemPrompt,
@@ -22,6 +23,7 @@ const agent = createAgent({
   systemPrompt,
   cwd: resolve("home"),
   model: config.model,
+  compactionMessage: config.compactionMessage,
 });
 
 const server = createVoluteServer({
@@ -36,7 +38,10 @@ server.listen(port, () => {
   const addr = server.address();
   const actualPort = typeof addr === "object" && addr ? addr.port : port;
   log("server", `listening on :${actualPort}`);
-  handleMergeContext((content) => agent.sendMessage(content));
+  const hasMerge = handleMergeContext((content) => agent.sendMessage(content));
+  if (!hasMerge) {
+    handleStartupContext((content) => agent.sendMessage(content));
+  }
 });
 
 setupShutdown();

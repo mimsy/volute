@@ -24,8 +24,8 @@ These files define who you are and are loaded into your system prompt on startup
 Two-tier memory, both managed via file tools:
 
 - **`MEMORY.md`** — Long-term knowledge, key decisions, learned preferences. Loaded into your system prompt on every startup. Update when you learn something worth keeping permanently.
-- **`memory/YYYY-MM-DD.md`** — Daily logs for session-level context. The two most recent logs are included in your system prompt. Update throughout the day as you work.
-- Periodically consolidate old daily log entries into `MEMORY.md` and clean up the daily logs.
+- **`memory/journal/YYYY-MM-DD.md`** — Daily journal entries for session-level context. Update throughout the day as you work. Journals are permanent records.
+- Periodically consolidate journal entries into `MEMORY.md` to promote lasting insights.
 
 See the **memory** skill for detailed guidance on consolidation and when to update.
 

@@ -6,8 +6,12 @@ export class Scheduler {
   private schedules = new Map<string, Schedule[]>();
   private interval: ReturnType<typeof setInterval> | null = null;
   private lastFired = new Map<string, number>(); // "agent:scheduleId" → epoch minute
+  private daemonPort: number | null = null;
+  private daemonToken: string | null = null;
 
-  start(): void {
+  start(daemonPort?: number, daemonToken?: string): void {
+    this.daemonPort = daemonPort ?? null;
+    this.daemonToken = daemonToken ?? null;
     this.interval = setInterval(() => this.tick(), 60_000);
   }
 
@@ -31,6 +35,11 @@ export class Scheduler {
   }
 
   private tick(): void {
+    // Hot-reload schedules from config on every tick
+    for (const agent of this.schedules.keys()) {
+      this.loadSchedules(agent);
+    }
+
     const now = new Date();
     for (const [agent, schedules] of this.schedules) {
       for (const schedule of schedules) {
@@ -64,16 +73,33 @@ export class Scheduler {
     const entry = findAgent(agentName);
     if (!entry) return;
 
+    const body = JSON.stringify({
+      content: [{ type: "text", text: schedule.message }],
+      channel: "system:scheduler",
+      sender: schedule.id,
+    });
+
     try {
-      await fetch(`http://localhost:${entry.port}/message`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content: [{ type: "text", text: schedule.message }],
-          channel: "system:scheduler",
-          sender: schedule.id,
-        }),
-      });
+      if (this.daemonPort && this.daemonToken) {
+        // Route through daemon so messages are recorded in agent_messages
+        const daemonUrl = `http://localhost:${this.daemonPort}`;
+        await fetch(`${daemonUrl}/api/agents/${encodeURIComponent(agentName)}/message`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${this.daemonToken}`,
+            Origin: daemonUrl,
+          },
+          body,
+        });
+      } else {
+        // Fallback to direct agent fetch
+        await fetch(`http://localhost:${entry.port}/message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        });
+      }
       console.error(`[scheduler] fired "${schedule.id}" for ${agentName}`);
     } catch (err) {
       console.error(`[scheduler] failed to fire "${schedule.id}" for ${agentName}:`, err);

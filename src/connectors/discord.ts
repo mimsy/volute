@@ -35,8 +35,12 @@ if (!token) {
 }
 
 const guildId = process.env.DISCORD_GUILD_ID;
+const daemonUrl = process.env.VOLUTE_DAEMON_URL;
+const daemonToken = process.env.VOLUTE_DAEMON_TOKEN;
 
-const baseUrl = `http://localhost:${agentPort}`;
+const baseUrl = daemonUrl
+  ? `${daemonUrl}/api/agents/${encodeURIComponent(agentName)}`
+  : `http://localhost:${agentPort}`;
 
 const client = new Client({
   intents: [
@@ -210,9 +214,15 @@ async function handleAgentRequest(message: Message, content: ContentPart[]) {
   const channelName = !isDM && "name" in message.channel ? message.channel.name : null;
 
   try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (daemonUrl && daemonToken) {
+      headers.Authorization = `Bearer ${daemonToken}`;
+      headers.Origin = daemonUrl;
+    }
+
     const res = await fetch(`${baseUrl}/message`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({
         content,
         channel: channelKey,
