@@ -23,13 +23,13 @@ function configPath(agentDir: string): string {
   return newPath;
 }
 
-export function readVoluteConfig(agentDir: string): VoluteConfig {
+export function readVoluteConfig(agentDir: string): VoluteConfig | null {
   const path = configPath(agentDir);
   if (!existsSync(path)) return {};
   try {
     return JSON.parse(readFileSync(path, "utf-8"));
   } catch {
-    return {};
+    return null;
   }
 }
 

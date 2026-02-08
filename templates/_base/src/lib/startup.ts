@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { log } from "./logger.js";
@@ -15,7 +16,7 @@ export function parseArgs(): { port: number } {
   return { port };
 }
 
-export function loadConfig(): { model?: string } {
+export function loadConfig(): { model?: string; compactionMessage?: string } {
   try {
     return JSON.parse(readFileSync(resolve("home/.config/volute.json"), "utf-8"));
   } catch {
@@ -60,9 +61,9 @@ export function loadPackageInfo(): { name: string; version: string } {
   }
 }
 
-export function handleMergeContext(sendMessage: (content: string) => void): void {
+export function handleMergeContext(sendMessage: (content: string) => void): boolean {
   const mergedPath = resolve(".volute/merged.json");
-  if (!existsSync(mergedPath)) return;
+  if (!existsSync(mergedPath)) return false;
 
   try {
     const merged = JSON.parse(readFileSync(mergedPath, "utf-8"));
@@ -77,8 +78,47 @@ export function handleMergeContext(sendMessage: (content: string) => void): void
 
     sendMessage(parts.join("\n"));
     log("server", `sent post-merge orientation for variant: ${merged.name}`);
+    return true;
   } catch (e) {
     log("server", "failed to process merged.json:", e);
+    return false;
+  }
+}
+
+export async function handleStartupContext(sendMessage: (content: string) => void): Promise<void> {
+  const scriptPath = resolve("home/.config/hooks/startup-context.sh");
+  if (!existsSync(scriptPath)) return;
+
+  try {
+    const stdout = await new Promise<string>((resolve, reject) => {
+      const child = spawn("bash", [scriptPath], { timeout: 5000 });
+      let out = "";
+      child.stdout.on("data", (d: Buffer) => {
+        out += d.toString();
+      });
+      child.stdin.end(JSON.stringify({ source: "startup" }));
+      child.on("close", (code) =>
+        code === 0 ? resolve(out) : reject(new Error(`exit code ${code}`)),
+      );
+      child.on("error", reject);
+    });
+
+    // Try to parse as JSON hook output
+    let context: string | null = null;
+    try {
+      const parsed = JSON.parse(stdout);
+      context = parsed?.hookSpecificOutput?.additionalContext ?? null;
+    } catch {
+      // Fall back to plain text
+      context = stdout.trim();
+    }
+
+    if (context) {
+      sendMessage(`[system] ${context}`);
+      log("server", "sent startup context");
+    }
+  } catch (e) {
+    log("server", "failed to run startup-context.sh:", e);
   }
 }
 

@@ -4,7 +4,12 @@ import { formatPrefix } from "./lib/format-prefix.js";
 import { logMessage } from "./lib/logger.js";
 import type { ChannelMeta, Listener, VoluteContentPart } from "./lib/types.js";
 
-export function createAgent(options: { systemPrompt: string; cwd: string; model?: string }) {
+export function createAgent(options: {
+  systemPrompt: string;
+  cwd: string;
+  model?: string;
+  compactionMessage?: string;
+}) {
   const { getOrCreateSession } = createPiSessionManager(options);
 
   function sendMessage(content: string | VoluteContentPart[], meta?: ChannelMeta) {

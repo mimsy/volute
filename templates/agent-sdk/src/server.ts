@@ -35,6 +35,7 @@ const agent = createAgent({
   abortController,
   model: config.model,
   sessionsDir,
+  compactionMessage: config.compactionMessage,
   onIdentityReload: async () => {
     log("server", "identity file changed — restarting to reload");
     await agent.waitForCommits();

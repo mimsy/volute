@@ -43,10 +43,16 @@ export async function run(args: string[]) {
     const status = (await exec("git", ["status", "--porcelain"], { cwd: variant.path })).trim();
     if (status) {
       console.log("Committing uncommitted changes in variant...");
-      await exec("git", ["add", "-A"], { cwd: variant.path });
-      await exec("git", ["commit", "-m", "Auto-commit uncommitted changes before merge"], {
-        cwd: variant.path,
-      });
+      try {
+        await exec("git", ["add", "-A"], { cwd: variant.path });
+        await exec("git", ["commit", "-m", "Auto-commit uncommitted changes before merge"], {
+          cwd: variant.path,
+        });
+      } catch (err) {
+        console.error("Failed to auto-commit variant changes:", err);
+        console.error("Please commit or stash changes in the variant manually before merging.");
+        process.exit(1);
+      }
     }
   }
 
@@ -73,6 +79,22 @@ export async function run(args: string[]) {
     }
 
     console.log("Verification passed.");
+  }
+
+  // Auto-commit any uncommitted changes in the main worktree
+  const mainStatus = (await exec("git", ["status", "--porcelain"], { cwd: projectRoot })).trim();
+  if (mainStatus) {
+    console.log("Committing uncommitted changes in main...");
+    try {
+      await exec("git", ["add", "-A"], { cwd: projectRoot });
+      await exec("git", ["commit", "-m", "Auto-commit uncommitted changes before merge"], {
+        cwd: projectRoot,
+      });
+    } catch (err) {
+      console.error("Failed to auto-commit main changes:", err);
+      console.error("Please commit or stash your changes manually before merging.");
+      process.exit(1);
+    }
   }
 
   // Merge branch

@@ -8,6 +8,7 @@ export const CHANNELS: Record<string, ChannelConfig> = {
   web: { name: "web", displayName: "Web UI", showToolCalls: true },
   discord: { name: "discord", displayName: "Discord", showToolCalls: false },
   cli: { name: "cli", displayName: "CLI", showToolCalls: true },
+  agent: { name: "agent", displayName: "Agent", showToolCalls: true },
   system: { name: "system", displayName: "System", showToolCalls: false },
 };
 

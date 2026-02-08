@@ -14,7 +14,7 @@ const app = new Hono<AuthEnv>()
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
     const dir = agentDir(name);
-    const config = readVoluteConfig(dir);
+    const config = readVoluteConfig(dir) ?? {};
     const configured = config.connectors ?? [];
 
     const manager = getConnectorManager();
@@ -38,7 +38,7 @@ const app = new Hono<AuthEnv>()
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
     const dir = agentDir(name);
-    const config = readVoluteConfig(dir);
+    const config = readVoluteConfig(dir) ?? {};
     const connectors = config.connectors ?? [];
 
     if (!connectors.includes(type)) {
@@ -71,7 +71,7 @@ const app = new Hono<AuthEnv>()
     const manager = getConnectorManager();
     await manager.stopConnector(name, type);
 
-    const config = readVoluteConfig(dir);
+    const config = readVoluteConfig(dir) ?? {};
     config.connectors = (config.connectors ?? []).filter((t) => t !== type);
     writeVoluteConfig(dir, config);
 

@@ -7,8 +7,9 @@ describe("channels", () => {
     assert.ok(CHANNELS.web);
     assert.ok(CHANNELS.discord);
     assert.ok(CHANNELS.cli);
+    assert.ok(CHANNELS.agent);
     assert.ok(CHANNELS.system);
-    assert.equal(Object.keys(CHANNELS).length, 4);
+    assert.equal(Object.keys(CHANNELS).length, 5);
   });
 
   it("getChannelConfig with no arg returns web config", () => {

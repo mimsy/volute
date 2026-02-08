@@ -11,14 +11,16 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  const sender = userInfo().username;
+  const agentSelf = process.env.VOLUTE_AGENT;
+  const sender = agentSelf || userInfo().username;
+  const channel = agentSelf ? "agent" : "cli";
 
   const res = await daemonFetch(`/api/agents/${encodeURIComponent(name)}/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       content: [{ type: "text", text: message }],
-      channel: "cli",
+      channel,
       sender,
     }),
   });
