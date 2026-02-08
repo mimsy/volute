@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/libsql";
@@ -26,6 +26,15 @@ export async function getDb(): Promise<DbInstance> {
   } catch (e: unknown) {
     // Tolerate "already exists" from pre-Drizzle databases
     if (!(e instanceof Error) || !e.message.includes("already exists")) throw e;
+  }
+  // Restrict database file permissions to owner only
+  try {
+    chmodSync(dbPath, 0o600);
+  } catch (err) {
+    console.error(
+      `[volute] WARNING: Failed to restrict database file permissions on ${dbPath}:`,
+      err,
+    );
   }
   return db;
 }

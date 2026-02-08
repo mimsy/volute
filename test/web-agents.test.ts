@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { createUser } from "../src/lib/auth.js";
+import { approveUser, createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
 import { conversations, messages, users } from "../src/lib/schema.js";
 import { createSession, deleteSession } from "../src/web/middleware/auth.js";
@@ -133,5 +133,47 @@ describe("web agents routes", () => {
     });
     // CSRF middleware rejects POSTs without matching origin
     assert.equal(res.status, 403);
+  });
+
+  it("POST /:name/start — non-admin user gets 403", async () => {
+    // First user becomes admin
+    await setupAuth();
+    // Second user gets "pending" role, approve to "user"
+    const user2 = await createUser("regular-user", "pass");
+    await approveUser(user2.id);
+    const cookie2 = createSession(user2.id);
+
+    const { default: app } = await import("../src/web/app.js");
+
+    const res = await app.request("http://localhost/api/agents/nonexistent/start", {
+      method: "POST",
+      headers: {
+        Cookie: `volute_session=${cookie2}`,
+        Origin: "http://localhost",
+      },
+    });
+    assert.equal(res.status, 403);
+    const body = await res.json();
+    assert.equal(body.error, "Forbidden");
+
+    deleteSession(cookie2);
+  });
+
+  it("GET / — non-admin user can still list agents", async () => {
+    await setupAuth();
+    const user2 = await createUser("regular-user2", "pass");
+    await approveUser(user2.id);
+    const cookie2 = createSession(user2.id);
+
+    const { default: app } = await import("../src/web/app.js");
+
+    const res = await app.request("/api/agents", {
+      headers: { Cookie: `volute_session=${cookie2}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body));
+
+    deleteSession(cookie2);
   });
 });

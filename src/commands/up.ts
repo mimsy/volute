@@ -7,10 +7,12 @@ import { voluteHome } from "../lib/registry.js";
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
     port: { type: "number" },
+    host: { type: "string" },
     foreground: { type: "boolean" },
   });
 
   const port = flags.port ?? 4200;
+  const hostname = flags.host ?? "127.0.0.1";
   const home = voluteHome();
   const pidPath = resolve(home, "daemon.pid");
 
@@ -41,7 +43,7 @@ export async function run(args: string[]) {
 
   if (flags.foreground) {
     const { startDaemon } = await import("../daemon.js");
-    await startDaemon({ port, foreground: true });
+    await startDaemon({ port, hostname, foreground: true });
     return;
   }
 
@@ -84,7 +86,7 @@ export async function run(args: string[]) {
   const logFile = resolve(home, "daemon.log");
   const logFd = openSync(logFile, "a");
 
-  const child = spawn(tsxBin, [daemonModule, "--port", String(port)], {
+  const child = spawn(tsxBin, [daemonModule, "--port", String(port), "--host", hostname], {
     stdio: ["ignore", logFd, logFd],
     detached: true,
   });
@@ -99,7 +101,7 @@ export async function run(args: string[]) {
     try {
       const res = await fetch(url);
       if (res.ok) {
-        console.log(`Volute daemon running on port ${port} (pid ${child.pid})`);
+        console.log(`Volute daemon running on ${hostname}:${port} (pid ${child.pid})`);
         console.log(`Logs: ${logFile}`);
         return;
       }

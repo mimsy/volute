@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { findVariant, readVariants } from "./variants.js";
@@ -34,10 +34,27 @@ export function readRegistry(): AgentEntry[] {
 export function writeRegistry(entries: AgentEntry[]) {
   ensureVoluteHome();
   const registryPath = resolve(voluteHome(), "agents.json");
-  writeFileSync(registryPath, `${JSON.stringify(entries, null, 2)}\n`);
+  const tmpPath = `${registryPath}.tmp`;
+  writeFileSync(tmpPath, `${JSON.stringify(entries, null, 2)}\n`);
+  renameSync(tmpPath, registryPath);
+}
+
+const AGENT_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+const AGENT_NAME_MAX = 64;
+
+export function validateAgentName(name: string): string | null {
+  if (!name) return "Agent name is required";
+  if (name.length > AGENT_NAME_MAX)
+    return `Agent name must be at most ${AGENT_NAME_MAX} characters`;
+  if (!AGENT_NAME_RE.test(name)) {
+    return "Agent name must start with alphanumeric and contain only alphanumeric, dots, dashes, or underscores";
+  }
+  return null;
 }
 
 export function addAgent(name: string, port: number) {
+  const err = validateAgentName(name);
+  if (err) throw new Error(err);
   const entries = readRegistry();
   const filtered = entries.filter((e) => e.name !== name);
   filtered.push({ name, port, created: new Date().toISOString(), running: false });
@@ -87,20 +104,17 @@ export function resolveAgent(name: string): { entry: AgentEntry; dir: string } {
 
   const entry = findAgent(baseName);
   if (!entry) {
-    console.error(`Unknown agent: ${baseName}`);
-    process.exit(1);
+    throw new Error(`Unknown agent: ${baseName}`);
   }
   const dir = agentDir(baseName);
   if (!existsSync(dir)) {
-    console.error(`Agent directory missing: ${dir}`);
-    process.exit(1);
+    throw new Error(`Agent directory missing: ${dir}`);
   }
 
   if (variantName) {
     const variant = findVariant(baseName, variantName);
     if (!variant) {
-      console.error(`Unknown variant: ${variantName} (agent: ${baseName})`);
-      process.exit(1);
+      throw new Error(`Unknown variant: ${variantName} (agent: ${baseName})`);
     }
     return { entry: { ...entry, port: variant.port }, dir: variant.path };
   }

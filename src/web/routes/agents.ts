@@ -9,6 +9,7 @@ import { getDb } from "../../lib/db.js";
 import { agentDir, findAgent, readRegistry, removeAgent } from "../../lib/registry.js";
 import { agentMessages } from "../../lib/schema.js";
 import { checkHealth, findVariant, readVariants, removeAllVariants } from "../../lib/variants.js";
+import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 type ChannelStatus = {
   name: string;
@@ -17,7 +18,7 @@ type ChannelStatus = {
   showToolCalls: boolean;
 };
 
-async function getAgentStatus(name: string, _dir: string, port: number) {
+async function getAgentStatus(name: string, port: number) {
   const manager = getAgentManager();
   let status: "running" | "stopped" | "starting" = "stopped";
 
@@ -37,38 +38,27 @@ async function getAgentStatus(name: string, _dir: string, port: number) {
   });
 
   // Check connector status via ConnectorManager
-  const connectorManager = getConnectorManager();
-  const connectorStatuses = connectorManager.getConnectorStatus(name);
+  const connectorStatuses = getConnectorManager().getConnectorStatus(name);
   for (const cs of connectorStatuses) {
-    const channelConfig = CHANNELS[cs.type];
-    if (channelConfig) {
-      channels.push({
-        name: channelConfig.name,
-        displayName: channelConfig.displayName,
-        status: cs.running ? "connected" : "disconnected",
-        showToolCalls: channelConfig.showToolCalls,
-      });
-    } else {
-      channels.push({
-        name: cs.type,
-        displayName: cs.type,
-        status: cs.running ? "connected" : "disconnected",
-        showToolCalls: false,
-      });
-    }
+    const config = CHANNELS[cs.type];
+    channels.push({
+      name: config?.name ?? cs.type,
+      displayName: config?.displayName ?? cs.type,
+      status: cs.running ? "connected" : "disconnected",
+      showToolCalls: config?.showToolCalls ?? false,
+    });
   }
 
   return { status, channels };
 }
 
 // List all agents
-const app = new Hono()
+const app = new Hono<AuthEnv>()
   .get("/", async (c) => {
     const entries = readRegistry();
     const agents = await Promise.all(
       entries.map(async (entry) => {
-        const dir = agentDir(entry.name);
-        const { status, channels } = await getAgentStatus(entry.name, dir, entry.port);
+        const { status, channels } = await getAgentStatus(entry.name, entry.port);
         return { ...entry, status, channels };
       }),
     );
@@ -80,16 +70,15 @@ const app = new Hono()
     const entry = findAgent(name);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
-    const dir = agentDir(name);
-    if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
+    if (!existsSync(agentDir(name))) return c.json({ error: "Agent directory missing" }, 404);
 
-    const { status, channels } = await getAgentStatus(name, dir, entry.port);
+    const { status, channels } = await getAgentStatus(name, entry.port);
 
     // Include variant info
     const variants = readVariants(name);
+    const manager = getAgentManager();
     const variantStatuses = await Promise.all(
       variants.map(async (v) => {
-        const manager = getAgentManager();
         const compositeKey = `${name}@${v.name}`;
         let variantStatus: "running" | "stopped" | "starting" = "stopped";
         if (manager.isRunning(compositeKey)) {
@@ -102,8 +91,8 @@ const app = new Hono()
 
     return c.json({ ...entry, status, channels, variants: variantStatuses });
   })
-  // Start agent (supports name@variant)
-  .post("/:name/start", async (c) => {
+  // Start agent (supports name@variant) — admin only
+  .post("/:name/start", requireAdmin, async (c) => {
     const name = c.req.param("name");
     const [baseName, variantName] = name.split("@", 2);
 
@@ -135,8 +124,8 @@ const app = new Hono()
       return c.json({ error: err instanceof Error ? err.message : "Failed to start agent" }, 500);
     }
   })
-  // Restart agent (supports name@variant)
-  .post("/:name/restart", async (c) => {
+  // Restart agent (supports name@variant) — admin only
+  .post("/:name/restart", requireAdmin, async (c) => {
     const name = c.req.param("name");
     const [baseName, variantName] = name.split("@", 2);
 
@@ -170,8 +159,8 @@ const app = new Hono()
       return c.json({ error: err instanceof Error ? err.message : "Failed to restart agent" }, 500);
     }
   })
-  // Stop agent (supports name@variant)
-  .post("/:name/stop", async (c) => {
+  // Stop agent (supports name@variant) — admin only
+  .post("/:name/stop", requireAdmin, async (c) => {
     const name = c.req.param("name");
     const [baseName, variantName] = name.split("@", 2);
 
@@ -196,8 +185,8 @@ const app = new Hono()
       return c.json({ error: err instanceof Error ? err.message : "Failed to stop agent" }, 500);
     }
   })
-  // Delete agent
-  .delete("/:name", async (c) => {
+  // Delete agent — admin only
+  .delete("/:name", requireAdmin, async (c) => {
     const name = c.req.param("name");
     const entry = findAgent(name);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
@@ -241,24 +230,30 @@ const app = new Hono()
     }
 
     const body = await c.req.text();
+    let parsed: Record<string, unknown> | null = null;
+    try {
+      parsed = JSON.parse(body);
+    } catch {}
+
+    const channel = (parsed?.channel as string) ?? "unknown";
 
     // Record inbound message
     const db = await getDb();
-    try {
-      const parsed = JSON.parse(body);
-      const channel = parsed.channel ?? "unknown";
-      const sender = parsed.sender ?? null;
-      const content =
-        typeof parsed.content === "string" ? parsed.content : JSON.stringify(parsed.content);
-      await db.insert(agentMessages).values({
-        agent: baseName,
-        channel,
-        role: "user",
-        sender,
-        content,
-      });
-    } catch {
-      // Don't block the request if persistence fails
+    if (parsed) {
+      try {
+        const sender = (parsed.sender as string) ?? null;
+        const content =
+          typeof parsed.content === "string" ? parsed.content : JSON.stringify(parsed.content);
+        await db.insert(agentMessages).values({
+          agent: baseName,
+          channel,
+          role: "user",
+          sender,
+          content,
+        });
+      } catch {
+        // Don't block the request if persistence fails
+      }
     }
 
     const res = await fetch(`http://localhost:${port}/message`, {
@@ -282,14 +277,8 @@ const app = new Hono()
       const decoder = new TextDecoder();
       let buffer = "";
       const textParts: string[] = [];
-      let channel = "unknown";
 
       try {
-        // Extract channel from the original request
-        try {
-          channel = JSON.parse(body).channel ?? "unknown";
-        } catch {}
-
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -322,7 +311,6 @@ const app = new Hono()
 
         // Record assistant response
         if (textParts.length > 0) {
-          const db = await getDb();
           await db.insert(agentMessages).values({
             agent: baseName,
             channel,

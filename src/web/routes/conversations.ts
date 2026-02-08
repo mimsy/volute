@@ -1,5 +1,10 @@
 import { Hono } from "hono";
-import { deleteConversation, getMessages, listConversations } from "../../lib/conversations.js";
+import {
+  deleteConversationForUser,
+  getConversationForUser,
+  getMessages,
+  listConversations,
+} from "../../lib/conversations.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
 const app = new Hono<AuthEnv>()
@@ -11,12 +16,17 @@ const app = new Hono<AuthEnv>()
   })
   .get("/:name/conversations/:id/messages", async (c) => {
     const id = c.req.param("id");
+    const user = c.get("user");
+    const conv = await getConversationForUser(id, user.id);
+    if (!conv) return c.json({ error: "Conversation not found" }, 404);
     const msgs = await getMessages(id);
     return c.json(msgs);
   })
   .delete("/:name/conversations/:id", async (c) => {
     const id = c.req.param("id");
-    await deleteConversation(id);
+    const user = c.get("user");
+    const deleted = await deleteConversationForUser(id, user.id);
+    if (!deleted) return c.json({ error: "Conversation not found" }, 404);
     return c.json({ ok: true });
   });
 

@@ -8,8 +8,12 @@ import { getScheduler } from "./lib/scheduler.js";
 import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
 import { startServer } from "./web/server.js";
 
-export async function startDaemon(opts: { port: number; foreground: boolean }): Promise<void> {
-  const { port } = opts;
+export async function startDaemon(opts: {
+  port: number;
+  hostname: string;
+  foreground: boolean;
+}): Promise<void> {
+  const { port, hostname } = opts;
   const myPid = String(process.pid);
 
   const home = voluteHome();
@@ -29,7 +33,7 @@ export async function startDaemon(opts: { port: number; foreground: boolean }): 
   // belonging to a running daemon.
   let server: Awaited<ReturnType<typeof startServer>>;
   try {
-    server = await startServer({ port });
+    server = await startServer({ port, hostname });
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
     if (e.code === "EADDRINUSE") {
@@ -76,7 +80,7 @@ export async function startDaemon(opts: { port: number; foreground: boolean }): 
     }
   }
 
-  console.error(`[daemon] running on port ${port}, pid ${myPid}`);
+  console.error(`[daemon] running on ${hostname}:${port}, pid ${myPid}`);
 
   // Only delete PID/config files if they still belong to this process
   function cleanup() {
@@ -86,7 +90,11 @@ export async function startDaemon(opts: { port: number; foreground: boolean }): 
       }
     } catch {}
     try {
-      unlinkSync(DAEMON_JSON_PATH);
+      // Only delete daemon.json if it belongs to this process
+      const data = JSON.parse(readFileSync(DAEMON_JSON_PATH, "utf-8"));
+      if (data.token === token) {
+        unlinkSync(DAEMON_JSON_PATH);
+      }
     } catch {}
   }
 
@@ -111,16 +119,20 @@ export async function startDaemon(opts: { port: number; foreground: boolean }): 
 // CLI entry point
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("daemon.ts")) {
   let port = 4200;
+  let hostname = "127.0.0.1";
   let foreground = false;
 
   for (let i = 2; i < process.argv.length; i++) {
     if (process.argv[i] === "--port" && process.argv[i + 1]) {
       port = parseInt(process.argv[i + 1], 10);
       i++;
+    } else if (process.argv[i] === "--host" && process.argv[i + 1]) {
+      hostname = process.argv[i + 1];
+      i++;
     } else if (process.argv[i] === "--foreground") {
       foreground = true;
     }
   }
 
-  startDaemon({ port, foreground });
+  startDaemon({ port, hostname, foreground });
 }

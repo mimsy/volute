@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
 import log from "../lib/logger.js";
@@ -50,6 +51,9 @@ app.use("*", async (c, next) => {
 app.get("/api/health", (c) => {
   return c.json({ ok: true, version: "0.1.0" });
 });
+
+// Body size limit (10MB — generous for image uploads)
+app.use("/api/*", bodyLimit({ maxSize: 10 * 1024 * 1024 }));
 
 // CSRF protection for API mutation requests
 app.use("/api/*", csrf());

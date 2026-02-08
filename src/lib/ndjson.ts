@@ -1,6 +1,8 @@
 import type { VoluteEvent } from "../types.js";
 import log from "./logger.js";
 
+const MAX_BUFFER_SIZE = 1_000_000; // 1MB
+
 export async function* readNdjson(body: ReadableStream<Uint8Array>): AsyncGenerator<VoluteEvent> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -12,6 +14,13 @@ export async function* readNdjson(body: ReadableStream<Uint8Array>): AsyncGenera
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
+
+      if (buffer.length > MAX_BUFFER_SIZE) {
+        log.warn("ndjson: buffer exceeded 1MB, resetting");
+        buffer = "";
+        continue;
+      }
+
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
 

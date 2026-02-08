@@ -13,15 +13,30 @@ import { loadMergedEnv } from "./env.js";
 import { agentDir as getAgentDir } from "./registry.js";
 import { readVoluteConfig } from "./volute-config.js";
 
+function searchUpwards(...segments: string[]): string | null {
+  let searchDir = dirname(new URL(import.meta.url).pathname);
+  for (let i = 0; i < 5; i++) {
+    const candidate = resolve(searchDir, ...segments);
+    if (existsSync(candidate)) return candidate;
+    searchDir = dirname(searchDir);
+  }
+  return null;
+}
+
 type TrackedConnector = {
   child: ChildProcess;
   type: string;
 };
 
+const MAX_RESTART_ATTEMPTS = 5;
+const BASE_RESTART_DELAY = 3000;
+const MAX_RESTART_DELAY = 60000;
+
 export class ConnectorManager {
   private connectors = new Map<string, Map<string, TrackedConnector>>();
   private stopping = new Set<string>(); // "agent:type" keys currently being explicitly stopped
   private shuttingDown = false;
+  private restartAttempts = new Map<string, number>(); // "agent:type" -> count
 
   async startConnectors(agentName: string, agentDir: string, agentPort: number): Promise<void> {
     const config = readVoluteConfig(agentDir);
@@ -79,7 +94,7 @@ export class ConnectorManager {
     } else if (existsSync(userConnector)) {
       connectorScript = userConnector;
       runtime = this.resolveVoluteTsx();
-    } else if (builtinConnector && existsSync(builtinConnector)) {
+    } else if (builtinConnector) {
       connectorScript = builtinConnector;
       runtime = process.execPath;
     } else {
@@ -98,10 +113,11 @@ export class ConnectorManager {
       Object.entries(agentEnv).filter(([k]) => k.startsWith(prefix)),
     );
 
+    const { VOLUTE_DAEMON_TOKEN: _, ...parentEnv } = process.env;
     const child = spawn(runtime, [connectorScript], {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
-        ...process.env,
+        ...parentEnv,
         VOLUTE_AGENT_PORT: String(agentPort),
         VOLUTE_AGENT_NAME: agentName,
         ...connectorEnv,
@@ -122,6 +138,7 @@ export class ConnectorManager {
     this.connectors.get(agentName)!.set(type, { child, type });
 
     const stopKey = `${agentName}:${type}`;
+    this.restartAttempts.delete(stopKey);
 
     // Crash recovery
     child.on("exit", (code) => {
@@ -136,13 +153,24 @@ export class ConnectorManager {
       if (this.stopping.has(stopKey)) return;
 
       console.error(`[daemon] connector ${type} for ${agentName} exited with code ${code}`);
-      console.error(`[daemon] restarting connector ${type} for ${agentName} in 3s`);
+      const attempts = this.restartAttempts.get(stopKey) ?? 0;
+      if (attempts >= MAX_RESTART_ATTEMPTS) {
+        console.error(
+          `[daemon] connector ${type} for ${agentName} crashed ${attempts} times — giving up`,
+        );
+        return;
+      }
+      const delay = Math.min(BASE_RESTART_DELAY * 2 ** attempts, MAX_RESTART_DELAY);
+      this.restartAttempts.set(stopKey, attempts + 1);
+      console.error(
+        `[daemon] restarting connector ${type} for ${agentName} — attempt ${attempts + 1}/${MAX_RESTART_ATTEMPTS}, in ${delay}ms`,
+      );
       setTimeout(() => {
         if (this.shuttingDown || this.stopping.has(stopKey)) return;
         this.startConnector(agentName, agentDir, agentPort, type).catch((err) => {
           console.error(`[daemon] failed to restart connector ${type} for ${agentName}:`, err);
         });
-      }, 3000);
+      }, delay);
     });
 
     console.error(`[daemon] started connector ${type} for ${agentName}`);
@@ -175,6 +203,7 @@ export class ConnectorManager {
     });
 
     this.stopping.delete(stopKey);
+    this.restartAttempts.delete(stopKey);
     try {
       this.removeConnectorPid(getAgentDir(agentName), type);
     } catch {}
@@ -237,26 +266,11 @@ export class ConnectorManager {
   }
 
   private resolveBuiltinConnector(type: string): string | null {
-    // Search up from this module's location for connectors/<type>.js
-    let searchDir = dirname(new URL(import.meta.url).pathname);
-    for (let i = 0; i < 5; i++) {
-      const candidate = resolve(searchDir, "connectors", `${type}.js`);
-      if (existsSync(candidate)) return candidate;
-      searchDir = dirname(searchDir);
-    }
-    return null;
+    return searchUpwards("connectors", `${type}.js`);
   }
 
   private resolveVoluteTsx(): string {
-    // Find tsx from Volute's own node_modules
-    let searchDir = dirname(new URL(import.meta.url).pathname);
-    for (let i = 0; i < 5; i++) {
-      const candidate = resolve(searchDir, "node_modules", ".bin", "tsx");
-      if (existsSync(candidate)) return candidate;
-      searchDir = dirname(searchDir);
-    }
-    // Fallback to just "tsx" on PATH
-    return "tsx";
+    return searchUpwards("node_modules", ".bin", "tsx") ?? "tsx";
   }
 }
 

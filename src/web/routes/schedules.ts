@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { agentDir, findAgent } from "../../lib/registry.js";
 import { getScheduler } from "../../lib/scheduler.js";
 import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../../lib/volute-config.js";
+import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 function readSchedules(name: string): Schedule[] {
   return readVoluteConfig(agentDir(name)).schedules ?? [];
@@ -15,15 +16,15 @@ function writeSchedules(name: string, schedules: Schedule[]): void {
   getScheduler().loadSchedules(name);
 }
 
-const app = new Hono()
+const app = new Hono<AuthEnv>()
   // List schedules
   .get("/:name/schedules", (c) => {
     const name = c.req.param("name");
     if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
     return c.json(readSchedules(name));
   })
-  // Add schedule
-  .post("/:name/schedules", async (c) => {
+  // Add schedule — admin only
+  .post("/:name/schedules", requireAdmin, async (c) => {
     const name = c.req.param("name");
     if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
 
@@ -43,8 +44,8 @@ const app = new Hono()
     writeSchedules(name, schedules);
     return c.json({ ok: true, id }, 201);
   })
-  // Update schedule
-  .put("/:name/schedules/:id", async (c) => {
+  // Update schedule — admin only
+  .put("/:name/schedules/:id", requireAdmin, async (c) => {
     const name = c.req.param("name");
     const id = c.req.param("id");
     if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
@@ -61,8 +62,8 @@ const app = new Hono()
     writeSchedules(name, schedules);
     return c.json({ ok: true });
   })
-  // Delete schedule
-  .delete("/:name/schedules/:id", (c) => {
+  // Delete schedule — admin only
+  .delete("/:name/schedules/:id", requireAdmin, (c) => {
     const name = c.req.param("name");
     const id = c.req.param("id");
     if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
