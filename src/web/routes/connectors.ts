@@ -3,6 +3,8 @@ import { getConnectorManager } from "../../lib/connector-manager.js";
 import { agentDir, findAgent } from "../../lib/registry.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
 
+const CONNECTOR_TYPE_RE = /^[a-z][a-z0-9-]*$/;
+
 const app = new Hono()
   // List connectors + status
   .get("/:name/connectors", (c) => {
@@ -28,6 +30,9 @@ const app = new Hono()
   .post("/:name/connectors/:type", async (c) => {
     const name = c.req.param("name");
     const type = c.req.param("type");
+    if (!CONNECTOR_TYPE_RE.test(type)) {
+      return c.json({ error: "Invalid connector type" }, 400);
+    }
     const entry = findAgent(name);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
@@ -55,6 +60,9 @@ const app = new Hono()
   .delete("/:name/connectors/:type", async (c) => {
     const name = c.req.param("name");
     const type = c.req.param("type");
+    if (!CONNECTOR_TYPE_RE.test(type)) {
+      return c.json({ error: "Invalid connector type" }, 400);
+    }
     const entry = findAgent(name);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
