@@ -6,7 +6,7 @@ import {
   addMessage,
   type ContentBlock,
   createConversation,
-  getConversation,
+  getConversationForUser,
 } from "../../lib/conversations.js";
 import { getDb } from "../../lib/db.js";
 import { readNdjson } from "../../lib/ndjson.js";
@@ -58,7 +58,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   // Resolve or create conversation
   let conversationId = body.conversationId;
   if (conversationId) {
-    const conv = await getConversation(conversationId);
+    const conv = await getConversationForUser(conversationId, user.id);
     if (!conv) return c.json({ error: "Conversation not found" }, 404);
   } else {
     const title = body.message ? body.message.slice(0, 80) : "Image message";

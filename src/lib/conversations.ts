@@ -78,6 +78,26 @@ export async function getConversation(id: string): Promise<Conversation | null> 
   return (row as Conversation) ?? null;
 }
 
+export async function getConversationForUser(
+  id: string,
+  userId: number,
+): Promise<Conversation | null> {
+  const db = await getDb();
+  const row = await db
+    .select()
+    .from(conversations)
+    .where(and(eq(conversations.id, id), eq(conversations.user_id, userId)))
+    .get();
+  return (row as Conversation) ?? null;
+}
+
+export async function deleteConversationForUser(id: string, userId: number): Promise<boolean> {
+  const conv = await getConversationForUser(id, userId);
+  if (!conv) return false;
+  await deleteConversation(id);
+  return true;
+}
+
 export async function listConversations(
   agentName: string,
   opts?: { userId?: number },
