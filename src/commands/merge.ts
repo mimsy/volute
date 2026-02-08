@@ -75,6 +75,16 @@ export async function run(args: string[]) {
     console.log("Verification passed.");
   }
 
+  // Auto-commit any uncommitted changes in the main worktree
+  const mainStatus = (await exec("git", ["status", "--porcelain"], { cwd: projectRoot })).trim();
+  if (mainStatus) {
+    console.log("Committing uncommitted changes in main...");
+    await exec("git", ["add", "-A"], { cwd: projectRoot });
+    await exec("git", ["commit", "-m", "Auto-commit uncommitted changes before merge"], {
+      cwd: projectRoot,
+    });
+  }
+
   // Merge branch
   console.log(`Merging branch: ${variant.branch}`);
   try {
