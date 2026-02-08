@@ -86,7 +86,11 @@ export async function startDaemon(opts: { port: number; foreground: boolean }): 
       }
     } catch {}
     try {
-      unlinkSync(DAEMON_JSON_PATH);
+      // Only delete daemon.json if it belongs to this process
+      const data = JSON.parse(readFileSync(DAEMON_JSON_PATH, "utf-8"));
+      if (data.token === token) {
+        unlinkSync(DAEMON_JSON_PATH);
+      }
     } catch {}
   }
 

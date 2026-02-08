@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { findVariant, readVariants } from "./variants.js";
@@ -34,7 +34,9 @@ export function readRegistry(): AgentEntry[] {
 export function writeRegistry(entries: AgentEntry[]) {
   ensureVoluteHome();
   const registryPath = resolve(voluteHome(), "agents.json");
-  writeFileSync(registryPath, `${JSON.stringify(entries, null, 2)}\n`);
+  const tmpPath = `${registryPath}.tmp`;
+  writeFileSync(tmpPath, `${JSON.stringify(entries, null, 2)}\n`);
+  renameSync(tmpPath, registryPath);
 }
 
 const AGENT_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
