@@ -13,6 +13,16 @@ import { loadMergedEnv } from "./env.js";
 import { agentDir as getAgentDir } from "./registry.js";
 import { readVoluteConfig } from "./volute-config.js";
 
+function searchUpwards(...segments: string[]): string | null {
+  let searchDir = dirname(new URL(import.meta.url).pathname);
+  for (let i = 0; i < 5; i++) {
+    const candidate = resolve(searchDir, ...segments);
+    if (existsSync(candidate)) return candidate;
+    searchDir = dirname(searchDir);
+  }
+  return null;
+}
+
 type TrackedConnector = {
   child: ChildProcess;
   type: string;
@@ -84,7 +94,7 @@ export class ConnectorManager {
     } else if (existsSync(userConnector)) {
       connectorScript = userConnector;
       runtime = this.resolveVoluteTsx();
-    } else if (builtinConnector && existsSync(builtinConnector)) {
+    } else if (builtinConnector) {
       connectorScript = builtinConnector;
       runtime = process.execPath;
     } else {
@@ -256,26 +266,11 @@ export class ConnectorManager {
   }
 
   private resolveBuiltinConnector(type: string): string | null {
-    // Search up from this module's location for connectors/<type>.js
-    let searchDir = dirname(new URL(import.meta.url).pathname);
-    for (let i = 0; i < 5; i++) {
-      const candidate = resolve(searchDir, "connectors", `${type}.js`);
-      if (existsSync(candidate)) return candidate;
-      searchDir = dirname(searchDir);
-    }
-    return null;
+    return searchUpwards("connectors", `${type}.js`);
   }
 
   private resolveVoluteTsx(): string {
-    // Find tsx from Volute's own node_modules
-    let searchDir = dirname(new URL(import.meta.url).pathname);
-    for (let i = 0; i < 5; i++) {
-      const candidate = resolve(searchDir, "node_modules", ".bin", "tsx");
-      if (existsSync(candidate)) return candidate;
-      searchDir = dirname(searchDir);
-    }
-    // Fallback to just "tsx" on PATH
-    return "tsx";
+    return searchUpwards("node_modules", ".bin", "tsx") ?? "tsx";
   }
 }
 

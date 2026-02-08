@@ -13,7 +13,6 @@ import { readNdjson } from "../../lib/ndjson.js";
 import { findAgent } from "../../lib/registry.js";
 import { agentMessages } from "../../lib/schema.js";
 import { findVariant } from "../../lib/variants.js";
-import type { VoluteContentPart, VoluteEvent } from "../../types.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
 const chatSchema = z.object({
@@ -69,47 +68,35 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     conversationId = conv.id;
   }
 
-  // Build user content blocks
-  const userContent: ContentBlock[] = [];
+  // Build content blocks (used for both persistence and agent request)
+  const contentBlocks: ContentBlock[] = [];
   if (body.message) {
-    userContent.push({ type: "text", text: body.message });
+    contentBlocks.push({ type: "text", text: body.message });
   }
   if (body.images) {
     for (const img of body.images) {
-      userContent.push({ type: "image", media_type: img.media_type, data: img.data });
+      contentBlocks.push({ type: "image", media_type: img.media_type, data: img.data });
     }
   }
 
   // Save user message
-  await addMessage(conversationId, "user", user.username, userContent);
+  await addMessage(conversationId, "user", user.username, contentBlocks);
 
   // Record in agent_messages
-  const userText = body.message ?? "[image]";
   const db = await getDb();
   await db.insert(agentMessages).values({
     agent: baseName,
     channel: "web",
     role: "user",
     sender: user.username,
-    content: userText,
+    content: body.message ?? "[image]",
   });
-
-  // Build content for agent server
-  const agentContent: VoluteContentPart[] = [];
-  if (body.message) {
-    agentContent.push({ type: "text", text: body.message });
-  }
-  if (body.images) {
-    for (const img of body.images) {
-      agentContent.push({ type: "image", media_type: img.media_type, data: img.data });
-    }
-  }
 
   const res = await fetch(`http://localhost:${port}/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      content: agentContent,
+      content: contentBlocks,
       channel: "web",
       sender: user.username,
     }),
@@ -132,32 +119,31 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     const assistantContent: ContentBlock[] = [];
 
     for await (const event of readNdjson(res.body!)) {
-      const voluteEvent = event as VoluteEvent;
-      await stream.writeSSE({ data: JSON.stringify(voluteEvent) });
+      await stream.writeSSE({ data: JSON.stringify(event) });
 
-      if (voluteEvent.type === "text") {
+      if (event.type === "text") {
         // Merge consecutive text blocks
         const last = assistantContent[assistantContent.length - 1];
         if (last && last.type === "text") {
-          last.text += voluteEvent.content;
+          last.text += event.content;
         } else {
-          assistantContent.push({ type: "text", text: voluteEvent.content });
+          assistantContent.push({ type: "text", text: event.content });
         }
-      } else if (voluteEvent.type === "tool_use") {
+      } else if (event.type === "tool_use") {
         assistantContent.push({
           type: "tool_use",
-          name: voluteEvent.name,
-          input: voluteEvent.input,
+          name: event.name,
+          input: event.input,
         });
-      } else if (voluteEvent.type === "tool_result") {
+      } else if (event.type === "tool_result") {
         assistantContent.push({
           type: "tool_result",
-          output: voluteEvent.output,
-          ...(voluteEvent.is_error ? { is_error: true } : {}),
+          output: event.output,
+          ...(event.is_error ? { is_error: true } : {}),
         });
       }
 
-      if (voluteEvent.type === "done") {
+      if (event.type === "done") {
         // Save assistant message
         if (assistantContent.length > 0) {
           await addMessage(conversationId!, "assistant", baseName, assistantContent);
@@ -167,7 +153,6 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
             .filter((b): b is ContentBlock & { type: "text" } => b.type === "text")
             .map((b) => b.text);
           if (textParts.length > 0) {
-            const db = await getDb();
             await db.insert(agentMessages).values({
               agent: baseName,
               channel: "web",
