@@ -47,37 +47,10 @@ export async function run(args: string[]) {
     return;
   }
 
-  // Find tsx from the volute project's own node_modules
-  let tsxBin = "";
-  let searchDir = dirname(new URL(import.meta.url).pathname);
-  for (let i = 0; i < 5; i++) {
-    const candidate = resolve(searchDir, "node_modules", ".bin", "tsx");
-    if (existsSync(candidate)) {
-      tsxBin = candidate;
-      break;
-    }
-    searchDir = dirname(searchDir);
-  }
-
-  if (!tsxBin) {
-    console.error("Could not find tsx binary.");
-    process.exit(1);
-  }
-
-  // Find daemon.ts source
-  let daemonModule = "";
-  searchDir = dirname(new URL(import.meta.url).pathname);
-  for (let i = 0; i < 5; i++) {
-    const candidate = resolve(searchDir, "src", "daemon.ts");
-    if (existsSync(candidate)) {
-      daemonModule = candidate;
-      break;
-    }
-    searchDir = dirname(searchDir);
-  }
-
-  if (!daemonModule) {
-    console.error("Could not find daemon module.");
+  // Find compiled daemon.js next to cli.js in dist/
+  const daemonModule = resolve(dirname(new URL(import.meta.url).pathname), "daemon.js");
+  if (!existsSync(daemonModule)) {
+    console.error("Could not find daemon module. Run `npm run build` first.");
     process.exit(1);
   }
 
@@ -86,10 +59,14 @@ export async function run(args: string[]) {
   const logFile = resolve(home, "daemon.log");
   const logFd = openSync(logFile, "a");
 
-  const child = spawn(tsxBin, [daemonModule, "--port", String(port), "--host", hostname], {
-    stdio: ["ignore", logFd, logFd],
-    detached: true,
-  });
+  const child = spawn(
+    process.execPath,
+    [daemonModule, "--port", String(port), "--host", hostname],
+    {
+      stdio: ["ignore", logFd, logFd],
+      detached: true,
+    },
+  );
   child.unref();
 
   // Poll health endpoint to confirm startup
