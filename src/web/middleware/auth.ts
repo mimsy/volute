@@ -32,6 +32,14 @@ export function getSessionUserId(sessionId: string): number | undefined {
   return session.userId;
 }
 
+export const requireAdmin = createMiddleware<AuthEnv>(async (c, next) => {
+  const user = c.get("user");
+  if (user.role !== "admin") {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+  await next();
+});
+
 export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   // Allow internal CLI-to-daemon requests via bearer token
   const authHeader = c.req.header("Authorization");

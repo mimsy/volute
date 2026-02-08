@@ -9,6 +9,7 @@ import { getDb } from "../../lib/db.js";
 import { agentDir, findAgent, readRegistry, removeAgent } from "../../lib/registry.js";
 import { agentMessages } from "../../lib/schema.js";
 import { checkHealth, findVariant, readVariants, removeAllVariants } from "../../lib/variants.js";
+import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 type ChannelStatus = {
   name: string;
@@ -62,7 +63,7 @@ async function getAgentStatus(name: string, _dir: string, port: number) {
 }
 
 // List all agents
-const app = new Hono()
+const app = new Hono<AuthEnv>()
   .get("/", async (c) => {
     const entries = readRegistry();
     const agents = await Promise.all(
@@ -102,8 +103,8 @@ const app = new Hono()
 
     return c.json({ ...entry, status, channels, variants: variantStatuses });
   })
-  // Start agent (supports name@variant)
-  .post("/:name/start", async (c) => {
+  // Start agent (supports name@variant) — admin only
+  .post("/:name/start", requireAdmin, async (c) => {
     const name = c.req.param("name");
     const [baseName, variantName] = name.split("@", 2);
 
@@ -135,8 +136,8 @@ const app = new Hono()
       return c.json({ error: err instanceof Error ? err.message : "Failed to start agent" }, 500);
     }
   })
-  // Restart agent (supports name@variant)
-  .post("/:name/restart", async (c) => {
+  // Restart agent (supports name@variant) — admin only
+  .post("/:name/restart", requireAdmin, async (c) => {
     const name = c.req.param("name");
     const [baseName, variantName] = name.split("@", 2);
 
@@ -170,8 +171,8 @@ const app = new Hono()
       return c.json({ error: err instanceof Error ? err.message : "Failed to restart agent" }, 500);
     }
   })
-  // Stop agent (supports name@variant)
-  .post("/:name/stop", async (c) => {
+  // Stop agent (supports name@variant) — admin only
+  .post("/:name/stop", requireAdmin, async (c) => {
     const name = c.req.param("name");
     const [baseName, variantName] = name.split("@", 2);
 
@@ -196,8 +197,8 @@ const app = new Hono()
       return c.json({ error: err instanceof Error ? err.message : "Failed to stop agent" }, 500);
     }
   })
-  // Delete agent
-  .delete("/:name", async (c) => {
+  // Delete agent — admin only
+  .delete("/:name", requireAdmin, async (c) => {
     const name = c.req.param("name");
     const entry = findAgent(name);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
