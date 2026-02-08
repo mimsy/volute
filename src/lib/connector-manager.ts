@@ -98,10 +98,11 @@ export class ConnectorManager {
       Object.entries(agentEnv).filter(([k]) => k.startsWith(prefix)),
     );
 
+    const { VOLUTE_DAEMON_TOKEN: _, ...parentEnv } = process.env;
     const child = spawn(runtime, [connectorScript], {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
-        ...process.env,
+        ...parentEnv,
         VOLUTE_AGENT_PORT: String(agentPort),
         VOLUTE_AGENT_NAME: agentName,
         ...connectorEnv,

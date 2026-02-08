@@ -70,7 +70,8 @@ export class AgentManager {
       flags: "a",
     });
     const agentEnv = loadMergedEnv(dir);
-    const env = { ...process.env, ...agentEnv, VOLUTE_AGENT: name };
+    const { VOLUTE_DAEMON_TOKEN: _, ...parentEnv } = process.env;
+    const env = { ...parentEnv, ...agentEnv, VOLUTE_AGENT: name };
     const tsxBin = resolve(dir, "node_modules", ".bin", "tsx");
 
     const child = spawn(tsxBin, ["src/server.ts", "--port", String(port)], {
