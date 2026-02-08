@@ -18,10 +18,15 @@ type TrackedConnector = {
   type: string;
 };
 
+const MAX_RESTART_ATTEMPTS = 5;
+const BASE_RESTART_DELAY = 3000;
+const MAX_RESTART_DELAY = 60000;
+
 export class ConnectorManager {
   private connectors = new Map<string, Map<string, TrackedConnector>>();
   private stopping = new Set<string>(); // "agent:type" keys currently being explicitly stopped
   private shuttingDown = false;
+  private restartAttempts = new Map<string, number>(); // "agent:type" -> count
 
   async startConnectors(agentName: string, agentDir: string, agentPort: number): Promise<void> {
     const config = readVoluteConfig(agentDir);
@@ -123,6 +128,7 @@ export class ConnectorManager {
     this.connectors.get(agentName)!.set(type, { child, type });
 
     const stopKey = `${agentName}:${type}`;
+    this.restartAttempts.delete(stopKey);
 
     // Crash recovery
     child.on("exit", (code) => {
@@ -137,13 +143,24 @@ export class ConnectorManager {
       if (this.stopping.has(stopKey)) return;
 
       console.error(`[daemon] connector ${type} for ${agentName} exited with code ${code}`);
-      console.error(`[daemon] restarting connector ${type} for ${agentName} in 3s`);
+      const attempts = this.restartAttempts.get(stopKey) ?? 0;
+      if (attempts >= MAX_RESTART_ATTEMPTS) {
+        console.error(
+          `[daemon] connector ${type} for ${agentName} crashed ${attempts} times — giving up`,
+        );
+        return;
+      }
+      const delay = Math.min(BASE_RESTART_DELAY * 2 ** attempts, MAX_RESTART_DELAY);
+      this.restartAttempts.set(stopKey, attempts + 1);
+      console.error(
+        `[daemon] restarting connector ${type} for ${agentName} — attempt ${attempts + 1}/${MAX_RESTART_ATTEMPTS}, in ${delay}ms`,
+      );
       setTimeout(() => {
         if (this.shuttingDown || this.stopping.has(stopKey)) return;
         this.startConnector(agentName, agentDir, agentPort, type).catch((err) => {
           console.error(`[daemon] failed to restart connector ${type} for ${agentName}:`, err);
         });
-      }, 3000);
+      }, delay);
     });
 
     console.error(`[daemon] started connector ${type} for ${agentName}`);
@@ -176,6 +193,7 @@ export class ConnectorManager {
     });
 
     this.stopping.delete(stopKey);
+    this.restartAttempts.delete(stopKey);
     try {
       this.removeConnectorPid(getAgentDir(agentName), type);
     } catch {}

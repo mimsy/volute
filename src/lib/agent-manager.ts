@@ -13,10 +13,15 @@ type TrackedAgent = {
   port: number;
 };
 
+const MAX_RESTART_ATTEMPTS = 5;
+const BASE_RESTART_DELAY = 3000;
+const MAX_RESTART_DELAY = 60000;
+
 export class AgentManager {
   private agents = new Map<string, TrackedAgent>();
   private stopping = new Set<string>();
   private shuttingDown = false;
+  private restartAttempts = new Map<string, number>();
 
   private resolveTarget(name: string): {
     dir: string;
@@ -123,6 +128,7 @@ export class AgentManager {
     }
 
     // Set up crash recovery after successful start
+    this.restartAttempts.delete(name);
     this.setupCrashRecovery(name, child, dir, isVariant);
     if (isVariant) {
       setVariantRunning(baseName, variantName!, true);
@@ -149,17 +155,27 @@ export class AgentManager {
       const wasRestart = isVariant ? false : await this.handleRestart(name, dir);
       if (wasRestart) {
         console.error(`[daemon] restarting ${name} immediately after merge`);
+        this.restartAttempts.delete(name);
         this.startAgent(name).catch((err) => {
           console.error(`[daemon] failed to restart ${name} after merge:`, err);
         });
       } else {
-        console.error(`[daemon] crash recovery for ${name} — restarting in 3s`);
+        const attempts = this.restartAttempts.get(name) ?? 0;
+        if (attempts >= MAX_RESTART_ATTEMPTS) {
+          console.error(`[daemon] ${name} crashed ${attempts} times — giving up on restart`);
+          return;
+        }
+        const delay = Math.min(BASE_RESTART_DELAY * 2 ** attempts, MAX_RESTART_DELAY);
+        this.restartAttempts.set(name, attempts + 1);
+        console.error(
+          `[daemon] crash recovery for ${name} — attempt ${attempts + 1}/${MAX_RESTART_ATTEMPTS}, restarting in ${delay}ms`,
+        );
         setTimeout(() => {
           if (this.shuttingDown) return;
           this.startAgent(name).catch((err) => {
             console.error(`[daemon] failed to restart ${name}:`, err);
           });
-        }, 3000);
+        }, delay);
       }
     });
   }
@@ -222,6 +238,7 @@ export class AgentManager {
     });
 
     this.stopping.delete(name);
+    this.restartAttempts.delete(name);
 
     const [baseName, variantName] = name.split("@", 2);
     if (variantName) {
