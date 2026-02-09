@@ -12,10 +12,12 @@ import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
 import { consolidateMemory } from "../lib/consolidate.js";
 import { convertSession } from "../lib/convert-session.js";
+import { agentEnvPath, readEnv, writeEnv } from "../lib/env.js";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { addAgent, agentDir, ensureVoluteHome, nextPort } from "../lib/registry.js";
 import { composeTemplate, copyTemplateToDir, findTemplatesRoot } from "../lib/template.js";
+import { readVoluteConfig, writeVoluteConfig } from "../lib/volute-config.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -142,6 +144,9 @@ export async function run(args: string[]) {
     }
   }
 
+  // Import connectors from openclaw.json
+  importOpenClawConnectors(dest);
+
   console.log(`\nImported agent: ${name} (port ${port})`);
   console.log(`\n  volute start ${name}`);
 }
@@ -254,6 +259,37 @@ function importPiSession(sessionFile: string, agentDirPath: string) {
   const destPath = resolve(piSessionDir, filename);
   writeFileSync(destPath, `${lines.join("\n")}\n`);
   console.log(`Imported session (${lines.length} entries)`);
+}
+
+/** Import connector config from ~/.openclaw/openclaw.json into the new agent. */
+function importOpenClawConnectors(agentDirPath: string) {
+  const configPath = resolve(homedir(), ".openclaw/openclaw.json");
+  if (!existsSync(configPath)) return;
+
+  let config: { channels?: Record<string, { enabled?: boolean; token?: string }> };
+  try {
+    config = JSON.parse(readFileSync(configPath, "utf-8"));
+  } catch {
+    return;
+  }
+
+  const discord = config.channels?.discord;
+  if (!discord?.enabled || !discord.token) return;
+
+  // Write DISCORD_TOKEN to agent env
+  const envPath = agentEnvPath(agentDirPath);
+  const env = readEnv(envPath);
+  env.DISCORD_TOKEN = discord.token;
+  writeEnv(envPath, env);
+
+  // Enable discord connector in volute.json
+  const voluteConfig = readVoluteConfig(agentDirPath) ?? {};
+  const connectors = new Set(voluteConfig.connectors ?? []);
+  connectors.add("discord");
+  voluteConfig.connectors = [...connectors];
+  writeVoluteConfig(agentDirPath, voluteConfig);
+
+  console.log("Imported Discord connector config");
 }
 
 function parseNameFromIdentity(identity: string): string | undefined {
