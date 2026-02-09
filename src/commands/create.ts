@@ -49,9 +49,17 @@ export async function run(args: string[]) {
   await execInherit("npm", ["install"], { cwd: dest });
 
   // git init + initial commit (after install so lockfile is included)
-  await exec("git", ["init"], { cwd: dest });
-  await exec("git", ["add", "-A"], { cwd: dest });
-  await exec("git", ["commit", "-m", "initial commit"], { cwd: dest });
+  try {
+    await exec("git", ["init"], { cwd: dest });
+    await exec("git", ["add", "-A"], { cwd: dest });
+    await exec("git", ["commit", "-m", "initial commit"], { cwd: dest });
+  } catch {
+    console.warn(
+      "\nWarning: git init failed (git may not be installed or configured).",
+      "\nThe agent will work, but forking/variants won't be available.",
+      "\nTo fix: install git and run `git config --global user.name` / `git config --global user.email`",
+    );
+  }
 
   console.log(`\nCreated agent: ${name} (port ${port})`);
   console.log(`\n  volute start ${name}`);
