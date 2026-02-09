@@ -197,5 +197,14 @@ export function createPiSessionManager(options: {
     }
   }
 
-  return { getOrCreateSession };
+  function interruptSession(name: string) {
+    const session = sessions.get(name);
+    if (session?.currentMessageId !== undefined) {
+      log("agent", `session "${name}": interrupting current turn`);
+      broadcast(session, { type: "done" });
+      session.currentMessageId = undefined;
+    }
+  }
+
+  return { getOrCreateSession, interruptSession };
 }

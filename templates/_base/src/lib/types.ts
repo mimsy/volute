@@ -27,3 +27,5 @@ export type VoluteEvent = { messageId?: string } & (
 );
 
 export type Listener = (event: VoluteEvent) => void;
+
+export const INTERACTIVE_CHANNELS = new Set(["web", "cli", "discord"]);

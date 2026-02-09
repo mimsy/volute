@@ -3,7 +3,12 @@ import { formatPrefix } from "./lib/format-prefix.js";
 import { createAutoCommitHook } from "./lib/hooks/auto-commit.js";
 import { createIdentityReloadHook } from "./lib/hooks/identity-reload.js";
 import { logMessage } from "./lib/logger.js";
-import type { ChannelMeta, Listener, VoluteContentPart } from "./lib/types.js";
+import {
+  type ChannelMeta,
+  INTERACTIVE_CHANNELS,
+  type Listener,
+  type VoluteContentPart,
+} from "./lib/types.js";
 
 export function createAgent(options: {
   systemPrompt: string;
@@ -77,6 +82,11 @@ export function createAgent(options: {
       if (prefix && !hasText) {
         sdkContent.unshift({ type: "text" as const, text: prefix.trimEnd() });
       }
+    }
+
+    // Interrupt current turn for interactive channels so the new message is processed immediately
+    if (INTERACTIVE_CHANNELS.has(meta?.channel ?? "") && session.currentMessageId !== undefined) {
+      sessionManager.interruptSession(sessionName);
     }
 
     session.messageIds.push(meta?.messageId);

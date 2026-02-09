@@ -13,6 +13,7 @@ type Session = {
   listeners: Set<Listener>;
   messageIds: (string | undefined)[];
   currentMessageId?: string;
+  currentQuery?: ReturnType<typeof query>;
 };
 
 export function createSessionManager(options: {
@@ -141,13 +142,17 @@ export function createSessionManager(options: {
     (async () => {
       log("agent", `session "${session.name}": stream consumer started`);
       try {
-        await consumeStream(createStream(session, savedSessionId), session);
+        const q = createStream(session, savedSessionId);
+        session.currentQuery = q;
+        await consumeStream(q, session);
       } catch (err) {
         if (savedSessionId) {
           log("agent", `session "${session.name}": resume failed, starting fresh:`, err);
           deleteSessionId(session.name);
           try {
-            await consumeStream(createStream(session), session);
+            const q = createStream(session);
+            session.currentQuery = q;
+            await consumeStream(q, session);
           } catch (retryErr) {
             log("agent", `session "${session.name}": stream consumer error:`, retryErr);
             broadcastToSession(session, { type: "done" });
@@ -187,5 +192,13 @@ export function createSessionManager(options: {
     return session;
   }
 
-  return { getOrCreateSession };
+  function interruptSession(name: string) {
+    const session = sessions.get(name);
+    if (session?.currentMessageId !== undefined && session.currentQuery) {
+      log("agent", `session "${name}": interrupting current turn`);
+      session.currentQuery.interrupt();
+    }
+  }
+
+  return { getOrCreateSession, interruptSession };
 }

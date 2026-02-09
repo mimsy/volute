@@ -103,6 +103,82 @@ describe("volute server HTTP contract", () => {
   });
 });
 
+describe("volute server mid-turn interrupt", () => {
+  it("first message gets done when second interactive message arrives", async () => {
+    const listeners = new Set<
+      (event: { type: string; messageId?: string; [k: string]: unknown }) => void
+    >();
+    let currentMessageId: string | undefined;
+
+    const interruptAgent: VoluteAgent = {
+      sendMessage(_content, meta) {
+        // Simulate interrupt: if mid-turn and interactive, emit done for previous message
+        if (currentMessageId !== undefined) {
+          for (const l of listeners) {
+            l({ type: "done", messageId: currentMessageId });
+          }
+        }
+        currentMessageId = meta?.messageId;
+        // Emit response after a delay (simulates agent processing)
+        setTimeout(() => {
+          const mid = currentMessageId;
+          for (const l of listeners) {
+            l({ type: "text", content: "response", messageId: mid });
+            l({ type: "done", messageId: mid });
+          }
+          currentMessageId = undefined;
+        }, 200);
+      },
+      onMessage(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    };
+
+    const srv = createVoluteServer({
+      agent: interruptAgent,
+      port: 0,
+      name: "interrupt-agent",
+      version: "0.0.1",
+    });
+
+    await new Promise<void>((resolve) => srv.listen(0, () => resolve()));
+    const url = getUrl(srv);
+
+    // Send first message (don't await — it will be interrupted)
+    const first = fetch(`${url}/message`, {
+      method: "POST",
+      body: JSON.stringify({ content: [{ type: "text", text: "msg1" }], channel: "web" }),
+    });
+
+    // Send second message quickly (before first completes)
+    await new Promise((r) => setTimeout(r, 20));
+    const second = fetch(`${url}/message`, {
+      method: "POST",
+      body: JSON.stringify({ content: [{ type: "text", text: "msg2" }], channel: "web" }),
+    });
+
+    // First message should end with just a done (interrupted, no text response)
+    const firstRes = await first;
+    const firstLines = (await firstRes.text())
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    assert.equal(firstLines[firstLines.length - 1].type, "done");
+
+    // Second message should get a normal text+done response
+    const secondRes = await second;
+    const secondLines = (await secondRes.text())
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    assert.ok(secondLines.some((l: any) => l.type === "text"));
+    assert.equal(secondLines[secondLines.length - 1].type, "done");
+
+    await new Promise<void>((resolve) => srv.close(() => resolve()));
+  });
+});
+
 describe("volute server client disconnect", () => {
   it("cleans up listener when client aborts", async () => {
     let listenerRemoved = false;
