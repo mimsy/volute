@@ -1,6 +1,9 @@
+import { Marked } from "marked";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type ContentBlock, fetchConversationMessages, type VoluteEvent } from "../lib/api";
 import { useChatStream } from "../lib/useStream";
+
+const marked = new Marked({ breaks: true, gfm: true });
 
 type ChatEntry = { role: "user" | "assistant"; blocks: ContentBlock[] };
 
@@ -501,15 +504,13 @@ function AssistantMessage({
           }
           // text
           return (
-            <div
-              key={j}
-              style={{
-                color: "var(--text-0)",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-              }}
-            >
-              {item.text}
+            <div key={j} style={{ color: "var(--text-0)" }}>
+              <div
+                className="markdown-body"
+                dangerouslySetInnerHTML={{
+                  __html: marked.parse(item.text) as string,
+                }}
+              />
               {isStreaming && j === items.length - 1 && (
                 <span
                   style={{
@@ -531,8 +532,41 @@ function AssistantMessage({
   );
 }
 
+function getToolSummary(tool: ToolBlock): { label: string; color: string } {
+  const inp = tool.input as Record<string, unknown>;
+  switch (tool.name) {
+    case "Read":
+      return { label: `Read ${inp.file_path ?? ""}`, color: "var(--blue)" };
+    case "Write":
+      return { label: `Write ${inp.file_path ?? ""}`, color: "var(--blue)" };
+    case "Edit":
+      return { label: `Edit ${inp.file_path ?? ""}`, color: "var(--blue)" };
+    case "Glob":
+      return { label: `Glob ${inp.pattern ?? ""}`, color: "var(--yellow)" };
+    case "Grep":
+      return {
+        label: `Grep "${inp.pattern ?? ""}"${inp.path ? ` in ${inp.path}` : ""}`,
+        color: "var(--yellow)",
+      };
+    case "Bash":
+      return {
+        label: `Bash: ${String(inp.command ?? "").split("\n")[0]}`,
+        color: "var(--red)",
+      };
+    case "WebSearch":
+      return { label: `Search: "${inp.query ?? ""}"`, color: "var(--purple)" };
+    case "WebFetch":
+      return { label: `Fetch: ${inp.url ?? ""}`, color: "var(--purple)" };
+    case "Task":
+      return { label: `Task: ${inp.description ?? ""}`, color: "var(--accent)" };
+    default:
+      return { label: tool.name, color: "var(--purple)" };
+  }
+}
+
 function ToolUseBlock({ tool }: { tool: ToolBlock }) {
   const [open, setOpen] = useState(false);
+  const summary = getToolSummary(tool);
 
   return (
     <div
@@ -553,21 +587,31 @@ function ToolUseBlock({ tool }: { tool: ToolBlock }) {
           justifyContent: "space-between",
           padding: "6px 10px",
           background: "var(--bg-3)",
-          color: "var(--purple)",
+          color: summary.color,
           fontSize: 12,
           fontFamily: "var(--mono)",
           textAlign: "left",
         }}
       >
-        <span>
+        <span
+          style={{
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
           <span style={{ color: "var(--text-2)", marginRight: 6 }}>{open ? "v" : ">"}</span>
-          {tool.name}
+          {summary.label}
         </span>
         {tool.output !== undefined && (
           <span
             style={{
               color: tool.isError ? "var(--red)" : "var(--accent)",
               fontSize: 10,
+              flexShrink: 0,
+              marginLeft: 8,
             }}
           >
             {tool.isError ? "error" : "done"}

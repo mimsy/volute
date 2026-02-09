@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Chat } from "../components/Chat";
 import { ConversationList } from "../components/ConversationList";
 import { FileEditor } from "../components/FileEditor";
+import { History } from "../components/History";
 import { LogViewer } from "../components/LogViewer";
 import { StatusBadge } from "../components/StatusBadge";
 import { VariantList } from "../components/VariantList";
 import { type Agent, type Conversation, fetchAgent, startAgent, stopAgent } from "../lib/api";
 
-const TABS = ["Chat", "Logs", "Files", "Variants", "Connections"] as const;
+const TABS = ["Chat", "History", "Logs", "Files", "Variants", "Connections"] as const;
 type Tab = (typeof TABS)[number];
 
 export function AgentDetail({ name }: { name: string }) {
@@ -17,14 +18,14 @@ export function AgentDetail({ name }: { name: string }) {
   const [actionLoading, setActionLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
 
-  const refresh = () => {
+  const refresh = useCallback(() => {
     fetchAgent(name)
       .then((a) => {
         setAgent(a);
         setError("");
       })
       .catch(() => setError("Agent not found"));
-  };
+  }, [name]);
 
   useEffect(() => {
     refresh();
@@ -178,6 +179,7 @@ export function AgentDetail({ name }: { name: string }) {
             </div>
           </div>
         )}
+        {tab === "History" && <History name={name} />}
         {tab === "Logs" && <LogViewer name={name} />}
         {tab === "Files" && <FileEditor name={name} />}
         {tab === "Variants" && <VariantList name={name} />}

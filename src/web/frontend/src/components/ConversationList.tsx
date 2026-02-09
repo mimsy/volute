@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { type Conversation, deleteConversation, fetchConversations } from "../lib/api";
 
 export function ConversationList({
@@ -14,14 +14,16 @@ export function ConversationList({
 }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
 
-  const refresh = () => {
+  const refresh = useCallback(() => {
     fetchConversations(name)
       .then(setConversations)
       .catch(() => {});
-  };
+  }, [name]);
 
   useEffect(() => {
     refresh();
+    const interval = setInterval(refresh, 5000);
+    return () => clearInterval(interval);
   }, [refresh]);
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {

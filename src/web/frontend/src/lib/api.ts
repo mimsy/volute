@@ -139,6 +139,30 @@ export async function fetchConversationMessages(
   return res.json();
 }
 
+export type HistoryMessage = {
+  id: number;
+  agent: string;
+  channel: string;
+  role: string;
+  sender_name: string | null;
+  content: string;
+  created_at: string;
+};
+
+export async function fetchHistory(
+  name: string,
+  opts?: { channel?: string; limit?: number; offset?: number },
+): Promise<HistoryMessage[]> {
+  const params = new URLSearchParams();
+  if (opts?.channel) params.set("channel", opts.channel);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  if (opts?.offset) params.set("offset", String(opts.offset));
+  const qs = params.toString();
+  const res = await fetch(`/api/agents/${encodeURIComponent(name)}/history${qs ? `?${qs}` : ""}`);
+  if (!res.ok) throw new Error("Failed to fetch history");
+  return res.json();
+}
+
 export async function deleteConversation(name: string, conversationId: string): Promise<void> {
   const res = await client.api.agents[":name"].conversations[":id"].$delete({
     param: { name, id: conversationId },
