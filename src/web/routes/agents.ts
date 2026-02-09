@@ -8,6 +8,7 @@ import { CHANNELS } from "../../lib/channels.js";
 import { getConnectorManager } from "../../lib/connector-manager.js";
 import { getDb } from "../../lib/db.js";
 import { agentDir, findAgent, readRegistry, removeAgent, voluteHome } from "../../lib/registry.js";
+import { getScheduler } from "../../lib/scheduler.js";
 import { agentMessages } from "../../lib/schema.js";
 import { checkHealth, findVariant, readVariants, removeAllVariants } from "../../lib/variants.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
@@ -128,6 +129,7 @@ const app = new Hono<AuthEnv>()
       if (!variantName) {
         const dir = agentDir(baseName);
         await getConnectorManager().startConnectors(baseName, dir, entry.port, getDaemonPort());
+        getScheduler().loadSchedules(baseName);
       }
       return c.json({ ok: true });
     } catch (err) {
@@ -163,6 +165,7 @@ const app = new Hono<AuthEnv>()
       if (!variantName) {
         const dir = agentDir(baseName);
         await connectorManager.startConnectors(baseName, dir, entry.port, getDaemonPort());
+        getScheduler().loadSchedules(baseName);
       }
       return c.json({ ok: true });
     } catch (err) {
@@ -188,7 +191,10 @@ const app = new Hono<AuthEnv>()
     }
 
     try {
-      if (!variantName) await getConnectorManager().stopConnectors(baseName);
+      if (!variantName) {
+        await getConnectorManager().stopConnectors(baseName);
+        getScheduler().unloadSchedules(baseName);
+      }
       await manager.stopAgent(name);
       return c.json({ ok: true });
     } catch (err) {

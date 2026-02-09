@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 export type Schedule = {
@@ -24,31 +24,8 @@ function readJson(path: string): VoluteConfig | null {
 }
 
 export function readVoluteConfig(agentDir: string): VoluteConfig | null {
-  const newPath = resolve(agentDir, "home/.config/volute.json");
-  const oldPath = resolve(agentDir, "volute.json");
-  const config = readJson(newPath);
-  if (config) {
-    // Migrate: if old config has fields missing from new config, merge them
-    const old = readJson(oldPath);
-    if (old) {
-      let migrated = false;
-      if (old.schedules?.length && !config.schedules?.length) {
-        config.schedules = old.schedules;
-        migrated = true;
-      }
-      if (old.connectors?.length && !config.connectors?.length) {
-        config.connectors = old.connectors;
-        migrated = true;
-      }
-      if (migrated) {
-        writeVoluteConfig(agentDir, config);
-        unlinkSync(oldPath);
-      }
-    }
-    return config;
-  }
-  // Fall back to legacy location
-  return readJson(oldPath) ?? {};
+  const path = resolve(agentDir, "home/.config/volute.json");
+  return readJson(path) ?? {};
 }
 
 export function writeVoluteConfig(agentDir: string, config: VoluteConfig) {
