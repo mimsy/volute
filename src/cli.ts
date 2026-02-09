@@ -56,6 +56,9 @@ switch (command) {
   case "service":
     await import("./commands/service.js").then((m) => m.run(args));
     break;
+  case "setup":
+    await import("./commands/setup.js").then((m) => m.run(args));
+    break;
   default:
     console.log(`volute — create and manage AI agents
 
@@ -86,6 +89,8 @@ Commands:
   volute service install [--port N]     Install as system service (auto-start)
   volute service uninstall              Remove system service
   volute service status                 Check service status
+  volute setup [--port N] [--host H]   Install system service with user isolation
+  volute setup uninstall [--force]     Remove system service + isolation
 
 Agent commands (variant, connector, schedule, logs, history, channel) use
 --agent <name> or VOLUTE_AGENT env var to identify the agent.`);

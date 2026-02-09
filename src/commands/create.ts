@@ -1,5 +1,6 @@
 import { existsSync, rmSync } from "node:fs";
 import { exec, execInherit } from "../lib/exec.js";
+import { chownAgentDir, createAgentUser, ensureVoluteGroup } from "../lib/isolation.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { addAgent, agentDir, ensureVoluteHome, nextPort } from "../lib/registry.js";
 import {
@@ -60,6 +61,11 @@ export async function run(args: string[]) {
       "\nTo fix: install git and run `git config --global user.name` / `git config --global user.email`",
     );
   }
+
+  // Set up per-agent user isolation (no-ops if VOLUTE_ISOLATION !== "user")
+  ensureVoluteGroup();
+  createAgentUser(name);
+  chownAgentDir(dest, name);
 
   console.log(`\nCreated agent: ${name} (port ${port})`);
   console.log(`\n  volute start ${name}`);

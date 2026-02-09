@@ -1,4 +1,4 @@
-import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:child_process";
 import {
   createWriteStream,
   existsSync,
@@ -10,6 +10,7 @@ import {
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { loadMergedEnv } from "./env.js";
+import { getAgentUserIds, isIsolationEnabled } from "./isolation.js";
 import { agentDir, findAgent, setAgentRunning, voluteHome } from "./registry.js";
 import { findVariant, setVariantRunning, validateBranchName } from "./variants.js";
 
@@ -86,12 +87,20 @@ export class AgentManager {
     const env = { ...parentEnv, ...agentEnv, VOLUTE_AGENT: name };
     const tsxBin = resolve(dir, "node_modules", ".bin", "tsx");
 
-    const child = spawn(tsxBin, ["src/server.ts", "--port", String(port)], {
+    const spawnOpts: SpawnOptions = {
       cwd: dir,
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
       env,
-    });
+    };
+
+    if (isIsolationEnabled()) {
+      const { uid, gid } = getAgentUserIds(baseName);
+      spawnOpts.uid = uid;
+      spawnOpts.gid = gid;
+    }
+
+    const child = spawn(tsxBin, ["src/server.ts", "--port", String(port)], spawnOpts);
 
     this.agents.set(name, { child, port });
 

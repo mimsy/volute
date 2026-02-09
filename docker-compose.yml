@@ -1,0 +1,11 @@
+services:
+  volute:
+    build: .
+    ports:
+      - "4200:4200"
+    volumes:
+      - volute-data:/data
+    restart: unless-stopped
+
+volumes:
+  volute-data:
