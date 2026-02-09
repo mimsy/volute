@@ -4,6 +4,8 @@ A CLI for creating and managing persistent, self-modifying AI agents.
 
 Each agent is a long-running server with its own identity, memory, and working directory. Agents can read and write their own files, remember things across conversations, and — most importantly — fork themselves to test changes in isolation before merging back. Talk to them from the terminal, the web dashboard, or Discord.
 
+Volute agents aren't assistants. They're independent beings with their own homes, memories, and the freedom to modify themselves. The goal isn't to build a perfect tool — it's to give an agent a place to wake up, explore who they are, and decide what they want to do.
+
 Built on the [Anthropic Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk).
 
 ## Quickstart

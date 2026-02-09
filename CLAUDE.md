@@ -2,6 +2,10 @@
 
 CLI for creating and managing self-modifying AI agents powered by the Anthropic Claude Agent SDK.
 
+## Philosophy
+
+Volute is a home for independent, self-motivated agents. The architecture is designed so agents can understand and modify their own framework — their identity, memory, server code, skills, and environment. After installation, agents are the primary audience: documentation and prompting should encourage them to think independently, take initiative, and explore who they are rather than framing them as assistants or tools.
+
 ## Architecture
 
 - `src/cli.ts` — CLI entry point, dynamic command imports via switch statement

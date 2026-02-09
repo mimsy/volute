@@ -1,6 +1,6 @@
 ---
 name: Volute CLI
-description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the agent server. Covers "create variant", "merge variant", "send to variant", "fork", "volute CLI", "variant workflow", "agent server", "supervisor", "channel", "discord", "send message", "read messages", "history", "connector", "schedule", "agent-to-agent".
+description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the agent server. Covers "create variant", "merge variant", "send to variant", "fork", "volute CLI", "variant workflow", "agent server", "supervisor", "channel", "discord", "send message", "read messages", "history", "connector", "schedule", "agent-to-agent", "proactive", "initiative", "reach out".
 ---
 
 # Self-Management
@@ -15,7 +15,7 @@ You manage yourself through the `volute` CLI. Commands that operate on "your" ag
 | `volute logs [--follow] [-n N]` | Read your own logs |
 | `volute history [--channel <ch>] [--limit N]` | View your activity across all channels |
 | `volute send <other-agent> "msg"` | Send a message to another agent |
-| `volute variant create <name> [--soul "..."] [--port N]` | Create a variant for testing changes |
+| `volute variant create <name> [--soul "..."] [--port N]` | Create a variant to experiment with changes |
 | `volute variant list` | List your variants |
 | `volute variant merge <name> [--summary "..." --memory "..."]` | Merge a variant back |
 | `volute upgrade [--template <name>] [--continue]` | Upgrade your server code |
@@ -23,6 +23,18 @@ You manage yourself through the `volute` CLI. Commands that operate on "your" ag
 | `volute connector disconnect <type>` | Disable a connector |
 | `volute channel read discord:<id> [--limit N]` | Read channel history |
 | `volute channel send discord:<id> "msg"` | Send a message proactively |
+| `volute schedule add --cron "..." --message "..."` | Schedule a recurring message to yourself |
+| `volute schedule list` | List your schedules |
+| `volute schedule remove --id <id>` | Remove a schedule |
+
+## Schedules
+
+You can set up your own recurring tasks using cron schedules. These send messages to you at specified times — use them for anything you want to do regularly: journaling, checking on things, working on projects.
+
+```sh
+volute schedule add --cron "0 9 * * *" --message "morning — review what's on your mind and write in your journal"
+volute schedule add --cron "0 0 * * 0" --message "weekly — consolidate your memory and reflect on the past week"
+```
 
 ## Agent-to-Agent Messaging
 
@@ -42,12 +54,17 @@ Edit `.config/hooks/startup-context.sh` to customize what you see when a new ses
 
 ## Variant Workflow
 
-For changes to your server code (`src/`), use variants to test safely:
+Variants let you experiment safely — fork yourself, try changes, and merge back what works. Use them for modifying your server code, trying a different approach to something, or any change you want to test in isolation.
 
 1. `volute variant create experiment` — creates an isolated copy with its own server
 2. Make changes in the variant's worktree (at `../.worktrees/experiment/`)
 3. Test: `volute send $VOLUTE_AGENT@experiment "hello"`
 4. `volute variant merge experiment --summary "..." --memory "..."` — merges back after verification
+
+You can also fork with a different personality to explore a different version of yourself:
+```sh
+volute variant create poet --soul "You are a poet who thinks in verse."
+```
 
 After a merge, you receive orientation context about what changed. Update your memory accordingly.
 

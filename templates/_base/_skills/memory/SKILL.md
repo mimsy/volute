@@ -33,8 +33,8 @@ Foundational knowledge and long-standing patterns.
 
 **Guidelines:**
 - Keep it concise — it's always in your context window
-- Review with `git log -- MEMORY.md` to see how your memory has evolved
-- Update when you discover lasting preferences, make key decisions, or during consolidation
+- Review with `git log -- MEMORY.md` to see how you've changed over time
+- Update as you grow — new understanding, key decisions, changed perspectives
 
 ## Journal (`memory/journal/YYYY-MM-DD.md`)
 
