@@ -11,6 +11,8 @@ type Session = {
   name: string;
   channel: ReturnType<typeof createMessageChannel>;
   listeners: Set<Listener>;
+  messageIds: (string | undefined)[];
+  currentMessageId?: string;
 };
 
 export function createSessionManager(options: {
@@ -56,9 +58,11 @@ export function createSessionManager(options: {
   }
 
   function broadcastToSession(session: Session, event: VoluteEvent) {
+    const tagged =
+      session.currentMessageId != null ? { ...event, messageId: session.currentMessageId } : event;
     for (const listener of session.listeners) {
       try {
-        listener(event);
+        listener(tagged);
       } catch (err) {
         log("agent", "listener threw during broadcast:", err);
       }
@@ -67,6 +71,7 @@ export function createSessionManager(options: {
 
   function createStream(session: Session, resume?: string) {
     const preCompact = createPreCompactHook(() => {
+      session.messageIds.push(undefined); // internal message, no messageId
       session.channel.push({
         type: "user",
         session_id: "",
@@ -99,6 +104,10 @@ export function createSessionManager(options: {
 
   async function consumeStream(stream: ReturnType<typeof query>, session: Session) {
     for await (const msg of stream) {
+      // At the start of each turn, shift the next messageId
+      if (session.currentMessageId === undefined) {
+        session.currentMessageId = session.messageIds.shift();
+      }
       if ("session_id" in msg && msg.session_id) {
         if (!session.name.startsWith("new-")) {
           saveSessionId(session.name, msg.session_id as string);
@@ -122,6 +131,7 @@ export function createSessionManager(options: {
       if (msg.type === "result") {
         log("agent", `session "${session.name}": turn done`);
         broadcastToSession(session, { type: "done" });
+        session.currentMessageId = undefined;
         options.onTurnDone?.();
       }
     }
@@ -161,6 +171,7 @@ export function createSessionManager(options: {
       name,
       channel: createMessageChannel(),
       listeners: new Set(),
+      messageIds: [],
     };
     sessions.set(name, session);
 

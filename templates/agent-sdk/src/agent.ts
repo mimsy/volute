@@ -79,6 +79,7 @@ export function createAgent(options: {
       }
     }
 
+    session.messageIds.push(meta?.messageId);
     session.channel.push({
       type: "user",
       session_id: "",

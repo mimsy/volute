@@ -20,6 +20,8 @@ type PiSession = {
   ready: Promise<void>;
   listeners: Set<Listener>;
   unsubscribe?: () => void;
+  messageIds: (string | undefined)[];
+  currentMessageId?: string;
 };
 
 const DEFAULT_COMPACTION_MESSAGE =
@@ -69,6 +71,7 @@ export function createPiSessionManager(options: {
       agentSession: null,
       ready: Promise.resolve(),
       listeners: new Set(),
+      messageIds: [],
     };
     sessions.set(name, session);
 
@@ -96,6 +99,7 @@ export function createPiSessionManager(options: {
             "agent",
             `session "${session.name}": blocking compaction — asking agent to update daily log`,
           );
+          session.messageIds.push(undefined); // internal message, no messageId
           session.agentSession?.prompt(compactionMessage, { streamingBehavior: "followUp" });
           return { cancel: true };
         }
@@ -132,6 +136,11 @@ export function createPiSessionManager(options: {
     const toolArgs = new Map<string, any>();
 
     session.unsubscribe = agentSession.subscribe((event) => {
+      // At the start of each turn, shift the next messageId
+      if (session.currentMessageId === undefined) {
+        session.currentMessageId = session.messageIds.shift();
+      }
+
       if (event.type === "message_update") {
         const ae = event.assistantMessageEvent;
         if (ae.type === "text_delta") {
@@ -169,6 +178,7 @@ export function createPiSessionManager(options: {
       if (event.type === "agent_end") {
         log("agent", `session "${session.name}": turn done`);
         broadcast(session, { type: "done" });
+        session.currentMessageId = undefined;
       }
     });
 
@@ -176,9 +186,11 @@ export function createPiSessionManager(options: {
   }
 
   function broadcast(session: PiSession, event: VoluteEvent) {
+    const tagged =
+      session.currentMessageId != null ? { ...event, messageId: session.currentMessageId } : event;
     for (const listener of session.listeners) {
       try {
-        listener(event);
+        listener(tagged);
       } catch (err) {
         log("agent", "listener threw during broadcast:", err);
       }

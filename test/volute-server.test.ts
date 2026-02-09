@@ -15,15 +15,17 @@ describe("volute server HTTP contract", () => {
   let server: Server;
   const calls: { content: unknown; channel?: string; sender?: string }[] = [];
 
+  let lastMessageId: string | undefined;
   const mockAgent: VoluteAgent = {
     sendMessage(content, meta) {
       calls.push({ content, channel: meta?.channel, sender: meta?.sender });
+      lastMessageId = meta?.messageId;
     },
     onMessage(listener) {
-      // Emit canned response asynchronously
+      // Emit canned response asynchronously, tagged with the messageId
       setTimeout(() => {
-        listener({ type: "text", content: "hello" });
-        listener({ type: "done" });
+        listener({ type: "text", content: "hello", messageId: lastMessageId });
+        listener({ type: "done", messageId: lastMessageId });
       }, 10);
       return () => {};
     },
@@ -77,8 +79,9 @@ describe("volute server HTTP contract", () => {
       .map((l) => JSON.parse(l));
 
     assert.equal(lines.length, 2);
-    assert.deepEqual(lines[0], { type: "text", content: "hello" });
-    assert.deepEqual(lines[1], { type: "done" });
+    assert.equal(lines[0].type, "text");
+    assert.equal(lines[0].content, "hello");
+    assert.equal(lines[1].type, "done");
 
     assert.equal(calls.length, 1);
     assert.deepEqual(calls[0].content, [{ type: "text", text: "hi" }]);

@@ -52,6 +52,8 @@ export function createVoluteServer(options: {
           sessionName = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         }
 
+        const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
         res.writeHead(200, {
           "Content-Type": "application/x-ndjson",
           "Cache-Control": "no-cache",
@@ -60,6 +62,8 @@ export function createVoluteServer(options: {
 
         const removeListener = agent.onMessage((event) => {
           try {
+            // Only forward events from our message (skip startup/other messages)
+            if (event.messageId !== messageId) return;
             res.write(`${JSON.stringify(event)}\n`);
             if (event.type === "done") {
               removeListener();
@@ -82,6 +86,7 @@ export function createVoluteServer(options: {
           channelName: body.channelName,
           guildName: body.guildName,
           sessionName,
+          messageId,
         });
       } catch {
         res.writeHead(400);

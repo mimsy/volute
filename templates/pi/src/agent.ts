@@ -39,6 +39,9 @@ export function createAgent(options: {
 
     const opts = images?.length ? { images } : {};
 
+    // Track messageId for this turn (must be pushed before prompt)
+    session.messageIds.push(meta?.messageId);
+
     // Fire-and-forget: await session ready then prompt
     (async () => {
       await session.ready;

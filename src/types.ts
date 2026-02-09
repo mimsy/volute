@@ -10,6 +10,7 @@ export type ChannelMeta = {
   channelName?: string;
   guildName?: string;
   sessionName?: string;
+  messageId?: string;
 };
 
 export type VoluteRequest = {
@@ -17,11 +18,12 @@ export type VoluteRequest = {
   session?: string;
 } & ChannelMeta;
 
-export type VoluteEvent =
+export type VoluteEvent = { messageId?: string } & (
   | { type: "text"; content: string }
   | { type: "image"; media_type: string; data: string }
   | { type: "tool_use"; name: string; input: unknown }
   | { type: "tool_result"; output: string; is_error?: boolean }
-  | { type: "done" };
+  | { type: "done" }
+);
 
 export type Listener = (event: VoluteEvent) => void;
