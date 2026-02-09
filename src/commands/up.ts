@@ -28,9 +28,12 @@ export async function run(args: string[]) {
     }
   }
 
+  // For health polling, use localhost when binding to all interfaces
+  const pollHost = hostname === "0.0.0.0" || hostname === "::" ? "localhost" : hostname;
+
   // Check if port is already responding (catches orphaned daemons with missing PID files)
   try {
-    const res = await fetch(`http://localhost:${port}/api/health`);
+    const res = await fetch(`http://${pollHost}:${port}/api/health`);
     if (res.ok) {
       console.error(
         `Port ${port} is already in use by a Volute daemon. Use 'volute down' first, or kill the process on that port.`,
@@ -70,7 +73,7 @@ export async function run(args: string[]) {
   child.unref();
 
   // Poll health endpoint to confirm startup
-  const url = `http://localhost:${port}/api/health`;
+  const url = `http://${pollHost}:${port}/api/health`;
   const maxWait = 30_000;
   const start = Date.now();
 

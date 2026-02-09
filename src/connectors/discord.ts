@@ -121,7 +121,10 @@ async function loginWithRetry() {
   }
 }
 
-loginWithRetry();
+loginWithRetry().catch((err) => {
+  console.error("Failed to connect to Discord:", err);
+  process.exit(1);
+});
 
 function splitMessage(text: string): string[] {
   const chunks: string[] = [];
