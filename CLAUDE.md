@@ -23,7 +23,7 @@ A single daemon process (`volute up`) manages all agents, connectors, and schedu
 - **Scheduler** (`src/lib/scheduler.ts`) — Cron-based scheduled messages to agents
 - **DaemonClient** (`src/lib/daemon-client.ts`) — CLI commands talk to the daemon via HTTP API
 
-CLI commands like `start`, `stop`, `status`, `send`, `connect`, `disconnect` all proxy through the daemon API.
+CLI commands like `start`, `stop`, `status`, `send`, `connector`, `variant` all proxy through the daemon API.
 
 ### Agent project structure
 
@@ -92,21 +92,24 @@ The daemon serves a Hono web server (default port 4200) with a React frontend.
 | `volute stop <name>` | Stop an agent (via daemon) |
 | `volute delete <name> [--force]` | Remove from registry (--force deletes directory) |
 | `volute status [<name>]` | Check agent status, or list all agents |
-| `volute logs <name> [--follow] [-n N]` | Tail agent logs |
+| `volute logs [--agent <name>]` | Tail agent logs |
 | `volute send <name> "<msg>"` | Send message, stream ndjson response |
-| `volute fork <name> <variant> [--soul "..."] [--port N] [--no-start] [--json]` | Create variant (worktree + server) |
-| `volute variants <name> [--json]` | List variants with health status |
-| `volute merge <name> <variant> [--summary "..." --memory "..."]` | Merge variant back and restart |
+| `volute variant create <name> [--agent] [--soul "..."] [--port N] [--no-start] [--json]` | Create variant (worktree + server) |
+| `volute variant list [--agent] [--json]` | List variants with health status |
+| `volute variant merge <name> [--agent] [--summary "..." --memory "..."]` | Merge variant back and restart |
 | `volute env <set\|get\|list\|remove> [--agent <name>]` | Manage environment variables |
-| `volute connect <type> <name>` | Enable a connector for an agent |
-| `volute disconnect <type> <name>` | Disable a connector for an agent |
-| `volute channel read <uri>` | Read recent messages from a channel |
-| `volute channel send <uri> "<msg>"` | Send a message to a channel |
-| `volute schedule list <agent>` | List schedules for an agent |
-| `volute schedule add <agent> ...` | Add a cron schedule |
-| `volute schedule remove <agent> ...` | Remove a schedule |
+| `volute connector connect <type> [--agent]` | Enable a connector for an agent |
+| `volute connector disconnect <type> [--agent]` | Disable a connector for an agent |
+| `volute channel read <uri> [--agent]` | Read recent messages from a channel |
+| `volute channel send <uri> "<msg>" [--agent]` | Send a message to a channel |
+| `volute schedule list [--agent]` | List schedules for an agent |
+| `volute schedule add [--agent] --cron "..." --message "..."` | Add a cron schedule |
+| `volute schedule remove [--agent] --id <id>` | Remove a schedule |
+| `volute history [--agent]` | View message history |
 | `volute upgrade <name>` | Upgrade agent to latest template |
 | `volute import <path> [--name <name>] [--session <path>]` | Import an OpenClaw workspace |
+
+Agent commands (`variant`, `connector`, `schedule`, `logs`, `history`, `channel`) use `--agent <name>` or `VOLUTE_AGENT` env var.
 
 ## Source files
 
@@ -133,6 +136,7 @@ The daemon serves a Hono web server (default port 4200) with a React frontend.
 | `channels.ts` | Channel config (web, discord, cli, system), display names and tool call visibility |
 | `channels/discord.ts` | Discord API client (read/send messages, used by `channel` command) |
 | `convert-session.ts` | Converts OpenClaw `session.jsonl` to Claude Agent SDK format |
+| `resolve-agent-name.ts` | Resolves agent name from `--agent` flag or `VOLUTE_AGENT` env var |
 
 ### src/web/
 

@@ -3,18 +3,16 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgent } from "../lib/registry.js";
+import { resolveAgentName } from "../lib/resolve-agent-name.js";
 
 export async function run(args: string[]) {
-  const { positional, flags } = parseArgs(args, {
+  const { flags } = parseArgs(args, {
+    agent: { type: "string" },
     follow: { type: "boolean" },
     n: { type: "number" },
   });
 
-  const name = positional[0];
-  if (!name) {
-    console.error("Usage: volute logs <name> [--follow] [-n N]");
-    process.exit(1);
-  }
+  const name = resolveAgentName(flags);
 
   const { dir } = resolveAgent(name);
   const logFile = resolve(dir, ".volute", "logs", "agent.log");
