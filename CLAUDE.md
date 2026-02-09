@@ -112,6 +112,8 @@ The daemon serves a Hono web server (default port 4200) with a React frontend.
 | `volute history [--agent]` | View message history |
 | `volute upgrade <name>` | Upgrade agent to latest template |
 | `volute import <path> [--name <name>] [--session <path>]` | Import an OpenClaw workspace |
+| `volute setup [--port N] [--host H]` | Install system service with user isolation (Linux, requires root) |
+| `volute setup uninstall [--force]` | Remove system service (--force removes data + users) |
 
 Agent commands (`variant`, `connector`, `schedule`, `logs`, `history`, `channel`) use `--agent <name>` or `VOLUTE_AGENT` env var.
 
@@ -141,6 +143,7 @@ Agent commands (`variant`, `connector`, `schedule`, `logs`, `history`, `channel`
 | `channels/discord.ts` | Discord API client (read/send messages, used by `channel` command) |
 | `convert-session.ts` | Converts OpenClaw `session.jsonl` to Claude Agent SDK format |
 | `resolve-agent-name.ts` | Resolves agent name from `--agent` flag or `VOLUTE_AGENT` env var |
+| `isolation.ts` | Per-agent Linux user isolation (`VOLUTE_ISOLATION=user`), user/group management, chown |
 
 ### src/web/
 
@@ -190,6 +193,32 @@ Agent commands (`variant`, `connector`, `schedule`, `logs`, `history`, `channel`
 - Model configurable via `VOLUTE_MODEL` env var
 - Auto-commit hooks track file changes in agent `home/` directory
 - Centralized message persistence in `agent_messages` table via daemon routes
+- Optional per-agent Linux user isolation via `VOLUTE_ISOLATION=user` env var — agents spawn as separate system users
+
+## Deployment
+
+### Docker
+
+```sh
+docker build -t volute .
+docker run -d -p 4200:4200 -v volute-data:/data volute
+```
+
+Or with docker-compose: `docker compose up -d`. The container runs with `VOLUTE_ISOLATION=user` enabled, so each agent gets its own Linux user inside the container.
+
+### Bare metal (Linux)
+
+```sh
+sudo bash install.sh
+# or manually:
+sudo volute setup --host 0.0.0.0
+```
+
+`volute setup` installs a system-level systemd service at `/etc/systemd/system/volute.service` with data at `/var/lib/volute` and user isolation enabled. Requires root. Uninstall with `volute setup uninstall [--force]`.
+
+### User isolation
+
+When `VOLUTE_ISOLATION=user` is set, `volute create` creates a Linux system user (`volute-<name>`) and `chown`s the agent directory. Agent and connector processes are spawned with the agent's uid/gid, so agents can't access each other's files. This is a no-op when the env var is unset (default for local development).
 
 ## Development
 

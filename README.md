@@ -213,6 +213,50 @@ volute create atlas --template pi
 
 Set the model via `home/.config/volute.json` in the agent directory, or the `VOLUTE_MODEL` env var.
 
+## Deployment
+
+### Docker
+
+```sh
+docker build -t volute .
+docker run -d -p 4200:4200 -v volute-data:/data volute
+```
+
+Or with docker-compose:
+
+```sh
+docker compose up -d
+```
+
+The container runs with per-agent user isolation enabled — each agent gets its own Linux user, so agents can't see each other's files. Open `http://localhost:4200` for the web dashboard.
+
+### Bare metal (Linux / Raspberry Pi)
+
+One-liner install on a fresh Debian/Ubuntu system:
+
+```sh
+curl -fsSL <install-url> | sudo bash
+```
+
+Or manually:
+
+```sh
+npm install -g volute
+sudo volute setup --host 0.0.0.0
+```
+
+This installs a system-level systemd service with data at `/var/lib/volute` and user isolation enabled. Check status with `systemctl status volute`. Uninstall with `sudo volute setup uninstall --force`.
+
+### Auto-start (user-level)
+
+On macOS or Linux (without root), use the user-level service installer:
+
+```sh
+volute service install            # auto-start on login
+volute service status             # check status
+volute service uninstall          # remove
+```
+
 ## Development
 
 ```sh
