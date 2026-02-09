@@ -2,10 +2,10 @@ import { execFile } from "node:child_process";
 import { resolve } from "node:path";
 import { log } from "./logger.js";
 
-function exec(cmd: string, args: string[], cwd: string): Promise<{ code: number }> {
+function exec(cmd: string, args: string[], cwd: string): Promise<{ code: number; stdout: string }> {
   return new Promise((r) => {
-    execFile(cmd, args, { cwd }, (_err) => {
-      r({ code: _err ? 1 : 0 });
+    execFile(cmd, args, { cwd }, (_err, stdout) => {
+      r({ code: _err ? 1 : 0, stdout: (stdout ?? "").trim() });
     });
   });
 }
@@ -37,6 +37,11 @@ export function commitFileChange(filePath: string, cwd: string): void {
     const message = `Update ${relativePath}`;
     if ((await exec("git", ["commit", "-m", message], cwd)).code === 0) {
       log("auto-commit", message);
+      // Push if a remote is configured
+      const { stdout: remote } = await exec("git", ["remote"], cwd);
+      if (remote) {
+        await exec("git", ["push"], cwd);
+      }
     }
   });
 }
