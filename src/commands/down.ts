@@ -19,7 +19,10 @@ export async function run(_args: string[]) {
       } catch {}
     }
     try {
-      const res = await fetch(`http://${hostname}:${port}/api/health`);
+      const url = new URL("http://localhost");
+      url.hostname = hostname;
+      url.port = String(port);
+      const res = await fetch(`${url.origin}/api/health`);
       if (res.ok) {
         console.error(`Daemon appears to be running on port ${port} but PID file is missing.`);
         console.error(`Kill the process manually: lsof -ti :${port} | xargs kill`);

@@ -4,9 +4,17 @@ import { existsSync, rmSync } from "node:fs";
 import { after, before, describe, it } from "node:test";
 import { agentDir, findAgent, removeAgent } from "../src/lib/registry.js";
 
+// Strip GIT_* env vars that hook runners (e.g. pre-push) inject, so that
+// spawned processes (like `volute create` which runs `git init`) don't
+// accidentally operate on the parent repo.
+const cleanEnv: Record<string, string> = {};
+for (const [k, v] of Object.entries(process.env)) {
+  if (!k.startsWith("GIT_") && v !== undefined) cleanEnv[k] = v;
+}
+
 const TEST_AGENT = "e2e-test-agent";
 const PORT = 14200 + Math.floor(Math.random() * 800);
-const TOKEN = "e2e-test-token-" + Date.now();
+const TOKEN = `e2e-test-token-${Date.now()}`;
 const BASE_URL = `http://localhost:${PORT}`;
 
 function daemonRequest(path: string, options?: RequestInit): Promise<Response> {
@@ -41,7 +49,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     daemon = spawn("npx", ["tsx", "src/daemon.ts", "--port", String(PORT), "--foreground"], {
       cwd: process.cwd(),
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, VOLUTE_DAEMON_TOKEN: TOKEN },
+      env: { ...cleanEnv, VOLUTE_DAEMON_TOKEN: TOKEN },
     });
 
     // Collect stderr for debugging
@@ -112,6 +120,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
       cwd: process.cwd(),
       stdio: "pipe",
       timeout: 30000,
+      env: cleanEnv,
     });
 
     // Install agent dependencies
@@ -121,6 +130,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
       cwd: dir,
       stdio: "pipe",
       timeout: 60000,
+      env: cleanEnv,
     });
 
     // Verify agent appears in listing

@@ -25,7 +25,7 @@ function readJson(path: string): VoluteConfig | null {
 
 export function readVoluteConfig(agentDir: string): VoluteConfig | null {
   const path = resolve(agentDir, "home/.config/volute.json");
-  return readJson(path) ?? {};
+  return readJson(path);
 }
 
 export function writeVoluteConfig(agentDir: string, config: VoluteConfig) {

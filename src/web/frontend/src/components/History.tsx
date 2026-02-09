@@ -1,10 +1,18 @@
-import { Marked } from "marked";
 import { useCallback, useEffect, useState } from "react";
 import { fetchHistory, type HistoryMessage } from "../lib/api";
-
-const marked = new Marked({ breaks: true, gfm: true });
+import { renderMarkdown } from "../lib/marked";
 
 const PAGE_SIZE = 50;
+
+const selectStyle: React.CSSProperties = {
+  background: "var(--bg-2)",
+  color: "var(--text-0)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius)",
+  padding: "4px 8px",
+  fontSize: 12,
+  fontFamily: "var(--mono)",
+};
 
 export function History({ name }: { name: string }) {
   const [messages, setMessages] = useState<HistoryMessage[]>([]);
@@ -54,19 +62,7 @@ export function History({ name }: { name: string }) {
           flexShrink: 0,
         }}
       >
-        <select
-          value={channel}
-          onChange={(e) => setChannel(e.target.value)}
-          style={{
-            background: "var(--bg-2)",
-            color: "var(--text-0)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--radius)",
-            padding: "4px 8px",
-            fontSize: 12,
-            fontFamily: "var(--mono)",
-          }}
-        >
+        <select value={channel} onChange={(e) => setChannel(e.target.value)} style={selectStyle}>
           <option value="">all channels</option>
           <option value="web">web</option>
           <option value="cli">cli</option>
@@ -74,19 +70,7 @@ export function History({ name }: { name: string }) {
           <option value="system:webhook">webhook</option>
           <option value="system:schedule">schedule</option>
         </select>
-        <select
-          value={role}
-          onChange={(e) => setRole(e.target.value)}
-          style={{
-            background: "var(--bg-2)",
-            color: "var(--text-0)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--radius)",
-            padding: "4px 8px",
-            fontSize: 12,
-            fontFamily: "var(--mono)",
-          }}
-        >
+        <select value={role} onChange={(e) => setRole(e.target.value)} style={selectStyle}>
           <option value="">all roles</option>
           <option value="user">user</option>
           <option value="assistant">assistant</option>
@@ -149,7 +133,7 @@ function HistoryEntry({ msg }: { msg: HistoryMessage }) {
             textTransform: "uppercase",
           }}
         >
-          {isUser ? (msg.sender_name ?? "user") : "agent"}
+          {isUser ? (msg.sender ?? "user") : "agent"}
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
           {isUser ? (
@@ -157,8 +141,9 @@ function HistoryEntry({ msg }: { msg: HistoryMessage }) {
           ) : (
             <div
               className="markdown-body"
+              // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized by DOMPurify
               dangerouslySetInnerHTML={{
-                __html: marked.parse(msg.content) as string,
+                __html: renderMarkdown(msg.content),
               }}
             />
           )}

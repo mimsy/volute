@@ -347,8 +347,8 @@ const app = new Hono<AuthEnv>()
   .get("/:name/history", async (c) => {
     const name = c.req.param("name");
     const channel = c.req.query("channel");
-    const limit = parseInt(c.req.query("limit") ?? "50", 10);
-    const offset = parseInt(c.req.query("offset") ?? "0", 10);
+    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
+    const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
 
     const db = await getDb();
     const conditions = [eq(agentMessages.agent, name)];

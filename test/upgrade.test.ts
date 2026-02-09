@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
@@ -12,10 +13,15 @@ import {
   listFiles,
 } from "../src/lib/template.js";
 
-const tmpDir = join(import.meta.dirname, ".tmp-upgrade-test");
+const tmpDir = join(tmpdir(), ".volute-upgrade-test");
 
 function git(args: string[], cwd: string): string {
-  return execFileSync("git", args, { cwd, encoding: "utf-8" });
+  // Strip ALL GIT_* env vars set by hooks (e.g. pre-push) that override cwd-based repo discovery
+  const env: Record<string, string> = { LEFTHOOK: "0" };
+  for (const [k, v] of Object.entries(process.env)) {
+    if (!k.startsWith("GIT_") && v !== undefined) env[k] = v;
+  }
+  return execFileSync("git", args, { cwd, encoding: "utf-8", env });
 }
 
 function setupGitRepo(dir: string) {

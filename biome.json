@@ -29,8 +29,7 @@
             "noStaticElementInteractions": "off"
           },
           "correctness": { "useExhaustiveDependencies": "warn" },
-          "suspicious": { "noAssignInExpressions": "off", "noArrayIndexKey": "off" },
-          "security": { "noDangerouslySetInnerHtml": "off" }
+          "suspicious": { "noAssignInExpressions": "off", "noArrayIndexKey": "off" }
         }
       }
     }

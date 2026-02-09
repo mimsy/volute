@@ -79,10 +79,7 @@ async function createVariant(args: string[]) {
     process.exit(1);
   }
 
-  const parentDir = resolve(projectRoot, ".variants");
-  if (!existsSync(parentDir)) {
-    mkdirSync(parentDir, { recursive: true });
-  }
+  mkdirSync(resolve(projectRoot, ".variants"), { recursive: true });
 
   // Create git worktree
   try {

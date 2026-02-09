@@ -1,9 +1,7 @@
-import { Marked } from "marked";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type ContentBlock, fetchConversationMessages, type VoluteEvent } from "../lib/api";
+import { renderMarkdown } from "../lib/marked";
 import { useChatStream } from "../lib/useStream";
-
-const marked = new Marked({ breaks: true, gfm: true });
 
 type ChatEntry = { role: "user" | "assistant"; blocks: ContentBlock[] };
 
@@ -507,8 +505,9 @@ function AssistantMessage({
             <div key={j} style={{ color: "var(--text-0)" }}>
               <div
                 className="markdown-body"
+                // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized by DOMPurify
                 dangerouslySetInnerHTML={{
-                  __html: marked.parse(item.text) as string,
+                  __html: renderMarkdown(item.text),
                 }}
               />
               {isStreaming && j === items.length - 1 && (

@@ -144,7 +144,7 @@ export type HistoryMessage = {
   agent: string;
   channel: string;
   role: string;
-  sender_name: string | null;
+  sender: string | null;
   content: string;
   created_at: string;
 };
