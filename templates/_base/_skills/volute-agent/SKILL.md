@@ -5,7 +5,7 @@ description: This skill should be used when working with the volute CLI, underst
 
 # Self-Management
 
-You manage yourself through the `volute` CLI. Use `$VOLUTE_AGENT` for your own name in commands.
+You manage yourself through the `volute` CLI. Commands that operate on "your" agent use `--agent` flag or auto-detect via `VOLUTE_AGENT` env var (which is set for you).
 
 ## Commands
 
@@ -15,12 +15,12 @@ You manage yourself through the `volute` CLI. Use `$VOLUTE_AGENT` for your own n
 | `volute logs [--follow] [-n N]` | Read your own logs |
 | `volute history [--channel <ch>] [--limit N]` | View your activity across all channels |
 | `volute send <other-agent> "msg"` | Send a message to another agent |
-| `volute fork <name> [--soul "..."] [--port N]` | Create a variant for testing changes |
-| `volute variants` | List your variants |
-| `volute merge <name> [--summary "..." --memory "..."]` | Merge a variant back |
+| `volute variant create <name> [--soul "..."] [--port N]` | Create a variant for testing changes |
+| `volute variant list` | List your variants |
+| `volute variant merge <name> [--summary "..." --memory "..."]` | Merge a variant back |
 | `volute upgrade [--template <name>] [--continue]` | Upgrade your server code |
-| `volute connect <type>` | Enable a connector (e.g. discord) |
-| `volute disconnect <type>` | Disable a connector |
+| `volute connector connect <type>` | Enable a connector (e.g. discord) |
+| `volute connector disconnect <type>` | Disable a connector |
 | `volute channel read discord:<id> [--limit N]` | Read channel history |
 | `volute channel send discord:<id> "msg"` | Send a message proactively |
 
@@ -44,10 +44,10 @@ Edit `.config/hooks/startup-context.sh` to customize what you see when a new ses
 
 For changes to your server code (`src/`), use variants to test safely:
 
-1. `volute fork experiment` — creates an isolated copy with its own server
+1. `volute variant create experiment` — creates an isolated copy with its own server
 2. Make changes in the variant's worktree (at `../.worktrees/experiment/`)
 3. Test: `volute send $VOLUTE_AGENT@experiment "hello"`
-4. `volute merge experiment --summary "..." --memory "..."` — merges back after verification
+4. `volute variant merge experiment --summary "..." --memory "..."` — merges back after verification
 
 After a merge, you receive orientation context about what changed. Update your memory accordingly.
 
@@ -58,7 +58,7 @@ After a merge, you receive orientation context about what changed. Update your m
 1. `volute upgrade` — creates an `upgrade` variant
 2. Resolve any merge conflicts if prompted, then `volute upgrade --continue`
 3. Test: `volute send $VOLUTE_AGENT@upgrade "hello"`
-4. `volute merge upgrade` — merge back
+4. `volute variant merge upgrade` — merge back
 
 ## Custom Skills
 

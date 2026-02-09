@@ -102,7 +102,29 @@ client.on(Events.MessageCreate, async (message) => {
   await handleAgentRequest(message, content);
 });
 
-client.login(token);
+async function loginWithRetry() {
+  try {
+    await client.login(token);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const match = msg.match(/resets at (.+)/);
+    if (match) {
+      const resetAt = new Date(match[1]);
+      const waitMs = resetAt.getTime() - Date.now();
+      if (waitMs > 0) {
+        console.error(`Session limit hit, waiting until ${resetAt.toISOString()}...`);
+        await new Promise((r) => setTimeout(r, waitMs + 5000));
+        return loginWithRetry();
+      }
+    }
+    throw err;
+  }
+}
+
+loginWithRetry().catch((err) => {
+  console.error("Failed to connect to Discord:", err);
+  process.exit(1);
+});
 
 function splitMessage(text: string): string[] {
   const chunks: string[] = [];

@@ -21,12 +21,7 @@ export async function getDb(): Promise<DbInstance> {
   if (db) return db;
   const dbPath = process.env.VOLUTE_DB_PATH || resolve(voluteHome(), "volute.db");
   db = drizzle({ connection: { url: `file:${dbPath}` }, schema });
-  try {
-    await migrate(db, { migrationsFolder });
-  } catch (e: unknown) {
-    // Tolerate "already exists" from pre-Drizzle databases
-    if (!(e instanceof Error) || !e.message.includes("already exists")) throw e;
-  }
+  await migrate(db, { migrationsFolder });
   // Restrict database file permissions to owner only
   try {
     chmodSync(dbPath, 0o600);

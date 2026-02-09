@@ -2,6 +2,7 @@ import * as discord from "../lib/channels/discord.js";
 import { loadMergedEnv } from "../lib/env.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgent } from "../lib/registry.js";
+import { resolveAgentName } from "../lib/resolve-agent-name.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -20,11 +21,7 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  const agentName = flags.agent || process.env.VOLUTE_AGENT;
-  if (!agentName) {
-    console.error("No agent specified. Use --agent <name> or run from within an agent process.");
-    process.exit(1);
-  }
+  const agentName = resolveAgentName(flags);
 
   const colonIdx = uri.indexOf(":");
   if (colonIdx === -1) {

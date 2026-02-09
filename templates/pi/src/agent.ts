@@ -2,7 +2,12 @@ import type { ImageContent } from "@mariozechner/pi-ai";
 import { createPiSessionManager } from "./lib/agent-sessions.js";
 import { formatPrefix } from "./lib/format-prefix.js";
 import { logMessage } from "./lib/logger.js";
-import type { ChannelMeta, Listener, VoluteContentPart } from "./lib/types.js";
+import {
+  type ChannelMeta,
+  INTERACTIVE_CHANNELS,
+  type Listener,
+  type VoluteContentPart,
+} from "./lib/types.js";
 
 export function createAgent(options: {
   systemPrompt: string;
@@ -10,7 +15,7 @@ export function createAgent(options: {
   model?: string;
   compactionMessage?: string;
 }) {
-  const { getOrCreateSession } = createPiSessionManager(options);
+  const { getOrCreateSession, interruptSession } = createPiSessionManager(options);
 
   function sendMessage(content: string | VoluteContentPart[], meta?: ChannelMeta) {
     const raw =
@@ -39,11 +44,19 @@ export function createAgent(options: {
 
     const opts = images?.length ? { images } : {};
 
+    // Track messageId for this turn (must be pushed before prompt)
+    session.messageIds.push(meta?.messageId);
+
     // Fire-and-forget: await session ready then prompt
     (async () => {
       await session.ready;
       if (session.agentSession!.isStreaming) {
-        session.agentSession!.prompt(text, { streamingBehavior: "followUp", ...opts });
+        if (INTERACTIVE_CHANNELS.has(meta?.channel ?? "")) {
+          interruptSession(sessionName);
+          session.agentSession!.prompt(text, { streamingBehavior: "steer", ...opts });
+        } else {
+          session.agentSession!.prompt(text, { streamingBehavior: "followUp", ...opts });
+        }
       } else {
         session.agentSession!.prompt(text, opts);
       }

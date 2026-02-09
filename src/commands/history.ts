@@ -1,18 +1,15 @@
 import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
+import { resolveAgentName } from "../lib/resolve-agent-name.js";
 
 export async function run(args: string[]) {
-  const { positional, flags } = parseArgs(args, {
+  const { flags } = parseArgs(args, {
+    agent: { type: "string" },
     channel: { type: "string" },
     limit: { type: "string" },
   });
 
-  const name = positional[0] || process.env.VOLUTE_AGENT;
-
-  if (!name) {
-    console.error("Usage: volute history [<agent>] [--channel <ch>] [--limit N]");
-    process.exit(1);
-  }
+  const name = resolveAgentName(flags);
 
   const params = new URLSearchParams();
   if (flags.channel) params.set("channel", flags.channel);

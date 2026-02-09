@@ -268,5 +268,5 @@ async function installAndVerify(agentName: string, worktreeDir: string) {
   console.log(`\nUpgrade variant running on port ${actualPort}`);
   console.log(`\nNext steps:`);
   console.log(`  volute send ${agentName}@${VARIANT_NAME} "hello"    # chat with upgraded variant`);
-  console.log(`  volute merge ${agentName} ${VARIANT_NAME}           # merge back when satisfied`);
+  console.log(`  volute variant merge ${VARIANT_NAME}                # merge back when satisfied`);
 }

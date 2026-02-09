@@ -36,9 +36,6 @@ export function findTemplatesRoot(): string {
   process.exit(1);
 }
 
-/**
- * Backwards-compatible: find a specific template directory.
- */
 export function findTemplatesDir(template: string): string {
   const root = findTemplatesRoot();
   const dir = resolve(root, template);

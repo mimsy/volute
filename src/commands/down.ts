@@ -10,13 +10,19 @@ export async function run(_args: string[]) {
     // Check if a daemon is running without a PID file (orphan)
     const configPath = resolve(home, "daemon.json");
     let port = 4200;
+    let hostname = "localhost";
     if (existsSync(configPath)) {
       try {
-        port = JSON.parse(readFileSync(configPath, "utf-8")).port ?? 4200;
+        const config = JSON.parse(readFileSync(configPath, "utf-8"));
+        port = config.port ?? 4200;
+        hostname = config.hostname || "localhost";
       } catch {}
     }
     try {
-      const res = await fetch(`http://localhost:${port}/api/health`);
+      const url = new URL("http://localhost");
+      url.hostname = hostname;
+      url.port = String(port);
+      const res = await fetch(`${url.origin}/api/health`);
       if (res.ok) {
         console.error(`Daemon appears to be running on port ${port} but PID file is missing.`);
         console.error(`Kill the process manually: lsof -ti :${port} | xargs kill`);
