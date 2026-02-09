@@ -155,9 +155,10 @@ export function createPiSessionManager(options: {
         broadcast(session, { type: "tool_result", output, is_error: event.isError });
 
         // Auto-commit file changes in home/
-        if ((event.toolName === "Edit" || event.toolName === "Write") && !event.isError) {
+        // pi-coding-agent uses lowercase tool names ("edit", "write") and "path" arg
+        if ((event.toolName === "edit" || event.toolName === "write") && !event.isError) {
           const args = toolArgs.get(event.toolCallId);
-          const filePath = (args as { file_path?: string })?.file_path;
+          const filePath = (args as { path?: string })?.path;
           if (filePath) {
             commitFileChange(filePath, options.cwd);
           }
