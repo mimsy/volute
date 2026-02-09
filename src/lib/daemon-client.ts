@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { voluteHome } from "./registry.js";
 
-type DaemonConfig = { port: number; token?: string };
+type DaemonConfig = { port: number; hostname?: string; token?: string };
 
 function readDaemonConfig(): DaemonConfig {
   const configPath = resolve(voluteHome(), "daemon.json");
@@ -20,12 +20,12 @@ function readDaemonConfig(): DaemonConfig {
 
 export function getDaemonUrl(): string {
   const config = readDaemonConfig();
-  return `http://localhost:${config.port}`;
+  return `http://${config.hostname || "localhost"}:${config.port}`;
 }
 
 export async function daemonFetch(path: string, options?: RequestInit): Promise<Response> {
   const config = readDaemonConfig();
-  const url = `http://localhost:${config.port}`;
+  const url = `http://${config.hostname || "localhost"}:${config.port}`;
   const headers = new Headers(options?.headers);
 
   // Include internal auth token for CLI-to-daemon requests
