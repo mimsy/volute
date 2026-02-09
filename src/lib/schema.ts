@@ -44,6 +44,14 @@ export const agentMessages = sqliteTable(
   ],
 );
 
+export const sessions = sqliteTable("sessions", {
+  id: text("id").primaryKey(),
+  userId: integer("user_id")
+    .references(() => users.id, { onDelete: "cascade" })
+    .notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+
 export const messages = sqliteTable(
   "messages",
   {

@@ -57,7 +57,7 @@ const app = new Hono()
 
     if (user.role === "admin") {
       // Auto-login first user
-      const sessionId = createSession(user.id);
+      const sessionId = await createSession(user.id);
       setCookie(c, "volute_session", sessionId, { path: "/", httpOnly: true, sameSite: "Lax" });
     }
 
@@ -71,14 +71,14 @@ const app = new Hono()
       return c.json({ error: "Invalid credentials" }, 401);
     }
 
-    const sessionId = createSession(user.id);
+    const sessionId = await createSession(user.id);
     setCookie(c, "volute_session", sessionId, { path: "/", httpOnly: true, sameSite: "Lax" });
     return c.json({ id: user.id, username: user.username, role: user.role });
   })
-  .post("/logout", (c) => {
+  .post("/logout", async (c) => {
     const sessionId = getCookie(c, "volute_session");
     if (sessionId) {
-      deleteSession(sessionId);
+      await deleteSession(sessionId);
       deleteCookie(c, "volute_session", { path: "/" });
     }
     return c.json({ ok: true });
@@ -87,7 +87,7 @@ const app = new Hono()
     const sessionId = getCookie(c, "volute_session");
     if (!sessionId) return c.json({ error: "Not logged in" }, 401);
 
-    const userId = getSessionUserId(sessionId);
+    const userId = await getSessionUserId(sessionId);
     if (userId == null) return c.json({ error: "Not logged in" }, 401);
 
     const user = await getUser(userId);

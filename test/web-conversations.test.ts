@@ -9,7 +9,7 @@ import {
   deleteConversation,
 } from "../src/lib/conversations.js";
 import { getDb } from "../src/lib/db.js";
-import { conversations, messages, users } from "../src/lib/schema.js";
+import { conversations, messages, sessions, users } from "../src/lib/schema.js";
 import { authMiddleware, createSession, deleteSession } from "../src/web/middleware/auth.js";
 import conversationsRoute from "../src/web/routes/conversations.js";
 
@@ -25,16 +25,16 @@ function createApp() {
 
 async function cleanup() {
   const db = await getDb();
+  await db.delete(sessions);
   await db.delete(messages);
   await db.delete(conversations);
   await db.delete(users);
-  if (sessionId) deleteSession(sessionId);
 }
 
 async function setupAuth() {
   const user = await createUser("conv-admin", "pass");
   userId = user.id;
-  sessionId = createSession(user.id);
+  sessionId = await createSession(user.id);
   return sessionId;
 }
 
@@ -122,7 +122,7 @@ describe("web conversations routes", () => {
     // Create and approve a second user
     const user2 = await createUser("other-user", "pass");
     await approveUser(user2.id);
-    const cookie2 = createSession(user2.id);
+    const cookie2 = await createSession(user2.id);
 
     // Second user should not see the first user's conversation
     const res = await app.request(`/api/agents/test-agent/conversations/${conv.id}/messages`, {
@@ -136,7 +136,7 @@ describe("web conversations routes", () => {
     });
     assert.equal(res2.status, 200);
 
-    deleteSession(cookie2);
+    await deleteSession(cookie2);
     await deleteConversation(conv.id);
   });
 
@@ -148,7 +148,7 @@ describe("web conversations routes", () => {
 
     const user2 = await createUser("other-user2", "pass");
     await approveUser(user2.id);
-    const cookie2 = createSession(user2.id);
+    const cookie2 = await createSession(user2.id);
 
     // Second user cannot delete
     const res = await app.request(`/api/agents/test-agent/conversations/${conv.id}`, {
@@ -164,6 +164,6 @@ describe("web conversations routes", () => {
     });
     assert.equal(res2.status, 200);
 
-    deleteSession(cookie2);
+    await deleteSession(cookie2);
   });
 });

@@ -1,9 +1,16 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { loadMergedEnv } from "./env.js";
-import { agentDir, findAgent, setAgentRunning } from "./registry.js";
+import { agentDir, findAgent, setAgentRunning, voluteHome } from "./registry.js";
 import { findVariant, setVariantRunning, validateBranchName } from "./variants.js";
 
 const execFileAsync = promisify(execFile);
@@ -128,7 +135,7 @@ export class AgentManager {
     }
 
     // Set up crash recovery after successful start
-    this.restartAttempts.delete(name);
+    if (this.restartAttempts.delete(name)) this.saveCrashAttempts();
     this.setupCrashRecovery(name, child, dir, isVariant);
     if (isVariant) {
       setVariantRunning(baseName, variantName!, true);
@@ -155,7 +162,7 @@ export class AgentManager {
       const wasRestart = isVariant ? false : await this.handleRestart(name, dir);
       if (wasRestart) {
         console.error(`[daemon] restarting ${name} immediately after merge`);
-        this.restartAttempts.delete(name);
+        if (this.restartAttempts.delete(name)) this.saveCrashAttempts();
         this.startAgent(name).catch((err) => {
           console.error(`[daemon] failed to restart ${name} after merge:`, err);
         });
@@ -173,6 +180,7 @@ export class AgentManager {
         }
         const delay = Math.min(BASE_RESTART_DELAY * 2 ** attempts, MAX_RESTART_DELAY);
         this.restartAttempts.set(name, attempts + 1);
+        this.saveCrashAttempts();
         console.error(
           `[daemon] crash recovery for ${name} — attempt ${attempts + 1}/${MAX_RESTART_ATTEMPTS}, restarting in ${delay}ms`,
         );
@@ -245,7 +253,7 @@ export class AgentManager {
     });
 
     this.stopping.delete(name);
-    this.restartAttempts.delete(name);
+    if (this.restartAttempts.delete(name)) this.saveCrashAttempts();
 
     const [baseName, variantName] = name.split("@", 2);
     if (variantName) {
@@ -274,6 +282,40 @@ export class AgentManager {
 
   getRunningAgents(): string[] {
     return [...this.agents.keys()];
+  }
+
+  private get crashAttemptsPath(): string {
+    return resolve(voluteHome(), "crash-attempts.json");
+  }
+
+  loadCrashAttempts(): void {
+    try {
+      if (existsSync(this.crashAttemptsPath)) {
+        const data = JSON.parse(readFileSync(this.crashAttemptsPath, "utf-8"));
+        for (const [name, count] of Object.entries(data)) {
+          if (typeof count === "number") this.restartAttempts.set(name, count);
+        }
+      }
+    } catch {
+      // Ignore corrupt file
+    }
+  }
+
+  private saveCrashAttempts(): void {
+    const data: Record<string, number> = {};
+    for (const [name, count] of this.restartAttempts) {
+      data[name] = count;
+    }
+    try {
+      writeFileSync(this.crashAttemptsPath, `${JSON.stringify(data)}\n`);
+    } catch {}
+  }
+
+  clearCrashAttempts(): void {
+    this.restartAttempts.clear();
+    try {
+      if (existsSync(this.crashAttemptsPath)) unlinkSync(this.crashAttemptsPath);
+    } catch {}
   }
 }
 

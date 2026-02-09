@@ -51,6 +51,7 @@ export async function startDaemon(opts: {
 
   // Start agent manager, connector manager, and scheduler
   const manager = initAgentManager();
+  manager.loadCrashAttempts();
   const connectors = initConnectorManager();
   const scheduler = getScheduler();
   scheduler.start(port, token);
@@ -106,8 +107,10 @@ export async function startDaemon(opts: {
     shuttingDown = true;
     console.error("[daemon] shutting down...");
     scheduler.stop();
+    scheduler.clearState();
     await connectors.stopAll();
     await manager.stopAll();
+    manager.clearCrashAttempts();
     server.close();
     cleanup();
     process.exit(0);

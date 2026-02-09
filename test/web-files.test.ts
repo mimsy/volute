@@ -9,8 +9,8 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
-import { conversations, messages, users } from "../src/lib/schema.js";
-import { authMiddleware, createSession, deleteSession } from "../src/web/middleware/auth.js";
+import { conversations, messages, sessions, users } from "../src/lib/schema.js";
+import { authMiddleware, createSession } from "../src/web/middleware/auth.js";
 
 let sessionId: string;
 let testDir: string;
@@ -20,16 +20,16 @@ const saveFileSchema = z.object({ content: z.string() });
 
 async function cleanup() {
   const db = await getDb();
+  await db.delete(sessions);
   await db.delete(messages);
   await db.delete(conversations);
   await db.delete(users);
-  if (sessionId) deleteSession(sessionId);
   if (testDir && existsSync(testDir)) rmSync(testDir, { recursive: true });
 }
 
 async function setupAuth() {
   const user = await createUser("files-admin", "pass");
-  sessionId = createSession(user.id);
+  sessionId = await createSession(user.id);
   return sessionId;
 }
 

@@ -53,6 +53,9 @@ switch (command) {
   case "history":
     await import("./commands/history.js").then((m) => m.run(args));
     break;
+  case "service":
+    await import("./commands/service.js").then((m) => m.run(args));
+    break;
   default:
     console.log(`volute — create and manage AI agents
 
@@ -80,6 +83,9 @@ Commands:
   volute down                           Stop the daemon
   volute upgrade <name>                 Upgrade agent to latest template
   volute delete <name> [--force]        Delete an agent (--force removes files)
+  volute service install [--port N]     Install as system service (auto-start)
+  volute service uninstall              Remove system service
+  volute service status                 Check service status
 
 Agent commands (variant, connector, schedule, logs, history, channel) use
 --agent <name> or VOLUTE_AGENT env var to identify the agent.`);

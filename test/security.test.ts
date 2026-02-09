@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { Hono } from "hono";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
-import { conversations, messages, users } from "../src/lib/schema.js";
+import { conversations, messages, sessions, users } from "../src/lib/schema.js";
 import { createSession, deleteSession, getSessionUserId } from "../src/web/middleware/auth.js";
 import auth from "../src/web/routes/auth.js";
 
@@ -15,6 +15,7 @@ function createApp() {
 
 async function cleanup() {
   const db = await getDb();
+  await db.delete(sessions);
   await db.delete(messages);
   await db.delete(conversations);
   await db.delete(users);
@@ -26,19 +27,19 @@ describe("security", () => {
 
   it("session expires after TTL", async () => {
     const user = await createUser("expiry-user", "pass");
-    const sessionId = createSession(user.id);
+    const sessionId = await createSession(user.id);
 
     // Session should be valid immediately
-    assert.equal(getSessionUserId(sessionId), user.id);
+    assert.equal(await getSessionUserId(sessionId), user.id);
 
     // Manually expire by patching createdAt in the past
     // We can't access the internal map directly, so test via the web route
     // Instead, let's verify the function works with a fresh session
-    assert.equal(getSessionUserId(sessionId), user.id);
+    assert.equal(await getSessionUserId(sessionId), user.id);
 
     // Clean up
-    deleteSession(sessionId);
-    assert.equal(getSessionUserId(sessionId), undefined);
+    await deleteSession(sessionId);
+    assert.equal(await getSessionUserId(sessionId), undefined);
   });
 
   it("expired session returns 401 on /api/auth/me", async () => {
@@ -60,7 +61,7 @@ describe("security", () => {
     const sessionId = match![1];
 
     // Delete the session to simulate expiry
-    deleteSession(sessionId);
+    await deleteSession(sessionId);
 
     const meRes = await app.request("/api/auth/me", {
       headers: { Cookie: `volute_session=${sessionId}` },
@@ -68,8 +69,8 @@ describe("security", () => {
     assert.equal(meRes.status, 401);
   });
 
-  it("getSessionUserId returns undefined for unknown session", () => {
-    assert.equal(getSessionUserId("nonexistent-session-id"), undefined);
+  it("getSessionUserId returns undefined for unknown session", async () => {
+    assert.equal(await getSessionUserId("nonexistent-session-id"), undefined);
   });
 
   it("CSRF rejects POST without matching origin", async () => {

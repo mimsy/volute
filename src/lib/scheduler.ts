@@ -1,5 +1,7 @@
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
-import { agentDir, findAgent } from "./registry.js";
+import { agentDir, findAgent, voluteHome } from "./registry.js";
 import { readVoluteConfig, type Schedule } from "./volute-config.js";
 
 export class Scheduler {
@@ -9,14 +11,49 @@ export class Scheduler {
   private daemonPort: number | null = null;
   private daemonToken: string | null = null;
 
+  private get statePath(): string {
+    return resolve(voluteHome(), "scheduler-state.json");
+  }
+
   start(daemonPort?: number, daemonToken?: string): void {
     this.daemonPort = daemonPort ?? null;
     this.daemonToken = daemonToken ?? null;
+    this.loadState();
     this.interval = setInterval(() => this.tick(), 60_000);
   }
 
   stop(): void {
     if (this.interval) clearInterval(this.interval);
+  }
+
+  private loadState(): void {
+    try {
+      if (existsSync(this.statePath)) {
+        const data = JSON.parse(readFileSync(this.statePath, "utf-8"));
+        for (const [key, value] of Object.entries(data)) {
+          if (typeof value === "number") this.lastFired.set(key, value);
+        }
+      }
+    } catch {
+      // Ignore corrupt file
+    }
+  }
+
+  private saveState(): void {
+    const data: Record<string, number> = {};
+    for (const [key, value] of this.lastFired) {
+      data[key] = value;
+    }
+    try {
+      writeFileSync(this.statePath, `${JSON.stringify(data)}\n`);
+    } catch {}
+  }
+
+  clearState(): void {
+    this.lastFired.clear();
+    try {
+      if (existsSync(this.statePath)) unlinkSync(this.statePath);
+    } catch {}
   }
 
   loadSchedules(agentName: string): void {
@@ -62,6 +99,7 @@ export class Scheduler {
       const prevMinute = Math.floor(prev.getTime() / 60000);
       if (prevMinute === epochMinute) {
         this.lastFired.set(key, epochMinute);
+        this.saveState();
         return true;
       }
       return false;

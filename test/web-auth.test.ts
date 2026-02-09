@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { Hono } from "hono";
 import { getDb } from "../src/lib/db.js";
-import { conversations, messages, users } from "../src/lib/schema.js";
+import { conversations, messages, sessions, users } from "../src/lib/schema.js";
 import { deleteSession } from "../src/web/middleware/auth.js";
 import auth from "../src/web/routes/auth.js";
 
@@ -14,6 +14,7 @@ function createApp() {
 
 async function cleanup() {
   const db = await getDb();
+  await db.delete(sessions);
   await db.delete(messages);
   await db.delete(conversations);
   await db.delete(users);
@@ -44,7 +45,7 @@ describe("web auth routes", () => {
     // First user gets auto-login session cookie
     const cookie = extractCookie(res, "volute_session");
     assert.ok(cookie, "should set session cookie for admin");
-    if (cookie) deleteSession(cookie);
+    if (cookie) await deleteSession(cookie);
   });
 
   it("POST /api/auth/register — duplicate username returns 409", async () => {
@@ -81,7 +82,7 @@ describe("web auth routes", () => {
     assert.equal(body.username, "loginuser");
     const cookie = extractCookie(res, "volute_session");
     assert.ok(cookie, "should set session cookie");
-    if (cookie) deleteSession(cookie);
+    if (cookie) await deleteSession(cookie);
   });
 
   it("POST /api/auth/login — invalid credentials returns 401", async () => {
@@ -121,7 +122,7 @@ describe("web auth routes", () => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.username, "meuser");
-    if (cookie) deleteSession(cookie);
+    if (cookie) await deleteSession(cookie);
   });
 
   it("GET /api/auth/me — without session returns 401", async () => {

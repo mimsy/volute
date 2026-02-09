@@ -2,22 +2,22 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { approveUser, createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
-import { conversations, messages, users } from "../src/lib/schema.js";
+import { conversations, messages, sessions, users } from "../src/lib/schema.js";
 import { createSession, deleteSession } from "../src/web/middleware/auth.js";
 
 let sessionId: string;
 
 async function cleanup() {
   const db = await getDb();
+  await db.delete(sessions);
   await db.delete(messages);
   await db.delete(conversations);
   await db.delete(users);
-  if (sessionId) deleteSession(sessionId);
 }
 
 async function setupAuth(): Promise<string> {
   const user = await createUser("testagent-admin", "pass");
-  sessionId = createSession(user.id);
+  sessionId = await createSession(user.id);
   return sessionId;
 }
 
@@ -141,7 +141,7 @@ describe("web agents routes", () => {
     // Second user gets "pending" role, approve to "user"
     const user2 = await createUser("regular-user", "pass");
     await approveUser(user2.id);
-    const cookie2 = createSession(user2.id);
+    const cookie2 = await createSession(user2.id);
 
     const { default: app } = await import("../src/web/app.js");
 
@@ -156,14 +156,14 @@ describe("web agents routes", () => {
     const body = await res.json();
     assert.equal(body.error, "Forbidden");
 
-    deleteSession(cookie2);
+    await deleteSession(cookie2);
   });
 
   it("GET / — non-admin user can still list agents", async () => {
     await setupAuth();
     const user2 = await createUser("regular-user2", "pass");
     await approveUser(user2.id);
-    const cookie2 = createSession(user2.id);
+    const cookie2 = await createSession(user2.id);
 
     const { default: app } = await import("../src/web/app.js");
 
@@ -174,6 +174,6 @@ describe("web agents routes", () => {
     const body = await res.json();
     assert.ok(Array.isArray(body));
 
-    deleteSession(cookie2);
+    await deleteSession(cookie2);
   });
 });

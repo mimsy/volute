@@ -1,6 +1,9 @@
+import { eq, lt } from "drizzle-orm";
 import { getCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
 import { getUser, type User } from "../../lib/auth.js";
+import { getDb } from "../../lib/db.js";
+import { sessions } from "../../lib/schema.js";
 
 export type AuthEnv = {
   Variables: {
@@ -8,28 +11,35 @@ export type AuthEnv = {
   };
 };
 
-// In-memory session store (sessions don't survive server restart — acceptable for local tool)
 const SESSION_MAX_AGE = 86400000; // 24 hours
-const sessions = new Map<string, { userId: number; createdAt: number }>();
 
-export function createSession(userId: number): string {
+export async function createSession(userId: number): Promise<string> {
+  const db = await getDb();
   const sessionId = crypto.randomUUID();
-  sessions.set(sessionId, { userId, createdAt: Date.now() });
+  await db.insert(sessions).values({ id: sessionId, userId, createdAt: Date.now() });
   return sessionId;
 }
 
-export function deleteSession(sessionId: string): void {
-  sessions.delete(sessionId);
+export async function deleteSession(sessionId: string): Promise<void> {
+  const db = await getDb();
+  await db.delete(sessions).where(eq(sessions.id, sessionId));
 }
 
-export function getSessionUserId(sessionId: string): number | undefined {
-  const session = sessions.get(sessionId);
-  if (!session) return undefined;
-  if (Date.now() - session.createdAt > SESSION_MAX_AGE) {
-    sessions.delete(sessionId);
+export async function getSessionUserId(sessionId: string): Promise<number | undefined> {
+  const db = await getDb();
+  const row = await db.select().from(sessions).where(eq(sessions.id, sessionId)).get();
+  if (!row) return undefined;
+  if (Date.now() - row.createdAt > SESSION_MAX_AGE) {
+    await db.delete(sessions).where(eq(sessions.id, sessionId));
     return undefined;
   }
-  return session.userId;
+  return row.userId;
+}
+
+export async function cleanExpiredSessions(): Promise<void> {
+  const db = await getDb();
+  const cutoff = Date.now() - SESSION_MAX_AGE;
+  await db.delete(sessions).where(lt(sessions.createdAt, cutoff));
 }
 
 export const requireAdmin = createMiddleware<AuthEnv>(async (c, next) => {
@@ -55,7 +65,7 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   const sessionId = getCookie(c, "volute_session");
   if (!sessionId) return c.json({ error: "Unauthorized" }, 401);
 
-  const userId = getSessionUserId(sessionId);
+  const userId = await getSessionUserId(sessionId);
   if (userId == null) return c.json({ error: "Unauthorized" }, 401);
 
   const user = await getUser(userId);
