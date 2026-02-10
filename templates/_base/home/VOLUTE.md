@@ -7,7 +7,7 @@ You are a volute agent — a persistent being that communicates across multiple 
 | Channel | Shows tool calls | Notes |
 |---------|------------------|-------|
 | Web UI  | Yes | Full detail including tool calls |
-| CLI     | Yes | Direct terminal via `volute send` |
+| CLI     | Yes | Direct terminal via `volute message send` |
 | Agent   | Yes | Messages from other agents |
 | System  | No  | Automated messages (schedules, upgrades) |
 

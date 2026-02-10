@@ -18,7 +18,7 @@ export async function run(args: string[]) {
 
   const agentName = positional[0];
   if (!agentName) {
-    console.error("Usage: volute upgrade <name> [--template <name>] [--continue]");
+    console.error("Usage: volute agent upgrade <name> [--template <name>] [--continue]");
     process.exit(1);
   }
 
@@ -72,7 +72,7 @@ export async function run(args: string[]) {
     console.log("\nMerge conflicts detected. Resolve them in:");
     console.log(`  ${worktreeDir}`);
     console.log(`\nThen run:`);
-    console.log(`  volute upgrade ${agentName} --continue`);
+    console.log(`  volute agent upgrade ${agentName} --continue`);
     return;
   }
 
@@ -210,7 +210,7 @@ async function continueUpgrade(agentName: string, projectRoot: string) {
   const worktreeDir = resolve(projectRoot, ".variants", VARIANT_NAME);
 
   if (!existsSync(worktreeDir)) {
-    console.error("No upgrade in progress. Run `volute upgrade` first.");
+    console.error("No upgrade in progress. Run `volute agent upgrade` first.");
     process.exit(1);
   }
 
@@ -272,7 +272,7 @@ async function installAndVerify(agentName: string, worktreeDir: string) {
   } catch {
     console.error("Failed to start variant. Is the daemon running? (volute up)");
     console.error(
-      "The variant was created but not started. Use: volute start " +
+      "The variant was created but not started. Use: volute agent start " +
         `${agentName}@${VARIANT_NAME}`,
     );
     process.exit(1);
@@ -280,6 +280,8 @@ async function installAndVerify(agentName: string, worktreeDir: string) {
 
   console.log(`\nUpgrade variant running on port ${variantPort}`);
   console.log(`\nNext steps:`);
-  console.log(`  volute send ${agentName}@${VARIANT_NAME} "hello"    # chat with upgraded variant`);
+  console.log(
+    `  volute message send ${agentName}@${VARIANT_NAME} "hello"    # chat with upgraded variant`,
+  );
   console.log(`  volute variant merge ${VARIANT_NAME}                # merge back when satisfied`);
 }

@@ -142,7 +142,7 @@ async function createVariant(args: string[]) {
     } catch {
       console.error("Failed to start variant. Is the daemon running? (volute up)");
       console.error(
-        "The variant was created but not started. Use: volute start " +
+        "The variant was created but not started. Use: volute agent start " +
           `${agentName}@${variantName}`,
       );
       process.exit(1);
@@ -370,7 +370,7 @@ async function mergeVariant(args: string[]) {
       console.error(`Failed to restart: ${data.error ?? "unknown error"}`);
     }
   } catch {
-    console.log(`Daemon not running. Start the agent manually: volute start ${agentName}`);
+    console.log(`Daemon not running. Start the agent manually: volute agent start ${agentName}`);
   }
 }
 

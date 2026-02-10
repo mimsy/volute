@@ -8,7 +8,7 @@ export async function run(args: string[]) {
   const message = args[1];
 
   if (!name || !message) {
-    console.error('Usage: volute send <name> "<message>"');
+    console.error('Usage: volute message send <name> "<message>"');
     process.exit(1);
   }
 

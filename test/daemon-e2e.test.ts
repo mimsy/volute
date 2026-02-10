@@ -116,7 +116,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
 
   it("agent lifecycle: create, start, status, stop", async () => {
     // Create agent via CLI
-    execFileSync("npx", ["tsx", "src/cli.ts", "create", TEST_AGENT], {
+    execFileSync("npx", ["tsx", "src/cli.ts", "agent", "create", TEST_AGENT], {
       cwd: process.cwd(),
       stdio: "pipe",
       timeout: 30000,

@@ -11,7 +11,7 @@ export async function run(args: string[]) {
 
   const name = positional[0];
   if (!name) {
-    console.error("Usage: volute delete <name> [--force]");
+    console.error("Usage: volute agent delete <name> [--force]");
     process.exit(1);
   }
 

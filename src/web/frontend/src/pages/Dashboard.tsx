@@ -43,7 +43,7 @@ export function Dashboard() {
         }}
       >
         <div style={{ marginBottom: 8 }}>No agents registered.</div>
-        <code style={{ color: "var(--text-1)" }}>volute create &lt;name&gt;</code>
+        <code style={{ color: "var(--text-1)" }}>volute agent create &lt;name&gt;</code>
       </div>
     );
   }

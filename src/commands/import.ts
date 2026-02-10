@@ -148,7 +148,7 @@ export async function run(args: string[]) {
   importOpenClawConnectors(dest);
 
   console.log(`\nImported agent: ${name} (port ${port})`);
-  console.log(`\n  volute start ${name}`);
+  console.log(`\n  volute agent start ${name}`);
 }
 
 /** Auto-detect OpenClaw workspace: explicit path > cwd > ~/.openclaw/workspace */
@@ -180,7 +180,7 @@ function resolveWorkspace(explicitPath?: string): string {
   }
 
   console.error(
-    "Usage: volute import [<workspace-path>] [--name <name>] [--session <path>] [--template <name>]\n\n" +
+    "Usage: volute agent import [<workspace-path>] [--name <name>] [--session <path>] [--template <name>]\n\n" +
       "No OpenClaw workspace found. Provide a path, run from a workspace, or ensure ~/.openclaw/workspace exists.",
   );
   process.exit(1);

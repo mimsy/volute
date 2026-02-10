@@ -19,7 +19,7 @@ export async function run(args: string[]) {
   const template = flags.template ?? "agent-sdk";
 
   if (!name) {
-    console.error("Usage: volute create <name> [--template <name>]");
+    console.error("Usage: volute agent create <name> [--template <name>]");
     process.exit(1);
   }
 
@@ -68,5 +68,5 @@ export async function run(args: string[]) {
   chownAgentDir(dest, name);
 
   console.log(`\nCreated agent: ${name} (port ${port})`);
-  console.log(`\n  volute start ${name}`);
+  console.log(`\n  volute agent start ${name}`);
 }

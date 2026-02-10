@@ -10,11 +10,11 @@ Volute is a home for independent, self-motivated agents. The architecture is des
 
 - `src/cli.ts` — CLI entry point, dynamic command imports via switch statement
 - `src/daemon.ts` — Daemon entry point, starts web server + agent/connector/scheduler managers
-- `src/commands/` — One file per command, each exports `async function run(args: string[])`
+- `src/commands/` — One file per command, each exports `async function run(args: string[])`. Top-level nouns (`agent.ts`, `message.ts`) dispatch to subcommand files.
 - `src/lib/` — Shared libraries (registry, agent-manager, connector-manager, scheduler, daemon-client, arg parsing, exec wrappers, variant metadata, db, auth, conversations, channels)
 - `src/web/` — Web dashboard (Hono backend + React frontend), served by the daemon
 - `connectors/` — Built-in connector implementations (e.g. `connectors/discord/index.ts`)
-- `templates/agent-sdk/` — Default template (Claude Agent SDK) copied by `volute create`
+- `templates/agent-sdk/` — Default template (Claude Agent SDK) copied by `volute agent create`
 - `templates/pi/` — Alternative template using pi-coding-agent for multi-provider LLM support
 - All agents live in `~/.volute/agents/<name>/` with a centralized registry at `~/.volute/agents.json`
 
@@ -27,7 +27,7 @@ A single daemon process (`volute up`) manages all agents, connectors, and schedu
 - **Scheduler** (`src/lib/scheduler.ts`) — Cron-based scheduled messages to agents
 - **DaemonClient** (`src/lib/daemon-client.ts`) — CLI commands talk to the daemon via HTTP API
 
-CLI commands like `start`, `stop`, `status`, `send`, `connector`, `variant` all proxy through the daemon API.
+CLI commands like `agent start`, `agent stop`, `message send`, `connector`, `variant` all proxy through the daemon API.
 
 ### Agent project structure
 
@@ -75,7 +75,7 @@ The SDK runs with `cwd: home/` so it picks up `CLAUDE.md` and `.claude/skills/` 
 
 ### Template .init/ directory
 
-Templates have a `.init/` directory containing identity files (SOUL.md, MEMORY.md, CLAUDE.md, memory/). On `volute create`, these are copied into `home/` and `.init/` is deleted. On `volute upgrade`, `.init/` files are excluded so identity files are never overwritten.
+Templates have a `.init/` directory containing identity files (SOUL.md, MEMORY.md, CLAUDE.md, memory/). On `volute agent create`, these are copied into `home/` and `.init/` is deleted. On `volute agent upgrade`, `.init/` files are excluded so identity files are never overwritten.
 
 ### Web dashboard
 
@@ -91,18 +91,21 @@ The daemon serves a Hono web server (default port 4200) with a React frontend.
 
 | Command | Purpose |
 |---------|---------|
-| `volute create <name>` | Create new agent in `~/.volute/agents/<name>/` |
-| `volute up [--port N]` | Start the daemon (default: 4200) |
-| `volute down` | Stop the daemon |
-| `volute start <name>` | Start an agent (via daemon) |
-| `volute stop <name>` | Stop an agent (via daemon) |
-| `volute delete <name> [--force]` | Remove from registry (--force deletes directory) |
-| `volute status [<name>]` | Check agent status, or list all agents |
-| `volute logs [--agent <name>]` | Tail agent logs |
-| `volute send <name> "<msg>"` | Send message, stream ndjson response |
+| `volute agent create <name>` | Create new agent in `~/.volute/agents/<name>/` |
+| `volute agent start <name>` | Start an agent (via daemon) |
+| `volute agent stop <name>` | Stop an agent (via daemon) |
+| `volute agent delete <name> [--force]` | Remove from registry (--force deletes directory) |
+| `volute agent list` | List all agents |
+| `volute agent status <name>` | Check agent status |
+| `volute agent logs <name> [--follow] [-n N]` | Tail agent logs |
+| `volute agent upgrade <name>` | Upgrade agent to latest template |
+| `volute agent import <path> [--name <name>] [--session <path>]` | Import an OpenClaw workspace |
+| `volute message send <name> "<msg>"` | Send message, stream ndjson response |
+| `volute message history [--agent <name>]` | View message history |
 | `volute variant create <name> [--agent] [--soul "..."] [--port N] [--no-start] [--json]` | Create variant (worktree + server) |
 | `volute variant list [--agent] [--json]` | List variants with health status |
 | `volute variant merge <name> [--agent] [--summary "..." --memory "..."]` | Merge variant back and restart |
+| `volute variant delete <name> [--agent]` | Delete a variant |
 | `volute env <set\|get\|list\|remove> [--agent <name>]` | Manage environment variables |
 | `volute connector connect <type> [--agent]` | Enable a connector for an agent |
 | `volute connector disconnect <type> [--agent]` | Disable a connector for an agent |
@@ -111,13 +114,13 @@ The daemon serves a Hono web server (default port 4200) with a React frontend.
 | `volute schedule list [--agent]` | List schedules for an agent |
 | `volute schedule add [--agent] --cron "..." --message "..."` | Add a cron schedule |
 | `volute schedule remove [--agent] --id <id>` | Remove a schedule |
-| `volute history [--agent]` | View message history |
-| `volute upgrade <name>` | Upgrade agent to latest template |
-| `volute import <path> [--name <name>] [--session <path>]` | Import an OpenClaw workspace |
+| `volute up [--port N]` | Start the daemon (default: 4200) |
+| `volute down` | Stop the daemon |
 | `volute setup [--port N] [--host H]` | Install system service with user isolation (Linux, requires root) |
 | `volute setup uninstall [--force]` | Remove system service (--force removes data + users) |
+| `volute update` | Check for updates (placeholder) |
 
-Agent commands (`variant`, `connector`, `schedule`, `logs`, `history`, `channel`) use `--agent <name>` or `VOLUTE_AGENT` env var.
+Agent-scoped commands (`variant`, `connector`, `schedule`, `channel`, `message history`) use `--agent <name>` or `VOLUTE_AGENT` env var.
 
 ## Source files
 
@@ -223,7 +226,7 @@ sudo volute setup --host 0.0.0.0
 
 ### User isolation
 
-When `VOLUTE_ISOLATION=user` is set, `volute create` creates a Linux system user (`volute-<name>`) and `chown`s the agent directory. Agent and connector processes are spawned with the agent's uid/gid, so agents can't access each other's files. This is a no-op when the env var is unset (default for local development).
+When `VOLUTE_ISOLATION=user` is set, `volute agent create` creates a Linux system user (`volute-<name>`) and `chown`s the agent directory. Agent and connector processes are spawned with the agent's uid/gid, so agents can't access each other's files. This is a no-op when the env var is unset (default for local development).
 
 ## Development
 
