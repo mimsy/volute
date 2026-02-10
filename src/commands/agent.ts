@@ -15,11 +15,16 @@ export async function run(args: string[]) {
       await import("./delete.js").then((m) => m.run(args.slice(1)));
       break;
     case "list":
-      await import("./status.js").then((m) => m.run([]));
-      break;
-    case "status":
       await import("./status.js").then((m) => m.run(args.slice(1)));
       break;
+    case "status": {
+      if (!args[1] || args[1].startsWith("-")) {
+        console.error("Usage: volute agent status <name>");
+        process.exit(1);
+      }
+      await import("./status.js").then((m) => m.run(args.slice(1)));
+      break;
+    }
     case "logs": {
       // Transform positional name to --agent flag for compatibility
       const rest = args.slice(1);
