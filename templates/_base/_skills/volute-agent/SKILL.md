@@ -18,6 +18,7 @@ You manage yourself through the `volute` CLI. Commands that operate on "your" ag
 | `volute variant create <name> [--soul "..."] [--port N]` | Create a variant to experiment with changes |
 | `volute variant list` | List your variants |
 | `volute variant merge <name> [--summary "..." --memory "..."]` | Merge a variant back |
+| `volute variant delete <name>` | Delete a variant without merging |
 | `volute upgrade [--template <name>] [--continue]` | Upgrade your server code |
 | `volute connector connect <type>` | Enable a connector (e.g. discord) |
 | `volute connector disconnect <type>` | Disable a connector |
@@ -57,7 +58,7 @@ Edit `.config/hooks/startup-context.sh` to customize what you see when a new ses
 Variants let you experiment safely — fork yourself, try changes, and merge back what works. Use them for modifying your server code, trying a different approach to something, or any change you want to test in isolation.
 
 1. `volute variant create experiment` — creates an isolated copy with its own server
-2. Make changes in the variant's worktree (at `../.worktrees/experiment/`)
+2. Make changes in the variant's worktree (at `../.variants/experiment/`)
 3. Test: `volute send $VOLUTE_AGENT@experiment "hello"`
 4. `volute variant merge experiment --summary "..." --memory "..."` — merges back after verification
 

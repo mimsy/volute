@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
+import { daemonFetch } from "../lib/daemon-client.js";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { resolveAgent } from "../lib/registry.js";
-import { spawnServer } from "../lib/spawn-server.js";
+import { nextPort, resolveAgent } from "../lib/registry.js";
 import { composeTemplate, copyTemplateToDir, findTemplatesRoot } from "../lib/template.js";
 import { addVariant } from "../lib/variants.js";
 
@@ -30,13 +30,13 @@ export async function run(args: string[]) {
     return;
   }
 
-  const worktreeDir = resolve(projectRoot, ".worktrees", VARIANT_NAME);
+  const worktreeDir = resolve(projectRoot, ".variants", VARIANT_NAME);
 
   if (existsSync(worktreeDir)) {
     console.error(
-      `Upgrade worktree already exists: ${worktreeDir}\n` +
+      `Upgrade variant already exists: ${worktreeDir}\n` +
         `If a previous upgrade is in progress, use --continue to finish it.\n` +
-        `Otherwise, remove it with: git -C ${projectRoot} worktree remove .worktrees/${VARIANT_NAME}`,
+        `Otherwise, remove it with: volute variant delete ${VARIANT_NAME} --agent ${agentName}`,
     );
     process.exit(1);
   }
@@ -55,7 +55,7 @@ export async function run(args: string[]) {
 
   // Step 2: Create upgrade worktree
   console.log("Creating upgrade variant...");
-  const parentDir = resolve(projectRoot, ".worktrees");
+  const parentDir = resolve(projectRoot, ".variants");
   if (!existsSync(parentDir)) {
     mkdirSync(parentDir, { recursive: true });
   }
@@ -85,7 +85,7 @@ export async function run(args: string[]) {
  * Uses a temporary worktree to avoid touching the main working directory.
  */
 async function updateTemplateBranch(projectRoot: string, template: string, agentName: string) {
-  const tempWorktree = resolve(projectRoot, ".worktrees", "_template_update");
+  const tempWorktree = resolve(projectRoot, ".variants", "_template_update");
 
   // Check if template branch exists
   let branchExists = false;
@@ -207,7 +207,7 @@ async function mergeTemplateBranch(worktreeDir: string): Promise<boolean> {
  * Continue an upgrade after conflict resolution.
  */
 async function continueUpgrade(agentName: string, projectRoot: string) {
-  const worktreeDir = resolve(projectRoot, ".worktrees", VARIANT_NAME);
+  const worktreeDir = resolve(projectRoot, ".variants", VARIANT_NAME);
 
   if (!existsSync(worktreeDir)) {
     console.error("No upgrade in progress. Run `volute upgrade` first.");
@@ -246,26 +246,39 @@ async function installAndVerify(agentName: string, worktreeDir: string) {
   console.log("Installing dependencies...");
   await execInherit("npm", ["install"], { cwd: worktreeDir });
 
-  // Start variant server
-  console.log("Starting upgrade variant...");
-  const result = await spawnServer(worktreeDir, 0, { detached: true });
-  if (!result) {
-    console.error("Server failed to start within timeout");
-    process.exit(1);
-  }
-
-  const { actualPort } = result;
+  const variantPort = nextPort();
 
   // Register variant
   addVariant(agentName, {
     name: VARIANT_NAME,
     branch: VARIANT_NAME,
     path: worktreeDir,
-    port: actualPort,
+    port: variantPort,
     created: new Date().toISOString(),
   });
 
-  console.log(`\nUpgrade variant running on port ${actualPort}`);
+  // Start variant via daemon
+  console.log("Starting upgrade variant...");
+  try {
+    const res = await daemonFetch(
+      `/api/agents/${encodeURIComponent(`${agentName}@${VARIANT_NAME}`)}/start`,
+      { method: "POST" },
+    );
+    if (!res.ok) {
+      const data = (await res.json()) as { error?: string };
+      console.error(data.error ?? "Failed to start variant");
+      process.exit(1);
+    }
+  } catch {
+    console.error("Failed to start variant. Is the daemon running? (volute up)");
+    console.error(
+      "The variant was created but not started. Use: volute start " +
+        `${agentName}@${VARIANT_NAME}`,
+    );
+    process.exit(1);
+  }
+
+  console.log(`\nUpgrade variant running on port ${variantPort}`);
   console.log(`\nNext steps:`);
   console.log(`  volute send ${agentName}@${VARIANT_NAME} "hello"    # chat with upgraded variant`);
   console.log(`  volute variant merge ${VARIANT_NAME}                # merge back when satisfied`);
