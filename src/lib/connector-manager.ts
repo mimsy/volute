@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { checkMissingEnvVars, getConnectorDef } from "./connector-defs.js";
 import { loadMergedEnv } from "./env.js";
 import { applyIsolation } from "./isolation.js";
 import { agentDir as getAgentDir, voluteHome } from "./registry.js";
@@ -54,6 +55,31 @@ export class ConnectorManager {
         console.error(`[daemon] failed to start connector ${type} for ${agentName}:`, err);
       }
     }
+  }
+
+  checkConnectorEnv(
+    type: string,
+    agentDir: string,
+  ): { missing: { name: string; description: string }[]; connectorName: string } | null {
+    // Check agent-specific, then user-shared connector dirs for custom connector.json
+    const agentConnectorDir = resolve(agentDir, "connectors", type);
+    const userConnectorDir = resolve(voluteHome(), "connectors", type);
+    const connectorDir = existsSync(agentConnectorDir)
+      ? agentConnectorDir
+      : existsSync(userConnectorDir)
+        ? userConnectorDir
+        : undefined;
+    const def = getConnectorDef(type, connectorDir);
+    if (!def) return null;
+
+    const env = loadMergedEnv(agentDir);
+    const missing = checkMissingEnvVars(def, env);
+    if (missing.length === 0) return null;
+
+    return {
+      missing: missing.map((v) => ({ name: v.name, description: v.description })),
+      connectorName: def.displayName,
+    };
   }
 
   async startConnector(

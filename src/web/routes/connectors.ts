@@ -38,6 +38,21 @@ const app = new Hono<AuthEnv>()
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
     const dir = agentDir(name);
+
+    // Check for missing required env vars
+    const manager = getConnectorManager();
+    const envCheck = manager.checkConnectorEnv(type, dir);
+    if (envCheck) {
+      return c.json(
+        {
+          error: "missing_env",
+          missing: envCheck.missing,
+          connectorName: envCheck.connectorName,
+        },
+        400,
+      );
+    }
+
     const config = readVoluteConfig(dir) ?? {};
     const connectors = config.connectors ?? [];
 
@@ -46,7 +61,6 @@ const app = new Hono<AuthEnv>()
       writeVoluteConfig(dir, config);
     }
 
-    const manager = getConnectorManager();
     try {
       await manager.startConnector(name, dir, entry.port, type);
       return c.json({ ok: true });
