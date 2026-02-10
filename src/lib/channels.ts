@@ -1,4 +1,6 @@
 import * as discord from "./channels/discord.js";
+import * as slack from "./channels/slack.js";
+import * as telegram from "./channels/telegram.js";
 
 export type ChannelDriver = {
   read(env: Record<string, string>, channelId: string, limit: number): Promise<string>;
@@ -19,6 +21,18 @@ export const CHANNELS: Record<string, ChannelProvider> = {
     displayName: "Discord",
     showToolCalls: false,
     driver: discord,
+  },
+  slack: {
+    name: "slack",
+    displayName: "Slack",
+    showToolCalls: false,
+    driver: slack,
+  },
+  telegram: {
+    name: "telegram",
+    displayName: "Telegram",
+    showToolCalls: false,
+    driver: telegram,
   },
   cli: { name: "cli", displayName: "CLI", showToolCalls: true },
   agent: { name: "agent", displayName: "Agent", showToolCalls: true },
