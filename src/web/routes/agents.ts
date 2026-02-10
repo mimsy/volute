@@ -251,7 +251,9 @@ const app = new Hono<AuthEnv>()
     let parsed: Record<string, unknown> | null = null;
     try {
       parsed = JSON.parse(body);
-    } catch {}
+    } catch (err) {
+      console.error(`[daemon] failed to parse message body for ${baseName}:`, err);
+    }
 
     const channel = (parsed?.channel as string) ?? "unknown";
 
@@ -301,22 +303,27 @@ const app = new Hono<AuthEnv>()
     c.header("Content-Type", "application/x-ndjson");
     const encoder = new TextEncoder();
     return stream(c, async (s) => {
-      const parts: string[] = [];
+      const textParts: string[] = [];
+      const toolParts: string[] = [];
 
       for await (const event of readNdjson(res.body!)) {
         await s.write(encoder.encode(`${JSON.stringify(event)}\n`));
         const part = collectPart(event);
-        if (part != null) parts.push(part);
+        if (part != null) {
+          if (event.type === "tool_use") toolParts.push(part);
+          else textParts.push(part);
+        }
       }
 
-      if (parts.length > 0) {
+      const content = [textParts.join(""), ...toolParts].filter(Boolean).join("\n");
+      if (content) {
         try {
           await db.insert(agentMessages).values({
             agent: baseName,
             channel,
             role: "assistant",
             sender: baseName,
-            content: parts.join("\n"),
+            content,
           });
         } catch (err) {
           console.error(`[daemon] failed to persist assistant response for ${baseName}:`, err);

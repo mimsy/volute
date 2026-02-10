@@ -140,8 +140,13 @@ export class ConnectorManager {
 
     const child = spawn(runtime, [connectorScript], spawnOpts);
 
+    let lastStderr = "";
+
     child.stdout?.pipe(logStream);
-    child.stderr?.pipe(logStream);
+    child.stderr?.on("data", (chunk: Buffer) => {
+      logStream.write(chunk);
+      lastStderr = chunk.toString().trim();
+    });
 
     // Track PID so orphans can be killed on next daemon startup
     if (child.pid) {
@@ -169,6 +174,7 @@ export class ConnectorManager {
       if (this.stopping.has(stopKey)) return;
 
       console.error(`[daemon] connector ${type} for ${agentName} exited with code ${code}`);
+      if (lastStderr) console.error(`[daemon] last output: ${lastStderr}`);
       const attempts = this.restartAttempts.get(stopKey) ?? 0;
       if (attempts >= MAX_RESTART_ATTEMPTS) {
         console.error(

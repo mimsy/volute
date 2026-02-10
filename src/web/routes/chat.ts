@@ -150,14 +150,23 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
           await addMessage(conversationId!, "assistant", baseName, assistantContent);
 
           // Record in agent_messages (text + tool summaries)
-          const parts = assistantContent.map((b) => collectPart(b)).filter((p) => p != null);
-          if (parts.length > 0) {
+          const textParts: string[] = [];
+          const toolParts: string[] = [];
+          for (const b of assistantContent) {
+            const part = collectPart(b);
+            if (part != null) {
+              if (b.type === "tool_use") toolParts.push(part);
+              else textParts.push(part);
+            }
+          }
+          const summary = [textParts.join(""), ...toolParts].filter(Boolean).join("\n");
+          if (summary) {
             await db.insert(agentMessages).values({
               agent: baseName,
               channel: "web",
               role: "assistant",
               sender: baseName,
-              content: parts.join("\n"),
+              content: summary,
             });
           }
         }

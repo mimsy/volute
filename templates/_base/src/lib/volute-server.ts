@@ -45,15 +45,22 @@ export function createVoluteServer(options: {
             if (event.type === "done") {
               res.end();
             }
-          } catch {
+          } catch (err) {
+            log("server", "write error, disconnecting:", err);
             unsubscribe();
           }
         });
 
         res.on("close", () => unsubscribe());
-      } catch {
-        res.writeHead(400);
-        res.end("Bad Request");
+      } catch (err) {
+        if (err instanceof SyntaxError) {
+          res.writeHead(400);
+          res.end("Bad Request");
+        } else {
+          log("server", "error handling /message:", err);
+          res.writeHead(500);
+          res.end("Internal Server Error");
+        }
       }
       return;
     }

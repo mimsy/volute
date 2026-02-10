@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { log } from "./logger.js";
 
 export type SessionRule = {
   session?: string;
@@ -22,7 +23,10 @@ export type ResolvedRoute =
 export function loadSessionConfig(configPath: string): SessionConfig {
   try {
     return JSON.parse(readFileSync(configPath, "utf-8"));
-  } catch {
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") {
+      log("sessions", `failed to load ${configPath}:`, err);
+    }
     return {};
   }
 }
@@ -73,7 +77,11 @@ export function resolveRoute(
   for (const rule of config.rules) {
     if (ruleMatches(rule, meta)) {
       if (rule.destination === "file") {
-        return { destination: "file", path: rule.path ?? "" };
+        if (!rule.path) {
+          log("sessions", `file destination rule missing path — falling through`);
+          continue;
+        }
+        return { destination: "file", path: rule.path };
       }
       return {
         destination: "agent",

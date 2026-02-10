@@ -31,7 +31,7 @@ const agent = createAgent({
 const router = createRouter({
   configPath: resolve("home/.config/sessions.json"),
   agentHandler: agent.resolve,
-  fileHandler: createFileHandlerResolver(),
+  fileHandler: createFileHandlerResolver(resolve("home")),
 });
 
 const server = createVoluteServer({

@@ -50,7 +50,9 @@ if (agentDir) {
     try {
       const config = JSON.parse(readFileSync(configPath, "utf-8"));
       followedChannelNames = config.discord?.channels ?? [];
-    } catch {}
+    } catch (err) {
+      console.warn(`Failed to load agent config: ${err}`);
+    }
   }
 }
 
@@ -200,7 +202,7 @@ async function* readNdjson(body: ReadableStream<Uint8Array>): AsyncGenerator<Ndj
         try {
           yield JSON.parse(line) as NdjsonEvent;
         } catch {
-          // skip invalid line
+          console.warn(`ndjson: skipping invalid line: ${line.slice(0, 100)}`);
         }
       }
     }
@@ -209,7 +211,7 @@ async function* readNdjson(body: ReadableStream<Uint8Array>): AsyncGenerator<Ndj
       try {
         yield JSON.parse(buffer) as NdjsonEvent;
       } catch {
-        // skip
+        console.warn(`ndjson: skipping invalid line: ${buffer.slice(0, 100)}`);
       }
     }
   } finally {
@@ -241,6 +243,10 @@ async function sendFireAndForget(message: Message, content: ContentPart[]) {
         ...(message.guild?.name ? { guildName: message.guild.name } : {}),
       }),
     });
+
+    if (!res.ok) {
+      console.error(`sendFireAndForget: agent returned ${res.status}`);
+    }
 
     // Drain the response body to close the connection properly
     if (res.body) {

@@ -82,7 +82,12 @@ export function createRouter(options: {
     const handler = options.agentHandler(buffer.sessionName);
 
     // Batch flushes are fire-and-forget — no HTTP response is waiting, so listener is a noop
-    handler.handle(content, { sessionName: buffer.sessionName, messageId }, () => {});
+    try {
+      handler.handle(content, { sessionName: buffer.sessionName, messageId }, () => {});
+    } catch (err) {
+      log("router", `error flushing batch for session ${buffer.sessionName}:`, err);
+      return;
+    }
     log("router", `flushed batch for session ${buffer.sessionName}: ${messages.length} messages`);
   }
 
@@ -115,6 +120,7 @@ export function createRouter(options: {
         return { messageId, unsubscribe };
       }
       // No file handler configured — emit done and discard
+      log("router", `no file handler configured — discarding file-destined message`);
       queueMicrotask(() => safeListener({ type: "done", messageId }));
       return { messageId, unsubscribe: noop };
     }
@@ -163,8 +169,9 @@ export function createRouter(options: {
   }
 
   function close() {
-    for (const [, buffer] of batchBuffers) {
+    for (const [key, buffer] of batchBuffers) {
       clearInterval(buffer.timer);
+      flushBatch(key);
     }
     batchBuffers.clear();
   }

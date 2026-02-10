@@ -83,7 +83,10 @@ export function createAgent(options: {
     try {
       const data = JSON.parse(readFileSync(sessionFilePath(sessionName), "utf-8"));
       return data.sessionId;
-    } catch {
+    } catch (err: any) {
+      if (err?.code !== "ENOENT") {
+        log("agent", `failed to load session file for "${sessionName}":`, err);
+      }
       return undefined;
     }
   }

@@ -98,7 +98,9 @@ export function createAgent(options: {
     };
     sessions.set(name, session);
 
-    session.ready = initSession(session);
+    session.ready = initSession(session).catch((err) => {
+      log("agent", `session "${session.name}": init failed:`, err);
+    });
     return session;
   }
 
@@ -260,7 +262,10 @@ export function createAgent(options: {
           } else {
             session.agentSession!.prompt(text, opts);
           }
-        })();
+        })().catch((err) => {
+          log("agent", `session "${sessionName}": prompt failed:`, err);
+          broadcast(session, { type: "done" });
+        });
 
         return () => session.listeners.delete(filteredListener);
       },
