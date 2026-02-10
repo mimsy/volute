@@ -72,6 +72,7 @@ Commands:
   volute variant create <name>          Create a variant (worktree + server)
   volute variant list                   List variants for an agent
   volute variant merge <name>           Merge a variant back
+  volute variant delete <name>          Delete a variant
   volute import <path>                  Import an OpenClaw workspace
   volute env <set|get|list|remove>      Manage environment variables
   volute connector connect <type>       Enable a connector for an agent

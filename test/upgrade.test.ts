@@ -187,7 +187,7 @@ describe("upgrade git operations", () => {
     git(["checkout", "main"], repoDir);
 
     // Create worktree
-    const worktreeDir = join(repoDir, ".worktrees", "upgrade");
+    const worktreeDir = join(repoDir, ".variants", "upgrade");
     git(["worktree", "add", "-b", "upgrade", worktreeDir], repoDir);
 
     // Merge template
@@ -219,7 +219,7 @@ describe("upgrade git operations", () => {
     git(["checkout", "main"], repoDir);
 
     // Create worktree and try to merge
-    const worktreeDir = join(repoDir, ".worktrees", "upgrade");
+    const worktreeDir = join(repoDir, ".variants", "upgrade");
     git(["worktree", "add", "-b", "upgrade", worktreeDir], repoDir);
 
     let hadConflict = false;
@@ -274,7 +274,7 @@ describe("upgrade git operations", () => {
     git(["checkout", "main"], repoDir);
 
     // Create worktree and merge — should be a clean 3-way merge
-    const worktreeDir = join(repoDir, ".worktrees", "upgrade2");
+    const worktreeDir = join(repoDir, ".variants", "upgrade2");
     git(["worktree", "add", "-b", "upgrade2", worktreeDir], repoDir);
     git(["merge", "volute/template", "-m", "second upgrade"], worktreeDir);
 
@@ -315,7 +315,7 @@ describe("upgrade git operations", () => {
     git(["checkout", "main"], repoDir);
 
     // Create worktree and merge
-    const worktreeDir = join(repoDir, ".worktrees", "upgrade");
+    const worktreeDir = join(repoDir, ".variants", "upgrade");
     git(["worktree", "add", "-b", "upgrade", worktreeDir], repoDir);
     try {
       git(
