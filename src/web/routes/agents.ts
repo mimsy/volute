@@ -285,11 +285,17 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    const res = await fetch(`http://127.0.0.1:${port}/message`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-    });
+    let res: Response;
+    try {
+      res = await fetch(`http://127.0.0.1:${port}/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+    } catch (err) {
+      console.error(`[daemon] agent ${name} unreachable on port ${port}:`, err);
+      return c.json({ error: "Agent is not reachable" }, 502);
+    }
 
     if (!res.ok) {
       return c.json({ error: `Agent responded with ${res.status}` }, res.status as 500);

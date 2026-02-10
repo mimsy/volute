@@ -93,15 +93,21 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     content: body.message ?? "[image]",
   });
 
-  const res = await fetch(`http://127.0.0.1:${port}/message`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      content: contentBlocks,
-      channel: "web",
-      sender: user.username,
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`http://127.0.0.1:${port}/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content: contentBlocks,
+        channel: "web",
+        sender: user.username,
+      }),
+    });
+  } catch (err) {
+    console.error(`[chat] agent ${name} unreachable on port ${port}:`, err);
+    return c.json({ error: "Agent is not reachable" }, 502);
+  }
 
   if (!res.ok) {
     return c.json({ error: `Agent responded with ${res.status}` }, res.status as 500);
