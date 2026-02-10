@@ -9,11 +9,12 @@ export function isIsolationEnabled(): boolean {
   return process.env.VOLUTE_ISOLATION === "user";
 }
 
-/** Linux username for an agent. */
+/** Linux username for an agent. Prefix configurable via VOLUTE_USER_PREFIX (default: "volute-"). */
 export function agentUserName(agentName: string): string {
   const err = validateAgentName(agentName);
   if (err) throw new Error(`Invalid agent name for isolation: ${err}`);
-  return `volute-${agentName}`;
+  const prefix = process.env.VOLUTE_USER_PREFIX ?? "volute-";
+  return `${prefix}${agentName}`;
 }
 
 /** Create the shared `volute` group (idempotent). Pass `force: true` to skip the isolation env check. */
