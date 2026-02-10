@@ -39,6 +39,15 @@ export async function run(args: string[]) {
   for await (const event of readNdjson(res.body)) {
     if (event.type === "text") {
       process.stdout.write(event.content);
+    } else if (event.type === "tool_use") {
+      const args =
+        event.input && typeof event.input === "object"
+          ? (event.input as Record<string, unknown>)
+          : null;
+      const val = args?.path ?? args?.command ?? args?.query ?? args?.url;
+      const summary =
+        typeof val === "string" ? ` ${val.length > 60 ? `${val.slice(0, 57)}...` : val}` : "";
+      process.stderr.write(`[${event.name}${summary}]\n`);
     }
     if (event.type === "done") {
       break;
