@@ -15,7 +15,7 @@ for (const [k, v] of Object.entries(process.env)) {
 const TEST_AGENT = "e2e-test-agent";
 const PORT = 14200 + Math.floor(Math.random() * 800);
 const TOKEN = `e2e-test-token-${Date.now()}`;
-const BASE_URL = `http://localhost:${PORT}`;
+const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 function daemonRequest(path: string, options?: RequestInit): Promise<Response> {
   const headers = new Headers(options?.headers);
@@ -132,6 +132,10 @@ describe("daemon e2e", { timeout: 120000 }, () => {
       timeout: 60000,
       env: cleanEnv,
     });
+
+    // Re-establish connection after long sync block (keep-alive connections
+    // may have been closed by the server while the event loop was blocked)
+    await waitForHealth();
 
     // Verify agent appears in listing
     const listRes = await daemonRequest("/api/agents");
