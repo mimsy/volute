@@ -1,6 +1,14 @@
 const command = process.argv[2];
 const args = process.argv.slice(3);
 
+if (command === "--version" || command === "-v") {
+  const { default: pkg } = await import("../package.json", {
+    with: { type: "json" },
+  });
+  console.log(pkg.version);
+  process.exit(0);
+}
+
 switch (command) {
   case "create":
     await import("./commands/create.js").then((m) => m.run(args));
@@ -59,7 +67,9 @@ switch (command) {
   case "setup":
     await import("./commands/setup.js").then((m) => m.run(args));
     break;
-  default:
+  case "--help":
+  case "-h":
+  case undefined:
     console.log(`volute — create and manage AI agents
 
 Commands:
@@ -93,10 +103,14 @@ Commands:
   volute setup [--port N] [--host H]   Install system service with user isolation
   volute setup uninstall [--force]     Remove system service + isolation
 
+Options:
+  --version, -v                         Show version number
+  --help, -h                            Show this help message
+
 Agent commands (variant, connector, schedule, logs, history, channel) use
 --agent <name> or VOLUTE_AGENT env var to identify the agent.`);
-    if (command) {
-      console.error(`\nUnknown command: ${command}`);
-      process.exit(1);
-    }
+    break;
+  default:
+    console.error(`Unknown command: ${command}\nRun 'volute --help' for usage.`);
+    process.exit(1);
 }
