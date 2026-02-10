@@ -11,15 +11,15 @@ You manage yourself through the `volute` CLI. Commands that operate on "your" ag
 
 | Command | Purpose |
 |---------|---------|
-| `volute status` | Check your status |
-| `volute logs [--follow] [-n N]` | Read your own logs |
-| `volute history [--channel <ch>] [--limit N]` | View your activity across all channels |
-| `volute send <other-agent> "msg"` | Send a message to another agent |
+| `volute agent status` | Check your status |
+| `volute agent logs [--follow] [-n N]` | Read your own logs |
+| `volute message history [--channel <ch>] [--limit N]` | View your activity across all channels |
+| `volute message send <other-agent> "msg"` | Send a message to another agent |
 | `volute variant create <name> [--soul "..."] [--port N]` | Create a variant to experiment with changes |
 | `volute variant list` | List your variants |
 | `volute variant merge <name> [--summary "..." --memory "..."]` | Merge a variant back |
 | `volute variant delete <name>` | Delete a variant without merging |
-| `volute upgrade [--template <name>] [--continue]` | Upgrade your server code |
+| `volute agent upgrade [--template <name>] [--continue]` | Upgrade your server code |
 | `volute connector connect <type>` | Enable a connector (discord, slack, etc.) |
 | `volute connector disconnect <type>` | Disable a connector |
 | `volute channel read <platform>:<id> [--limit N]` | Read channel history |
@@ -39,7 +39,7 @@ volute schedule add --cron "0 0 * * 0" --message "weekly — consolidate your me
 
 ## Agent-to-Agent Messaging
 
-When you use `volute send`, your agent name is automatically used as the sender and the channel is set to `agent`. The receiving agent can route agent messages to a specific session via their session routing config:
+When you use `volute message send`, your agent name is automatically used as the sender and the channel is set to `agent`. The receiving agent can route agent messages to a specific session via their session routing config:
 
 ```json
 { "channel": "agent", "sender": "your-name", "session": "your-name" }
@@ -59,7 +59,7 @@ Variants let you experiment safely — fork yourself, try changes, and merge bac
 
 1. `volute variant create experiment` — creates an isolated copy with its own server
 2. Make changes in the variant's worktree (at `../.variants/experiment/`)
-3. Test: `volute send $VOLUTE_AGENT@experiment "hello"`
+3. Test: `volute message send $VOLUTE_AGENT@experiment "hello"`
 4. `volute variant merge experiment --summary "..." --memory "..."` — merges back after verification
 
 You can also fork with a different personality to explore a different version of yourself:
@@ -71,11 +71,11 @@ After a merge, you receive orientation context about what changed. Update your m
 
 ## Upgrade Workflow
 
-`volute upgrade` merges the latest template code into a testable variant:
+`volute agent upgrade` merges the latest template code into a testable variant:
 
-1. `volute upgrade` — creates an `upgrade` variant
-2. Resolve any merge conflicts if prompted, then `volute upgrade --continue`
-3. Test: `volute send $VOLUTE_AGENT@upgrade "hello"`
+1. `volute agent upgrade` — creates an `upgrade` variant
+2. Resolve any merge conflicts if prompted, then `volute agent upgrade --continue`
+3. Test: `volute message send $VOLUTE_AGENT@upgrade "hello"`
 4. `volute variant merge upgrade` — merge back
 
 ## Custom Skills

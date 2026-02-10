@@ -14,14 +14,19 @@ export async function run(args: string[]) {
     case "disconnect":
       await disconnectConnector(args.slice(1));
       break;
+    case "--help":
+    case "-h":
+    case undefined:
+      printUsage();
+      break;
     default:
       printUsage();
-      process.exit(subcommand ? 1 : 0);
+      process.exit(1);
   }
 }
 
 function printUsage() {
-  console.error(`Usage:
+  console.log(`Usage:
   volute connector connect <type> [--agent <name>]
   volute connector disconnect <type> [--agent <name>]`);
 }

@@ -22,14 +22,19 @@ export async function run(args: string[]) {
     case "remove":
       await removeSchedule(args.slice(1));
       break;
+    case "--help":
+    case "-h":
+    case undefined:
+      printUsage();
+      break;
     default:
       printUsage();
-      process.exit(subcommand ? 1 : 0);
+      process.exit(1);
   }
 }
 
 function printUsage() {
-  console.error(`Usage:
+  console.log(`Usage:
   volute schedule list [--agent <name>]
   volute schedule add [--agent <name>] --cron "..." --message "..." [--id name]
   volute schedule remove [--agent <name>] --id <id>`);

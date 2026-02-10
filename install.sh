@@ -30,5 +30,5 @@ volute setup --host 0.0.0.0
 echo ""
 echo "Volute is installed and running."
 echo "  systemctl status volute     Check daemon status"
-echo "  volute create <name>        Create a new agent"
-echo "  volute start <name>         Start an agent"
+echo "  volute agent create <name>   Create a new agent"
+echo "  volute agent start <name>   Start an agent"

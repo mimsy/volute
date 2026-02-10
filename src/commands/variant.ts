@@ -34,14 +34,19 @@ export async function run(args: string[]) {
     case "delete":
       await deleteVariant(args.slice(1));
       break;
+    case "--help":
+    case "-h":
+    case undefined:
+      printUsage();
+      break;
     default:
       printUsage();
-      process.exit(subcommand ? 1 : 0);
+      process.exit(1);
   }
 }
 
 function printUsage() {
-  console.error(`Usage:
+  console.log(`Usage:
   volute variant create <variant> [--agent <name>] [--soul "..."] [--port N] [--no-start] [--json]
   volute variant list [--agent <name>] [--json]
   volute variant merge <variant> [--agent <name>] [--summary "..." --memory "..."] [--skip-verify]
@@ -142,7 +147,7 @@ async function createVariant(args: string[]) {
     } catch {
       console.error("Failed to start variant. Is the daemon running? (volute up)");
       console.error(
-        "The variant was created but not started. Use: volute start " +
+        "The variant was created but not started. Use: volute agent start " +
           `${agentName}@${variantName}`,
       );
       process.exit(1);
@@ -370,7 +375,7 @@ async function mergeVariant(args: string[]) {
       console.error(`Failed to restart: ${data.error ?? "unknown error"}`);
     }
   } catch {
-    console.log(`Daemon not running. Start the agent manually: volute start ${agentName}`);
+    console.log(`Daemon not running. Start the agent manually: volute agent start ${agentName}`);
   }
 }
 

@@ -28,7 +28,7 @@ export async function run(args: string[]) {
     const agents = (await res.json()) as AgentInfo[];
 
     if (agents.length === 0) {
-      console.log("No agents registered. Create one with: volute create <name>");
+      console.log("No agents registered. Create one with: volute agent create <name>");
       return;
     }
 

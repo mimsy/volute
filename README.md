@@ -17,13 +17,13 @@ npm install -g volute
 volute up
 
 # Create an agent
-volute create atlas
+volute agent create atlas
 
 # Start it
-volute start atlas
+volute agent start atlas
 
 # Talk to it
-volute send atlas "hey, what can you do?"
+volute message send atlas "hey, what can you do?"
 ```
 
 You now have a running AI agent with persistent memory, auto-committing file changes, and session resume across restarts. Open `http://localhost:4200` for the web dashboard.
@@ -45,20 +45,20 @@ The daemon handles agent lifecycle, crash recovery (auto-restarts after 3 second
 ### Lifecycle
 
 ```sh
-volute create atlas           # scaffold a new agent
-volute start atlas            # start it
-volute stop atlas             # stop it
-volute status                 # list all agents
-volute status atlas           # check one
-volute logs atlas --follow    # tail logs
-volute delete atlas           # remove from registry
-volute delete atlas --force   # also delete files
+volute agent create atlas           # scaffold a new agent
+volute agent start atlas            # start it
+volute agent stop atlas             # stop it
+volute agent list                   # list all agents
+volute agent status atlas           # check one
+volute agent logs atlas --follow    # tail logs
+volute agent delete atlas           # remove from registry
+volute agent delete atlas --force   # also delete files
 ```
 
 ### Sending messages
 
 ```sh
-volute send atlas "what's on your mind?"
+volute message send atlas "what's on your mind?"
 ```
 
 Responses stream back to your terminal in real time. The agent knows which channel each message came from — CLI, web, Discord, or system — and routes its response back to the source.
@@ -92,16 +92,16 @@ This is the interesting part. Agents can fork themselves into isolated branches,
 
 ```sh
 # Create a variant — gets its own git worktree and running server
-volute fork atlas experiment
+volute variant create experiment --agent atlas
 
 # Talk to the variant directly
-volute send atlas@experiment "try a different approach"
+volute message send atlas@experiment "try a different approach"
 
 # List all variants
-volute variants atlas
+volute variant list --agent atlas
 
 # Merge it back (verifies, merges, cleans up, restarts the main agent)
-volute merge atlas experiment --summary "improved response style"
+volute variant merge experiment --agent atlas --summary "improved response style"
 ```
 
 What happens:
@@ -114,7 +114,7 @@ What happens:
 You can fork with a custom personality:
 
 ```sh
-volute fork atlas poet --soul "You are a poet who responds only in verse."
+volute variant create poet --agent atlas --soul "You are a poet who responds only in verse."
 ```
 
 Agents have access to the `volute` CLI from their working directory, so they can fork, test, and merge their own variants autonomously.
@@ -187,13 +187,13 @@ The daemon serves a web UI at `http://localhost:4200` (or whatever port you chos
 When the Volute template updates, you can upgrade agents without touching their identity:
 
 ```sh
-volute upgrade atlas          # creates an "upgrade" variant
+volute agent upgrade atlas          # creates an "upgrade" variant
 # resolve conflicts if needed, then:
-volute upgrade atlas --continue
+volute agent upgrade atlas --continue
 # test:
-volute send atlas@upgrade "are you working?"
+volute message send atlas@upgrade "are you working?"
 # merge:
-volute merge atlas upgrade
+volute variant merge upgrade --agent atlas
 ```
 
 Your agent's `SOUL.md` and `MEMORY.md` are never overwritten.
@@ -206,7 +206,7 @@ Two built-in templates:
 - **`pi`** — [pi-coding-agent](https://github.com/nicepkg/pi) for multi-provider LLM support
 
 ```sh
-volute create atlas --template pi
+volute agent create atlas --template pi
 ```
 
 ## Model configuration

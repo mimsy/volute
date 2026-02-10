@@ -4,7 +4,7 @@ import { resolveAgent } from "../lib/registry.js";
 export async function run(args: string[]) {
   const name = args[0];
   if (!name) {
-    console.error("Usage: volute start <name>");
+    console.error("Usage: volute agent start <name>");
     process.exit(1);
   }
 
