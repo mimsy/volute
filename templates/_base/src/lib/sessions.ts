@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
 
 export type SessionRule = {
-  session: string;
+  session?: string;
+  destination?: "agent" | "file";
+  path?: string; // file path for file destination
+  interrupt?: boolean; // interrupt in-progress agent turn (default: true for agent)
   batch?: number; // minutes — buffer messages, flush on timer
   channel?: string;
   sender?: string;
@@ -10,6 +13,14 @@ export type SessionRule = {
 export type SessionConfig = {
   rules?: SessionRule[];
   default?: string;
+};
+
+export type ResolvedRoute = {
+  session: string;
+  destination: "agent" | "file";
+  path?: string;
+  interrupt: boolean;
+  batch?: number;
 };
 
 export function loadSessionConfig(configPath: string): SessionConfig {
@@ -43,7 +54,7 @@ export function resolveSession(
 
   for (const rule of config.rules) {
     if (ruleMatches(rule, meta)) {
-      return sanitizeSessionName(expandTemplate(rule.session, meta));
+      return sanitizeSessionName(expandTemplate(rule.session ?? fallback, meta));
     }
   }
 
@@ -51,10 +62,11 @@ export function resolveSession(
 }
 
 const MATCH_KEYS = new Set(["channel", "sender"]);
+const NON_MATCH_KEYS = new Set(["session", "batch", "destination", "path", "interrupt"]);
 
 function ruleMatches(rule: SessionRule, meta: { channel?: string; sender?: string }): boolean {
   for (const [key, pattern] of Object.entries(rule)) {
-    if (key === "session" || key === "batch") continue;
+    if (NON_MATCH_KEYS.has(key)) continue;
     if (typeof pattern !== "string") return false;
     if (!MATCH_KEYS.has(key)) return false;
     const value = meta[key as keyof typeof meta] ?? "";
@@ -86,6 +98,38 @@ export function resolveBatch(
   }
 
   return undefined;
+}
+
+/**
+ * Resolve the full route for a message: destination type, session/path, interrupt, batch.
+ */
+export function resolveRoute(
+  config: SessionConfig,
+  meta: { channel?: string; sender?: string },
+): ResolvedRoute {
+  const fallback = config.default ?? "main";
+
+  if (!config.rules) {
+    return { session: fallback, destination: "agent", interrupt: true };
+  }
+
+  for (const rule of config.rules) {
+    if (ruleMatches(rule, meta)) {
+      const destination = rule.destination === "file" ? "file" : "agent";
+      return {
+        session:
+          destination === "agent"
+            ? sanitizeSessionName(expandTemplate(rule.session ?? fallback, meta))
+            : "",
+        destination,
+        path: rule.path,
+        interrupt: rule.interrupt ?? destination === "agent",
+        batch: rule.batch,
+      };
+    }
+  }
+
+  return { session: fallback, destination: "agent", interrupt: true };
 }
 
 function sanitizeSessionName(name: string): string {

@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { resolve } from "node:path";
 import { createAgent } from "./agent.js";
+import { createFileHandlerResolver } from "./lib/file-handler.js";
 import { log } from "./lib/logger.js";
+import { createRouter } from "./lib/router.js";
 import {
   handleMergeContext,
   loadConfig,
@@ -44,19 +46,26 @@ const agent = createAgent({
   },
 });
 
+const router = createRouter({
+  configPath: resolve("home/.config/sessions.json"),
+  agentHandler: agent.resolve,
+  fileHandler: createFileHandlerResolver(),
+});
+
 const server = createVoluteServer({
-  agent,
+  router,
   port,
   name: pkg.name,
   version: pkg.version,
-  sessionsConfigPath: resolve("home/.config/sessions.json"),
 });
 
 server.listen(port, () => {
   const addr = server.address();
   const actualPort = typeof addr === "object" && addr ? addr.port : port;
   log("server", `listening on :${actualPort}`);
-  handleMergeContext((content) => agent.sendMessage(content));
+  handleMergeContext((content) =>
+    router.route([{ type: "text", text: content }], { channel: "system" }),
+  );
 });
 
 setupShutdown();

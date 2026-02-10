@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import {
   loadSessionConfig,
   resolveBatch,
+  resolveRoute,
   resolveSession,
   type SessionConfig,
 } from "../templates/_base/src/lib/sessions.js";
@@ -249,5 +250,91 @@ describe("resolveBatch", () => {
       default: "main",
     };
     assert.equal(resolveBatch(config, { channel: "discord:123" }), 5);
+  });
+});
+
+describe("resolveRoute", () => {
+  it("returns agent destination with default session when no config", () => {
+    const route = resolveRoute({}, { channel: "web" });
+    assert.equal(route.destination, "agent");
+    assert.equal(route.session, "main");
+    assert.equal(route.interrupt, true);
+    assert.equal(route.batch, undefined);
+  });
+
+  it("returns agent destination for rules without destination field", () => {
+    const config: SessionConfig = {
+      rules: [{ channel: "discord:*", session: "discord" }],
+      default: "main",
+    };
+    const route = resolveRoute(config, { channel: "discord:123" });
+    assert.equal(route.destination, "agent");
+    assert.equal(route.session, "discord");
+    assert.equal(route.interrupt, true);
+  });
+
+  it("returns file destination when rule specifies it", () => {
+    const config: SessionConfig = {
+      rules: [{ channel: "discord:logs-*", destination: "file", path: "home/inbox/discord.md" }],
+      default: "main",
+    };
+    const route = resolveRoute(config, { channel: "discord:logs-123" });
+    assert.equal(route.destination, "file");
+    assert.equal(route.path, "home/inbox/discord.md");
+    assert.equal(route.interrupt, false);
+  });
+
+  it("respects explicit interrupt setting", () => {
+    const config: SessionConfig = {
+      rules: [{ channel: "system:*", session: "main", interrupt: false }],
+      default: "main",
+    };
+    const route = resolveRoute(config, { channel: "system:scheduler" });
+    assert.equal(route.interrupt, false);
+  });
+
+  it("includes batch from matching rule", () => {
+    const config: SessionConfig = {
+      rules: [{ channel: "discord:*", session: "discord-feed", batch: 15 }],
+      default: "main",
+    };
+    const route = resolveRoute(config, { channel: "discord:123" });
+    assert.equal(route.batch, 15);
+    assert.equal(route.session, "discord-feed");
+  });
+
+  it("falls through to default when no rules match", () => {
+    const config: SessionConfig = {
+      rules: [{ channel: "discord:*", session: "discord" }],
+      default: "fallback",
+    };
+    const route = resolveRoute(config, { channel: "web" });
+    assert.equal(route.destination, "agent");
+    assert.equal(route.session, "fallback");
+    assert.equal(route.interrupt, true);
+  });
+
+  it("file destination rules work with new fields alongside match keys", () => {
+    const config: SessionConfig = {
+      rules: [
+        {
+          channel: "discord:*",
+          sender: "bot-*",
+          destination: "file",
+          path: "home/inbox/bots.md",
+        },
+        { channel: "discord:*", session: "discord" },
+      ],
+      default: "main",
+    };
+    // Bot messages go to file
+    const botRoute = resolveRoute(config, { channel: "discord:123", sender: "bot-webhook" });
+    assert.equal(botRoute.destination, "file");
+    assert.equal(botRoute.path, "home/inbox/bots.md");
+
+    // Human messages go to agent
+    const humanRoute = resolveRoute(config, { channel: "discord:123", sender: "alice" });
+    assert.equal(humanRoute.destination, "agent");
+    assert.equal(humanRoute.session, "discord");
   });
 });

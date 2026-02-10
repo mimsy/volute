@@ -24,10 +24,14 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, "src/lib/format-prefix.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/startup.ts")));
 
+      // Base router + file handler
+      assert.ok(existsSync(resolve(composedDir, "src/lib/router.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/file-handler.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/sessions.ts")));
+
       // Template-specific source
       assert.ok(existsSync(resolve(composedDir, "src/server.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/agent.ts")));
-      assert.ok(existsSync(resolve(composedDir, "src/lib/agent-sessions.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/message-channel.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/hooks/auto-commit.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/hooks/pre-compact.ts")));
