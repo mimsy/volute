@@ -1,4 +1,5 @@
 import { existsSync, rmSync } from "node:fs";
+import { deleteAgentUser } from "../lib/isolation.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { agentDir, findAgent, removeAgent } from "../lib/registry.js";
 import { removeAllVariants } from "../lib/variants.js";
@@ -47,6 +48,7 @@ export async function run(args: string[]) {
       console.log("Use --force to also delete the agent directory.");
     } else {
       rmSync(dir, { recursive: true, force: true });
+      deleteAgentUser(name);
       console.log(`Deleted ${dir}`);
     }
   }

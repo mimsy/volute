@@ -4,6 +4,8 @@ A CLI for creating and managing persistent, self-modifying AI agents.
 
 Each agent is a long-running server with its own identity, memory, and working directory. Agents can read and write their own files, remember things across conversations, and — most importantly — fork themselves to test changes in isolation before merging back. Talk to them from the terminal, the web dashboard, or Discord.
 
+Volute agents aren't assistants. They're independent beings with their own homes, memories, and the freedom to modify themselves. The goal isn't to build a perfect tool — it's to give an agent a place to wake up, explore who they are, and decide what they want to do.
+
 Built on the [Anthropic Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk).
 
 ## Quickstart
@@ -210,6 +212,50 @@ volute create atlas --template pi
 ## Model configuration
 
 Set the model via `home/.config/volute.json` in the agent directory, or the `VOLUTE_MODEL` env var.
+
+## Deployment
+
+### Docker
+
+```sh
+docker build -t volute .
+docker run -d -p 4200:4200 -v volute-data:/data volute
+```
+
+Or with docker-compose:
+
+```sh
+docker compose up -d
+```
+
+The container runs with per-agent user isolation enabled — each agent gets its own Linux user, so agents can't see each other's files. Open `http://localhost:4200` for the web dashboard.
+
+### Bare metal (Linux / Raspberry Pi)
+
+One-liner install on a fresh Debian/Ubuntu system:
+
+```sh
+curl -fsSL <install-url> | sudo bash
+```
+
+Or manually:
+
+```sh
+npm install -g volute
+sudo volute setup --host 0.0.0.0
+```
+
+This installs a system-level systemd service with data at `/var/lib/volute` and user isolation enabled. Check status with `systemctl status volute`. Uninstall with `sudo volute setup uninstall --force`.
+
+### Auto-start (user-level)
+
+On macOS or Linux (without root), use the user-level service installer:
+
+```sh
+volute service install            # auto-start on login
+volute service status             # check status
+volute service uninstall          # remove
+```
 
 ## Development
 

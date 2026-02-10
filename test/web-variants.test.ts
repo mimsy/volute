@@ -3,25 +3,25 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { Hono } from "hono";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
-import { conversations, messages, users } from "../src/lib/schema.js";
+import { conversations, messages, sessions, users } from "../src/lib/schema.js";
 import { readVariants, removeAllVariants } from "../src/lib/variants.js";
-import { authMiddleware, createSession, deleteSession } from "../src/web/middleware/auth.js";
+import { authMiddleware, createSession } from "../src/web/middleware/auth.js";
 
 let sessionId: string;
 const testAgent = `web-variants-test-${Date.now()}`;
 
 async function cleanup() {
   const db = await getDb();
+  await db.delete(sessions);
   await db.delete(messages);
   await db.delete(conversations);
   await db.delete(users);
-  if (sessionId) deleteSession(sessionId);
   removeAllVariants(testAgent);
 }
 
 async function setupAuth() {
   const user = await createUser("variants-admin", "pass");
-  sessionId = createSession(user.id);
+  sessionId = await createSession(user.id);
   return sessionId;
 }
 

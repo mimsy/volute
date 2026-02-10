@@ -15,6 +15,13 @@
       "when": 1770403902722,
       "tag": "0001_careless_warpath",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1770672071268,
+      "tag": "0002_wealthy_the_call",
+      "breakpoints": true
     }
   ]
 }

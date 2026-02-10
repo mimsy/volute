@@ -1,5 +1,7 @@
+import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
-import { agentDir, findAgent } from "./registry.js";
+import { clearJsonMap, loadJsonMap, saveJsonMap } from "./json-state.js";
+import { agentDir, findAgent, voluteHome } from "./registry.js";
 import { readVoluteConfig, type Schedule } from "./volute-config.js";
 
 export class Scheduler {
@@ -9,14 +11,31 @@ export class Scheduler {
   private daemonPort: number | null = null;
   private daemonToken: string | null = null;
 
+  private get statePath(): string {
+    return resolve(voluteHome(), "scheduler-state.json");
+  }
+
   start(daemonPort?: number, daemonToken?: string): void {
     this.daemonPort = daemonPort ?? null;
     this.daemonToken = daemonToken ?? null;
+    this.loadState();
     this.interval = setInterval(() => this.tick(), 60_000);
   }
 
   stop(): void {
     if (this.interval) clearInterval(this.interval);
+  }
+
+  private loadState(): void {
+    this.lastFired = loadJsonMap(this.statePath);
+  }
+
+  saveState(): void {
+    saveJsonMap(this.statePath, this.lastFired);
+  }
+
+  clearState(): void {
+    clearJsonMap(this.statePath, this.lastFired);
   }
 
   loadSchedules(agentName: string): void {
@@ -62,6 +81,7 @@ export class Scheduler {
       const prevMinute = Math.floor(prev.getTime() / 60000);
       if (prevMinute === epochMinute) {
         this.lastFired.set(key, epochMinute);
+        this.saveState();
         return true;
       }
       return false;

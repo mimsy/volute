@@ -1,9 +1,11 @@
-import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { loadMergedEnv } from "./env.js";
-import { agentDir, findAgent, setAgentRunning } from "./registry.js";
+import { applyIsolation } from "./isolation.js";
+import { clearJsonMap, loadJsonMap, saveJsonMap } from "./json-state.js";
+import { agentDir, findAgent, setAgentRunning, voluteHome } from "./registry.js";
 import { findVariant, setVariantRunning, validateBranchName } from "./variants.js";
 
 const execFileAsync = promisify(execFile);
@@ -79,12 +81,16 @@ export class AgentManager {
     const env = { ...parentEnv, ...agentEnv, VOLUTE_AGENT: name };
     const tsxBin = resolve(dir, "node_modules", ".bin", "tsx");
 
-    const child = spawn(tsxBin, ["src/server.ts", "--port", String(port)], {
+    const spawnOpts: SpawnOptions = {
       cwd: dir,
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
       env,
-    });
+    };
+
+    await applyIsolation(spawnOpts, name);
+
+    const child = spawn(tsxBin, ["src/server.ts", "--port", String(port)], spawnOpts);
 
     this.agents.set(name, { child, port });
 
@@ -128,7 +134,7 @@ export class AgentManager {
     }
 
     // Set up crash recovery after successful start
-    this.restartAttempts.delete(name);
+    if (this.restartAttempts.delete(name)) this.saveCrashAttempts();
     this.setupCrashRecovery(name, child, dir, isVariant);
     if (isVariant) {
       setVariantRunning(baseName, variantName!, true);
@@ -155,7 +161,7 @@ export class AgentManager {
       const wasRestart = isVariant ? false : await this.handleRestart(name, dir);
       if (wasRestart) {
         console.error(`[daemon] restarting ${name} immediately after merge`);
-        this.restartAttempts.delete(name);
+        if (this.restartAttempts.delete(name)) this.saveCrashAttempts();
         this.startAgent(name).catch((err) => {
           console.error(`[daemon] failed to restart ${name} after merge:`, err);
         });
@@ -173,6 +179,7 @@ export class AgentManager {
         }
         const delay = Math.min(BASE_RESTART_DELAY * 2 ** attempts, MAX_RESTART_DELAY);
         this.restartAttempts.set(name, attempts + 1);
+        this.saveCrashAttempts();
         console.error(
           `[daemon] crash recovery for ${name} — attempt ${attempts + 1}/${MAX_RESTART_ATTEMPTS}, restarting in ${delay}ms`,
         );
@@ -245,7 +252,7 @@ export class AgentManager {
     });
 
     this.stopping.delete(name);
-    this.restartAttempts.delete(name);
+    if (this.restartAttempts.delete(name)) this.saveCrashAttempts();
 
     const [baseName, variantName] = name.split("@", 2);
     if (variantName) {
@@ -275,6 +282,22 @@ export class AgentManager {
   getRunningAgents(): string[] {
     return [...this.agents.keys()];
   }
+
+  private get crashAttemptsPath(): string {
+    return resolve(voluteHome(), "crash-attempts.json");
+  }
+
+  loadCrashAttempts(): void {
+    this.restartAttempts = loadJsonMap(this.crashAttemptsPath);
+  }
+
+  private saveCrashAttempts(): void {
+    saveJsonMap(this.crashAttemptsPath, this.restartAttempts);
+  }
+
+  clearCrashAttempts(): void {
+    clearJsonMap(this.crashAttemptsPath, this.restartAttempts);
+  }
 }
 
 async function killProcessOnPort(port: number): Promise<void> {
@@ -299,7 +322,9 @@ async function killProcessOnPort(port: number): Promise<void> {
         process.kill(pid, "SIGTERM");
       } catch {}
     }
-  } catch {}
+  } catch {
+    // lsof may fail if no process on port — expected
+  }
 }
 
 let instance: AgentManager | null = null;
