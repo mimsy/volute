@@ -40,7 +40,7 @@ const daemonToken = process.env.VOLUTE_DAEMON_TOKEN;
 
 const baseUrl = daemonUrl
   ? `${daemonUrl}/api/agents/${encodeURIComponent(agentName)}`
-  : `http://localhost:${agentPort}`;
+  : `http://127.0.0.1:${agentPort}`;
 
 const client = new Client({
   intents: [
@@ -62,7 +62,7 @@ process.on("SIGTERM", shutdown);
 
 client.once(Events.ClientReady, (c) => {
   console.log(`Connected to Discord as ${c.user.tag}`);
-  console.log(`Bridging to agent: ${agentName} (port ${agentPort})`);
+  console.log(`Bridging to agent: ${agentName} via ${baseUrl}/message`);
 });
 
 client.on(Events.MessageCreate, async (message) => {
@@ -257,6 +257,8 @@ async function handleAgentRequest(message: Message, content: ContentPart[]) {
     });
 
     if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error(`Agent returned ${res.status}: ${body}`);
       await message.reply(`Error: agent returned ${res.status}`);
       clearInterval(typingInterval);
       return;
@@ -285,6 +287,7 @@ async function handleAgentRequest(message: Message, content: ContentPart[]) {
 
     await flush();
   } catch (err) {
+    console.error(`Failed to reach agent at ${baseUrl}/message:`, err);
     const errMsg =
       err instanceof TypeError && (err as any).cause?.code === "ECONNREFUSED"
         ? "Agent is not running"

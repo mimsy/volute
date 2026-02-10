@@ -14,7 +14,7 @@ export async function verify(port: number): Promise<boolean> {
 
   // Send test message
   try {
-    const res = await fetch(`http://localhost:${port}/message`, {
+    const res = await fetch(`http://127.0.0.1:${port}/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
