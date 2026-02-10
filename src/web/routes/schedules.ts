@@ -88,7 +88,7 @@ const app = new Hono<AuthEnv>()
     const message = `[webhook: ${event}] ${body}`;
 
     try {
-      const res = await fetch(`http://localhost:${entry.port}/message`, {
+      const res = await fetch(`http://127.0.0.1:${entry.port}/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

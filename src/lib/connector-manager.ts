@@ -127,7 +127,7 @@ export class ConnectorManager {
         VOLUTE_AGENT_NAME: agentName,
         ...(daemonPort
           ? {
-              VOLUTE_DAEMON_URL: `http://localhost:${daemonPort}`,
+              VOLUTE_DAEMON_URL: `http://127.0.0.1:${daemonPort}`,
               VOLUTE_DAEMON_TOKEN: process.env.VOLUTE_DAEMON_TOKEN,
             }
           : {}),
