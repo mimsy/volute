@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 
 export type SessionRule = {
   session: string;
-  [key: string]: string; // all other keys are match criteria
+  batch?: number; // minutes — buffer messages, flush on timer
+  channel?: string;
+  sender?: string;
 };
 
 export type SessionConfig = {
@@ -52,7 +54,8 @@ const MATCH_KEYS = new Set(["channel", "sender"]);
 
 function ruleMatches(rule: SessionRule, meta: { channel?: string; sender?: string }): boolean {
   for (const [key, pattern] of Object.entries(rule)) {
-    if (key === "session") continue;
+    if (key === "session" || key === "batch") continue;
+    if (typeof pattern !== "string") return false;
     if (!MATCH_KEYS.has(key)) return false;
     const value = meta[key as keyof typeof meta] ?? "";
     if (!globMatch(pattern, value)) return false;
@@ -64,6 +67,25 @@ function expandTemplate(template: string, meta: { channel?: string; sender?: str
   return template
     .replace(/\$\{sender\}/g, meta.sender ?? "unknown")
     .replace(/\$\{channel\}/g, meta.channel ?? "unknown");
+}
+
+/**
+ * Resolve the batch interval (in minutes) for a message based on the config.
+ * Returns undefined if no matching rule has a batch value.
+ */
+export function resolveBatch(
+  config: SessionConfig,
+  meta: { channel?: string; sender?: string },
+): number | undefined {
+  if (!config.rules) return undefined;
+
+  for (const rule of config.rules) {
+    if (ruleMatches(rule, meta)) {
+      return rule.batch;
+    }
+  }
+
+  return undefined;
 }
 
 function sanitizeSessionName(name: string): string {

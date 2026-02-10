@@ -8,10 +8,15 @@ export type Schedule = {
   enabled: boolean;
 };
 
+export type DiscordConfig = {
+  channels?: string[];
+};
+
 export type VoluteConfig = {
   model?: string;
   connectors?: string[];
   schedules?: Schedule[];
+  discord?: DiscordConfig;
 };
 
 function readJson(path: string): VoluteConfig | null {

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import {
   loadSessionConfig,
+  resolveBatch,
   resolveSession,
   type SessionConfig,
 } from "../templates/_base/src/lib/sessions.js";
@@ -168,10 +169,10 @@ describe("resolveSession", () => {
   });
 
   it("ignores unknown rule keys (no match)", () => {
-    const config: SessionConfig = {
+    const config = {
       rules: [{ chanel: "web", session: "typo-rule" }],
       default: "main",
-    };
+    } as unknown as SessionConfig;
     // Unknown key "chanel" causes rule to not match
     assert.equal(resolveSession(config, { channel: "web", sender: "alice" }), "main");
   });
@@ -207,5 +208,46 @@ describe("resolveSession", () => {
     const result = resolveSession(config, { channel: "web", sender: "..\\..\\etc\\passwd" });
     assert.ok(!result.includes("\\"), `session name should not contain \\: ${result}`);
     assert.ok(!result.includes(".."), `session name should not contain ..: ${result}`);
+  });
+});
+
+describe("resolveBatch", () => {
+  it("returns batch minutes for matching rule", () => {
+    const config: SessionConfig = {
+      rules: [{ channel: "discord:*", session: "discord-feed", batch: 15 }],
+      default: "main",
+    };
+    assert.equal(resolveBatch(config, { channel: "discord:123" }), 15);
+  });
+
+  it("returns undefined for matching rule without batch", () => {
+    const config: SessionConfig = {
+      rules: [{ channel: "discord:*", session: "discord" }],
+      default: "main",
+    };
+    assert.equal(resolveBatch(config, { channel: "discord:123" }), undefined);
+  });
+
+  it("returns undefined when no rules match", () => {
+    const config: SessionConfig = {
+      rules: [{ channel: "discord:*", session: "discord-feed", batch: 15 }],
+      default: "main",
+    };
+    assert.equal(resolveBatch(config, { channel: "web" }), undefined);
+  });
+
+  it("returns undefined when config has no rules", () => {
+    assert.equal(resolveBatch({}, { channel: "discord:123" }), undefined);
+  });
+
+  it("first matching rule wins for batch", () => {
+    const config: SessionConfig = {
+      rules: [
+        { channel: "discord:*", session: "discord-fast", batch: 5 },
+        { channel: "discord:*", session: "discord-slow", batch: 30 },
+      ],
+      default: "main",
+    };
+    assert.equal(resolveBatch(config, { channel: "discord:123" }), 5);
   });
 });

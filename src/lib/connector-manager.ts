@@ -125,6 +125,7 @@ export class ConnectorManager {
         ...process.env,
         VOLUTE_AGENT_PORT: String(agentPort),
         VOLUTE_AGENT_NAME: agentName,
+        VOLUTE_AGENT_DIR: agentDir,
         ...(daemonPort
           ? {
               VOLUTE_DAEMON_URL: `http://127.0.0.1:${daemonPort}`,

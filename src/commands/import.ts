@@ -260,12 +260,18 @@ export function importPiSession(sessionFile: string, agentDirPath: string) {
   console.log(`Imported session (${lines.length} entries)`);
 }
 
+type OpenClawDiscordConfig = {
+  enabled?: boolean;
+  token?: string;
+  guilds?: Record<string, { channels?: Record<string, { allow?: boolean }> }>;
+};
+
 /** Import connector config from ~/.openclaw/openclaw.json into the new agent. */
 export function importOpenClawConnectors(agentDirPath: string) {
   const configPath = resolve(homedir(), ".openclaw/openclaw.json");
   if (!existsSync(configPath)) return;
 
-  let config: { channels?: Record<string, { enabled?: boolean; token?: string }> };
+  let config: { channels?: Record<string, OpenClawDiscordConfig> };
   try {
     config = JSON.parse(readFileSync(configPath, "utf-8"));
   } catch (err) {
@@ -282,14 +288,31 @@ export function importOpenClawConnectors(agentDirPath: string) {
   env.DISCORD_TOKEN = discord.token;
   writeEnv(envPath, env);
 
+  // Extract followed channel names from guilds config
+  const channelNames = new Set<string>();
+  if (discord.guilds) {
+    for (const guild of Object.values(discord.guilds)) {
+      if (!guild.channels) continue;
+      for (const [name, ch] of Object.entries(guild.channels)) {
+        if (ch.allow) channelNames.add(name);
+      }
+    }
+  }
+
   // Enable discord connector in volute.json
   const voluteConfig = readVoluteConfig(agentDirPath) ?? {};
   const connectors = new Set(voluteConfig.connectors ?? []);
   connectors.add("discord");
   voluteConfig.connectors = [...connectors];
+  if (channelNames.size > 0) {
+    voluteConfig.discord = { channels: [...channelNames] };
+  }
   writeVoluteConfig(agentDirPath, voluteConfig);
 
   console.log("Imported Discord connector config");
+  if (channelNames.size > 0) {
+    console.log(`Imported followed channels: ${[...channelNames].join(", ")}`);
+  }
 }
 
 export function parseNameFromIdentity(identity: string): string | undefined {
