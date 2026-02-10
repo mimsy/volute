@@ -34,14 +34,19 @@ export async function run(args: string[]) {
     case "delete":
       await deleteVariant(args.slice(1));
       break;
+    case "--help":
+    case "-h":
+    case undefined:
+      printUsage();
+      break;
     default:
       printUsage();
-      process.exit(subcommand ? 1 : 0);
+      process.exit(1);
   }
 }
 
 function printUsage() {
-  console.error(`Usage:
+  console.log(`Usage:
   volute variant create <variant> [--agent <name>] [--soul "..."] [--port N] [--no-start] [--json]
   volute variant list [--agent <name>] [--json]
   volute variant merge <variant> [--agent <name>] [--summary "..." --memory "..."] [--skip-verify]

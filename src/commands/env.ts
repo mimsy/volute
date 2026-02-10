@@ -153,11 +153,14 @@ export async function run(args: string[]) {
       break;
     }
 
+    case "--help":
+    case "-h":
+    case undefined:
+      console.log(`Usage: volute env <set|get|list|remove> [--agent <name>]`);
+      break;
     default:
       console.error(`Usage: volute env <set|get|list|remove> [--agent <name>]`);
-      if (subcommand) {
-        console.error(`\nUnknown subcommand: ${subcommand}`);
-      }
+      console.error(`\nUnknown subcommand: ${subcommand}`);
       process.exit(1);
   }
 }

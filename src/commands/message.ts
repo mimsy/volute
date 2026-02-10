@@ -8,14 +8,19 @@ export async function run(args: string[]) {
     case "history":
       await import("./history.js").then((m) => m.run(args.slice(1)));
       break;
+    case "--help":
+    case "-h":
+    case undefined:
+      printUsage();
+      break;
     default:
       printUsage();
-      process.exit(subcommand ? 1 : 0);
+      process.exit(1);
   }
 }
 
 function printUsage() {
-  console.error(`Usage:
+  console.log(`Usage:
   volute message send <name> "<msg>"
   volute message history [--agent <name>] [--channel <ch>] [--limit N]`);
 }

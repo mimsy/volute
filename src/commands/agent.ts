@@ -33,9 +33,14 @@ export async function run(args: string[]) {
     case "import":
       await import("./import.js").then((m) => m.run(args.slice(1)));
       break;
+    case "--help":
+    case "-h":
+    case undefined:
+      printUsage();
+      break;
     default:
       printUsage();
-      process.exit(subcommand ? 1 : 0);
+      process.exit(1);
   }
 }
 
@@ -48,7 +53,7 @@ function transformAgentFlag(args: string[]): string[] {
 }
 
 function printUsage() {
-  console.error(`Usage:
+  console.log(`Usage:
   volute agent create <name> [--template <name>]
   volute agent start <name>
   volute agent stop <name>

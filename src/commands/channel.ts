@@ -10,6 +10,13 @@ export async function run(args: string[]) {
     limit: { type: "number" },
   });
 
+  if (args.includes("--help") || args.includes("-h") || args.length === 0) {
+    console.log(`Usage:
+  volute channel read <channel-uri> [--limit N] [--agent <name>]
+  volute channel send <channel-uri> "<message>" [--agent <name>]`);
+    process.exit(0);
+  }
+
   const subcommand = positional[0];
   const uri = positional[1];
   const message = positional[2];
