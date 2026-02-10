@@ -43,15 +43,9 @@ switch (command) {
   case "service":
     await import("./commands/service.js").then((m) => m.run(args));
     break;
-  case "update": {
-    const { default: pkg } = await import("../package.json", {
-      with: { type: "json" },
-    });
-    console.log(`volute v${pkg.version}`);
-    console.log("Self-update is not yet implemented. Use npm to update:");
-    console.log("  npm update -g volute");
+  case "update":
+    await import("./commands/update.js").then((m) => m.run(args));
     break;
-  }
   case "--help":
   case "-h":
   case undefined:
@@ -109,4 +103,17 @@ use --agent <name> or VOLUTE_AGENT env var to identify the agent.`);
   default:
     console.error(`Unknown command: ${command}\nRun 'volute --help' for usage.`);
     process.exit(1);
+}
+
+// Non-blocking update check (prints to stderr so it doesn't interfere with piped output)
+if (command !== "update") {
+  import("./lib/update-check.js")
+    .then((m) => m.checkForUpdate())
+    .then((result) => {
+      if (result.updateAvailable) {
+        console.error(`\n  Update available: ${result.current} → ${result.latest}`);
+        console.error("  Run `volute update` to update\n");
+      }
+    })
+    .catch(() => {});
 }
