@@ -104,6 +104,9 @@ export class Scheduler {
       sender: schedule.id,
     });
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120_000);
+
     try {
       let res: Response;
       if (this.daemonPort && this.daemonToken) {
@@ -117,6 +120,7 @@ export class Scheduler {
             Origin: daemonUrl,
           },
           body,
+          signal: controller.signal,
         });
       } else {
         // Fallback to direct agent fetch
@@ -124,6 +128,7 @@ export class Scheduler {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body,
+          signal: controller.signal,
         });
       }
       if (!res.ok) {
@@ -131,8 +136,17 @@ export class Scheduler {
       } else {
         console.error(`[scheduler] fired "${schedule.id}" for ${agentName}`);
       }
+      // Cancel the streaming body to free the connection — the message
+      // was already delivered to the agent when response headers arrived
+      try {
+        await res.body?.cancel();
+      } catch {
+        // Body already closed or stream errored — safe to ignore
+      }
     } catch (err) {
       console.error(`[scheduler] failed to fire "${schedule.id}" for ${agentName}:`, err);
+    } finally {
+      clearTimeout(timeout);
     }
   }
 }
