@@ -31,6 +31,9 @@ export async function run(args: string[]) {
     case "merge":
       await mergeVariant(args.slice(1));
       break;
+    case "delete":
+      await deleteVariant(args.slice(1));
+      break;
     default:
       printUsage();
       process.exit(subcommand ? 1 : 0);
@@ -41,7 +44,8 @@ function printUsage() {
   console.error(`Usage:
   volute variant create <variant> [--agent <name>] [--soul "..."] [--port N] [--no-start] [--json]
   volute variant list [--agent <name>] [--json]
-  volute variant merge <variant> [--agent <name>] [--summary "..." --memory "..."] [--skip-verify]`);
+  volute variant merge <variant> [--agent <name>] [--summary "..." --memory "..."] [--skip-verify]
+  volute variant delete <variant> [--agent <name>]`);
 }
 
 async function createVariant(args: string[]) {
@@ -368,4 +372,55 @@ async function mergeVariant(args: string[]) {
   } catch {
     console.log(`Daemon not running. Start the agent manually: volute start ${agentName}`);
   }
+}
+
+async function deleteVariant(args: string[]) {
+  const { positional, flags } = parseArgs(args, {
+    agent: { type: "string" },
+  });
+
+  const agentName = resolveAgentName(flags);
+  const variantName = positional[0];
+  if (!variantName) {
+    console.error("Usage: volute variant delete <variant> [--agent <name>]");
+    process.exit(1);
+  }
+
+  const { dir: projectRoot } = resolveAgent(agentName);
+  const variant = findVariant(agentName, variantName);
+
+  if (!variant) {
+    console.error(`Unknown variant: ${variantName}`);
+    process.exit(1);
+  }
+
+  // Stop the variant via daemon if running
+  try {
+    await daemonFetch(`/api/agents/${encodeURIComponent(`${agentName}@${variantName}`)}/stop`, {
+      method: "POST",
+    });
+  } catch {
+    // Daemon not running or variant not running — that's fine
+  }
+
+  // Remove the git worktree
+  if (existsSync(variant.path)) {
+    try {
+      await exec("git", ["worktree", "remove", "--force", variant.path], { cwd: projectRoot });
+    } catch {
+      // Best effort
+    }
+  }
+
+  // Delete the git branch
+  try {
+    await exec("git", ["branch", "-D", variant.branch], { cwd: projectRoot });
+  } catch {
+    // Best effort
+  }
+
+  // Remove from variants.json
+  removeVariant(agentName, variantName);
+
+  console.log(`Variant ${variantName} deleted.`);
 }
