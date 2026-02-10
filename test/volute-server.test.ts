@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { request as httpRequest } from "node:http";
 import type { AddressInfo, Server } from "node:net";
 import { after, before, describe, it } from "node:test";
-import { createVoluteServer, type VoluteAgent } from "../templates/_base/src/lib/volute-server.js";
+import type { Router } from "../templates/_base/src/lib/router.js";
+import type { Listener } from "../templates/_base/src/lib/types.js";
+import { createVoluteServer } from "../templates/_base/src/lib/volute-server.js";
 
 // --- HTTP contract tests ---
 
@@ -15,25 +17,23 @@ describe("volute server HTTP contract", () => {
   let server: Server;
   const calls: { content: unknown; channel?: string; sender?: string }[] = [];
 
-  let lastMessageId: string | undefined;
-  const mockAgent: VoluteAgent = {
-    sendMessage(content, meta) {
+  const mockRouter: Router = {
+    route(content, meta, listener) {
       calls.push({ content, channel: meta?.channel, sender: meta?.sender });
-      lastMessageId = meta?.messageId;
-    },
-    onMessage(listener) {
-      // Emit canned response asynchronously, tagged with the messageId
+      const messageId = `msg-${Date.now()}`;
+      // Emit canned response asynchronously
       setTimeout(() => {
-        listener({ type: "text", content: "hello", messageId: lastMessageId });
-        listener({ type: "done", messageId: lastMessageId });
+        listener?.({ type: "text", content: "hello", messageId });
+        listener?.({ type: "done", messageId });
       }, 10);
-      return () => {};
+      return { messageId, unsubscribe: () => {} };
     },
+    close() {},
   };
 
   before(() => {
     server = createVoluteServer({
-      agent: mockAgent,
+      router: mockRouter,
       port: 0,
       name: "test-agent",
       version: "1.2.3",
@@ -104,39 +104,39 @@ describe("volute server HTTP contract", () => {
 });
 
 describe("volute server mid-turn interrupt", () => {
-  it("first message gets done when second interactive message arrives", async () => {
-    const listeners = new Set<
-      (event: { type: string; messageId?: string; [k: string]: unknown }) => void
-    >();
+  it("first message gets done when second message arrives", async () => {
+    let currentListener: Listener | undefined;
     let currentMessageId: string | undefined;
 
-    const interruptAgent: VoluteAgent = {
-      sendMessage(_content, meta) {
-        // Simulate interrupt: if mid-turn and interactive, emit done for previous message
-        if (currentMessageId !== undefined) {
-          for (const l of listeners) {
-            l({ type: "done", messageId: currentMessageId });
-          }
+    const interruptRouter: Router = {
+      route(content, meta, listener) {
+        const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+        // If mid-turn, emit done for previous message
+        if (currentListener && currentMessageId) {
+          currentListener({ type: "done", messageId: currentMessageId });
         }
-        currentMessageId = meta?.messageId;
+
+        currentListener = listener;
+        currentMessageId = messageId;
+
         // Emit response after a delay (simulates agent processing)
         setTimeout(() => {
-          const mid = currentMessageId;
-          for (const l of listeners) {
-            l({ type: "text", content: "response", messageId: mid });
-            l({ type: "done", messageId: mid });
+          if (currentMessageId === messageId) {
+            listener?.({ type: "text", content: "response", messageId });
+            listener?.({ type: "done", messageId });
+            currentListener = undefined;
+            currentMessageId = undefined;
           }
-          currentMessageId = undefined;
         }, 200);
+
+        return { messageId, unsubscribe: () => {} };
       },
-      onMessage(listener) {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
+      close() {},
     };
 
     const srv = createVoluteServer({
-      agent: interruptAgent,
+      router: interruptRouter,
       port: 0,
       name: "interrupt-agent",
       version: "0.0.1",
@@ -180,21 +180,24 @@ describe("volute server mid-turn interrupt", () => {
 });
 
 describe("volute server client disconnect", () => {
-  it("cleans up listener when client aborts", async () => {
-    let listenerRemoved = false;
+  it("cleans up when client aborts", async () => {
+    let unsubscribeCalled = false;
 
-    const slowAgent: VoluteAgent = {
-      sendMessage() {},
-      onMessage(_listener) {
+    const slowRouter: Router = {
+      route(_content, _meta, _listener) {
         // Never emit done — simulates a long-running request
-        return () => {
-          listenerRemoved = true;
+        return {
+          messageId: "msg-slow",
+          unsubscribe: () => {
+            unsubscribeCalled = true;
+          },
         };
       },
+      close() {},
     };
 
     const srv = createVoluteServer({
-      agent: slowAgent,
+      router: slowRouter,
       port: 0,
       name: "slow-agent",
       version: "0.0.1",
@@ -221,7 +224,7 @@ describe("volute server client disconnect", () => {
     req.on("error", () => {}); // Ignore client-side errors from destroy
     req.end(body);
 
-    // Wait for the request to reach the server and listener to be registered
+    // Wait for the request to reach the server
     await new Promise((r) => setTimeout(r, 100));
 
     // Destroy the connection from the client side
@@ -230,7 +233,7 @@ describe("volute server client disconnect", () => {
     // Give time for the close event to propagate to the server
     await new Promise((r) => setTimeout(r, 100));
 
-    assert.ok(listenerRemoved, "Expected listener to be removed after client disconnect");
+    assert.ok(unsubscribeCalled, "Expected unsubscribe to be called after client disconnect");
 
     await new Promise<void>((resolve) => {
       srv.close(() => resolve());

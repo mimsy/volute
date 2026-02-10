@@ -273,7 +273,16 @@ describe("import: importOpenClawConnectors", () => {
   function importOpenClawConnectors(agentDirPath: string, configPath: string) {
     if (!existsSync(configPath)) return;
 
-    let config: { channels?: Record<string, { enabled?: boolean; token?: string }> };
+    let config: {
+      channels?: Record<
+        string,
+        {
+          enabled?: boolean;
+          token?: string;
+          guilds?: Record<string, { channels?: Record<string, { allow?: boolean }> }>;
+        }
+      >;
+    };
     try {
       config = JSON.parse(readFileSync(configPath, "utf-8"));
     } catch {
@@ -295,9 +304,24 @@ describe("import: importOpenClawConnectors", () => {
     mkdirSync(dirname(envPath), { recursive: true });
     writeFileSync(envPath, JSON.stringify(env, null, 2));
 
+    // Extract followed channel names from guilds config
+    const channelNames = new Set<string>();
+    if (discord.guilds) {
+      for (const guild of Object.values(discord.guilds)) {
+        if (!guild.channels) continue;
+        for (const [name, ch] of Object.entries(guild.channels)) {
+          if (ch.allow) channelNames.add(name);
+        }
+      }
+    }
+
     // Enable discord connector in volute.json
     const voluteConfigPath = resolve(agentDirPath, "home/.config/volute.json");
-    let voluteConfig: { model?: string; connectors?: string[] } = {};
+    let voluteConfig: {
+      model?: string;
+      connectors?: string[];
+      discord?: { channels?: string[] };
+    } = {};
     if (existsSync(voluteConfigPath)) {
       try {
         voluteConfig = JSON.parse(readFileSync(voluteConfigPath, "utf-8"));
@@ -306,6 +330,9 @@ describe("import: importOpenClawConnectors", () => {
     const connectors = new Set(voluteConfig.connectors ?? []);
     connectors.add("discord");
     voluteConfig.connectors = [...connectors];
+    if (channelNames.size > 0) {
+      voluteConfig.discord = { channels: [...channelNames] };
+    }
     writeFileSync(voluteConfigPath, JSON.stringify(voluteConfig, null, 2));
   }
 
@@ -379,5 +406,92 @@ describe("import: importOpenClawConnectors", () => {
     const env = JSON.parse(readFileSync(envPath, "utf-8"));
     assert.equal(env.EXISTING_VAR, "keep-me");
     assert.equal(env.DISCORD_TOKEN, "new-token");
+  });
+
+  it("imports followed channel names from guilds config", () => {
+    const configPath = resolve(scratchDir, "openclaw.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        channels: {
+          discord: {
+            enabled: true,
+            token: "test-token",
+            guilds: {
+              "*": {
+                channels: {
+                  general: { allow: true },
+                  random: { allow: true },
+                  announcements: { allow: false },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    importOpenClawConnectors(scratchDir, configPath);
+
+    const config = JSON.parse(
+      readFileSync(resolve(scratchDir, "home/.config/volute.json"), "utf-8"),
+    );
+    assert.deepEqual(config.connectors, ["discord"]);
+    assert.ok(config.discord?.channels);
+    assert.equal(config.discord.channels.length, 2);
+    assert.ok(config.discord.channels.includes("general"));
+    assert.ok(config.discord.channels.includes("random"));
+    assert.ok(!config.discord.channels.includes("announcements"));
+  });
+
+  it("imports channels from multiple guilds", () => {
+    const configPath = resolve(scratchDir, "openclaw.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        channels: {
+          discord: {
+            enabled: true,
+            token: "test-token",
+            guilds: {
+              guild1: { channels: { general: { allow: true } } },
+              guild2: { channels: { dev: { allow: true } } },
+            },
+          },
+        },
+      }),
+    );
+
+    importOpenClawConnectors(scratchDir, configPath);
+
+    const config = JSON.parse(
+      readFileSync(resolve(scratchDir, "home/.config/volute.json"), "utf-8"),
+    );
+    assert.ok(config.discord?.channels.includes("general"));
+    assert.ok(config.discord?.channels.includes("dev"));
+  });
+
+  it("does not set discord config when no channels are allowed", () => {
+    const configPath = resolve(scratchDir, "openclaw.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        channels: {
+          discord: {
+            enabled: true,
+            token: "test-token",
+            guilds: { "*": { channels: { general: { allow: false } } } },
+          },
+        },
+      }),
+    );
+
+    importOpenClawConnectors(scratchDir, configPath);
+
+    const config = JSON.parse(
+      readFileSync(resolve(scratchDir, "home/.config/volute.json"), "utf-8"),
+    );
+    assert.deepEqual(config.connectors, ["discord"]);
+    assert.equal(config.discord, undefined);
   });
 });

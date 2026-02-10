@@ -36,18 +36,20 @@ Each agent project (created from the template) has:
 ```
 <agent>/
 ├── src/
-│   ├── server.ts              # HTTP server with /health and POST /message (ndjson streaming)
-│   ├── agent.ts               # Agent customization surface (hooks, message formatting)
+│   ├── server.ts              # Wires agent + router + file handler + HTTP server
+│   ├── agent.ts               # Core agent handler: session management, SDK integration, HandlerResolver
 │   ├── consolidate.ts         # Memory consolidation script
 │   └── lib/
-│       ├── agent-sessions.ts  # Session lifecycle framework (extracted from agent.ts)
-│       ├── auto-commit.ts     # Auto-commits file changes in home/ via SDK hooks
+│       ├── router.ts          # Message router: route resolution, prefix formatting, batch buffering
+│       ├── volute-server.ts   # Thin HTTP layer (~85 lines): /health, POST /message → ndjson
+│       ├── file-handler.ts    # File destination handler: appends messages to files
+│       ├── routing.ts         # Message routing: config loader, glob matcher, route resolution
+│       ├── types.ts           # ChannelMeta, HandlerMeta, MessageHandler, HandlerResolver, VoluteEvent
 │       ├── format-prefix.ts   # Shared message formatting (channel/sender/time prefix)
 │       ├── startup.ts         # Shared server.ts boilerplate (parseArgs, loadConfig, etc.)
-│       ├── sessions.ts        # Session routing config loader and matcher
+│       ├── auto-commit.ts     # Auto-commits file changes in home/ via SDK hooks
 │       ├── logger.ts          # Logging utilities
-│       ├── message-channel.ts # Async iterable for agent communication
-│       └── types.ts           # VoluteRequest, VoluteContentPart, Listener types
+│       ├── message-channel.ts # Async iterable for agent communication (agent-sdk template)
 ├── home/                      # Agent working directory (cwd for the SDK)
 │   ├── SOUL.md                # System prompt / personality
 │   ├── MEMORY.md              # Long-term memory (included in system prompt)
@@ -134,13 +136,14 @@ Agent commands (`variant`, `connector`, `schedule`, `logs`, `history`, `channel`
 | `parse-args.ts` | Type-safe argument parser with positional args and typed flags |
 | `exec.ts` | Async wrappers around `execFile` (returns stdout) and `spawn` (inherits stdio) |
 | `env.ts` | Environment variables (shared `~/.volute/env.json` + agent-specific `.volute/env.json`) |
+| `format-tool.ts` | Shared tool call summarization (`[toolName primaryArg]` format) |
 | `ndjson.ts` | NDJSON stream reader, yields `VoluteEvent` objects |
 | `schema.ts` | Drizzle ORM schema (users, conversations, messages, agent_messages) |
 | `db.ts` | libSQL database singleton at `~/.volute/volute.db` (WAL mode, foreign keys) |
 | `auth.ts` | bcrypt password hashing, first user auto-admin, pending approval flow |
 | `conversations.ts` | Conversation and message CRUD |
-| `channels.ts` | Channel config (web, discord, cli, system), display names and tool call visibility |
-| `channels/discord.ts` | Discord API client (read/send messages, used by `channel` command) |
+| `channels.ts` | ChannelProvider registry with optional drivers (read/send), display names, tool call visibility |
+| `channels/discord.ts` | Discord channel driver (read/send via REST API, env-based token) |
 | `convert-session.ts` | Converts OpenClaw `session.jsonl` to Claude Agent SDK format |
 | `resolve-agent-name.ts` | Resolves agent name from `--agent` flag or `VOLUTE_AGENT` env var |
 | `isolation.ts` | Per-agent Linux user isolation (`VOLUTE_ISOLATION=user`), user/group management, chown |
@@ -185,14 +188,16 @@ Agent commands (`variant`, `connector`, `schedule`, `logs`, `history`, `channel`
 - `resolveAgent()` supports `name@variant` syntax for addressing variants
 - AgentManager spawns agent servers as child processes with crash recovery (3s delay) and merge-restart
 - Connector resolution: agent-specific → user-shared (`~/.volute/connectors/`) → built-in (`connectors/`)
-- Agent servers use HTTP with ndjson streaming (`/health`, `POST /message` → ndjson response)
+- Agent message flow: `volute-server` (HTTP) → `Router` (routing/formatting/batching) → `MessageHandler` (agent or file destination)
+- `MessageHandler` interface: `handle(content, meta, listener) => unsubscribe`; `HandlerResolver`: `(key: string) => MessageHandler`
+- Session routing via `sessions.json` rules with glob matching, template expansion (`${sender}`, `${channel}`), and file/agent destinations
 - Variants use git worktrees with detached server processes; metadata in `<agentDir>/.volute/variants.json`
 - All child process execution must be async (never `execFileSync`) to avoid blocking the event loop
 - Arg parsing via `src/lib/parse-args.ts` — type-safe with positional args and typed flags
 - Agent system prompt built from: SOUL.md + VOLUTE.md + MEMORY.md
 - Model configurable via `VOLUTE_MODEL` env var
 - Auto-commit hooks track file changes in agent `home/` directory
-- Centralized message persistence in `agent_messages` table via daemon routes
+- Centralized message persistence in `agent_messages` table via daemon routes (text + tool call summaries)
 - Optional per-agent Linux user isolation via `VOLUTE_ISOLATION=user` env var — agents spawn as separate system users
 
 ## Deployment
@@ -233,3 +238,12 @@ npm test                 # run tests
 The CLI is installed globally via `npm link` (requires `npm run build` first) or run in dev mode via `tsx src/cli.ts`.
 
 Tests run with `node --import tsx --test test/*.test.ts`.
+
+## Commits and releases
+
+We use [Conventional Commits](https://www.conventionalcommits.org/) and squash-merge PRs. Release-please reads the squash commit message (which comes from the PR title) to determine version bumps and changelog entries.
+
+- **PR titles must be conventional commits** — e.g. `feat: add message routing`, `fix: handle empty batch`. A CI check enforces this.
+- **Branch commits** don't need to follow the convention (they get squashed), but it's good practice.
+- `feat:` → minor version bump, `fix:` → patch. `feat!:` or `fix!:` (with `!`) → major.
+- Other prefixes (`docs:`, `chore:`, `refactor:`, `test:`, `ci:`, `perf:`) don't trigger a release.

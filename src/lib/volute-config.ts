@@ -12,6 +12,7 @@ export type VoluteConfig = {
   model?: string;
   connectors?: string[];
   schedules?: Schedule[];
+  [key: string]: unknown;
 };
 
 function readJson(path: string): VoluteConfig | null {

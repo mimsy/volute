@@ -228,7 +228,7 @@ function ConnectionsTab({ agent }: { agent: Agent }) {
               alignItems: "center",
               justifyContent: "center",
               fontSize: 18,
-              color: channel.name === "discord" ? "#5865F2" : "var(--accent)",
+              color: "var(--accent)",
               flexShrink: 0,
             }}
           >

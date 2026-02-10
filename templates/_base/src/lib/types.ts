@@ -10,7 +10,12 @@ export type ChannelMeta = {
   channelName?: string;
   guildName?: string;
   sessionName?: string;
-  messageId?: string;
+};
+
+/** ChannelMeta enriched by the router with dispatch info. */
+export type HandlerMeta = ChannelMeta & {
+  messageId: string;
+  interrupt?: boolean;
 };
 
 export type VoluteRequest = {
@@ -28,4 +33,10 @@ export type VoluteEvent = { messageId?: string } & (
 
 export type Listener = (event: VoluteEvent) => void;
 
-export const INTERACTIVE_CHANNELS = new Set(["web", "cli", "discord"]);
+/** A handler that processes a single routed message and streams events to a listener. */
+export type MessageHandler = {
+  handle(content: VoluteContentPart[], meta: HandlerMeta, listener: Listener): () => void; // returns unsubscribe
+};
+
+/** Resolves a key (session name, file path, etc.) to a MessageHandler. */
+export type HandlerResolver = (key: string) => MessageHandler;

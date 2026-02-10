@@ -1,5 +1,8 @@
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   AttachmentBuilder,
+  ChannelType,
   Client,
   Events,
   GatewayIntentBits,
@@ -34,9 +37,27 @@ if (!token) {
   process.exit(1);
 }
 
+const agentDir = process.env.VOLUTE_AGENT_DIR;
 const guildId = process.env.DISCORD_GUILD_ID;
 const daemonUrl = process.env.VOLUTE_DAEMON_URL;
 const daemonToken = process.env.VOLUTE_DAEMON_TOKEN;
+
+// Load followed channels from agent config
+let followedChannelNames: string[] = [];
+if (agentDir) {
+  const configPath = resolve(agentDir, "home/.config/volute.json");
+  if (existsSync(configPath)) {
+    try {
+      const config = JSON.parse(readFileSync(configPath, "utf-8"));
+      followedChannelNames = config.discord?.channels ?? [];
+    } catch (err) {
+      console.warn(`Failed to load agent config: ${err}`);
+    }
+  }
+}
+
+// Resolved at ClientReady — maps channel ID to true
+const followedChannelIds = new Set<string>();
 
 const baseUrl = daemonUrl
   ? `${daemonUrl}/api/agents/${encodeURIComponent(agentName)}`
@@ -63,6 +84,22 @@ process.on("SIGTERM", shutdown);
 client.once(Events.ClientReady, (c) => {
   console.log(`Connected to Discord as ${c.user.tag}`);
   console.log(`Bridging to agent: ${agentName} via ${baseUrl}/message`);
+
+  // Resolve followed channel names to IDs
+  if (followedChannelNames.length > 0) {
+    for (const guild of c.guilds.cache.values()) {
+      for (const ch of guild.channels.cache.values()) {
+        if (ch.type !== ChannelType.GuildText) continue;
+        if (followedChannelNames.includes(ch.name)) {
+          followedChannelIds.add(ch.id);
+          console.log(`Following #${ch.name} (${ch.id}) in ${guild.name}`);
+        }
+      }
+    }
+    if (followedChannelIds.size === 0) {
+      console.warn(`No channels found matching: ${followedChannelNames.join(", ")}`);
+    }
+  }
 });
 
 client.on(Events.MessageCreate, async (message) => {
@@ -70,8 +107,10 @@ client.on(Events.MessageCreate, async (message) => {
 
   const isDM = !message.guild;
   const isMentioned = !isDM && message.mentions.has(client.user!);
+  const isFollowedChannel = !isDM && followedChannelIds.has(message.channelId);
 
-  if (!isDM && !isMentioned) return;
+  // Ignore messages that aren't DMs, mentions, or in followed channels
+  if (!isDM && !isMentioned && !isFollowedChannel) return;
 
   let text = message.content;
   if (isMentioned) {
@@ -98,6 +137,12 @@ client.on(Events.MessageCreate, async (message) => {
   }
 
   if (content.length === 0) return;
+
+  // Followed channel (not a mention) → fire and forget
+  if (isFollowedChannel && !isMentioned) {
+    await sendFireAndForget(message, content);
+    return;
+  }
 
   await handleAgentRequest(message, content);
 });
@@ -157,7 +202,7 @@ async function* readNdjson(body: ReadableStream<Uint8Array>): AsyncGenerator<Ndj
         try {
           yield JSON.parse(line) as NdjsonEvent;
         } catch {
-          // skip invalid line
+          console.warn(`ndjson: skipping invalid line: ${line.slice(0, 100)}`);
         }
       }
     }
@@ -166,11 +211,50 @@ async function* readNdjson(body: ReadableStream<Uint8Array>): AsyncGenerator<Ndj
       try {
         yield JSON.parse(buffer) as NdjsonEvent;
       } catch {
-        // skip
+        console.warn(`ndjson: skipping invalid line: ${buffer.slice(0, 100)}`);
       }
     }
   } finally {
     reader.releaseLock();
+  }
+}
+
+async function sendFireAndForget(message: Message, content: ContentPart[]) {
+  const senderName = message.author.displayName || message.author.username;
+  const channelKey = `discord:${message.channelId}`;
+  const channelName = "name" in message.channel ? message.channel.name : undefined;
+
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (daemonUrl && daemonToken) {
+      headers.Authorization = `Bearer ${daemonToken}`;
+      headers.Origin = daemonUrl;
+    }
+
+    const res = await fetch(`${baseUrl}/message`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        content,
+        channel: channelKey,
+        sender: senderName,
+        platform: "Discord",
+        ...(channelName ? { channelName } : {}),
+        ...(message.guild?.name ? { guildName: message.guild.name } : {}),
+      }),
+    });
+
+    if (!res.ok) {
+      console.error(`sendFireAndForget: agent returned ${res.status}`);
+    }
+
+    // Drain the response body to close the connection properly
+    if (res.body) {
+      const reader = res.body.getReader();
+      while (!(await reader.read()).done) {}
+    }
+  } catch (err) {
+    console.error(`Failed to forward followed-channel message: ${err}`);
   }
 }
 

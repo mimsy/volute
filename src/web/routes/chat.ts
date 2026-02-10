@@ -9,6 +9,7 @@ import {
   getConversationForUser,
 } from "../../lib/conversations.js";
 import { getDb } from "../../lib/db.js";
+import { collectPart } from "../../lib/format-tool.js";
 import { readNdjson } from "../../lib/ndjson.js";
 import { findAgent } from "../../lib/registry.js";
 import { agentMessages } from "../../lib/schema.js";
@@ -148,16 +149,24 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
         if (assistantContent.length > 0) {
           await addMessage(conversationId!, "assistant", baseName, assistantContent);
 
-          // Record in agent_messages
-          const textParts = assistantContent
-            .filter((b): b is ContentBlock & { type: "text" } => b.type === "text")
-            .map((b) => b.text);
-          if (textParts.length > 0) {
+          // Record in agent_messages (text + tool summaries)
+          const textParts: string[] = [];
+          const toolParts: string[] = [];
+          for (const b of assistantContent) {
+            const part = collectPart(b);
+            if (part != null) {
+              if (b.type === "tool_use") toolParts.push(part);
+              else textParts.push(part);
+            }
+          }
+          const summary = [textParts.join(""), ...toolParts].filter(Boolean).join("\n");
+          if (summary) {
             await db.insert(agentMessages).values({
               agent: baseName,
               channel: "web",
               role: "assistant",
-              content: textParts.join(""),
+              sender: baseName,
+              content: summary,
             });
           }
         }

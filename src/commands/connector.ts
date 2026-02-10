@@ -1,7 +1,5 @@
 import { daemonFetch } from "../lib/daemon-client.js";
-import { loadMergedEnv } from "../lib/env.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { resolveAgent } from "../lib/registry.js";
 import { resolveAgentName } from "../lib/resolve-agent-name.js";
 
 export async function run(args: string[]) {
@@ -36,20 +34,6 @@ async function connectConnector(args: string[]) {
 
   if (!type) {
     console.error("Usage: volute connector connect <type> [--agent <name>]");
-    process.exit(1);
-  }
-
-  const { dir } = resolveAgent(agentName);
-
-  // Validate required env vars for the connector type
-  if (type === "discord") {
-    const env = loadMergedEnv(dir);
-    if (!env.DISCORD_TOKEN) {
-      console.error("DISCORD_TOKEN not set. Run: volute env set DISCORD_TOKEN <token>");
-      process.exit(1);
-    }
-  } else {
-    console.error(`Unknown connector type: ${type}`);
     process.exit(1);
   }
 

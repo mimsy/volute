@@ -1,12 +1,7 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { log } from "./logger.js";
-import { loadSessionConfig, resolveSession } from "./sessions.js";
-import type { ChannelMeta, VoluteContentPart, VoluteEvent, VoluteRequest } from "./types.js";
-
-export type VoluteAgent = {
-  sendMessage: (content: string | VoluteContentPart[], meta?: ChannelMeta) => void;
-  onMessage: (listener: (event: VoluteEvent) => void, sessionName?: string) => () => void;
-};
+import type { Router } from "./router.js";
+import type { VoluteRequest } from "./types.js";
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -18,13 +13,12 @@ function readBody(req: IncomingMessage): Promise<string> {
 }
 
 export function createVoluteServer(options: {
-  agent: VoluteAgent;
+  router: Router;
   port: number;
   name: string;
   version: string;
-  sessionsConfigPath?: string;
 }): Server {
-  const { agent, port, name, version } = options;
+  const { router, port, name, version } = options;
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://localhost");
@@ -39,58 +33,34 @@ export function createVoluteServer(options: {
       try {
         const body = JSON.parse(await readBody(req)) as VoluteRequest;
 
-        // Resolve session from routing config (re-read on each request for hot-reload)
-        let sessionName = "main";
-        if (options.sessionsConfigPath) {
-          const sessionConfig = loadSessionConfig(options.sessionsConfigPath);
-          sessionName = resolveSession(sessionConfig, {
-            channel: body.channel,
-            sender: body.sender,
-          });
-        }
-        if (sessionName === "$new") {
-          sessionName = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        }
-
-        const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
         res.writeHead(200, {
           "Content-Type": "application/x-ndjson",
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
         });
 
-        const removeListener = agent.onMessage((event) => {
+        const { unsubscribe } = router.route(body.content, body, (event) => {
           try {
-            // Only forward events from our message (skip startup/other messages)
-            if (event.messageId !== messageId) return;
             res.write(`${JSON.stringify(event)}\n`);
             if (event.type === "done") {
-              removeListener();
               res.end();
             }
-          } catch {
-            removeListener();
+          } catch (err) {
+            log("server", "write error, disconnecting:", err);
+            unsubscribe();
           }
-        }, sessionName);
-
-        res.on("close", () => {
-          removeListener();
         });
 
-        agent.sendMessage(body.content, {
-          channel: body.channel,
-          sender: body.sender,
-          platform: body.platform,
-          isDM: body.isDM,
-          channelName: body.channelName,
-          guildName: body.guildName,
-          sessionName,
-          messageId,
-        });
-      } catch {
-        res.writeHead(400);
-        res.end("Bad Request");
+        res.on("close", () => unsubscribe());
+      } catch (err) {
+        if (err instanceof SyntaxError) {
+          res.writeHead(400);
+          res.end("Bad Request");
+        } else {
+          log("server", "error handling /message:", err);
+          res.writeHead(500);
+          res.end("Internal Server Error");
+        }
       }
       return;
     }
@@ -98,6 +68,8 @@ export function createVoluteServer(options: {
     res.writeHead(404);
     res.end("Not Found");
   });
+
+  server.on("close", () => router.close());
 
   let retries = 0;
   const maxRetries = 5;

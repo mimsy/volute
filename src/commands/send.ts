@@ -1,5 +1,6 @@
 import { userInfo } from "node:os";
 import { daemonFetch } from "../lib/daemon-client.js";
+import { summarizeTool } from "../lib/format-tool.js";
 import { readNdjson } from "../lib/ndjson.js";
 
 export async function run(args: string[]) {
@@ -39,6 +40,8 @@ export async function run(args: string[]) {
   for await (const event of readNdjson(res.body)) {
     if (event.type === "text") {
       process.stdout.write(event.content);
+    } else if (event.type === "tool_use") {
+      process.stderr.write(`${summarizeTool(event.name, event.input)}\n`);
     }
     if (event.type === "done") {
       break;

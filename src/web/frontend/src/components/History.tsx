@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchHistory, type HistoryMessage } from "../lib/api";
+import { fetchHistory, fetchHistoryChannels, type HistoryMessage } from "../lib/api";
 import { renderMarkdown } from "../lib/marked";
 
 const PAGE_SIZE = 50;
@@ -16,10 +16,17 @@ const selectStyle: React.CSSProperties = {
 
 export function History({ name }: { name: string }) {
   const [messages, setMessages] = useState<HistoryMessage[]>([]);
+  const [channels, setChannels] = useState<string[]>([]);
   const [channel, setChannel] = useState("");
   const [role, setRole] = useState("");
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    fetchHistoryChannels(name)
+      .then(setChannels)
+      .catch(() => {});
+  }, [name]);
 
   const load = useCallback(
     async (offset: number) => {
@@ -64,11 +71,11 @@ export function History({ name }: { name: string }) {
       >
         <select value={channel} onChange={(e) => setChannel(e.target.value)} style={selectStyle}>
           <option value="">all channels</option>
-          <option value="web">web</option>
-          <option value="cli">cli</option>
-          <option value="discord">discord</option>
-          <option value="system:webhook">webhook</option>
-          <option value="system:schedule">schedule</option>
+          {channels.map((ch) => (
+            <option key={ch} value={ch}>
+              {ch}
+            </option>
+          ))}
         </select>
         <select value={role} onChange={(e) => setRole(e.target.value)} style={selectStyle}>
           <option value="">all roles</option>

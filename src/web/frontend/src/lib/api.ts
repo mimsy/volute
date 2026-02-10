@@ -163,6 +163,12 @@ export async function fetchHistory(
   return res.json();
 }
 
+export async function fetchHistoryChannels(name: string): Promise<string[]> {
+  const res = await fetch(`/api/agents/${encodeURIComponent(name)}/history/channels`);
+  if (!res.ok) throw new Error("Failed to fetch channels");
+  return res.json();
+}
+
 export async function deleteConversation(name: string, conversationId: string): Promise<void> {
   const res = await client.api.agents[":name"].conversations[":id"].$delete({
     param: { name, id: conversationId },

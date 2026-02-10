@@ -1,4 +1,4 @@
-import * as discord from "../lib/channels/discord.js";
+import { getChannelDriver } from "../lib/channels.js";
 import { loadMergedEnv } from "../lib/env.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgent } from "../lib/registry.js";
@@ -32,28 +32,28 @@ export async function run(args: string[]) {
   const platform = uri.slice(0, colonIdx);
   const channelId = uri.slice(colonIdx + 1);
 
+  const driver = getChannelDriver(platform);
+  if (!driver) {
+    console.error(`No channel driver for platform: ${platform}`);
+    process.exit(1);
+  }
+
   const { dir } = resolveAgent(agentName);
   const env = loadMergedEnv(dir);
 
-  if (platform === "discord") {
-    const token = env.DISCORD_TOKEN;
-    if (!token) {
-      console.error("DISCORD_TOKEN not set. Run: volute env set DISCORD_TOKEN <token>");
-      process.exit(1);
-    }
-
+  try {
     if (subcommand === "read") {
       const limit = flags.limit ?? 20;
-      const output = await discord.read(token, channelId, limit);
+      const output = await driver.read(env, channelId, limit);
       console.log(output);
     } else if (subcommand === "send") {
-      await discord.send(token, channelId, message!);
+      await driver.send(env, channelId, message!);
     } else {
       console.error(`Unknown subcommand: ${subcommand}`);
       process.exit(1);
     }
-  } else {
-    console.error(`Unsupported platform: ${platform}`);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
 }

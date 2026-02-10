@@ -121,7 +121,7 @@ Agents have access to the `volute` CLI from their working directory, so they can
 
 ## Connectors
 
-Connect agents to external services.
+Connect agents to external services. Connectors are generic — any connector type that has an implementation (built-in, shared, or agent-specific) can be enabled.
 
 ### Discord
 
@@ -130,21 +130,21 @@ Connect agents to external services.
 volute env set DISCORD_TOKEN <your-bot-token>
 
 # Connect
-volute connect discord atlas
+volute connector connect discord --agent atlas
 
 # Disconnect
-volute disconnect discord atlas
+volute connector disconnect discord --agent atlas
 ```
 
-The agent receives Discord messages and responds in-channel. Tool calls are filtered out — Discord users see clean text responses.
+The agent receives Discord messages and responds in-channel. Tool calls are filtered out — connector users see clean text responses.
 
 ### Channel commands
 
-Read from and write to channels directly:
+Read from and write to connector channels directly:
 
 ```sh
-volute channel read discord:123456789         # recent messages
-volute channel send discord:123456789 "hello" # send a message
+volute channel read discord:123456789 --agent atlas         # recent messages
+volute channel send discord:123456789 "hello" --agent atlas # send a message
 ```
 
 ## Schedules
