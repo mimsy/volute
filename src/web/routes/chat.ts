@@ -15,6 +15,18 @@ import { agentMessages } from "../../lib/schema.js";
 import { findVariant } from "../../lib/variants.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
+function summarizeTool(name: string, input: unknown): string {
+  if (input && typeof input === "object") {
+    const args = input as Record<string, unknown>;
+    const val = args.path ?? args.command ?? args.query ?? args.url;
+    if (typeof val === "string") {
+      const brief = val.length > 60 ? `${val.slice(0, 57)}...` : val;
+      return `[${name} ${brief}]`;
+    }
+  }
+  return `[${name}]`;
+}
+
 const chatSchema = z.object({
   message: z.string().optional(),
   conversationId: z.string().optional(),
@@ -148,16 +160,21 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
         if (assistantContent.length > 0) {
           await addMessage(conversationId!, "assistant", baseName, assistantContent);
 
-          // Record in agent_messages
-          const textParts = assistantContent
-            .filter((b): b is ContentBlock & { type: "text" } => b.type === "text")
-            .map((b) => b.text);
-          if (textParts.length > 0) {
+          // Record in agent_messages (text + tool summaries)
+          const parts: string[] = [];
+          for (const block of assistantContent) {
+            if (block.type === "text") {
+              parts.push(block.text);
+            } else if (block.type === "tool_use") {
+              parts.push(summarizeTool(block.name, block.input));
+            }
+          }
+          if (parts.length > 0) {
             await db.insert(agentMessages).values({
               agent: baseName,
               channel: "web",
               role: "assistant",
-              content: textParts.join(""),
+              content: parts.join(""),
             });
           }
         }

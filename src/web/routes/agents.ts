@@ -13,6 +13,18 @@ import { agentMessages } from "../../lib/schema.js";
 import { checkHealth, findVariant, readVariants, removeAllVariants } from "../../lib/variants.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
+function summarizeTool(name: string, input: unknown): string {
+  if (input && typeof input === "object") {
+    const args = input as Record<string, unknown>;
+    const val = args.path ?? args.command ?? args.query ?? args.url;
+    if (typeof val === "string") {
+      const brief = val.length > 60 ? `${val.slice(0, 57)}...` : val;
+      return `[${name} ${brief}]`;
+    }
+  }
+  return `[${name}]`;
+}
+
 function getDaemonPort(): number | undefined {
   try {
     const data = JSON.parse(readFileSync(resolve(voluteHome(), "daemon.json"), "utf-8"));
@@ -292,7 +304,7 @@ const app = new Hono<AuthEnv>()
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      const textParts: string[] = [];
+      const parts: string[] = [];
 
       try {
         while (true) {
@@ -300,7 +312,7 @@ const app = new Hono<AuthEnv>()
           if (done) break;
           await s.write(value);
 
-          // Parse NDJSON lines to accumulate text events
+          // Parse NDJSON lines to accumulate text and tool events
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n");
           buffer = lines.pop() || "";
@@ -309,7 +321,9 @@ const app = new Hono<AuthEnv>()
             try {
               const event = JSON.parse(line);
               if (event.type === "text") {
-                textParts.push(event.content);
+                parts.push(event.content);
+              } else if (event.type === "tool_use") {
+                parts.push(summarizeTool(event.name, event.input));
               }
             } catch {
               console.warn(`[daemon] malformed NDJSON line from ${baseName}`);
@@ -322,7 +336,9 @@ const app = new Hono<AuthEnv>()
           try {
             const event = JSON.parse(buffer);
             if (event.type === "text") {
-              textParts.push(event.content);
+              parts.push(event.content);
+            } else if (event.type === "tool_use") {
+              parts.push(summarizeTool(event.name, event.input));
             }
           } catch {
             console.warn(`[daemon] malformed NDJSON trailing data from ${baseName}`);
@@ -330,13 +346,13 @@ const app = new Hono<AuthEnv>()
         }
 
         // Record assistant response
-        if (textParts.length > 0) {
+        if (parts.length > 0) {
           try {
             await db.insert(agentMessages).values({
               agent: baseName,
               channel,
               role: "assistant",
-              content: textParts.join(""),
+              content: parts.join(""),
             });
           } catch (err) {
             console.error(`[daemon] failed to persist assistant response for ${baseName}:`, err);
