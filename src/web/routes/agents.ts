@@ -7,7 +7,8 @@ import { getAgentManager } from "../../lib/agent-manager.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { getConnectorManager } from "../../lib/connector-manager.js";
 import { getDb } from "../../lib/db.js";
-import { summarizeTool } from "../../lib/format-tool.js";
+import { collectPart } from "../../lib/format-tool.js";
+import { readNdjson } from "../../lib/ndjson.js";
 import { agentDir, findAgent, readRegistry, removeAgent, voluteHome } from "../../lib/registry.js";
 import { getScheduler } from "../../lib/scheduler.js";
 import { agentMessages } from "../../lib/schema.js";
@@ -259,8 +260,17 @@ const app = new Hono<AuthEnv>()
     if (parsed) {
       try {
         const sender = (parsed.sender as string) ?? null;
-        const content =
-          typeof parsed.content === "string" ? parsed.content : JSON.stringify(parsed.content);
+        let content: string;
+        if (typeof parsed.content === "string") {
+          content = parsed.content;
+        } else if (Array.isArray(parsed.content)) {
+          content = (parsed.content as { type: string; text?: string }[])
+            .filter((p) => p.type === "text" && p.text)
+            .map((p) => p.text)
+            .join("\n");
+        } else {
+          content = JSON.stringify(parsed.content);
+        }
         await db.insert(agentMessages).values({
           agent: baseName,
           channel,
@@ -289,66 +299,28 @@ const app = new Hono<AuthEnv>()
 
     // Stream NDJSON response back, accumulating text for persistence
     c.header("Content-Type", "application/x-ndjson");
+    const encoder = new TextEncoder();
     return stream(c, async (s) => {
-      const reader = res.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
       const parts: string[] = [];
 
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          await s.write(value);
+      for await (const event of readNdjson(res.body!)) {
+        await s.write(encoder.encode(`${JSON.stringify(event)}\n`));
+        const part = collectPart(event);
+        if (part != null) parts.push(part);
+      }
 
-          // Parse NDJSON lines to accumulate text and tool events
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const event = JSON.parse(line);
-              if (event.type === "text") {
-                parts.push(event.content);
-              } else if (event.type === "tool_use") {
-                parts.push(summarizeTool(event.name, event.input));
-              }
-            } catch {
-              console.warn(`[daemon] malformed NDJSON line from ${baseName}`);
-            }
-          }
+      if (parts.length > 0) {
+        try {
+          await db.insert(agentMessages).values({
+            agent: baseName,
+            channel,
+            role: "assistant",
+            sender: baseName,
+            content: parts.join("\n"),
+          });
+        } catch (err) {
+          console.error(`[daemon] failed to persist assistant response for ${baseName}:`, err);
         }
-
-        // Handle remaining buffer
-        if (buffer.trim()) {
-          try {
-            const event = JSON.parse(buffer);
-            if (event.type === "text") {
-              parts.push(event.content);
-            } else if (event.type === "tool_use") {
-              parts.push(summarizeTool(event.name, event.input));
-            }
-          } catch {
-            console.warn(`[daemon] malformed NDJSON trailing data from ${baseName}`);
-          }
-        }
-
-        // Record assistant response
-        if (parts.length > 0) {
-          try {
-            await db.insert(agentMessages).values({
-              agent: baseName,
-              channel,
-              role: "assistant",
-              content: parts.join(""),
-            });
-          } catch (err) {
-            console.error(`[daemon] failed to persist assistant response for ${baseName}:`, err);
-          }
-        }
-      } finally {
-        reader.releaseLock();
       }
     });
   })
