@@ -1,6 +1,6 @@
 import { formatPrefix } from "./format-prefix.js";
 import { log, logMessage } from "./logger.js";
-import { loadSessionConfig, resolveRoute } from "./sessions.js";
+import { loadRoutingConfig, resolveRoute } from "./routing.js";
 import type { ChannelMeta, HandlerResolver, Listener, VoluteContentPart } from "./types.js";
 
 export type Router = {
@@ -104,7 +104,7 @@ export function createRouter(options: {
     logMessage("in", text, meta.channel);
 
     // Resolve route from config (re-read on each request for hot-reload)
-    const config = options.configPath ? loadSessionConfig(options.configPath) : {};
+    const config = options.configPath ? loadRoutingConfig(options.configPath) : {};
     const resolved = resolveRoute(config, { channel: meta.channel, sender: meta.sender });
 
     const messageId = generateMessageId();

@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import {
-  loadSessionConfig,
+  loadRoutingConfig,
   type ResolvedRoute,
+  type RoutingConfig,
   resolveRoute,
-  type SessionConfig,
-} from "../templates/_base/src/lib/sessions.js";
+} from "../templates/_base/src/lib/routing.js";
 
 /** Asserts route is agent-destined and returns the narrowed type. */
 function expectAgent(route: ResolvedRoute) {
@@ -16,9 +16,9 @@ function expectAgent(route: ResolvedRoute) {
   return route as Extract<ResolvedRoute, { destination: "agent" }>;
 }
 
-describe("loadSessionConfig", () => {
+describe("loadRoutingConfig", () => {
   it("returns empty config for missing file", () => {
-    const config = loadSessionConfig("/nonexistent/sessions.json");
+    const config = loadRoutingConfig("/nonexistent/sessions.json");
     assert.deepEqual(config, {});
   });
 
@@ -32,7 +32,7 @@ describe("loadSessionConfig", () => {
         default: "main",
       }),
     );
-    const config = loadSessionConfig(path);
+    const config = loadRoutingConfig(path);
     assert.equal(config.rules?.length, 1);
     assert.equal(config.default, "main");
   });
@@ -54,7 +54,7 @@ describe("resolveRoute", () => {
   });
 
   it("returns agent destination for rules without destination field", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       rules: [{ channel: "discord:*", session: "discord" }],
       default: "main",
     };
@@ -64,7 +64,7 @@ describe("resolveRoute", () => {
   });
 
   it("returns file destination when rule specifies it", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       rules: [{ channel: "discord:logs-*", destination: "file", path: "home/inbox/discord.md" }],
       default: "main",
     };
@@ -74,7 +74,7 @@ describe("resolveRoute", () => {
   });
 
   it("falls through to default when no rules match", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       rules: [{ channel: "discord:*", session: "discord" }],
       default: "fallback",
     };
@@ -86,7 +86,7 @@ describe("resolveRoute", () => {
   // --- Match criteria ---
 
   it("matches exact channel", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       rules: [{ channel: "web", session: "web-session" }],
       default: "main",
     };
@@ -94,7 +94,7 @@ describe("resolveRoute", () => {
   });
 
   it("matches exact sender", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       rules: [{ sender: "alice", session: "alice" }],
       default: "main",
     };
@@ -109,7 +109,7 @@ describe("resolveRoute", () => {
   });
 
   it("matches glob pattern in channel", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       rules: [{ channel: "discord:*", session: "discord" }],
       default: "main",
     };
@@ -121,7 +121,7 @@ describe("resolveRoute", () => {
   });
 
   it("matches multiple criteria (AND)", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       rules: [{ channel: "web", sender: "alice", session: "alice-web" }],
       default: "main",
     };
@@ -140,7 +140,7 @@ describe("resolveRoute", () => {
   });
 
   it("first matching rule wins", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       rules: [
         { sender: "alice", session: "alice-special" },
         { channel: "web", session: "web-default" },
@@ -158,7 +158,7 @@ describe("resolveRoute", () => {
   });
 
   it("rule with no match criteria matches everything", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       rules: [{ session: "catch-all" }],
       default: "main",
     };
@@ -173,7 +173,7 @@ describe("resolveRoute", () => {
     const config = {
       rules: [{ chanel: "web", session: "typo-rule" }],
       default: "main",
-    } as unknown as SessionConfig;
+    } as unknown as RoutingConfig;
     assert.equal(
       expectAgent(resolveRoute(config, { channel: "web", sender: "alice" })).session,
       "main",
@@ -184,7 +184,7 @@ describe("resolveRoute", () => {
 
   // biome-ignore lint/suspicious/noTemplateCurlyInString: testing literal config syntax
   it("expands ${sender} template variable", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       // biome-ignore lint/suspicious/noTemplateCurlyInString: literal config syntax
       rules: [{ channel: "discord:*", session: "discord-${sender}" }],
       default: "main",
@@ -201,7 +201,7 @@ describe("resolveRoute", () => {
 
   // biome-ignore lint/suspicious/noTemplateCurlyInString: testing literal config syntax
   it("expands ${channel} template variable", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       // biome-ignore lint/suspicious/noTemplateCurlyInString: literal config syntax
       rules: [{ channel: "discord:*", session: "chan-${channel}" }],
       default: "main",
@@ -213,7 +213,7 @@ describe("resolveRoute", () => {
   });
 
   it("handles missing sender in template expansion", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       // biome-ignore lint/suspicious/noTemplateCurlyInString: literal config syntax
       rules: [{ channel: "web", session: "user-${sender}" }],
       default: "main",
@@ -222,7 +222,7 @@ describe("resolveRoute", () => {
   });
 
   it("returns $new literally (server handles generation)", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       rules: [{ channel: "system:scheduler", session: "$new" }],
       default: "main",
     };
@@ -235,7 +235,7 @@ describe("resolveRoute", () => {
   // --- Scheduler patterns ---
 
   it("scheduler schedule id as sender", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       rules: [
         { channel: "system:scheduler", sender: "daily-report", session: "daily-report" },
         { channel: "system:scheduler", sender: "cleanup", session: "$new" },
@@ -260,7 +260,7 @@ describe("resolveRoute", () => {
   // --- Interrupt ---
 
   it("respects explicit interrupt setting", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       rules: [{ channel: "system:*", session: "main", interrupt: false }],
       default: "main",
     };
@@ -271,7 +271,7 @@ describe("resolveRoute", () => {
   // --- Batch ---
 
   it("includes batch from matching rule", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       rules: [{ channel: "discord:*", session: "discord-feed", batch: 15 }],
       default: "main",
     };
@@ -281,7 +281,7 @@ describe("resolveRoute", () => {
   });
 
   it("returns undefined batch for matching rule without batch", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       rules: [{ channel: "discord:*", session: "discord" }],
       default: "main",
     };
@@ -290,7 +290,7 @@ describe("resolveRoute", () => {
   });
 
   it("returns no batch when no rules match", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       rules: [{ channel: "discord:*", session: "discord-feed", batch: 15 }],
       default: "main",
     };
@@ -299,7 +299,7 @@ describe("resolveRoute", () => {
   });
 
   it("first matching rule wins for batch", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       rules: [
         { channel: "discord:*", session: "discord-fast", batch: 5 },
         { channel: "discord:*", session: "discord-slow", batch: 30 },
@@ -313,7 +313,7 @@ describe("resolveRoute", () => {
   // --- Mixed destinations ---
 
   it("file destination rules work with match keys", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       rules: [
         {
           channel: "discord:*",
@@ -338,7 +338,7 @@ describe("resolveRoute", () => {
   // --- Sanitization ---
 
   it("sanitizes path traversal in sender template", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       // biome-ignore lint/suspicious/noTemplateCurlyInString: testing literal config syntax
       rules: [{ channel: "discord:*", session: "discord-${sender}" }],
       default: "main",
@@ -351,7 +351,7 @@ describe("resolveRoute", () => {
   });
 
   it("sanitizes path traversal in channel template", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       // biome-ignore lint/suspicious/noTemplateCurlyInString: testing literal config syntax
       rules: [{ sender: "alice", session: "chan-${channel}" }],
       default: "main",
@@ -362,7 +362,7 @@ describe("resolveRoute", () => {
   });
 
   it("sanitizes backslashes in session names", () => {
-    const config: SessionConfig = {
+    const config: RoutingConfig = {
       // biome-ignore lint/suspicious/noTemplateCurlyInString: testing literal config syntax
       rules: [{ channel: "*", session: "s-${sender}" }],
       default: "main",

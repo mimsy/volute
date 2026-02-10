@@ -27,7 +27,7 @@ describe("template composition", () => {
       // Base router + file handler
       assert.ok(existsSync(resolve(composedDir, "src/lib/router.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/file-handler.ts")));
-      assert.ok(existsSync(resolve(composedDir, "src/lib/sessions.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/routing.ts")));
 
       // Template-specific source
       assert.ok(existsSync(resolve(composedDir, "src/server.ts")));
@@ -90,7 +90,7 @@ describe("template composition", () => {
       // Base router + file handler
       assert.ok(existsSync(resolve(composedDir, "src/lib/router.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/file-handler.ts")));
-      assert.ok(existsSync(resolve(composedDir, "src/lib/sessions.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/routing.ts")));
 
       // Template-specific source
       assert.ok(existsSync(resolve(composedDir, "src/server.ts")));

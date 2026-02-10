@@ -43,7 +43,7 @@ Each agent project (created from the template) has:
 │       ├── router.ts          # Message router: route resolution, prefix formatting, batch buffering
 │       ├── volute-server.ts   # Thin HTTP layer (~85 lines): /health, POST /message → ndjson
 │       ├── file-handler.ts    # File destination handler: appends messages to files
-│       ├── sessions.ts        # Session routing config loader and glob matcher
+│       ├── routing.ts         # Message routing: config loader, glob matcher, route resolution
 │       ├── types.ts           # ChannelMeta, HandlerMeta, MessageHandler, HandlerResolver, VoluteEvent
 │       ├── format-prefix.ts   # Shared message formatting (channel/sender/time prefix)
 │       ├── startup.ts         # Shared server.ts boilerplate (parseArgs, loadConfig, etc.)
@@ -142,8 +142,8 @@ Agent commands (`variant`, `connector`, `schedule`, `logs`, `history`, `channel`
 | `db.ts` | libSQL database singleton at `~/.volute/volute.db` (WAL mode, foreign keys) |
 | `auth.ts` | bcrypt password hashing, first user auto-admin, pending approval flow |
 | `conversations.ts` | Conversation and message CRUD |
-| `channels.ts` | Channel config (web, discord, cli, system), display names and tool call visibility |
-| `channels/discord.ts` | Discord API client (read/send messages, used by `channel` command) |
+| `channels.ts` | ChannelProvider registry with optional drivers (read/send), display names, tool call visibility |
+| `channels/discord.ts` | Discord channel driver (read/send via REST API, env-based token) |
 | `convert-session.ts` | Converts OpenClaw `session.jsonl` to Claude Agent SDK format |
 | `resolve-agent-name.ts` | Resolves agent name from `--agent` flag or `VOLUTE_AGENT` env var |
 | `isolation.ts` | Per-agent Linux user isolation (`VOLUTE_ISOLATION=user`), user/group management, chown |

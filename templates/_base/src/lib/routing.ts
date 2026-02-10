@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { log } from "./logger.js";
 
-export type SessionRule = {
+export type RoutingRule = {
   session?: string;
   destination?: "agent" | "file";
   path?: string; // file path for file destination
@@ -11,8 +11,8 @@ export type SessionRule = {
   sender?: string;
 };
 
-export type SessionConfig = {
-  rules?: SessionRule[];
+export type RoutingConfig = {
+  rules?: RoutingRule[];
   default?: string;
 };
 
@@ -20,7 +20,7 @@ export type ResolvedRoute =
   | { destination: "agent"; session: string; interrupt: boolean; batch?: number }
   | { destination: "file"; path: string };
 
-export function loadSessionConfig(configPath: string): SessionConfig {
+export function loadRoutingConfig(configPath: string): RoutingConfig {
   try {
     return JSON.parse(readFileSync(configPath, "utf-8"));
   } catch (err: any) {
@@ -44,7 +44,7 @@ function globMatch(pattern: string, value: string): boolean {
 const MATCH_KEYS = new Set(["channel", "sender"]);
 const NON_MATCH_KEYS = new Set(["session", "batch", "destination", "path", "interrupt"]);
 
-function ruleMatches(rule: SessionRule, meta: { channel?: string; sender?: string }): boolean {
+function ruleMatches(rule: RoutingRule, meta: { channel?: string; sender?: string }): boolean {
   for (const [key, pattern] of Object.entries(rule)) {
     if (NON_MATCH_KEYS.has(key)) continue;
     if (typeof pattern !== "string") return false;
@@ -65,7 +65,7 @@ function expandTemplate(template: string, meta: { channel?: string; sender?: str
  * Resolve the full route for a message: destination type, session/path, interrupt, batch.
  */
 export function resolveRoute(
-  config: SessionConfig,
+  config: RoutingConfig,
   meta: { channel?: string; sender?: string },
 ): ResolvedRoute {
   const fallback = config.default ?? "main";
