@@ -41,14 +41,19 @@ export async function run(args: string[]) {
   const { dir } = resolveAgent(agentName);
   const env = loadMergedEnv(dir);
 
-  if (subcommand === "read") {
-    const limit = flags.limit ?? 20;
-    const output = await driver.read(env, channelId, limit);
-    console.log(output);
-  } else if (subcommand === "send") {
-    await driver.send(env, channelId, message!);
-  } else {
-    console.error(`Unknown subcommand: ${subcommand}`);
+  try {
+    if (subcommand === "read") {
+      const limit = flags.limit ?? 20;
+      const output = await driver.read(env, channelId, limit);
+      console.log(output);
+    } else if (subcommand === "send") {
+      await driver.send(env, channelId, message!);
+    } else {
+      console.error(`Unknown subcommand: ${subcommand}`);
+      process.exit(1);
+    }
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
 }

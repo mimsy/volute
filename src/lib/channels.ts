@@ -18,14 +18,14 @@ export const CHANNELS: Record<string, ChannelProvider> = {
     name: "discord",
     displayName: "Discord",
     showToolCalls: false,
-    driver: { read: discord.read, send: discord.send },
+    driver: discord,
   },
   cli: { name: "cli", displayName: "CLI", showToolCalls: true },
   agent: { name: "agent", displayName: "Agent", showToolCalls: true },
   system: { name: "system", displayName: "System", showToolCalls: false },
 };
 
-export function getChannelConfig(channelUri?: string): ChannelProvider {
+export function getChannelProvider(channelUri?: string): ChannelProvider {
   if (!channelUri) return CHANNELS.web;
   const platform = channelUri.split(":")[0];
   return (

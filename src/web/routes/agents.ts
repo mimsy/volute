@@ -332,6 +332,15 @@ const app = new Hono<AuthEnv>()
     });
   })
   // Get message history
+  .get("/:name/history/channels", async (c) => {
+    const name = c.req.param("name");
+    const db = await getDb();
+    const rows = await db
+      .selectDistinct({ channel: agentMessages.channel })
+      .from(agentMessages)
+      .where(eq(agentMessages.agent, name));
+    return c.json(rows.map((r) => r.channel));
+  })
   .get("/:name/history", async (c) => {
     const name = c.req.param("name");
     const channel = c.req.query("channel");
