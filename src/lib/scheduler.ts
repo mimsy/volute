@@ -108,7 +108,7 @@ export class Scheduler {
       let res: Response;
       if (this.daemonPort && this.daemonToken) {
         // Route through daemon so messages are recorded in agent_messages
-        const daemonUrl = `http://localhost:${this.daemonPort}`;
+        const daemonUrl = `http://127.0.0.1:${this.daemonPort}`;
         res = await fetch(`${daemonUrl}/api/agents/${encodeURIComponent(agentName)}/message`, {
           method: "POST",
           headers: {
@@ -120,7 +120,7 @@ export class Scheduler {
         });
       } else {
         // Fallback to direct agent fetch
-        res = await fetch(`http://localhost:${entry.port}/message`, {
+        res = await fetch(`http://127.0.0.1:${entry.port}/message`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body,

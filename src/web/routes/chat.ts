@@ -92,7 +92,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     content: body.message ?? "[image]",
   });
 
-  const res = await fetch(`http://localhost:${port}/message`, {
+  const res = await fetch(`http://127.0.0.1:${port}/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
