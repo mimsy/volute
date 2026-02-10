@@ -66,7 +66,6 @@ export function History({ name }: { name: string }) {
           <option value="">all channels</option>
           <option value="web">web</option>
           <option value="cli">cli</option>
-          <option value="discord">discord</option>
           <option value="system:webhook">webhook</option>
           <option value="system:schedule">schedule</option>
         </select>

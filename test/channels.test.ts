@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CHANNELS, getChannelConfig } from "../src/lib/channels.js";
+import { CHANNELS, getChannelConfig, getChannelDriver } from "../src/lib/channels.js";
 
 describe("channels", () => {
   it("CHANNELS has expected entries", () => {
@@ -35,8 +35,27 @@ describe("channels", () => {
     assert.equal(config.showToolCalls, true);
   });
 
-  it("getChannelConfig with unknown platform falls back to web", () => {
-    const config = getChannelConfig("unknown:foo");
-    assert.equal(config.name, "web");
+  it("getChannelConfig with unknown platform auto-generates config", () => {
+    const config = getChannelConfig("slack:foo");
+    assert.equal(config.name, "slack");
+    assert.equal(config.displayName, "slack");
+    assert.equal(config.showToolCalls, false);
+  });
+
+  it("getChannelDriver returns driver for discord", () => {
+    const driver = getChannelDriver("discord");
+    assert.ok(driver);
+    assert.equal(typeof driver.read, "function");
+    assert.equal(typeof driver.send, "function");
+  });
+
+  it("getChannelDriver returns null for unknown platform", () => {
+    const driver = getChannelDriver("unknown");
+    assert.equal(driver, null);
+  });
+
+  it("getChannelDriver returns null for platforms without drivers", () => {
+    const driver = getChannelDriver("web");
+    assert.equal(driver, null);
   });
 });

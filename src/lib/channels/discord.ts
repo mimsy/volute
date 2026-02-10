@@ -1,6 +1,12 @@
 const API_BASE = "https://discord.com/api/v10";
 
-export async function read(token: string, channelId: string, limit: number): Promise<string> {
+export async function read(
+  env: Record<string, string>,
+  channelId: string,
+  limit: number,
+): Promise<string> {
+  const token = env.DISCORD_TOKEN;
+  if (!token) throw new Error("DISCORD_TOKEN not set");
   const res = await fetch(`${API_BASE}/channels/${channelId}/messages?limit=${limit}`, {
     headers: { Authorization: `Bot ${token}` },
   });
@@ -17,7 +23,13 @@ export async function read(token: string, channelId: string, limit: number): Pro
     .join("\n");
 }
 
-export async function send(token: string, channelId: string, message: string): Promise<void> {
+export async function send(
+  env: Record<string, string>,
+  channelId: string,
+  message: string,
+): Promise<void> {
+  const token = env.DISCORD_TOKEN;
+  if (!token) throw new Error("DISCORD_TOKEN not set");
   const res = await fetch(`${API_BASE}/channels/${channelId}/messages`, {
     method: "POST",
     headers: {
