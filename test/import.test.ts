@@ -9,11 +9,13 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-
-// We test the import helpers by importing them.
-// Since they're not exported from the module, we'll test the logic inline.
+import {
+  importPiSession,
+  parseNameFromIdentity,
+  sessionMatchesWorkspace,
+} from "../src/commands/import.js";
 
 const scratchDir = resolve("/tmp/import-test");
 
@@ -22,17 +24,6 @@ function writeJsonl(path: string, events: unknown[]) {
 }
 
 describe("import: parseNameFromIdentity", () => {
-  // Inline the function for testing since it's not exported
-  function parseNameFromIdentity(identity: string): string | undefined {
-    const match = identity.match(/\*\*Name:\*\*\s*(.+)/);
-    if (match) {
-      const raw = match[1].trim();
-      if (!raw || raw.startsWith("*") || raw.startsWith("(")) return undefined;
-      return raw.toLowerCase().replace(/\s+/g, "-");
-    }
-    return undefined;
-  }
-
   it("parses a filled-in name", () => {
     assert.equal(parseNameFromIdentity("- **Name:** Mimsy"), "mimsy");
   });
@@ -62,32 +53,6 @@ describe("import: importPiSession", () => {
   afterEach(() => {
     rmSync(scratchDir, { recursive: true, force: true });
   });
-
-  // Inline the function for testing
-  function importPiSession(sessionFile: string, agentDirPath: string) {
-    const homeDir = resolve(agentDirPath, "home");
-    const piSessionDir = resolve(agentDirPath, ".volute/pi-sessions/main");
-    mkdirSync(piSessionDir, { recursive: true });
-
-    const content = readFileSync(sessionFile, "utf-8");
-    const lines = content.trim().split("\n");
-
-    if (lines.length > 0) {
-      try {
-        const header = JSON.parse(lines[0]);
-        if (header.type === "session") {
-          header.cwd = homeDir;
-          lines[0] = JSON.stringify(header);
-        }
-      } catch {
-        // Not a valid header, copy as-is
-      }
-    }
-
-    const filename = basename(sessionFile);
-    const destPath = resolve(piSessionDir, filename);
-    writeFileSync(destPath, `${lines.join("\n")}\n`);
-  }
 
   it("copies session file to .volute/pi-sessions/main/", () => {
     const sessionPath = resolve(scratchDir, "source-session.jsonl");
@@ -220,18 +185,7 @@ describe("import: findOpenClawSession", () => {
     rmSync(scratchDir, { recursive: true, force: true });
   });
 
-  // Mirror of findOpenClawSession + sessionMatchesWorkspace from import.ts
-  function sessionMatchesWorkspace(sessionPath: string, wsDir: string): boolean {
-    try {
-      const fd = readFileSync(sessionPath, "utf-8");
-      const firstLine = fd.slice(0, fd.indexOf("\n"));
-      const header = JSON.parse(firstLine);
-      return header.type === "session" && resolve(header.cwd) === resolve(wsDir);
-    } catch {
-      return false;
-    }
-  }
-
+  // Wrapper around findOpenClawSession that accepts a custom agents dir
   function findOpenClawSession(agentsDir: string, wsDir: string): string | undefined {
     if (!existsSync(agentsDir)) return undefined;
 

@@ -1,4 +1,8 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync, type SpawnOptions } from "node:child_process";
+import { promisify } from "node:util";
+import { validateAgentName } from "./registry.js";
+
+const execFileAsync = promisify(execFile);
 
 /** Returns true when per-agent Linux user isolation is enabled. */
 export function isIsolationEnabled(): boolean {
@@ -7,12 +11,14 @@ export function isIsolationEnabled(): boolean {
 
 /** Linux username for an agent. */
 export function agentUserName(agentName: string): string {
+  const err = validateAgentName(agentName);
+  if (err) throw new Error(`Invalid agent name for isolation: ${err}`);
   return `volute-${agentName}`;
 }
 
-/** Create the shared `volute` group (idempotent). */
-export function ensureVoluteGroup(): void {
-  if (!isIsolationEnabled()) return;
+/** Create the shared `volute` group (idempotent). Pass `force: true` to skip the isolation env check. */
+export function ensureVoluteGroup(opts?: { force?: boolean }): void {
+  if (!opts?.force && !isIsolationEnabled()) return;
   try {
     execFileSync("getent", ["group", "volute"], { stdio: "ignore" });
   } catch {
@@ -56,11 +62,23 @@ export function deleteAgentUser(name: string): void {
 }
 
 /** Get uid and gid for an agent's system user. */
-export function getAgentUserIds(name: string): { uid: number; gid: number } {
+export async function getAgentUserIds(name: string): Promise<{ uid: number; gid: number }> {
   const user = agentUserName(name);
-  const uid = parseInt(execFileSync("id", ["-u", user], { encoding: "utf-8" }).trim(), 10);
-  const gid = parseInt(execFileSync("id", ["-g", user], { encoding: "utf-8" }).trim(), 10);
-  return { uid, gid };
+  const { stdout: uidStr } = await execFileAsync("id", ["-u", user]);
+  const { stdout: gidStr } = await execFileAsync("id", ["-g", user]);
+  return { uid: parseInt(uidStr.trim(), 10), gid: parseInt(gidStr.trim(), 10) };
+}
+
+/**
+ * Apply isolation uid/gid to spawn options if isolation is enabled.
+ * Resolves the base agent name from a potentially composite "name@variant" key.
+ */
+export async function applyIsolation(spawnOpts: SpawnOptions, agentName: string): Promise<void> {
+  if (!isIsolationEnabled()) return;
+  const baseName = agentName.split("@", 2)[0];
+  const { uid, gid } = await getAgentUserIds(baseName);
+  spawnOpts.uid = uid;
+  spawnOpts.gid = gid;
 }
 
 /** Set ownership of an agent directory to its system user. */

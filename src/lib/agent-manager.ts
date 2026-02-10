@@ -1,16 +1,10 @@
 import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:child_process";
-import {
-  createWriteStream,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { loadMergedEnv } from "./env.js";
-import { getAgentUserIds, isIsolationEnabled } from "./isolation.js";
+import { applyIsolation } from "./isolation.js";
+import { clearJsonMap, loadJsonMap, saveJsonMap } from "./json-state.js";
 import { agentDir, findAgent, setAgentRunning, voluteHome } from "./registry.js";
 import { findVariant, setVariantRunning, validateBranchName } from "./variants.js";
 
@@ -94,11 +88,7 @@ export class AgentManager {
       env,
     };
 
-    if (isIsolationEnabled()) {
-      const { uid, gid } = getAgentUserIds(baseName);
-      spawnOpts.uid = uid;
-      spawnOpts.gid = gid;
-    }
+    await applyIsolation(spawnOpts, name);
 
     const child = spawn(tsxBin, ["src/server.ts", "--port", String(port)], spawnOpts);
 
@@ -298,33 +288,15 @@ export class AgentManager {
   }
 
   loadCrashAttempts(): void {
-    try {
-      if (existsSync(this.crashAttemptsPath)) {
-        const data = JSON.parse(readFileSync(this.crashAttemptsPath, "utf-8"));
-        for (const [name, count] of Object.entries(data)) {
-          if (typeof count === "number") this.restartAttempts.set(name, count);
-        }
-      }
-    } catch {
-      // Ignore corrupt file
-    }
+    this.restartAttempts = loadJsonMap(this.crashAttemptsPath);
   }
 
   private saveCrashAttempts(): void {
-    const data: Record<string, number> = {};
-    for (const [name, count] of this.restartAttempts) {
-      data[name] = count;
-    }
-    try {
-      writeFileSync(this.crashAttemptsPath, `${JSON.stringify(data)}\n`);
-    } catch {}
+    saveJsonMap(this.crashAttemptsPath, this.restartAttempts);
   }
 
   clearCrashAttempts(): void {
-    this.restartAttempts.clear();
-    try {
-      if (existsSync(this.crashAttemptsPath)) unlinkSync(this.crashAttemptsPath);
-    } catch {}
+    clearJsonMap(this.crashAttemptsPath, this.restartAttempts);
   }
 }
 
@@ -350,7 +322,9 @@ async function killProcessOnPort(port: number): Promise<void> {
         process.kill(pid, "SIGTERM");
       } catch {}
     }
-  } catch {}
+  } catch {
+    // lsof may fail if no process on port — expected
+  }
 }
 
 let instance: AgentManager | null = null;

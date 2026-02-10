@@ -1,4 +1,4 @@
-import { execFile as execFileCb, spawn } from "node:child_process";
+import { execFile as execFileCb, execFileSync, spawn } from "node:child_process";
 
 /** Promise wrapper around child_process.execFile. Returns stdout as a string. */
 export function exec(
@@ -16,6 +16,15 @@ export function exec(
       }
     });
   });
+}
+
+/** Resolve the absolute path to the `volute` binary. Throws if not found on PATH. */
+export function resolveVoluteBin(): string {
+  try {
+    return execFileSync("which", ["volute"], { encoding: "utf-8" }).trim();
+  } catch {
+    throw new Error("Could not find volute binary on PATH");
+  }
 }
 
 /** Promise wrapper around spawn with stdio: "inherit". Resolves when the process exits 0, rejects otherwise. */

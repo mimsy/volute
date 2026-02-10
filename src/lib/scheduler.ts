@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
+import { clearJsonMap, loadJsonMap, saveJsonMap } from "./json-state.js";
 import { agentDir, findAgent, voluteHome } from "./registry.js";
 import { readVoluteConfig, type Schedule } from "./volute-config.js";
 
@@ -27,33 +27,15 @@ export class Scheduler {
   }
 
   private loadState(): void {
-    try {
-      if (existsSync(this.statePath)) {
-        const data = JSON.parse(readFileSync(this.statePath, "utf-8"));
-        for (const [key, value] of Object.entries(data)) {
-          if (typeof value === "number") this.lastFired.set(key, value);
-        }
-      }
-    } catch {
-      // Ignore corrupt file
-    }
+    this.lastFired = loadJsonMap(this.statePath);
   }
 
-  private saveState(): void {
-    const data: Record<string, number> = {};
-    for (const [key, value] of this.lastFired) {
-      data[key] = value;
-    }
-    try {
-      writeFileSync(this.statePath, `${JSON.stringify(data)}\n`);
-    } catch {}
+  saveState(): void {
+    saveJsonMap(this.statePath, this.lastFired);
   }
 
   clearState(): void {
-    this.lastFired.clear();
-    try {
-      if (existsSync(this.statePath)) unlinkSync(this.statePath);
-    } catch {}
+    clearJsonMap(this.statePath, this.lastFired);
   }
 
   loadSchedules(agentName: string): void {

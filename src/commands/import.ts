@@ -187,7 +187,7 @@ function resolveWorkspace(explicitPath?: string): string {
 }
 
 /** Find the most recent OpenClaw session whose cwd matches the workspace being imported. */
-function findOpenClawSession(workspaceDir: string): string | undefined {
+export function findOpenClawSession(workspaceDir: string): string | undefined {
   const agentsDir = resolve(homedir(), ".openclaw/agents");
   if (!existsSync(agentsDir)) return undefined;
 
@@ -206,7 +206,8 @@ function findOpenClawSession(workspaceDir: string): string | undefined {
         }
       }
     }
-  } catch {
+  } catch (err) {
+    console.warn("Warning: error scanning OpenClaw sessions:", err);
     return undefined;
   }
 
@@ -218,7 +219,7 @@ function findOpenClawSession(workspaceDir: string): string | undefined {
 }
 
 /** Check if a session JSONL file's header cwd matches the given workspace directory. */
-function sessionMatchesWorkspace(sessionPath: string, workspaceDir: string): boolean {
+export function sessionMatchesWorkspace(sessionPath: string, workspaceDir: string): boolean {
   try {
     const fd = readFileSync(sessionPath, "utf-8");
     const firstLine = fd.slice(0, fd.indexOf("\n"));
@@ -234,7 +235,7 @@ function sessionMatchesWorkspace(sessionPath: string, workspaceDir: string): boo
  * OpenClaw sessions use the same JSONL format as pi-coding-agent,
  * so we copy directly and just update the cwd in the session header.
  */
-function importPiSession(sessionFile: string, agentDirPath: string) {
+export function importPiSession(sessionFile: string, agentDirPath: string) {
   const homeDir = resolve(agentDirPath, "home");
   const piSessionDir = resolve(agentDirPath, ".volute/pi-sessions/main");
   mkdirSync(piSessionDir, { recursive: true });
@@ -243,16 +244,14 @@ function importPiSession(sessionFile: string, agentDirPath: string) {
   const content = readFileSync(sessionFile, "utf-8");
   const lines = content.trim().split("\n");
 
-  if (lines.length > 0) {
-    try {
-      const header = JSON.parse(lines[0]);
-      if (header.type === "session") {
-        header.cwd = homeDir;
-        lines[0] = JSON.stringify(header);
-      }
-    } catch {
-      // Not a valid header, copy as-is
+  try {
+    const header = JSON.parse(lines[0]);
+    if (header.type === "session") {
+      header.cwd = homeDir;
+      lines[0] = JSON.stringify(header);
     }
+  } catch {
+    // Not a valid header, copy as-is
   }
 
   const filename = basename(sessionFile);
@@ -262,14 +261,15 @@ function importPiSession(sessionFile: string, agentDirPath: string) {
 }
 
 /** Import connector config from ~/.openclaw/openclaw.json into the new agent. */
-function importOpenClawConnectors(agentDirPath: string) {
+export function importOpenClawConnectors(agentDirPath: string) {
   const configPath = resolve(homedir(), ".openclaw/openclaw.json");
   if (!existsSync(configPath)) return;
 
   let config: { channels?: Record<string, { enabled?: boolean; token?: string }> };
   try {
     config = JSON.parse(readFileSync(configPath, "utf-8"));
-  } catch {
+  } catch (err) {
+    console.warn("Warning: failed to parse openclaw.json:", err);
     return;
   }
 
@@ -292,13 +292,16 @@ function importOpenClawConnectors(agentDirPath: string) {
   console.log("Imported Discord connector config");
 }
 
-function parseNameFromIdentity(identity: string): string | undefined {
+export function parseNameFromIdentity(identity: string): string | undefined {
   const match = identity.match(/\*\*Name:\*\*\s*(.+)/);
   if (match) {
     const raw = match[1].trim();
     // Skip template placeholder text
     if (!raw || raw.startsWith("*") || raw.startsWith("(")) return undefined;
-    return raw.toLowerCase().replace(/\s+/g, "-");
+    return raw
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9.-]/g, "");
   }
   return undefined;
 }

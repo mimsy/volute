@@ -1,9 +1,16 @@
+import { timingSafeEqual } from "node:crypto";
 import { eq, lt } from "drizzle-orm";
 import { getCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
 import { getUser, type User } from "../../lib/auth.js";
 import { getDb } from "../../lib/db.js";
 import { sessions } from "../../lib/schema.js";
+
+function isValidDaemonToken(token: string): boolean {
+  const expected = process.env.VOLUTE_DAEMON_TOKEN;
+  if (!expected || token.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(token), Buffer.from(expected));
+}
 
 export type AuthEnv = {
   Variables: {
@@ -55,7 +62,7 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   const authHeader = c.req.header("Authorization");
   if (authHeader?.startsWith("Bearer ")) {
     const token = authHeader.slice(7);
-    if (token && token === process.env.VOLUTE_DAEMON_TOKEN) {
+    if (token && isValidDaemonToken(token)) {
       c.set("user", { id: 0, username: "cli", role: "admin" } as User);
       await next();
       return;

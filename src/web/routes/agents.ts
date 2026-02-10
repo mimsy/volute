@@ -311,7 +311,9 @@ const app = new Hono<AuthEnv>()
               if (event.type === "text") {
                 textParts.push(event.content);
               }
-            } catch {}
+            } catch {
+              console.warn(`[daemon] malformed NDJSON line from ${baseName}`);
+            }
           }
         }
 
@@ -322,7 +324,9 @@ const app = new Hono<AuthEnv>()
             if (event.type === "text") {
               textParts.push(event.content);
             }
-          } catch {}
+          } catch {
+            console.warn(`[daemon] malformed NDJSON trailing data from ${baseName}`);
+          }
         }
 
         // Record assistant response

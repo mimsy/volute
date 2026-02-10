@@ -1,18 +1,23 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
+import { resolveVoluteBin } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
 
 const execFileAsync = promisify(execFile);
 
-function resolveVoluteBin(): string {
-  try {
-    return execFileSync("which", ["volute"], { encoding: "utf-8" }).trim();
-  } catch {
-    return "volute";
+const HOST_RE = /^[a-zA-Z0-9.:_-]+$/;
+
+function validateHost(host: string): void {
+  if (!HOST_RE.test(host)) {
+    throw new Error(`Invalid host: ${host}`);
   }
+}
+
+function escapeXml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 // macOS launchd
@@ -21,7 +26,7 @@ const plistPath = () => resolve(homedir(), "Library", "LaunchAgents", `${PLIST_L
 
 function generatePlist(voluteBin: string, port?: number, host?: string): string {
   const args = ["up", "--foreground"];
-  if (port) args.push("--port", String(port));
+  if (port != null) args.push("--port", String(port));
   if (host) args.push("--host", host);
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -32,7 +37,7 @@ function generatePlist(voluteBin: string, port?: number, host?: string): string 
   <string>${PLIST_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    ${[voluteBin, ...args].map((a) => `<string>${a}</string>`).join("\n    ")}
+    ${[voluteBin, ...args].map((a) => `<string>${escapeXml(a)}</string>`).join("\n    ")}
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -52,7 +57,7 @@ const unitPath = () => resolve(homedir(), ".config", "systemd", "user", unitName
 
 function generateUnit(voluteBin: string, port?: number, host?: string): string {
   const args = ["up", "--foreground"];
-  if (port) args.push("--port", String(port));
+  if (port != null) args.push("--port", String(port));
   if (host) args.push("--host", host);
 
   return `[Unit]
@@ -71,6 +76,7 @@ WantedBy=default.target
 }
 
 async function install(port?: number, host?: string): Promise<void> {
+  if (host) validateHost(host);
   const voluteBin = resolveVoluteBin();
   const platform = process.platform;
 
@@ -102,7 +108,9 @@ async function uninstall(): Promise<void> {
     if (existsSync(path)) {
       try {
         await execFileAsync("launchctl", ["unload", path]);
-      } catch {}
+      } catch {
+        console.warn("Warning: failed to unload service (may already be unloaded)");
+      }
       unlinkSync(path);
       console.log("Service uninstalled.");
     } else {
@@ -113,7 +121,9 @@ async function uninstall(): Promise<void> {
     if (existsSync(path)) {
       try {
         await execFileAsync("systemctl", ["--user", "disable", "--now", "volute"]);
-      } catch {}
+      } catch {
+        console.warn("Warning: failed to disable service (may already be stopped)");
+      }
       unlinkSync(path);
       console.log("Service uninstalled.");
     } else {

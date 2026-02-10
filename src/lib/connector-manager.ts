@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { loadMergedEnv } from "./env.js";
-import { getAgentUserIds, isIsolationEnabled } from "./isolation.js";
+import { applyIsolation } from "./isolation.js";
 import { agentDir as getAgentDir, voluteHome } from "./registry.js";
 import { readVoluteConfig } from "./volute-config.js";
 
@@ -135,12 +135,7 @@ export class ConnectorManager {
       },
     };
 
-    if (isIsolationEnabled()) {
-      const baseName = agentName.split("@", 2)[0];
-      const { uid, gid } = getAgentUserIds(baseName);
-      spawnOpts.uid = uid;
-      spawnOpts.gid = gid;
-    }
+    await applyIsolation(spawnOpts, agentName);
 
     const child = spawn(runtime, [connectorScript], spawnOpts);
 
@@ -267,7 +262,9 @@ export class ConnectorManager {
   private removeConnectorPid(agentDir: string, type: string): void {
     try {
       unlinkSync(this.connectorPidPath(agentDir, type));
-    } catch {}
+    } catch {
+      // PID file may not exist — ignore
+    }
   }
 
   private killOrphanConnector(agentDir: string, type: string): void {
@@ -279,10 +276,14 @@ export class ConnectorManager {
         process.kill(pid, "SIGTERM");
         console.error(`[daemon] killed orphan connector ${type} (pid ${pid})`);
       }
-    } catch {}
+    } catch {
+      // Process may not exist — ignore
+    }
     try {
       unlinkSync(pidPath);
-    } catch {}
+    } catch {
+      // PID file cleanup is best-effort
+    }
   }
 
   private resolveBuiltinConnector(type: string): string | null {

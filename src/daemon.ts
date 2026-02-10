@@ -6,6 +6,7 @@ import { initConnectorManager } from "./lib/connector-manager.js";
 import { agentDir, readRegistry, setAgentRunning, voluteHome } from "./lib/registry.js";
 import { getScheduler } from "./lib/scheduler.js";
 import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
+import { cleanExpiredSessions } from "./web/middleware/auth.js";
 import { startServer } from "./web/server.js";
 
 export async function startDaemon(opts: {
@@ -83,6 +84,9 @@ export async function startDaemon(opts: {
     }
   }
 
+  // Clean up expired sessions (non-blocking)
+  cleanExpiredSessions().catch(() => {});
+
   console.error(`[daemon] running on ${hostname}:${port}, pid ${myPid}`);
 
   // Only delete PID/config files if they still belong to this process
@@ -91,14 +95,18 @@ export async function startDaemon(opts: {
       if (readFileSync(DAEMON_PID_PATH, "utf-8").trim() === myPid) {
         unlinkSync(DAEMON_PID_PATH);
       }
-    } catch {}
+    } catch {
+      // PID file may not exist or belong to another process — ignore
+    }
     try {
       // Only delete daemon.json if it belongs to this process
       const data = JSON.parse(readFileSync(DAEMON_JSON_PATH, "utf-8"));
       if (data.token === token) {
         unlinkSync(DAEMON_JSON_PATH);
       }
-    } catch {}
+    } catch {
+      // Config file may not exist — ignore
+    }
   }
 
   let shuttingDown = false;
@@ -107,7 +115,7 @@ export async function startDaemon(opts: {
     shuttingDown = true;
     console.error("[daemon] shutting down...");
     scheduler.stop();
-    scheduler.clearState();
+    scheduler.saveState();
     await connectors.stopAll();
     await manager.stopAll();
     manager.clearCrashAttempts();
