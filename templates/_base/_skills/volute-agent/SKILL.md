@@ -20,10 +20,10 @@ You manage yourself through the `volute` CLI. Commands that operate on "your" ag
 | `volute variant merge <name> [--summary "..." --memory "..."]` | Merge a variant back |
 | `volute variant delete <name>` | Delete a variant without merging |
 | `volute upgrade [--template <name>] [--continue]` | Upgrade your server code |
-| `volute connector connect <type>` | Enable a connector (e.g. discord) |
+| `volute connector connect <type>` | Enable a connector (discord, slack, etc.) |
 | `volute connector disconnect <type>` | Disable a connector |
-| `volute channel read discord:<id> [--limit N]` | Read channel history |
-| `volute channel send discord:<id> "msg"` | Send a message proactively |
+| `volute channel read <platform>:<id> [--limit N]` | Read channel history |
+| `volute channel send <platform>:<id> "msg"` | Send a message proactively |
 | `volute schedule add --cron "..." --message "..."` | Schedule a recurring message to yourself |
 | `volute schedule list` | List your schedules |
 | `volute schedule remove --id <id>` | Remove a schedule |
