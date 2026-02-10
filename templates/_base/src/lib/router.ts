@@ -36,16 +36,14 @@ function applyPrefix(content: VoluteContentPart[], meta: ChannelMeta): VoluteCon
   const prefix = formatPrefix(meta, time);
   if (!prefix) return content;
 
-  const hasText = content.some((p) => p.type === "text");
-  if (!hasText) {
+  const firstTextIdx = content.findIndex((p) => p.type === "text");
+  if (firstTextIdx === -1) {
     return [{ type: "text", text: prefix.trimEnd() }, ...content];
   }
 
-  let first = true;
-  return content.map((part) => {
-    if (part.type === "text" && first) {
-      first = false;
-      return { type: "text" as const, text: prefix + part.text };
+  return content.map((part, i) => {
+    if (i === firstTextIdx) {
+      return { type: "text" as const, text: prefix + (part as { text: string }).text };
     }
     return part;
   });
@@ -83,6 +81,7 @@ export function createRouter(options: {
     const messageId = generateMessageId();
     const handler = options.agentHandler(buffer.sessionName);
 
+    // Batch flushes are fire-and-forget — no HTTP response is waiting, so listener is a noop
     handler.handle(content, { sessionName: buffer.sessionName, messageId }, () => {});
     log("router", `flushed batch for session ${buffer.sessionName}: ${messages.length} messages`);
   }
@@ -103,18 +102,31 @@ export function createRouter(options: {
     const config = options.configPath ? loadSessionConfig(options.configPath) : {};
     const resolved = resolveRoute(config, { channel: meta.channel, sender: meta.sender });
 
-    // Handle $new session names
+    const messageId = generateMessageId();
+    const noop = () => {};
+    const safeListener = listener ?? noop;
+
+    // File destination
+    if (resolved.destination === "file") {
+      if (options.fileHandler) {
+        const formatted = applyPrefix(content, meta);
+        const handler = options.fileHandler(resolved.path);
+        const unsubscribe = handler.handle(formatted, { ...meta, messageId }, safeListener);
+        return { messageId, unsubscribe };
+      }
+      // No file handler configured — emit done and discard
+      queueMicrotask(() => safeListener({ type: "done", messageId }));
+      return { messageId, unsubscribe: noop };
+    }
+
+    // Agent destination
     let sessionName = resolved.session;
     if (sessionName === "$new") {
       sessionName = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     }
 
-    const messageId = generateMessageId();
-    const noop = () => {};
-    const safeListener = listener ?? noop;
-
     // Batch mode: buffer the message and return immediate done
-    if (resolved.batch != null && resolved.destination === "agent") {
+    if (resolved.batch != null) {
       const batchKey = `batch:${sessionName}`;
 
       if (!batchBuffers.has(batchKey)) {
@@ -139,21 +151,8 @@ export function createRouter(options: {
       return { messageId, unsubscribe: noop };
     }
 
-    // Apply formatting prefix
+    // Direct dispatch to agent
     const formatted = applyPrefix(content, { ...meta, sessionName });
-
-    // Dispatch to the appropriate handler
-    if (resolved.destination === "file" && resolved.path && options.fileHandler) {
-      const handler = options.fileHandler(resolved.path);
-      const unsubscribe = handler.handle(
-        formatted,
-        { ...meta, sessionName, messageId },
-        safeListener,
-      );
-      return { messageId, unsubscribe };
-    }
-
-    // Default: agent handler
     const handler = options.agentHandler(sessionName);
     const unsubscribe = handler.handle(
       formatted,

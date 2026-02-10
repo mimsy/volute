@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { log } from "./logger.js";
 import type {
-  ChannelMeta,
+  HandlerMeta,
   HandlerResolver,
   Listener,
   MessageHandler,
@@ -16,13 +16,9 @@ function extractText(content: VoluteContentPart[]): string {
     .join("\n");
 }
 
-function createFileHandler(filePath: string): MessageHandler {
-  return {
-    handle(
-      content: VoluteContentPart[],
-      meta: ChannelMeta & { messageId: string },
-      listener: Listener,
-    ): () => void {
+export function createFileHandlerResolver(): HandlerResolver {
+  return (filePath: string): MessageHandler => ({
+    handle(content: VoluteContentPart[], meta: HandlerMeta, listener: Listener): () => void {
       const text = extractText(content);
       if (text) {
         mkdirSync(dirname(filePath), { recursive: true });
@@ -33,17 +29,5 @@ function createFileHandler(filePath: string): MessageHandler {
       queueMicrotask(() => listener({ type: "done", messageId: meta.messageId }));
       return () => {};
     },
-  };
-}
-
-export function createFileHandlerResolver(): HandlerResolver {
-  const handlers = new Map<string, MessageHandler>();
-  return (filePath: string) => {
-    let handler = handlers.get(filePath);
-    if (!handler) {
-      handler = createFileHandler(filePath);
-      handlers.set(filePath, handler);
-    }
-    return handler;
-  };
+  });
 }

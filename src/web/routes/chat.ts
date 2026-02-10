@@ -9,23 +9,12 @@ import {
   getConversationForUser,
 } from "../../lib/conversations.js";
 import { getDb } from "../../lib/db.js";
+import { summarizeTool } from "../../lib/format-tool.js";
 import { readNdjson } from "../../lib/ndjson.js";
 import { findAgent } from "../../lib/registry.js";
 import { agentMessages } from "../../lib/schema.js";
 import { findVariant } from "../../lib/variants.js";
 import type { AuthEnv } from "../middleware/auth.js";
-
-function summarizeTool(name: string, input: unknown): string {
-  if (input && typeof input === "object") {
-    const args = input as Record<string, unknown>;
-    const val = args.path ?? args.command ?? args.query ?? args.url;
-    if (typeof val === "string") {
-      const brief = val.length > 60 ? `${val.slice(0, 57)}...` : val;
-      return `[${name} ${brief}]`;
-    }
-  }
-  return `[${name}]`;
-}
 
 const chatSchema = z.object({
   message: z.string().optional(),

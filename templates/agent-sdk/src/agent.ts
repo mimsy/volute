@@ -8,7 +8,7 @@ import { createPreCompactHook } from "./lib/hooks/pre-compact.js";
 import { log, logText, logThinking, logToolUse } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
 import type {
-  ChannelMeta,
+  HandlerMeta,
   HandlerResolver,
   Listener,
   MessageHandler,
@@ -245,11 +245,7 @@ export function createAgent(options: {
 
   function createSessionHandler(sessionName: string): MessageHandler {
     return {
-      handle(
-        content: VoluteContentPart[],
-        meta: ChannelMeta & { messageId: string },
-        listener: Listener,
-      ): () => void {
+      handle(content: VoluteContentPart[], meta: HandlerMeta, listener: Listener): () => void {
         const session = getOrCreateSession(sessionName);
 
         // Filter listener to only receive events for this messageId
@@ -283,6 +279,10 @@ export function createAgent(options: {
   const handlers = new Map<string, MessageHandler>();
 
   function resolve(sessionName: string): MessageHandler {
+    // Ephemeral sessions get unique names — don't cache their handlers
+    if (sessionName.startsWith("new-")) {
+      return createSessionHandler(sessionName);
+    }
     let handler = handlers.get(sessionName);
     if (!handler) {
       handler = createSessionHandler(sessionName);

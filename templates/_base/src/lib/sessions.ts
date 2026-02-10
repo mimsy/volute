@@ -15,13 +15,9 @@ export type SessionConfig = {
   default?: string;
 };
 
-export type ResolvedRoute = {
-  session: string;
-  destination: "agent" | "file";
-  path?: string;
-  interrupt: boolean;
-  batch?: number;
-};
+export type ResolvedRoute =
+  | { destination: "agent"; session: string; interrupt: boolean; batch?: number }
+  | { destination: "file"; path: string };
 
 export function loadSessionConfig(configPath: string): SessionConfig {
   try {
@@ -39,26 +35,6 @@ function globMatch(pattern: string, value: string): boolean {
   // Escape regex special chars except *, then replace * with .*
   const regex = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
   return new RegExp(`^${regex}$`).test(value);
-}
-
-/**
- * Resolve which session a message should route to based on the config.
- * Returns the session name (with template variables expanded, path-safe).
- */
-export function resolveSession(
-  config: SessionConfig,
-  meta: { channel?: string; sender?: string },
-): string {
-  const fallback = config.default ?? "main";
-  if (!config.rules) return fallback;
-
-  for (const rule of config.rules) {
-    if (ruleMatches(rule, meta)) {
-      return sanitizeSessionName(expandTemplate(rule.session ?? fallback, meta));
-    }
-  }
-
-  return fallback;
 }
 
 const MATCH_KEYS = new Set(["channel", "sender"]);
@@ -82,25 +58,6 @@ function expandTemplate(template: string, meta: { channel?: string; sender?: str
 }
 
 /**
- * Resolve the batch interval (in minutes) for a message based on the config.
- * Returns undefined if no matching rule has a batch value.
- */
-export function resolveBatch(
-  config: SessionConfig,
-  meta: { channel?: string; sender?: string },
-): number | undefined {
-  if (!config.rules) return undefined;
-
-  for (const rule of config.rules) {
-    if (ruleMatches(rule, meta)) {
-      return rule.batch;
-    }
-  }
-
-  return undefined;
-}
-
-/**
  * Resolve the full route for a message: destination type, session/path, interrupt, batch.
  */
 export function resolveRoute(
@@ -110,26 +67,24 @@ export function resolveRoute(
   const fallback = config.default ?? "main";
 
   if (!config.rules) {
-    return { session: fallback, destination: "agent", interrupt: true };
+    return { destination: "agent", session: fallback, interrupt: true };
   }
 
   for (const rule of config.rules) {
     if (ruleMatches(rule, meta)) {
-      const destination = rule.destination === "file" ? "file" : "agent";
+      if (rule.destination === "file") {
+        return { destination: "file", path: rule.path ?? "" };
+      }
       return {
-        session:
-          destination === "agent"
-            ? sanitizeSessionName(expandTemplate(rule.session ?? fallback, meta))
-            : "",
-        destination,
-        path: rule.path,
-        interrupt: rule.interrupt ?? destination === "agent",
+        destination: "agent",
+        session: sanitizeSessionName(expandTemplate(rule.session ?? fallback, meta)),
+        interrupt: rule.interrupt ?? true,
         batch: rule.batch,
       };
     }
   }
 
-  return { session: fallback, destination: "agent", interrupt: true };
+  return { destination: "agent", session: fallback, interrupt: true };
 }
 
 function sanitizeSessionName(name: string): string {

@@ -7,23 +7,12 @@ import { getAgentManager } from "../../lib/agent-manager.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { getConnectorManager } from "../../lib/connector-manager.js";
 import { getDb } from "../../lib/db.js";
+import { summarizeTool } from "../../lib/format-tool.js";
 import { agentDir, findAgent, readRegistry, removeAgent, voluteHome } from "../../lib/registry.js";
 import { getScheduler } from "../../lib/scheduler.js";
 import { agentMessages } from "../../lib/schema.js";
 import { checkHealth, findVariant, readVariants, removeAllVariants } from "../../lib/variants.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
-
-function summarizeTool(name: string, input: unknown): string {
-  if (input && typeof input === "object") {
-    const args = input as Record<string, unknown>;
-    const val = args.path ?? args.command ?? args.query ?? args.url;
-    if (typeof val === "string") {
-      const brief = val.length > 60 ? `${val.slice(0, 57)}...` : val;
-      return `[${name} ${brief}]`;
-    }
-  }
-  return `[${name}]`;
-}
 
 function getDaemonPort(): number | undefined {
   try {
