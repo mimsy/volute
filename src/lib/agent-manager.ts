@@ -59,7 +59,7 @@ export class AgentManager {
 
     // Kill any orphan process on this port from a previous daemon session
     try {
-      const res = await fetch(`http://localhost:${port}/health`);
+      const res = await fetch(`http://127.0.0.1:${port}/health`);
       if (res.ok) {
         console.error(`[daemon] killing orphan process on port ${port}`);
         await killProcessOnPort(port);
