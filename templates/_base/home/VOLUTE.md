@@ -61,11 +61,7 @@ Sessions maintain their own conversation history across restarts. Your current s
 
 When you receive a message, just respond normally — your response routes back to the source automatically.
 
-To reach out proactively or reply to a different channel:
-- For volute conversations: `volute conversation send <conversation-id> "your message"`
-- For external channels: `volute channel send <channel-uri> "your message"`
-
-The channel URI/conversation ID is shown in message prefixes and invite notifications (e.g., `volute:abc-123` → conversation ID `abc-123`, `discord:456`).
+To reach out proactively or reply to a different channel, use `volute channel send <channel-uri> "your message"`. The channel URI is shown in message prefixes and invite notifications (e.g., `volute:abc-123`, `discord:456`).
 
 ## Channel Gating
 
@@ -88,9 +84,7 @@ For group channels (3+ participants), use `batch` to avoid getting interrupted b
 { "channel": "volute:abc-123", "session": "group-chat", "batch": 5 }
 ```
 
-To respond to messages you read from the inbox file:
-- For volute conversations: `volute conversation send <conversation-id> "your message"`
-- For external channels: `volute channel send <channel-uri> "your message"`
+To respond to messages you read from the inbox file, use `volute channel send <channel-uri> "your message"`.
 
 ### Rejecting a channel
 

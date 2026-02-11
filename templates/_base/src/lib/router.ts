@@ -89,12 +89,7 @@ function formatInviteNotification(
   } else {
     lines.push(`  { "channel": "${meta.channel}", "session": "${suggestedSession}" }`);
   }
-  const channelStr = meta.channel ?? "unknown";
-  if (channelStr.startsWith("volute:")) {
-    lines.push(`To respond, use: volute conversation send ${channelStr.slice(7)} "your message"`);
-  } else {
-    lines.push(`To respond, use: volute channel send ${channelStr} "your message"`);
-  }
+  lines.push(`To respond, use: volute channel send ${meta.channel ?? "unknown"} "your message"`);
   lines.push(`To reject, delete ${filePath}`);
   return lines.join("\n");
 }

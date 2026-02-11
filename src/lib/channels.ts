@@ -1,6 +1,7 @@
 import * as discord from "./channels/discord.js";
 import * as slack from "./channels/slack.js";
 import * as telegram from "./channels/telegram.js";
+import * as volute from "./channels/volute.js";
 
 export type ChannelDriver = {
   read(env: Record<string, string>, channelId: string, limit: number): Promise<string>;
@@ -15,7 +16,7 @@ export type ChannelProvider = {
 };
 
 export const CHANNELS: Record<string, ChannelProvider> = {
-  volute: { name: "volute", displayName: "Volute", showToolCalls: true },
+  volute: { name: "volute", displayName: "Volute", showToolCalls: true, driver: volute },
   web: { name: "web", displayName: "Web UI", showToolCalls: true },
   discord: {
     name: "discord",

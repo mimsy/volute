@@ -280,7 +280,7 @@ describe("router invite gating", () => {
     );
   });
 
-  it("uses conversation send for volute channels in invite", async () => {
+  it("uses channel send for volute channels in invite", async () => {
     const dir = mkdtempSync(join(tmpdir(), "router-invite-"));
     const configPath = writeConfig(dir, {
       gateUnmatched: true,
@@ -299,12 +299,8 @@ describe("router invite gating", () => {
     const mainCalls = agentCalls.get("main")!;
     const text = (mainCalls[0].content[0] as { text: string }).text;
     assert.ok(
-      text.includes("volute conversation send conv-xyz"),
-      "should use conversation send for volute channels",
-    );
-    assert.ok(
-      !text.includes("volute channel send"),
-      "should not suggest channel send for volute channels",
+      text.includes("volute channel send volute:conv-xyz"),
+      "should use channel send for volute channels",
     );
   });
 
