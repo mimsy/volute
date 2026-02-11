@@ -90,6 +90,13 @@ export function App() {
                   color: route.page === "logs" ? "var(--accent)" : "var(--text-2)",
                   fontSize: 12,
                   fontFamily: "var(--mono)",
+                  transition: "color 0.15s",
+                }}
+                onMouseEnter={(e) => {
+                  if (route.page !== "logs") e.currentTarget.style.color = "var(--text-0)";
+                }}
+                onMouseLeave={(e) => {
+                  if (route.page !== "logs") e.currentTarget.style.color = "var(--text-2)";
                 }}
               >
                 logs
@@ -105,7 +112,10 @@ export function App() {
                   fontFamily: "var(--mono)",
                   border: "none",
                   cursor: "pointer",
+                  transition: "color 0.15s",
                 }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-0)")}
+                onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}
               >
                 users
               </button>
@@ -120,7 +130,10 @@ export function App() {
                 fontFamily: "var(--mono)",
                 border: "none",
                 cursor: "pointer",
+                transition: "color 0.15s",
               }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-0)")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}
             >
               logout
             </button>
@@ -163,7 +176,6 @@ const globalStyles = `
     --blue: #60a5fa;
     --purple: #c084fc;
     --mono: 'IBM Plex Mono', 'SF Mono', 'Fira Code', monospace;
-    --sans: 'Space Grotesk', system-ui, sans-serif;
     --radius: 6px;
     --radius-lg: 10px;
   }
@@ -213,7 +225,20 @@ const globalStyles = `
     font-family: var(--mono);
     cursor: pointer;
     border: none;
+  }
+
+  button:focus {
     outline: none;
+  }
+
+  button:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  a:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: 2px;
   }
 
   .app {

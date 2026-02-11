@@ -26,7 +26,7 @@ export function LogViewer({ name }: { name: string }) {
     if (autoScroll && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [autoScroll]);
+  }, [autoScroll, lines.length]);
 
   // Detect scroll position
   const handleScroll = () => {

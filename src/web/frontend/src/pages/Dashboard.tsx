@@ -5,6 +5,7 @@ import { type Agent, fetchAgents } from "../lib/api";
 export function Dashboard() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let active = true;
@@ -14,9 +15,13 @@ export function Dashboard() {
         if (active) {
           setAgents(data);
           setError("");
+          setLoading(false);
         }
       } catch {
-        if (active) setError("Failed to connect to API");
+        if (active) {
+          setError("Failed to connect to API");
+          setLoading(false);
+        }
       }
     };
 
@@ -30,6 +35,10 @@ export function Dashboard() {
 
   if (error) {
     return <div style={{ color: "var(--red)", padding: 40, textAlign: "center" }}>{error}</div>;
+  }
+
+  if (loading) {
+    return null;
   }
 
   if (agents.length === 0) {
@@ -58,7 +67,13 @@ export function Dashboard() {
       }}
     >
       {agents.map((agent, i) => (
-        <div key={agent.name} style={{ animationDelay: `${i * 50}ms` }}>
+        <div
+          key={agent.name}
+          style={{
+            animation: "fadeIn 0.3s ease both",
+            animationDelay: `${i * 50}ms`,
+          }}
+        >
           <AgentCard agent={agent} />
         </div>
       ))}

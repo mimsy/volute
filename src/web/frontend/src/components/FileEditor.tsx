@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { fetchFile, fetchFiles, saveFile } from "../lib/api";
 
 export function FileEditor({ name }: { name: string }) {
@@ -30,7 +30,7 @@ export function FileEditor({ name }: { name: string }) {
       .catch(() => setError("Failed to load file"));
   }, [name, selected]);
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     if (!selected) return;
     setSaving(true);
     try {
@@ -42,9 +42,20 @@ export function FileEditor({ name }: { name: string }) {
       setError("Failed to save file");
     }
     setSaving(false);
-  };
+  }, [name, selected, content]);
 
   const dirty = content !== original;
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+        e.preventDefault();
+        if (dirty) handleSave();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [dirty, handleSave]);
 
   return (
     <div

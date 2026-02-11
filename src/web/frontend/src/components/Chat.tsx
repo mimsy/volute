@@ -147,6 +147,10 @@ export function Chat({
     setInput("");
     setPendingImages([]);
     currentRef.current = [];
+    if (inputRef.current) {
+      inputRef.current.style.height = "auto";
+      inputRef.current.style.overflow = "hidden";
+    }
     setEntries((prev) => [
       ...prev,
       { role: "user", blocks: userBlocks },
@@ -324,6 +328,13 @@ export function Chat({
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
+          onInput={(e) => {
+            const el = e.currentTarget;
+            el.style.height = "auto";
+            const maxH = 120;
+            el.style.height = `${Math.min(el.scrollHeight, maxH)}px`;
+            el.style.overflow = el.scrollHeight > maxH ? "auto" : "hidden";
+          }}
           placeholder="Send a message..."
           rows={1}
           style={{
@@ -337,6 +348,7 @@ export function Chat({
             fontSize: 13,
             resize: "none",
             outline: "none",
+            overflow: "hidden",
             transition: "border-color 0.15s",
           }}
           onFocus={(e) => (e.currentTarget.style.borderColor = "var(--border-bright)")}
@@ -628,7 +640,7 @@ function ToolUseBlock({ tool }: { tool: ToolBlock }) {
             minWidth: 0,
           }}
         >
-          <span style={{ color: "var(--text-2)", marginRight: 6 }}>{open ? "v" : ">"}</span>
+          <span style={{ color: "var(--text-2)", marginRight: 6 }}>{open ? "▾" : "▸"}</span>
           {summary.label}
         </span>
         {tool.output !== undefined && (

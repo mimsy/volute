@@ -104,6 +104,13 @@ export function ConversationList({
               alignItems: "center",
               justifyContent: "space-between",
               gap: 4,
+              transition: "background 0.1s",
+            }}
+            onMouseEnter={(e) => {
+              if (conv.id !== activeId) e.currentTarget.style.background = "var(--bg-2)";
+            }}
+            onMouseLeave={(e) => {
+              if (conv.id !== activeId) e.currentTarget.style.background = "transparent";
             }}
           >
             <div
