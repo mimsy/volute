@@ -49,12 +49,58 @@ function applyPrefix(content: VoluteContentPart[], meta: ChannelMeta): VoluteCon
   });
 }
 
+function sanitizeChannelPath(channel: string): string {
+  return channel
+    .replace(/[/\\:]/g, "-")
+    .replace(/\.\./g, "-")
+    .replace(/\0/g, "")
+    .slice(0, 100);
+}
+
+function formatInviteNotification(
+  meta: ChannelMeta,
+  filePath: string,
+  messageText: string,
+): string {
+  const time = new Date().toLocaleString();
+  const lines = ["[Channel Invite]"];
+  if (meta.channel) lines.push(`Channel: ${meta.channel}`);
+  if (meta.sender) lines.push(`Sender: ${meta.sender}`);
+  if (meta.platform) lines.push(`Platform: ${meta.platform}`);
+  if (meta.guildName) lines.push(`Guild: ${meta.guildName}`);
+  if (meta.channelName) lines.push(`Channel name: ${meta.channelName}`);
+  if (meta.participants && meta.participants.length > 0)
+    lines.push(`Participants: ${meta.participants.join(", ")}`);
+  lines.push("");
+  const preview = messageText.length > 200 ? `${messageText.slice(0, 200)}...` : messageText;
+  lines.push(`[${meta.sender ?? "unknown"} — ${time}]`);
+  lines.push(preview);
+  lines.push("");
+  lines.push(`Further messages will be saved to ${filePath}`);
+  lines.push("");
+  lines.push("To accept, add a routing rule to .config/sessions.json:");
+  const suggestedSession = sanitizeChannelPath(meta.channel ?? "unknown");
+  const otherCount = (meta.participantCount ?? 1) - 1;
+  if (otherCount > 1) {
+    lines.push(`  { "channel": "${meta.channel}", "session": "${suggestedSession}", "batch": 5 }`);
+    lines.push(
+      `(batch recommended — ${otherCount} other participants may generate frequent messages)`,
+    );
+  } else {
+    lines.push(`  { "channel": "${meta.channel}", "session": "${suggestedSession}" }`);
+  }
+  lines.push(`To respond, use: volute channel send ${meta.channel} "your message"`);
+  lines.push(`To reject, delete ${filePath}`);
+  return lines.join("\n");
+}
+
 export function createRouter(options: {
   configPath?: string;
   agentHandler: HandlerResolver;
   fileHandler?: HandlerResolver;
 }): Router {
   const batchBuffers = new Map<string, BatchBuffer>();
+  const pendingChannels = new Set<string>();
 
   function flushBatch(key: string) {
     const buffer = batchBuffers.get(key);
@@ -115,6 +161,43 @@ export function createRouter(options: {
     const messageId = generateMessageId();
     const noop = () => {};
     const safeListener = listener ?? noop;
+
+    // Gate unmatched channels
+    if (!resolved.matched && config.gateUnmatched) {
+      const channelKey = meta.channel ?? "unknown";
+      const sanitized = sanitizeChannelPath(channelKey);
+      const filePath = `inbox/${sanitized}.md`;
+
+      if (!pendingChannels.has(channelKey)) {
+        pendingChannels.add(channelKey);
+
+        // Send invite notification to main session
+        const notification = formatInviteNotification(meta, filePath, text);
+        const notifContent: VoluteContentPart[] = [{ type: "text", text: notification }];
+        const handler = options.agentHandler("main");
+        handler.handle(
+          notifContent,
+          { sessionName: "main", messageId: generateMessageId(), interrupt: true },
+          safeListener,
+        );
+
+        // Save original message to file
+        if (options.fileHandler) {
+          const formatted = applyPrefix(content, meta);
+          const fileHandler = options.fileHandler(filePath);
+          fileHandler.handle(formatted, { ...meta, messageId }, noop);
+        }
+      } else {
+        // Already pending — just append to file
+        if (options.fileHandler) {
+          const formatted = applyPrefix(content, meta);
+          const fileHandler = options.fileHandler(filePath);
+          fileHandler.handle(formatted, { ...meta, messageId }, noop);
+        }
+        queueMicrotask(() => safeListener({ type: "done", messageId }));
+      }
+      return { messageId, unsubscribe: noop };
+    }
 
     // File destination
     if (resolved.destination === "file") {

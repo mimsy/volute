@@ -17,11 +17,12 @@ export type RoutingRule = {
 export type RoutingConfig = {
   rules?: RoutingRule[];
   default?: string;
+  gateUnmatched?: boolean;
 };
 
 export type ResolvedRoute =
-  | { destination: "agent"; session: string; interrupt: boolean; batch?: number }
-  | { destination: "file"; path: string };
+  | { destination: "agent"; session: string; interrupt: boolean; batch?: number; matched: boolean }
+  | { destination: "file"; path: string; matched: boolean };
 
 export function loadRoutingConfig(configPath: string): RoutingConfig {
   try {
@@ -89,7 +90,7 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
   const fallback = config.default ?? "main";
 
   if (!config.rules) {
-    return { destination: "agent", session: fallback, interrupt: true };
+    return { destination: "agent", session: fallback, interrupt: true, matched: false };
   }
 
   for (const rule of config.rules) {
@@ -99,18 +100,19 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
           log("sessions", `file destination rule missing path — falling through`);
           continue;
         }
-        return { destination: "file", path: rule.path };
+        return { destination: "file", path: rule.path, matched: true };
       }
       return {
         destination: "agent",
         session: sanitizeSessionName(expandTemplate(rule.session ?? fallback, meta)),
         interrupt: rule.interrupt ?? true,
         batch: rule.batch,
+        matched: true,
       };
     }
   }
 
-  return { destination: "agent", session: fallback, interrupt: true };
+  return { destination: "agent", session: fallback, interrupt: true, matched: false };
 }
 
 function sanitizeSessionName(name: string): string {

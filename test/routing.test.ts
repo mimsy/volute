@@ -443,6 +443,40 @@ describe("resolveRoute", () => {
     );
   });
 
+  // --- matched field ---
+
+  it("returns matched: true when a rule matches", () => {
+    const config: RoutingConfig = {
+      rules: [{ channel: "discord:*", session: "discord" }],
+      default: "main",
+    };
+    const r = resolveRoute(config, { channel: "discord:123" });
+    assert.equal(r.matched, true);
+  });
+
+  it("returns matched: false when falling through to default", () => {
+    const config: RoutingConfig = {
+      rules: [{ channel: "discord:*", session: "discord" }],
+      default: "main",
+    };
+    const r = resolveRoute(config, { channel: "web" });
+    assert.equal(r.matched, false);
+  });
+
+  it("returns matched: false when no rules exist", () => {
+    const r = resolveRoute({}, { channel: "web" });
+    assert.equal(r.matched, false);
+  });
+
+  it("returns matched: true for file destination rule", () => {
+    const config: RoutingConfig = {
+      rules: [{ channel: "discord:logs", destination: "file", path: "home/inbox/logs.md" }],
+    };
+    const r = resolveRoute(config, { channel: "discord:logs" });
+    assert.equal(r.matched, true);
+    assert.equal(r.destination, "file");
+  });
+
   // --- auto flag ---
 
   it("auto flag does not affect matching", () => {
