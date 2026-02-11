@@ -10,6 +10,8 @@ export type ChannelMeta = {
   channelName?: string;
   guildName?: string;
   sessionName?: string;
+  participants?: string[];
+  participantCount?: number;
 };
 
 /** ChannelMeta enriched by the router with dispatch info. */

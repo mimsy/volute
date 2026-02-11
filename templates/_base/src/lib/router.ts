@@ -105,7 +105,12 @@ export function createRouter(options: {
 
     // Resolve route from config (re-read on each request for hot-reload)
     const config = options.configPath ? loadRoutingConfig(options.configPath) : {};
-    const resolved = resolveRoute(config, { channel: meta.channel, sender: meta.sender });
+    const resolved = resolveRoute(config, {
+      channel: meta.channel,
+      sender: meta.sender,
+      isDM: meta.isDM,
+      participantCount: meta.participantCount,
+    });
 
     const messageId = generateMessageId();
     const noop = () => {};

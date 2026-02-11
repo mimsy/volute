@@ -169,11 +169,14 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   }
 
   // Send to all agents
+  const isDM = participants.length === 2;
   const messagePayload = JSON.stringify({
     content: contentBlocks,
     channel,
     sender: user.username,
     participants: participantNames,
+    participantCount: participants.length,
+    isDM,
   });
 
   const responses: { name: string; res: Response }[] = [];
