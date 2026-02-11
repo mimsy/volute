@@ -49,27 +49,10 @@ async function createConversation(args: string[]) {
 
   const participantNames = flags.participants.split(",").map((s) => s.trim());
 
-  // Resolve participant names to IDs via the daemon
-  const usersRes = await daemonFetch("/api/auth/users");
-  if (!usersRes.ok) {
-    console.error("Failed to fetch users");
-    process.exit(1);
-  }
-  const allUsers = (await usersRes.json()) as { id: number; username: string }[];
-  const participantIds: number[] = [];
-  for (const name of participantNames) {
-    const user = allUsers.find((u) => u.username === name);
-    if (!user) {
-      console.error(`User not found: ${name}`);
-      process.exit(1);
-    }
-    participantIds.push(user.id);
-  }
-
   const res = await daemonFetch(`/api/agents/${encodeURIComponent(agentName)}/conversations`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ participantIds, title: flags.title }),
+    body: JSON.stringify({ participantNames, title: flags.title }),
   });
 
   if (!res.ok) {

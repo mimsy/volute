@@ -109,15 +109,16 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   // Resolve or create conversation
   let conversationId = body.conversationId;
   if (conversationId) {
-    if (!(await isParticipantOrOwner(conversationId, user.id))) {
+    // Daemon token (id: 0) can access any conversation
+    if (user.id !== 0 && !(await isParticipantOrOwner(conversationId, user.id))) {
       return c.json({ error: "Conversation not found" }, 404);
     }
   } else {
     const title = body.message ? body.message.slice(0, 80) : "Image message";
     const conv = await createConversation(baseName, "volute", {
-      userId: user.id,
+      userId: user.id !== 0 ? user.id : undefined,
       title,
-      participantIds: [user.id, agentUser.id],
+      participantIds: user.id !== 0 ? [user.id, agentUser.id] : [agentUser.id],
     });
     conversationId = conv.id;
   }

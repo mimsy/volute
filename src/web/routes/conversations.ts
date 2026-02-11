@@ -1,7 +1,7 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
-import { getOrCreateAgentUser, getUser } from "../../lib/auth.js";
+import { getOrCreateAgentUser, getUser, getUserByUsername } from "../../lib/auth.js";
 import {
   createConversation,
   deleteConversationForUser,
@@ -10,18 +10,28 @@ import {
   isParticipantOrOwner,
   listConversationsForUser,
 } from "../../lib/conversations.js";
+import { findAgent } from "../../lib/registry.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
 const createConvSchema = z.object({
   title: z.string().optional(),
-  participantIds: z.array(z.number()).min(1),
+  participantIds: z.array(z.number()).optional(),
+  participantNames: z.array(z.string()).optional(),
 });
 
 const app = new Hono<AuthEnv>()
   .get("/:name/conversations", async (c) => {
     const name = c.req.param("name");
     const user = c.get("user");
-    const all = await listConversationsForUser(user.id);
+
+    // Daemon token (id: 0) lists as the agent
+    let lookupId = user.id;
+    if (user.id === 0) {
+      const agentUser = await getOrCreateAgentUser(name);
+      lookupId = agentUser.id;
+    }
+
+    const all = await listConversationsForUser(lookupId);
     const convs = all.filter((c) => c.agent_name === name);
     return c.json(convs);
   })
@@ -30,11 +40,34 @@ const app = new Hono<AuthEnv>()
     const user = c.get("user");
     const body = c.req.valid("json");
 
+    if (!body.participantIds?.length && !body.participantNames?.length) {
+      return c.json({ error: "participantIds or participantNames required" }, 400);
+    }
+
     // Ensure the named agent is a participant
     const agentUser = await getOrCreateAgentUser(name);
 
-    // Build participant list: current user + specified IDs + agent
-    const participantSet = new Set([user.id, agentUser.id, ...body.participantIds]);
+    // Build participant list: specified IDs + agent (+ current user if real)
+    const participantSet = new Set([agentUser.id, ...(body.participantIds ?? [])]);
+    if (user.id !== 0) participantSet.add(user.id);
+
+    // Resolve participant names to IDs (auto-creating agent users for registered agents)
+    if (body.participantNames) {
+      for (const pname of body.participantNames) {
+        const existing = await getUserByUsername(pname);
+        if (existing) {
+          participantSet.add(existing.id);
+          continue;
+        }
+        // If name matches a registered agent, auto-create agent user
+        if (findAgent(pname)) {
+          const au = await getOrCreateAgentUser(pname);
+          participantSet.add(au.id);
+          continue;
+        }
+        return c.json({ error: `User not found: ${pname}` }, 400);
+      }
+    }
 
     // Validate all participant IDs exist
     for (const id of participantSet) {
@@ -44,7 +77,7 @@ const app = new Hono<AuthEnv>()
     }
 
     const conv = await createConversation(name, "volute", {
-      userId: user.id,
+      userId: user.id !== 0 ? user.id : undefined,
       title: body.title,
       participantIds: [...participantSet],
     });

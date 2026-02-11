@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   approveUser,
   createUser,
+  getOrCreateAgentUser,
   getUser,
   getUserByUsername,
   listPendingUsers,
@@ -12,6 +13,7 @@ import {
   listUsersByType,
   verifyUser,
 } from "../../lib/auth.js";
+import { readRegistry } from "../../lib/registry.js";
 import {
   type AuthEnv,
   authMiddleware,
@@ -30,6 +32,13 @@ const admin = new Hono<AuthEnv>()
   .get("/users", async (c) => {
     const user = c.get("user");
     if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
+
+    // Ensure all registered agents have user records
+    const agents = readRegistry();
+    for (const agent of agents) {
+      await getOrCreateAgentUser(agent.name);
+    }
+
     const type = c.req.query("type");
     if (type === "human" || type === "agent") {
       return c.json(await listUsersByType(type));
