@@ -15,6 +15,7 @@ import logs from "./routes/logs.js";
 import schedules from "./routes/schedules.js";
 import system from "./routes/system.js";
 import update from "./routes/update.js";
+import userConversations from "./routes/user-conversations.js";
 import variants from "./routes/variants.js";
 
 const app = new Hono();
@@ -74,6 +75,7 @@ app.use("/api/*", csrf());
 
 // Protected API routes
 app.use("/api/agents/*", authMiddleware);
+app.use("/api/conversations/*", authMiddleware);
 app.use("/api/system/*", authMiddleware);
 
 // Chain route registrations to capture types
@@ -88,7 +90,8 @@ const routes = app
   .route("/api/agents", logs)
   .route("/api/agents", variants)
   .route("/api/agents", files)
-  .route("/api/agents", conversations);
+  .route("/api/agents", conversations)
+  .route("/api/conversations", userConversations);
 
 export default app;
 export type AppType = typeof routes;

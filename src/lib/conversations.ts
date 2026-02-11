@@ -256,6 +256,19 @@ export async function getMessages(conversationId: string): Promise<Message[]> {
   });
 }
 
+export async function listConversationsWithParticipants(
+  userId: number,
+): Promise<(Conversation & { participants: Participant[] })[]> {
+  const convs = await listConversationsForUser(userId);
+  if (convs.length === 0) return [];
+  const result: (Conversation & { participants: Participant[] })[] = [];
+  for (const conv of convs) {
+    const participants = await getParticipants(conv.id);
+    result.push({ ...conv, participants });
+  }
+  return result;
+}
+
 export async function deleteConversation(id: string): Promise<void> {
   const db = await getDb();
   await db.delete(conversations).where(eq(conversations.id, id));

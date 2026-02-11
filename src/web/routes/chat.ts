@@ -238,7 +238,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
 
   return streamSSE(c, async (stream) => {
     await stream.writeSSE({
-      data: JSON.stringify({ type: "meta", conversationId }),
+      data: JSON.stringify({ type: "meta", conversationId, senderName: primary.name }),
     });
 
     const assistantContent: ContentBlock[] = [];

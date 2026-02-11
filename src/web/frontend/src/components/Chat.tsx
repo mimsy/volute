@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type ContentBlock, fetchConversationMessages, type VoluteEvent } from "../lib/api";
+import {
+  type ContentBlock,
+  fetchConversationMessages,
+  fetchConversationMessagesById,
+  type VoluteEvent,
+} from "../lib/api";
 import { renderMarkdown } from "../lib/marked";
 import { useChatStream } from "../lib/useStream";
 
@@ -19,10 +24,12 @@ type ToolBlock = {
 
 export function Chat({
   name,
+  username,
   conversationId,
   onConversationId,
 }: {
   name: string;
+  username?: string;
   conversationId: string | null;
   onConversationId: (id: string) => void;
 }) {
@@ -39,6 +46,7 @@ export function Chat({
 
   // Track current assistant blocks being built
   const currentRef = useRef<ContentBlock[]>([]);
+  const streamingSenderRef = useRef<string | undefined>(undefined);
 
   const scrollToBottom = useCallback((force?: boolean) => {
     requestAnimationFrame(() => {
@@ -55,6 +63,26 @@ export function Chat({
     });
   }, []);
 
+  const loadMessages = useCallback(
+    (convId: string, forceScroll?: boolean) => {
+      const fetchFn = name
+        ? fetchConversationMessages(name, convId)
+        : fetchConversationMessagesById(convId);
+      return fetchFn
+        .then((msgs) => {
+          const loaded: ChatEntry[] = msgs.map((m) => ({
+            role: m.role as "user" | "assistant",
+            blocks: normalizeContent(m.content),
+            senderName: m.sender_name ?? undefined,
+          }));
+          setEntries(loaded);
+          if (forceScroll) scrollToBottom(true);
+        })
+        .catch(() => {});
+    },
+    [name, scrollToBottom],
+  );
+
   // Load existing messages when conversationId changes
   useEffect(() => {
     convIdRef.current = conversationId;
@@ -62,24 +90,26 @@ export function Chat({
       setEntries([]);
       return;
     }
-    fetchConversationMessages(name, conversationId)
-      .then((msgs) => {
-        const loaded: ChatEntry[] = msgs.map((m) => ({
-          role: m.role as "user" | "assistant",
-          blocks: normalizeContent(m.content),
-          senderName: m.sender_name ?? undefined,
-        }));
-        setEntries(loaded);
-        scrollToBottom(true);
-      })
-      .catch(() => {});
-  }, [name, conversationId, scrollToBottom]);
+    loadMessages(conversationId, true);
+  }, [conversationId, loadMessages]);
 
   const onEvent = useCallback(
     (event: VoluteEvent) => {
       if (event.type === "meta") {
         convIdRef.current = event.conversationId;
         onConversationId(event.conversationId);
+        streamingSenderRef.current = event.senderName;
+        // Update the streaming entry with sender name immediately
+        if (event.senderName) {
+          setEntries((prev) => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            if (last?.role === "assistant") {
+              next[next.length - 1] = { ...last, senderName: event.senderName };
+            }
+            return next;
+          });
+        }
         return;
       }
 
@@ -103,6 +133,12 @@ export function Chat({
         });
       } else if (event.type === "done") {
         setStreaming(false);
+        // Re-fetch messages to pick up secondary agent responses in group chats
+        const cid = convIdRef.current;
+        if (cid) {
+          // Small delay to let secondary agent responses persist
+          setTimeout(() => loadMessages(cid), 500);
+        }
         return;
       }
 
@@ -111,12 +147,13 @@ export function Chat({
         next[next.length - 1] = {
           role: "assistant",
           blocks: [...blocks],
+          senderName: streamingSenderRef.current,
         };
         return next;
       });
       scrollToBottom();
     },
-    [onConversationId, scrollToBottom],
+    [onConversationId, scrollToBottom, loadMessages],
   );
 
   const { send, stop } = useChatStream(name, onEvent);
@@ -151,10 +188,11 @@ export function Chat({
       inputRef.current.style.height = "auto";
       inputRef.current.style.overflow = "hidden";
     }
+    streamingSenderRef.current = name;
     setEntries((prev) => [
       ...prev,
-      { role: "user", blocks: userBlocks },
-      { role: "assistant", blocks: [] },
+      { role: "user", blocks: userBlocks, senderName: username },
+      { role: "assistant", blocks: [], senderName: name },
     ]);
     setStreaming(true);
     scrollToBottom(true);

@@ -5,11 +5,15 @@ import { UpdateBanner } from "./components/UpdateBanner";
 import { UserManagement } from "./components/UserManagement";
 import { type AuthUser, fetchMe, logout } from "./lib/auth";
 import { AgentDetail } from "./pages/AgentDetail";
+import { Chats } from "./pages/Chats";
 import { Dashboard } from "./pages/Dashboard";
 
-function parseHash(): { page: string; name?: string } {
+function parseHash(): { page: string; name?: string; conversationId?: string } {
   const hash = window.location.hash.slice(1) || "/";
   if (hash === "/logs") return { page: "logs" };
+  if (hash === "/chats") return { page: "chats" };
+  const chatsMatch = hash.match(/^\/chats\/(.+)$/);
+  if (chatsMatch) return { page: "chats", conversationId: chatsMatch[1] };
   const match = hash.match(/^\/agent\/(.+)$/);
   if (match) return { page: "agent", name: match[1] };
   return { page: "dashboard" };
@@ -76,6 +80,12 @@ export function App() {
               <span className="breadcrumb-name">{route.name}</span>
             </nav>
           )}
+          {route.page === "chats" && (
+            <nav className="breadcrumb">
+              <span className="breadcrumb-sep">/</span>
+              <span className="breadcrumb-name">chats</span>
+            </nav>
+          )}
           {route.page === "logs" && (
             <nav className="breadcrumb">
               <span className="breadcrumb-sep">/</span>
@@ -83,6 +93,23 @@ export function App() {
             </nav>
           )}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+            <a
+              href="#/chats"
+              style={{
+                color: route.page === "chats" ? "var(--accent)" : "var(--text-2)",
+                fontSize: 12,
+                fontFamily: "var(--mono)",
+                transition: "color 0.15s",
+              }}
+              onMouseEnter={(e) => {
+                if (route.page !== "chats") e.currentTarget.style.color = "var(--text-0)";
+              }}
+              onMouseLeave={(e) => {
+                if (route.page !== "chats") e.currentTarget.style.color = "var(--text-2)";
+              }}
+            >
+              chats
+            </a>
             {user.role === "admin" && (
               <a
                 href="#/logs"
@@ -145,6 +172,9 @@ export function App() {
           ) : (
             <>
               {route.page === "dashboard" && <Dashboard />}
+              {route.page === "chats" && (
+                <Chats conversationId={route.conversationId} username={user.username} />
+              )}
               {route.page === "agent" && route.name && <AgentDetail name={route.name} />}
               {route.page === "logs" && <SystemLogs />}
             </>

@@ -24,7 +24,7 @@ export type VoluteEvent =
   | { type: "text"; content: string }
   | { type: "tool_use"; name: string; input: unknown }
   | { type: "tool_result"; output: string; is_error?: boolean }
-  | { type: "meta"; conversationId: string }
+  | { type: "meta"; conversationId: string; senderName?: string }
   | { type: "done" };
 
 export type Variant = {
@@ -211,5 +211,45 @@ export async function fetchAvailableUsers(type?: string): Promise<AvailableUser[
   const params = type ? `?type=${type}` : "";
   const res = await fetch(`/api/auth/users${params}`, { credentials: "include" });
   if (!res.ok) throw new Error("Failed to fetch users");
+  return res.json();
+}
+
+// User-scoped conversation endpoints (not agent-scoped)
+export async function fetchAllConversations(): Promise<
+  (Conversation & { participants: Participant[] })[]
+> {
+  const res = await client.api.conversations.$get();
+  if (!res.ok) throw new Error("Failed to fetch conversations");
+  return res.json();
+}
+
+export async function fetchConversationMessagesById(
+  conversationId: string,
+): Promise<ConversationMessage[]> {
+  const res = await client.api.conversations[":id"].messages.$get({
+    param: { id: conversationId },
+  });
+  if (!res.ok) throw new Error("Failed to fetch messages");
+  return res.json();
+}
+
+export async function deleteConversationById(conversationId: string): Promise<void> {
+  const res = await client.api.conversations[":id"].$delete({
+    param: { id: conversationId },
+  });
+  if (!res.ok) throw new Error("Failed to delete conversation");
+}
+
+export async function createConversationWithParticipants(
+  participantNames: string[],
+  title?: string,
+): Promise<Conversation> {
+  const res = await client.api.conversations.$post({
+    json: { participantNames, title },
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to create conversation");
+  }
   return res.json();
 }
