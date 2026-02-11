@@ -287,6 +287,106 @@ describe("upgrade git operations", () => {
     git(["worktree", "remove", worktreeDir], repoDir);
   });
 
+  it("first upgrade is conflict-free when template branch created at agent creation", () => {
+    // Simulate new creation flow: template branch created first, main branched from it
+    const dir = join(tmpDir, "shared-history-repo");
+    mkdirSync(dir, { recursive: true });
+    git(["init"], dir);
+    git(["config", "user.email", "test@test.com"], dir);
+    git(["config", "user.name", "Test"], dir);
+
+    // Step 1: Create template branch with infrastructure files
+    mkdirSync(join(dir, "src"), { recursive: true });
+    mkdirSync(join(dir, "home"), { recursive: true });
+    writeFileSync(join(dir, "src", "server.ts"), "server v1");
+    writeFileSync(join(dir, "package.json"), '{"name": "test"}');
+    writeFileSync(join(dir, "home", "VOLUTE.md"), "volute v1");
+    git(["checkout", "--orphan", "volute/template"], dir);
+    git(["add", "src/server.ts", "package.json", "home/VOLUTE.md"], dir);
+    git(["commit", "-m", "template update"], dir);
+
+    // Step 2: Branch main from template, add identity files
+    git(["checkout", "-b", "main"], dir);
+    writeFileSync(join(dir, "home", "SOUL.md"), "I am unique");
+    writeFileSync(join(dir, "home", "MEMORY.md"), "my memories");
+    git(["add", "-A"], dir);
+    git(["commit", "-m", "initial commit"], dir);
+
+    // Agent modifies identity files (normal agent activity)
+    writeFileSync(join(dir, "home", "MEMORY.md"), "updated memories");
+    git(["add", "-A"], dir);
+    git(["commit", "-m", "agent changes"], dir);
+
+    // First upgrade: update template branch
+    git(["checkout", "volute/template"], dir);
+    writeFileSync(join(dir, "src", "server.ts"), "server v2");
+    writeFileSync(join(dir, "home", "VOLUTE.md"), "volute v2");
+    git(["add", "-A"], dir);
+    git(["commit", "-m", "template v2"], dir);
+    git(["checkout", "main"], dir);
+
+    // Merge — should be CLEAN (no --allow-unrelated-histories needed)
+    const worktreeDir = join(dir, ".variants", "upgrade");
+    git(["worktree", "add", "-b", "upgrade", worktreeDir], dir);
+    git(["merge", "volute/template", "-m", "first upgrade"], worktreeDir);
+
+    // Template files updated, identity files preserved
+    assert.equal(readFileSync(join(worktreeDir, "src", "server.ts"), "utf-8"), "server v2");
+    assert.equal(readFileSync(join(worktreeDir, "home", "VOLUTE.md"), "utf-8"), "volute v2");
+    assert.equal(readFileSync(join(worktreeDir, "home", "SOUL.md"), "utf-8"), "I am unique");
+    assert.equal(readFileSync(join(worktreeDir, "home", "MEMORY.md"), "utf-8"), "updated memories");
+
+    git(["worktree", "remove", worktreeDir], dir);
+  });
+
+  it("first upgrade detects real conflicts when agent modified template files", () => {
+    // Same shared-history setup, but agent modifies a file that template also changes
+    const dir = join(tmpDir, "real-conflict-repo");
+    mkdirSync(dir, { recursive: true });
+    git(["init"], dir);
+    git(["config", "user.email", "test@test.com"], dir);
+    git(["config", "user.name", "Test"], dir);
+
+    // Template branch
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "src", "server.ts"), "server v1");
+    git(["checkout", "--orphan", "volute/template"], dir);
+    git(["add", "src/server.ts"], dir);
+    git(["commit", "-m", "template update"], dir);
+
+    // Main from template
+    git(["checkout", "-b", "main"], dir);
+    git(["commit", "--allow-empty", "-m", "initial commit"], dir);
+
+    // Agent customizes a template file
+    writeFileSync(join(dir, "src", "server.ts"), "server v1 - agent customized");
+    git(["add", "-A"], dir);
+    git(["commit", "-m", "agent customization"], dir);
+
+    // Template update changes the same file
+    git(["checkout", "volute/template"], dir);
+    writeFileSync(join(dir, "src", "server.ts"), "server v2");
+    git(["add", "-A"], dir);
+    git(["commit", "-m", "template v2"], dir);
+    git(["checkout", "main"], dir);
+
+    // Merge should detect real conflict
+    const worktreeDir = join(dir, ".variants", "upgrade");
+    git(["worktree", "add", "-b", "upgrade", worktreeDir], dir);
+
+    let hadConflict = false;
+    try {
+      git(["merge", "volute/template", "-m", "first upgrade"], worktreeDir);
+    } catch {
+      hadConflict = true;
+    }
+
+    assert.ok(hadConflict, "Expected conflict when both sides modified the same file");
+
+    git(["merge", "--abort"], worktreeDir);
+    git(["worktree", "remove", "--force", worktreeDir], dir);
+  });
+
   it("template merge preserves agent home/ files when .init/ approach is used", () => {
     // Simulate an agent created with the .init/ approach:
     // main branch has SOUL.md/MEMORY.md in home/ (from applyInitFiles at creation)
