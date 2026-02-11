@@ -60,7 +60,7 @@ async function recordForAllAgents(
   }
 }
 
-/** Consume an agent's ndjson response and persist it as a conversation message. Returns collected content. */
+/** Consume an agent's ndjson response and persist it to both conversation messages and agent_messages. Returns collected content. */
 async function consumeAndPersist(
   res: Response,
   conversationId: string,
@@ -231,15 +231,19 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   const participantNames = participants.map((p) => p.username);
 
   // Record in agent_messages for all agent participants
-  const db = await getDb();
-  for (const ap of agentParticipants) {
-    await db.insert(agentMessages).values({
-      agent: ap.username,
-      channel,
-      role: "user",
-      sender: senderName,
-      content: body.message ?? "[image]",
-    });
+  try {
+    const db = await getDb();
+    for (const ap of agentParticipants) {
+      await db.insert(agentMessages).values({
+        agent: ap.username,
+        channel,
+        role: "user",
+        sender: senderName,
+        content: body.message ?? "[image]",
+      });
+    }
+  } catch (err) {
+    console.error("[chat] failed to record user message in agent_messages:", err);
   }
 
   // Resolve ports for each agent participant
@@ -257,6 +261,12 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
         agentTargets.push({ name: ap.username, port: agentEntry.port });
       }
     }
+  }
+
+  // Filter out the sender so agents don't receive their own messages back
+  if (senderName) {
+    const idx = agentTargets.findIndex((t) => t.name === senderName);
+    if (idx !== -1) agentTargets.splice(idx, 1);
   }
 
   // If no running agents found, return error

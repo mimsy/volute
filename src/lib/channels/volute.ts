@@ -7,11 +7,19 @@ function getDaemonConfig(): { url: string; token?: string } {
   if (!existsSync(configPath)) {
     throw new Error("Volute daemon is not running");
   }
-  const config = JSON.parse(readFileSync(configPath, "utf-8"));
+  let config: Record<string, unknown>;
+  try {
+    config = JSON.parse(readFileSync(configPath, "utf-8"));
+  } catch (err) {
+    throw new Error(`Failed to parse ${configPath}: ${err}`);
+  }
+  if (typeof config.port !== "number") {
+    throw new Error(`Invalid or missing port in ${configPath}`);
+  }
   const url = new URL("http://localhost");
-  url.hostname = config.hostname || "localhost";
+  url.hostname = (config.hostname as string) || "localhost";
   url.port = String(config.port);
-  return { url: url.origin, token: config.token };
+  return { url: url.origin, token: config.token as string | undefined };
 }
 
 export async function read(
@@ -76,7 +84,7 @@ export async function send(
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error ?? `Failed to send: ${res.status}`);
   }
-  // Consume the SSE stream to completion
+  // Drain the response body so the request completes
   if (res.body) {
     const reader = res.body.getReader();
     while (true) {

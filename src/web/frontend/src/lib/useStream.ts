@@ -45,12 +45,13 @@ export function useChatStream(name: string, onEvent: (event: VoluteEvent) => voi
           if (!line.startsWith("data: ")) continue;
           const json = line.slice(6);
           if (!json) continue;
+          let event: VoluteEvent;
           try {
-            const event = JSON.parse(json) as VoluteEvent;
-            onEvent(event);
+            event = JSON.parse(json) as VoluteEvent;
           } catch {
-            // skip invalid
+            continue;
           }
+          onEvent(event);
         }
       }
     },
