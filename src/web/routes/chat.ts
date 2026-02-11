@@ -231,15 +231,19 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   const participantNames = participants.map((p) => p.username);
 
   // Record in agent_messages for all agent participants
-  const db = await getDb();
-  for (const ap of agentParticipants) {
-    await db.insert(agentMessages).values({
-      agent: ap.username,
-      channel,
-      role: "user",
-      sender: senderName,
-      content: body.message ?? "[image]",
-    });
+  try {
+    const db = await getDb();
+    for (const ap of agentParticipants) {
+      await db.insert(agentMessages).values({
+        agent: ap.username,
+        channel,
+        role: "user",
+        sender: senderName,
+        content: body.message ?? "[image]",
+      });
+    }
+  } catch (err) {
+    console.error("[chat] failed to record user message in agent_messages:", err);
   }
 
   // Resolve ports for each agent participant
@@ -367,6 +371,11 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     // In group chats, forward each agent's response to all other agents
     if (agentTargets.length > 1) {
       const secondaryResults = await Promise.allSettled(secondaryPromises);
+      for (const r of secondaryResults) {
+        if (r.status === "rejected") {
+          console.error("[chat] secondary agent response failed:", r.reason);
+        }
+      }
 
       const allResults: { name: string; port: number; content: ContentBlock[] }[] = [
         { name: primary.name, port: primary.port, content: assistantContent },
@@ -403,7 +412,12 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
           );
         }
       }
-      await Promise.allSettled(forwardPromises);
+      const forwardResults = await Promise.allSettled(forwardPromises);
+      for (const r of forwardResults) {
+        if (r.status === "rejected") {
+          console.error("[chat] forward failed:", r.reason);
+        }
+      }
     }
 
     // Signal frontend that all responses (including forwarded) are persisted

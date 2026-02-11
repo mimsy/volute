@@ -25,6 +25,7 @@ export function Chats({
   const [activeId, setActiveId] = useState<string | null>(initialId ?? null);
   const [showNewChat, setShowNewChat] = useState(false);
   const [showGroupModal, setShowGroupModal] = useState(false);
+  const [newChatAgent, setNewChatAgent] = useState<string | null>(null);
 
   const activeConv = conversations.find((c) => c.id === activeId);
   const agentName = activeConv?.agent_name ?? "";
@@ -32,7 +33,7 @@ export function Chats({
   const refresh = useCallback(() => {
     fetchAllConversations()
       .then(setConversations)
-      .catch(() => {});
+      .catch((err: unknown) => console.warn("[chats] refresh failed:", err));
   }, []);
 
   useEffect(() => {
@@ -62,9 +63,13 @@ export function Chats({
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    await deleteConversationById(id);
-    refresh();
-    if (activeId === id) handleNew();
+    try {
+      await deleteConversationById(id);
+      refresh();
+      if (activeId === id) handleNew();
+    } catch (err) {
+      console.warn("[chats] delete failed:", err);
+    }
   };
 
   const handleConversationId = (id: string) => {
@@ -74,14 +79,9 @@ export function Chats({
 
   const handleNewChatCreated = (agent: string) => {
     setShowNewChat(false);
-    // Set agent name, clear active conversation to start fresh
     setActiveId(null);
-    // We need a way to tell Chat which agent to talk to for a new conversation.
-    // We'll use a special state for this.
     setNewChatAgent(agent);
   };
-
-  const [newChatAgent, setNewChatAgent] = useState<string | null>(null);
 
   // Clear newChatAgent only once the conversation list has caught up
   useEffect(() => {
@@ -297,6 +297,7 @@ function AgentPickerModal({
 }) {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     fetchAgents()
@@ -304,7 +305,10 @@ function AgentPickerModal({
         setAgents(a);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(() => {
+        setLoading(false);
+        setError("Failed to load agents");
+      });
   }, []);
 
   return (
@@ -339,6 +343,8 @@ function AgentPickerModal({
         </div>
         {loading ? (
           <div style={{ color: "var(--text-2)", fontSize: 12 }}>Loading agents...</div>
+        ) : error ? (
+          <div style={{ color: "var(--red)", fontSize: 12, padding: 8 }}>{error}</div>
         ) : (
           <div style={{ flex: 1, overflow: "auto" }}>
             {agents.map((a) => (

@@ -7,7 +7,12 @@ function getDaemonConfig(): { url: string; token?: string } {
   if (!existsSync(configPath)) {
     throw new Error("Volute daemon is not running");
   }
-  const config = JSON.parse(readFileSync(configPath, "utf-8"));
+  let config: { hostname?: string; port: number; token?: string };
+  try {
+    config = JSON.parse(readFileSync(configPath, "utf-8"));
+  } catch {
+    throw new Error(`Failed to parse ${configPath}`);
+  }
   const url = new URL("http://localhost");
   url.hostname = config.hostname || "localhost";
   url.port = String(config.port);
@@ -70,7 +75,7 @@ export async function send(
   const res = await fetch(`${url}/api/agents/${encodeURIComponent(agentName)}/chat`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ message, conversationId, sender: env.VOLUTE_AGENT }),
+    body: JSON.stringify({ message, conversationId, sender: agentName }),
   });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };

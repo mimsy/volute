@@ -191,11 +191,10 @@ export function createRouter(options: {
   }
 
   function route(
-    inputContent: VoluteContentPart[],
+    content: VoluteContentPart[],
     meta: ChannelMeta,
     listener?: Listener,
   ): { messageId: string; unsubscribe: () => void } {
-    const content = inputContent;
     // Log incoming message
     const text = content
       .filter((p): p is { type: "text"; text: string } => p.type === "text")
@@ -222,10 +221,16 @@ export function createRouter(options: {
       const sanitized = sanitizeChannelPath(channelKey);
       const filePath = `inbox/${sanitized}.md`;
 
+      // Save message to file
+      if (options.fileHandler) {
+        const formatted = applyPrefix(content, meta);
+        const fileHandler = options.fileHandler(filePath);
+        fileHandler.handle(formatted, { ...meta, messageId }, noop);
+      }
+
+      // First message from this channel — send invite notification
       if (!pendingChannels.has(channelKey)) {
         pendingChannels.add(channelKey);
-
-        // Send invite notification to main session (internal — don't stream back to sender)
         const notification = formatInviteNotification(meta, filePath, text);
         const notifContent: VoluteContentPart[] = [{ type: "text", text: notification }];
         const handler = options.agentHandler("main");
@@ -234,24 +239,9 @@ export function createRouter(options: {
           { sessionName: "main", messageId: generateMessageId(), interrupt: true },
           noop,
         );
-
-        // Save original message to file
-        if (options.fileHandler) {
-          const formatted = applyPrefix(content, meta);
-          const fileHandler = options.fileHandler(filePath);
-          fileHandler.handle(formatted, { ...meta, messageId }, noop);
-        }
-
-        queueMicrotask(() => safeListener({ type: "done", messageId }));
-      } else {
-        // Already pending — just append to file
-        if (options.fileHandler) {
-          const formatted = applyPrefix(content, meta);
-          const fileHandler = options.fileHandler(filePath);
-          fileHandler.handle(formatted, { ...meta, messageId }, noop);
-        }
-        queueMicrotask(() => safeListener({ type: "done", messageId }));
       }
+
+      queueMicrotask(() => safeListener({ type: "done", messageId }));
       return { messageId, unsubscribe: noop };
     }
 
