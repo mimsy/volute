@@ -6,6 +6,10 @@ import { checkForUpdate } from "../lib/update-check.js";
 
 export async function run(_args: string[]) {
   const result = await checkForUpdate();
+  if (result.checkFailed) {
+    console.error("Could not reach npm registry. Check your network connection and try again.");
+    process.exit(1);
+  }
   console.log(`Current version: ${result.current}`);
   console.log(`Latest version:  ${result.latest}`);
 
@@ -44,7 +48,9 @@ export async function run(_args: string[]) {
       const config = JSON.parse(readFileSync(configPath, "utf-8"));
       daemonPort = config.port ?? 4200;
       daemonHost = config.hostname || "127.0.0.1";
-    } catch {}
+    } catch {
+      console.error("Warning: could not read daemon config, using default port/host");
+    }
   }
 
   // Stop daemon if running
@@ -77,6 +83,23 @@ export async function run(_args: string[]) {
         } catch {}
       }
     }
+
+    // Verify daemon actually stopped
+    if (existsSync(pidPath)) {
+      try {
+        const stalePid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
+        process.kill(stalePid, 0);
+        // Still alive — abort
+        console.error("Warning: daemon process may still be running. Aborting update.");
+        process.exit(1);
+      } catch {
+        // Process gone, clean up stale PID file
+        try {
+          unlinkSync(pidPath);
+        } catch {}
+      }
+    }
+
     console.log("Daemon stopped.");
   }
 

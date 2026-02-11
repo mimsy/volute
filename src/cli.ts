@@ -91,7 +91,7 @@ Commands:
   volute setup [--port N] [--host H]      Install system service with user isolation
   volute setup uninstall [--force]        Remove system service + isolation
 
-  volute update                           Check for updates
+  volute update                           Update to latest version
 
 Options:
   --version, -v                           Show version number

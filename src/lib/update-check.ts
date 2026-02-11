@@ -6,6 +6,7 @@ type UpdateCheckResult = {
   current: string;
   latest: string;
   updateAvailable: boolean;
+  checkFailed?: boolean;
 };
 
 type UpdateCheckCache = {
@@ -37,6 +38,7 @@ export function getCurrentVersion(): string {
   // Walk up from this file to find package.json
   // In built dist: dist/lib/update-check.js → ../../package.json
   // In dev via tsx: src/lib/update-check.ts → ../../package.json
+  // ../../../ — tsup may produce different dist layouts depending on chunk splitting
   const thisDir = new URL(".", import.meta.url).pathname;
   const candidates = [
     resolve(thisDir, "../../package.json"),
@@ -55,27 +57,32 @@ export function getCurrentVersion(): string {
 export async function fetchLatestVersion(): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5000);
+  timeout.unref?.();
   try {
     const res = await fetch("https://registry.npmjs.org/volute/latest", {
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`npm registry returned ${res.status}`);
     const data = (await res.json()) as { version: string };
+    if (typeof data.version !== "string") throw new Error("invalid npm response");
     return data.version;
   } finally {
     clearTimeout(timeout);
   }
 }
 
-/** Compare two semver strings. Returns true if latest > current. */
+/** Compare two semver version strings (MAJOR.MINOR.PATCH). Pre-release suffixes are stripped. Returns true if latest > current. */
 export function isNewer(current: string, latest: string): boolean {
-  const parse = (v: string) => v.split(".").map(Number);
+  const parse = (v: string) => v.split("-")[0].split(".").map(Number);
+  const hasPrerelease = (v: string) => v.includes("-");
   const c = parse(current);
   const l = parse(latest);
   for (let i = 0; i < 3; i++) {
     if ((l[i] ?? 0) > (c[i] ?? 0)) return true;
     if ((l[i] ?? 0) < (c[i] ?? 0)) return false;
   }
+  // Same numeric version: release is newer than pre-release
+  if (hasPrerelease(current) && !hasPrerelease(latest)) return true;
   return false;
 }
 
@@ -97,11 +104,11 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
     writeCache(latest);
     return { current, latest, updateAvailable: isNewer(current, latest) };
   } catch {
-    return { current, latest: current, updateAvailable: false };
+    return { current, latest: current, updateAvailable: false, checkFailed: true };
   }
 }
 
-/** Synchronous cache-only check. Returns null if no cache exists. */
+/** Synchronous cache-only check (ignores TTL). Returns null if no valid cache exists. */
 export function checkForUpdateCached(): UpdateCheckResult | null {
   const cache = readCache();
   if (!cache) return null;

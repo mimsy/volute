@@ -51,8 +51,14 @@ app.use("*", async (c, next) => {
 
 // Daemon health (unauthenticated)
 app.get("/api/health", (c) => {
-  const version = getCurrentVersion();
-  const cached = checkForUpdateCached();
+  let version = "unknown";
+  let cached: ReturnType<typeof checkForUpdateCached> = null;
+  try {
+    version = getCurrentVersion();
+    cached = checkForUpdateCached();
+  } catch (err) {
+    log.error("Health check error", { error: (err as Error).message });
+  }
   return c.json({
     ok: true,
     version,

@@ -10,6 +10,7 @@ export function UpdateBanner() {
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -43,6 +44,8 @@ export function UpdateBanner() {
       const res = await fetch("/api/system/update", { method: "POST" });
       if (!res.ok) {
         setUpdating(false);
+        setError("Update failed");
+        setTimeout(() => setError(null), 5000);
         return;
       }
 
@@ -69,12 +72,16 @@ export function UpdateBanner() {
       window.location.reload();
     } catch {
       setUpdating(false);
+      setError("Update failed");
+      setTimeout(() => setError(null), 5000);
     }
   }
 
   return (
     <div style={bannerStyle}>
-      {updating ? (
+      {error ? (
+        <span style={{ color: "var(--error, #f44)" }}>{error}</span>
+      ) : updating ? (
         <span style={{ animation: "pulse 1.5s ease-in-out infinite" }}>Updating...</span>
       ) : (
         <>
