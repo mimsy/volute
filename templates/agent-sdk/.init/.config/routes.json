@@ -1,4 +1,5 @@
 {
-  "rules": [],
+  "gateUnmatched": true,
+  "rules": [{ "channel": "volute:*", "isDM": true, "session": "${channel}" }],
   "default": "main"
 }
