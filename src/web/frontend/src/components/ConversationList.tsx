@@ -88,6 +88,11 @@ export function ConversationList({
               }}
             >
               {conv.title || "Untitled"}
+              {conv.participants && conv.participants.length > 2 && (
+                <span style={{ color: "var(--text-2)", fontSize: 10, marginLeft: 4 }}>
+                  ({conv.participants.length})
+                </span>
+              )}
             </div>
             <button
               onClick={(e) => handleDelete(e, conv.id)}

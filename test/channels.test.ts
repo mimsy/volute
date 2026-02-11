@@ -4,6 +4,7 @@ import { CHANNELS, getChannelDriver, getChannelProvider } from "../src/lib/chann
 
 describe("channels", () => {
   it("CHANNELS has expected entries", () => {
+    assert.ok(CHANNELS.volute);
     assert.ok(CHANNELS.web);
     assert.ok(CHANNELS.discord);
     assert.ok(CHANNELS.slack);
@@ -11,7 +12,7 @@ describe("channels", () => {
     assert.ok(CHANNELS.cli);
     assert.ok(CHANNELS.agent);
     assert.ok(CHANNELS.system);
-    assert.equal(Object.keys(CHANNELS).length, 7);
+    assert.equal(Object.keys(CHANNELS).length, 8);
   });
 
   it("getChannelProvider with no arg returns web config", () => {

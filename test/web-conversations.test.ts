@@ -9,7 +9,13 @@ import {
   deleteConversation,
 } from "../src/lib/conversations.js";
 import { getDb } from "../src/lib/db.js";
-import { conversations, messages, sessions, users } from "../src/lib/schema.js";
+import {
+  conversationParticipants,
+  conversations,
+  messages,
+  sessions,
+  users,
+} from "../src/lib/schema.js";
 import { authMiddleware, createSession, deleteSession } from "../src/web/middleware/auth.js";
 import conversationsRoute from "../src/web/routes/conversations.js";
 
@@ -27,6 +33,7 @@ async function cleanup() {
   const db = await getDb();
   await db.delete(sessions);
   await db.delete(messages);
+  await db.delete(conversationParticipants);
   await db.delete(conversations);
   await db.delete(users);
 }
@@ -46,8 +53,10 @@ describe("web conversations routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    // Create a conversation for this user
-    const conv = await createConversation("test-agent", "web", { userId });
+    // Create a conversation with the user as participant
+    const conv = await createConversation("test-agent", "volute", {
+      participantIds: [userId],
+    });
     await addMessage(conv.id, "user", "conv-admin", [{ type: "text", text: "Hello" }]);
 
     const res = await app.request("/api/agents/test-agent/conversations", {
@@ -66,7 +75,9 @@ describe("web conversations routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("test-agent", "web", { userId });
+    const conv = await createConversation("test-agent", "volute", {
+      participantIds: [userId],
+    });
     const blocks: ContentBlock[] = [{ type: "text", text: "Test message" }];
     await addMessage(conv.id, "user", "conv-admin", blocks);
     await addMessage(conv.id, "assistant", "test-agent", [{ type: "text", text: "Response" }]);
@@ -88,7 +99,9 @@ describe("web conversations routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("test-agent", "web", { userId });
+    const conv = await createConversation("test-agent", "volute", {
+      participantIds: [userId],
+    });
     await addMessage(conv.id, "user", "conv-admin", [{ type: "text", text: "To delete" }]);
 
     const res = await app.request(`/api/agents/test-agent/conversations/${conv.id}`, {
@@ -112,12 +125,14 @@ describe("web conversations routes", () => {
     assert.equal(res.status, 401);
   });
 
-  it("GET /:name/conversations/:id/messages — 404 for other user's conversation", async () => {
+  it("GET /:name/conversations/:id/messages — 404 for non-participant", async () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    // Create a conversation owned by the first user
-    const conv = await createConversation("test-agent", "web", { userId });
+    // Create a conversation with the first user as participant
+    const conv = await createConversation("test-agent", "volute", {
+      participantIds: [userId],
+    });
 
     // Create and approve a second user
     const user2 = await createUser("other-user", "pass");
@@ -140,11 +155,13 @@ describe("web conversations routes", () => {
     await deleteConversation(conv.id);
   });
 
-  it("DELETE /:name/conversations/:id — 404 for other user's conversation", async () => {
+  it("DELETE /:name/conversations/:id — 404 for non-participant", async () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("test-agent", "web", { userId });
+    const conv = await createConversation("test-agent", "volute", {
+      participantIds: [userId],
+    });
 
     const user2 = await createUser("other-user2", "pass");
     await approveUser(user2.id);
@@ -165,5 +182,46 @@ describe("web conversations routes", () => {
     assert.equal(res2.status, 200);
 
     await deleteSession(cookie2);
+  });
+
+  it("GET /:name/conversations/:id/participants — returns participant list", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const conv = await createConversation("test-agent", "volute", {
+      participantIds: [userId],
+    });
+
+    const res = await app.request(`/api/agents/test-agent/conversations/${conv.id}/participants`, {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body));
+    assert.equal(body.length, 1);
+    assert.equal(body[0].username, "conv-admin");
+
+    await deleteConversation(conv.id);
+  });
+
+  it("GET /:name/conversations/:id/participants — 404 for non-participant", async () => {
+    await setupAuth();
+    const app = createApp();
+
+    const conv = await createConversation("test-agent", "volute", {
+      participantIds: [userId],
+    });
+
+    const user2 = await createUser("other-user3", "pass");
+    await approveUser(user2.id);
+    const cookie2 = await createSession(user2.id);
+
+    const res = await app.request(`/api/agents/test-agent/conversations/${conv.id}/participants`, {
+      headers: { Cookie: `volute_session=${cookie2}` },
+    });
+    assert.equal(res.status, 404);
+
+    await deleteSession(cookie2);
+    await deleteConversation(conv.id);
   });
 });

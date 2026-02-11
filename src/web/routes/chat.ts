@@ -2,11 +2,12 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
+import { getOrCreateAgentUser } from "../../lib/auth.js";
 import {
   addMessage,
   type ContentBlock,
   createConversation,
-  getConversationForUser,
+  isParticipantOrOwner,
 } from "../../lib/conversations.js";
 import { getDb } from "../../lib/db.js";
 import { collectPart } from "../../lib/format-tool.js";
@@ -54,20 +55,25 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   }
 
   const user = c.get("user");
+  const agentUser = await getOrCreateAgentUser(baseName);
 
   // Resolve or create conversation
   let conversationId = body.conversationId;
   if (conversationId) {
-    const conv = await getConversationForUser(conversationId, user.id);
-    if (!conv) return c.json({ error: "Conversation not found" }, 404);
+    if (!(await isParticipantOrOwner(conversationId, user.id))) {
+      return c.json({ error: "Conversation not found" }, 404);
+    }
   } else {
     const title = body.message ? body.message.slice(0, 80) : "Image message";
-    const conv = await createConversation(baseName, "web", {
+    const conv = await createConversation(baseName, `volute`, {
       userId: user.id,
       title,
+      participantIds: [user.id, agentUser.id],
     });
     conversationId = conv.id;
   }
+
+  const channel = `volute:${conversationId}`;
 
   // Build content blocks (used for both persistence and agent request)
   const contentBlocks: ContentBlock[] = [];
@@ -87,7 +93,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   const db = await getDb();
   await db.insert(agentMessages).values({
     agent: baseName,
-    channel: "web",
+    channel,
     role: "user",
     sender: user.username,
     content: body.message ?? "[image]",
@@ -100,7 +106,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         content: contentBlocks,
-        channel: "web",
+        channel,
         sender: user.username,
       }),
     });
@@ -169,7 +175,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
           if (summary) {
             await db.insert(agentMessages).values({
               agent: baseName,
-              channel: "web",
+              channel,
               role: "assistant",
               sender: baseName,
               content: summary,

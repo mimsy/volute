@@ -6,7 +6,7 @@ const client = hc<AppType>("/");
 export type AuthUser = {
   id: number;
   username: string;
-  role: "admin" | "user" | "pending";
+  role: "admin" | "user" | "pending" | "agent";
 };
 
 export async function fetchMe(): Promise<AuthUser | null> {

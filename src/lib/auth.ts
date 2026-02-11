@@ -6,7 +6,8 @@ import { users } from "./schema.js";
 export type User = {
   id: number;
   username: string;
-  role: "admin" | "user" | "pending";
+  role: "admin" | "user" | "pending" | "agent";
+  user_type: "human" | "agent";
   created_at: string;
 };
 
@@ -25,6 +26,7 @@ export async function createUser(username: string, password: string): Promise<Us
       id: users.id,
       username: users.username,
       role: users.role,
+      user_type: users.user_type,
       created_at: users.created_at,
     });
 
@@ -35,6 +37,7 @@ export async function verifyUser(username: string, password: string): Promise<Us
   const db = await getDb();
   const row = await db.select().from(users).where(eq(users.username, username)).get();
   if (!row) return null;
+  if (row.user_type === "agent") return null; // agents can't log in
   if (!compareSync(password, row.password_hash)) return null;
   const { password_hash: _, ...user } = row;
   return user as User;
@@ -47,6 +50,7 @@ export async function getUser(id: number): Promise<User | null> {
       id: users.id,
       username: users.username,
       role: users.role,
+      user_type: users.user_type,
       created_at: users.created_at,
     })
     .from(users)
@@ -62,6 +66,7 @@ export async function getUserByUsername(username: string): Promise<User | null> 
       id: users.id,
       username: users.username,
       role: users.role,
+      user_type: users.user_type,
       created_at: users.created_at,
     })
     .from(users)
@@ -77,6 +82,7 @@ export async function listUsers(): Promise<User[]> {
       id: users.id,
       username: users.username,
       role: users.role,
+      user_type: users.user_type,
       created_at: users.created_at,
     })
     .from(users)
@@ -91,12 +97,36 @@ export async function listPendingUsers(): Promise<User[]> {
       id: users.id,
       username: users.username,
       role: users.role,
+      user_type: users.user_type,
       created_at: users.created_at,
     })
     .from(users)
     .where(eq(users.role, "pending"))
     .orderBy(users.created_at)
     .all() as Promise<User[]>;
+}
+
+export async function getOrCreateAgentUser(agentName: string): Promise<User> {
+  const existing = await getUserByUsername(agentName);
+  if (existing) return existing;
+
+  const db = await getDb();
+  const [result] = await db
+    .insert(users)
+    .values({
+      username: agentName,
+      password_hash: "!agent",
+      role: "agent",
+      user_type: "agent",
+    })
+    .returning({
+      id: users.id,
+      username: users.username,
+      role: users.role,
+      user_type: users.user_type,
+      created_at: users.created_at,
+    });
+  return result as User;
 }
 
 export async function approveUser(id: number): Promise<void> {

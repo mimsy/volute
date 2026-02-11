@@ -97,6 +97,13 @@ export async function saveFile(name: string, filename: string, content: string):
   if (!res.ok) throw new Error("Failed to save file");
 }
 
+export type Participant = {
+  userId: number;
+  username: string;
+  userType: string;
+  role: string;
+};
+
 export type Conversation = {
   id: string;
   agent_name: string;
@@ -105,6 +112,7 @@ export type Conversation = {
   title: string | null;
   created_at: string;
   updated_at: string;
+  participants?: Participant[];
 };
 
 export type ContentBlock =

@@ -63,7 +63,7 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   if (authHeader?.startsWith("Bearer ")) {
     const token = authHeader.slice(7);
     if (token && isValidDaemonToken(token)) {
-      c.set("user", { id: 0, username: "cli", role: "admin" } as User);
+      c.set("user", { id: 0, username: "cli", role: "admin", user_type: "human" } as User);
       await next();
       return;
     }
