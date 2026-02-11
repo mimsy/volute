@@ -78,7 +78,7 @@ export function Chat({
           setEntries(loaded);
           if (forceScroll) scrollToBottom(true);
         })
-        .catch((err: unknown) => console.warn("[chat] failed to load messages:", err));
+        .catch((e) => console.error("Failed to load messages:", e));
     },
     [name, scrollToBottom],
   );
@@ -206,7 +206,8 @@ export function Chat({
 
     try {
       await send(message, convIdRef.current ?? undefined, images.length > 0 ? images : undefined);
-    } catch {
+    } catch (err) {
+      console.error("Failed to send message:", err);
       setStreaming(false);
       setEntries((prev) => {
         const next = [...prev];

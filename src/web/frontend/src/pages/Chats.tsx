@@ -33,7 +33,7 @@ export function Chats({
   const refresh = useCallback(() => {
     fetchAllConversations()
       .then(setConversations)
-      .catch((err: unknown) => console.warn("[chats] refresh failed:", err));
+      .catch((e) => console.error("Failed to fetch conversations:", e));
   }, []);
 
   useEffect(() => {
@@ -65,11 +65,12 @@ export function Chats({
     e.stopPropagation();
     try {
       await deleteConversationById(id);
-      refresh();
-      if (activeId === id) handleNew();
     } catch (err) {
-      console.warn("[chats] delete failed:", err);
+      console.error("Failed to delete conversation:", err);
+      return;
     }
+    refresh();
+    if (activeId === id) handleNew();
   };
 
   const handleConversationId = (id: string) => {
@@ -305,7 +306,8 @@ function AgentPickerModal({
         setAgents(a);
         setLoading(false);
       })
-      .catch(() => {
+      .catch((e) => {
+        console.error("Failed to fetch agents:", e);
         setLoading(false);
         setError("Failed to load agents");
       });
