@@ -1,9 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { format } from "node:util";
 import { initAgentManager } from "./lib/agent-manager.js";
 import { initConnectorManager } from "./lib/connector-manager.js";
 import { agentDir, readRegistry, setAgentRunning, voluteHome } from "./lib/registry.js";
+import { RotatingLog } from "./lib/rotating-log.js";
 import { getScheduler } from "./lib/scheduler.js";
 import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
 import { cleanExpiredSessions } from "./web/middleware/auth.js";
@@ -18,6 +20,16 @@ export async function startDaemon(opts: {
   const myPid = String(process.pid);
 
   const home = voluteHome();
+
+  // In background mode, redirect console to a rotating log file
+  if (!opts.foreground) {
+    const log = new RotatingLog(resolve(home, "daemon.log"));
+    const write = (...args: any[]) => log.write(`${format(...args)}\n`);
+    console.log = write;
+    console.error = write;
+    console.warn = write;
+    console.info = write;
+  }
   const DAEMON_PID_PATH = resolve(home, "daemon.pid");
   const DAEMON_JSON_PATH = resolve(home, "daemon.json");
 

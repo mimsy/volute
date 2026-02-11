@@ -1,17 +1,11 @@
 import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
-import {
-  createWriteStream,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { checkMissingEnvVars, getConnectorDef } from "./connector-defs.js";
 import { loadMergedEnv } from "./env.js";
 import { applyIsolation } from "./isolation.js";
 import { agentDir as getAgentDir, voluteHome } from "./registry.js";
+import { RotatingLog } from "./rotating-log.js";
 import { readVoluteConfig } from "./volute-config.js";
 
 function searchUpwards(...segments: string[]): string | null {
@@ -136,7 +130,7 @@ export class ConnectorManager {
     // Set up log file
     const logsDir = resolve(agentDir, ".volute", "logs");
     mkdirSync(logsDir, { recursive: true });
-    const logStream = createWriteStream(resolve(logsDir, `${type}.log`), { flags: "a" });
+    const logStream = new RotatingLog(resolve(logsDir, `${type}.log`));
 
     // Pass connector-specific env vars from agent env
     const agentEnv = loadMergedEnv(agentDir);

@@ -1,11 +1,12 @@
 import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { loadMergedEnv } from "./env.js";
 import { applyIsolation } from "./isolation.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "./json-state.js";
 import { agentDir, findAgent, setAgentRunning, voluteHome } from "./registry.js";
+import { RotatingLog } from "./rotating-log.js";
 import { findVariant, setVariantRunning, validateBranchName } from "./variants.js";
 
 const execFileAsync = promisify(execFile);
@@ -73,9 +74,7 @@ export class AgentManager {
     const logsDir = resolve(voluteDir, "logs");
     mkdirSync(logsDir, { recursive: true });
 
-    const logStream = createWriteStream(resolve(logsDir, "agent.log"), {
-      flags: "a",
-    });
+    const logStream = new RotatingLog(resolve(logsDir, "agent.log"));
     const agentEnv = loadMergedEnv(dir);
     const { VOLUTE_DAEMON_TOKEN: _, ...parentEnv } = process.env;
     const env = { ...parentEnv, ...agentEnv, VOLUTE_AGENT: name };

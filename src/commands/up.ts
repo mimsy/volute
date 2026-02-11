@@ -57,7 +57,7 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  // Spawn daemon as detached child process
+  // Spawn daemon as detached child process (daemon manages its own log rotation)
   mkdirSync(home, { recursive: true });
   const logFile = resolve(home, "daemon.log");
   const logFd = openSync(logFile, "a");
@@ -66,7 +66,7 @@ export async function run(args: string[]) {
     process.execPath,
     [daemonModule, "--port", String(port), "--host", hostname],
     {
-      stdio: ["ignore", logFd, logFd],
+      stdio: ["ignore", "ignore", logFd],
       detached: true,
     },
   );
