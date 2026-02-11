@@ -3,7 +3,7 @@ import { type ContentBlock, fetchConversationMessages, type VoluteEvent } from "
 import { renderMarkdown } from "../lib/marked";
 import { useChatStream } from "../lib/useStream";
 
-type ChatEntry = { role: "user" | "assistant"; blocks: ContentBlock[] };
+type ChatEntry = { role: "user" | "assistant"; blocks: ContentBlock[]; senderName?: string };
 
 function normalizeContent(content: ContentBlock[] | string): ContentBlock[] {
   if (Array.isArray(content)) return content;
@@ -52,6 +52,7 @@ export function Chat({
         const loaded: ChatEntry[] = msgs.map((m) => ({
           role: m.role as "user" | "assistant",
           blocks: normalizeContent(m.content),
+          senderName: m.sender_name ?? undefined,
         }));
         setEntries(loaded);
       })
@@ -215,11 +216,12 @@ export function Chat({
             }}
           >
             {entry.role === "user" ? (
-              <UserMessage blocks={entry.blocks} />
+              <UserMessage blocks={entry.blocks} senderName={entry.senderName} />
             ) : (
               <AssistantMessage
                 blocks={entry.blocks}
                 isStreaming={streaming && i === entries.length - 1}
+                senderName={entry.senderName}
               />
             )}
           </div>
@@ -369,12 +371,27 @@ export function Chat({
   );
 }
 
-function UserMessage({ blocks }: { blocks: ContentBlock[] }) {
+const SENDER_COLORS = [
+  "var(--blue)",
+  "var(--purple)",
+  "var(--yellow)",
+  "var(--red)",
+  "var(--accent)",
+];
+
+function senderColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
+  return SENDER_COLORS[Math.abs(hash) % SENDER_COLORS.length];
+}
+
+function UserMessage({ blocks, senderName }: { blocks: ContentBlock[]; senderName?: string }) {
+  const label = senderName || "you";
   return (
     <div style={{ display: "flex", gap: 10 }}>
       <span
         style={{
-          color: "var(--blue)",
+          color: senderName ? senderColor(senderName) : "var(--blue)",
           fontSize: 11,
           fontWeight: 600,
           flexShrink: 0,
@@ -382,7 +399,7 @@ function UserMessage({ blocks }: { blocks: ContentBlock[] }) {
           textTransform: "uppercase",
         }}
       >
-        you
+        {label}
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
         {blocks.map((block, i) => {
@@ -418,9 +435,11 @@ function UserMessage({ blocks }: { blocks: ContentBlock[] }) {
 function AssistantMessage({
   blocks,
   isStreaming,
+  senderName,
 }: {
   blocks: ContentBlock[];
   isStreaming: boolean;
+  senderName?: string;
 }) {
   // Build render items: text, tool pairs, images — in order
   const items: Array<
@@ -460,7 +479,7 @@ function AssistantMessage({
     <div style={{ display: "flex", gap: 10 }}>
       <span
         style={{
-          color: "var(--accent)",
+          color: senderName ? senderColor(senderName) : "var(--accent)",
           fontSize: 11,
           fontWeight: 600,
           flexShrink: 0,
@@ -468,7 +487,7 @@ function AssistantMessage({
           textTransform: "uppercase",
         }}
       >
-        agent
+        {senderName || "agent"}
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
         {!hasContent && isStreaming && (

@@ -6,7 +6,8 @@ import { users } from "./schema.js";
 export type User = {
   id: number;
   username: string;
-  role: "admin" | "user" | "pending";
+  role: "admin" | "user" | "pending" | "agent";
+  user_type: "human" | "agent";
   created_at: string;
 };
 
@@ -14,8 +15,11 @@ export async function createUser(username: string, password: string): Promise<Us
   const db = await getDb();
   const hash = hashSync(password, 10);
 
-  // First user becomes admin automatically
-  const [{ value }] = await db.select({ value: count() }).from(users);
+  // First human user becomes admin automatically
+  const [{ value }] = await db
+    .select({ value: count() })
+    .from(users)
+    .where(eq(users.user_type, "human"));
   const role = value === 0 ? "admin" : "pending";
 
   const [result] = await db
@@ -25,6 +29,7 @@ export async function createUser(username: string, password: string): Promise<Us
       id: users.id,
       username: users.username,
       role: users.role,
+      user_type: users.user_type,
       created_at: users.created_at,
     });
 
@@ -35,6 +40,7 @@ export async function verifyUser(username: string, password: string): Promise<Us
   const db = await getDb();
   const row = await db.select().from(users).where(eq(users.username, username)).get();
   if (!row) return null;
+  if (row.user_type === "agent") return null; // agents can't log in
   if (!compareSync(password, row.password_hash)) return null;
   const { password_hash: _, ...user } = row;
   return user as User;
@@ -47,6 +53,7 @@ export async function getUser(id: number): Promise<User | null> {
       id: users.id,
       username: users.username,
       role: users.role,
+      user_type: users.user_type,
       created_at: users.created_at,
     })
     .from(users)
@@ -62,6 +69,7 @@ export async function getUserByUsername(username: string): Promise<User | null> 
       id: users.id,
       username: users.username,
       role: users.role,
+      user_type: users.user_type,
       created_at: users.created_at,
     })
     .from(users)
@@ -77,6 +85,7 @@ export async function listUsers(): Promise<User[]> {
       id: users.id,
       username: users.username,
       role: users.role,
+      user_type: users.user_type,
       created_at: users.created_at,
     })
     .from(users)
@@ -91,12 +100,81 @@ export async function listPendingUsers(): Promise<User[]> {
       id: users.id,
       username: users.username,
       role: users.role,
+      user_type: users.user_type,
       created_at: users.created_at,
     })
     .from(users)
     .where(eq(users.role, "pending"))
     .orderBy(users.created_at)
     .all() as Promise<User[]>;
+}
+
+export async function listUsersByType(userType: "human" | "agent"): Promise<User[]> {
+  const db = await getDb();
+  return db
+    .select({
+      id: users.id,
+      username: users.username,
+      role: users.role,
+      user_type: users.user_type,
+      created_at: users.created_at,
+    })
+    .from(users)
+    .where(eq(users.user_type, userType))
+    .orderBy(users.created_at)
+    .all() as Promise<User[]>;
+}
+
+export async function getOrCreateAgentUser(agentName: string): Promise<User> {
+  const db = await getDb();
+  const existing = await db
+    .select({
+      id: users.id,
+      username: users.username,
+      role: users.role,
+      user_type: users.user_type,
+      created_at: users.created_at,
+    })
+    .from(users)
+    .where(and(eq(users.username, agentName), eq(users.user_type, "agent")))
+    .get();
+  if (existing) return existing as User;
+
+  try {
+    const [result] = await db
+      .insert(users)
+      .values({
+        username: agentName,
+        password_hash: "!agent",
+        role: "agent",
+        user_type: "agent",
+      })
+      .returning({
+        id: users.id,
+        username: users.username,
+        role: users.role,
+        user_type: users.user_type,
+        created_at: users.created_at,
+      });
+    return result as User;
+  } catch (err: unknown) {
+    // Handle race condition: another request may have inserted concurrently
+    if (err instanceof Error && err.message.includes("UNIQUE constraint")) {
+      const retried = await db
+        .select({
+          id: users.id,
+          username: users.username,
+          role: users.role,
+          user_type: users.user_type,
+          created_at: users.created_at,
+        })
+        .from(users)
+        .where(and(eq(users.username, agentName), eq(users.user_type, "agent")))
+        .get();
+      if (retried) return retried as User;
+    }
+    throw err;
+  }
 }
 
 export async function approveUser(id: number): Promise<void> {

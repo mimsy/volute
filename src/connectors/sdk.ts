@@ -27,7 +27,8 @@ export interface AgentPayload {
   platform: string;
   isDM?: boolean;
   channelName?: string;
-  guildName?: string;
+  serverName?: string;
+  participantCount?: number;
 }
 
 export interface FlushHandlers {

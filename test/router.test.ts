@@ -70,7 +70,7 @@ describe("router", () => {
 
   it("routes to file handler when configured", async () => {
     const dir = mkdtempSync(join(tmpdir(), "router-test-"));
-    const configPath = join(dir, "sessions.json");
+    const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
       JSON.stringify({
@@ -95,7 +95,7 @@ describe("router", () => {
 
   it("emits done and discards when file destination but no fileHandler", async () => {
     const dir = mkdtempSync(join(tmpdir(), "router-test-"));
-    const configPath = join(dir, "sessions.json");
+    const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
       JSON.stringify({
@@ -117,7 +117,7 @@ describe("router", () => {
 
   it("expands $new session to unique name", async () => {
     const dir = mkdtempSync(join(tmpdir(), "router-test-"));
-    const configPath = join(dir, "sessions.json");
+    const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
       JSON.stringify({
@@ -139,7 +139,7 @@ describe("router", () => {
 
   it("batch buffers messages and flushes on timer", async () => {
     const dir = mkdtempSync(join(tmpdir(), "router-test-"));
-    const configPath = join(dir, "sessions.json");
+    const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
       JSON.stringify({
@@ -176,7 +176,7 @@ describe("router", () => {
 
   it("flush on close sends buffered batch", async () => {
     const dir = mkdtempSync(join(tmpdir(), "router-test-"));
-    const configPath = join(dir, "sessions.json");
+    const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
       JSON.stringify({

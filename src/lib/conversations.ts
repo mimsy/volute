@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getDb } from "./db.js";
-import { conversations, messages } from "./schema.js";
+import { conversationParticipants, conversations, messages, users } from "./schema.js";
 
 export type ContentBlock =
   | { type: "text"; text: string }
@@ -19,6 +19,13 @@ export type Conversation = {
   updated_at: string;
 };
 
+export type Participant = {
+  userId: number;
+  username: string;
+  userType: "human" | "agent";
+  role: "owner" | "member";
+};
+
 export type Message = {
   id: number;
   conversation_id: string;
@@ -31,7 +38,7 @@ export type Message = {
 export async function createConversation(
   agentName: string,
   channel: string,
-  opts?: { userId?: number; title?: string },
+  opts?: { userId?: number; title?: string; participantIds?: number[] },
 ): Promise<Conversation> {
   const db = await getDb();
   const id = randomUUID();
@@ -42,6 +49,17 @@ export async function createConversation(
     user_id: opts?.userId ?? null,
     title: opts?.title ?? null,
   });
+
+  // Add participants if provided
+  if (opts?.participantIds && opts.participantIds.length > 0) {
+    await db.insert(conversationParticipants).values(
+      opts.participantIds.map((uid, i) => ({
+        conversation_id: id,
+        user_id: uid,
+        role: i === 0 ? "owner" : "member",
+      })),
+    );
+  }
 
   return {
     id,
@@ -78,45 +96,102 @@ export async function getConversation(id: string): Promise<Conversation | null> 
   return (row as Conversation) ?? null;
 }
 
-export async function getConversationForUser(
-  id: string,
+export async function addParticipant(
+  conversationId: string,
   userId: number,
-): Promise<Conversation | null> {
+  role = "member",
+): Promise<void> {
+  const db = await getDb();
+  await db.insert(conversationParticipants).values({
+    conversation_id: conversationId,
+    user_id: userId,
+    role,
+  });
+}
+
+export async function removeParticipant(conversationId: string, userId: number): Promise<void> {
+  const db = await getDb();
+  await db
+    .delete(conversationParticipants)
+    .where(
+      and(
+        eq(conversationParticipants.conversation_id, conversationId),
+        eq(conversationParticipants.user_id, userId),
+      ),
+    );
+}
+
+export async function getParticipants(conversationId: string): Promise<Participant[]> {
+  const db = await getDb();
+  const rows = await db
+    .select({
+      userId: conversationParticipants.user_id,
+      username: users.username,
+      userType: users.user_type,
+      role: conversationParticipants.role,
+    })
+    .from(conversationParticipants)
+    .innerJoin(users, eq(conversationParticipants.user_id, users.id))
+    .where(eq(conversationParticipants.conversation_id, conversationId))
+    .all();
+  return rows as Participant[];
+}
+
+export async function isParticipant(conversationId: string, userId: number): Promise<boolean> {
+  const db = await getDb();
+  const row = await db
+    .select({ user_id: conversationParticipants.user_id })
+    .from(conversationParticipants)
+    .where(
+      and(
+        eq(conversationParticipants.conversation_id, conversationId),
+        eq(conversationParticipants.user_id, userId),
+      ),
+    )
+    .get();
+  return row != null;
+}
+
+export async function listConversationsForUser(userId: number): Promise<Conversation[]> {
+  const db = await getDb();
+  // Get conversation IDs this user participates in
+  const participantRows = await db
+    .select({ conversation_id: conversationParticipants.conversation_id })
+    .from(conversationParticipants)
+    .where(eq(conversationParticipants.user_id, userId))
+    .all();
+
+  if (participantRows.length === 0) return [];
+
+  const convIds = participantRows.map((r) => r.conversation_id);
+  return db
+    .select()
+    .from(conversations)
+    .where(inArray(conversations.id, convIds))
+    .orderBy(desc(conversations.updated_at))
+    .all() as Promise<Conversation[]>;
+}
+
+export async function isParticipantOrOwner(
+  conversationId: string,
+  userId: number,
+): Promise<boolean> {
+  // Check participant table first
+  if (await isParticipant(conversationId, userId)) return true;
+  // Fall back to legacy user_id column
   const db = await getDb();
   const row = await db
     .select()
     .from(conversations)
-    .where(and(eq(conversations.id, id), eq(conversations.user_id, userId)))
+    .where(and(eq(conversations.id, conversationId), eq(conversations.user_id, userId)))
     .get();
-  return (row as Conversation) ?? null;
+  return row != null;
 }
 
 export async function deleteConversationForUser(id: string, userId: number): Promise<boolean> {
-  const conv = await getConversationForUser(id, userId);
-  if (!conv) return false;
+  if (!(await isParticipantOrOwner(id, userId))) return false;
   await deleteConversation(id);
   return true;
-}
-
-export async function listConversations(
-  agentName: string,
-  opts?: { userId?: number },
-): Promise<Conversation[]> {
-  const db = await getDb();
-  if (opts?.userId != null) {
-    return db
-      .select()
-      .from(conversations)
-      .where(and(eq(conversations.agent_name, agentName), eq(conversations.user_id, opts.userId)))
-      .orderBy(desc(conversations.updated_at))
-      .all() as Promise<Conversation[]>;
-  }
-  return db
-    .select()
-    .from(conversations)
-    .where(eq(conversations.agent_name, agentName))
-    .orderBy(desc(conversations.updated_at))
-    .all() as Promise<Conversation[]>;
 }
 
 export async function addMessage(

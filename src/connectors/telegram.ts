@@ -57,6 +57,15 @@ bot.on(message("text"), async (ctx) => {
     (ctx.message.from.last_name ? ` ${ctx.message.from.last_name}` : "");
   const chatTitle = "title" in ctx.chat ? ctx.chat.title : undefined;
 
+  let participantCount: number | undefined = isDM ? 2 : undefined;
+  if (!isDM) {
+    try {
+      participantCount = await ctx.telegram.getChatMembersCount(ctx.chat.id);
+    } catch (err) {
+      console.warn(`Failed to get member count for chat ${ctx.chat.id}: ${err}`);
+    }
+  }
+
   const payload: AgentPayload = {
     content,
     channel: `telegram:${ctx.chat.id}`,
@@ -64,6 +73,7 @@ bot.on(message("text"), async (ctx) => {
     platform: "Telegram",
     ...(isDM ? { isDM: true } : {}),
     ...(chatTitle ? { channelName: chatTitle } : {}),
+    ...(participantCount ? { participantCount } : {}),
   };
 
   if (isFollowedChat && !isMentioned) {
@@ -118,12 +128,23 @@ bot.on(message("photo"), async (ctx) => {
     (ctx.message.from.last_name ? ` ${ctx.message.from.last_name}` : "");
   const chatTitle = "title" in ctx.chat ? ctx.chat.title : undefined;
 
+  let participantCount: number | undefined = isDM ? 2 : undefined;
+  if (!isDM) {
+    try {
+      participantCount = await ctx.telegram.getChatMembersCount(ctx.chat.id);
+    } catch (err) {
+      console.warn(`Failed to get member count for chat ${ctx.chat.id}: ${err}`);
+    }
+  }
+
   const payload: AgentPayload = {
     content,
     channel: `telegram:${ctx.chat.id}`,
     sender: senderName,
     platform: "Telegram",
+    ...(isDM ? { isDM: true } : {}),
     ...(chatTitle ? { channelName: chatTitle } : {}),
+    ...(participantCount ? { participantCount } : {}),
   };
 
   if (isFollowedChat) {

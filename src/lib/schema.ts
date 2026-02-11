@@ -1,11 +1,12 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   username: text("username").unique().notNull(),
   password_hash: text("password_hash").notNull(),
   role: text("role").notNull().default("pending"),
+  user_type: text("user_type").notNull().default("human"),
   created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
 });
 
@@ -41,6 +42,24 @@ export const agentMessages = sqliteTable(
   (table) => [
     index("idx_agent_messages_agent").on(table.agent),
     index("idx_agent_messages_channel").on(table.agent, table.channel),
+  ],
+);
+
+export const conversationParticipants = sqliteTable(
+  "conversation_participants",
+  {
+    conversation_id: text("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    user_id: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: text("role").notNull().default("member"),
+    joined_at: text("joined_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    uniqueIndex("idx_cp_unique").on(table.conversation_id, table.user_id),
+    index("idx_cp_user_id").on(table.user_id),
   ],
 );
 

@@ -97,6 +97,13 @@ export async function saveFile(name: string, filename: string, content: string):
   if (!res.ok) throw new Error("Failed to save file");
 }
 
+export type Participant = {
+  userId: number;
+  username: string;
+  userType: string;
+  role: string;
+};
+
 export type Conversation = {
   id: string;
   agent_name: string;
@@ -105,6 +112,7 @@ export type Conversation = {
   title: string | null;
   created_at: string;
   updated_at: string;
+  participants?: Participant[];
 };
 
 export type ContentBlock =
@@ -174,4 +182,34 @@ export async function deleteConversation(name: string, conversationId: string): 
     param: { name, id: conversationId },
   });
   if (!res.ok) throw new Error("Failed to delete conversation");
+}
+
+export async function createGroupConversation(
+  name: string,
+  participantIds: number[],
+  title?: string,
+): Promise<Conversation> {
+  const res = await client.api.agents[":name"].conversations.$post({
+    param: { name },
+    json: { participantIds, title },
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to create conversation");
+  }
+  return res.json();
+}
+
+export type AvailableUser = {
+  id: number;
+  username: string;
+  role: string;
+  user_type: string;
+};
+
+export async function fetchAvailableUsers(type?: string): Promise<AvailableUser[]> {
+  const params = type ? `?type=${type}` : "";
+  const res = await fetch(`/api/auth/users${params}`, { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch users");
+  return res.json();
 }

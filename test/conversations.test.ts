@@ -1,14 +1,21 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { eq } from "drizzle-orm";
+import { getOrCreateAgentUser } from "../src/lib/auth.js";
 import {
   addMessage,
+  addParticipant,
   type ContentBlock,
   createConversation,
   deleteConversation,
   getMessages,
+  getParticipants,
+  isParticipant,
+  listConversationsForUser,
+  removeParticipant,
 } from "../src/lib/conversations.js";
 import { getDb } from "../src/lib/db.js";
-import { messages } from "../src/lib/schema.js";
+import { messages, users } from "../src/lib/schema.js";
 
 describe("conversations", () => {
   it("round-trips ContentBlock[] through addMessage/getMessages", async () => {
@@ -87,6 +94,117 @@ describe("conversations", () => {
       }
     } finally {
       await deleteConversation(conv.id);
+    }
+  });
+});
+
+describe("conversation participants", () => {
+  it("creates conversation with participants", async () => {
+    const db = await getDb();
+    // Create test users
+    const agentUser = await getOrCreateAgentUser("test-agent-p");
+    const [humanUser] = await db
+      .insert(users)
+      .values({ username: "test-human-p", password_hash: "!test", role: "user" })
+      .returning({ id: users.id });
+
+    try {
+      const conv = await createConversation("test-agent-p", "volute", {
+        participantIds: [humanUser.id, agentUser.id],
+      });
+
+      const participants = await getParticipants(conv.id);
+      assert.equal(participants.length, 2);
+      assert.ok(participants.some((p) => p.username === "test-human-p"));
+      assert.ok(participants.some((p) => p.username === "test-agent-p"));
+
+      // First participant gets "owner" role
+      const owner = participants.find((p) => p.userId === humanUser.id);
+      assert.equal(owner?.role, "owner");
+
+      await deleteConversation(conv.id);
+    } finally {
+      await db.delete(users).where(eq(users.id, humanUser.id));
+      await db.delete(users).where(eq(users.id, agentUser.id));
+    }
+  });
+
+  it("addParticipant / removeParticipant / isParticipant", async () => {
+    const db = await getDb();
+    const [user1] = await db
+      .insert(users)
+      .values({ username: "part-test-1", password_hash: "!test", role: "user" })
+      .returning({ id: users.id });
+    const [user2] = await db
+      .insert(users)
+      .values({ username: "part-test-2", password_hash: "!test", role: "user" })
+      .returning({ id: users.id });
+
+    try {
+      const conv = await createConversation("test-agent", "volute");
+
+      // Initially no participants
+      assert.equal(await isParticipant(conv.id, user1.id), false);
+
+      // Add participant
+      await addParticipant(conv.id, user1.id, "owner");
+      assert.equal(await isParticipant(conv.id, user1.id), true);
+
+      // Add another
+      await addParticipant(conv.id, user2.id);
+      const participants = await getParticipants(conv.id);
+      assert.equal(participants.length, 2);
+
+      // Remove one
+      await removeParticipant(conv.id, user2.id);
+      assert.equal(await isParticipant(conv.id, user2.id), false);
+      assert.equal(await isParticipant(conv.id, user1.id), true);
+
+      await deleteConversation(conv.id);
+    } finally {
+      await db.delete(users).where(eq(users.id, user1.id));
+      await db.delete(users).where(eq(users.id, user2.id));
+    }
+  });
+
+  it("listConversationsForUser returns participant conversations", async () => {
+    const db = await getDb();
+    const [user1] = await db
+      .insert(users)
+      .values({ username: "list-test-1", password_hash: "!test", role: "user" })
+      .returning({ id: users.id });
+
+    try {
+      const conv = await createConversation("test-agent", "volute", {
+        participantIds: [user1.id],
+      });
+
+      const convs = await listConversationsForUser(user1.id);
+      assert.equal(convs.length, 1);
+      assert.equal(convs[0].id, conv.id);
+
+      await deleteConversation(conv.id);
+    } finally {
+      await db.delete(users).where(eq(users.id, user1.id));
+    }
+  });
+
+  it("getParticipants returns user_type info", async () => {
+    const agentUser = await getOrCreateAgentUser("agent-type-test");
+    const db = await getDb();
+
+    try {
+      const conv = await createConversation("agent-type-test", "volute", {
+        participantIds: [agentUser.id],
+      });
+
+      const participants = await getParticipants(conv.id);
+      assert.equal(participants.length, 1);
+      assert.equal(participants[0].userType, "agent");
+
+      await deleteConversation(conv.id);
+    } finally {
+      await db.delete(users).where(eq(users.id, agentUser.id));
     }
   });
 });

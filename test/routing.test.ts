@@ -18,13 +18,13 @@ function expectAgent(route: ResolvedRoute) {
 
 describe("loadRoutingConfig", () => {
   it("returns empty config for missing file", () => {
-    const config = loadRoutingConfig("/nonexistent/sessions.json");
+    const config = loadRoutingConfig("/nonexistent/routes.json");
     assert.deepEqual(config, {});
   });
 
   it("loads valid config", () => {
     const dir = mkdtempSync(join(tmpdir(), "sessions-test-"));
-    const path = join(dir, "sessions.json");
+    const path = join(dir, "routes.json");
     writeFileSync(
       path,
       JSON.stringify({
@@ -370,5 +370,110 @@ describe("resolveRoute", () => {
     const r = expectAgent(resolveRoute(config, { channel: "web", sender: "..\\..\\etc\\passwd" }));
     assert.ok(!r.session.includes("\\"), `session name should not contain \\: ${r.session}`);
     assert.ok(!r.session.includes(".."), `session name should not contain ..: ${r.session}`);
+  });
+
+  // --- isDM matching ---
+
+  it("matches isDM: true", () => {
+    const config: RoutingConfig = {
+      rules: [{ isDM: true, session: "dm" }],
+      default: "main",
+    };
+    assert.equal(
+      expectAgent(resolveRoute(config, { channel: "volute:abc", isDM: true })).session,
+      "dm",
+    );
+    assert.equal(
+      expectAgent(resolveRoute(config, { channel: "volute:abc", isDM: false })).session,
+      "main",
+    );
+    assert.equal(expectAgent(resolveRoute(config, { channel: "volute:abc" })).session, "main");
+  });
+
+  it("matches isDM: false", () => {
+    const config: RoutingConfig = {
+      rules: [{ isDM: false, session: "group" }],
+      default: "main",
+    };
+    assert.equal(
+      expectAgent(resolveRoute(config, { channel: "volute:abc", isDM: false })).session,
+      "group",
+    );
+    // isDM undefined treated as false
+    assert.equal(expectAgent(resolveRoute(config, { channel: "volute:abc" })).session, "group");
+    assert.equal(
+      expectAgent(resolveRoute(config, { channel: "volute:abc", isDM: true })).session,
+      "main",
+    );
+  });
+
+  // --- participants matching ---
+
+  it("matches participants count", () => {
+    const config: RoutingConfig = {
+      rules: [{ participants: 2, session: "one-on-one" }],
+      default: "main",
+    };
+    assert.equal(
+      expectAgent(resolveRoute(config, { channel: "volute:abc", participantCount: 2 })).session,
+      "one-on-one",
+    );
+    assert.equal(
+      expectAgent(resolveRoute(config, { channel: "volute:abc", participantCount: 5 })).session,
+      "main",
+    );
+    assert.equal(expectAgent(resolveRoute(config, { channel: "volute:abc" })).session, "main");
+  });
+
+  it("combines isDM with channel for routing", () => {
+    const config: RoutingConfig = {
+      rules: [
+        { channel: "volute:*", isDM: true, session: "volute-dm" },
+        { channel: "volute:*", session: "volute-group" },
+      ],
+      default: "main",
+    };
+    assert.equal(
+      expectAgent(resolveRoute(config, { channel: "volute:abc", isDM: true })).session,
+      "volute-dm",
+    );
+    assert.equal(
+      expectAgent(resolveRoute(config, { channel: "volute:abc", isDM: false })).session,
+      "volute-group",
+    );
+  });
+
+  // --- matched field ---
+
+  it("returns matched: true when a rule matches", () => {
+    const config: RoutingConfig = {
+      rules: [{ channel: "discord:*", session: "discord" }],
+      default: "main",
+    };
+    const r = resolveRoute(config, { channel: "discord:123" });
+    assert.equal(r.matched, true);
+  });
+
+  it("returns matched: false when falling through to default", () => {
+    const config: RoutingConfig = {
+      rules: [{ channel: "discord:*", session: "discord" }],
+      default: "main",
+    };
+    const r = resolveRoute(config, { channel: "web" });
+    assert.equal(r.matched, false);
+  });
+
+  it("returns matched: false when no rules exist", () => {
+    const r = resolveRoute({}, { channel: "web" });
+    assert.equal(r.matched, false);
+  });
+
+  it("returns matched: true for file destination rule", () => {
+    const config: RoutingConfig = {
+      rules: [{ channel: "discord:logs", destination: "file", path: "home/inbox/logs.md" }],
+    };
+    const r = resolveRoute(config, { channel: "discord:logs" });
+    assert.equal(r.matched, true);
+    assert.equal(r.destination, "file");
   });
 });

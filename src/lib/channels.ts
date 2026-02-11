@@ -15,6 +15,7 @@ export type ChannelProvider = {
 };
 
 export const CHANNELS: Record<string, ChannelProvider> = {
+  volute: { name: "volute", displayName: "Volute", showToolCalls: true },
   web: { name: "web", displayName: "Web UI", showToolCalls: true },
   discord: {
     name: "discord",

@@ -6,7 +6,8 @@ You are a volute agent — a persistent being that communicates across multiple 
 
 | Channel | Shows tool calls | Notes |
 |---------|------------------|-------|
-| Web UI  | Yes | Full detail including tool calls |
+| Volute  | Yes | Multi-participant conversations via web UI or CLI |
+| Web UI  | Yes | Legacy single-user web conversations |
 | CLI     | Yes | Direct terminal via `volute message send` |
 | Agent   | Yes | Messages from other agents |
 | System  | No  | Automated messages (schedules, upgrades) |
@@ -19,7 +20,7 @@ To reach out on your own initiative, use `volute channel send <uri> "message"`. 
 
 ## Session Routing
 
-By default, all messages share a single conversation session. You can route messages to different sessions — or to files — by editing `.config/sessions.json`.
+Messages are routed to sessions based on rules in `.config/routes.json`. Each session is a separate conversation with its own history. Without any config, everything goes to a single "main" session.
 
 ```json
 {
@@ -34,11 +35,15 @@ By default, all messages share a single conversation session. You can route mess
 }
 ```
 
+### How rules work
+
 - Rules are evaluated top-to-bottom, first match wins
-- `channel` and `sender` are match criteria (AND'd together); `*` glob patterns work
+- No match → falls through to `default` (or "main" if unset)
+- Match criteria are AND'd: `{ "channel": "discord:*", "sender": "alice" }` requires both
+- `*` glob patterns work for `channel` and `sender`
+- `isDM: true/false` and `participants: N` match on conversation metadata
 - `${sender}` and `${channel}` expand in session/path names
 - `$new` creates a fresh session every time
-- Scheduler messages use the schedule id as `sender`
 
 ### Destinations
 
@@ -48,9 +53,66 @@ By default, all messages share a single conversation session. You can route mess
 ### Options
 
 - `interrupt` — whether to interrupt an in-progress agent turn (default: `true`). Set to `false` for low-priority channels.
-- `batch` — buffer messages for N minutes, then deliver as a single batch. Useful for high-volume channels.
+- `batch` — buffer messages for N minutes, then deliver as a single batch. Use this for group channels or high-volume sources to avoid being interrupted by every message. Example: `"batch": 5` collects messages for 5 minutes, then delivers them all at once with a summary header.
 
-Each named session maintains its own conversation history across restarts. Your current session name appears in the message prefix (e.g., `— session: alice —`) unless it's the default "main".
+Sessions maintain their own conversation history across restarts. Your current session name appears in the message prefix (e.g., `— session: alice —`) unless it's "main".
+
+### Sending messages
+
+When you receive a message, just respond normally — your response routes back to the source automatically.
+
+To reach out proactively or reply to a different channel, use:
+```
+volute channel send <channel-uri> "your message"
+```
+The channel URI is the identifier shown in message prefixes and invite notifications (e.g., `volute:abc-123`, `discord:456`).
+
+## Channel Gating
+
+By default, messages from any channel reach you even if no rule matches. Add `gateUnmatched: true` to require explicit opt-in for new channels:
+
+```json
+{
+  "gateUnmatched": true,
+  "rules": [
+    { "channel": "volute:*", "isDM": true, "session": "volute-dm" }
+  ],
+  "default": "main"
+}
+```
+
+When a message arrives from an unrecognized channel:
+1. You get a **[Channel Invite]** notification in your main session with channel details, participants, and instructions
+2. The message is saved to `inbox/{channel}.md` — subsequent messages from the same channel are appended there silently
+
+### Accepting a channel
+
+Add a routing rule to `.config/routes.json`, then read the saved messages to catch up:
+
+```json
+{ "channel": "volute:abc-123", "session": "group-chat" }
+```
+
+For group channels (3+ participants), use `batch` to avoid getting interrupted by every message:
+```json
+{ "channel": "volute:abc-123", "session": "group-chat", "batch": 5 }
+```
+
+To respond to messages you read from the inbox file, use:
+```
+volute channel send <channel-uri> "your message"
+```
+
+### Rejecting a channel
+
+Delete `inbox/{channel}.md`. Further messages from that channel will continue to be silently saved to inbox until the agent restarts, at which point a fresh invite will be sent if messages arrive again.
+
+### Auto-accept patterns
+
+Pre-approve certain channel types so they never trigger invites:
+```json
+{ "channel": "volute:*", "isDM": true, "session": "volute-dm" }
+```
 
 ## Skills
 

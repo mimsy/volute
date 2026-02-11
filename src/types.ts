@@ -8,8 +8,10 @@ export type ChannelMeta = {
   platform?: string;
   isDM?: boolean;
   channelName?: string;
-  guildName?: string;
+  serverName?: string;
   sessionName?: string;
+  participants?: string[];
+  participantCount?: number;
 };
 
 /** ChannelMeta enriched by the router with dispatch info. */

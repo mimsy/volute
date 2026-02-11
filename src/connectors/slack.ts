@@ -31,13 +31,14 @@ const app = new App({
 });
 
 let botUserId: string | undefined;
+let serverName: string | undefined;
 
 app.message(async ({ message, say }) => {
   if (message.subtype) return;
   if (!("user" in message) || !("text" in message)) return;
   if ("bot_id" in message && message.bot_id) return;
 
-  const isDM = message.channel_type === "im";
+  const isDM = message.channel_type === "im" || message.channel_type === "mpim";
   const isMentioned = !isDM && botUserId && message.text?.includes(`<@${botUserId}>`);
   const isFollowedChannel = !isDM && followedChannelIds.has(message.channel);
 
@@ -77,14 +78,17 @@ app.message(async ({ message, say }) => {
   if (content.length === 0) return;
 
   let channelName: string | undefined;
-  if (!isDM) {
+  let numMembers: number | undefined;
+  // Fetch channel info for non-1:1 DMs (includes mpim group DMs and channels)
+  if (message.channel_type !== "im") {
     try {
       const info = (await app.client.conversations.info({
         channel: message.channel,
-      })) as { channel?: { name?: string } };
+      })) as { channel?: { name?: string; num_members?: number } };
       channelName = info.channel?.name;
+      numMembers = info.channel?.num_members;
     } catch (err) {
-      console.warn(`Failed to get channel name: ${err}`);
+      console.warn(`Failed to get channel info: ${err}`);
     }
   }
 
@@ -101,6 +105,7 @@ app.message(async ({ message, say }) => {
 
   const channelKey = `slack:${message.channel}`;
 
+  const participantCount = message.channel_type === "im" ? 2 : numMembers;
   const payload = {
     content,
     channel: channelKey,
@@ -108,6 +113,8 @@ app.message(async ({ message, say }) => {
     platform: "Slack",
     ...(isDM ? { isDM: true } : {}),
     ...(channelName ? { channelName } : {}),
+    ...(serverName ? { serverName } : {}),
+    ...(participantCount ? { participantCount } : {}),
   };
 
   if (isFollowedChannel && !isMentioned) {
@@ -150,12 +157,15 @@ app.message(async ({ message, say }) => {
 async function start() {
   await app.start();
 
-  const auth = (await app.client.auth.test()) as { user_id?: string };
+  const auth = (await app.client.auth.test()) as { user_id?: string; team?: string };
   if (!auth.user_id) {
     throw new Error("auth.test succeeded but returned no user_id");
   }
   botUserId = auth.user_id;
-  console.log(`Connected to Slack as bot user ${botUserId}`);
+  serverName = auth.team;
+  console.log(
+    `Connected to Slack as bot user ${botUserId}${serverName ? ` in ${serverName}` : ""}`,
+  );
 
   console.log(`Bridging to agent: ${env.agentName} via ${env.baseUrl}/message`);
 

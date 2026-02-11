@@ -2,11 +2,13 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
+import { getOrCreateAgentUser } from "../../lib/auth.js";
 import {
   addMessage,
   type ContentBlock,
   createConversation,
-  getConversationForUser,
+  getParticipants,
+  isParticipantOrOwner,
 } from "../../lib/conversations.js";
 import { getDb } from "../../lib/db.js";
 import { collectPart } from "../../lib/format-tool.js";
@@ -28,6 +30,70 @@ const chatSchema = z.object({
     )
     .optional(),
 });
+
+/** Consume an agent's ndjson response and persist it as a conversation message. */
+async function consumeAndPersist(
+  res: Response,
+  conversationId: string,
+  agentName: string,
+  channel: string,
+): Promise<void> {
+  if (!res.body) {
+    console.warn(`[chat] no response body from ${agentName}`);
+    return;
+  }
+  const assistantContent: ContentBlock[] = [];
+  for await (const event of readNdjson(res.body)) {
+    if (event.type === "text") {
+      const last = assistantContent[assistantContent.length - 1];
+      if (last && last.type === "text") last.text += event.content;
+      else assistantContent.push({ type: "text", text: event.content });
+    } else if (event.type === "tool_use") {
+      assistantContent.push({ type: "tool_use", name: event.name, input: event.input });
+    } else if (event.type === "tool_result") {
+      assistantContent.push({
+        type: "tool_result",
+        output: event.output,
+        ...(event.is_error ? { is_error: true } : {}),
+      });
+    }
+    if (event.type === "done") break;
+  }
+  if (assistantContent.length === 0) return;
+
+  // Persist to both tables independently so one failure doesn't block the other
+  try {
+    await addMessage(conversationId, "assistant", agentName, assistantContent);
+  } catch (err) {
+    console.error(`[chat] failed to persist conversation message from ${agentName}:`, err);
+    console.error(`[chat] lost content: ${JSON.stringify(assistantContent).slice(0, 500)}`);
+  }
+
+  try {
+    const db = await getDb();
+    const textParts: string[] = [];
+    const toolParts: string[] = [];
+    for (const b of assistantContent) {
+      const part = collectPart(b);
+      if (part != null) {
+        if (b.type === "tool_use") toolParts.push(part);
+        else textParts.push(part);
+      }
+    }
+    const summary = [textParts.join(""), ...toolParts].filter(Boolean).join("\n");
+    if (summary) {
+      await db.insert(agentMessages).values({
+        agent: agentName,
+        channel,
+        role: "assistant",
+        sender: agentName,
+        content: summary,
+      });
+    }
+  } catch (err) {
+    console.error(`[chat] failed to persist agent_message from ${agentName}:`, err);
+  }
+}
 
 const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchema), async (c) => {
   const name = c.req.param("name");
@@ -54,22 +120,28 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   }
 
   const user = c.get("user");
+  const agentUser = await getOrCreateAgentUser(baseName);
 
   // Resolve or create conversation
   let conversationId = body.conversationId;
   if (conversationId) {
-    const conv = await getConversationForUser(conversationId, user.id);
-    if (!conv) return c.json({ error: "Conversation not found" }, 404);
+    // Daemon token (id: 0) can access any conversation
+    if (user.id !== 0 && !(await isParticipantOrOwner(conversationId, user.id))) {
+      return c.json({ error: "Conversation not found" }, 404);
+    }
   } else {
     const title = body.message ? body.message.slice(0, 80) : "Image message";
-    const conv = await createConversation(baseName, "web", {
-      userId: user.id,
+    const conv = await createConversation(baseName, "volute", {
+      userId: user.id !== 0 ? user.id : undefined,
       title,
+      participantIds: user.id !== 0 ? [user.id, agentUser.id] : [agentUser.id],
     });
     conversationId = conv.id;
   }
 
-  // Build content blocks (used for both persistence and agent request)
+  const channel = `volute:${conversationId}`;
+
+  // Build content blocks
   const contentBlocks: ContentBlock[] = [];
   if (body.message) {
     contentBlocks.push({ type: "text", text: body.message });
@@ -87,96 +159,150 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   const db = await getDb();
   await db.insert(agentMessages).values({
     agent: baseName,
-    channel: "web",
+    channel,
     role: "user",
     sender: user.username,
     content: body.message ?? "[image]",
   });
 
-  let res: Response;
-  try {
-    res = await fetch(`http://127.0.0.1:${port}/message`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        content: contentBlocks,
-        channel: "web",
-        sender: user.username,
-      }),
+  // Find all agent participants for fan-out
+  const participants = await getParticipants(conversationId);
+  const agentParticipants = participants.filter((p) => p.userType === "agent");
+  const participantNames = participants.map((p) => p.username);
+
+  // Resolve ports for each agent participant
+  const agentTargets: { name: string; port: number }[] = [];
+  const manager = getAgentManager();
+  for (const ap of agentParticipants) {
+    if (ap.username === baseName) {
+      // Use variant port if addressing a variant, otherwise base port
+      if (manager.isRunning(name)) {
+        agentTargets.push({ name: ap.username, port });
+      }
+    } else {
+      const agentEntry = findAgent(ap.username);
+      if (agentEntry && manager.isRunning(ap.username)) {
+        agentTargets.push({ name: ap.username, port: agentEntry.port });
+      }
+    }
+  }
+
+  // If no running agents found, return error
+  if (agentTargets.length === 0) {
+    return c.json({ error: "No running agents in this conversation" }, 409);
+  }
+
+  // Send to all agents
+  const isDM = participants.length === 2;
+  const messagePayload = JSON.stringify({
+    content: contentBlocks,
+    channel,
+    sender: user.username,
+    participants: participantNames,
+    participantCount: participants.length,
+    isDM,
+  });
+
+  const responses: { name: string; res: Response }[] = [];
+  for (const target of agentTargets) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${target.port}/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: messagePayload,
+      });
+      if (res.ok && res.body) {
+        responses.push({ name: target.name, res });
+      } else {
+        console.error(`[chat] agent ${target.name} responded with ${res.status}`);
+      }
+    } catch (err) {
+      console.error(`[chat] agent ${target.name} unreachable on port ${target.port}:`, err);
+    }
+  }
+
+  if (responses.length === 0) {
+    return c.json({ error: "No agents reachable" }, 502);
+  }
+
+  // Stream the first agent's response to the client; consume others in background
+  const primary = responses[0];
+  const secondary = responses.slice(1);
+
+  // Fire-and-forget for secondary agents
+  for (const s of secondary) {
+    consumeAndPersist(s.res, conversationId!, s.name, channel).catch((err) => {
+      console.error(`[chat] failed to persist response from ${s.name}:`, err);
     });
-  } catch (err) {
-    console.error(`[chat] agent ${name} unreachable on port ${port}:`, err);
-    return c.json({ error: "Agent is not reachable" }, 502);
-  }
-
-  if (!res.ok) {
-    return c.json({ error: `Agent responded with ${res.status}` }, res.status as 500);
-  }
-
-  if (!res.body) {
-    return c.json({ error: "No response body from agent" }, 502);
   }
 
   return streamSSE(c, async (stream) => {
-    // Send conversation ID as first event
     await stream.writeSSE({
       data: JSON.stringify({ type: "meta", conversationId }),
     });
 
     const assistantContent: ContentBlock[] = [];
 
-    for await (const event of readNdjson(res.body!)) {
-      await stream.writeSSE({ data: JSON.stringify(event) });
+    try {
+      for await (const event of readNdjson(primary.res.body!)) {
+        await stream.writeSSE({ data: JSON.stringify(event) });
 
-      if (event.type === "text") {
-        // Merge consecutive text blocks
-        const last = assistantContent[assistantContent.length - 1];
-        if (last && last.type === "text") {
-          last.text += event.content;
-        } else {
-          assistantContent.push({ type: "text", text: event.content });
+        if (event.type === "text") {
+          const last = assistantContent[assistantContent.length - 1];
+          if (last && last.type === "text") {
+            last.text += event.content;
+          } else {
+            assistantContent.push({ type: "text", text: event.content });
+          }
+        } else if (event.type === "tool_use") {
+          assistantContent.push({
+            type: "tool_use",
+            name: event.name,
+            input: event.input,
+          });
+        } else if (event.type === "tool_result") {
+          assistantContent.push({
+            type: "tool_result",
+            output: event.output,
+            ...(event.is_error ? { is_error: true } : {}),
+          });
         }
-      } else if (event.type === "tool_use") {
-        assistantContent.push({
-          type: "tool_use",
-          name: event.name,
-          input: event.input,
-        });
-      } else if (event.type === "tool_result") {
-        assistantContent.push({
-          type: "tool_result",
-          output: event.output,
-          ...(event.is_error ? { is_error: true } : {}),
-        });
+
+        if (event.type === "done") break;
       }
+    } catch (err) {
+      console.error(`[chat] error streaming response from ${primary.name}:`, err);
+      await stream.writeSSE({
+        data: JSON.stringify({ type: "error", message: "Stream interrupted" }),
+      });
+    }
 
-      if (event.type === "done") {
-        // Save assistant message
-        if (assistantContent.length > 0) {
-          await addMessage(conversationId!, "assistant", baseName, assistantContent);
+    // Persist collected content (even if partial due to error)
+    if (assistantContent.length > 0) {
+      try {
+        await addMessage(conversationId!, "assistant", primary.name, assistantContent);
 
-          // Record in agent_messages (text + tool summaries)
-          const textParts: string[] = [];
-          const toolParts: string[] = [];
-          for (const b of assistantContent) {
-            const part = collectPart(b);
-            if (part != null) {
-              if (b.type === "tool_use") toolParts.push(part);
-              else textParts.push(part);
-            }
-          }
-          const summary = [textParts.join(""), ...toolParts].filter(Boolean).join("\n");
-          if (summary) {
-            await db.insert(agentMessages).values({
-              agent: baseName,
-              channel: "web",
-              role: "assistant",
-              sender: baseName,
-              content: summary,
-            });
+        const textParts: string[] = [];
+        const toolParts: string[] = [];
+        for (const b of assistantContent) {
+          const part = collectPart(b);
+          if (part != null) {
+            if (b.type === "tool_use") toolParts.push(part);
+            else textParts.push(part);
           }
         }
-        break;
+        const summary = [textParts.join(""), ...toolParts].filter(Boolean).join("\n");
+        if (summary) {
+          await db.insert(agentMessages).values({
+            agent: primary.name,
+            channel,
+            role: "assistant",
+            sender: primary.name,
+            content: summary,
+          });
+        }
+      } catch (err) {
+        console.error(`[chat] failed to persist response from ${primary.name}:`, err);
       }
     }
   });

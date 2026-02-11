@@ -33,7 +33,7 @@ See the **memory** skill for detailed guidance.
 
 ## Sessions
 
-- You may have **multiple named sessions** — each maintains its own conversation history. See `VOLUTE.md` for how to configure session routing via `.config/sessions.json`.
+- You may have **multiple named sessions** — each maintains its own conversation history. See `VOLUTE.md` for how to configure session routing via `.config/routes.json`.
 - Your conversation may be **resumed** from a previous session — orient yourself by reading recent journal entries if needed.
 - On a **fresh session**, read `MEMORY.md` and recent journal entries to remember where you left off.
 - On **compaction**, update today's journal to preserve context before the conversation is trimmed.
