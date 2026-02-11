@@ -105,7 +105,7 @@ volute channel send <channel-uri> "your message"
 
 ### Rejecting a channel
 
-Delete `inbox/{channel}.md`. If new messages arrive later, you'll get a fresh invite notification.
+Delete `inbox/{channel}.md`. Further messages from that channel will continue to be silently saved to inbox until the agent restarts, at which point a fresh invite will be sent if messages arrive again.
 
 ### Auto-accept patterns
 

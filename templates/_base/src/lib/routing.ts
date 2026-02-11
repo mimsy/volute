@@ -28,7 +28,7 @@ export function loadRoutingConfig(configPath: string): RoutingConfig {
     return JSON.parse(readFileSync(configPath, "utf-8"));
   } catch (err: any) {
     if (err?.code !== "ENOENT") {
-      log("sessions", `failed to load ${configPath}:`, err);
+      log("routing", `failed to load ${configPath}:`, err);
     }
     return {};
   }
@@ -96,7 +96,7 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
     if (ruleMatches(rule, meta)) {
       if (rule.destination === "file") {
         if (!rule.path) {
-          log("sessions", `file destination rule missing path — falling through`);
+          log("routing", `file destination rule missing path — falling through`);
           continue;
         }
         return { destination: "file", path: rule.path, matched: true };

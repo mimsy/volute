@@ -140,22 +140,41 @@ export async function getOrCreateAgentUser(agentName: string): Promise<User> {
     .get();
   if (existing) return existing as User;
 
-  const [result] = await db
-    .insert(users)
-    .values({
-      username: agentName,
-      password_hash: "!agent",
-      role: "agent",
-      user_type: "agent",
-    })
-    .returning({
-      id: users.id,
-      username: users.username,
-      role: users.role,
-      user_type: users.user_type,
-      created_at: users.created_at,
-    });
-  return result as User;
+  try {
+    const [result] = await db
+      .insert(users)
+      .values({
+        username: agentName,
+        password_hash: "!agent",
+        role: "agent",
+        user_type: "agent",
+      })
+      .returning({
+        id: users.id,
+        username: users.username,
+        role: users.role,
+        user_type: users.user_type,
+        created_at: users.created_at,
+      });
+    return result as User;
+  } catch (err: unknown) {
+    // Handle race condition: another request may have inserted concurrently
+    if (err instanceof Error && err.message.includes("UNIQUE constraint")) {
+      const retried = await db
+        .select({
+          id: users.id,
+          username: users.username,
+          role: users.role,
+          user_type: users.user_type,
+          created_at: users.created_at,
+        })
+        .from(users)
+        .where(and(eq(users.username, agentName), eq(users.user_type, "agent")))
+        .get();
+      if (retried) return retried as User;
+    }
+    throw err;
+  }
 }
 
 export async function approveUser(id: number): Promise<void> {

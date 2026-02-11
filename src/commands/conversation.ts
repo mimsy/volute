@@ -146,19 +146,20 @@ async function sendToConversation(args: string[]) {
       if (!line.startsWith("data:")) continue;
       const data = line.slice(5).trim();
       if (!data) continue;
+      let event: Record<string, unknown>;
       try {
-        const event = JSON.parse(data);
-        if (event.type === "text") {
-          process.stdout.write(event.content);
-        } else if (event.type === "tool_use") {
-          process.stderr.write(`${summarizeTool(event.name, event.input)}\n`);
-        }
-        if (event.type === "done") {
-          process.stdout.write("\n");
-          return;
-        }
+        event = JSON.parse(data);
       } catch {
-        // skip malformed events
+        continue;
+      }
+      if (event.type === "text") {
+        process.stdout.write(event.content as string);
+      } else if (event.type === "tool_use") {
+        process.stderr.write(`${summarizeTool(event.name as string, event.input)}\n`);
+      }
+      if (event.type === "done") {
+        process.stdout.write("\n");
+        return;
       }
     }
   }

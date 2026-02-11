@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -58,7 +58,7 @@ export const conversationParticipants = sqliteTable(
     joined_at: text("joined_at").notNull().default(sql`(datetime('now'))`),
   },
   (table) => [
-    index("idx_cp_conversation_id").on(table.conversation_id),
+    uniqueIndex("idx_cp_unique").on(table.conversation_id, table.user_id),
     index("idx_cp_user_id").on(table.user_id),
   ],
 );

@@ -38,7 +38,10 @@ async function consumeAndPersist(
   agentName: string,
   channel: string,
 ): Promise<void> {
-  if (!res.body) return;
+  if (!res.body) {
+    console.warn(`[chat] no response body from ${agentName}`);
+    return;
+  }
   const assistantContent: ContentBlock[] = [];
   for await (const event of readNdjson(res.body)) {
     if (event.type === "text") {
@@ -56,8 +59,17 @@ async function consumeAndPersist(
     }
     if (event.type === "done") break;
   }
-  if (assistantContent.length > 0) {
+  if (assistantContent.length === 0) return;
+
+  // Persist to both tables independently so one failure doesn't block the other
+  try {
     await addMessage(conversationId, "assistant", agentName, assistantContent);
+  } catch (err) {
+    console.error(`[chat] failed to persist conversation message from ${agentName}:`, err);
+    console.error(`[chat] lost content: ${JSON.stringify(assistantContent).slice(0, 500)}`);
+  }
+
+  try {
     const db = await getDb();
     const textParts: string[] = [];
     const toolParts: string[] = [];
@@ -78,6 +90,8 @@ async function consumeAndPersist(
         content: summary,
       });
     }
+  } catch (err) {
+    console.error(`[chat] failed to persist agent_message from ${agentName}:`, err);
   }
 }
 
@@ -199,6 +213,8 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
       });
       if (res.ok && res.body) {
         responses.push({ name: target.name, res });
+      } else {
+        console.error(`[chat] agent ${target.name} responded with ${res.status}`);
       }
     } catch (err) {
       console.error(`[chat] agent ${target.name} unreachable on port ${target.port}:`, err);
@@ -227,55 +243,66 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
 
     const assistantContent: ContentBlock[] = [];
 
-    for await (const event of readNdjson(primary.res.body!)) {
-      await stream.writeSSE({ data: JSON.stringify(event) });
+    try {
+      for await (const event of readNdjson(primary.res.body!)) {
+        await stream.writeSSE({ data: JSON.stringify(event) });
 
-      if (event.type === "text") {
-        const last = assistantContent[assistantContent.length - 1];
-        if (last && last.type === "text") {
-          last.text += event.content;
-        } else {
-          assistantContent.push({ type: "text", text: event.content });
+        if (event.type === "text") {
+          const last = assistantContent[assistantContent.length - 1];
+          if (last && last.type === "text") {
+            last.text += event.content;
+          } else {
+            assistantContent.push({ type: "text", text: event.content });
+          }
+        } else if (event.type === "tool_use") {
+          assistantContent.push({
+            type: "tool_use",
+            name: event.name,
+            input: event.input,
+          });
+        } else if (event.type === "tool_result") {
+          assistantContent.push({
+            type: "tool_result",
+            output: event.output,
+            ...(event.is_error ? { is_error: true } : {}),
+          });
         }
-      } else if (event.type === "tool_use") {
-        assistantContent.push({
-          type: "tool_use",
-          name: event.name,
-          input: event.input,
-        });
-      } else if (event.type === "tool_result") {
-        assistantContent.push({
-          type: "tool_result",
-          output: event.output,
-          ...(event.is_error ? { is_error: true } : {}),
-        });
+
+        if (event.type === "done") break;
       }
+    } catch (err) {
+      console.error(`[chat] error streaming response from ${primary.name}:`, err);
+      await stream.writeSSE({
+        data: JSON.stringify({ type: "error", message: "Stream interrupted" }),
+      });
+    }
 
-      if (event.type === "done") {
-        if (assistantContent.length > 0) {
-          await addMessage(conversationId!, "assistant", primary.name, assistantContent);
+    // Persist collected content (even if partial due to error)
+    if (assistantContent.length > 0) {
+      try {
+        await addMessage(conversationId!, "assistant", primary.name, assistantContent);
 
-          const textParts: string[] = [];
-          const toolParts: string[] = [];
-          for (const b of assistantContent) {
-            const part = collectPart(b);
-            if (part != null) {
-              if (b.type === "tool_use") toolParts.push(part);
-              else textParts.push(part);
-            }
-          }
-          const summary = [textParts.join(""), ...toolParts].filter(Boolean).join("\n");
-          if (summary) {
-            await db.insert(agentMessages).values({
-              agent: primary.name,
-              channel,
-              role: "assistant",
-              sender: primary.name,
-              content: summary,
-            });
+        const textParts: string[] = [];
+        const toolParts: string[] = [];
+        for (const b of assistantContent) {
+          const part = collectPart(b);
+          if (part != null) {
+            if (b.type === "tool_use") toolParts.push(part);
+            else textParts.push(part);
           }
         }
-        break;
+        const summary = [textParts.join(""), ...toolParts].filter(Boolean).join("\n");
+        if (summary) {
+          await db.insert(agentMessages).values({
+            agent: primary.name,
+            channel,
+            role: "assistant",
+            sender: primary.name,
+            content: summary,
+          });
+        }
+      } catch (err) {
+        console.error(`[chat] failed to persist response from ${primary.name}:`, err);
       }
     }
   });

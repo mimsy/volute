@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "b76b7e15-3489-4a1d-ac23-977cf267d174",
-  "prevId": "20874fcf-0bda-45d0-a07f-7ed0561cd0a3",
+  "id": "b96d5915-4500-42f4-8638-28f0526d41f0",
+  "prevId": "b76b7e15-3489-4a1d-ac23-977cf267d174",
   "tables": {
     "agent_messages": {
       "name": "agent_messages",
@@ -110,10 +110,10 @@
         }
       },
       "indexes": {
-        "idx_cp_conversation_id": {
-          "name": "idx_cp_conversation_id",
-          "columns": ["conversation_id"],
-          "isUnique": false
+        "idx_cp_unique": {
+          "name": "idx_cp_unique",
+          "columns": ["conversation_id", "user_id"],
+          "isUnique": true
         },
         "idx_cp_user_id": {
           "name": "idx_cp_user_id",

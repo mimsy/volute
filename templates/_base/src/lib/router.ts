@@ -175,7 +175,7 @@ export function createRouter(options: {
         const notification = formatInviteNotification(meta, filePath, text);
         const notifContent: VoluteContentPart[] = [{ type: "text", text: notification }];
         const handler = options.agentHandler("main");
-        handler.handle(
+        const unsubscribe = handler.handle(
           notifContent,
           { sessionName: "main", messageId: generateMessageId(), interrupt: true },
           safeListener,
@@ -187,6 +187,8 @@ export function createRouter(options: {
           const fileHandler = options.fileHandler(filePath);
           fileHandler.handle(formatted, { ...meta, messageId }, noop);
         }
+
+        return { messageId, unsubscribe };
       } else {
         // Already pending — just append to file
         if (options.fileHandler) {

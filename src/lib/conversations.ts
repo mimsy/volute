@@ -22,8 +22,8 @@ export type Conversation = {
 export type Participant = {
   userId: number;
   username: string;
-  userType: string;
-  role: string;
+  userType: "human" | "agent";
+  role: "owner" | "member";
 };
 
 export type Message = {
@@ -134,7 +134,7 @@ export async function getParticipants(conversationId: string): Promise<Participa
     .innerJoin(users, eq(conversationParticipants.user_id, users.id))
     .where(eq(conversationParticipants.conversation_id, conversationId))
     .all();
-  return rows;
+  return rows as Participant[];
 }
 
 export async function isParticipant(conversationId: string, userId: number): Promise<boolean> {
@@ -168,34 +168,6 @@ export async function listConversationsForUser(userId: number): Promise<Conversa
     .select()
     .from(conversations)
     .where(inArray(conversations.id, convIds))
-    .orderBy(desc(conversations.updated_at))
-    .all() as Promise<Conversation[]>;
-}
-
-/** @deprecated Use listConversationsForUser + isParticipant instead */
-export async function listConversations(
-  agentName: string,
-  opts?: { userId?: number },
-): Promise<Conversation[]> {
-  const db = await getDb();
-  if (opts?.userId != null) {
-    // Try participant-based lookup first
-    const participantConvs = await listConversationsForUser(opts.userId);
-    if (participantConvs.length > 0) {
-      return participantConvs.filter((c) => c.agent_name === agentName);
-    }
-    // Fall back to legacy user_id column
-    return db
-      .select()
-      .from(conversations)
-      .where(and(eq(conversations.agent_name, agentName), eq(conversations.user_id, opts.userId)))
-      .orderBy(desc(conversations.updated_at))
-      .all() as Promise<Conversation[]>;
-  }
-  return db
-    .select()
-    .from(conversations)
-    .where(eq(conversations.agent_name, agentName))
     .orderBy(desc(conversations.updated_at))
     .all() as Promise<Conversation[]>;
 }

@@ -47,9 +47,11 @@ const app = new Hono<AuthEnv>()
     // Ensure the named agent is a participant
     const agentUser = await getOrCreateAgentUser(name);
 
-    // Build participant list: specified IDs + agent (+ current user if real)
-    const participantSet = new Set([agentUser.id, ...(body.participantIds ?? [])]);
+    // Build participant list: creator first (owner), then agent, then others
+    const participantSet = new Set<number>();
     if (user.id !== 0) participantSet.add(user.id);
+    participantSet.add(agentUser.id);
+    for (const id of body.participantIds ?? []) participantSet.add(id);
 
     // Resolve participant names to IDs (auto-creating agent users for registered agents)
     if (body.participantNames) {
@@ -87,7 +89,7 @@ const app = new Hono<AuthEnv>()
   .get("/:name/conversations/:id/messages", async (c) => {
     const id = c.req.param("id");
     const user = c.get("user");
-    if (!(await isParticipantOrOwner(id, user.id))) {
+    if (user.id !== 0 && !(await isParticipantOrOwner(id, user.id))) {
       return c.json({ error: "Conversation not found" }, 404);
     }
     const msgs = await getMessages(id);

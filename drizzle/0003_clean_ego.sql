@@ -7,6 +7,6 @@ CREATE TABLE `conversation_participants` (
 	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-CREATE INDEX `idx_cp_conversation_id` ON `conversation_participants` (`conversation_id`);--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_cp_unique` ON `conversation_participants` (`conversation_id`,`user_id`);--> statement-breakpoint
 CREATE INDEX `idx_cp_user_id` ON `conversation_participants` (`user_id`);--> statement-breakpoint
 ALTER TABLE `users` ADD `user_type` text DEFAULT 'human' NOT NULL;
