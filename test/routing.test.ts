@@ -476,18 +476,4 @@ describe("resolveRoute", () => {
     assert.equal(r.matched, true);
     assert.equal(r.destination, "file");
   });
-
-  // --- auto flag ---
-
-  it("auto flag does not affect matching", () => {
-    const config: RoutingConfig = {
-      rules: [{ channel: "volute:*", auto: true, session: "auto-volute" }],
-      default: "main",
-    };
-    assert.equal(
-      expectAgent(resolveRoute(config, { channel: "volute:abc" })).session,
-      "auto-volute",
-    );
-    assert.equal(expectAgent(resolveRoute(config, { channel: "discord:123" })).session, "main");
-  });
 });

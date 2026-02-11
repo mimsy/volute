@@ -7,7 +7,6 @@ export type RoutingRule = {
   path?: string; // file path for file destination
   interrupt?: boolean; // interrupt in-progress agent turn (default: true for agent)
   batch?: number; // minutes — buffer messages, flush on timer
-  auto?: boolean; // auto-route new conversation sources matching this rule
   channel?: string;
   sender?: string;
   isDM?: boolean; // match on isDM metadata
@@ -46,7 +45,7 @@ function globMatch(pattern: string, value: string): boolean {
 }
 
 const GLOB_MATCH_KEYS = new Set(["channel", "sender"]);
-const NON_MATCH_KEYS = new Set(["session", "batch", "destination", "path", "interrupt", "auto"]);
+const NON_MATCH_KEYS = new Set(["session", "batch", "destination", "path", "interrupt"]);
 
 type MatchMeta = { channel?: string; sender?: string; isDM?: boolean; participantCount?: number };
 
