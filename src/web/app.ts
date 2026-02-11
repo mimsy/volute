@@ -3,6 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
 import log from "../lib/logger.js";
+import { checkForUpdateCached, getCurrentVersion } from "../lib/update-check.js";
 import { authMiddleware } from "./middleware/auth.js";
 import agents from "./routes/agents.js";
 import auth from "./routes/auth.js";
@@ -13,6 +14,7 @@ import files from "./routes/files.js";
 import logs from "./routes/logs.js";
 import schedules from "./routes/schedules.js";
 import system from "./routes/system.js";
+import update from "./routes/update.js";
 import variants from "./routes/variants.js";
 
 const app = new Hono();
@@ -49,7 +51,19 @@ app.use("*", async (c, next) => {
 
 // Daemon health (unauthenticated)
 app.get("/api/health", (c) => {
-  return c.json({ ok: true, version: "0.1.0" });
+  let version = "unknown";
+  let cached: ReturnType<typeof checkForUpdateCached> = null;
+  try {
+    version = getCurrentVersion();
+    cached = checkForUpdateCached();
+  } catch (err) {
+    log.error("Health check error", { error: (err as Error).message });
+  }
+  return c.json({
+    ok: true,
+    version,
+    ...(cached?.updateAvailable ? { updateAvailable: true, latest: cached.latest } : {}),
+  });
 });
 
 // Body size limit (10MB — generous for image uploads)
@@ -66,6 +80,7 @@ app.use("/api/system/*", authMiddleware);
 const routes = app
   .route("/api/auth", auth)
   .route("/api/system", system)
+  .route("/api/system", update)
   .route("/api/agents", agents)
   .route("/api/agents", chat)
   .route("/api/agents", connectors)

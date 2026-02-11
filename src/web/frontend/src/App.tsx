@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { LoginPage } from "./components/LoginPage";
 import { SystemLogs } from "./components/SystemLogs";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { UserManagement } from "./components/UserManagement";
 import { type AuthUser, fetchMe, logout } from "./lib/auth";
 import { AgentDetail } from "./pages/AgentDetail";
@@ -64,6 +65,7 @@ export function App() {
     <>
       <style>{globalStyles}</style>
       <div className="app">
+        {user.role === "admin" && <UpdateBanner />}
         <header className="app-header">
           <a href="#/" className="logo">
             <span className="logo-symbol">&gt;</span> volute
