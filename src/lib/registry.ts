@@ -1,10 +1,24 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { findVariant, readVariants } from "./variants.js";
 
 export function voluteHome(): string {
-  return process.env.VOLUTE_HOME || resolve(homedir(), ".volute");
+  if (process.env.VOLUTE_HOME) return process.env.VOLUTE_HOME;
+
+  // When running from source (tsx), require explicit VOLUTE_HOME to prevent
+  // tests from accidentally touching the real ~/.volute directory.
+  // Built code (dist/) falls through to the homedir() default.
+  const dir = dirname(fileURLToPath(import.meta.url));
+  if (dir.endsWith("/src/lib")) {
+    throw new Error(
+      "VOLUTE_HOME must be set when running from source. " +
+        'For tests, run via "npm test" or add "--import ./test/setup.ts".',
+    );
+  }
+
+  return resolve(homedir(), ".volute");
 }
 
 export type AgentEntry = {

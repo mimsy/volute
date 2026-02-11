@@ -1,10 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { resolve } from "node:path";
-
-function voluteHome(): string {
-  return process.env.VOLUTE_HOME || resolve(homedir(), ".volute");
-}
+import { voluteHome } from "./registry.js";
 
 export type Variant = {
   name: string;

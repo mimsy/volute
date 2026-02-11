@@ -1,3 +1,10 @@
+import { homedir } from "node:os";
+import { resolve } from "node:path";
+
+if (!process.env.VOLUTE_HOME) {
+  process.env.VOLUTE_HOME = resolve(homedir(), ".volute");
+}
+
 const command = process.argv[2];
 const args = process.argv.slice(3);
 

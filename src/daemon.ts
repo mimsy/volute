@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { format } from "node:util";
 import { initAgentManager } from "./lib/agent-manager.js";
@@ -10,6 +11,10 @@ import { getScheduler } from "./lib/scheduler.js";
 import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
 import { cleanExpiredSessions } from "./web/middleware/auth.js";
 import { startServer } from "./web/server.js";
+
+if (!process.env.VOLUTE_HOME) {
+  process.env.VOLUTE_HOME = resolve(homedir(), ".volute");
+}
 
 export async function startDaemon(opts: {
   port: number;
