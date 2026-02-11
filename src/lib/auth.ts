@@ -15,8 +15,11 @@ export async function createUser(username: string, password: string): Promise<Us
   const db = await getDb();
   const hash = hashSync(password, 10);
 
-  // First user becomes admin automatically
-  const [{ value }] = await db.select({ value: count() }).from(users);
+  // First human user becomes admin automatically
+  const [{ value }] = await db
+    .select({ value: count() })
+    .from(users)
+    .where(eq(users.user_type, "human"));
   const role = value === 0 ? "admin" : "pending";
 
   const [result] = await db
@@ -123,10 +126,20 @@ export async function listUsersByType(userType: "human" | "agent"): Promise<User
 }
 
 export async function getOrCreateAgentUser(agentName: string): Promise<User> {
-  const existing = await getUserByUsername(agentName);
-  if (existing) return existing;
-
   const db = await getDb();
+  const existing = await db
+    .select({
+      id: users.id,
+      username: users.username,
+      role: users.role,
+      user_type: users.user_type,
+      created_at: users.created_at,
+    })
+    .from(users)
+    .where(and(eq(users.username, agentName), eq(users.user_type, "agent")))
+    .get();
+  if (existing) return existing as User;
+
   const [result] = await db
     .insert(users)
     .values({

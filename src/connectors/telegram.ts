@@ -61,7 +61,9 @@ bot.on(message("text"), async (ctx) => {
   if (!isDM) {
     try {
       participantCount = await ctx.telegram.getChatMembersCount(ctx.chat.id);
-    } catch {}
+    } catch (err) {
+      console.warn(`Failed to get member count for chat ${ctx.chat.id}: ${err}`);
+    }
   }
 
   const payload: AgentPayload = {
@@ -130,7 +132,9 @@ bot.on(message("photo"), async (ctx) => {
   if (!isDM) {
     try {
       participantCount = await ctx.telegram.getChatMembersCount(ctx.chat.id);
-    } catch {}
+    } catch (err) {
+      console.warn(`Failed to get member count for chat ${ctx.chat.id}: ${err}`);
+    }
   }
 
   const payload: AgentPayload = {

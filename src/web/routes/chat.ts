@@ -88,9 +88,11 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   const entry = findAgent(baseName);
   if (!entry) return c.json({ error: "Agent not found" }, 404);
 
+  let port = entry.port;
   if (variantName) {
     const variant = findVariant(baseName, variantName);
     if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
+    port = variant.port;
   }
 
   const { getAgentManager } = await import("../../lib/agent-manager.js");
@@ -158,9 +160,16 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   const agentTargets: { name: string; port: number }[] = [];
   const manager = getAgentManager();
   for (const ap of agentParticipants) {
-    const agentEntry = findAgent(ap.username);
-    if (agentEntry && manager.isRunning(ap.username)) {
-      agentTargets.push({ name: ap.username, port: agentEntry.port });
+    if (ap.username === baseName) {
+      // Use variant port if addressing a variant, otherwise base port
+      if (manager.isRunning(name)) {
+        agentTargets.push({ name: ap.username, port });
+      }
+    } else {
+      const agentEntry = findAgent(ap.username);
+      if (agentEntry && manager.isRunning(ap.username)) {
+        agentTargets.push({ name: ap.username, port: agentEntry.port });
+      }
     }
   }
 
