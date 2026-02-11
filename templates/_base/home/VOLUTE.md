@@ -70,7 +70,7 @@ When a message arrives from an unrecognized channel:
 
 ### Accepting a channel
 
-Add a routing rule to `.config/routes.json` (relative to your working directory — do NOT prefix with `home/`), then read the saved messages to catch up:
+Add a routing rule to `.config/routes.json`, then read the saved messages to catch up:
 
 ```json
 { "channel": "volute:abc-123", "session": "group-chat" }
