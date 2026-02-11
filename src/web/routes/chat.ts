@@ -31,12 +31,41 @@ const chatSchema = z.object({
     .optional(),
 });
 
+/** Summarize content blocks into a text string for agent_messages. */
+function summarizeContent(content: ContentBlock[]): string {
+  const textParts: string[] = [];
+  const toolParts: string[] = [];
+  for (const b of content) {
+    const part = collectPart(b);
+    if (part != null) {
+      if (b.type === "tool_use") toolParts.push(part);
+      else textParts.push(part);
+    }
+  }
+  return [textParts.join(""), ...toolParts].filter(Boolean).join("\n");
+}
+
+/** Record a message in agent_messages for all agents in the conversation. */
+async function recordForAllAgents(
+  allAgents: string[],
+  channel: string,
+  role: string,
+  sender: string,
+  content: string,
+): Promise<void> {
+  const db = await getDb();
+  for (const agent of allAgents) {
+    await db.insert(agentMessages).values({ agent, channel, role, sender, content });
+  }
+}
+
 /** Consume an agent's ndjson response and persist it as a conversation message. Returns collected content. */
 async function consumeAndPersist(
   res: Response,
   conversationId: string,
   agentName: string,
   channel: string,
+  allAgents: string[],
 ): Promise<ContentBlock[]> {
   if (!res.body) {
     console.warn(`[chat] no response body from ${agentName}`);
@@ -70,25 +99,9 @@ async function consumeAndPersist(
   }
 
   try {
-    const db = await getDb();
-    const textParts: string[] = [];
-    const toolParts: string[] = [];
-    for (const b of assistantContent) {
-      const part = collectPart(b);
-      if (part != null) {
-        if (b.type === "tool_use") toolParts.push(part);
-        else textParts.push(part);
-      }
-    }
-    const summary = [textParts.join(""), ...toolParts].filter(Boolean).join("\n");
+    const summary = summarizeContent(assistantContent);
     if (summary) {
-      await db.insert(agentMessages).values({
-        agent: agentName,
-        channel,
-        role: "assistant",
-        sender: agentName,
-        content: summary,
-      });
+      await recordForAllAgents(allAgents, channel, "assistant", agentName, summary);
     }
   } catch (err) {
     console.error(`[chat] failed to persist agent_message from ${agentName}:`, err);
@@ -105,6 +118,7 @@ async function forwardAndPersist(
   channel: string,
   participantNames: string[],
   participantCount: number,
+  allAgents: string[],
 ): Promise<void> {
   const textBlocks = content.filter((b): b is { type: "text"; text: string } => b.type === "text");
   if (textBlocks.length === 0) return;
@@ -125,7 +139,7 @@ async function forwardAndPersist(
       body: payload,
     });
     if (res.ok && res.body) {
-      await consumeAndPersist(res, conversationId, target.name, channel);
+      await consumeAndPersist(res, conversationId, target.name, channel, allAgents);
     } else {
       console.error(`[chat] forwarding to ${target.name}: status ${res.status}`);
     }
@@ -270,9 +284,12 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   const primary = responses[0];
   const secondary = responses.slice(1);
 
+  // All agent names for recording in agent_messages
+  const allAgents = agentTargets.map((t) => t.name);
+
   // Start consuming secondary responses immediately (runs concurrently with primary streaming)
   const secondaryPromises = secondary.map(async (s) => {
-    const content = await consumeAndPersist(s.res, conversationId!, s.name, channel);
+    const content = await consumeAndPersist(s.res, conversationId!, s.name, channel, allAgents);
     return { name: s.name, port: s.port, content };
   });
 
@@ -321,25 +338,9 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     if (assistantContent.length > 0) {
       try {
         await addMessage(conversationId!, "assistant", primary.name, assistantContent);
-
-        const textParts: string[] = [];
-        const toolParts: string[] = [];
-        for (const b of assistantContent) {
-          const part = collectPart(b);
-          if (part != null) {
-            if (b.type === "tool_use") toolParts.push(part);
-            else textParts.push(part);
-          }
-        }
-        const summary = [textParts.join(""), ...toolParts].filter(Boolean).join("\n");
+        const summary = summarizeContent(assistantContent);
         if (summary) {
-          await db.insert(agentMessages).values({
-            agent: primary.name,
-            channel,
-            role: "assistant",
-            sender: primary.name,
-            content: summary,
-          });
+          await recordForAllAgents(allAgents, channel, "assistant", primary.name, summary);
         }
       } catch (err) {
         console.error(`[chat] failed to persist response from ${primary.name}:`, err);
@@ -380,6 +381,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
               channel,
               participantNames,
               participants.length,
+              allAgents,
             ),
           );
         }

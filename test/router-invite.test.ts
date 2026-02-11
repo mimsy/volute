@@ -151,9 +151,10 @@ describe("router invite gating", () => {
     assert.equal(fileCalls.size, 0, "should not save to file");
   });
 
-  it("unmatched channel without gateUnmatched routes to default", async () => {
+  it("unmatched channel with gateUnmatched=false routes to default", async () => {
     const dir = mkdtempSync(join(tmpdir(), "router-invite-"));
     const configPath = writeConfig(dir, {
+      gateUnmatched: false,
       rules: [{ channel: "web", session: "web-session" }],
       default: "fallback",
     });

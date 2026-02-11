@@ -138,10 +138,11 @@ export function createRouter(options: {
   }
 
   function route(
-    content: VoluteContentPart[],
+    inputContent: VoluteContentPart[],
     meta: ChannelMeta,
     listener?: Listener,
   ): { messageId: string; unsubscribe: () => void } {
+    const content = inputContent;
     // Log incoming message
     const text = content
       .filter((p): p is { type: "text"; text: string } => p.type === "text")
@@ -162,8 +163,8 @@ export function createRouter(options: {
     const noop = () => {};
     const safeListener = listener ?? noop;
 
-    // Gate unmatched channels
-    if (!resolved.matched && config.gateUnmatched) {
+    // Gate unmatched channels (default: gate unless explicitly disabled)
+    if (!resolved.matched && config.gateUnmatched !== false) {
       const channelKey = meta.channel ?? "unknown";
       const sanitized = sanitizeChannelPath(channelKey);
       const filePath = `inbox/${sanitized}.md`;
