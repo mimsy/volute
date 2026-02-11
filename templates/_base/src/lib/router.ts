@@ -89,7 +89,12 @@ function formatInviteNotification(
   } else {
     lines.push(`  { "channel": "${meta.channel}", "session": "${suggestedSession}" }`);
   }
-  lines.push(`To respond, use: volute channel send ${meta.channel} "your message"`);
+  const channelStr = meta.channel ?? "unknown";
+  if (channelStr.startsWith("volute:")) {
+    lines.push(`To respond, use: volute conversation send ${channelStr.slice(7)} "your message"`);
+  } else {
+    lines.push(`To respond, use: volute channel send ${channelStr} "your message"`);
+  }
   lines.push(`To reject, delete ${filePath}`);
   return lines.join("\n");
 }
@@ -172,14 +177,14 @@ export function createRouter(options: {
       if (!pendingChannels.has(channelKey)) {
         pendingChannels.add(channelKey);
 
-        // Send invite notification to main session
+        // Send invite notification to main session (internal — don't stream back to sender)
         const notification = formatInviteNotification(meta, filePath, text);
         const notifContent: VoluteContentPart[] = [{ type: "text", text: notification }];
         const handler = options.agentHandler("main");
-        const unsubscribe = handler.handle(
+        handler.handle(
           notifContent,
           { sessionName: "main", messageId: generateMessageId(), interrupt: true },
-          safeListener,
+          noop,
         );
 
         // Save original message to file
@@ -189,7 +194,7 @@ export function createRouter(options: {
           fileHandler.handle(formatted, { ...meta, messageId }, noop);
         }
 
-        return { messageId, unsubscribe };
+        queueMicrotask(() => safeListener({ type: "done", messageId }));
       } else {
         // Already pending — just append to file
         if (options.fileHandler) {

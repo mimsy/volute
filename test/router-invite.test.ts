@@ -82,6 +82,9 @@ describe("router invite gating", () => {
       "notification should contain message preview",
     );
 
+    // Sender gets done (not the invite response)
+    assert.deepEqual(events, ["done"], "sender should only receive done event");
+
     // Message saved to file
     const fileKey = "inbox/discord-123.md";
     const fCalls = fileCalls.get(fileKey);
@@ -274,6 +277,34 @@ describe("router invite gating", () => {
     assert.ok(
       text.includes("volute channel send discord:general"),
       "should include channel send command",
+    );
+  });
+
+  it("uses conversation send for volute channels in invite", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-invite-"));
+    const configPath = writeConfig(dir, {
+      gateUnmatched: true,
+      rules: [],
+    });
+
+    const { agentHandler, fileHandler, agentCalls } = createTestHandlers();
+    const router = createRouter({ configPath, agentHandler, fileHandler });
+
+    router.route([{ type: "text", text: "hi" }], {
+      channel: "volute:conv-xyz",
+      sender: "alice",
+    });
+    await waitMicrotask();
+
+    const mainCalls = agentCalls.get("main")!;
+    const text = (mainCalls[0].content[0] as { text: string }).text;
+    assert.ok(
+      text.includes("volute conversation send conv-xyz"),
+      "should use conversation send for volute channels",
+    );
+    assert.ok(
+      !text.includes("volute channel send"),
+      "should not suggest channel send for volute channels",
     );
   });
 
