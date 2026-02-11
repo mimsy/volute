@@ -18,13 +18,13 @@ function expectAgent(route: ResolvedRoute) {
 
 describe("loadRoutingConfig", () => {
   it("returns empty config for missing file", () => {
-    const config = loadRoutingConfig("/nonexistent/sessions.json");
+    const config = loadRoutingConfig("/nonexistent/routes.json");
     assert.deepEqual(config, {});
   });
 
   it("loads valid config", () => {
     const dir = mkdtempSync(join(tmpdir(), "sessions-test-"));
-    const path = join(dir, "sessions.json");
+    const path = join(dir, "routes.json");
     writeFileSync(
       path,
       JSON.stringify({

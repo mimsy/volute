@@ -78,7 +78,7 @@ function formatInviteNotification(
   lines.push("");
   lines.push(`Further messages will be saved to ${filePath}`);
   lines.push("");
-  lines.push("To accept, add a routing rule to .config/sessions.json:");
+  lines.push("To accept, add a routing rule to .config/routes.json:");
   const suggestedSession = sanitizeChannelPath(meta.channel ?? "unknown");
   const otherCount = (meta.participantCount ?? 1) - 1;
   if (otherCount > 1) {

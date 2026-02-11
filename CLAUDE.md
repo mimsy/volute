@@ -57,7 +57,7 @@ Each agent project (created from the template) has:
 │   ├── VOLUTE.md              # Channel routing documentation
 │   ├── .config/               # Agent configuration
 │   │   ├── volute.json        # Model, connectors, schedules
-│   │   └── sessions.json      # Session routing config (optional)
+│   │   └── routes.json         # Message routing config (optional)
 │   ├── memory/                # Daily logs (YYYY-MM-DD.md)
 │   └── .claude/skills/        # Skills (volute CLI reference, memory system)
 └── .volute/                   # Runtime state
@@ -193,7 +193,7 @@ Agent-scoped commands (`variant`, `connector`, `schedule`, `channel`, `message h
 - Connector resolution: agent-specific → user-shared (`~/.volute/connectors/`) → built-in (`connectors/`)
 - Agent message flow: `volute-server` (HTTP) → `Router` (routing/formatting/batching) → `MessageHandler` (agent or file destination)
 - `MessageHandler` interface: `handle(content, meta, listener) => unsubscribe`; `HandlerResolver`: `(key: string) => MessageHandler`
-- Session routing via `sessions.json` rules with glob matching, template expansion (`${sender}`, `${channel}`), and file/agent destinations
+- Message routing via `routes.json` rules with glob matching, template expansion (`${sender}`, `${channel}`), and file/agent destinations
 - Variants use git worktrees with detached server processes; metadata in `<agentDir>/.volute/variants.json`
 - All child process execution must be async (never `execFileSync`) to avoid blocking the event loop
 - Arg parsing via `src/lib/parse-args.ts` — type-safe with positional args and typed flags

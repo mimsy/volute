@@ -19,7 +19,7 @@ To reach out on your own initiative, use `volute channel send <uri> "message"`. 
 
 ## Session Routing
 
-Messages are routed to sessions based on rules in `.config/sessions.json`. Each session is a separate conversation with its own history. Without any config, everything goes to a single "main" session.
+Messages are routed to sessions based on rules in `.config/routes.json`. Each session is a separate conversation with its own history. Without any config, everything goes to a single "main" session.
 
 ```json
 {
@@ -86,7 +86,7 @@ When a message arrives from an unrecognized channel:
 
 ### Accepting a channel
 
-Add a routing rule to `.config/sessions.json`, then read the saved messages to catch up:
+Add a routing rule to `.config/routes.json`, then read the saved messages to catch up:
 
 ```json
 { "channel": "volute:abc-123", "session": "group-chat" }

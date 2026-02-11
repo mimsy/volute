@@ -39,7 +39,7 @@ function createTestHandlers() {
 }
 
 function writeConfig(dir: string, config: object): string {
-  const path = join(dir, "sessions.json");
+  const path = join(dir, "routes.json");
   writeFileSync(path, JSON.stringify(config));
   return path;
 }

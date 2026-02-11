@@ -105,7 +105,7 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, ".init/SOUL.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/MEMORY.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/AGENTS.md")));
-      assert.ok(existsSync(resolve(composedDir, ".init/.config/sessions.json")));
+      assert.ok(existsSync(resolve(composedDir, ".init/.config/routes.json")));
 
       // Pi overrides home/.config/volute.json.tmpl with provider-prefixed model
       assert.ok(existsSync(resolve(composedDir, "home/.config/volute.json.tmpl")));
