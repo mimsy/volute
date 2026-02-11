@@ -7,6 +7,7 @@ import {
   type ContentBlock,
   createConversation,
   deleteConversation,
+  getParticipants,
 } from "../src/lib/conversations.js";
 import { getDb } from "../src/lib/db.js";
 import {
@@ -223,5 +224,73 @@ describe("web conversations routes", () => {
 
     await deleteSession(cookie2);
     await deleteConversation(conv.id);
+  });
+
+  it("POST /:name/conversations — creates group conversation", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    // Create another user to add as participant
+    const user2 = await createUser("group-member", "pass");
+    await approveUser(user2.id);
+
+    const res = await app.request("/api/agents/test-agent/conversations", {
+      method: "POST",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        participantIds: [user2.id],
+        title: "Test Group",
+      }),
+    });
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.ok(body.id);
+    assert.equal(body.title, "Test Group");
+
+    // Verify participants include current user, agent user, and specified user
+    const participants = await getParticipants(body.id);
+    assert.ok(participants.length >= 3);
+    assert.ok(participants.some((p) => p.username === "conv-admin"));
+    assert.ok(participants.some((p) => p.username === "test-agent"));
+    assert.ok(participants.some((p) => p.username === "group-member"));
+
+    await deleteConversation(body.id);
+  });
+
+  it("POST /:name/conversations — validates participant IDs", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const res = await app.request("/api/agents/test-agent/conversations", {
+      method: "POST",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        participantIds: [99999],
+      }),
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.ok(body.error);
+  });
+
+  it("POST /:name/conversations — requires participantIds", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const res = await app.request("/api/agents/test-agent/conversations", {
+      method: "POST",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+    assert.equal(res.status, 400);
   });
 });

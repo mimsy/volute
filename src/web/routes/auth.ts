@@ -9,6 +9,7 @@ import {
   getUserByUsername,
   listPendingUsers,
   listUsers,
+  listUsersByType,
   verifyUser,
 } from "../../lib/auth.js";
 import {
@@ -29,6 +30,10 @@ const admin = new Hono<AuthEnv>()
   .get("/users", async (c) => {
     const user = c.get("user");
     if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
+    const type = c.req.query("type");
+    if (type === "human" || type === "agent") {
+      return c.json(await listUsersByType(type));
+    }
     return c.json(await listUsers());
   })
   .get("/users/pending", async (c) => {

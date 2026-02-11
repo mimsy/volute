@@ -3,10 +3,12 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import {
   approveUser,
   createUser,
+  getOrCreateAgentUser,
   getUser,
   getUserByUsername,
   listPendingUsers,
   listUsers,
+  listUsersByType,
   verifyUser,
 } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
@@ -91,5 +93,35 @@ describe("auth", () => {
     const approved = await getUser(pending.id);
     assert.ok(approved);
     assert.equal(approved.role, "user");
+  });
+
+  it("getOrCreateAgentUser creates agent user", async () => {
+    const agent = await getOrCreateAgentUser("my-agent");
+    assert.equal(agent.username, "my-agent");
+    assert.equal(agent.user_type, "agent");
+    assert.equal(agent.role, "agent");
+
+    // Calling again returns the same user
+    const again = await getOrCreateAgentUser("my-agent");
+    assert.equal(again.id, agent.id);
+  });
+
+  it("verifyUser rejects agent users", async () => {
+    await getOrCreateAgentUser("agent-login");
+    const result = await verifyUser("agent-login", "anything");
+    assert.equal(result, null);
+  });
+
+  it("listUsersByType filters by type", async () => {
+    await createUser("human1", "p1");
+    await getOrCreateAgentUser("agent1");
+
+    const humans = await listUsersByType("human");
+    assert.ok(humans.every((u) => u.user_type === "human"));
+    assert.ok(humans.some((u) => u.username === "human1"));
+
+    const agents = await listUsersByType("agent");
+    assert.ok(agents.every((u) => u.user_type === "agent"));
+    assert.ok(agents.some((u) => u.username === "agent1"));
   });
 });

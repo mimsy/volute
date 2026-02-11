@@ -106,6 +106,22 @@ export async function listPendingUsers(): Promise<User[]> {
     .all() as Promise<User[]>;
 }
 
+export async function listUsersByType(userType: "human" | "agent"): Promise<User[]> {
+  const db = await getDb();
+  return db
+    .select({
+      id: users.id,
+      username: users.username,
+      role: users.role,
+      user_type: users.user_type,
+      created_at: users.created_at,
+    })
+    .from(users)
+    .where(eq(users.user_type, userType))
+    .orderBy(users.created_at)
+    .all() as Promise<User[]>;
+}
+
 export async function getOrCreateAgentUser(agentName: string): Promise<User> {
   const existing = await getUserByUsername(agentName);
   if (existing) return existing;
