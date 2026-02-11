@@ -76,6 +76,8 @@ export function LoginPage({ onAuth }: { onAuth: (user: AuthUser) => void }) {
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             style={inputStyle}
+            onFocus={(e) => (e.currentTarget.style.borderColor = "var(--border-bright)")}
+            onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
           />
           <input
             type="password"
@@ -83,6 +85,8 @@ export function LoginPage({ onAuth }: { onAuth: (user: AuthUser) => void }) {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             style={{ ...inputStyle, marginTop: 8 }}
+            onFocus={(e) => (e.currentTarget.style.borderColor = "var(--border-bright)")}
+            onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
           />
           {error && <div style={{ color: "var(--red)", fontSize: 12, marginTop: 8 }}>{error}</div>}
           <button

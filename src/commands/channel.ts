@@ -47,7 +47,7 @@ async function readChannel(args: string[]) {
   const { platform, channelId } = parseUri(uri);
   const driver = requireDriver(platform);
   const { dir } = resolveAgent(agentName);
-  const env = loadMergedEnv(dir);
+  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName };
 
   try {
     const limit = flags.limit ?? 20;
@@ -75,7 +75,7 @@ async function sendChannel(args: string[]) {
   const { platform, channelId } = parseUri(uri);
   const driver = requireDriver(platform);
   const { dir } = resolveAgent(agentName);
-  const env = loadMergedEnv(dir);
+  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName };
 
   try {
     await driver.send(env, channelId, message);

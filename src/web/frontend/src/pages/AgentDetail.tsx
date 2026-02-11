@@ -1,22 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
-import { Chat } from "../components/Chat";
-import { ConversationList } from "../components/ConversationList";
 import { FileEditor } from "../components/FileEditor";
 import { History } from "../components/History";
 import { LogViewer } from "../components/LogViewer";
 import { StatusBadge } from "../components/StatusBadge";
 import { VariantList } from "../components/VariantList";
-import { type Agent, type Conversation, fetchAgent, startAgent, stopAgent } from "../lib/api";
+import { type Agent, fetchAgent, startAgent, stopAgent } from "../lib/api";
 
-const TABS = ["Chat", "History", "Logs", "Files", "Variants", "Connections"] as const;
+const TABS = ["History", "Logs", "Files", "Variants", "Connections"] as const;
 type Tab = (typeof TABS)[number];
 
 export function AgentDetail({ name }: { name: string }) {
   const [agent, setAgent] = useState<Agent | null>(null);
-  const [tab, setTab] = useState<Tab>("Chat");
+  const [tab, setTab] = useState<Tab>("History");
   const [error, setError] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
-  const [conversationId, setConversationId] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     fetchAgent(name)
@@ -162,23 +159,6 @@ export function AgentDetail({ name }: { name: string }) {
 
       {/* Tab content */}
       <div style={{ flex: 1, overflow: "hidden", paddingTop: 12 }}>
-        {tab === "Chat" && (
-          <div style={{ display: "flex", height: "100%" }}>
-            <ConversationList
-              name={name}
-              activeId={conversationId}
-              onSelect={(conv: Conversation) => setConversationId(conv.id)}
-              onNew={() => setConversationId(null)}
-            />
-            <div style={{ flex: 1, paddingLeft: 16, minWidth: 0 }}>
-              <Chat
-                name={name}
-                conversationId={conversationId}
-                onConversationId={setConversationId}
-              />
-            </div>
-          </div>
-        )}
         {tab === "History" && <History name={name} />}
         {tab === "Logs" && <LogViewer name={name} />}
         {tab === "Files" && <FileEditor name={name} />}

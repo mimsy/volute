@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type ContentBlock, fetchConversationMessages, type VoluteEvent } from "../lib/api";
+import {
+  type ContentBlock,
+  fetchConversationMessages,
+  fetchConversationMessagesById,
+  type VoluteEvent,
+} from "../lib/api";
 import { renderMarkdown } from "../lib/marked";
 import { useChatStream } from "../lib/useStream";
 
@@ -19,10 +24,12 @@ type ToolBlock = {
 
 export function Chat({
   name,
+  username,
   conversationId,
   onConversationId,
 }: {
   name: string;
+  username?: string;
   conversationId: string | null;
   onConversationId: (id: string) => void;
 }) {
@@ -39,6 +46,42 @@ export function Chat({
 
   // Track current assistant blocks being built
   const currentRef = useRef<ContentBlock[]>([]);
+  const streamingSenderRef = useRef<string | undefined>(undefined);
+
+  const scrollToBottom = useCallback((force?: boolean) => {
+    requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (!el) return;
+      if (force) {
+        el.scrollTop = el.scrollHeight;
+        return;
+      }
+      const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+      if (isNearBottom) {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+  }, []);
+
+  const loadMessages = useCallback(
+    (convId: string, forceScroll?: boolean) => {
+      const fetchFn = name
+        ? fetchConversationMessages(name, convId)
+        : fetchConversationMessagesById(convId);
+      return fetchFn
+        .then((msgs) => {
+          const loaded: ChatEntry[] = msgs.map((m) => ({
+            role: m.role as "user" | "assistant",
+            blocks: normalizeContent(m.content),
+            senderName: m.sender_name ?? undefined,
+          }));
+          setEntries(loaded);
+          if (forceScroll) scrollToBottom(true);
+        })
+        .catch((e) => console.error("Failed to load messages:", e));
+    },
+    [name, scrollToBottom],
+  );
 
   // Load existing messages when conversationId changes
   useEffect(() => {
@@ -47,23 +90,33 @@ export function Chat({
       setEntries([]);
       return;
     }
-    fetchConversationMessages(name, conversationId)
-      .then((msgs) => {
-        const loaded: ChatEntry[] = msgs.map((m) => ({
-          role: m.role as "user" | "assistant",
-          blocks: normalizeContent(m.content),
-          senderName: m.sender_name ?? undefined,
-        }));
-        setEntries(loaded);
-      })
-      .catch(() => {});
-  }, [name, conversationId]);
+    loadMessages(conversationId, true);
+  }, [conversationId, loadMessages]);
+
+  // Poll for new messages when not streaming
+  useEffect(() => {
+    if (!conversationId || streaming) return;
+    const id = setInterval(() => loadMessages(conversationId), 3000);
+    return () => clearInterval(id);
+  }, [conversationId, streaming, loadMessages]);
 
   const onEvent = useCallback(
     (event: VoluteEvent) => {
       if (event.type === "meta") {
         convIdRef.current = event.conversationId;
         onConversationId(event.conversationId);
+        streamingSenderRef.current = event.senderName;
+        // Update the streaming entry with sender name immediately
+        if (event.senderName) {
+          setEntries((prev) => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            if (last?.role === "assistant") {
+              next[next.length - 1] = { ...last, senderName: event.senderName };
+            }
+            return next;
+          });
+        }
         return;
       }
 
@@ -88,6 +141,11 @@ export function Chat({
       } else if (event.type === "done") {
         setStreaming(false);
         return;
+      } else if (event.type === "sync") {
+        // All responses (including forwarded) are persisted — re-fetch
+        const cid = convIdRef.current;
+        if (cid) loadMessages(cid);
+        return;
       }
 
       setEntries((prev) => {
@@ -95,24 +153,16 @@ export function Chat({
         next[next.length - 1] = {
           role: "assistant",
           blocks: [...blocks],
+          senderName: streamingSenderRef.current,
         };
         return next;
       });
+      scrollToBottom();
     },
-    [onConversationId],
+    [onConversationId, scrollToBottom, loadMessages],
   );
 
   const { send, stop } = useChatStream(name, onEvent);
-
-  // Auto-scroll on new content
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
-    if (isNearBottom) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, []);
 
   const handleSend = async () => {
     const message = input.trim();
@@ -140,16 +190,23 @@ export function Chat({
     setInput("");
     setPendingImages([]);
     currentRef.current = [];
+    if (inputRef.current) {
+      inputRef.current.style.height = "auto";
+      inputRef.current.style.overflow = "hidden";
+    }
+    streamingSenderRef.current = name;
     setEntries((prev) => [
       ...prev,
-      { role: "user", blocks: userBlocks },
-      { role: "assistant", blocks: [] },
+      { role: "user", blocks: userBlocks, senderName: username },
+      { role: "assistant", blocks: [], senderName: name },
     ]);
     setStreaming(true);
+    scrollToBottom(true);
 
     try {
       await send(message, convIdRef.current ?? undefined, images.length > 0 ? images : undefined);
-    } catch {
+    } catch (err) {
+      console.error("Failed to send message:", err);
       setStreaming(false);
     }
   };
@@ -207,25 +264,33 @@ export function Chat({
             Send a message to start chatting.
           </div>
         )}
-        {entries.map((entry, i) => (
-          <div
-            key={i}
-            style={{
-              marginBottom: 16,
-              animation: "fadeIn 0.2s ease both",
-            }}
-          >
-            {entry.role === "user" ? (
-              <UserMessage blocks={entry.blocks} senderName={entry.senderName} />
-            ) : (
-              <AssistantMessage
-                blocks={entry.blocks}
-                isStreaming={streaming && i === entries.length - 1}
-                senderName={entry.senderName}
-              />
-            )}
-          </div>
-        ))}
+        {(() => {
+          const colorMap = buildSenderColorMap(entries);
+          return entries.map((entry, i) => (
+            <div
+              key={i}
+              style={{
+                marginBottom: 16,
+                animation: "fadeIn 0.2s ease both",
+              }}
+            >
+              {entry.role === "user" ? (
+                <UserMessage
+                  blocks={entry.blocks}
+                  senderName={entry.senderName}
+                  color={entry.senderName ? colorMap.get(entry.senderName) : undefined}
+                />
+              ) : (
+                <AssistantMessage
+                  blocks={entry.blocks}
+                  isStreaming={streaming && i === entries.length - 1}
+                  senderName={entry.senderName}
+                  color={entry.senderName ? colorMap.get(entry.senderName) : undefined}
+                />
+              )}
+            </div>
+          ));
+        })()}
       </div>
 
       {/* Image preview strip */}
@@ -316,6 +381,13 @@ export function Chat({
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
+          onInput={(e) => {
+            const el = e.currentTarget;
+            el.style.height = "auto";
+            const maxH = 120;
+            el.style.height = `${Math.min(el.scrollHeight, maxH)}px`;
+            el.style.overflow = el.scrollHeight > maxH ? "auto" : "hidden";
+          }}
           placeholder="Send a message..."
           rows={1}
           style={{
@@ -329,6 +401,7 @@ export function Chat({
             fontSize: 13,
             resize: "none",
             outline: "none",
+            overflow: "hidden",
             transition: "border-color 0.15s",
           }}
           onFocus={(e) => (e.currentTarget.style.borderColor = "var(--border-bright)")}
@@ -379,19 +452,32 @@ const SENDER_COLORS = [
   "var(--accent)",
 ];
 
-function senderColor(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
-  return SENDER_COLORS[Math.abs(hash) % SENDER_COLORS.length];
+function buildSenderColorMap(entries: ChatEntry[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const entry of entries) {
+    const name = entry.senderName;
+    if (name && !map.has(name)) {
+      map.set(name, SENDER_COLORS[map.size % SENDER_COLORS.length]);
+    }
+  }
+  return map;
 }
 
-function UserMessage({ blocks, senderName }: { blocks: ContentBlock[]; senderName?: string }) {
+function UserMessage({
+  blocks,
+  senderName,
+  color,
+}: {
+  blocks: ContentBlock[];
+  senderName?: string;
+  color?: string;
+}) {
   const label = senderName || "you";
   return (
     <div style={{ display: "flex", gap: 10 }}>
       <span
         style={{
-          color: senderName ? senderColor(senderName) : "var(--blue)",
+          color: color ?? "var(--blue)",
           fontSize: 11,
           fontWeight: 600,
           flexShrink: 0,
@@ -436,10 +522,12 @@ function AssistantMessage({
   blocks,
   isStreaming,
   senderName,
+  color,
 }: {
   blocks: ContentBlock[];
   isStreaming: boolean;
   senderName?: string;
+  color?: string;
 }) {
   // Build render items: text, tool pairs, images — in order
   const items: Array<
@@ -479,7 +567,7 @@ function AssistantMessage({
     <div style={{ display: "flex", gap: 10 }}>
       <span
         style={{
-          color: senderName ? senderColor(senderName) : "var(--accent)",
+          color: color ?? "var(--accent)",
           fontSize: 11,
           fontWeight: 600,
           flexShrink: 0,
@@ -620,7 +708,7 @@ function ToolUseBlock({ tool }: { tool: ToolBlock }) {
             minWidth: 0,
           }}
         >
-          <span style={{ color: "var(--text-2)", marginRight: 6 }}>{open ? "v" : ">"}</span>
+          <span style={{ color: "var(--text-2)", marginRight: 6 }}>{open ? "▾" : "▸"}</span>
           {summary.label}
         </span>
         {tool.output !== undefined && (

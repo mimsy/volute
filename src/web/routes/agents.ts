@@ -42,12 +42,12 @@ async function getAgentStatus(name: string, port: number) {
 
   const channels: ChannelStatus[] = [];
 
-  // Web channel is always available when agent is running
+  // Volute channel is always available when agent is running
   channels.push({
-    name: CHANNELS.web.name,
-    displayName: CHANNELS.web.displayName,
+    name: CHANNELS.volute.name,
+    displayName: CHANNELS.volute.displayName,
     status: status === "running" ? "connected" : "disconnected",
-    showToolCalls: CHANNELS.web.showToolCalls,
+    showToolCalls: CHANNELS.volute.showToolCalls,
   });
 
   // Check connector status via ConnectorManager

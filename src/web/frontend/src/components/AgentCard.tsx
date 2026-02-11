@@ -13,7 +13,6 @@ export function AgentCard({ agent }: { agent: Agent }) {
         borderRadius: "var(--radius-lg)",
         cursor: "pointer",
         transition: "all 0.15s ease",
-        animation: "fadeIn 0.3s ease both",
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.borderColor = "var(--border-bright)";
@@ -56,7 +55,18 @@ export function AgentCard({ agent }: { agent: Agent }) {
         {agent.channels
           .filter((ch) => ch.name !== "web" && ch.status === "connected")
           .map((ch) => (
-            <StatusBadge key={ch.name} status="connected" />
+            <span
+              key={ch.name}
+              style={{
+                fontSize: 10,
+                padding: "2px 6px",
+                borderRadius: "var(--radius)",
+                background: "var(--accent-dim)",
+                color: "var(--accent)",
+              }}
+            >
+              {ch.displayName || ch.name}
+            </span>
           ))}
       </div>
     </a>

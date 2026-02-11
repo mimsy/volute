@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -10,17 +12,15 @@ import {
   getParticipants,
   isParticipantOrOwner,
 } from "../../lib/conversations.js";
-import { getDb } from "../../lib/db.js";
-import { collectPart } from "../../lib/format-tool.js";
 import { readNdjson } from "../../lib/ndjson.js";
-import { findAgent } from "../../lib/registry.js";
-import { agentMessages } from "../../lib/schema.js";
-import { findVariant } from "../../lib/variants.js";
+import { findAgent, voluteHome } from "../../lib/registry.js";
+import type { VoluteEvent } from "../../types.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
 const chatSchema = z.object({
   message: z.string().optional(),
   conversationId: z.string().optional(),
+  sender: z.string().optional(),
   images: z
     .array(
       z.object({
@@ -31,83 +31,70 @@ const chatSchema = z.object({
     .optional(),
 });
 
-/** Consume an agent's ndjson response and persist it as a conversation message. */
+function getDaemonUrl(): string {
+  const data = JSON.parse(readFileSync(resolve(voluteHome(), "daemon.json"), "utf-8"));
+  return `http://127.0.0.1:${data.port}`;
+}
+
+function daemonFetchInternal(path: string, body: string): Promise<Response> {
+  const daemonUrl = getDaemonUrl();
+  const token = process.env.VOLUTE_DAEMON_TOKEN;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Origin: daemonUrl,
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return fetch(`${daemonUrl}${path}`, { method: "POST", headers, body });
+}
+
+/** Accumulate a single ndjson event into a content block array. */
+function accumulateEvent(content: ContentBlock[], event: VoluteEvent): void {
+  if (event.type === "text") {
+    const last = content[content.length - 1];
+    if (last && last.type === "text") last.text += event.content;
+    else content.push({ type: "text", text: event.content });
+  } else if (event.type === "tool_use") {
+    content.push({ type: "tool_use", name: event.name, input: event.input });
+  } else if (event.type === "tool_result") {
+    content.push({
+      type: "tool_result",
+      output: event.output,
+      ...(event.is_error ? { is_error: true } : {}),
+    });
+  }
+}
+
+/** Consume an agent's ndjson response and persist to conversation messages. */
 async function consumeAndPersist(
   res: Response,
   conversationId: string,
   agentName: string,
-  channel: string,
-): Promise<void> {
+): Promise<ContentBlock[]> {
   if (!res.body) {
     console.warn(`[chat] no response body from ${agentName}`);
-    return;
+    return [];
   }
   const assistantContent: ContentBlock[] = [];
   for await (const event of readNdjson(res.body)) {
-    if (event.type === "text") {
-      const last = assistantContent[assistantContent.length - 1];
-      if (last && last.type === "text") last.text += event.content;
-      else assistantContent.push({ type: "text", text: event.content });
-    } else if (event.type === "tool_use") {
-      assistantContent.push({ type: "tool_use", name: event.name, input: event.input });
-    } else if (event.type === "tool_result") {
-      assistantContent.push({
-        type: "tool_result",
-        output: event.output,
-        ...(event.is_error ? { is_error: true } : {}),
-      });
-    }
+    accumulateEvent(assistantContent, event);
     if (event.type === "done") break;
   }
-  if (assistantContent.length === 0) return;
+  if (assistantContent.length === 0) return [];
 
-  // Persist to both tables independently so one failure doesn't block the other
   try {
     await addMessage(conversationId, "assistant", agentName, assistantContent);
   } catch (err) {
     console.error(`[chat] failed to persist conversation message from ${agentName}:`, err);
-    console.error(`[chat] lost content: ${JSON.stringify(assistantContent).slice(0, 500)}`);
   }
-
-  try {
-    const db = await getDb();
-    const textParts: string[] = [];
-    const toolParts: string[] = [];
-    for (const b of assistantContent) {
-      const part = collectPart(b);
-      if (part != null) {
-        if (b.type === "tool_use") toolParts.push(part);
-        else textParts.push(part);
-      }
-    }
-    const summary = [textParts.join(""), ...toolParts].filter(Boolean).join("\n");
-    if (summary) {
-      await db.insert(agentMessages).values({
-        agent: agentName,
-        channel,
-        role: "assistant",
-        sender: agentName,
-        content: summary,
-      });
-    }
-  } catch (err) {
-    console.error(`[chat] failed to persist agent_message from ${agentName}:`, err);
-  }
+  return assistantContent;
 }
 
 const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchema), async (c) => {
   const name = c.req.param("name");
-  const [baseName, variantName] = name.split("@", 2);
+  const [baseName] = name.split("@", 2);
 
   const entry = findAgent(baseName);
   if (!entry) return c.json({ error: "Agent not found" }, 404);
-
-  let port = entry.port;
-  if (variantName) {
-    const variant = findVariant(baseName, variantName);
-    if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
-    port = variant.port;
-  }
 
   const { getAgentManager } = await import("../../lib/agent-manager.js");
   if (!getAgentManager().isRunning(name)) {
@@ -122,6 +109,9 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   const user = c.get("user");
   const agentUser = await getOrCreateAgentUser(baseName);
 
+  // Daemon token callers can override the sender name
+  const senderName = user.id === 0 && body.sender ? body.sender : user.username;
+
   // Resolve or create conversation
   let conversationId = body.conversationId;
   if (conversationId) {
@@ -131,10 +121,23 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     }
   } else {
     const title = body.message ? body.message.slice(0, 80) : "Image message";
+    // If sender is a registered agent, include them as a participant
+    const participantIds: number[] = [];
+    if (user.id !== 0) {
+      participantIds.push(user.id);
+    } else if (body.sender) {
+      // Check if sender is an agent — if so, add their agent user as participant
+      const senderAgent = findAgent(body.sender);
+      if (senderAgent) {
+        const senderAgentUser = await getOrCreateAgentUser(body.sender);
+        participantIds.push(senderAgentUser.id);
+      }
+    }
+    participantIds.push(agentUser.id);
     const conv = await createConversation(baseName, "volute", {
       userId: user.id !== 0 ? user.id : undefined,
       title,
-      participantIds: user.id !== 0 ? [user.id, agentUser.id] : [agentUser.id],
+      participantIds,
     });
     conversationId = conv.id;
   }
@@ -153,71 +156,57 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   }
 
   // Save user message
-  await addMessage(conversationId, "user", user.username, contentBlocks);
-
-  // Record in agent_messages
-  const db = await getDb();
-  await db.insert(agentMessages).values({
-    agent: baseName,
-    channel,
-    role: "user",
-    sender: user.username,
-    content: body.message ?? "[image]",
-  });
+  await addMessage(conversationId, "user", senderName, contentBlocks);
 
   // Find all agent participants for fan-out
   const participants = await getParticipants(conversationId);
   const agentParticipants = participants.filter((p) => p.userType === "agent");
   const participantNames = participants.map((p) => p.username);
 
-  // Resolve ports for each agent participant
-  const agentTargets: { name: string; port: number }[] = [];
+  // Find running agent participants (excluding the sender)
   const manager = getAgentManager();
-  for (const ap of agentParticipants) {
-    if (ap.username === baseName) {
-      // Use variant port if addressing a variant, otherwise base port
-      if (manager.isRunning(name)) {
-        agentTargets.push({ name: ap.username, port });
-      }
-    } else {
-      const agentEntry = findAgent(ap.username);
-      if (agentEntry && manager.isRunning(ap.username)) {
-        agentTargets.push({ name: ap.username, port: agentEntry.port });
-      }
-    }
-  }
+  const runningAgents = agentParticipants
+    .map((ap) => {
+      // Use the full name (with variant) for the addressed agent, base name for others
+      const agentKey = ap.username === baseName ? name : ap.username;
+      return manager.isRunning(agentKey) ? ap.username : null;
+    })
+    .filter((n): n is string => n !== null && n !== senderName);
 
-  // If no running agents found, return error
-  if (agentTargets.length === 0) {
+  if (runningAgents.length === 0) {
     return c.json({ error: "No running agents in this conversation" }, 409);
   }
 
-  // Send to all agents
+  // Build payload for daemon /message route
   const isDM = participants.length === 2;
-  const messagePayload = JSON.stringify({
+  const payload = JSON.stringify({
     content: contentBlocks,
     channel,
-    sender: user.username,
+    sender: senderName,
     participants: participantNames,
     participantCount: participants.length,
     isDM,
   });
 
+  // Send to all agents via daemon /message route
   const responses: { name: string; res: Response }[] = [];
-  for (const target of agentTargets) {
+  for (const agentName of runningAgents) {
+    const targetName = agentName === baseName ? name : agentName;
     try {
-      const res = await fetch(`http://127.0.0.1:${target.port}/message`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: messagePayload,
-      });
+      const res = await daemonFetchInternal(
+        `/api/agents/${encodeURIComponent(targetName)}/message`,
+        payload,
+      );
       if (res.ok && res.body) {
-        responses.push({ name: target.name, res });
+        responses.push({ name: agentName, res });
       } else {
-        console.error(`[chat] agent ${target.name} responded with ${res.status}`);
+        const errorBody = await res.text().catch(() => "");
+        console.error(
+          `[chat] agent ${agentName} responded with ${res.status}: ${errorBody.slice(0, 500)}`,
+        );
       }
     } catch (err) {
-      console.error(`[chat] agent ${target.name} unreachable on port ${target.port}:`, err);
+      console.error(`[chat] agent ${agentName} unreachable via daemon:`, err);
     }
   }
 
@@ -225,20 +214,16 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     return c.json({ error: "No agents reachable" }, 502);
   }
 
-  // Stream the first agent's response to the client; consume others in background
+  // Stream the first agent's response to the client; consume others concurrently
   const primary = responses[0];
   const secondary = responses.slice(1);
 
-  // Fire-and-forget for secondary agents
-  for (const s of secondary) {
-    consumeAndPersist(s.res, conversationId!, s.name, channel).catch((err) => {
-      console.error(`[chat] failed to persist response from ${s.name}:`, err);
-    });
-  }
+  // Start consuming secondary responses immediately (runs concurrently with primary streaming)
+  const secondaryPromises = secondary.map((s) => consumeAndPersist(s.res, conversationId!, s.name));
 
   return streamSSE(c, async (stream) => {
     await stream.writeSSE({
-      data: JSON.stringify({ type: "meta", conversationId }),
+      data: JSON.stringify({ type: "meta", conversationId, senderName: primary.name }),
     });
 
     const assistantContent: ContentBlock[] = [];
@@ -246,28 +231,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     try {
       for await (const event of readNdjson(primary.res.body!)) {
         await stream.writeSSE({ data: JSON.stringify(event) });
-
-        if (event.type === "text") {
-          const last = assistantContent[assistantContent.length - 1];
-          if (last && last.type === "text") {
-            last.text += event.content;
-          } else {
-            assistantContent.push({ type: "text", text: event.content });
-          }
-        } else if (event.type === "tool_use") {
-          assistantContent.push({
-            type: "tool_use",
-            name: event.name,
-            input: event.input,
-          });
-        } else if (event.type === "tool_result") {
-          assistantContent.push({
-            type: "tool_result",
-            output: event.output,
-            ...(event.is_error ? { is_error: true } : {}),
-          });
-        }
-
+        accumulateEvent(assistantContent, event);
         if (event.type === "done") break;
       }
     } catch (err) {
@@ -277,34 +241,28 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
       });
     }
 
-    // Persist collected content (even if partial due to error)
+    // Persist primary response to conversation messages (daemon already handled agent_messages)
     if (assistantContent.length > 0) {
       try {
         await addMessage(conversationId!, "assistant", primary.name, assistantContent);
-
-        const textParts: string[] = [];
-        const toolParts: string[] = [];
-        for (const b of assistantContent) {
-          const part = collectPart(b);
-          if (part != null) {
-            if (b.type === "tool_use") toolParts.push(part);
-            else textParts.push(part);
-          }
-        }
-        const summary = [textParts.join(""), ...toolParts].filter(Boolean).join("\n");
-        if (summary) {
-          await db.insert(agentMessages).values({
-            agent: primary.name,
-            channel,
-            role: "assistant",
-            sender: primary.name,
-            content: summary,
-          });
-        }
       } catch (err) {
         console.error(`[chat] failed to persist response from ${primary.name}:`, err);
       }
     }
+
+    // Wait for secondary agent responses to complete
+    const results = await Promise.allSettled(secondaryPromises);
+    for (let i = 0; i < results.length; i++) {
+      if (results[i].status === "rejected") {
+        console.error(
+          `[chat] secondary agent ${secondary[i].name} response failed:`,
+          (results[i] as PromiseRejectedResult).reason,
+        );
+      }
+    }
+
+    // Signal frontend that all responses are persisted
+    await stream.writeSSE({ data: JSON.stringify({ type: "sync" }) });
   });
 });
 

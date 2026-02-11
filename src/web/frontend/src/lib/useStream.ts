@@ -9,12 +9,14 @@ export function useChatStream(name: string, onEvent: (event: VoluteEvent) => voi
       message: string,
       conversationId?: string,
       images?: Array<{ media_type: string; data: string }>,
+      agentName?: string,
     ) => {
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
 
-      const res = await fetch(`/api/agents/${name}/chat`, {
+      const targetName = agentName || name;
+      const res = await fetch(`/api/agents/${targetName}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -43,12 +45,13 @@ export function useChatStream(name: string, onEvent: (event: VoluteEvent) => voi
           if (!line.startsWith("data: ")) continue;
           const json = line.slice(6);
           if (!json) continue;
+          let event: VoluteEvent;
           try {
-            const event = JSON.parse(json) as VoluteEvent;
-            onEvent(event);
+            event = JSON.parse(json) as VoluteEvent;
           } catch {
-            // skip invalid
+            continue;
           }
+          onEvent(event);
         }
       }
     },

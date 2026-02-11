@@ -1,3 +1,4 @@
+import { userInfo } from "node:os";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { summarizeTool } from "../lib/format-tool.js";
 import { parseArgs } from "../lib/parse-args.js";
@@ -115,7 +116,11 @@ async function sendToConversation(args: string[]) {
   const res = await daemonFetch(`/api/agents/${encodeURIComponent(agentName)}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, conversationId }),
+    body: JSON.stringify({
+      message,
+      conversationId,
+      sender: process.env.VOLUTE_AGENT || userInfo().username,
+    }),
   });
 
   if (!res.ok) {

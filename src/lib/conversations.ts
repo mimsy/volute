@@ -256,6 +256,41 @@ export async function getMessages(conversationId: string): Promise<Message[]> {
   });
 }
 
+export async function listConversationsWithParticipants(
+  userId: number,
+): Promise<(Conversation & { participants: Participant[] })[]> {
+  const convs = await listConversationsForUser(userId);
+  if (convs.length === 0) return [];
+  const db = await getDb();
+  const convIds = convs.map((c) => c.id);
+  const rows = await db
+    .select({
+      conversationId: conversationParticipants.conversation_id,
+      userId: users.id,
+      username: users.username,
+      userType: users.user_type,
+      role: conversationParticipants.role,
+    })
+    .from(conversationParticipants)
+    .innerJoin(users, eq(conversationParticipants.user_id, users.id))
+    .where(inArray(conversationParticipants.conversation_id, convIds));
+  const byConv = new Map<string, Participant[]>();
+  for (const r of rows) {
+    let arr = byConv.get(r.conversationId);
+    if (!arr) {
+      arr = [];
+      byConv.set(r.conversationId, arr);
+    }
+    arr.push({
+      userId: r.userId,
+      username: r.username,
+      userType: r.userType as "human" | "agent",
+      role: r.role as "owner" | "member",
+    });
+  }
+  return convs.map((c) => ({ ...c, participants: byConv.get(c.id) ?? [] }));
+}
+
 export async function deleteConversation(id: string): Promise<void> {
   const db = await getDb();
   await db.delete(conversations).where(eq(conversations.id, id));

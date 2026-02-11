@@ -39,6 +39,8 @@ export async function startServer({
     // Serve static files and SPA fallback
     app.get("*", async (c) => {
       const urlPath = new URL(c.req.url).pathname;
+      // Never serve SPA for API routes
+      if (urlPath.startsWith("/api/")) return c.notFound();
       // Try exact file first (with path traversal guard)
       const filePath = resolve(assetsDir, urlPath.slice(1));
       if (!filePath.startsWith(assetsDir)) return c.text("Forbidden", 403);

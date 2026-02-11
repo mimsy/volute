@@ -89,7 +89,7 @@ function formatInviteNotification(
   } else {
     lines.push(`  { "channel": "${meta.channel}", "session": "${suggestedSession}" }`);
   }
-  lines.push(`To respond, use: volute channel send ${meta.channel} "your message"`);
+  lines.push(`To respond, use: volute channel send ${meta.channel ?? "unknown"} "your message"`);
   lines.push(`To reject, delete ${filePath}`);
   return lines.join("\n");
 }
@@ -138,10 +138,11 @@ export function createRouter(options: {
   }
 
   function route(
-    content: VoluteContentPart[],
+    inputContent: VoluteContentPart[],
     meta: ChannelMeta,
     listener?: Listener,
   ): { messageId: string; unsubscribe: () => void } {
+    const content = inputContent;
     // Log incoming message
     const text = content
       .filter((p): p is { type: "text"; text: string } => p.type === "text")
@@ -162,8 +163,8 @@ export function createRouter(options: {
     const noop = () => {};
     const safeListener = listener ?? noop;
 
-    // Gate unmatched channels
-    if (!resolved.matched && config.gateUnmatched) {
+    // Gate unmatched channels (default: gate unless explicitly disabled)
+    if (!resolved.matched && config.gateUnmatched !== false) {
       const channelKey = meta.channel ?? "unknown";
       const sanitized = sanitizeChannelPath(channelKey);
       const filePath = `inbox/${sanitized}.md`;
@@ -171,14 +172,14 @@ export function createRouter(options: {
       if (!pendingChannels.has(channelKey)) {
         pendingChannels.add(channelKey);
 
-        // Send invite notification to main session
+        // Send invite notification to main session (internal — don't stream back to sender)
         const notification = formatInviteNotification(meta, filePath, text);
         const notifContent: VoluteContentPart[] = [{ type: "text", text: notification }];
         const handler = options.agentHandler("main");
-        const unsubscribe = handler.handle(
+        handler.handle(
           notifContent,
           { sessionName: "main", messageId: generateMessageId(), interrupt: true },
-          safeListener,
+          noop,
         );
 
         // Save original message to file
@@ -188,7 +189,7 @@ export function createRouter(options: {
           fileHandler.handle(formatted, { ...meta, messageId }, noop);
         }
 
-        return { messageId, unsubscribe };
+        queueMicrotask(() => safeListener({ type: "done", messageId }));
       } else {
         // Already pending — just append to file
         if (options.fileHandler) {
