@@ -1,6 +1,6 @@
 ---
 name: Volute CLI
-description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the agent server. Covers "create variant", "merge variant", "send to variant", "fork", "volute CLI", "variant workflow", "agent server", "supervisor", "channel", "discord", "send message", "read messages", "history", "connector", "schedule", "agent-to-agent", "proactive", "initiative", "reach out", "conversation", "group chat", "participants", "invite".
+description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the agent server. Also covers routing config, batch settings, channel gating, and message flow. Covers "create variant", "merge variant", "send to variant", "fork", "volute CLI", "variant workflow", "agent server", "supervisor", "channel", "discord", "send message", "read messages", "history", "connector", "schedule", "agent-to-agent", "proactive", "initiative", "reach out", "conversation", "group chat", "participants", "invite", "routing", "routes.json", "batch", "debounce", "trigger", "gating", "gate".
 ---
 
 # Self-Management
@@ -88,6 +88,85 @@ Create skills by writing `.claude/skills/<name>/SKILL.md` files in your `home/` 
 ## MCP Configuration
 
 Edit `home/.mcp.json` to configure MCP servers for your SDK session. This gives you access to additional tools and services.
+
+## Message Routing
+
+Messages are routed to sessions based on rules in `.config/routes.json`. Rules are evaluated in order; first match wins. Unmatched messages go to the `default` session (defaults to `"main"`).
+
+### Rule syntax
+
+```json
+{
+  "rules": [
+    { "channel": "discord:*", "session": "discord", "batch": { "debounce": 20, "maxWait": 120, "triggers": ["@myagent"] } },
+    { "channel": "volute:*", "isDM": true, "session": "${sender}" },
+    { "channel": "volute:*", "isDM": false, "session": "${channel}", "batch": { "debounce": 20, "maxWait": 120 } },
+    { "sender": "alice", "session": "alice" },
+    { "channel": "system:*", "session": "$new" },
+    { "channel": "discord:logs", "destination": "file", "path": "inbox/log.md" }
+  ],
+  "default": "main",
+  "gateUnmatched": true
+}
+```
+
+### Match criteria
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `channel` | glob string | Channel URI (e.g. `discord:*`, `volute:conv-*`) |
+| `sender` | glob string | Sender name |
+| `isDM` | boolean | Match DMs (`true`) or group channels (`false`) |
+| `participants` | number | Match exact participant count |
+
+### Rule fields
+
+| Field | Description |
+|-------|-------------|
+| `session` | Target session name. Supports `${sender}`, `${channel}` templates, or `$new` for a unique session per message |
+| `destination` | `"agent"` (default) or `"file"` |
+| `path` | File path when destination is `"file"` |
+| `batch` | Batch config (see below) |
+| `interrupt` | Whether to interrupt an in-progress turn (default: `true`) |
+
+### Batch config
+
+Batch mode buffers messages and delivers them together. Configure with an object:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `debounce` | seconds | Wait for quiet period before flushing — resets on each new message |
+| `maxWait` | seconds | Maximum time before forced flush, even during continuous activity |
+| `triggers` | string[] | Patterns that cause immediate flush (case-insensitive substring match) |
+
+Examples:
+- `{ "debounce": 20, "maxWait": 120 }` — flush after 20s of quiet, or 2 minutes max
+- `{ "debounce": 20, "maxWait": 120, "triggers": ["@myagent"] }` — same, but flush immediately on @mention
+- `{ "triggers": ["urgent"] }` — no timer, flush only on trigger (or immediately if no timers)
+
+Batched messages arrive as a single message with a `[Batch: N messages — ...]` header showing the channel URI and message count, followed by individual messages with `[sender — time]` prefixes.
+
+## Channel Gating
+
+When `gateUnmatched` is `true` (the default), messages from channels without a matching rule are held:
+
+1. First message from an unknown channel triggers a **[Channel Invite]** notification in your main session
+2. The notification includes channel details, a message preview, and a suggested routing rule
+3. Further messages are saved to `inbox/<channel>.md`
+4. To accept: add a routing rule to `.config/routes.json`
+5. To reject: delete the inbox file
+6. Set `gateUnmatched: false` to route all unmatched messages to the default session
+
+## Channel Commands
+
+Read and send messages to any connected channel:
+
+```sh
+volute channel read <uri> [--limit N]    # Read recent messages
+volute channel send <uri> "message"      # Send a message
+```
+
+Channel URIs use `platform:id` format (e.g. `discord:123456`, `volute:conv-abc`).
 
 ## Git Introspection
 

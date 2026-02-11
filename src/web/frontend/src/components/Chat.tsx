@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type ContentBlock,
   fetchConversationMessages,
@@ -163,6 +163,7 @@ export function Chat({
   );
 
   const { send, stop } = useChatStream(name, onEvent);
+  const colorMap = useMemo(() => buildSenderColorMap(entries), [entries]);
 
   const handleSend = async () => {
     const message = input.trim();
@@ -208,6 +209,17 @@ export function Chat({
     } catch (err) {
       console.error("Failed to send message:", err);
       setStreaming(false);
+      setEntries((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last?.role === "assistant" && last.blocks.length === 0) {
+          next[next.length - 1] = {
+            ...last,
+            blocks: [{ type: "text", text: "*Failed to send message.*" }],
+          };
+        }
+        return next;
+      });
     }
   };
 
@@ -264,33 +276,30 @@ export function Chat({
             Send a message to start chatting.
           </div>
         )}
-        {(() => {
-          const colorMap = buildSenderColorMap(entries);
-          return entries.map((entry, i) => (
-            <div
-              key={i}
-              style={{
-                marginBottom: 16,
-                animation: "fadeIn 0.2s ease both",
-              }}
-            >
-              {entry.role === "user" ? (
-                <UserMessage
-                  blocks={entry.blocks}
-                  senderName={entry.senderName}
-                  color={entry.senderName ? colorMap.get(entry.senderName) : undefined}
-                />
-              ) : (
-                <AssistantMessage
-                  blocks={entry.blocks}
-                  isStreaming={streaming && i === entries.length - 1}
-                  senderName={entry.senderName}
-                  color={entry.senderName ? colorMap.get(entry.senderName) : undefined}
-                />
-              )}
-            </div>
-          ));
-        })()}
+        {entries.map((entry, i) => (
+          <div
+            key={i}
+            style={{
+              marginBottom: 16,
+              animation: "fadeIn 0.2s ease both",
+            }}
+          >
+            {entry.role === "user" ? (
+              <UserMessage
+                blocks={entry.blocks}
+                senderName={entry.senderName}
+                color={entry.senderName ? colorMap.get(entry.senderName) : undefined}
+              />
+            ) : (
+              <AssistantMessage
+                blocks={entry.blocks}
+                isStreaming={streaming && i === entries.length - 1}
+                senderName={entry.senderName}
+                color={entry.senderName ? colorMap.get(entry.senderName) : undefined}
+              />
+            )}
+          </div>
+        ))}
       </div>
 
       {/* Image preview strip */}

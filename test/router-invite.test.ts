@@ -230,7 +230,8 @@ describe("router invite gating", () => {
     assert.ok(text.includes("Platform: discord"));
     assert.ok(text.includes("Server: My Server"));
     assert.ok(text.includes("alice, bob, charlie"));
-    assert.ok(text.includes('"batch": 5'), "should suggest batch mode for group channels");
+    assert.ok(text.includes('"batch"'), "should suggest batch mode for group channels");
+    assert.ok(text.includes('"debounce"'), "should suggest debounce config");
     assert.ok(text.includes("3 other participants"), "should mention participant count");
   });
 

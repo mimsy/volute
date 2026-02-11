@@ -32,8 +32,10 @@ type PiSession = {
   currentMessageId?: string;
 };
 
-const DEFAULT_COMPACTION_MESSAGE =
-  "Your conversation is approaching its context limit. Please update today's journal entry to preserve important context before the conversation is compacted.";
+function defaultCompactionMessage(): string {
+  const today = new Date().toISOString().slice(0, 10);
+  return `Context is getting long — compaction is about to summarize this conversation. Before that happens, save anything important to files (MEMORY.md, memory/journal/${today}.md, etc.) since those survive compaction. Focus on: decisions made, open tasks, and anything you'd need to pick up where you left off.`;
+}
 
 function resolveModel(modelStr: string) {
   const [provider, ...rest] = modelStr.split(":");
@@ -75,7 +77,7 @@ export function createAgent(options: {
   compactionMessage?: string;
 }): { resolve: HandlerResolver } {
   const sessions = new Map<string, PiSession>();
-  const compactionMessage = options.compactionMessage ?? DEFAULT_COMPACTION_MESSAGE;
+  const compactionMessage = options.compactionMessage ?? defaultCompactionMessage();
 
   // Shared setup (created once)
   const modelStr = options.model || process.env.PI_MODEL || "anthropic:claude-sonnet-4-20250514";

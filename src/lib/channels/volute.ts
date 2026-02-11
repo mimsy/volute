@@ -78,7 +78,7 @@ export async function send(
   const res = await fetch(`${url}/api/agents/${encodeURIComponent(agentName)}/chat`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ message, conversationId, sender: env.VOLUTE_AGENT }),
+    body: JSON.stringify({ message, conversationId, sender: agentName }),
   });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };

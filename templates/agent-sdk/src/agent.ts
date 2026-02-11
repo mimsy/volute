@@ -69,9 +69,10 @@ export function createAgent(options: {
   ];
 
   const sessions = new Map<string, Session>();
+  const today = new Date().toISOString().slice(0, 10);
   const compactionMessage =
     options.compactionMessage ??
-    "Your conversation is approaching its context limit. Please update today's journal entry to preserve important context before the conversation is compacted.";
+    `Context is getting long — compaction is about to summarize this conversation. Before that happens, save anything important to files (MEMORY.md, memory/journal/${today}.md, etc.) since those survive compaction. Focus on: decisions made, open tasks, and anything you'd need to pick up where you left off.`;
 
   // --- Session persistence ---
 

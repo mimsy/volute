@@ -57,6 +57,14 @@ function waitForDone(
   });
 }
 
+function batchText(calls: { content: VoluteContentPart[] }[]): string {
+  return calls
+    .flatMap((c) => c.content)
+    .filter((p): p is { type: "text"; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join("");
+}
+
 describe("router", () => {
   it("routes to agent handler with default session", async () => {
     const agent = mockAgentHandler();
@@ -137,13 +145,13 @@ describe("router", () => {
     assert.notEqual(agent.calls[0].sessionName, agent.calls[1].sessionName);
   });
 
-  it("batch buffers messages and flushes on timer", async () => {
+  it("batch (number) buffers messages and flushes on maxWait", async () => {
     const dir = mkdtempSync(join(tmpdir(), "router-test-"));
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "discord:*", session: "batch-test", batch: 0.001 }], // ~60ms
+        rules: [{ channel: "discord:*", session: "batch-test", batch: 0.001 }], // ~60ms maxWait
       }),
     );
 
@@ -162,11 +170,7 @@ describe("router", () => {
     assert.equal(agent.calls.length, 1, "batch should be flushed");
     assert.equal(agent.calls[0].sessionName, "batch-test");
 
-    // Content should contain batch header
-    const text = agent.calls[0].content
-      .filter((p): p is { type: "text"; text: string } => p.type === "text")
-      .map((p) => p.text)
-      .join("");
+    const text = batchText(agent.calls);
     assert.ok(text.includes("[Batch:"), "should have batch header");
     assert.ok(text.includes("msg1"));
     assert.ok(text.includes("msg2"));
@@ -195,5 +199,230 @@ describe("router", () => {
 
     router.close();
     assert.equal(agent.calls.length, 1, "close should flush pending batches");
+  });
+
+  // --- Debounce ---
+
+  it("debounce flushes after quiet period", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const configPath = join(dir, "routes.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        rules: [
+          { channel: "discord:*", session: "debounce-test", batch: { debounce: 0.08 } }, // 80ms
+        ],
+      }),
+    );
+
+    const agent = mockAgentHandler();
+    const router = createRouter({ configPath, agentHandler: agent.resolver });
+
+    router.route([{ type: "text", text: "msg1" }], { channel: "discord:123", sender: "alice" });
+    assert.equal(agent.calls.length, 0);
+
+    // Send another message before debounce fires — should reset the timer
+    await new Promise((r) => setTimeout(r, 40));
+    router.route([{ type: "text", text: "msg2" }], { channel: "discord:123", sender: "bob" });
+    assert.equal(agent.calls.length, 0, "debounce should reset on new message");
+
+    // Wait for debounce to fire after msg2
+    await new Promise((r) => setTimeout(r, 120));
+    assert.equal(agent.calls.length, 1, "debounce should flush after quiet period");
+
+    const text = batchText(agent.calls);
+    assert.ok(text.includes("msg1"));
+    assert.ok(text.includes("msg2"));
+
+    router.close();
+  });
+
+  it("maxWait forces flush even with continuous messages", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const configPath = join(dir, "routes.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        rules: [
+          {
+            channel: "discord:*",
+            session: "maxwait-test",
+            batch: { debounce: 5, maxWait: 0.1 }, // 5s debounce, 100ms maxWait
+          },
+        ],
+      }),
+    );
+
+    const agent = mockAgentHandler();
+    const router = createRouter({ configPath, agentHandler: agent.resolver });
+
+    // Send messages rapidly — debounce would keep resetting, but maxWait should force flush
+    router.route([{ type: "text", text: "msg1" }], { channel: "discord:123", sender: "alice" });
+
+    await new Promise((r) => setTimeout(r, 50));
+    router.route([{ type: "text", text: "msg2" }], { channel: "discord:123", sender: "bob" });
+
+    // maxWait of 100ms should fire (debounce at 5s won't have fired)
+    await new Promise((r) => setTimeout(r, 100));
+
+    assert.equal(agent.calls.length, 1, "maxWait should force flush");
+    const text = batchText(agent.calls);
+    assert.ok(text.includes("msg1"));
+    assert.ok(text.includes("msg2"));
+
+    router.close();
+  });
+
+  // --- Triggers ---
+
+  it("trigger causes immediate flush", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const configPath = join(dir, "routes.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        rules: [
+          {
+            channel: "discord:*",
+            session: "trigger-test",
+            batch: { debounce: 60, maxWait: 300, triggers: ["@agent"] },
+          },
+        ],
+      }),
+    );
+
+    const agent = mockAgentHandler();
+    const router = createRouter({ configPath, agentHandler: agent.resolver });
+
+    // First message doesn't trigger
+    router.route([{ type: "text", text: "hello everyone" }], {
+      channel: "discord:123",
+      sender: "alice",
+    });
+    assert.equal(agent.calls.length, 0, "non-trigger message should be buffered");
+
+    // Second message contains trigger
+    router.route([{ type: "text", text: "hey @agent what do you think?" }], {
+      channel: "discord:123",
+      sender: "bob",
+    });
+    assert.equal(agent.calls.length, 1, "trigger should flush immediately");
+
+    const text = batchText(agent.calls);
+    assert.ok(text.includes("hello everyone"), "should include buffered message");
+    assert.ok(text.includes("@agent"), "should include trigger message");
+
+    router.close();
+  });
+
+  it("trigger matching is case-insensitive", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const configPath = join(dir, "routes.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        rules: [
+          {
+            channel: "discord:*",
+            session: "trigger-ci",
+            batch: { debounce: 60, triggers: ["@Agent"] },
+          },
+        ],
+      }),
+    );
+
+    const agent = mockAgentHandler();
+    const router = createRouter({ configPath, agentHandler: agent.resolver });
+
+    router.route([{ type: "text", text: "hey @AGENT help" }], {
+      channel: "discord:123",
+      sender: "alice",
+    });
+    assert.equal(agent.calls.length, 1, "trigger should match case-insensitively");
+
+    router.close();
+  });
+
+  it("batch with only triggers and no debounce/maxWait flushes immediately on trigger", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const configPath = join(dir, "routes.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        rules: [
+          {
+            channel: "discord:*",
+            session: "trigger-only",
+            batch: { triggers: ["urgent"] },
+          },
+        ],
+      }),
+    );
+
+    const agent = mockAgentHandler();
+    const router = createRouter({ configPath, agentHandler: agent.resolver });
+
+    // Non-trigger — no debounce or maxWait configured, so flushes immediately
+    router.route([{ type: "text", text: "casual message" }], {
+      channel: "discord:123",
+      sender: "alice",
+    });
+    // With no debounce and no maxWait, the scheduleBatchTimers falls through to immediate flush
+    assert.equal(agent.calls.length, 1, "should flush immediately when no timers configured");
+
+    // Trigger message also flushes immediately
+    router.route([{ type: "text", text: "urgent issue!" }], {
+      channel: "discord:123",
+      sender: "bob",
+    });
+    assert.equal(agent.calls.length, 2, "trigger should also flush immediately");
+
+    router.close();
+  });
+
+  it("batch header includes channel URI alongside display name", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const configPath = join(dir, "routes.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        rules: [
+          {
+            channel: "discord:*",
+            session: "uri-test",
+            batch: { debounce: 60, triggers: ["flush"] },
+          },
+        ],
+      }),
+    );
+
+    const agent = mockAgentHandler();
+    const router = createRouter({ configPath, agentHandler: agent.resolver });
+
+    // Send with channelName (human-readable) — URI should still appear
+    router.route([{ type: "text", text: "hello" }], {
+      channel: "discord:123",
+      sender: "alice",
+      channelName: "general",
+      serverName: "My Server",
+    });
+    assert.equal(agent.calls.length, 0, "first message should be buffered (no trigger)");
+
+    // Second message triggers flush — both messages delivered together
+    router.route([{ type: "text", text: "flush please" }], {
+      channel: "discord:123",
+      sender: "bob",
+      channelName: "general",
+      serverName: "My Server",
+    });
+
+    assert.equal(agent.calls.length, 1, "trigger should flush both messages");
+    const text = batchText(agent.calls);
+    assert.ok(text.includes("discord:123"), "batch header should include channel URI");
+    assert.ok(text.includes("#general"), "batch header should include channel display name");
+    assert.ok(text.includes("hello"), "should include first message");
+    assert.ok(text.includes("flush"), "should include trigger message");
+
+    router.close();
   });
 });
