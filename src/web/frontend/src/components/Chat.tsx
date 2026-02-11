@@ -93,6 +93,13 @@ export function Chat({
     loadMessages(conversationId, true);
   }, [conversationId, loadMessages]);
 
+  // Poll for new messages when not streaming
+  useEffect(() => {
+    if (!conversationId || streaming) return;
+    const id = setInterval(() => loadMessages(conversationId), 3000);
+    return () => clearInterval(id);
+  }, [conversationId, streaming, loadMessages]);
+
   const onEvent = useCallback(
     (event: VoluteEvent) => {
       if (event.type === "meta") {
@@ -256,25 +263,33 @@ export function Chat({
             Send a message to start chatting.
           </div>
         )}
-        {entries.map((entry, i) => (
-          <div
-            key={i}
-            style={{
-              marginBottom: 16,
-              animation: "fadeIn 0.2s ease both",
-            }}
-          >
-            {entry.role === "user" ? (
-              <UserMessage blocks={entry.blocks} senderName={entry.senderName} />
-            ) : (
-              <AssistantMessage
-                blocks={entry.blocks}
-                isStreaming={streaming && i === entries.length - 1}
-                senderName={entry.senderName}
-              />
-            )}
-          </div>
-        ))}
+        {(() => {
+          const colorMap = buildSenderColorMap(entries);
+          return entries.map((entry, i) => (
+            <div
+              key={i}
+              style={{
+                marginBottom: 16,
+                animation: "fadeIn 0.2s ease both",
+              }}
+            >
+              {entry.role === "user" ? (
+                <UserMessage
+                  blocks={entry.blocks}
+                  senderName={entry.senderName}
+                  color={entry.senderName ? colorMap.get(entry.senderName) : undefined}
+                />
+              ) : (
+                <AssistantMessage
+                  blocks={entry.blocks}
+                  isStreaming={streaming && i === entries.length - 1}
+                  senderName={entry.senderName}
+                  color={entry.senderName ? colorMap.get(entry.senderName) : undefined}
+                />
+              )}
+            </div>
+          ));
+        })()}
       </div>
 
       {/* Image preview strip */}
@@ -436,19 +451,32 @@ const SENDER_COLORS = [
   "var(--accent)",
 ];
 
-function senderColor(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
-  return SENDER_COLORS[Math.abs(hash) % SENDER_COLORS.length];
+function buildSenderColorMap(entries: ChatEntry[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const entry of entries) {
+    const name = entry.senderName;
+    if (name && !map.has(name)) {
+      map.set(name, SENDER_COLORS[map.size % SENDER_COLORS.length]);
+    }
+  }
+  return map;
 }
 
-function UserMessage({ blocks, senderName }: { blocks: ContentBlock[]; senderName?: string }) {
+function UserMessage({
+  blocks,
+  senderName,
+  color,
+}: {
+  blocks: ContentBlock[];
+  senderName?: string;
+  color?: string;
+}) {
   const label = senderName || "you";
   return (
     <div style={{ display: "flex", gap: 10 }}>
       <span
         style={{
-          color: senderName ? senderColor(senderName) : "var(--blue)",
+          color: color ?? "var(--blue)",
           fontSize: 11,
           fontWeight: 600,
           flexShrink: 0,
@@ -493,10 +521,12 @@ function AssistantMessage({
   blocks,
   isStreaming,
   senderName,
+  color,
 }: {
   blocks: ContentBlock[];
   isStreaming: boolean;
   senderName?: string;
+  color?: string;
 }) {
   // Build render items: text, tool pairs, images — in order
   const items: Array<
@@ -536,7 +566,7 @@ function AssistantMessage({
     <div style={{ display: "flex", gap: 10 }}>
       <span
         style={{
-          color: senderName ? senderColor(senderName) : "var(--accent)",
+          color: color ?? "var(--accent)",
           fontSize: 11,
           fontWeight: 600,
           flexShrink: 0,
