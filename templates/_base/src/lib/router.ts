@@ -124,19 +124,32 @@ export function createRouter(options: {
 
     const messages = buffer.messages.splice(0);
 
-    // Group by channel for header summary
+    // Group by channel URI for header summary
     const channelCounts = new Map<string, number>();
     for (const msg of messages) {
-      const label = msg.channelName
-        ? `#${msg.channelName}${msg.serverName ? ` in ${msg.serverName}` : ""}`
-        : (msg.channel ?? "unknown");
-      channelCounts.set(label, (channelCounts.get(label) ?? 0) + 1);
+      const uri = msg.channel ?? "unknown";
+      channelCounts.set(uri, (channelCounts.get(uri) ?? 0) + 1);
     }
-    const summary = [...channelCounts.entries()].map(([ch, n]) => `${n} from ${ch}`).join(", ");
+    const channelLabels = [...channelCounts.entries()].map(([uri, n]) => {
+      const msg = messages.find((m) => m.channel === uri);
+      const display = msg?.channelName
+        ? `#${msg.channelName}${msg.serverName ? ` in ${msg.serverName}` : ""} (${uri})`
+        : uri;
+      return `${n} from ${display}`;
+    });
+    const summary = channelLabels.join(", ");
 
     const header = `[Batch: ${messages.length} message${messages.length === 1 ? "" : "s"} — ${summary}]`;
+    // Include channel URI per message when batch spans multiple channels
+    const multiChannel = channelCounts.size > 1;
     const body = messages
-      .map((m) => `[${m.sender ?? "unknown"} — ${m.timestamp}]\n${m.text}`)
+      .map((m) => {
+        const prefix =
+          multiChannel && m.channel
+            ? `[${m.sender ?? "unknown"} in ${m.channel} — ${m.timestamp}]`
+            : `[${m.sender ?? "unknown"} — ${m.timestamp}]`;
+        return `${prefix}\n${m.text}`;
+      })
       .join("\n\n");
 
     const content: VoluteContentPart[] = [{ type: "text", text: `${header}\n\n${body}` }];

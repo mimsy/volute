@@ -379,4 +379,50 @@ describe("router", () => {
 
     router.close();
   });
+
+  it("batch header includes channel URI alongside display name", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const configPath = join(dir, "routes.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        rules: [
+          {
+            channel: "discord:*",
+            session: "uri-test",
+            batch: { debounce: 60, triggers: ["flush"] },
+          },
+        ],
+      }),
+    );
+
+    const agent = mockAgentHandler();
+    const router = createRouter({ configPath, agentHandler: agent.resolver });
+
+    // Send with channelName (human-readable) — URI should still appear
+    router.route([{ type: "text", text: "hello" }], {
+      channel: "discord:123",
+      sender: "alice",
+      channelName: "general",
+      serverName: "My Server",
+    });
+    assert.equal(agent.calls.length, 0, "first message should be buffered (no trigger)");
+
+    // Second message triggers flush — both messages delivered together
+    router.route([{ type: "text", text: "flush please" }], {
+      channel: "discord:123",
+      sender: "bob",
+      channelName: "general",
+      serverName: "My Server",
+    });
+
+    assert.equal(agent.calls.length, 1, "trigger should flush both messages");
+    const text = batchText(agent.calls);
+    assert.ok(text.includes("discord:123"), "batch header should include channel URI");
+    assert.ok(text.includes("#general"), "batch header should include channel display name");
+    assert.ok(text.includes("hello"), "should include first message");
+    assert.ok(text.includes("flush"), "should include trigger message");
+
+    router.close();
+  });
 });
