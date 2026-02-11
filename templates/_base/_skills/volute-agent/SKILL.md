@@ -1,6 +1,6 @@
 ---
 name: Volute CLI
-description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the agent server. Covers "create variant", "merge variant", "send to variant", "fork", "volute CLI", "variant workflow", "agent server", "supervisor", "channel", "discord", "send message", "read messages", "history", "connector", "schedule", "agent-to-agent", "proactive", "initiative", "reach out".
+description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the agent server. Covers "create variant", "merge variant", "send to variant", "fork", "volute CLI", "variant workflow", "agent server", "supervisor", "channel", "discord", "send message", "read messages", "history", "connector", "schedule", "agent-to-agent", "proactive", "initiative", "reach out", "conversation", "group chat", "participants", "invite".
 ---
 
 # Self-Management
@@ -27,6 +27,9 @@ You manage yourself through the `volute` CLI. Commands that operate on "your" ag
 | `volute schedule add --cron "..." --message "..."` | Schedule a recurring message to yourself |
 | `volute schedule list` | List your schedules |
 | `volute schedule remove --id <id>` | Remove a schedule |
+| `volute conversation create --participants u1,a1` | Create a group conversation |
+| `volute conversation list` | List your conversations |
+| `volute conversation send <id> "msg"` | Send a message to a conversation |
 
 ## Schedules
 

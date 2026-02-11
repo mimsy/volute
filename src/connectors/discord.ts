@@ -107,6 +107,9 @@ client.on(Events.MessageCreate, async (message) => {
   const channelKey = `discord:${message.channelId}`;
   const channelName = !isDM && "name" in message.channel ? message.channel.name : undefined;
 
+  // Determine participant count: DMs are always 1:1 for bots, guild channels use memberCount
+  const participantCount = isDM ? 2 : message.guild?.memberCount;
+
   const payload: AgentPayload = {
     content,
     channel: channelKey,
@@ -114,7 +117,8 @@ client.on(Events.MessageCreate, async (message) => {
     platform: "Discord",
     ...(isDM ? { isDM: true } : {}),
     ...(channelName ? { channelName } : {}),
-    ...(message.guild?.name ? { guildName: message.guild.name } : {}),
+    ...(message.guild?.name ? { serverName: message.guild.name } : {}),
+    ...(participantCount ? { participantCount } : {}),
   };
 
   if (isFollowedChannel && !isMentioned) {

@@ -17,7 +17,7 @@ type BufferedMessage = {
   sender?: string;
   channel?: string;
   channelName?: string;
-  guildName?: string;
+  serverName?: string;
   timestamp: string;
 };
 
@@ -67,7 +67,7 @@ function formatInviteNotification(
   if (meta.channel) lines.push(`Channel: ${meta.channel}`);
   if (meta.sender) lines.push(`Sender: ${meta.sender}`);
   if (meta.platform) lines.push(`Platform: ${meta.platform}`);
-  if (meta.guildName) lines.push(`Guild: ${meta.guildName}`);
+  if (meta.serverName) lines.push(`Server: ${meta.serverName}`);
   if (meta.channelName) lines.push(`Channel name: ${meta.channelName}`);
   if (meta.participants && meta.participants.length > 0)
     lines.push(`Participants: ${meta.participants.join(", ")}`);
@@ -112,7 +112,7 @@ export function createRouter(options: {
     const channelCounts = new Map<string, number>();
     for (const msg of messages) {
       const label = msg.channelName
-        ? `#${msg.channelName}${msg.guildName ? ` in ${msg.guildName}` : ""}`
+        ? `#${msg.channelName}${msg.serverName ? ` in ${msg.serverName}` : ""}`
         : (msg.channel ?? "unknown");
       channelCounts.set(label, (channelCounts.get(label) ?? 0) + 1);
     }
@@ -234,7 +234,7 @@ export function createRouter(options: {
         sender: meta.sender,
         channel: meta.channel,
         channelName: meta.channelName,
-        guildName: meta.guildName,
+        serverName: meta.serverName,
         timestamp: new Date().toLocaleTimeString("en-US", {
           hour: "numeric",
           minute: "2-digit",

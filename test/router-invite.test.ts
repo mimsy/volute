@@ -214,7 +214,7 @@ describe("router invite gating", () => {
       channel: "discord:general",
       sender: "alice",
       platform: "discord",
-      guildName: "My Server",
+      serverName: "My Server",
       channelName: "general",
       participants: ["alice", "bob", "charlie"],
       participantCount: 4, // 3 others + self
@@ -224,7 +224,7 @@ describe("router invite gating", () => {
     const mainCalls = agentCalls.get("main")!;
     const text = (mainCalls[0].content[0] as { text: string }).text;
     assert.ok(text.includes("Platform: discord"));
-    assert.ok(text.includes("Guild: My Server"));
+    assert.ok(text.includes("Server: My Server"));
     assert.ok(text.includes("alice, bob, charlie"));
     assert.ok(text.includes('"batch": 5'), "should suggest batch mode for group channels");
     assert.ok(text.includes("3 other participants"), "should mention participant count");

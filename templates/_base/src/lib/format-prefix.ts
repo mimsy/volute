@@ -14,7 +14,7 @@ export function formatPrefix(meta: ChannelMeta | undefined, time: string): strin
     sender += " in DM";
   } else if (meta.channelName) {
     sender += ` in #${meta.channelName}`;
-    if (meta.guildName) sender += ` in ${meta.guildName}`;
+    if (meta.serverName) sender += ` in ${meta.serverName}`;
   }
   const parts = [platform, sender].filter(Boolean);
   // Include session name if not the default
