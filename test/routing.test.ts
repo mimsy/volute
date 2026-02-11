@@ -270,14 +270,29 @@ describe("resolveRoute", () => {
 
   // --- Batch ---
 
-  it("includes batch from matching rule", () => {
+  it("normalizes batch number (minutes) to BatchConfig", () => {
     const config: RoutingConfig = {
       rules: [{ channel: "discord:*", session: "discord-feed", batch: 15 }],
       default: "main",
     };
     const r = expectAgent(resolveRoute(config, { channel: "discord:123" }));
-    assert.equal(r.batch, 15);
+    assert.deepEqual(r.batch, { maxWait: 900 }); // 15 * 60
     assert.equal(r.session, "discord-feed");
+  });
+
+  it("passes through BatchConfig object", () => {
+    const config: RoutingConfig = {
+      rules: [
+        {
+          channel: "discord:*",
+          session: "discord-feed",
+          batch: { debounce: 20, maxWait: 120, triggers: ["@bot"] },
+        },
+      ],
+      default: "main",
+    };
+    const r = expectAgent(resolveRoute(config, { channel: "discord:123" }));
+    assert.deepEqual(r.batch, { debounce: 20, maxWait: 120, triggers: ["@bot"] });
   });
 
   it("returns undefined batch for matching rule without batch", () => {
@@ -307,7 +322,7 @@ describe("resolveRoute", () => {
       default: "main",
     };
     const r = expectAgent(resolveRoute(config, { channel: "discord:123" }));
-    assert.equal(r.batch, 5);
+    assert.deepEqual(r.batch, { maxWait: 300 }); // 5 * 60
   });
 
   // --- Mixed destinations ---

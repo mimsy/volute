@@ -1,6 +1,6 @@
 import { formatPrefix } from "./format-prefix.js";
 import { log, logMessage } from "./logger.js";
-import { loadRoutingConfig, resolveRoute } from "./routing.js";
+import { type BatchConfig, loadRoutingConfig, resolveRoute } from "./routing.js";
 import type { ChannelMeta, HandlerResolver, Listener, VoluteContentPart } from "./types.js";
 
 export type Router = {
@@ -23,8 +23,10 @@ type BufferedMessage = {
 
 type BatchBuffer = {
   messages: BufferedMessage[];
-  timer: ReturnType<typeof setInterval>;
+  debounceTimer: ReturnType<typeof setTimeout> | null;
+  maxWaitTimer: ReturnType<typeof setTimeout> | null;
   sessionName: string;
+  config: BatchConfig;
 };
 
 function generateMessageId(): string {
@@ -57,6 +59,12 @@ function sanitizeChannelPath(channel: string): string {
     .slice(0, 100);
 }
 
+/** Check if message text matches any trigger patterns (case-insensitive substring match). */
+function matchesTrigger(text: string, triggers: string[]): boolean {
+  const lower = text.toLowerCase();
+  return triggers.some((t) => lower.includes(t.toLowerCase()));
+}
+
 function formatInviteNotification(
   meta: ChannelMeta,
   filePath: string,
@@ -82,7 +90,9 @@ function formatInviteNotification(
   const suggestedSession = sanitizeChannelPath(meta.channel ?? "unknown");
   const otherCount = (meta.participantCount ?? 1) - 1;
   if (otherCount > 1) {
-    lines.push(`  { "channel": "${meta.channel}", "session": "${suggestedSession}", "batch": 5 }`);
+    lines.push(
+      `  { "channel": "${meta.channel}", "session": "${suggestedSession}", "batch": { "debounce": 20, "maxWait": 120 } }`,
+    );
     lines.push(
       `(batch recommended — ${otherCount} other participants may generate frequent messages)`,
     );
@@ -105,6 +115,12 @@ export function createRouter(options: {
   function flushBatch(key: string) {
     const buffer = batchBuffers.get(key);
     if (!buffer || buffer.messages.length === 0) return;
+
+    // Clear both timers
+    if (buffer.debounceTimer) clearTimeout(buffer.debounceTimer);
+    if (buffer.maxWaitTimer) clearTimeout(buffer.maxWaitTimer);
+    buffer.debounceTimer = null;
+    buffer.maxWaitTimer = null;
 
     const messages = buffer.messages.splice(0);
 
@@ -135,6 +151,30 @@ export function createRouter(options: {
       return;
     }
     log("router", `flushed batch for session ${buffer.sessionName}: ${messages.length} messages`);
+  }
+
+  function scheduleBatchTimers(key: string) {
+    const buffer = batchBuffers.get(key);
+    if (!buffer) return;
+    const { config } = buffer;
+
+    // Reset debounce timer
+    if (buffer.debounceTimer) clearTimeout(buffer.debounceTimer);
+    if (config.debounce != null) {
+      buffer.debounceTimer = setTimeout(() => flushBatch(key), config.debounce * 1000);
+      buffer.debounceTimer.unref();
+    }
+
+    // Start maxWait timer if not already running
+    if (!buffer.maxWaitTimer && config.maxWait != null) {
+      buffer.maxWaitTimer = setTimeout(() => flushBatch(key), config.maxWait * 1000);
+      buffer.maxWaitTimer.unref();
+    }
+
+    // If neither timer is configured, flush immediately (shouldn't happen in practice)
+    if (config.debounce == null && config.maxWait == null) {
+      flushBatch(key);
+    }
   }
 
   function route(
@@ -225,11 +265,16 @@ export function createRouter(options: {
     // Batch mode: buffer the message and return immediate done
     if (resolved.batch != null) {
       const batchKey = `batch:${sessionName}`;
+      const batchConfig = resolved.batch;
 
       if (!batchBuffers.has(batchKey)) {
-        const timer = setInterval(() => flushBatch(batchKey), resolved.batch * 60 * 1000);
-        timer.unref();
-        batchBuffers.set(batchKey, { messages: [], timer, sessionName });
+        batchBuffers.set(batchKey, {
+          messages: [],
+          debounceTimer: null,
+          maxWaitTimer: null,
+          sessionName,
+          config: batchConfig,
+        });
       }
 
       batchBuffers.get(batchKey)!.messages.push({
@@ -243,6 +288,13 @@ export function createRouter(options: {
           minute: "2-digit",
         }),
       });
+
+      // Check triggers — flush immediately if matched
+      if (batchConfig.triggers?.length && matchesTrigger(text, batchConfig.triggers)) {
+        flushBatch(batchKey);
+      } else {
+        scheduleBatchTimers(batchKey);
+      }
 
       queueMicrotask(() => safeListener({ type: "done", messageId }));
       return { messageId, unsubscribe: noop };
@@ -261,7 +313,8 @@ export function createRouter(options: {
 
   function close() {
     for (const [key, buffer] of batchBuffers) {
-      clearInterval(buffer.timer);
+      if (buffer.debounceTimer) clearTimeout(buffer.debounceTimer);
+      if (buffer.maxWaitTimer) clearTimeout(buffer.maxWaitTimer);
       flushBatch(key);
     }
     batchBuffers.clear();

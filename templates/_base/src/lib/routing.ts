@@ -1,12 +1,18 @@
 import { readFileSync } from "node:fs";
 import { log } from "./logger.js";
 
+export type BatchConfig = {
+  debounce?: number; // seconds of quiet before flush
+  maxWait?: number; // max seconds before forced flush
+  triggers?: string[]; // patterns that cause immediate flush
+};
+
 export type RoutingRule = {
   session?: string;
   destination?: "agent" | "file";
   path?: string; // file path for file destination
   interrupt?: boolean; // interrupt in-progress agent turn (default: true for agent)
-  batch?: number; // minutes — buffer messages, flush on timer
+  batch?: number | BatchConfig; // number = minutes (legacy), object = fine-grained control
   channel?: string;
   sender?: string;
   isDM?: boolean; // match on isDM metadata
@@ -20,8 +26,20 @@ export type RoutingConfig = {
 };
 
 export type ResolvedRoute =
-  | { destination: "agent"; session: string; interrupt: boolean; batch?: number; matched: boolean }
+  | {
+      destination: "agent";
+      session: string;
+      interrupt: boolean;
+      batch?: BatchConfig;
+      matched: boolean;
+    }
   | { destination: "file"; path: string; matched: boolean };
+
+/** Normalize batch config: number (minutes) → { maxWait } in seconds. */
+export function normalizeBatch(batch: number | BatchConfig): BatchConfig {
+  if (typeof batch === "number") return { maxWait: batch * 60 };
+  return batch;
+}
 
 export function loadRoutingConfig(configPath: string): RoutingConfig {
   try {
@@ -105,7 +123,7 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
         destination: "agent",
         session: sanitizeSessionName(expandTemplate(rule.session ?? fallback, meta)),
         interrupt: rule.interrupt ?? true,
-        batch: rule.batch,
+        batch: rule.batch != null ? normalizeBatch(rule.batch) : undefined,
         matched: true,
       };
     }
