@@ -1,7 +1,6 @@
 import { userInfo } from "node:os";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { summarizeTool } from "../lib/format-tool.js";
-import { readNdjson } from "../lib/ndjson.js";
 
 export async function run(args: string[]) {
   const name = args[0];
@@ -14,16 +13,11 @@ export async function run(args: string[]) {
 
   const agentSelf = process.env.VOLUTE_AGENT;
   const sender = agentSelf || userInfo().username;
-  const channel = agentSelf ? "agent" : "cli";
 
-  const res = await daemonFetch(`/api/agents/${encodeURIComponent(name)}/message`, {
+  const res = await daemonFetch(`/api/agents/${encodeURIComponent(name)}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      content: [{ type: "text", text: message }],
-      channel,
-      sender,
-    }),
+    body: JSON.stringify({ message, sender }),
   });
 
   if (!res.ok) {
@@ -37,14 +31,38 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  for await (const event of readNdjson(res.body)) {
-    if (event.type === "text") {
-      process.stdout.write(event.content);
-    } else if (event.type === "tool_use") {
-      process.stderr.write(`${summarizeTool(event.name, event.input)}\n`);
-    }
-    if (event.type === "done") {
-      break;
+  // Parse SSE stream
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (!data) continue;
+      let event: Record<string, unknown>;
+      try {
+        event = JSON.parse(data);
+      } catch {
+        continue;
+      }
+      if (event.type === "text") {
+        process.stdout.write(event.content as string);
+      } else if (event.type === "tool_use") {
+        process.stderr.write(`${summarizeTool(event.name as string, event.input)}\n`);
+      }
+      if (event.type === "done") {
+        process.stdout.write("\n");
+        return;
+      }
     }
   }
 

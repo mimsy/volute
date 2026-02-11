@@ -16,14 +16,14 @@ describe("agent_messages", () => {
       const db = await getDb();
       await db.insert(agentMessages).values({
         agent: "test-agent",
-        channel: "cli",
+        channel: "volute:test-conv",
         role: "user",
         sender: "alice",
         content: "Hello agent",
       });
       await db.insert(agentMessages).values({
         agent: "test-agent",
-        channel: "cli",
+        channel: "volute:test-conv",
         role: "assistant",
         content: "Hello alice!",
       });
@@ -51,9 +51,9 @@ describe("agent_messages", () => {
     try {
       const db = await getDb();
       await db.insert(agentMessages).values([
-        { agent: "agent-a", channel: "web", role: "user", content: "msg1" },
-        { agent: "agent-b", channel: "web", role: "user", content: "msg2" },
-        { agent: "agent-a", channel: "cli", role: "assistant", content: "msg3" },
+        { agent: "agent-a", channel: "volute:test-conv", role: "user", content: "msg1" },
+        { agent: "agent-b", channel: "volute:test-conv", role: "user", content: "msg2" },
+        { agent: "agent-a", channel: "volute:test-conv", role: "assistant", content: "msg3" },
       ]);
 
       const rows = await db
@@ -75,9 +75,9 @@ describe("agent_messages", () => {
     try {
       const db = await getDb();
       await db.insert(agentMessages).values([
-        { agent: "agent-a", channel: "web", role: "user", content: "web-msg" },
+        { agent: "agent-a", channel: "volute:test-conv", role: "user", content: "web-msg" },
         { agent: "agent-a", channel: "discord", role: "user", content: "discord-msg" },
-        { agent: "agent-a", channel: "web", role: "assistant", content: "web-reply" },
+        { agent: "agent-a", channel: "volute:test-conv", role: "assistant", content: "web-reply" },
       ]);
 
       const rows = await db
@@ -100,7 +100,7 @@ describe("agent_messages", () => {
       for (let i = 1; i <= 5; i++) {
         await db.insert(agentMessages).values({
           agent: "agent-page",
-          channel: "cli",
+          channel: "volute:test-conv",
           role: "user",
           content: `msg-${i}`,
         });

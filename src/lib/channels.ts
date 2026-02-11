@@ -17,7 +17,6 @@ export type ChannelProvider = {
 
 export const CHANNELS: Record<string, ChannelProvider> = {
   volute: { name: "volute", displayName: "Volute", showToolCalls: true, driver: volute },
-  web: { name: "web", displayName: "Web UI", showToolCalls: true },
   discord: {
     name: "discord",
     displayName: "Discord",
@@ -36,13 +35,11 @@ export const CHANNELS: Record<string, ChannelProvider> = {
     showToolCalls: false,
     driver: telegram,
   },
-  cli: { name: "cli", displayName: "CLI", showToolCalls: true },
-  agent: { name: "agent", displayName: "Agent", showToolCalls: true },
   system: { name: "system", displayName: "System", showToolCalls: false },
 };
 
 export function getChannelProvider(channelUri?: string): ChannelProvider {
-  if (!channelUri) return CHANNELS.web;
+  if (!channelUri) return CHANNELS.volute;
   const platform = channelUri.split(":")[0];
   return (
     CHANNELS[platform] ?? {

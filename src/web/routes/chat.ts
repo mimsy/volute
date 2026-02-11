@@ -21,6 +21,7 @@ import type { AuthEnv } from "../middleware/auth.js";
 const chatSchema = z.object({
   message: z.string().optional(),
   conversationId: z.string().optional(),
+  sender: z.string().optional(),
   images: z
     .array(
       z.object({
@@ -175,6 +176,9 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   const user = c.get("user");
   const agentUser = await getOrCreateAgentUser(baseName);
 
+  // Daemon token callers can override the sender name
+  const senderName = user.id === 0 && body.sender ? body.sender : user.username;
+
   // Resolve or create conversation
   let conversationId = body.conversationId;
   if (conversationId) {
@@ -184,10 +188,23 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     }
   } else {
     const title = body.message ? body.message.slice(0, 80) : "Image message";
+    // If sender is a registered agent, include them as a participant
+    const participantIds: number[] = [];
+    if (user.id !== 0) {
+      participantIds.push(user.id);
+    } else if (body.sender) {
+      // Check if sender is an agent — if so, add their agent user as participant
+      const senderAgent = findAgent(body.sender);
+      if (senderAgent) {
+        const senderAgentUser = await getOrCreateAgentUser(body.sender);
+        participantIds.push(senderAgentUser.id);
+      }
+    }
+    participantIds.push(agentUser.id);
     const conv = await createConversation(baseName, "volute", {
       userId: user.id !== 0 ? user.id : undefined,
       title,
-      participantIds: user.id !== 0 ? [user.id, agentUser.id] : [agentUser.id],
+      participantIds,
     });
     conversationId = conv.id;
   }
@@ -206,7 +223,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   }
 
   // Save user message
-  await addMessage(conversationId, "user", user.username, contentBlocks);
+  await addMessage(conversationId, "user", senderName, contentBlocks);
 
   // Find all agent participants for fan-out
   const participants = await getParticipants(conversationId);
@@ -220,7 +237,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
       agent: ap.username,
       channel,
       role: "user",
-      sender: user.username,
+      sender: senderName,
       content: body.message ?? "[image]",
     });
   }
@@ -252,7 +269,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   const payload = JSON.stringify({
     content: contentBlocks,
     channel,
-    sender: user.username,
+    sender: senderName,
     participants: participantNames,
     participantCount: participants.length,
     isDM,

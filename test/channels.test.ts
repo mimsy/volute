@@ -5,24 +5,21 @@ import { CHANNELS, getChannelDriver, getChannelProvider } from "../src/lib/chann
 describe("channels", () => {
   it("CHANNELS has expected entries", () => {
     assert.ok(CHANNELS.volute);
-    assert.ok(CHANNELS.web);
     assert.ok(CHANNELS.discord);
     assert.ok(CHANNELS.slack);
     assert.ok(CHANNELS.telegram);
-    assert.ok(CHANNELS.cli);
-    assert.ok(CHANNELS.agent);
     assert.ok(CHANNELS.system);
-    assert.equal(Object.keys(CHANNELS).length, 8);
+    assert.equal(Object.keys(CHANNELS).length, 5);
   });
 
-  it("getChannelProvider with no arg returns web config", () => {
+  it("getChannelProvider with no arg returns volute config", () => {
     const config = getChannelProvider();
-    assert.equal(config.name, "web");
+    assert.equal(config.name, "volute");
   });
 
-  it("getChannelProvider with web URI returns web config", () => {
-    const config = getChannelProvider("web:123");
-    assert.equal(config.name, "web");
+  it("getChannelProvider with volute URI returns volute config", () => {
+    const config = getChannelProvider("volute:abc-123");
+    assert.equal(config.name, "volute");
     assert.equal(config.showToolCalls, true);
   });
 
@@ -46,17 +43,18 @@ describe("channels", () => {
     assert.equal(config.showToolCalls, false);
   });
 
-  it("getChannelProvider with cli URI returns cli config", () => {
-    const config = getChannelProvider("cli:789");
-    assert.equal(config.name, "cli");
-    assert.equal(config.showToolCalls, true);
-  });
-
   it("getChannelProvider with unknown platform auto-generates config", () => {
     const config = getChannelProvider("matrix:foo");
     assert.equal(config.name, "matrix");
     assert.equal(config.displayName, "matrix");
     assert.equal(config.showToolCalls, false);
+  });
+
+  it("getChannelDriver returns driver for volute", () => {
+    const driver = getChannelDriver("volute");
+    assert.ok(driver);
+    assert.equal(typeof driver.read, "function");
+    assert.equal(typeof driver.send, "function");
   });
 
   it("getChannelDriver returns driver for discord", () => {
@@ -85,8 +83,8 @@ describe("channels", () => {
     assert.equal(driver, null);
   });
 
-  it("getChannelDriver returns null for platforms without drivers", () => {
-    const driver = getChannelDriver("web");
+  it("getChannelDriver returns null for system (no driver)", () => {
+    const driver = getChannelDriver("system");
     assert.equal(driver, null);
   });
 
