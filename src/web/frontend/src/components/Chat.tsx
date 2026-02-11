@@ -40,6 +40,21 @@ export function Chat({
   // Track current assistant blocks being built
   const currentRef = useRef<ContentBlock[]>([]);
 
+  const scrollToBottom = useCallback((force?: boolean) => {
+    requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (!el) return;
+      if (force) {
+        el.scrollTop = el.scrollHeight;
+        return;
+      }
+      const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+      if (isNearBottom) {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+  }, []);
+
   // Load existing messages when conversationId changes
   useEffect(() => {
     convIdRef.current = conversationId;
@@ -55,9 +70,10 @@ export function Chat({
           senderName: m.sender_name ?? undefined,
         }));
         setEntries(loaded);
+        scrollToBottom(true);
       })
       .catch(() => {});
-  }, [name, conversationId]);
+  }, [name, conversationId, scrollToBottom]);
 
   const onEvent = useCallback(
     (event: VoluteEvent) => {
@@ -98,21 +114,12 @@ export function Chat({
         };
         return next;
       });
+      scrollToBottom();
     },
-    [onConversationId],
+    [onConversationId, scrollToBottom],
   );
 
   const { send, stop } = useChatStream(name, onEvent);
-
-  // Auto-scroll on new content
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
-    if (isNearBottom) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, []);
 
   const handleSend = async () => {
     const message = input.trim();
@@ -146,6 +153,7 @@ export function Chat({
       { role: "assistant", blocks: [] },
     ]);
     setStreaming(true);
+    scrollToBottom(true);
 
     try {
       await send(message, convIdRef.current ?? undefined, images.length > 0 ? images : undefined);
