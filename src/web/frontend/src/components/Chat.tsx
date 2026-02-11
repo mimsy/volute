@@ -133,12 +133,11 @@ export function Chat({
         });
       } else if (event.type === "done") {
         setStreaming(false);
-        // Re-fetch messages to pick up secondary agent responses in group chats
+        return;
+      } else if (event.type === "sync") {
+        // All responses (including forwarded) are persisted — re-fetch
         const cid = convIdRef.current;
-        if (cid) {
-          // Small delay to let secondary agent responses persist
-          setTimeout(() => loadMessages(cid), 500);
-        }
+        if (cid) loadMessages(cid);
         return;
       }
 

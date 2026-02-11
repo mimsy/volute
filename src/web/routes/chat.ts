@@ -194,20 +194,22 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   // Save user message
   await addMessage(conversationId, "user", user.username, contentBlocks);
 
-  // Record in agent_messages
-  const db = await getDb();
-  await db.insert(agentMessages).values({
-    agent: baseName,
-    channel,
-    role: "user",
-    sender: user.username,
-    content: body.message ?? "[image]",
-  });
-
   // Find all agent participants for fan-out
   const participants = await getParticipants(conversationId);
   const agentParticipants = participants.filter((p) => p.userType === "agent");
   const participantNames = participants.map((p) => p.username);
+
+  // Record in agent_messages for all agent participants
+  const db = await getDb();
+  for (const ap of agentParticipants) {
+    await db.insert(agentMessages).values({
+      agent: ap.username,
+      channel,
+      role: "user",
+      sender: user.username,
+      content: body.message ?? "[image]",
+    });
+  }
 
   // Resolve ports for each agent participant
   const agentTargets: { name: string; port: number }[] = [];
@@ -363,7 +365,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
           .map((r) => r.value),
       ];
 
-      // Forward each agent's response to every other agent (fire-and-forget)
+      // Forward each agent's response to every other agent
       const forwardPromises: Promise<void>[] = [];
       for (const result of allResults) {
         if (result.content.length === 0) continue;
@@ -382,8 +384,11 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
           );
         }
       }
-      Promise.allSettled(forwardPromises).catch(() => {});
+      await Promise.allSettled(forwardPromises);
     }
+
+    // Signal frontend that all responses (including forwarded) are persisted
+    await stream.writeSSE({ data: JSON.stringify({ type: "sync" }) });
   });
 });
 

@@ -25,7 +25,8 @@ export type VoluteEvent =
   | { type: "tool_use"; name: string; input: unknown }
   | { type: "tool_result"; output: string; is_error?: boolean }
   | { type: "meta"; conversationId: string; senderName?: string }
-  | { type: "done" };
+  | { type: "done" }
+  | { type: "sync" };
 
 export type Variant = {
   name: string;
