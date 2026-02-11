@@ -31,16 +31,16 @@ const chatSchema = z.object({
     .optional(),
 });
 
-/** Consume an agent's ndjson response and persist it as a conversation message. */
+/** Consume an agent's ndjson response and persist it as a conversation message. Returns collected content. */
 async function consumeAndPersist(
   res: Response,
   conversationId: string,
   agentName: string,
   channel: string,
-): Promise<void> {
+): Promise<ContentBlock[]> {
   if (!res.body) {
     console.warn(`[chat] no response body from ${agentName}`);
-    return;
+    return [];
   }
   const assistantContent: ContentBlock[] = [];
   for await (const event of readNdjson(res.body)) {
@@ -59,7 +59,7 @@ async function consumeAndPersist(
     }
     if (event.type === "done") break;
   }
-  if (assistantContent.length === 0) return;
+  if (assistantContent.length === 0) return [];
 
   // Persist to both tables independently so one failure doesn't block the other
   try {
@@ -92,6 +92,45 @@ async function consumeAndPersist(
     }
   } catch (err) {
     console.error(`[chat] failed to persist agent_message from ${agentName}:`, err);
+  }
+  return assistantContent;
+}
+
+/** Forward an agent's response to another agent and consume+persist their reply. */
+async function forwardAndPersist(
+  content: ContentBlock[],
+  senderName: string,
+  target: { name: string; port: number },
+  conversationId: string,
+  channel: string,
+  participantNames: string[],
+  participantCount: number,
+): Promise<void> {
+  const textBlocks = content.filter((b): b is { type: "text"; text: string } => b.type === "text");
+  if (textBlocks.length === 0) return;
+
+  const payload = JSON.stringify({
+    content: textBlocks,
+    channel,
+    sender: senderName,
+    participants: participantNames,
+    participantCount,
+    isDM: false,
+  });
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${target.port}/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: payload,
+    });
+    if (res.ok && res.body) {
+      await consumeAndPersist(res, conversationId, target.name, channel);
+    } else {
+      console.error(`[chat] forwarding to ${target.name}: status ${res.status}`);
+    }
+  } catch (err) {
+    console.error(`[chat] forward to ${target.name} failed:`, err);
   }
 }
 
@@ -192,9 +231,9 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     return c.json({ error: "No running agents in this conversation" }, 409);
   }
 
-  // Send to all agents
+  // Send same message to all agents
   const isDM = participants.length === 2;
-  const messagePayload = JSON.stringify({
+  const payload = JSON.stringify({
     content: contentBlocks,
     channel,
     sender: user.username,
@@ -203,16 +242,16 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     isDM,
   });
 
-  const responses: { name: string; res: Response }[] = [];
+  const responses: { name: string; port: number; res: Response }[] = [];
   for (const target of agentTargets) {
     try {
       const res = await fetch(`http://127.0.0.1:${target.port}/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: messagePayload,
+        body: payload,
       });
       if (res.ok && res.body) {
-        responses.push({ name: target.name, res });
+        responses.push({ name: target.name, port: target.port, res });
       } else {
         console.error(`[chat] agent ${target.name} responded with ${res.status}`);
       }
@@ -225,16 +264,15 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     return c.json({ error: "No agents reachable" }, 502);
   }
 
-  // Stream the first agent's response to the client; consume others in background
+  // Stream the first agent's response to the client; consume others concurrently
   const primary = responses[0];
   const secondary = responses.slice(1);
 
-  // Fire-and-forget for secondary agents
-  for (const s of secondary) {
-    consumeAndPersist(s.res, conversationId!, s.name, channel).catch((err) => {
-      console.error(`[chat] failed to persist response from ${s.name}:`, err);
-    });
-  }
+  // Start consuming secondary responses immediately (runs concurrently with primary streaming)
+  const secondaryPromises = secondary.map(async (s) => {
+    const content = await consumeAndPersist(s.res, conversationId!, s.name, channel);
+    return { name: s.name, port: s.port, content };
+  });
 
   return streamSSE(c, async (stream) => {
     await stream.writeSSE({
@@ -277,7 +315,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
       });
     }
 
-    // Persist collected content (even if partial due to error)
+    // Persist primary response
     if (assistantContent.length > 0) {
       try {
         await addMessage(conversationId!, "assistant", primary.name, assistantContent);
@@ -304,6 +342,47 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
       } catch (err) {
         console.error(`[chat] failed to persist response from ${primary.name}:`, err);
       }
+    }
+
+    // In group chats, forward each agent's response to all other agents
+    if (agentTargets.length > 1) {
+      const secondaryResults = await Promise.allSettled(secondaryPromises);
+
+      const allResults: { name: string; port: number; content: ContentBlock[] }[] = [
+        { name: primary.name, port: primary.port, content: assistantContent },
+        ...secondaryResults
+          .filter(
+            (
+              r,
+            ): r is PromiseFulfilledResult<{
+              name: string;
+              port: number;
+              content: ContentBlock[];
+            }> => r.status === "fulfilled",
+          )
+          .map((r) => r.value),
+      ];
+
+      // Forward each agent's response to every other agent (fire-and-forget)
+      const forwardPromises: Promise<void>[] = [];
+      for (const result of allResults) {
+        if (result.content.length === 0) continue;
+        const targets = agentTargets.filter((t) => t.name !== result.name);
+        for (const target of targets) {
+          forwardPromises.push(
+            forwardAndPersist(
+              result.content,
+              result.name,
+              target,
+              conversationId!,
+              channel,
+              participantNames,
+              participants.length,
+            ),
+          );
+        }
+      }
+      Promise.allSettled(forwardPromises).catch(() => {});
     }
   });
 });
