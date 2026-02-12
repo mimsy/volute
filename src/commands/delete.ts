@@ -2,6 +2,7 @@ import { existsSync, rmSync } from "node:fs";
 import { deleteAgentUser } from "../lib/isolation.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { agentDir, findAgent, removeAgent } from "../lib/registry.js";
+import { resolveAgentName } from "../lib/resolve-agent-name.js";
 import { removeAllVariants } from "../lib/variants.js";
 
 export async function run(args: string[]) {
@@ -9,11 +10,7 @@ export async function run(args: string[]) {
     force: { type: "boolean" },
   });
 
-  const name = positional[0];
-  if (!name) {
-    console.error("Usage: volute agent delete <name> [--force]");
-    process.exit(1);
-  }
+  const name = resolveAgentName({ agent: positional[0] });
 
   const entry = findAgent(name);
   if (!entry) {

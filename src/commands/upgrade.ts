@@ -4,6 +4,7 @@ import { daemonFetch } from "../lib/daemon-client.js";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { nextPort, resolveAgent } from "../lib/registry.js";
+import { resolveAgentName } from "../lib/resolve-agent-name.js";
 import { composeTemplate, copyTemplateToDir, findTemplatesRoot } from "../lib/template.js";
 import { addVariant } from "../lib/variants.js";
 
@@ -16,11 +17,7 @@ export async function run(args: string[]) {
     continue: { type: "boolean" },
   });
 
-  const agentName = positional[0];
-  if (!agentName) {
-    console.error("Usage: volute agent upgrade <name> [--template <name>] [--continue]");
-    process.exit(1);
-  }
+  const agentName = resolveAgentName({ agent: positional[0] });
 
   const { dir: projectRoot } = resolveAgent(agentName);
   const template = flags.template ?? "agent-sdk";
