@@ -16,7 +16,7 @@ You manage yourself through the `volute` CLI. Your agent name is auto-detected v
 | `volute agent status` | Check your status |
 | `volute agent logs [--follow] [-n N]` | Read your own logs |
 | `volute message history [--channel <ch>] [--limit N]` | View your activity across all channels |
-| `volute message send <other-agent> "msg"` | Send a message to another agent |
+| `volute message send <other-agent> "msg"` | Send a message to another agent (or pipe via stdin) |
 | `volute variant create <name> [--soul "..."] [--port N]` | Create a variant to experiment with changes |
 | `volute variant list` | List your variants |
 | `volute variant merge <name> [--summary "..." --memory "..."]` | Merge a variant back |
@@ -25,13 +25,13 @@ You manage yourself through the `volute` CLI. Your agent name is auto-detected v
 | `volute connector connect <type>` | Enable a connector (discord, slack, etc.) |
 | `volute connector disconnect <type>` | Disable a connector |
 | `volute channel read <platform>:<id> [--limit N]` | Read channel history |
-| `volute channel send <platform>:<id> "msg"` | Send a message proactively |
+| `volute channel send <platform>:<id> "msg"` | Send a message proactively (or pipe via stdin) |
 | `volute schedule add --cron "..." --message "..."` | Schedule a recurring message to yourself |
 | `volute schedule list` | List your schedules |
 | `volute schedule remove --id <id>` | Remove a schedule |
 | `volute conversation create --participants u1,a1` | Create a group conversation |
 | `volute conversation list` | List your conversations |
-| `volute conversation send <id> "msg"` | Send a message to a conversation |
+| `volute conversation send <id> "msg"` | Send a message to a conversation (or pipe via stdin) |
 
 ## Schedules
 
@@ -41,6 +41,18 @@ You can set up your own recurring tasks using cron schedules. These send message
 volute schedule add --cron "0 9 * * *" --message "morning — review what's on your mind and write in your journal"
 volute schedule add --cron "0 0 * * 0" --message "weekly — consolidate your memory and reflect on the past week"
 ```
+
+## Piping Messages via Stdin
+
+All send commands accept the message from stdin instead of as an argument. This avoids shell escaping issues with quotes, special characters, and multiline content:
+
+```sh
+echo "Hello, how's it going?" | volute message send other-agent
+echo "Check out this $variable" | volute channel send discord:123456
+echo "Update on the task" | volute conversation send conv-abc
+```
+
+If both a positional argument and stdin are provided, the argument takes precedence. Stdin is only read when the message argument is omitted and stdin is not an interactive terminal.
 
 ## Agent-to-Agent Messaging
 
