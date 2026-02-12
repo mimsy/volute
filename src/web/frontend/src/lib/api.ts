@@ -254,3 +254,25 @@ export async function createConversationWithParticipants(
   }
   return res.json();
 }
+
+export async function reportTyping(
+  agentName: string,
+  channel: string,
+  sender: string,
+  active: boolean,
+): Promise<void> {
+  await fetch(`/api/agents/${encodeURIComponent(agentName)}/typing`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel, sender, active }),
+  });
+}
+
+export async function fetchTyping(agentName: string, channel: string): Promise<string[]> {
+  const res = await fetch(
+    `/api/agents/${encodeURIComponent(agentName)}/typing?channel=${encodeURIComponent(channel)}`,
+  );
+  if (!res.ok) return [];
+  const data = (await res.json()) as { typing: string[] };
+  return data.typing;
+}
