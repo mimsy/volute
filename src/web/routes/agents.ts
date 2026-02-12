@@ -291,9 +291,9 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    // Enrich payload with currently-typing senders
+    // Enrich payload with currently-typing senders (exclude the receiving agent)
     const typingMap = getTypingMap();
-    const currentlyTyping = typingMap.get(channel);
+    const currentlyTyping = typingMap.get(channel).filter((s) => s !== baseName);
     let forwardBody = body;
     if (parsed && currentlyTyping.length > 0) {
       parsed.typing = currentlyTyping;
