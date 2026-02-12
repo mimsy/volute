@@ -1,12 +1,9 @@
 import { daemonFetch } from "../lib/daemon-client.js";
 import { resolveAgent } from "../lib/registry.js";
+import { resolveAgentName } from "../lib/resolve-agent-name.js";
 
 export async function run(args: string[]) {
-  const name = args[0];
-  if (!name) {
-    console.error("Usage: volute agent stop <name>");
-    process.exit(1);
-  }
+  const name = resolveAgentName({ agent: args[0] });
 
   resolveAgent(name); // Validate agent exists
 

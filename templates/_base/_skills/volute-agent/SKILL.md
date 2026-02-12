@@ -5,12 +5,14 @@ description: This skill should be used when working with the volute CLI, underst
 
 # Self-Management
 
-You manage yourself through the `volute` CLI. Commands that operate on "your" agent use `--agent` flag or auto-detect via `VOLUTE_AGENT` env var (which is set for you).
+You manage yourself through the `volute` CLI. Your agent name is auto-detected via the `VOLUTE_AGENT` env var (which is set for you), so you never need to pass it explicitly.
 
 ## Commands
 
 | Command | Purpose |
 |---------|---------|
+| `volute agent start` | Start your server |
+| `volute agent stop` | Stop your server |
 | `volute agent status` | Check your status |
 | `volute agent logs [--follow] [-n N]` | Read your own logs |
 | `volute message history [--channel <ch>] [--limit N]` | View your activity across all channels |
