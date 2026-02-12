@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import {
   addAgent,
+  daemonLoopback,
   nextPort,
   readRegistry,
   removeAgent,
@@ -60,5 +61,33 @@ describe("registry", () => {
 
   it("addAgent throws on invalid name", () => {
     assert.throws(() => addAgent("../evil", 4100), /Agent name must/);
+  });
+});
+
+describe("daemonLoopback", () => {
+  const original = process.env.VOLUTE_DAEMON_HOSTNAME;
+  afterEach(() => {
+    if (original === undefined) delete process.env.VOLUTE_DAEMON_HOSTNAME;
+    else process.env.VOLUTE_DAEMON_HOSTNAME = original;
+  });
+
+  it("returns 127.0.0.1 when hostname is 0.0.0.0", () => {
+    process.env.VOLUTE_DAEMON_HOSTNAME = "0.0.0.0";
+    assert.equal(daemonLoopback(), "127.0.0.1");
+  });
+
+  it("returns [::1] when hostname is ::", () => {
+    process.env.VOLUTE_DAEMON_HOSTNAME = "::";
+    assert.equal(daemonLoopback(), "[::1]");
+  });
+
+  it("returns 127.0.0.1 when hostname is unset", () => {
+    delete process.env.VOLUTE_DAEMON_HOSTNAME;
+    assert.equal(daemonLoopback(), "127.0.0.1");
+  });
+
+  it("returns the hostname as-is for specific addresses", () => {
+    process.env.VOLUTE_DAEMON_HOSTNAME = "192.168.1.10";
+    assert.equal(daemonLoopback(), "192.168.1.10");
   });
 });
