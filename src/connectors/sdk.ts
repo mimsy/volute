@@ -141,6 +141,19 @@ export function onShutdown(cleanup: () => void | Promise<void>): void {
   process.on("SIGTERM", handler);
 }
 
+export function reportTyping(
+  env: ConnectorEnv,
+  channel: string,
+  sender: string,
+  active: boolean,
+): void {
+  fetch(`${env.baseUrl}/typing`, {
+    method: "POST",
+    headers: getHeaders(env),
+    body: JSON.stringify({ channel, sender, active }),
+  }).catch(() => {});
+}
+
 export async function fireAndForget(env: ConnectorEnv, payload: AgentPayload): Promise<void> {
   try {
     const res = await fetch(`${env.baseUrl}/message`, {
