@@ -1,13 +1,15 @@
 import { userInfo } from "node:os";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { summarizeTool } from "../lib/format-tool.js";
+import { readStdin } from "../lib/read-stdin.js";
 
 export async function run(args: string[]) {
   const name = args[0];
-  const message = args[1];
+  const message = args[1] ?? (await readStdin());
 
   if (!name || !message) {
     console.error('Usage: volute message send <name> "<message>"');
+    console.error('       echo "message" | volute message send <name>');
     process.exit(1);
   }
 

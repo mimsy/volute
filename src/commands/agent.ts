@@ -17,9 +17,14 @@ export async function run(args: string[]) {
     case "list":
       await import("./status.js").then((m) => m.run(args.slice(1)));
       break;
-    case "status":
-      await import("./status.js").then((m) => m.run(args.slice(1)));
+    case "status": {
+      const rest = args.slice(1);
+      if (!rest[0] && process.env.VOLUTE_AGENT) {
+        rest.unshift(process.env.VOLUTE_AGENT);
+      }
+      await import("./status.js").then((m) => m.run(rest));
       break;
+    }
     case "logs": {
       // Transform positional name to --agent flag for compatibility
       const rest = args.slice(1);
@@ -55,7 +60,7 @@ function transformAgentFlag(args: string[]): string[] {
 function printUsage() {
   console.log(`Usage:
   volute agent create <name> [--template <name>]
-  volute agent start [name]
+  volute agent start <name>
   volute agent stop [name]
   volute agent delete [name] [--force]
   volute agent list
@@ -64,5 +69,5 @@ function printUsage() {
   volute agent upgrade [name] [--template <name>] [--continue]
   volute agent import <path> [--name <name>] [--session <path>] [--template <name>]
 
-Agent name can be omitted if VOLUTE_AGENT is set.`);
+Agent name can be omitted (where shown as [name]) if VOLUTE_AGENT is set.`);
 }

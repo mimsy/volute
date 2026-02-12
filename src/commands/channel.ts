@@ -1,6 +1,7 @@
 import { getChannelDriver } from "../lib/channels.js";
 import { loadMergedEnv } from "../lib/env.js";
 import { parseArgs } from "../lib/parse-args.js";
+import { readStdin } from "../lib/read-stdin.js";
 import { resolveAgent } from "../lib/registry.js";
 import { resolveAgentName } from "../lib/resolve-agent-name.js";
 
@@ -28,7 +29,8 @@ export async function run(args: string[]) {
 function printUsage() {
   console.log(`Usage:
   volute channel read <channel-uri> [--limit N] [--agent <name>]
-  volute channel send <channel-uri> "<message>" [--agent <name>]`);
+  volute channel send <channel-uri> "<message>" [--agent <name>]
+  echo "message" | volute channel send <channel-uri> [--agent <name>]`);
 }
 
 async function readChannel(args: string[]) {
@@ -65,9 +67,10 @@ async function sendChannel(args: string[]) {
   });
 
   const uri = positional[0];
-  const message = positional[1];
+  const message = positional[1] ?? (await readStdin());
   if (!uri || !message) {
     console.error('Usage: volute channel send <channel-uri> "<message>" [--agent <name>]');
+    console.error('       echo "message" | volute channel send <channel-uri> [--agent <name>]');
     process.exit(1);
   }
 

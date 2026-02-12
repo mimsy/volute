@@ -2,6 +2,7 @@ import { userInfo } from "node:os";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { summarizeTool } from "../lib/format-tool.js";
 import { parseArgs } from "../lib/parse-args.js";
+import { readStdin } from "../lib/read-stdin.js";
 import { resolveAgentName } from "../lib/resolve-agent-name.js";
 
 export async function run(args: string[]) {
@@ -32,7 +33,8 @@ function printUsage() {
   console.log(`Usage:
   volute conversation create --participants user1,agent1 [--title "..."] [--agent <name>]
   volute conversation list [--agent <name>]
-  volute conversation send <id> "<message>" [--agent <name>]`);
+  volute conversation send <id> "<message>" [--agent <name>]
+  echo "message" | volute conversation send <id> [--agent <name>]`);
 }
 
 async function createConversation(args: string[]) {
@@ -105,9 +107,10 @@ async function sendToConversation(args: string[]) {
   });
 
   const conversationId = positional[0];
-  const message = positional[1];
+  const message = positional[1] ?? (await readStdin());
   if (!conversationId || !message) {
     console.error('Usage: volute conversation send <id> "<message>" [--agent <name>]');
+    console.error('       echo "message" | volute conversation send <id> [--agent <name>]');
     process.exit(1);
   }
 

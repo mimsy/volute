@@ -15,7 +15,7 @@ type AgentInfo = {
 };
 
 export async function run(args: string[]) {
-  const name = args[0] || process.env.VOLUTE_AGENT;
+  const name = args[0];
 
   if (!name) {
     // List all agents

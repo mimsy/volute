@@ -100,7 +100,7 @@ The daemon serves a Hono web server (default port 4200) with a React frontend.
 | `volute agent logs <name> [--follow] [-n N]` | Tail agent logs |
 | `volute agent upgrade <name>` | Upgrade agent to latest template |
 | `volute agent import <path> [--name <name>] [--session <path>]` | Import an OpenClaw workspace |
-| `volute message send <name> "<msg>"` | Send message, stream ndjson response |
+| `volute message send <name> "<msg>"` | Send message, stream ndjson response (or pipe via stdin) |
 | `volute message history [--agent <name>]` | View message history |
 | `volute variant create <name> [--agent] [--soul "..."] [--port N] [--no-start] [--json]` | Create variant (worktree + server) |
 | `volute variant list [--agent] [--json]` | List variants with health status |
@@ -110,13 +110,13 @@ The daemon serves a Hono web server (default port 4200) with a React frontend.
 | `volute connector connect <type> [--agent]` | Enable a connector for an agent |
 | `volute connector disconnect <type> [--agent]` | Disable a connector for an agent |
 | `volute channel read <uri> [--agent]` | Read recent messages from a channel |
-| `volute channel send <uri> "<msg>" [--agent]` | Send a message to a channel |
+| `volute channel send <uri> "<msg>" [--agent]` | Send a message to a channel (or pipe via stdin) |
 | `volute schedule list [--agent]` | List schedules for an agent |
 | `volute schedule add [--agent] --cron "..." --message "..."` | Add a cron schedule |
 | `volute schedule remove [--agent] --id <id>` | Remove a schedule |
 | `volute conversation create --participants u1,a1 [--agent]` | Create a group conversation |
 | `volute conversation list [--agent <name>]` | List conversations for an agent |
-| `volute conversation send <id> "<msg>" [--agent]` | Send a message to a conversation |
+| `volute conversation send <id> "<msg>" [--agent]` | Send a message to a conversation (or pipe via stdin) |
 | `volute up [--port N]` | Start the daemon (default: 4200) |
 | `volute down` | Stop the daemon |
 | `volute setup [--port N] [--host H]` | Install system service with user isolation (Linux, requires root) |
@@ -153,6 +153,7 @@ Agent-scoped commands (`variant`, `connector`, `schedule`, `channel`, `conversat
 | `channels/slack.ts` | Slack channel driver (read/send via Slack API) |
 | `channels/telegram.ts` | Telegram channel driver (send via Bot API; read not supported) |
 | `convert-session.ts` | Converts OpenClaw `session.jsonl` to Claude Agent SDK format |
+| `read-stdin.ts` | Reads piped stdin for send commands (returns undefined if TTY) |
 | `resolve-agent-name.ts` | Resolves agent name from `--agent` flag or `VOLUTE_AGENT` env var |
 | `isolation.ts` | Per-agent Linux user isolation (`VOLUTE_ISOLATION=user`), user/group management, chown |
 

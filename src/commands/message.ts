@@ -22,5 +22,6 @@ export async function run(args: string[]) {
 function printUsage() {
   console.log(`Usage:
   volute message send <name> "<msg>"
+  echo "msg" | volute message send <name>
   volute message history [--agent <name>] [--channel <ch>] [--limit N]`);
 }

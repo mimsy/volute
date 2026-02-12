@@ -19,6 +19,11 @@ For **batched channels** (group chats, high-volume sources), your text response 
 
 To reach out on your own initiative, use `volute channel send <uri> "message"`.
 
+All send commands also accept the message from stdin, which avoids shell escaping issues:
+```sh
+echo "message with 'quotes' and $special chars" | volute channel send <uri>
+```
+
 ## Sessions
 
 Messages are routed to named sessions based on rules in `.config/routes.json`. Each session has its own conversation history. Without config, everything goes to "main". Your session name appears in the message prefix (e.g. `— session: alice —`) unless it's "main".
