@@ -13,6 +13,8 @@ export type VoluteConfig = {
   connectors?: string[];
   schedules?: Schedule[];
   channels?: Record<string, { showToolCalls?: boolean }>;
+  tokenBudget?: number;
+  tokenBudgetPeriodMinutes?: number;
   [key: string]: unknown;
 };
 

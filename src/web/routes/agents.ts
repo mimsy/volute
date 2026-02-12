@@ -12,6 +12,7 @@ import { readNdjson } from "../../lib/ndjson.js";
 import { agentDir, findAgent, readRegistry, removeAgent, voluteHome } from "../../lib/registry.js";
 import { getScheduler } from "../../lib/scheduler.js";
 import { agentMessages } from "../../lib/schema.js";
+import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "../../lib/token-budget.js";
 import { getTypingMap } from "../../lib/typing.js";
 import { checkHealth, findVariant, readVariants, removeAllVariants } from "../../lib/variants.js";
 import { readVoluteConfig } from "../../lib/volute-config.js";
@@ -138,6 +139,14 @@ const app = new Hono<AuthEnv>()
         const dir = agentDir(baseName);
         await getConnectorManager().startConnectors(baseName, dir, entry.port, getDaemonPort());
         getScheduler().loadSchedules(baseName);
+        const config = readVoluteConfig(dir);
+        if (config?.tokenBudget) {
+          getTokenBudget().setBudget(
+            baseName,
+            config.tokenBudget,
+            config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
+          );
+        }
       }
       return c.json({ ok: true });
     } catch (err) {
@@ -174,6 +183,14 @@ const app = new Hono<AuthEnv>()
         const dir = agentDir(baseName);
         await connectorManager.startConnectors(baseName, dir, entry.port, getDaemonPort());
         getScheduler().loadSchedules(baseName);
+        const config = readVoluteConfig(dir);
+        if (config?.tokenBudget) {
+          getTokenBudget().setBudget(
+            baseName,
+            config.tokenBudget,
+            config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
+          );
+        }
       }
       return c.json({ ok: true });
     } catch (err) {
@@ -202,6 +219,7 @@ const app = new Hono<AuthEnv>()
       if (!variantName) {
         await getConnectorManager().stopConnectors(baseName);
         getScheduler().unloadSchedules(baseName);
+        getTokenBudget().removeBudget(baseName);
       }
       await manager.stopAgent(name);
       return c.json({ ok: true });
@@ -222,6 +240,7 @@ const app = new Hono<AuthEnv>()
     const manager = getAgentManager();
     if (manager.isRunning(name)) {
       await getConnectorManager().stopConnectors(name);
+      getTokenBudget().removeBudget(name);
       await manager.stopAgent(name);
     }
 
@@ -291,12 +310,62 @@ const app = new Hono<AuthEnv>()
       }
     }
 
+    // Check token budget before forwarding
+    const budget = getTokenBudget();
+    const budgetStatus = budget.checkBudget(baseName);
+
+    if (budgetStatus === "exceeded") {
+      // Extract text content for the queued summary
+      let textContent = "";
+      if (parsed) {
+        if (typeof parsed.content === "string") {
+          textContent = parsed.content;
+        } else if (Array.isArray(parsed.content)) {
+          textContent = (parsed.content as { type: string; text?: string }[])
+            .filter((p) => p.type === "text" && p.text)
+            .map((p) => p.text)
+            .join("\n");
+        }
+      }
+
+      budget.enqueue(baseName, {
+        channel,
+        sender: (parsed?.sender as string) ?? null,
+        textContent,
+      });
+
+      c.header("Content-Type", "application/x-ndjson");
+      const encoder = new TextEncoder();
+      return stream(c, async (s) => {
+        await s.write(
+          encoder.encode(
+            `${JSON.stringify({ type: "text", content: "[Token budget exceeded — message queued for next period]" })}\n`,
+          ),
+        );
+        await s.write(encoder.encode(`${JSON.stringify({ type: "done" })}\n`));
+      });
+    }
+
     // Enrich payload with currently-typing senders (exclude the receiving agent)
     const typingMap = getTypingMap();
     const currentlyTyping = typingMap.get(channel).filter((s) => s !== baseName);
     let forwardBody = body;
     if (parsed && currentlyTyping.length > 0) {
       parsed.typing = currentlyTyping;
+      forwardBody = JSON.stringify(parsed);
+    }
+
+    // Inject one-time budget warning (triggers once at >=80% per period)
+    if (budgetStatus === "warning" && parsed) {
+      const usage = budget.getUsage(baseName);
+      const pct = usage?.percentUsed ?? 80;
+      const warningText = `\n[System: Token budget is at ${pct}% — conserve tokens to avoid message queuing]`;
+      if (typeof parsed.content === "string") {
+        parsed.content = parsed.content + warningText;
+      } else if (Array.isArray(parsed.content)) {
+        parsed.content = [...parsed.content, { type: "text", text: warningText }];
+      }
+      budget.acknowledgeWarning(baseName);
       forwardBody = JSON.stringify(parsed);
     }
 
@@ -330,6 +399,13 @@ const app = new Hono<AuthEnv>()
         const toolParts: string[] = [];
 
         for await (const event of readNdjson(res.body!)) {
+          // Intercept usage events — record against budget (no-op if unconfigured) and strip from stream
+          if (event.type === "usage") {
+            const input = typeof event.input_tokens === "number" ? event.input_tokens : 0;
+            const output = typeof event.output_tokens === "number" ? event.output_tokens : 0;
+            budget.recordUsage(baseName, input, output);
+            continue;
+          }
           await s.write(encoder.encode(`${JSON.stringify(event)}\n`));
           const part = collectPart(event);
           if (part != null) {
@@ -356,6 +432,14 @@ const app = new Hono<AuthEnv>()
         typingMap.delete(channel, baseName);
       }
     });
+  })
+  // Budget status
+  .get("/:name/budget", async (c) => {
+    const name = c.req.param("name");
+    const [baseName] = name.split("@", 2);
+    const usage = getTokenBudget().getUsage(baseName);
+    if (!usage) return c.json({ error: "No budget configured" }, 404);
+    return c.json(usage);
   })
   // Persist external channel send to agent_messages
   .post("/:name/history", async (c) => {

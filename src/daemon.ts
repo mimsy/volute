@@ -8,7 +8,9 @@ import { initConnectorManager } from "./lib/connector-manager.js";
 import { agentDir, readRegistry, setAgentRunning, voluteHome } from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
 import { getScheduler } from "./lib/scheduler.js";
+import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "./lib/token-budget.js";
 import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
+import { readVoluteConfig } from "./lib/volute-config.js";
 import { cleanExpiredSessions } from "./web/middleware/auth.js";
 import { startServer } from "./web/server.js";
 
@@ -74,6 +76,8 @@ export async function startDaemon(opts: {
   const connectors = initConnectorManager();
   const scheduler = getScheduler();
   scheduler.start(port, token);
+  const tokenBudget = getTokenBudget();
+  tokenBudget.start(port, token);
 
   // Start all agents that were previously running, then their connectors and schedules
   const registry = readRegistry();
@@ -84,6 +88,14 @@ export async function startDaemon(opts: {
       const dir = agentDir(entry.name);
       await connectors.startConnectors(entry.name, dir, entry.port, port);
       scheduler.loadSchedules(entry.name);
+      const config = readVoluteConfig(dir);
+      if (config?.tokenBudget) {
+        tokenBudget.setBudget(
+          entry.name,
+          config.tokenBudget,
+          config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
+        );
+      }
     } catch (err) {
       console.error(`[daemon] failed to start agent ${entry.name}:`, err);
       setAgentRunning(entry.name, false);
@@ -134,6 +146,7 @@ export async function startDaemon(opts: {
     console.error("[daemon] shutting down...");
     scheduler.stop();
     scheduler.saveState();
+    tokenBudget.stop();
     await connectors.stopAll();
     await manager.stopAll();
     manager.clearCrashAttempts();
