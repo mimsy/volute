@@ -12,6 +12,7 @@ import files from "./routes/files.js";
 import logs from "./routes/logs.js";
 import schedules from "./routes/schedules.js";
 import system from "./routes/system.js";
+import typing from "./routes/typing.js";
 import update from "./routes/update.js";
 import variants from "./routes/variants.js";
 import chat from "./routes/volute/chat.js";
@@ -88,6 +89,7 @@ const routes = app
   .route("/api/agents", connectors)
   .route("/api/agents", schedules)
   .route("/api/agents", logs)
+  .route("/api/agents", typing)
   .route("/api/agents", variants)
   .route("/api/agents", files)
   .route("/api/agents", conversations)
