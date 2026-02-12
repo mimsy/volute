@@ -8,6 +8,7 @@ import {
   type ContentBlock,
   createConversation,
   deleteConversation,
+  findDMConversation,
   getMessages,
   getParticipants,
   isParticipant,
@@ -204,6 +205,68 @@ describe("conversation participants", () => {
 
       await deleteConversation(conv.id);
     } finally {
+      await db.delete(users).where(eq(users.id, agentUser.id));
+    }
+  });
+
+  it("findDMConversation finds existing 2-person conversation", async () => {
+    const db = await getDb();
+    const agentUser = await getOrCreateAgentUser("dm-test-agent");
+    const [humanUser] = await db
+      .insert(users)
+      .values({ username: "dm-test-human", password_hash: "!test", role: "user" })
+      .returning({ id: users.id });
+
+    try {
+      const conv = await createConversation("dm-test-agent", "volute", {
+        participantIds: [humanUser.id, agentUser.id],
+      });
+
+      const found = await findDMConversation("dm-test-agent", [humanUser.id, agentUser.id]);
+      assert.equal(found, conv.id);
+
+      // Reversed order should also find it
+      const found2 = await findDMConversation("dm-test-agent", [agentUser.id, humanUser.id]);
+      assert.equal(found2, conv.id);
+
+      await deleteConversation(conv.id);
+    } finally {
+      await db.delete(users).where(eq(users.id, humanUser.id));
+      await db.delete(users).where(eq(users.id, agentUser.id));
+    }
+  });
+
+  it("findDMConversation returns null when no match", async () => {
+    const result = await findDMConversation("nonexistent-agent", [999, 998]);
+    assert.equal(result, null);
+  });
+
+  it("findDMConversation ignores 3+ person conversations", async () => {
+    const db = await getDb();
+    const agentUser = await getOrCreateAgentUser("dm-skip-agent");
+    const [user1] = await db
+      .insert(users)
+      .values({ username: "dm-skip-1", password_hash: "!test", role: "user" })
+      .returning({ id: users.id });
+    const [user2] = await db
+      .insert(users)
+      .values({ username: "dm-skip-2", password_hash: "!test", role: "user" })
+      .returning({ id: users.id });
+
+    try {
+      // Create a 3-person conversation
+      const conv = await createConversation("dm-skip-agent", "volute", {
+        participantIds: [user1.id, agentUser.id, user2.id],
+      });
+
+      // Should not find it as a DM between user1 and agent
+      const found = await findDMConversation("dm-skip-agent", [user1.id, agentUser.id]);
+      assert.equal(found, null);
+
+      await deleteConversation(conv.id);
+    } finally {
+      await db.delete(users).where(eq(users.id, user1.id));
+      await db.delete(users).where(eq(users.id, user2.id));
       await db.delete(users).where(eq(users.id, agentUser.id));
     }
   });

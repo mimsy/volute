@@ -35,9 +35,6 @@ switch (command) {
   case "schedule":
     await import("./commands/schedule.js").then((m) => m.run(args));
     break;
-  case "conversation":
-    await import("./commands/conversation.js").then((m) => m.run(args));
-    break;
   case "env":
     await import("./commands/env.js").then((m) => m.run(args));
     break;
@@ -85,14 +82,13 @@ Commands:
 
   volute channel read <uri>               Read recent messages from a channel
   volute channel send <uri> "<msg>"       Send a message to a channel
+  volute channel list [<platform>]        List conversations on a platform
+  volute channel users <platform>         List users on a platform
+  volute channel create <platform> ...    Create a conversation on a platform
 
   volute schedule list                    List schedules for an agent
   volute schedule add ...                 Add a cron schedule
   volute schedule remove ...              Remove a schedule
-
-  volute conversation create ...           Create a group conversation
-  volute conversation list                 List conversations
-  volute conversation send <id> "<msg>"    Send a message to a conversation
 
   volute env <set|get|list|remove>        Manage environment variables
 
@@ -111,7 +107,7 @@ Options:
   --version, -v                           Show version number
   --help, -h                              Show this help message
 
-Agent-scoped commands (variant, connector, schedule, channel, conversation, message history)
+Agent-scoped commands (variant, connector, schedule, channel, message history)
 use --agent <name> or VOLUTE_AGENT env var to identify the agent.`);
     break;
   default:

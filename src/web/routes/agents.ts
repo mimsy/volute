@@ -13,6 +13,7 @@ import { agentDir, findAgent, readRegistry, removeAgent, voluteHome } from "../.
 import { getScheduler } from "../../lib/scheduler.js";
 import { agentMessages } from "../../lib/schema.js";
 import { checkHealth, findVariant, readVariants, removeAllVariants } from "../../lib/variants.js";
+import { readVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 function getDaemonPort(): number | undefined {
@@ -40,25 +41,29 @@ async function getAgentStatus(name: string, port: number) {
     status = health.ok ? "running" : "starting";
   }
 
+  const channelConfig = readVoluteConfig(agentDir(name))?.channels;
   const channels: ChannelStatus[] = [];
 
-  // Volute channel is always available when agent is running
-  channels.push({
-    name: CHANNELS.volute.name,
-    displayName: CHANNELS.volute.displayName,
-    status: status === "running" ? "connected" : "disconnected",
-    showToolCalls: CHANNELS.volute.showToolCalls,
-  });
+  // Built-in channels (e.g. volute)
+  for (const [, provider] of Object.entries(CHANNELS)) {
+    if (!provider.builtIn) continue;
+    channels.push({
+      name: provider.name,
+      displayName: provider.displayName,
+      status: status === "running" ? "connected" : "disconnected",
+      showToolCalls: channelConfig?.[provider.name]?.showToolCalls ?? provider.showToolCalls,
+    });
+  }
 
-  // Check connector status via ConnectorManager
+  // External connectors
   const connectorStatuses = getConnectorManager().getConnectorStatus(name);
   for (const cs of connectorStatuses) {
-    const config = CHANNELS[cs.type];
+    const provider = CHANNELS[cs.type];
     channels.push({
-      name: config?.name ?? cs.type,
-      displayName: config?.displayName ?? cs.type,
+      name: provider?.name ?? cs.type,
+      displayName: provider?.displayName ?? cs.type,
       status: cs.running ? "connected" : "disconnected",
-      showToolCalls: config?.showToolCalls ?? false,
+      showToolCalls: channelConfig?.[cs.type]?.showToolCalls ?? provider?.showToolCalls ?? false,
     });
   }
 
@@ -336,6 +341,38 @@ const app = new Hono<AuthEnv>()
         }
       }
     });
+  })
+  // Persist external channel send to agent_messages
+  .post("/:name/history", async (c) => {
+    const name = c.req.param("name");
+    const [baseName] = name.split("@", 2);
+
+    let body: { channel: string; content: string };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+
+    if (!body.channel || !body.content) {
+      return c.json({ error: "channel and content required" }, 400);
+    }
+
+    const db = await getDb();
+    try {
+      await db.insert(agentMessages).values({
+        agent: baseName,
+        channel: body.channel,
+        role: "assistant",
+        sender: baseName,
+        content: body.content,
+      });
+    } catch (err) {
+      console.error(`[daemon] failed to persist external send for ${baseName}:`, err);
+      return c.json({ error: "Failed to persist" }, 500);
+    }
+
+    return c.json({ ok: true });
   })
   // Get message history
   .get("/:name/history/channels", async (c) => {

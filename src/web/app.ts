@@ -7,16 +7,16 @@ import { checkForUpdateCached, getCurrentVersion } from "../lib/update-check.js"
 import { authMiddleware } from "./middleware/auth.js";
 import agents from "./routes/agents.js";
 import auth from "./routes/auth.js";
-import chat from "./routes/chat.js";
 import connectors from "./routes/connectors.js";
-import conversations from "./routes/conversations.js";
 import files from "./routes/files.js";
 import logs from "./routes/logs.js";
 import schedules from "./routes/schedules.js";
 import system from "./routes/system.js";
 import update from "./routes/update.js";
-import userConversations from "./routes/user-conversations.js";
 import variants from "./routes/variants.js";
+import chat from "./routes/volute/chat.js";
+import conversations from "./routes/volute/conversations.js";
+import userConversations from "./routes/volute/user-conversations.js";
 
 const app = new Hono();
 

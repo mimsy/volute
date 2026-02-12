@@ -1,17 +1,19 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
-import { getOrCreateAgentUser, getUser, getUserByUsername } from "../../lib/auth.js";
+import { getOrCreateAgentUser, getUser, getUserByUsername } from "../../../lib/auth.js";
 import {
   createConversation,
   deleteConversationForUser,
+  findDMConversation,
+  getConversation,
   getMessages,
   getParticipants,
   isParticipantOrOwner,
   listConversationsForUser,
-} from "../../lib/conversations.js";
-import { findAgent } from "../../lib/registry.js";
-import type { AuthEnv } from "../middleware/auth.js";
+} from "../../../lib/conversations.js";
+import { findAgent } from "../../../lib/registry.js";
+import type { AuthEnv } from "../../middleware/auth.js";
 
 const createConvSchema = z.object({
   title: z.string().optional(),
@@ -78,10 +80,22 @@ const app = new Hono<AuthEnv>()
       if (!u) return c.json({ error: `User ${id} not found` }, 400);
     }
 
+    const participantIds = [...participantSet];
+
+    // DM reuse: if exactly 2 participants, return existing conversation if found
+    if (participantIds.length === 2) {
+      const existingId = await findDMConversation(name, participantIds as [number, number]);
+      if (existingId) {
+        const conv = await getConversation(existingId);
+        if (conv) return c.json(conv);
+        console.warn(`[conversations] DM conversation ${existingId} found but not retrievable`);
+      }
+    }
+
     const conv = await createConversation(name, "volute", {
       userId: user.id !== 0 ? user.id : undefined,
       title: body.title,
-      participantIds: [...participantSet],
+      participantIds,
     });
 
     return c.json(conv, 201);
@@ -98,7 +112,8 @@ const app = new Hono<AuthEnv>()
   .get("/:name/conversations/:id/participants", async (c) => {
     const id = c.req.param("id");
     const user = c.get("user");
-    if (!(await isParticipantOrOwner(id, user.id))) {
+    // Daemon token (id: 0) can access any conversation
+    if (user.id !== 0 && !(await isParticipantOrOwner(id, user.id))) {
       return c.json({ error: "Conversation not found" }, 404);
     }
     const participants = await getParticipants(id);
