@@ -42,6 +42,16 @@ describe("readStdin", () => {
     assert.equal(stdout, "line1\nline2");
   });
 
+  it("trims trailing \\r\\n", async () => {
+    const child = execAsync("node", ["--import", "tsx", "-e", script], {
+      cwd: process.cwd(),
+    });
+    child.child.stdin!.write("hello\r\n");
+    child.child.stdin!.end();
+    const { stdout } = await child;
+    assert.equal(stdout, "hello");
+  });
+
   it("returns undefined for empty stdin", async () => {
     const child = execAsync("node", ["--import", "tsx", "-e", script], {
       cwd: process.cwd(),
