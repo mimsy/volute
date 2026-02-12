@@ -1,16 +1,16 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
-import { getOrCreateAgentUser, getUserByUsername } from "../../lib/auth.js";
+import { getOrCreateAgentUser, getUserByUsername } from "../../../lib/auth.js";
 import {
   createConversation,
   deleteConversationForUser,
   getMessages,
   isParticipantOrOwner,
   listConversationsWithParticipants,
-} from "../../lib/conversations.js";
-import { findAgent } from "../../lib/registry.js";
-import { type AuthEnv, authMiddleware } from "../middleware/auth.js";
+} from "../../../lib/conversations.js";
+import { findAgent } from "../../../lib/registry.js";
+import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
 
 const createSchema = z.object({
   title: z.string().optional(),

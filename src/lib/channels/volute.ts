@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import type { VoluteEvent } from "../../types.js";
 import type { ChannelConversation, ChannelUser } from "../channels.js";
 import { voluteHome } from "../registry.js";
 
@@ -61,11 +62,11 @@ export async function read(
     .join("\n");
 }
 
-export async function send(
+export async function* sendAndStream(
   env: Record<string, string>,
   conversationId: string,
   message: string,
-): Promise<void> {
+): AsyncGenerator<VoluteEvent> {
   const agentName = env.VOLUTE_AGENT;
   if (!agentName) throw new Error("VOLUTE_AGENT not set");
 
@@ -79,19 +80,52 @@ export async function send(
   const res = await fetch(`${url}/api/agents/${encodeURIComponent(agentName)}/chat`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ message, conversationId, sender: agentName }),
+    body: JSON.stringify({ message, conversationId, sender: env.VOLUTE_SENDER ?? agentName }),
   });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error ?? `Failed to send: ${res.status}`);
   }
-  // Drain the response body so the request completes
-  if (res.body) {
-    const reader = res.body.getReader();
+  if (!res.body) return;
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
     while (true) {
-      const { done } = await reader.read();
+      const { done, value } = await reader.read();
       if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (!data) continue;
+        try {
+          const event = JSON.parse(data) as VoluteEvent;
+          yield event;
+          if (event.type === "done") return;
+        } catch (err) {
+          console.error(`[volute] failed to parse SSE data: ${data}`, err);
+        }
+      }
     }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+export async function send(
+  env: Record<string, string>,
+  conversationId: string,
+  message: string,
+): Promise<void> {
+  for await (const event of sendAndStream(env, conversationId, message)) {
+    if (event.type === "done") break;
   }
 }
 
@@ -130,8 +164,8 @@ export async function listConversations(
         const participants = (await pRes.json()) as unknown[];
         participantCount = participants.length;
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error(`[volute] failed to fetch participants for ${conv.id}:`, err);
     }
     results.push({
       id: `volute:${conv.id}`,
@@ -143,7 +177,7 @@ export async function listConversations(
   return results;
 }
 
-export async function listUsers(env: Record<string, string>): Promise<ChannelUser[]> {
+export async function listUsers(_env: Record<string, string>): Promise<ChannelUser[]> {
   const { url, token } = getDaemonConfig();
   const headers: Record<string, string> = { Origin: url };
   if (token) headers.Authorization = `Bearer ${token}`;

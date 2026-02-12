@@ -1,3 +1,4 @@
+import type { VoluteEvent } from "../types.js";
 import * as discord from "./channels/discord.js";
 import * as slack from "./channels/slack.js";
 import * as telegram from "./channels/telegram.js";
@@ -19,6 +20,11 @@ export type ChannelUser = {
 export type ChannelDriver = {
   read(env: Record<string, string>, channelId: string, limit: number): Promise<string>;
   send(env: Record<string, string>, channelId: string, message: string): Promise<void>;
+  sendAndStream?(
+    env: Record<string, string>,
+    channelId: string,
+    message: string,
+  ): AsyncIterable<VoluteEvent>;
   listConversations?(env: Record<string, string>): Promise<ChannelConversation[]>;
   listUsers?(env: Record<string, string>): Promise<ChannelUser[]>;
   createConversation?(
@@ -32,11 +38,18 @@ export type ChannelProvider = {
   name: string;
   displayName: string;
   showToolCalls: boolean;
+  builtIn?: boolean;
   driver?: ChannelDriver;
 };
 
 export const CHANNELS: Record<string, ChannelProvider> = {
-  volute: { name: "volute", displayName: "Volute", showToolCalls: true, driver: volute },
+  volute: {
+    name: "volute",
+    displayName: "Volute",
+    showToolCalls: true,
+    builtIn: true,
+    driver: volute,
+  },
   discord: {
     name: "discord",
     displayName: "Discord",

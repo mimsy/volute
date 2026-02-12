@@ -4,7 +4,7 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
-import { getOrCreateAgentUser } from "../../lib/auth.js";
+import { getOrCreateAgentUser } from "../../../lib/auth.js";
 import {
   addMessage,
   type ContentBlock,
@@ -12,13 +12,11 @@ import {
   findDMConversation,
   getParticipants,
   isParticipantOrOwner,
-} from "../../lib/conversations.js";
-import { getDb } from "../../lib/db.js";
-import { readNdjson } from "../../lib/ndjson.js";
-import { daemonLoopback, findAgent, voluteHome } from "../../lib/registry.js";
-import { agentMessages } from "../../lib/schema.js";
-import type { VoluteEvent } from "../../types.js";
-import type { AuthEnv } from "../middleware/auth.js";
+} from "../../../lib/conversations.js";
+import { readNdjson } from "../../../lib/ndjson.js";
+import { daemonLoopback, findAgent, voluteHome } from "../../../lib/registry.js";
+import type { VoluteEvent } from "../../../types.js";
+import type { AuthEnv } from "../../middleware/auth.js";
 
 const chatSchema = z.object({
   message: z.string().optional(),
@@ -99,11 +97,6 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   const entry = findAgent(baseName);
   if (!entry) return c.json({ error: "Agent not found" }, 404);
 
-  const { getAgentManager } = await import("../../lib/agent-manager.js");
-  if (!getAgentManager().isRunning(name)) {
-    return c.json({ error: "Agent is not running" }, 409);
-  }
-
   const body = c.req.valid("json");
   if (!body.message && (!body.images || body.images.length === 0)) {
     return c.json({ error: "message or images required" }, 400);
@@ -172,34 +165,13 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
   // Save user message
   await addMessage(conversationId, "user", senderName, contentBlocks);
 
-  // Persist sender outgoing to agent_messages if sender is a registered agent
-  if (findAgent(senderName)) {
-    const textContent = contentBlocks
-      .filter((b): b is { type: "text"; text: string } => b.type === "text" && "text" in b)
-      .map((b) => b.text)
-      .join("\n");
-    if (textContent) {
-      try {
-        const db = await getDb();
-        await db.insert(agentMessages).values({
-          agent: senderName,
-          channel: `volute:${conversationId}`,
-          role: "assistant",
-          sender: senderName,
-          content: textContent,
-        });
-      } catch (err) {
-        console.error(`[chat] failed to persist sender outgoing for ${senderName}:`, err);
-      }
-    }
-  }
-
   // Find all agent participants for fan-out
   const participants = await getParticipants(conversationId);
   const agentParticipants = participants.filter((p) => p.userType === "agent");
   const participantNames = participants.map((p) => p.username);
 
   // Find running agent participants (excluding the sender)
+  const { getAgentManager } = await import("../../../lib/agent-manager.js");
   const manager = getAgentManager();
   const runningAgents = agentParticipants
     .map((ap) => {
@@ -208,10 +180,6 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
       return manager.isRunning(agentKey) ? ap.username : null;
     })
     .filter((n): n is string => n !== null && n !== senderName);
-
-  if (runningAgents.length === 0) {
-    return c.json({ error: "No running agents in this conversation" }, 409);
-  }
 
   // Build payload for daemon /message route
   const isDM = participants.length === 2;
@@ -246,8 +214,14 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     }
   }
 
+  // No running agents — message is persisted, return empty stream
   if (responses.length === 0) {
-    return c.json({ error: "No agents reachable" }, 502);
+    return streamSSE(c, async (stream) => {
+      await stream.writeSSE({
+        data: JSON.stringify({ type: "meta", conversationId }),
+      });
+      await stream.writeSSE({ data: JSON.stringify({ type: "sync" }) });
+    });
   }
 
   // Stream the first agent's response to the client; consume others concurrently

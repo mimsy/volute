@@ -96,18 +96,15 @@ async function sendChannel(args: string[]) {
   try {
     await driver.send(env, channelId, message);
 
-    // Persist outgoing message to agent_messages for non-volute platforms
-    // (volute channel sends already persist via the /chat route)
-    if (platform !== "volute") {
-      try {
-        await daemonFetch(`/api/agents/${encodeURIComponent(agentName)}/history`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ channel: `${platform}:${channelId}`, content: message }),
-        });
-      } catch {
-        // Non-fatal: message was sent, just not persisted
-      }
+    // Persist outgoing message to agent_messages
+    try {
+      await daemonFetch(`/api/agents/${encodeURIComponent(agentName)}/history`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: `${platform}:${channelId}`, content: message }),
+      });
+    } catch (err) {
+      console.error(`Failed to persist to history: ${err instanceof Error ? err.message : err}`);
     }
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));

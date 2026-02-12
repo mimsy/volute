@@ -13,6 +13,7 @@ import { agentDir, findAgent, readRegistry, removeAgent, voluteHome } from "../.
 import { getScheduler } from "../../lib/scheduler.js";
 import { agentMessages } from "../../lib/schema.js";
 import { checkHealth, findVariant, readVariants, removeAllVariants } from "../../lib/variants.js";
+import { readVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 function getDaemonPort(): number | undefined {
@@ -40,25 +41,29 @@ async function getAgentStatus(name: string, port: number) {
     status = health.ok ? "running" : "starting";
   }
 
+  const channelConfig = readVoluteConfig(agentDir(name))?.channels;
   const channels: ChannelStatus[] = [];
 
-  // Volute channel is always available when agent is running
-  channels.push({
-    name: CHANNELS.volute.name,
-    displayName: CHANNELS.volute.displayName,
-    status: status === "running" ? "connected" : "disconnected",
-    showToolCalls: CHANNELS.volute.showToolCalls,
-  });
+  // Built-in channels (e.g. volute)
+  for (const [, provider] of Object.entries(CHANNELS)) {
+    if (!provider.builtIn) continue;
+    channels.push({
+      name: provider.name,
+      displayName: provider.displayName,
+      status: status === "running" ? "connected" : "disconnected",
+      showToolCalls: channelConfig?.[provider.name]?.showToolCalls ?? provider.showToolCalls,
+    });
+  }
 
-  // Check connector status via ConnectorManager
+  // External connectors
   const connectorStatuses = getConnectorManager().getConnectorStatus(name);
   for (const cs of connectorStatuses) {
-    const config = CHANNELS[cs.type];
+    const provider = CHANNELS[cs.type];
     channels.push({
-      name: config?.name ?? cs.type,
-      displayName: config?.displayName ?? cs.type,
+      name: provider?.name ?? cs.type,
+      displayName: provider?.displayName ?? cs.type,
       status: cs.running ? "connected" : "disconnected",
-      showToolCalls: config?.showToolCalls ?? false,
+      showToolCalls: channelConfig?.[cs.type]?.showToolCalls ?? provider?.showToolCalls ?? false,
     });
   }
 

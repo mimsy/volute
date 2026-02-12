@@ -18,7 +18,7 @@ import {
   users,
 } from "../src/lib/schema.js";
 import { authMiddleware, createSession, deleteSession } from "../src/web/middleware/auth.js";
-import conversationsRoute from "../src/web/routes/conversations.js";
+import conversationsRoute from "../src/web/routes/volute/conversations.js";
 
 let sessionId: string;
 let userId: number;
