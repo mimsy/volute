@@ -291,12 +291,21 @@ const app = new Hono<AuthEnv>()
       }
     }
 
+    // Enrich payload with currently-typing senders
+    const typingMap = getTypingMap();
+    const currentlyTyping = typingMap.get(channel);
+    let forwardBody = body;
+    if (parsed && currentlyTyping.length > 0) {
+      parsed.typing = currentlyTyping;
+      forwardBody = JSON.stringify(parsed);
+    }
+
     let res: Response;
     try {
       res = await fetch(`http://127.0.0.1:${port}/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body,
+        body: forwardBody,
       });
     } catch (err) {
       console.error(`[daemon] agent ${name} unreachable on port ${port}:`, err);
@@ -314,7 +323,6 @@ const app = new Hono<AuthEnv>()
     // Stream NDJSON response back, accumulating text for persistence
     c.header("Content-Type", "application/x-ndjson");
     const encoder = new TextEncoder();
-    const typingMap = getTypingMap();
     typingMap.set(channel, baseName, { persistent: true });
     return stream(c, async (s) => {
       try {

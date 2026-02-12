@@ -184,6 +184,8 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
 
   // Build payload for daemon /message route
   const isDM = participants.length === 2;
+  const typingMap = getTypingMap();
+  const currentlyTyping = typingMap.get(channel);
   const payload = JSON.stringify({
     content: contentBlocks,
     channel,
@@ -191,10 +193,10 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     participants: participantNames,
     participantCount: participants.length,
     isDM,
+    ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
   });
 
   // Mark all running agents as typing
-  const typingMap = getTypingMap();
   for (const agentName of runningAgents) {
     typingMap.set(channel, agentName, { persistent: true });
   }
