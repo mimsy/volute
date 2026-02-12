@@ -151,7 +151,9 @@ export function reportTyping(
     method: "POST",
     headers: getHeaders(env),
     body: JSON.stringify({ channel, sender, active }),
-  }).catch(() => {});
+  }).catch((err) => {
+    console.warn(`[typing] failed to report for ${sender} on ${channel}: ${err}`);
+  });
 }
 
 export async function fireAndForget(env: ConnectorEnv, payload: AgentPayload): Promise<void> {

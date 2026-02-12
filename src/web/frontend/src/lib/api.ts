@@ -255,24 +255,24 @@ export async function createConversationWithParticipants(
   return res.json();
 }
 
-export async function reportTyping(
+export function reportTyping(
   agentName: string,
   channel: string,
   sender: string,
   active: boolean,
-): Promise<void> {
-  await fetch(`/api/agents/${encodeURIComponent(agentName)}/typing`, {
+): void {
+  fetch(`/api/agents/${encodeURIComponent(agentName)}/typing`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ channel, sender, active }),
-  });
+  }).catch(() => {});
 }
 
 export async function fetchTyping(agentName: string, channel: string): Promise<string[]> {
   const res = await fetch(
     `/api/agents/${encodeURIComponent(agentName)}/typing?channel=${encodeURIComponent(channel)}`,
   );
-  if (!res.ok) return [];
+  if (!res.ok) throw new Error(`Failed to fetch typing (${res.status})`);
   const data = (await res.json()) as { typing: string[] };
   return data.typing;
 }

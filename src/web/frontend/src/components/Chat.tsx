@@ -129,7 +129,7 @@ export function Chat({
   useEffect(() => {
     return () => {
       if (convIdRef.current && name && username && typingTimerRef.current > 0) {
-        reportTyping(name, `volute:${convIdRef.current}`, username, false).catch(() => {});
+        reportTyping(name, `volute:${convIdRef.current}`, username, false);
       }
     };
   }, [name, username]);
@@ -238,7 +238,7 @@ export function Chat({
     setStreaming(true);
     // Clear user's typing indicator
     if (convIdRef.current && name && username) {
-      reportTyping(name, `volute:${convIdRef.current}`, username, false).catch(() => {});
+      reportTyping(name, `volute:${convIdRef.current}`, username, false);
       typingTimerRef.current = 0;
     }
     scrollToBottom(true);
@@ -450,7 +450,7 @@ export function Chat({
               const now = Date.now();
               if (now - typingTimerRef.current > 3000) {
                 typingTimerRef.current = now;
-                reportTyping(name, `volute:${convIdRef.current}`, username, true).catch(() => {});
+                reportTyping(name, `volute:${convIdRef.current}`, username, true);
               }
             }
           }}
@@ -482,7 +482,7 @@ export function Chat({
           onBlur={(e) => {
             e.currentTarget.style.borderColor = "var(--border)";
             if (convIdRef.current && name && username && typingTimerRef.current > 0) {
-              reportTyping(name, `volute:${convIdRef.current}`, username, false).catch(() => {});
+              reportTyping(name, `volute:${convIdRef.current}`, username, false);
               typingTimerRef.current = 0;
             }
           }}
