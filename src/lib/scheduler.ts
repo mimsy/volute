@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "./json-state.js";
-import { agentDir, findAgent, voluteHome } from "./registry.js";
+import { agentDir, daemonLoopback, findAgent, voluteHome } from "./registry.js";
 import { readVoluteConfig, type Schedule } from "./volute-config.js";
 
 export class Scheduler {
@@ -111,7 +111,7 @@ export class Scheduler {
       let res: Response;
       if (this.daemonPort && this.daemonToken) {
         // Route through daemon so messages are recorded in agent_messages
-        const daemonUrl = `http://127.0.0.1:${this.daemonPort}`;
+        const daemonUrl = `http://${daemonLoopback()}:${this.daemonPort}`;
         res = await fetch(`${daemonUrl}/api/agents/${encodeURIComponent(agentName)}/message`, {
           method: "POST",
           headers: {

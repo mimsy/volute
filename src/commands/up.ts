@@ -4,6 +4,19 @@ import { dirname, resolve } from "node:path";
 import { parseArgs } from "../lib/parse-args.js";
 import { voluteHome } from "../lib/registry.js";
 
+type GlobalConfig = { hostname?: string; port?: number };
+
+export function readGlobalConfig(): GlobalConfig {
+  const configPath = resolve(voluteHome(), "config.json");
+  if (!existsSync(configPath)) return {};
+  try {
+    return JSON.parse(readFileSync(configPath, "utf-8"));
+  } catch (err) {
+    console.error(`Invalid config file ${configPath}: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
+}
+
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
     port: { type: "number" },
@@ -11,8 +24,10 @@ export async function run(args: string[]) {
     foreground: { type: "boolean" },
   });
 
-  const port = flags.port ?? 4200;
-  const hostname = flags.host ?? "127.0.0.1";
+  // Read defaults from config file, CLI flags override
+  const config = readGlobalConfig();
+  const port = flags.port ?? config.port ?? 4200;
+  const hostname = flags.host ?? config.hostname ?? "127.0.0.1";
   const home = voluteHome();
   const pidPath = resolve(home, "daemon.pid");
 

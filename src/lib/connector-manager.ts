@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { checkMissingEnvVars, getConnectorDef } from "./connector-defs.js";
 import { loadMergedEnv } from "./env.js";
 import { applyIsolation } from "./isolation.js";
-import { agentDir as getAgentDir, voluteHome } from "./registry.js";
+import { daemonLoopback, agentDir as getAgentDir, voluteHome } from "./registry.js";
 import { RotatingLog } from "./rotating-log.js";
 import { readVoluteConfig } from "./volute-config.js";
 
@@ -148,7 +148,7 @@ export class ConnectorManager {
         VOLUTE_AGENT_DIR: agentDir,
         ...(daemonPort
           ? {
-              VOLUTE_DAEMON_URL: `http://127.0.0.1:${daemonPort}`,
+              VOLUTE_DAEMON_URL: `http://${daemonLoopback()}:${daemonPort}`,
               VOLUTE_DAEMON_TOKEN: process.env.VOLUTE_DAEMON_TOKEN,
             }
           : {}),
