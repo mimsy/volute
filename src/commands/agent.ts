@@ -11,6 +11,9 @@ export async function run(args: string[]) {
     case "stop":
       await import("./stop.js").then((m) => m.run(args.slice(1)));
       break;
+    case "restart":
+      await import("./restart.js").then((m) => m.run(args.slice(1)));
+      break;
     case "delete":
       await import("./delete.js").then((m) => m.run(args.slice(1)));
       break;
@@ -62,6 +65,7 @@ function printUsage() {
   volute agent create <name> [--template <name>]
   volute agent start <name>
   volute agent stop [name]
+  volute agent restart [name]
   volute agent delete [name] [--force]
   volute agent list
   volute agent status [name]

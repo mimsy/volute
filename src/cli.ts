@@ -44,6 +44,9 @@ switch (command) {
   case "down":
     await import("./commands/down.js").then((m) => m.run(args));
     break;
+  case "restart":
+    await import("./commands/restart.js").then((m) => m.run(args));
+    break;
   case "setup":
     await import("./commands/setup.js").then((m) => m.run(args));
     break;
@@ -62,6 +65,7 @@ Commands:
   volute agent create <name>              Create a new agent
   volute agent start <name>               Start an agent (daemonized)
   volute agent stop <name>                Stop an agent
+  volute agent restart <name>             Restart an agent
   volute agent delete <name> [--force]    Delete an agent (--force removes files)
   volute agent list                       List all agents
   volute agent status <name>              Check agent status
