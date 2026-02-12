@@ -12,6 +12,7 @@ import { readNdjson } from "../../lib/ndjson.js";
 import { agentDir, findAgent, readRegistry, removeAgent, voluteHome } from "../../lib/registry.js";
 import { getScheduler } from "../../lib/scheduler.js";
 import { agentMessages } from "../../lib/schema.js";
+import { getTypingMap } from "../../lib/typing.js";
 import { checkHealth, findVariant, readVariants, removeAllVariants } from "../../lib/variants.js";
 import { readVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
@@ -313,32 +314,38 @@ const app = new Hono<AuthEnv>()
     // Stream NDJSON response back, accumulating text for persistence
     c.header("Content-Type", "application/x-ndjson");
     const encoder = new TextEncoder();
+    const typingMap = getTypingMap();
+    typingMap.set(channel, baseName, { persistent: true });
     return stream(c, async (s) => {
-      const textParts: string[] = [];
-      const toolParts: string[] = [];
+      try {
+        const textParts: string[] = [];
+        const toolParts: string[] = [];
 
-      for await (const event of readNdjson(res.body!)) {
-        await s.write(encoder.encode(`${JSON.stringify(event)}\n`));
-        const part = collectPart(event);
-        if (part != null) {
-          if (event.type === "tool_use") toolParts.push(part);
-          else textParts.push(part);
+        for await (const event of readNdjson(res.body!)) {
+          await s.write(encoder.encode(`${JSON.stringify(event)}\n`));
+          const part = collectPart(event);
+          if (part != null) {
+            if (event.type === "tool_use") toolParts.push(part);
+            else textParts.push(part);
+          }
         }
-      }
 
-      const content = [textParts.join(""), ...toolParts].filter(Boolean).join("\n");
-      if (content) {
-        try {
-          await db.insert(agentMessages).values({
-            agent: baseName,
-            channel,
-            role: "assistant",
-            sender: baseName,
-            content,
-          });
-        } catch (err) {
-          console.error(`[daemon] failed to persist assistant response for ${baseName}:`, err);
+        const content = [textParts.join(""), ...toolParts].filter(Boolean).join("\n");
+        if (content) {
+          try {
+            await db.insert(agentMessages).values({
+              agent: baseName,
+              channel,
+              role: "assistant",
+              sender: baseName,
+              content,
+            });
+          } catch (err) {
+            console.error(`[daemon] failed to persist assistant response for ${baseName}:`, err);
+          }
         }
+      } finally {
+        typingMap.delete(channel, baseName);
       }
     });
   })

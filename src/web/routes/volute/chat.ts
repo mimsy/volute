@@ -15,6 +15,7 @@ import {
 } from "../../../lib/conversations.js";
 import { readNdjson } from "../../../lib/ndjson.js";
 import { daemonLoopback, findAgent, voluteHome } from "../../../lib/registry.js";
+import { getTypingMap } from "../../../lib/typing.js";
 import type { VoluteEvent } from "../../../types.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
@@ -192,6 +193,12 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     isDM,
   });
 
+  // Mark all running agents as typing
+  const typingMap = getTypingMap();
+  for (const agentName of runningAgents) {
+    typingMap.set(channel, agentName, { persistent: true });
+  }
+
   // Send to all agents via daemon /message route
   const responses: { name: string; res: Response }[] = [];
   for (const agentName of runningAgents) {
@@ -208,9 +215,11 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
         console.error(
           `[chat] agent ${agentName} responded with ${res.status}: ${errorBody.slice(0, 500)}`,
         );
+        typingMap.delete(channel, agentName);
       }
     } catch (err) {
       console.error(`[chat] agent ${agentName} unreachable via daemon:`, err);
+      typingMap.delete(channel, agentName);
     }
   }
 
@@ -251,6 +260,8 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
       });
     }
 
+    typingMap.delete(channel, primary.name);
+
     // Persist primary response to conversation messages (daemon already handled agent_messages)
     if (assistantContent.length > 0) {
       try {
@@ -269,6 +280,10 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
           (results[i] as PromiseRejectedResult).reason,
         );
       }
+    }
+
+    for (const s of secondary) {
+      typingMap.delete(channel, s.name);
     }
 
     // Signal frontend that all responses are persisted
