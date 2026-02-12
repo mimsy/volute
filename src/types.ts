@@ -31,6 +31,7 @@ export type VoluteEvent = { messageId?: string } & (
   | { type: "image"; media_type: string; data: string }
   | { type: "tool_use"; name: string; input: unknown }
   | { type: "tool_result"; output: string; is_error?: boolean }
+  | { type: "usage"; input_tokens: number; output_tokens: number }
   | { type: "done" }
 );
 

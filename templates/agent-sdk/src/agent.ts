@@ -182,6 +182,14 @@ export function createAgent(options: {
       }
       if (msg.type === "result") {
         log("agent", `session "${session.name}": turn done`);
+        const result = msg as { usage?: { input_tokens?: number; output_tokens?: number } };
+        if (result.usage) {
+          broadcastToSession(session, {
+            type: "usage",
+            input_tokens: result.usage.input_tokens ?? 0,
+            output_tokens: result.usage.output_tokens ?? 0,
+          });
+        }
         broadcastToSession(session, { type: "done" });
         session.currentMessageId = undefined;
         if (identityReload.needsReload()) {
