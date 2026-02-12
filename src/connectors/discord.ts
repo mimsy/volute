@@ -14,6 +14,7 @@ import {
   handleAgentMessage,
   loadEnv,
   loadFollowedChannels,
+  reportTyping,
   splitMessage,
 } from "./sdk.js";
 
@@ -37,6 +38,8 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.GuildMessageTyping,
+    GatewayIntentBits.DirectMessageTyping,
   ],
   partials: [Partials.Channel],
 });
@@ -127,6 +130,12 @@ client.on(Events.MessageCreate, async (message) => {
   }
 
   await handleDiscordMessage(message, payload);
+});
+
+client.on(Events.TypingStart, (typing) => {
+  if (typing.user.bot) return;
+  const sender = typing.member?.displayName ?? typing.user.username ?? typing.user.id ?? "unknown";
+  reportTyping(env, `discord:${typing.channel.id}`, sender, true);
 });
 
 async function handleDiscordMessage(message: Message, payload: AgentPayload) {

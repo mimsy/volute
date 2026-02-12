@@ -254,3 +254,25 @@ export async function createConversationWithParticipants(
   }
   return res.json();
 }
+
+export function reportTyping(
+  agentName: string,
+  channel: string,
+  sender: string,
+  active: boolean,
+): void {
+  fetch(`/api/agents/${encodeURIComponent(agentName)}/typing`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel, sender, active }),
+  }).catch(() => {});
+}
+
+export async function fetchTyping(agentName: string, channel: string): Promise<string[]> {
+  const res = await fetch(
+    `/api/agents/${encodeURIComponent(agentName)}/typing?channel=${encodeURIComponent(channel)}`,
+  );
+  if (!res.ok) throw new Error(`Failed to fetch typing (${res.status})`);
+  const data = (await res.json()) as { typing: string[] };
+  return data.typing;
+}

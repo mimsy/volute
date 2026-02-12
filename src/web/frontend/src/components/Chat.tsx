@@ -3,6 +3,8 @@ import {
   type ContentBlock,
   fetchConversationMessages,
   fetchConversationMessagesById,
+  fetchTyping,
+  reportTyping,
   type VoluteEvent,
 } from "../lib/api";
 import { renderMarkdown } from "../lib/marked";
@@ -43,6 +45,8 @@ export function Chat({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const convIdRef = useRef(conversationId);
+  const typingTimerRef = useRef<number>(0);
+  const [typingNames, setTypingNames] = useState<string[]>([]);
 
   // Track current assistant blocks being built
   const currentRef = useRef<ContentBlock[]>([]);
@@ -99,6 +103,36 @@ export function Chat({
     const id = setInterval(() => loadMessages(conversationId), 3000);
     return () => clearInterval(id);
   }, [conversationId, streaming, loadMessages]);
+
+  // Poll typing indicators (skip while streaming — same pattern as message poll)
+  useEffect(() => {
+    if (!conversationId || !name || streaming) return;
+    let cancelled = false;
+    const poll = () => {
+      fetchTyping(name, `volute:${conversationId}`)
+        .then((names) => {
+          if (cancelled) return;
+          // Filter out the current user
+          setTypingNames(names.filter((n) => n !== username));
+        })
+        .catch(() => {});
+    };
+    poll(); // Initial fetch
+    const id = setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [conversationId, name, username, streaming]);
+
+  // Clear typing indicator on unmount
+  useEffect(() => {
+    return () => {
+      if (convIdRef.current && name && username && typingTimerRef.current > 0) {
+        reportTyping(name, `volute:${convIdRef.current}`, username, false);
+      }
+    };
+  }, [name, username]);
 
   const onEvent = useCallback(
     (event: VoluteEvent) => {
@@ -202,6 +236,11 @@ export function Chat({
       { role: "assistant", blocks: [], senderName: name },
     ]);
     setStreaming(true);
+    // Clear user's typing indicator
+    if (convIdRef.current && name && username) {
+      reportTyping(name, `volute:${convIdRef.current}`, username, false);
+      typingTimerRef.current = 0;
+    }
     scrollToBottom(true);
 
     try {
@@ -351,6 +390,22 @@ export function Chat({
         </div>
       )}
 
+      {/* Typing indicator */}
+      {typingNames.length > 0 && (
+        <div
+          style={{
+            padding: "4px 0",
+            fontSize: 12,
+            color: "var(--text-2)",
+            animation: "pulse 1.5s ease infinite",
+          }}
+        >
+          {typingNames.length === 1
+            ? `${typingNames[0]} is typing...`
+            : `${typingNames.join(", ")} are typing...`}
+        </div>
+      )}
+
       {/* Hidden file input */}
       <input
         ref={fileRef}
@@ -388,7 +443,17 @@ export function Chat({
         <textarea
           ref={inputRef}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => {
+            setInput(e.target.value);
+            // Report typing (debounced to every 3s)
+            if (convIdRef.current && name && username) {
+              const now = Date.now();
+              if (now - typingTimerRef.current > 3000) {
+                typingTimerRef.current = now;
+                reportTyping(name, `volute:${convIdRef.current}`, username, true);
+              }
+            }
+          }}
           onKeyDown={handleKeyDown}
           onInput={(e) => {
             const el = e.currentTarget;
@@ -414,7 +479,13 @@ export function Chat({
             transition: "border-color 0.15s",
           }}
           onFocus={(e) => (e.currentTarget.style.borderColor = "var(--border-bright)")}
-          onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+          onBlur={(e) => {
+            e.currentTarget.style.borderColor = "var(--border)";
+            if (convIdRef.current && name && username && typingTimerRef.current > 0) {
+              reportTyping(name, `volute:${convIdRef.current}`, username, false);
+              typingTimerRef.current = 0;
+            }
+          }}
         />
         {streaming ? (
           <button

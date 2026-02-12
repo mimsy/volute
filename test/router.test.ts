@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { createRouter } from "../templates/_base/src/lib/router.js";
 import type {
+  ChannelMeta,
   HandlerMeta,
   HandlerResolver,
   MessageHandler,
@@ -46,7 +47,7 @@ function mockFileHandler(): {
 function waitForDone(
   router: ReturnType<typeof createRouter>,
   content: VoluteContentPart[],
-  meta: { channel?: string; sender?: string },
+  meta: ChannelMeta,
 ): Promise<VoluteEvent[]> {
   return new Promise((resolve) => {
     const events: VoluteEvent[] = [];
@@ -422,6 +423,106 @@ describe("router", () => {
     assert.ok(text.includes("#general"), "batch header should include channel display name");
     assert.ok(text.includes("hello"), "should include first message");
     assert.ok(text.includes("flush"), "should include trigger message");
+
+    router.close();
+  });
+
+  // --- Typing indicators ---
+
+  it("direct dispatch appends typing suffix for single user", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const configPath = join(dir, "routes.json");
+    writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
+
+    const agent = mockAgentHandler();
+    const router = createRouter({ configPath, agentHandler: agent.resolver });
+
+    await waitForDone(router, [{ type: "text", text: "hello" }], {
+      channel: "web",
+      sender: "alice",
+      typing: ["bob"],
+    });
+
+    assert.equal(agent.calls.length, 1);
+    const text = batchText(agent.calls);
+    assert.ok(text.includes("[bob is typing]"), "should show single user typing");
+  });
+
+  it("direct dispatch appends typing suffix for multiple users", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const configPath = join(dir, "routes.json");
+    writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
+
+    const agent = mockAgentHandler();
+    const router = createRouter({ configPath, agentHandler: agent.resolver });
+
+    await waitForDone(router, [{ type: "text", text: "hello" }], {
+      channel: "web",
+      sender: "alice",
+      typing: ["bob", "charlie"],
+    });
+
+    assert.equal(agent.calls.length, 1);
+    const text = batchText(agent.calls);
+    assert.ok(text.includes("[bob, charlie are typing]"), "should show multiple users typing");
+  });
+
+  it("direct dispatch omits typing suffix when no one is typing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const configPath = join(dir, "routes.json");
+    writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
+
+    const agent = mockAgentHandler();
+    const router = createRouter({ configPath, agentHandler: agent.resolver });
+
+    await waitForDone(router, [{ type: "text", text: "hello" }], {
+      channel: "web",
+      sender: "alice",
+      typing: [],
+    });
+
+    assert.equal(agent.calls.length, 1);
+    const text = batchText(agent.calls);
+    assert.ok(!text.includes("typing"), "should not include typing indicator");
+  });
+
+  it("batch mode includes typing from last message", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const configPath = join(dir, "routes.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        rules: [
+          {
+            channel: "discord:*",
+            session: "typing-batch",
+            batch: { debounce: 60, triggers: ["flush"] },
+          },
+        ],
+      }),
+    );
+
+    const agent = mockAgentHandler();
+    const router = createRouter({ configPath, agentHandler: agent.resolver });
+
+    router.route([{ type: "text", text: "msg1" }], {
+      channel: "discord:123",
+      sender: "alice",
+      typing: ["bob"],
+    });
+    router.route([{ type: "text", text: "flush" }], {
+      channel: "discord:123",
+      sender: "bob",
+      typing: ["charlie"],
+    });
+
+    assert.equal(agent.calls.length, 1);
+    const text = batchText(agent.calls);
+    assert.ok(text.includes("[charlie is typing]"), "batch should use typing from last message");
+    assert.ok(
+      !text.includes("[bob is typing]"),
+      "batch should not use typing from earlier messages",
+    );
 
     router.close();
   });

@@ -12,6 +12,7 @@ export type ChannelMeta = {
   sessionName?: string;
   participants?: string[];
   participantCount?: number;
+  typing?: string[];
 };
 
 /** ChannelMeta enriched by the router with dispatch info. */

@@ -15,6 +15,7 @@ import {
 } from "../../../lib/conversations.js";
 import { readNdjson } from "../../../lib/ndjson.js";
 import { daemonLoopback, findAgent, voluteHome } from "../../../lib/registry.js";
+import { getTypingMap } from "../../../lib/typing.js";
 import type { VoluteEvent } from "../../../types.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
@@ -183,6 +184,8 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
 
   // Build payload for daemon /message route
   const isDM = participants.length === 2;
+  const typingMap = getTypingMap();
+  const currentlyTyping = typingMap.get(channel);
   const payload = JSON.stringify({
     content: contentBlocks,
     channel,
@@ -190,6 +193,7 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     participants: participantNames,
     participantCount: participants.length,
     isDM,
+    ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
   });
 
   // Send to all agents via daemon /message route

@@ -25,6 +25,9 @@ export async function run(args: string[]) {
     case "create":
       await createChannel(args.slice(1));
       break;
+    case "typing":
+      await typingChannel(args.slice(1));
+      break;
     case "--help":
     case "-h":
     case undefined:
@@ -43,6 +46,7 @@ function printUsage() {
   volute channel list [<platform>] [--agent <name>]
   volute channel users <platform> [--agent <name>]
   volute channel create <platform> --participants user1,user2 [--name "..."] [--agent <name>]
+  volute channel typing <channel-uri> [--agent <name>]
   echo "message" | volute channel send <channel-uri> [--agent <name>]`);
 }
 
@@ -204,6 +208,38 @@ async function createChannel(args: string[]) {
   try {
     const id = await driver.createConversation(env, participants, flags.name);
     console.log(`${platform}:${id}`);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
+
+async function typingChannel(args: string[]) {
+  const { positional, flags } = parseArgs(args, {
+    agent: { type: "string" },
+  });
+
+  const uri = positional[0];
+  if (!uri) {
+    console.error("Usage: volute channel typing <channel-uri> [--agent <name>]");
+    process.exit(1);
+  }
+
+  const agentName = resolveAgentName(flags);
+
+  try {
+    const res = await daemonFetch(
+      `/api/agents/${encodeURIComponent(agentName)}/typing?channel=${encodeURIComponent(uri)}`,
+    );
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      console.error(body.error ?? `Server responded with ${res.status}`);
+      process.exit(1);
+    }
+    const data = (await res.json()) as { typing: string[] };
+    if (data.typing.length > 0) {
+      console.log(data.typing.join(", "));
+    }
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
