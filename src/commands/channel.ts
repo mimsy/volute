@@ -227,13 +227,22 @@ async function typingChannel(args: string[]) {
 
   const agentName = resolveAgentName(flags);
 
-  const res = await daemonFetch(
-    `/api/agents/${encodeURIComponent(agentName)}/typing?channel=${encodeURIComponent(uri)}`,
-  );
-  const data = (await res.json()) as { typing: string[] };
-
-  if (data.typing.length > 0) {
-    console.log(data.typing.join(", "));
+  try {
+    const res = await daemonFetch(
+      `/api/agents/${encodeURIComponent(agentName)}/typing?channel=${encodeURIComponent(uri)}`,
+    );
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      console.error(body.error ?? `Server responded with ${res.status}`);
+      process.exit(1);
+    }
+    const data = (await res.json()) as { typing: string[] };
+    if (data.typing.length > 0) {
+      console.log(data.typing.join(", "));
+    }
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
   }
 }
 
