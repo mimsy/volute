@@ -95,4 +95,45 @@ describe("channels", () => {
       message: /does not support reading/,
     });
   });
+
+  it("volute driver has listConversations, listUsers, createConversation", () => {
+    const driver = getChannelDriver("volute");
+    assert.ok(driver);
+    assert.equal(typeof driver.listConversations, "function");
+    assert.equal(typeof driver.listUsers, "function");
+    assert.equal(typeof driver.createConversation, "function");
+  });
+
+  it("discord driver has listConversations, listUsers, createConversation", () => {
+    const driver = getChannelDriver("discord");
+    assert.ok(driver);
+    assert.equal(typeof driver.listConversations, "function");
+    assert.equal(typeof driver.listUsers, "function");
+    assert.equal(typeof driver.createConversation, "function");
+  });
+
+  it("slack driver has listConversations, listUsers, createConversation", () => {
+    const driver = getChannelDriver("slack");
+    assert.ok(driver);
+    assert.equal(typeof driver.listConversations, "function");
+    assert.equal(typeof driver.listUsers, "function");
+    assert.equal(typeof driver.createConversation, "function");
+  });
+
+  it("telegram driver has listConversations, listUsers, createConversation that throw", async () => {
+    const driver = getChannelDriver("telegram");
+    assert.ok(driver);
+    assert.equal(typeof driver.listConversations, "function");
+    assert.equal(typeof driver.listUsers, "function");
+    assert.equal(typeof driver.createConversation, "function");
+    await assert.rejects(() => driver.listConversations!({} as Record<string, string>), {
+      message: /does not support listing conversations/,
+    });
+    await assert.rejects(() => driver.listUsers!({} as Record<string, string>), {
+      message: /does not support listing users/,
+    });
+    await assert.rejects(() => driver.createConversation!({} as Record<string, string>, []), {
+      message: /does not support creating conversations/,
+    });
+  });
 });

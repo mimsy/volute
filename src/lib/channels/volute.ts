@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import type { ChannelConversation, ChannelUser } from "../channels.js";
 import { voluteHome } from "../registry.js";
 
 function getDaemonConfig(): { url: string; token?: string } {
@@ -92,4 +93,101 @@ export async function send(
       if (done) break;
     }
   }
+}
+
+export async function listConversations(
+  env: Record<string, string>,
+): Promise<ChannelConversation[]> {
+  const agentName = env.VOLUTE_AGENT;
+  if (!agentName) throw new Error("VOLUTE_AGENT not set");
+
+  const { url, token } = getDaemonConfig();
+  const headers: Record<string, string> = { Origin: url };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${url}/api/agents/${encodeURIComponent(agentName)}/conversations`, {
+    headers,
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to list conversations: ${res.status} ${res.statusText}`);
+  }
+  const convs = (await res.json()) as {
+    id: string;
+    title: string | null;
+    participants?: { userId: number }[];
+  }[];
+
+  // Fetch participant counts
+  const results: ChannelConversation[] = [];
+  for (const conv of convs) {
+    let participantCount: number | undefined;
+    try {
+      const pRes = await fetch(
+        `${url}/api/agents/${encodeURIComponent(agentName)}/conversations/${encodeURIComponent(conv.id)}/participants`,
+        { headers },
+      );
+      if (pRes.ok) {
+        const participants = (await pRes.json()) as unknown[];
+        participantCount = participants.length;
+      }
+    } catch {
+      // ignore
+    }
+    results.push({
+      id: `volute:${conv.id}`,
+      name: conv.title ?? "(untitled)",
+      type: participantCount === 2 ? "dm" : "group",
+      participantCount,
+    });
+  }
+  return results;
+}
+
+export async function listUsers(env: Record<string, string>): Promise<ChannelUser[]> {
+  const { url, token } = getDaemonConfig();
+  const headers: Record<string, string> = { Origin: url };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${url}/api/auth/users`, { headers });
+  if (!res.ok) {
+    throw new Error(`Failed to list users: ${res.status} ${res.statusText}`);
+  }
+  const data = (await res.json()) as {
+    id: number;
+    username: string;
+    user_type: string;
+  }[];
+  return data.map((u) => ({
+    id: String(u.id),
+    username: u.username,
+    type: u.user_type,
+  }));
+}
+
+export async function createConversation(
+  env: Record<string, string>,
+  participants: string[],
+  name?: string,
+): Promise<string> {
+  const agentName = env.VOLUTE_AGENT;
+  if (!agentName) throw new Error("VOLUTE_AGENT not set");
+
+  const { url, token } = getDaemonConfig();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Origin: url,
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${url}/api/agents/${encodeURIComponent(agentName)}/conversations`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ participantNames: participants, title: name }),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `Failed to create conversation: ${res.status}`);
+  }
+  const conv = (await res.json()) as { id: string };
+  return conv.id;
 }

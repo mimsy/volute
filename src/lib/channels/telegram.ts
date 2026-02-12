@@ -32,3 +32,21 @@ export async function send(
     throw new Error(`Telegram API error: ${res.status} ${body}`);
   }
 }
+
+export async function listConversations(): Promise<never> {
+  throw new Error(
+    "Telegram Bot API does not support listing conversations. Users must message the bot first.",
+  );
+}
+
+export async function listUsers(): Promise<never> {
+  throw new Error(
+    "Telegram Bot API does not support listing users. Users must message the bot first.",
+  );
+}
+
+export async function createConversation(): Promise<never> {
+  throw new Error(
+    "Telegram Bot API does not support creating conversations. Users must message the bot first.",
+  );
+}

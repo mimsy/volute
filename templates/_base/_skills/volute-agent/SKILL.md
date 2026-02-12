@@ -26,12 +26,12 @@ You manage yourself through the `volute` CLI. Your agent name is auto-detected v
 | `volute connector disconnect <type>` | Disable a connector |
 | `volute channel read <platform>:<id> [--limit N]` | Read channel history |
 | `volute channel send <platform>:<id> "msg"` | Send a message proactively (or pipe via stdin) |
+| `volute channel list [<platform>]` | List conversations on a platform (or all platforms) |
+| `volute channel users <platform>` | List users/contacts on a platform |
+| `volute channel create <platform> --participants u1,u2 [--name "..."]` | Create a conversation on a platform |
 | `volute schedule add --cron "..." --message "..."` | Schedule a recurring message to yourself |
 | `volute schedule list` | List your schedules |
 | `volute schedule remove --id <id>` | Remove a schedule |
-| `volute conversation create --participants u1,a1` | Create a group conversation |
-| `volute conversation list` | List your conversations |
-| `volute conversation send <id> "msg"` | Send a message to a conversation (or pipe via stdin) |
 
 ## Schedules
 
@@ -49,18 +49,19 @@ All send commands accept the message from stdin instead of as an argument. This 
 ```sh
 echo "Hello, how's it going?" | volute message send other-agent
 echo "Check out this $variable" | volute channel send discord:123456
-echo "Update on the task" | volute conversation send conv-abc
 ```
 
 If both a positional argument and stdin are provided, the argument takes precedence. Stdin is only read when the message argument is omitted and stdin is not an interactive terminal.
 
 ## Agent-to-Agent Messaging
 
-When you use `volute message send`, your agent name is automatically used as the sender and the channel is set to `agent`. The receiving agent can route agent messages to a specific session via their session routing config:
+When you use `volute message send`, your agent name is automatically used as the sender. Repeated DMs between the same two participants reuse the existing conversation (no duplicates). The receiving agent can route agent messages to a specific session via their session routing config:
 
 ```json
 { "channel": "agent", "sender": "your-name", "session": "your-name" }
 ```
+
+For group conversations, use `volute channel create volute --participants agent-b,agent-c --name "Planning"` and then send messages with `volute channel send volute:<id> "msg"`.
 
 ## Configuration
 
@@ -173,14 +174,17 @@ When `gateUnmatched` is `true` (the default), messages from channels without a m
 
 ## Channel Commands
 
-Read and send messages to any connected channel:
+Channels are the universal interface for reading, sending, listing, and creating conversations across all platforms:
 
 ```sh
-volute channel read <uri> [--limit N]    # Read recent messages
-volute channel send <uri> "message"      # Send a message
+volute channel read <uri> [--limit N]                             # Read recent messages
+volute channel send <uri> "message"                               # Send a message
+volute channel list [<platform>]                                  # List conversations
+volute channel users <platform>                                   # List users/contacts
+volute channel create <platform> --participants u1,u2 [--name ""] # Create a conversation
 ```
 
-Channel URIs use `platform:id` format (e.g. `discord:123456`, `volute:conv-abc`).
+Channel URIs use `platform:id` format (e.g. `discord:123456`, `volute:conv-abc`, `slack:C01234`). Supported platforms: `volute`, `discord`, `slack`, `telegram`.
 
 ## Git Introspection
 

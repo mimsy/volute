@@ -3,9 +3,29 @@ import * as slack from "./channels/slack.js";
 import * as telegram from "./channels/telegram.js";
 import * as volute from "./channels/volute.js";
 
+export type ChannelConversation = {
+  id: string;
+  name: string;
+  type: "dm" | "group" | "channel";
+  participantCount?: number;
+};
+
+export type ChannelUser = {
+  id: string;
+  username: string;
+  type?: string;
+};
+
 export type ChannelDriver = {
   read(env: Record<string, string>, channelId: string, limit: number): Promise<string>;
   send(env: Record<string, string>, channelId: string, message: string): Promise<void>;
+  listConversations?(env: Record<string, string>): Promise<ChannelConversation[]>;
+  listUsers?(env: Record<string, string>): Promise<ChannelUser[]>;
+  createConversation?(
+    env: Record<string, string>,
+    participants: string[],
+    name?: string,
+  ): Promise<string>;
 };
 
 export type ChannelProvider = {

@@ -1,4 +1,5 @@
-import { getChannelDriver } from "../lib/channels.js";
+import { CHANNELS, getChannelDriver } from "../lib/channels.js";
+import { daemonFetch } from "../lib/daemon-client.js";
 import { loadMergedEnv } from "../lib/env.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { readStdin } from "../lib/read-stdin.js";
@@ -15,6 +16,15 @@ export async function run(args: string[]) {
     case "send":
       await sendChannel(args.slice(1));
       break;
+    case "list":
+      await listChannels(args.slice(1));
+      break;
+    case "users":
+      await listUsers(args.slice(1));
+      break;
+    case "create":
+      await createChannel(args.slice(1));
+      break;
     case "--help":
     case "-h":
     case undefined:
@@ -30,6 +40,9 @@ function printUsage() {
   console.log(`Usage:
   volute channel read <channel-uri> [--limit N] [--agent <name>]
   volute channel send <channel-uri> "<message>" [--agent <name>]
+  volute channel list [<platform>] [--agent <name>]
+  volute channel users <platform> [--agent <name>]
+  volute channel create <platform> --participants user1,user2 [--name "..."] [--agent <name>]
   echo "message" | volute channel send <channel-uri> [--agent <name>]`);
 }
 
@@ -82,6 +95,118 @@ async function sendChannel(args: string[]) {
 
   try {
     await driver.send(env, channelId, message);
+
+    // Persist outgoing message to agent_messages for non-volute platforms
+    // (volute channel sends already persist via the /chat route)
+    if (platform !== "volute") {
+      try {
+        await daemonFetch(`/api/agents/${encodeURIComponent(agentName)}/history`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ channel: `${platform}:${channelId}`, content: message }),
+        });
+      } catch {
+        // Non-fatal: message was sent, just not persisted
+      }
+    }
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
+
+async function listChannels(args: string[]) {
+  const { positional, flags } = parseArgs(args, {
+    agent: { type: "string" },
+  });
+
+  const platform = positional[0];
+  const agentName = resolveAgentName(flags);
+  const { dir } = resolveAgent(agentName);
+  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName };
+
+  const platforms = platform ? [platform] : Object.keys(CHANNELS);
+
+  for (const p of platforms) {
+    const driver = getChannelDriver(p);
+    if (!driver?.listConversations) continue;
+
+    try {
+      const convs = await driver.listConversations(env);
+      for (const conv of convs) {
+        const parts = [conv.id.padEnd(24), conv.name.padEnd(28), conv.type];
+        if (conv.participantCount != null) {
+          parts.push(String(conv.participantCount));
+        }
+        console.log(parts.join("  "));
+      }
+    } catch (err) {
+      console.error(`${p}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+}
+
+async function listUsers(args: string[]) {
+  const { positional, flags } = parseArgs(args, {
+    agent: { type: "string" },
+  });
+
+  const platform = positional[0];
+  if (!platform) {
+    console.error("Usage: volute channel users <platform> [--agent <name>]");
+    process.exit(1);
+  }
+
+  const driver = requireDriver(platform);
+  if (!driver.listUsers) {
+    console.error(`Platform ${platform} does not support listing users`);
+    process.exit(1);
+  }
+
+  const agentName = resolveAgentName(flags);
+  const { dir } = resolveAgent(agentName);
+  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName };
+
+  try {
+    const users = await driver.listUsers(env);
+    for (const user of users) {
+      console.log(`${user.username.padEnd(20)}  ${user.id.padEnd(20)}  ${user.type ?? ""}`);
+    }
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
+
+async function createChannel(args: string[]) {
+  const { positional, flags } = parseArgs(args, {
+    agent: { type: "string" },
+    participants: { type: "string" },
+    name: { type: "string" },
+  });
+
+  const platform = positional[0];
+  if (!platform || !flags.participants) {
+    console.error(
+      'Usage: volute channel create <platform> --participants user1,user2 [--name "..."] [--agent <name>]',
+    );
+    process.exit(1);
+  }
+
+  const driver = requireDriver(platform);
+  if (!driver.createConversation) {
+    console.error(`Platform ${platform} does not support creating conversations`);
+    process.exit(1);
+  }
+
+  const agentName = resolveAgentName(flags);
+  const { dir } = resolveAgent(agentName);
+  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName };
+  const participants = flags.participants.split(",").map((s) => s.trim());
+
+  try {
+    const id = await driver.createConversation(env, participants, flags.name);
+    console.log(`${platform}:${id}`);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);

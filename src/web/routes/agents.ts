@@ -337,6 +337,38 @@ const app = new Hono<AuthEnv>()
       }
     });
   })
+  // Persist external channel send to agent_messages
+  .post("/:name/history", async (c) => {
+    const name = c.req.param("name");
+    const [baseName] = name.split("@", 2);
+
+    let body: { channel: string; content: string };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+
+    if (!body.channel || !body.content) {
+      return c.json({ error: "channel and content required" }, 400);
+    }
+
+    const db = await getDb();
+    try {
+      await db.insert(agentMessages).values({
+        agent: baseName,
+        channel: body.channel,
+        role: "assistant",
+        sender: baseName,
+        content: body.content,
+      });
+    } catch (err) {
+      console.error(`[daemon] failed to persist external send for ${baseName}:`, err);
+      return c.json({ error: "Failed to persist" }, 500);
+    }
+
+    return c.json({ ok: true });
+  })
   // Get message history
   .get("/:name/history/channels", async (c) => {
     const name = c.req.param("name");

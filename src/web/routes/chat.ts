@@ -9,11 +9,14 @@ import {
   addMessage,
   type ContentBlock,
   createConversation,
+  findDMConversation,
   getParticipants,
   isParticipantOrOwner,
 } from "../../lib/conversations.js";
+import { getDb } from "../../lib/db.js";
 import { readNdjson } from "../../lib/ndjson.js";
 import { daemonLoopback, findAgent, voluteHome } from "../../lib/registry.js";
+import { agentMessages } from "../../lib/schema.js";
 import type { VoluteEvent } from "../../types.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
@@ -134,12 +137,23 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
       }
     }
     participantIds.push(agentUser.id);
-    const conv = await createConversation(baseName, "volute", {
-      userId: user.id !== 0 ? user.id : undefined,
-      title,
-      participantIds,
-    });
-    conversationId = conv.id;
+
+    // DM reuse: if exactly 2 participants, look for an existing conversation
+    if (participantIds.length === 2) {
+      const existing = await findDMConversation(baseName, participantIds as [number, number]);
+      if (existing) {
+        conversationId = existing;
+      }
+    }
+
+    if (!conversationId) {
+      const conv = await createConversation(baseName, "volute", {
+        userId: user.id !== 0 ? user.id : undefined,
+        title,
+        participantIds,
+      });
+      conversationId = conv.id;
+    }
   }
 
   const channel = `volute:${conversationId}`;
@@ -157,6 +171,28 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
 
   // Save user message
   await addMessage(conversationId, "user", senderName, contentBlocks);
+
+  // Persist sender outgoing to agent_messages if sender is a registered agent
+  if (findAgent(senderName)) {
+    const textContent = contentBlocks
+      .filter((b): b is { type: "text"; text: string } => b.type === "text" && "text" in b)
+      .map((b) => b.text)
+      .join("\n");
+    if (textContent) {
+      try {
+        const db = await getDb();
+        await db.insert(agentMessages).values({
+          agent: senderName,
+          channel: `volute:${conversationId}`,
+          role: "assistant",
+          sender: senderName,
+          content: textContent,
+        });
+      } catch (err) {
+        console.error(`[chat] failed to persist sender outgoing for ${senderName}:`, err);
+      }
+    }
+  }
 
   // Find all agent participants for fan-out
   const participants = await getParticipants(conversationId);

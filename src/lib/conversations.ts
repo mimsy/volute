@@ -291,6 +291,34 @@ export async function listConversationsWithParticipants(
   return convs.map((c) => ({ ...c, participants: byConv.get(c.id) ?? [] }));
 }
 
+export async function findDMConversation(
+  agentName: string,
+  participantIds: [number, number],
+): Promise<string | null> {
+  const db = await getDb();
+  // Find conversations for this agent with exactly these two participants
+  const agentConvs = await db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(eq(conversations.agent_name, agentName))
+    .all();
+
+  for (const conv of agentConvs) {
+    const rows = await db
+      .select({ user_id: conversationParticipants.user_id })
+      .from(conversationParticipants)
+      .where(eq(conversationParticipants.conversation_id, conv.id))
+      .all();
+
+    if (rows.length !== 2) continue;
+    const ids = new Set(rows.map((r) => r.user_id));
+    if (ids.has(participantIds[0]) && ids.has(participantIds[1])) {
+      return conv.id;
+    }
+  }
+  return null;
+}
+
 export async function deleteConversation(id: string): Promise<void> {
   const db = await getDb();
   await db.delete(conversations).where(eq(conversations.id, id));
