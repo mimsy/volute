@@ -50,6 +50,7 @@ export class TypingMap {
   dispose(): void {
     clearInterval(this.sweepTimer);
     this.channels.clear();
+    if (instance === this) instance = undefined;
   }
 
   private sweep(): void {

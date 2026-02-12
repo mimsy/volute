@@ -71,6 +71,14 @@ describe("TypingMap", () => {
     map.set("discord:123", "alice", { ttlMs: 60000 });
     assert.deepEqual(map.get("discord:123"), ["alice"]);
   });
+
+  it("singleton re-creates after dispose", () => {
+    const map1 = getTypingMap();
+    map1.dispose();
+    const map2 = getTypingMap();
+    assert.notStrictEqual(map1, map2);
+    map2.dispose();
+  });
 });
 
 describe("typing routes", () => {

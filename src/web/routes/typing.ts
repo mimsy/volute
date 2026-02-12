@@ -1,15 +1,18 @@
+import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
+import { z } from "zod";
 import { getTypingMap } from "../../lib/typing.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
-const app = new Hono<AuthEnv>()
-  .post("/:name/typing", async (c) => {
-    const body = await c.req.json();
-    const { channel, sender, active } = body;
+const typingSchema = z.object({
+  channel: z.string().min(1),
+  sender: z.string().min(1),
+  active: z.boolean(),
+});
 
-    if (!channel || !sender) {
-      return c.json({ error: "channel and sender are required" }, 400);
-    }
+const app = new Hono<AuthEnv>()
+  .post("/:name/typing", zValidator("json", typingSchema), (c) => {
+    const { channel, sender, active } = c.req.valid("json");
 
     const map = getTypingMap();
     if (active) {
