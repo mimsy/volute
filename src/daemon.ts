@@ -43,8 +43,9 @@ export async function startDaemon(opts: {
   // Use existing token if set (for testing), otherwise generate one
   const token = process.env.VOLUTE_DAEMON_TOKEN || randomBytes(32).toString("hex");
 
-  // Set token in environment so auth middleware can check it
+  // Set token and hostname in environment so internal code can build correct URLs
   process.env.VOLUTE_DAEMON_TOKEN = token;
+  process.env.VOLUTE_DAEMON_HOSTNAME = hostname;
 
   // Start web server — must succeed before writing PID/config files,
   // otherwise a failed startup (e.g. EADDRINUSE) would overwrite files

@@ -13,7 +13,7 @@ import {
   isParticipantOrOwner,
 } from "../../lib/conversations.js";
 import { readNdjson } from "../../lib/ndjson.js";
-import { findAgent, voluteHome } from "../../lib/registry.js";
+import { daemonLoopback, findAgent, voluteHome } from "../../lib/registry.js";
 import type { VoluteEvent } from "../../types.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
@@ -33,7 +33,7 @@ const chatSchema = z.object({
 
 function getDaemonUrl(): string {
   const data = JSON.parse(readFileSync(resolve(voluteHome(), "daemon.json"), "utf-8"));
-  return `http://127.0.0.1:${data.port}`;
+  return `http://${daemonLoopback()}:${data.port}`;
 }
 
 function daemonFetchInternal(path: string, body: string): Promise<Response> {

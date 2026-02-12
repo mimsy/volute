@@ -112,6 +112,14 @@ export function nextPort(): number {
   return port;
 }
 
+/** Map a server bind hostname to the appropriate loopback for internal connections. */
+export function daemonLoopback(): string {
+  const host = process.env.VOLUTE_DAEMON_HOSTNAME || "127.0.0.1";
+  if (host === "0.0.0.0") return "127.0.0.1";
+  if (host === "::") return "[::1]";
+  return host;
+}
+
 export function resolveAgent(name: string): { entry: AgentEntry; dir: string } {
   // Parse name@variant syntax
   const [baseName, variantName] = name.split("@", 2);
