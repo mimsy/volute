@@ -104,9 +104,9 @@ export function Chat({
     return () => clearInterval(id);
   }, [conversationId, streaming, loadMessages]);
 
-  // Poll typing indicators
+  // Poll typing indicators (skip while streaming — same pattern as message poll)
   useEffect(() => {
-    if (!conversationId || !name) return;
+    if (!conversationId || !name || streaming) return;
     let cancelled = false;
     const poll = () => {
       fetchTyping(name, `volute:${conversationId}`)
@@ -123,7 +123,16 @@ export function Chat({
       cancelled = true;
       clearInterval(id);
     };
-  }, [conversationId, name, username]);
+  }, [conversationId, name, username, streaming]);
+
+  // Clear typing indicator on unmount
+  useEffect(() => {
+    return () => {
+      if (convIdRef.current && name && username && typingTimerRef.current > 0) {
+        reportTyping(name, `volute:${convIdRef.current}`, username, false).catch(() => {});
+      }
+    };
+  }, [name, username]);
 
   const onEvent = useCallback(
     (event: VoluteEvent) => {
@@ -470,7 +479,13 @@ export function Chat({
             transition: "border-color 0.15s",
           }}
           onFocus={(e) => (e.currentTarget.style.borderColor = "var(--border-bright)")}
-          onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+          onBlur={(e) => {
+            e.currentTarget.style.borderColor = "var(--border)";
+            if (convIdRef.current && name && username && typingTimerRef.current > 0) {
+              reportTyping(name, `volute:${convIdRef.current}`, username, false).catch(() => {});
+              typingTimerRef.current = 0;
+            }
+          }}
         />
         {streaming ? (
           <button
