@@ -22,3 +22,9 @@ export function formatPrefix(meta: ChannelMeta | undefined, time: string): strin
     meta.sessionName && meta.sessionName !== "main" ? ` — session: ${meta.sessionName}` : "";
   return parts.length > 0 ? `[${parts.join(": ")}${sessionPart} — ${time}]\n` : "";
 }
+
+export function formatTypingSuffix(typing: string[] | undefined): string {
+  if (!typing || typing.length === 0) return "";
+  if (typing.length === 1) return `\n[${typing[0]} is typing]`;
+  return `\n[${typing.join(", ")} are typing]`;
+}

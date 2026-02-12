@@ -1,4 +1,4 @@
-import { formatPrefix } from "./format-prefix.js";
+import { formatPrefix, formatTypingSuffix } from "./format-prefix.js";
 import { log, logMessage } from "./logger.js";
 import { type BatchConfig, loadRoutingConfig, resolveRoute } from "./routing.js";
 import type { ChannelMeta, HandlerResolver, Listener, VoluteContentPart } from "./types.js";
@@ -19,6 +19,7 @@ type BufferedMessage = {
   channelName?: string;
   serverName?: string;
   timestamp: string;
+  typing?: string[];
 };
 
 type BatchBuffer = {
@@ -47,6 +48,26 @@ function applyPrefix(content: VoluteContentPart[], meta: ChannelMeta): VoluteCon
     if (i === firstTextIdx) {
       return { type: "text" as const, text: prefix + (part as { text: string }).text };
     }
+    return part;
+  });
+}
+
+function appendTypingSuffix(
+  content: VoluteContentPart[],
+  typing: string[] | undefined,
+): VoluteContentPart[] {
+  const suffix = formatTypingSuffix(typing);
+  if (!suffix) return content;
+  let lastTextIdx = -1;
+  for (let i = content.length - 1; i >= 0; i--) {
+    if (content[i].type === "text") {
+      lastTextIdx = i;
+      break;
+    }
+  }
+  if (lastTextIdx === -1) return [...content, { type: "text", text: suffix.trimStart() }];
+  return content.map((part, i) => {
+    if (i === lastTextIdx) return { type: "text", text: (part as { text: string }).text + suffix };
     return part;
   });
 }
@@ -152,7 +173,11 @@ export function createRouter(options: {
       })
       .join("\n\n");
 
-    const content: VoluteContentPart[] = [{ type: "text", text: `${header}\n\n${body}` }];
+    const lastTyping = messages[messages.length - 1]?.typing;
+    const typingSuffix = formatTypingSuffix(lastTyping);
+    const content: VoluteContentPart[] = [
+      { type: "text", text: `${header}\n\n${body}${typingSuffix}` },
+    ];
     const messageId = generateMessageId();
     const handler = options.agentHandler(buffer.sessionName);
 
@@ -290,6 +315,7 @@ export function createRouter(options: {
           hour: "numeric",
           minute: "2-digit",
         }),
+        typing: meta.typing,
       });
 
       // Check triggers — flush immediately if matched
@@ -305,9 +331,10 @@ export function createRouter(options: {
 
     // Direct dispatch to agent
     const formatted = applyPrefix(content, { ...meta, sessionName });
+    const withTyping = appendTypingSuffix(formatted, meta.typing);
     const handler = options.agentHandler(sessionName);
     const unsubscribe = handler.handle(
-      formatted,
+      withTyping,
       { ...meta, sessionName, messageId, interrupt: resolved.interrupt },
       safeListener,
     );
