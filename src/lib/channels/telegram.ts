@@ -1,4 +1,7 @@
+import { splitMessage } from "../../connectors/sdk.js";
 import { resolveChannelId } from "../channels.js";
+
+const TELEGRAM_MAX_LENGTH = 4096;
 
 const API_BASE = "https://api.telegram.org";
 
@@ -25,14 +28,18 @@ export async function send(
 ): Promise<void> {
   const token = requireToken(env);
   const chatId = resolveChannelId(env, channelSlug);
-  const res = await fetch(`${API_BASE}/bot${token}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text: message }),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Telegram API error: ${res.status} ${body}`);
+  const chunks = splitMessage(message, TELEGRAM_MAX_LENGTH);
+  for (let i = 0; i < chunks.length; i++) {
+    const res = await fetch(`${API_BASE}/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text: chunks[i] }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      const partial = i > 0 ? ` (${i}/${chunks.length} chunks were already sent)` : "";
+      throw new Error(`Telegram API error: ${res.status} ${body}${partial}`);
+    }
   }
 }
 

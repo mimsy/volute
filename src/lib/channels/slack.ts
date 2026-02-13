@@ -1,6 +1,8 @@
-import { writeChannelEntry } from "../../connectors/sdk.js";
+import { splitMessage, writeChannelEntry } from "../../connectors/sdk.js";
 import { type ChannelConversation, type ChannelUser, resolveChannelId } from "../channels.js";
 import { slugify } from "../slugify.js";
+
+const SLACK_MAX_LENGTH = 4000;
 
 const API_BASE = "https://slack.com/api";
 
@@ -59,10 +61,18 @@ export async function send(
 ): Promise<void> {
   const token = requireToken(env);
   const channelId = resolveChannelId(env, channelSlug);
-  await slackApi(token, "chat.postMessage", {
-    channel: channelId,
-    text: message,
-  });
+  const chunks = splitMessage(message, SLACK_MAX_LENGTH);
+  for (let i = 0; i < chunks.length; i++) {
+    try {
+      await slackApi(token, "chat.postMessage", {
+        channel: channelId,
+        text: chunks[i],
+      });
+    } catch (err) {
+      const partial = i > 0 ? ` (${i}/${chunks.length} chunks were already sent)` : "";
+      throw new Error(`${err instanceof Error ? err.message : err}${partial}`);
+    }
+  }
 }
 
 export async function listConversations(

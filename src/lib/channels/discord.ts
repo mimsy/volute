@@ -1,6 +1,8 @@
-import { writeChannelEntry } from "../../connectors/sdk.js";
+import { splitMessage, writeChannelEntry } from "../../connectors/sdk.js";
 import { type ChannelConversation, type ChannelUser, resolveChannelId } from "../channels.js";
 import { slugify } from "../slugify.js";
+
+const DISCORD_MAX_LENGTH = 2000;
 
 const API_BASE = "https://discord.com/api/v10";
 
@@ -50,16 +52,20 @@ export async function send(
 ): Promise<void> {
   const token = requireToken(env);
   const channelId = resolveChannelId(env, channelSlug);
-  const res = await fetch(`${API_BASE}/channels/${channelId}/messages`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bot ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ content: message }),
-  });
-  if (!res.ok) {
-    throw new Error(`Discord API error: ${res.status} ${res.statusText}`);
+  const chunks = splitMessage(message, DISCORD_MAX_LENGTH);
+  for (let i = 0; i < chunks.length; i++) {
+    const res = await fetch(`${API_BASE}/channels/${channelId}/messages`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bot ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ content: chunks[i] }),
+    });
+    if (!res.ok) {
+      const partial = i > 0 ? ` (${i}/${chunks.length} chunks were already sent)` : "";
+      throw new Error(`Discord API error: ${res.status} ${res.statusText}${partial}`);
+    }
   }
 }
 
