@@ -47,6 +47,7 @@ export function Chat({
   const convIdRef = useRef(conversationId);
   const typingTimerRef = useRef<number>(0);
   const [typingNames, setTypingNames] = useState<string[]>([]);
+  const lastPollFingerprintRef = useRef("");
 
   // Track current assistant blocks being built
   const currentRef = useRef<ContentBlock[]>([]);
@@ -74,6 +75,11 @@ export function Chat({
         : fetchConversationMessagesById(convId);
       return fetchFn
         .then((msgs) => {
+          // Skip re-render if messages haven't changed (prevents scrollbar flicker from polling)
+          const fingerprint = msgs.length + ":" + (msgs[msgs.length - 1]?.id ?? "");
+          if (!forceScroll && fingerprint === lastPollFingerprintRef.current) return;
+          lastPollFingerprintRef.current = fingerprint;
+
           const loaded: ChatEntry[] = msgs.map((m) => ({
             role: m.role as "user" | "assistant",
             blocks: normalizeContent(m.content),
@@ -90,6 +96,7 @@ export function Chat({
   // Load existing messages when conversationId changes
   useEffect(() => {
     convIdRef.current = conversationId;
+    lastPollFingerprintRef.current = "";
     if (!conversationId) {
       setEntries([]);
       return;

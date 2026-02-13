@@ -42,12 +42,23 @@ export function Chats({
     return () => clearInterval(interval);
   }, [refresh]);
 
-  // Sync hash with active conversation
+  // Sync prop → state when navigating via URL
+  useEffect(() => {
+    setActiveId(initialId ?? null);
+  }, [initialId]);
+
+  // Sync active conversation → hash (only for internal selections, not external navigation)
   useEffect(() => {
     if (activeId) {
       const expected = `#/chats/${activeId}`;
       if (window.location.hash !== expected) {
         window.history.replaceState(null, "", expected);
+      }
+    } else {
+      // When no active conversation, keep hash at root
+      const hash = window.location.hash.slice(1) || "/";
+      if (hash.startsWith("/chats/")) {
+        window.history.replaceState(null, "", "#/");
       }
     }
   }, [activeId]);
@@ -58,7 +69,7 @@ export function Chats({
 
   const handleNew = () => {
     setActiveId(null);
-    window.history.replaceState(null, "", "#/chats");
+    window.history.replaceState(null, "", "#/");
   };
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
@@ -113,7 +124,7 @@ export function Chats({
     <div
       style={{
         display: "flex",
-        height: "calc(100vh - 48px - 48px)",
+        height: "100%",
         animation: "fadeIn 0.2s ease both",
       }}
     >

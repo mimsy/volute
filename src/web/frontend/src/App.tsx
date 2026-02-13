@@ -10,13 +10,13 @@ import { Dashboard } from "./pages/Dashboard";
 
 function parseHash(): { page: string; name?: string; conversationId?: string } {
   const hash = window.location.hash.slice(1) || "/";
+  if (hash === "/agents") return { page: "agents" };
   if (hash === "/logs") return { page: "logs" };
-  if (hash === "/chats") return { page: "chats" };
   const chatsMatch = hash.match(/^\/chats\/(.+)$/);
   if (chatsMatch) return { page: "chats", conversationId: chatsMatch[1] };
   const match = hash.match(/^\/agent\/(.+)$/);
   if (match) return { page: "agent", name: match[1] };
-  return { page: "dashboard" };
+  return { page: "chats" };
 }
 
 export function App() {
@@ -33,7 +33,10 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const handler = () => setRoute(parseHash());
+    const handler = () => {
+      setRoute(parseHash());
+      setShowUsers(false);
+    };
     window.addEventListener("hashchange", handler);
     return () => window.removeEventListener("hashchange", handler);
   }, []);
@@ -80,10 +83,10 @@ export function App() {
               <span className="breadcrumb-name">{route.name}</span>
             </nav>
           )}
-          {route.page === "chats" && (
+          {route.page === "agents" && (
             <nav className="breadcrumb">
               <span className="breadcrumb-sep">/</span>
-              <span className="breadcrumb-name">chats</span>
+              <span className="breadcrumb-name">agents</span>
             </nav>
           )}
           {route.page === "logs" && (
@@ -94,21 +97,26 @@ export function App() {
           )}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
             <a
-              href="#/chats"
+              href="#/agents"
               style={{
-                color: route.page === "chats" ? "var(--accent)" : "var(--text-2)",
+                color:
+                  route.page === "agents" || route.page === "agent"
+                    ? "var(--accent)"
+                    : "var(--text-2)",
                 fontSize: 12,
                 fontFamily: "var(--mono)",
                 transition: "color 0.15s",
               }}
               onMouseEnter={(e) => {
-                if (route.page !== "chats") e.currentTarget.style.color = "var(--text-0)";
+                if (route.page !== "agents" && route.page !== "agent")
+                  e.currentTarget.style.color = "var(--text-0)";
               }}
               onMouseLeave={(e) => {
-                if (route.page !== "chats") e.currentTarget.style.color = "var(--text-2)";
+                if (route.page !== "agents" && route.page !== "agent")
+                  e.currentTarget.style.color = "var(--text-2)";
               }}
             >
-              chats
+              agents
             </a>
             {user.role === "admin" && (
               <a
@@ -166,12 +174,17 @@ export function App() {
             </button>
           </div>
         </header>
-        <main className="app-main">
+        <main
+          className="app-main"
+          style={
+            route.page === "chats" && !showUsers ? { padding: 0, overflow: "hidden" } : undefined
+          }
+        >
           {showUsers ? (
             <UserManagement onClose={() => setShowUsers(false)} />
           ) : (
             <>
-              {route.page === "dashboard" && <Dashboard />}
+              {route.page === "agents" && <Dashboard />}
               {route.page === "chats" && (
                 <Chats conversationId={route.conversationId} username={user.username} />
               )}
