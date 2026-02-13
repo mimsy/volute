@@ -62,6 +62,7 @@ Commands:
   volute agent create <name>              Create a new agent
   volute agent start <name>               Start an agent (daemonized)
   volute agent stop <name>                Stop an agent
+  volute agent restart <name>             Restart an agent
   volute agent delete <name> [--force]    Delete an agent (--force removes files)
   volute agent list                       List all agents
   volute agent status <name>              Check agent status

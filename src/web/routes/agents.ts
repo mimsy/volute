@@ -174,7 +174,10 @@ const app = new Hono<AuthEnv>()
 
     try {
       if (manager.isRunning(name)) {
-        if (!variantName) await connectorManager.stopConnectors(baseName);
+        if (!variantName) {
+          await connectorManager.stopConnectors(baseName);
+          getTokenBudget().removeBudget(baseName);
+        }
         await manager.stopAgent(name);
       }
 
