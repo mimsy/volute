@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.6.0](https://github.com/mimsy/volute/compare/volute-v0.5.0...volute-v0.6.0) (2026-02-13)
+
+
+### Features
+
+* add agent restart command ([#26](https://github.com/mimsy/volute/issues/26)) ([f1d6a0f](https://github.com/mimsy/volute/commit/f1d6a0f27ccd66471fbb90e8fc041230f46e6a49))
+* add cross-session awareness (short-term memory) ([#27](https://github.com/mimsy/volute/issues/27)) ([8798e68](https://github.com/mimsy/volute/commit/8798e68400d92f30c8f8c8a5567d293aeb2f9271))
+* human-readable channel slugs ([#28](https://github.com/mimsy/volute/issues/28)) ([01ea512](https://github.com/mimsy/volute/commit/01ea5120b1251b41dde4085ead574bae12703cc5))
+* per-agent token budgeting ([#25](https://github.com/mimsy/volute/issues/25)) ([9452314](https://github.com/mimsy/volute/commit/9452314b3f7799abc54e6099a852b5c0a7d24e82))
+* typing indicators ([#24](https://github.com/mimsy/volute/issues/24)) ([809c895](https://github.com/mimsy/volute/commit/809c895aa1a99f6175f5cd85135258cbfa77a8d7))
+* unified channel interface with message history persistence ([#23](https://github.com/mimsy/volute/issues/23)) ([21c2d9f](https://github.com/mimsy/volute/commit/21c2d9f51313c277ae2cc3d805b69478e9df40e6))
+
+
+### Bug Fixes
+
+* use daemon bind hostname for internal loopback connections ([#21](https://github.com/mimsy/volute/issues/21)) ([0ebd9df](https://github.com/mimsy/volute/commit/0ebd9df0bd82c427fd794c10046b95fc625b78b5))
+
 ## [0.5.0](https://github.com/mimsy/volute/compare/volute-v0.4.0...volute-v0.5.0) (2026-02-12)
 
 
