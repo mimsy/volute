@@ -36,11 +36,11 @@ function writeCache(latest: string): void {
 
 export function getCurrentVersion(): string {
   // Walk up from this file to find package.json
-  // In built dist: dist/lib/update-check.js → ../../package.json
+  // In built dist (flat with splitting): dist/chunk-*.js → ../package.json
   // In dev via tsx: src/lib/update-check.ts → ../../package.json
-  // ../../../ — tsup may produce different dist layouts depending on chunk splitting
   const thisDir = new URL(".", import.meta.url).pathname;
   const candidates = [
+    resolve(thisDir, "../package.json"),
     resolve(thisDir, "../../package.json"),
     resolve(thisDir, "../../../package.json"),
   ];
