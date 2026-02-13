@@ -44,6 +44,9 @@ switch (command) {
   case "down":
     await import("./commands/down.js").then((m) => m.run(args));
     break;
+  case "restart":
+    await import("./commands/daemon-restart.js").then((m) => m.run(args));
+    break;
   case "setup":
     await import("./commands/setup.js").then((m) => m.run(args));
     break;
@@ -95,6 +98,7 @@ Commands:
 
   volute up [--port N]                    Start the daemon (default: 4200)
   volute down                             Stop the daemon
+  volute restart [--port N]               Restart the daemon
 
   volute service install [--port N]       Install as system service (auto-start)
   volute service uninstall                Remove system service

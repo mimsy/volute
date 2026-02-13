@@ -170,6 +170,119 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.equal(stoppedStatus.status, "stopped");
   });
 
+  it("agents persist running state across daemon restart", async () => {
+    // Start agent
+    const startRes = await daemonRequest(`/api/agents/${TEST_AGENT}/start`, { method: "POST" });
+    assert.ok(
+      startRes.status === 200 || startRes.status === 409,
+      `Start: expected 200 or 409, got ${startRes.status}`,
+    );
+
+    // Verify running
+    const statusRes = await daemonRequest(`/api/agents/${TEST_AGENT}`);
+    const status = (await statusRes.json()) as { status: string };
+    assert.ok(
+      status.status === "running" || status.status === "starting",
+      `Expected running/starting, got ${status.status}`,
+    );
+
+    // Kill daemon via SIGTERM (simulates `volute down`)
+    daemon.kill("SIGTERM");
+    await new Promise<void>((resolve) => {
+      daemon.on("exit", () => resolve());
+      setTimeout(() => {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {}
+        resolve();
+      }, 5000);
+    });
+
+    // Registry should still show running: true
+    const entry = findAgent(TEST_AGENT);
+    assert.ok(entry, "Agent should still be in registry");
+    assert.equal(entry.running, true, "Agent should still be marked as running in registry");
+
+    // Start a new daemon
+    daemon = spawn("npx", ["tsx", "src/daemon.ts", "--port", String(PORT), "--foreground"], {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...cleanEnv, VOLUTE_DAEMON_TOKEN: TOKEN },
+    });
+    daemon.stderr?.on("data", (data: Buffer) => {
+      process.stderr.write(`[daemon] ${data}`);
+    });
+
+    await waitForHealth();
+
+    // Agent should be auto-restored by the new daemon
+    const deadline = Date.now() + 30000;
+    let restored = false;
+    while (Date.now() < deadline) {
+      const res = await daemonRequest(`/api/agents/${TEST_AGENT}`);
+      const s = (await res.json()) as { status: string };
+      if (s.status === "running") {
+        restored = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    assert.ok(restored, "Agent should be auto-restored after daemon restart");
+
+    // Stop agent for subsequent tests
+    await daemonRequest(`/api/agents/${TEST_AGENT}/stop`, { method: "POST" });
+  });
+
+  it("stopped agents stay stopped across daemon restart", async () => {
+    // Agent should be stopped from the previous test — verify
+    const statusRes = await daemonRequest(`/api/agents/${TEST_AGENT}`);
+    const status = (await statusRes.json()) as { status: string };
+    assert.equal(status.status, "stopped", "Agent should be stopped before this test");
+
+    // Verify registry shows running: false
+    const entryBefore = findAgent(TEST_AGENT);
+    assert.ok(entryBefore, "Agent should be in registry");
+    assert.equal(entryBefore.running, false, "Agent should be marked as not running in registry");
+
+    // Kill daemon via SIGTERM
+    daemon.kill("SIGTERM");
+    await new Promise<void>((resolve) => {
+      daemon.on("exit", () => resolve());
+      setTimeout(() => {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {}
+        resolve();
+      }, 5000);
+    });
+
+    // Registry should still show running: false
+    const entryAfter = findAgent(TEST_AGENT);
+    assert.ok(entryAfter, "Agent should still be in registry");
+    assert.equal(entryAfter.running, false, "Stopped agent should remain not running in registry");
+
+    // Start a new daemon
+    daemon = spawn("npx", ["tsx", "src/daemon.ts", "--port", String(PORT), "--foreground"], {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...cleanEnv, VOLUTE_DAEMON_TOKEN: TOKEN },
+    });
+    daemon.stderr?.on("data", (data: Buffer) => {
+      process.stderr.write(`[daemon] ${data}`);
+    });
+
+    await waitForHealth();
+
+    // Agent should still be stopped — not auto-started
+    const restoredRes = await daemonRequest(`/api/agents/${TEST_AGENT}`);
+    const restoredStatus = (await restoredRes.json()) as { status: string };
+    assert.equal(
+      restoredStatus.status,
+      "stopped",
+      "Stopped agent should not be auto-started after daemon restart",
+    );
+  });
+
   it("message proxy streams ndjson response", async () => {
     if (!process.env.ANTHROPIC_API_KEY) {
       console.log("Skipping message test: ANTHROPIC_API_KEY not set");
