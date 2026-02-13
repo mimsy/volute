@@ -1,4 +1,6 @@
-import type { ChannelConversation, ChannelUser } from "../channels.js";
+import { writeChannelEntry } from "../../connectors/sdk.js";
+import { type ChannelConversation, type ChannelUser, resolveChannelId } from "../channels.js";
+import { slugify } from "../slugify.js";
 
 const API_BASE = "https://discord.com/api/v10";
 
@@ -20,10 +22,11 @@ async function discordGet(token: string, path: string): Promise<unknown> {
 
 export async function read(
   env: Record<string, string>,
-  channelId: string,
+  channelSlug: string,
   limit: number,
 ): Promise<string> {
   const token = requireToken(env);
+  const channelId = resolveChannelId(env, channelSlug);
   const res = await fetch(`${API_BASE}/channels/${channelId}/messages?limit=${limit}`, {
     headers: { Authorization: `Bot ${token}` },
   });
@@ -42,10 +45,11 @@ export async function read(
 
 export async function send(
   env: Record<string, string>,
-  channelId: string,
+  channelSlug: string,
   message: string,
 ): Promise<void> {
   const token = requireToken(env);
+  const channelId = resolveChannelId(env, channelSlug);
   const res = await fetch(`${API_BASE}/channels/${channelId}/messages`, {
     method: "POST",
     headers: {
@@ -66,7 +70,10 @@ export async function listConversations(
   const results: ChannelConversation[] = [];
 
   // Get guild text channels
-  const guilds = (await discordGet(token, "/users/@me/guilds")) as { id: string }[];
+  const guilds = (await discordGet(token, "/users/@me/guilds")) as {
+    id: string;
+    name: string;
+  }[];
   for (const guild of guilds) {
     const channels = (await discordGet(token, `/guilds/${guild.id}/channels`)) as {
       id: string;
@@ -76,7 +83,8 @@ export async function listConversations(
     for (const ch of channels) {
       if (ch.type !== 0) continue; // text channels only
       results.push({
-        id: `discord:${ch.id}`,
+        id: `discord:${slugify(guild.name)}/${slugify(ch.name)}`,
+        platformId: ch.id,
         name: `#${ch.name}`,
         type: "channel",
       });
@@ -90,10 +98,17 @@ export async function listConversations(
     recipients?: { username: string }[];
   }[];
   for (const dm of dms) {
-    const name = dm.recipients?.map((r) => r.username).join(", ") ?? "DM";
+    const recipients = dm.recipients?.map((r) => r.username) ?? [];
+    const slug =
+      recipients.length === 0
+        ? `discord:${dm.id}`
+        : recipients.length === 1
+          ? `discord:@${slugify(recipients[0])}`
+          : `discord:@${recipients.map(slugify).sort().join(",")}`;
     results.push({
-      id: `discord:${dm.id}`,
-      name,
+      id: slug,
+      platformId: dm.id,
+      name: recipients.join(", ") || "DM",
       type: dm.type === 1 ? "dm" : "group",
     });
   }
@@ -156,5 +171,17 @@ export async function createConversation(
     throw new Error(`Discord API error: ${res.status} ${res.statusText}`);
   }
   const dm = (await res.json()) as { id: string };
-  return dm.id;
+  const slug = `discord:@${slugify(participants[0])}`;
+
+  const agentDir = env.VOLUTE_AGENT_DIR;
+  if (agentDir) {
+    writeChannelEntry(agentDir, slug, {
+      platformId: dm.id,
+      platform: "discord",
+      name: participants[0],
+      type: "dm",
+    });
+  }
+
+  return slug;
 }

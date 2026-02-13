@@ -1,5 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { slugify } from "../lib/slugify.js";
+
+export { slugify } from "../lib/slugify.js";
 
 export type ContentPart =
   | { type: "text"; text: string }
@@ -235,4 +238,75 @@ export async function handleAgentMessage(
         : `Error: ${err}`;
     await handlers.onError(errMsg);
   }
+}
+
+export interface ChannelSlugMeta {
+  channelName?: string;
+  serverName?: string;
+  isDM?: boolean;
+  senderName?: string;
+  recipients?: string[];
+  platformId?: string;
+}
+
+export interface ChannelEntry {
+  platformId: string;
+  platform: string;
+  name?: string;
+  server?: string;
+  type?: "channel" | "dm" | "group";
+}
+
+export function buildChannelSlug(platform: string, meta: ChannelSlugMeta): string {
+  if (meta.isDM) {
+    if (meta.recipients && meta.recipients.length > 0) {
+      const sorted = meta.recipients.map(slugify).sort();
+      return `${platform}:@${sorted.join(",")}`;
+    }
+    if (meta.senderName) {
+      return `${platform}:@${slugify(meta.senderName)}`;
+    }
+  }
+
+  if (meta.channelName && meta.serverName) {
+    return `${platform}:${slugify(meta.serverName)}/${slugify(meta.channelName)}`;
+  }
+
+  if (meta.channelName) {
+    return `${platform}:${slugify(meta.channelName)}`;
+  }
+
+  if (meta.platformId) {
+    return `${platform}:${meta.platformId}`;
+  }
+
+  return `${platform}:unknown`;
+}
+
+export function readChannelMap(agentDir: string): Record<string, ChannelEntry> {
+  const filePath = join(agentDir, ".volute", "channels.json");
+  if (!existsSync(filePath)) return {};
+  try {
+    return JSON.parse(readFileSync(filePath, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+export function writeChannelEntry(agentDir: string, slug: string, entry: ChannelEntry): void {
+  const voluteDir = join(agentDir, ".volute");
+  mkdirSync(voluteDir, { recursive: true });
+  const filePath = join(voluteDir, "channels.json");
+  const map = readChannelMap(agentDir);
+  map[slug] = entry;
+  writeFileSync(filePath, JSON.stringify(map, null, 2) + "\n");
+}
+
+export function resolveChannelId(agentDir: string, slug: string): string {
+  const map = readChannelMap(agentDir);
+  if (map[slug]) {
+    return map[slug].platformId;
+  }
+  const colonIndex = slug.indexOf(":");
+  return colonIndex >= 0 ? slug.slice(colonIndex + 1) : slug;
 }

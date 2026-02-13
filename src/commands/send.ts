@@ -56,7 +56,7 @@ export async function run(args: string[]) {
       await daemonFetch(`/api/agents/${encodeURIComponent(agentSelf)}/history`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channel: `volute:${conversationId}`, content: message }),
+        body: JSON.stringify({ channel: conversationId, content: message }),
       });
     } catch (err) {
       console.error(`Failed to persist to history: ${err instanceof Error ? err.message : err}`);

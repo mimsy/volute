@@ -9,13 +9,16 @@ import {
 } from "discord.js";
 import {
   type AgentPayload,
+  buildChannelSlug,
   type ContentPart,
   fireAndForget,
   handleAgentMessage,
   loadEnv,
   loadFollowedChannels,
   reportTyping,
+  slugify,
   splitMessage,
+  writeChannelEntry,
 } from "./sdk.js";
 
 const DISCORD_MAX_LENGTH = 2000;
@@ -107,8 +110,26 @@ client.on(Events.MessageCreate, async (message) => {
   if (content.length === 0) return;
 
   const senderName = message.author.displayName || message.author.username;
-  const channelKey = `discord:${message.channelId}`;
   const channelName = !isDM && "name" in message.channel ? message.channel.name : undefined;
+  const channelKey = isDM
+    ? buildChannelSlug("discord", {
+        isDM: true,
+        recipients: [message.author.username],
+      })
+    : buildChannelSlug("discord", {
+        channelName: channelName ?? message.channelId,
+        serverName: message.guild?.name,
+      });
+
+  if (env.agentDir) {
+    writeChannelEntry(env.agentDir, channelKey, {
+      platformId: message.channelId,
+      platform: "discord",
+      name: channelName ? `#${channelName}` : undefined,
+      server: message.guild?.name,
+      type: isDM ? "dm" : "channel",
+    });
+  }
 
   // Determine participant count: DMs are always 1:1 for bots, guild channels use memberCount
   const participantCount = isDM ? 2 : message.guild?.memberCount;
@@ -135,7 +156,10 @@ client.on(Events.MessageCreate, async (message) => {
 client.on(Events.TypingStart, (typing) => {
   if (typing.user.bot) return;
   const sender = typing.member?.displayName ?? typing.user.username ?? typing.user.id ?? "unknown";
-  reportTyping(env, `discord:${typing.channel.id}`, sender, true);
+  const typingChannel = typing.guild
+    ? `discord:${slugify(typing.guild.name)}/${slugify("name" in typing.channel ? String((typing.channel as any).name) : typing.channel.id)}`
+    : `discord:@${slugify(typing.user.username ?? typing.user.id)}`;
+  reportTyping(env, typingChannel, sender, true);
 });
 
 async function handleDiscordMessage(message: Message, payload: AgentPayload) {

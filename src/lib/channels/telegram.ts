@@ -1,3 +1,5 @@
+import { resolveChannelId } from "../channels.js";
+
 const API_BASE = "https://api.telegram.org";
 
 function requireToken(env: Record<string, string>): string {
@@ -8,7 +10,7 @@ function requireToken(env: Record<string, string>): string {
 
 export async function read(
   _env: Record<string, string>,
-  _channelId: string,
+  _channelSlug: string,
   _limit: number,
 ): Promise<string> {
   throw new Error(
@@ -18,10 +20,11 @@ export async function read(
 
 export async function send(
   env: Record<string, string>,
-  chatId: string,
+  channelSlug: string,
   message: string,
 ): Promise<void> {
   const token = requireToken(env);
+  const chatId = resolveChannelId(env, channelSlug);
   const res = await fetch(`${API_BASE}/bot${token}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

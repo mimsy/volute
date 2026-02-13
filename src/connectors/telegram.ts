@@ -2,12 +2,14 @@ import { Input, Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
 import {
   type AgentPayload,
+  buildChannelSlug,
   type ContentPart,
   fireAndForget,
   handleAgentMessage,
   loadEnv,
   loadFollowedChannels,
   splitMessage,
+  writeChannelEntry,
 } from "./sdk.js";
 
 const TELEGRAM_MAX_LENGTH = 4096;
@@ -66,9 +68,27 @@ bot.on(message("text"), async (ctx) => {
     }
   }
 
+  const channelSlug = isDM
+    ? buildChannelSlug("telegram", {
+        isDM: true,
+        senderName: ctx.message.from.username ?? ctx.message.from.first_name,
+      })
+    : buildChannelSlug("telegram", {
+        channelName: chatTitle ?? String(ctx.chat.id),
+      });
+
+  if (env.agentDir) {
+    writeChannelEntry(env.agentDir, channelSlug, {
+      platformId: String(ctx.chat.id),
+      platform: "telegram",
+      name: chatTitle,
+      type: isDM ? "dm" : "channel",
+    });
+  }
+
   const payload: AgentPayload = {
     content,
-    channel: `telegram:${ctx.chat.id}`,
+    channel: channelSlug,
     sender: senderName,
     platform: "Telegram",
     ...(isDM ? { isDM: true } : {}),
@@ -137,9 +157,27 @@ bot.on(message("photo"), async (ctx) => {
     }
   }
 
+  const channelSlug = isDM
+    ? buildChannelSlug("telegram", {
+        isDM: true,
+        senderName: ctx.message.from.username ?? ctx.message.from.first_name,
+      })
+    : buildChannelSlug("telegram", {
+        channelName: chatTitle ?? String(ctx.chat.id),
+      });
+
+  if (env.agentDir) {
+    writeChannelEntry(env.agentDir, channelSlug, {
+      platformId: String(ctx.chat.id),
+      platform: "telegram",
+      name: chatTitle,
+      type: isDM ? "dm" : "channel",
+    });
+  }
+
   const payload: AgentPayload = {
     content,
-    channel: `telegram:${ctx.chat.id}`,
+    channel: channelSlug,
     sender: senderName,
     platform: "Telegram",
     ...(isDM ? { isDM: true } : {}),

@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { writeChannelEntry } from "../../connectors/sdk.js";
 import type { VoluteEvent } from "../../types.js";
-import type { ChannelConversation, ChannelUser } from "../channels.js";
+import { type ChannelConversation, type ChannelUser, resolveChannelId } from "../channels.js";
 import { voluteHome } from "../registry.js";
+import { slugify } from "../slugify.js";
 
 function getDaemonConfig(): { url: string; token?: string } {
   const configPath = resolve(voluteHome(), "daemon.json");
@@ -26,11 +28,12 @@ function getDaemonConfig(): { url: string; token?: string } {
 
 export async function read(
   env: Record<string, string>,
-  conversationId: string,
+  channelSlug: string,
   limit: number,
 ): Promise<string> {
   const agentName = env.VOLUTE_AGENT;
   if (!agentName) throw new Error("VOLUTE_AGENT not set");
+  const conversationId = resolveChannelId(env, channelSlug);
 
   const { url, token } = getDaemonConfig();
   const headers: Record<string, string> = { Origin: url };
@@ -64,11 +67,12 @@ export async function read(
 
 export async function* sendAndStream(
   env: Record<string, string>,
-  conversationId: string,
+  channelSlug: string,
   message: string,
 ): AsyncGenerator<VoluteEvent> {
   const agentName = env.VOLUTE_AGENT;
   if (!agentName) throw new Error("VOLUTE_AGENT not set");
+  const conversationId = resolveChannelId(env, channelSlug);
 
   const { url, token } = getDaemonConfig();
   const headers: Record<string, string> = {
@@ -121,10 +125,10 @@ export async function* sendAndStream(
 
 export async function send(
   env: Record<string, string>,
-  conversationId: string,
+  channelSlug: string,
   message: string,
 ): Promise<void> {
-  for await (const event of sendAndStream(env, conversationId, message)) {
+  for await (const event of sendAndStream(env, channelSlug, message)) {
     if (event.type === "done") break;
   }
 }
@@ -167,8 +171,10 @@ export async function listConversations(
     } catch (err) {
       console.error(`[volute] failed to fetch participants for ${conv.id}:`, err);
     }
+    const slug = conv.title ? `volute:${slugify(conv.title)}` : `volute:${conv.id}`;
     results.push({
-      id: `volute:${conv.id}`,
+      id: slug,
+      platformId: conv.id,
       name: conv.title ?? "(untitled)",
       type: participantCount === 2 ? "dm" : "group",
       participantCount,
@@ -223,5 +229,17 @@ export async function createConversation(
     throw new Error(data.error ?? `Failed to create conversation: ${res.status}`);
   }
   const conv = (await res.json()) as { id: string };
-  return conv.id;
+  const slug = name ? `volute:${slugify(name)}` : `volute:${conv.id}`;
+
+  const agentDir = env.VOLUTE_AGENT_DIR;
+  if (agentDir) {
+    writeChannelEntry(agentDir, slug, {
+      platformId: conv.id,
+      platform: "volute",
+      name: name ?? participants.join(", "),
+      type: participants.length <= 1 ? "dm" : "group",
+    });
+  }
+
+  return slug;
 }
