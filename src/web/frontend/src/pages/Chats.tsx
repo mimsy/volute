@@ -138,7 +138,7 @@ export function Chats({
           borderRight: "1px solid var(--border)",
         }}
       >
-        <div style={{ display: "flex", gap: 4, padding: "0 8px 8px" }}>
+        <div style={{ display: "flex", gap: 4, padding: "8px 8px 8px" }}>
           <button
             onClick={() => setShowNewChat(true)}
             style={{
