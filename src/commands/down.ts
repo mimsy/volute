@@ -2,7 +2,15 @@ import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { voluteHome } from "../lib/registry.js";
 
-export async function run(_args: string[]) {
+export type StopResult =
+  | { stopped: true; clean: boolean }
+  | { stopped: false; reason: "not-running" | "orphan" | "kill-failed"; port?: number };
+
+/**
+ * Attempts to stop the running daemon. Returns a result instead of calling process.exit(),
+ * so callers can decide how to handle each case.
+ */
+export async function stopDaemon(): Promise<StopResult> {
   const home = voluteHome();
   const pidPath = resolve(home, "daemon.pid");
 
@@ -24,18 +32,23 @@ export async function run(_args: string[]) {
       url.port = String(port);
       const res = await fetch(`${url.origin}/api/health`);
       if (res.ok) {
-        console.error(`Daemon appears to be running on port ${port} but PID file is missing.`);
-        console.error(`Kill the process manually: lsof -ti :${port} | xargs kill`);
-        process.exit(1);
+        return { stopped: false, reason: "orphan", port };
       }
     } catch {
       // Not responding either
     }
-    console.error("Daemon is not running (no PID file found).");
-    process.exit(1);
+    return { stopped: false, reason: "not-running" };
   }
 
   const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
+
+  if (!Number.isInteger(pid) || pid <= 0) {
+    console.error(`Stale or corrupt PID file (${pidPath}), removing.`);
+    try {
+      unlinkSync(pidPath);
+    } catch {}
+    return { stopped: false, reason: "not-running" };
+  }
 
   try {
     process.kill(pid, 0); // Check if alive
@@ -44,7 +57,7 @@ export async function run(_args: string[]) {
       unlinkSync(pidPath);
     } catch {}
     console.log("Daemon was not running (cleaned up stale PID file).");
-    return;
+    return { stopped: false, reason: "not-running" };
   }
 
   // Kill the process group
@@ -52,8 +65,15 @@ export async function run(_args: string[]) {
     process.kill(-pid, "SIGTERM");
     console.log(`Sent SIGTERM to daemon group (pid ${pid})`);
   } catch {
-    process.kill(pid, "SIGTERM");
-    console.log(`Sent SIGTERM to daemon (pid ${pid})`);
+    try {
+      process.kill(pid, "SIGTERM");
+      console.log(`Sent SIGTERM to daemon (pid ${pid})`);
+    } catch (e) {
+      console.error(
+        `Failed to send SIGTERM to daemon (pid ${pid}): ${e instanceof Error ? e.message : e}`,
+      );
+      return { stopped: false, reason: "kill-failed", port: pid };
+    }
   }
 
   // Wait for PID file to be removed (daemon cleans up on exit)
@@ -63,7 +83,7 @@ export async function run(_args: string[]) {
   while (Date.now() - start < maxWait) {
     if (!existsSync(pidPath)) {
       console.log("Daemon stopped.");
-      return;
+      return { stopped: true, clean: true };
     }
     await new Promise((r) => setTimeout(r, 200));
   }
@@ -74,9 +94,37 @@ export async function run(_args: string[]) {
   } catch {
     try {
       process.kill(pid, "SIGKILL");
-    } catch {
-      // Already dead
+    } catch (e) {
+      console.error(
+        `Failed to force-kill daemon (pid ${pid}): ${e instanceof Error ? e.message : e}`,
+      );
+      console.error(`The daemon may still be running. Kill it manually: kill -9 ${pid}`);
+      return { stopped: false, reason: "kill-failed" };
     }
   }
+
+  // SIGKILL is uncatchable so the daemon's exit handler won't clean up
+  try {
+    unlinkSync(pidPath);
+  } catch {}
+
+  // Brief delay to let the kernel reap the process
+  await new Promise((r) => setTimeout(r, 500));
+
   console.error("Daemon did not exit cleanly, sent SIGKILL.");
+  return { stopped: true, clean: false };
+}
+
+export async function run(_args: string[]) {
+  const result = await stopDaemon();
+
+  if (result.stopped) return;
+
+  if (result.reason === "orphan") {
+    console.error(`Daemon appears to be running on port ${result.port} but PID file is missing.`);
+    console.error(`Kill the process manually: lsof -ti :${result.port} | xargs kill`);
+  } else if (result.reason === "not-running") {
+    console.error("Daemon is not running (no PID file found).");
+  }
+  process.exit(1);
 }

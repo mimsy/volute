@@ -253,11 +253,13 @@ export class AgentManager {
     this.stopping.delete(name);
     if (this.restartAttempts.delete(name)) this.saveCrashAttempts();
 
-    const [baseName, variantName] = name.split("@", 2);
-    if (variantName) {
-      setVariantRunning(baseName, variantName, false);
-    } else {
-      setAgentRunning(name, false);
+    if (!this.shuttingDown) {
+      const [baseName, variantName] = name.split("@", 2);
+      if (variantName) {
+        setVariantRunning(baseName, variantName, false);
+      } else {
+        setAgentRunning(name, false);
+      }
     }
 
     console.error(`[daemon] stopped agent ${name}`);
