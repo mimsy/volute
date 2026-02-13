@@ -4,17 +4,20 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
+import { writeChannelEntry } from "../../../connectors/sdk.js";
 import { getOrCreateAgentUser } from "../../../lib/auth.js";
 import {
   addMessage,
   type ContentBlock,
   createConversation,
   findDMConversation,
+  getConversation,
   getParticipants,
   isParticipantOrOwner,
 } from "../../../lib/conversations.js";
 import { readNdjson } from "../../../lib/ndjson.js";
-import { daemonLoopback, findAgent, voluteHome } from "../../../lib/registry.js";
+import { agentDir, daemonLoopback, findAgent, voluteHome } from "../../../lib/registry.js";
+import { slugify } from "../../../lib/slugify.js";
 import { getTypingMap } from "../../../lib/typing.js";
 import type { VoluteEvent } from "../../../types.js";
 import type { AuthEnv } from "../../middleware/auth.js";
@@ -150,7 +153,10 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
     }
   }
 
-  const channel = `volute:${conversationId}`;
+  // Build a human-readable channel slug for this conversation
+  const conv = await getConversation(conversationId);
+  const convTitle = conv?.title;
+  const channel = convTitle ? `volute:${slugify(convTitle)}` : `volute:${conversationId}`;
 
   // Build content blocks
   const contentBlocks: ContentBlock[] = [];
@@ -184,6 +190,15 @@ const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchem
 
   // Build payload for daemon /message route
   const isDM = participants.length === 2;
+
+  // Write slug → platformId mapping so channel drivers can resolve it
+  const dir = agentDir(baseName);
+  writeChannelEntry(dir, channel, {
+    platformId: conversationId!,
+    platform: "volute",
+    name: convTitle ?? undefined,
+    type: isDM ? "dm" : "group",
+  });
   const typingMap = getTypingMap();
   const currentlyTyping = typingMap.get(channel);
   const payload = JSON.stringify({
