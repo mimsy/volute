@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import {
   approveUser,
   createUser,
+  deleteAgentUser,
   getOrCreateAgentUser,
   getUser,
   getUserByUsername,
@@ -110,6 +111,22 @@ describe("auth", () => {
     await getOrCreateAgentUser("agent-login");
     const result = await verifyUser("agent-login", "anything");
     assert.equal(result, null);
+  });
+
+  it("deleteAgentUser removes agent user", async () => {
+    const agent = await getOrCreateAgentUser("delete-me");
+    assert.ok(agent.id);
+    await deleteAgentUser("delete-me");
+    const found = await getUserByUsername("delete-me");
+    assert.equal(found, null);
+  });
+
+  it("deleteAgentUser does not affect human users", async () => {
+    const human = await createUser("keep-me", "pass");
+    await deleteAgentUser("keep-me");
+    const found = await getUser(human.id);
+    assert.ok(found);
+    assert.equal(found.username, "keep-me");
   });
 
   it("listUsersByType filters by type", async () => {
