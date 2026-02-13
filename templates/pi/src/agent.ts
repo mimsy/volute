@@ -75,6 +75,7 @@ export function createAgent(options: {
   systemPrompt: string;
   cwd: string;
   model?: string;
+  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   compactionMessage?: string;
 }): { resolve: HandlerResolver } {
   const sessions = new Map<string, PiSession>();
@@ -154,6 +155,7 @@ export function createAgent(options: {
     const { session: agentSession } = await createAgentSession({
       cwd: options.cwd,
       model,
+      thinkingLevel: options.thinkingLevel,
       authStorage,
       modelRegistry,
       sessionManager,

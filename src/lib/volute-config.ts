@@ -10,6 +10,8 @@ export type Schedule = {
 
 export type VoluteConfig = {
   model?: string;
+  maxThinkingTokens?: number;
+  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   connectors?: string[];
   schedules?: Schedule[];
   channels?: Record<string, { showToolCalls?: boolean }>;

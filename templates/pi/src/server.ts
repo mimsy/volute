@@ -17,6 +17,7 @@ import { createVoluteServer } from "./lib/volute-server.js";
 const { port } = parseArgs();
 const config = loadConfig();
 if (config.model) log("server", `using model: ${config.model}`);
+if (config.thinkingLevel) log("server", `thinking level: ${config.thinkingLevel}`);
 
 const systemPrompt = loadSystemPrompt();
 const pkg = loadPackageInfo();
@@ -25,6 +26,7 @@ const agent = createAgent({
   systemPrompt,
   cwd: resolve("home"),
   model: config.model,
+  thinkingLevel: config.thinkingLevel,
   compactionMessage: config.compactionMessage,
 });
 

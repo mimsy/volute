@@ -59,6 +59,7 @@ export function createAgent(options: {
   cwd: string;
   abortController: AbortController;
   model?: string;
+  maxThinkingTokens?: number;
   sessionsDir: string;
   compactionMessage?: string;
   onIdentityReload?: () => Promise<void>;
@@ -153,6 +154,7 @@ export function createAgent(options: {
         cwd: options.cwd,
         abortController: options.abortController,
         model: options.model,
+        maxThinkingTokens: options.maxThinkingTokens,
         resume,
         hooks: {
           PostToolUse: postToolUseHooks,
