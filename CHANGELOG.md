@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.7.0](https://github.com/mimsy/volute/compare/volute-v0.6.0...volute-v0.7.0) (2026-02-13)
+
+
+### Features
+
+* improve web dashboard navigation and chat UX ([#34](https://github.com/mimsy/volute/issues/34)) ([ae9494e](https://github.com/mimsy/volute/commit/ae9494e06dd576f5c64e050a9b393a9ca4ffa1df))
+* persist agent running state across daemon restarts ([#32](https://github.com/mimsy/volute/issues/32)) ([0a63a6a](https://github.com/mimsy/volute/commit/0a63a6ab9c5b3bb3512397ad9a9d4a4ba7abb9b7))
+
+
+### Bug Fixes
+
+* clear typing indicator when Discord message arrives ([#33](https://github.com/mimsy/volute/issues/33)) ([71506d7](https://github.com/mimsy/volute/commit/71506d74def79c9cafe2e1780ebaf3e4c0969e0b))
+* resolve package.json for flat dist layout in update check ([#29](https://github.com/mimsy/volute/issues/29)) ([cdacc99](https://github.com/mimsy/volute/commit/cdacc99861f79ef307db5d6a1a469ab30669256e))
+* volute chat generates human-readable channel slugs ([#30](https://github.com/mimsy/volute/issues/30)) ([906e2e3](https://github.com/mimsy/volute/commit/906e2e3095c7418886c787a164acd16809d44dfd))
+
 ## [0.6.0](https://github.com/mimsy/volute/compare/volute-v0.5.0...volute-v0.6.0) (2026-02-13)
 
 
