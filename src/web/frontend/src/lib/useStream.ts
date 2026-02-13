@@ -27,33 +27,13 @@ export function useChatStream(name: string, onEvent: (event: VoluteEvent) => voi
         signal: controller.signal,
       });
 
-      if (!res.ok || !res.body) throw new Error("Chat request failed");
+      if (!res.ok) throw new Error("Chat request failed");
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const json = line.slice(6);
-          if (!json) continue;
-          let event: VoluteEvent;
-          try {
-            event = JSON.parse(json) as VoluteEvent;
-          } catch {
-            continue;
-          }
-          onEvent(event);
-        }
-      }
+      const data = (await res.json()) as { ok: boolean; conversationId: string };
+      // Emit meta event so Chat component knows the conversationId
+      onEvent({ type: "meta", conversationId: data.conversationId });
+      // Emit done — the actual messages will arrive via the SSE subscription
+      onEvent({ type: "done" });
     },
     [name, onEvent],
   );

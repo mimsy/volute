@@ -1,7 +1,6 @@
 import { userInfo } from "node:os";
 import { getChannelDriver } from "../lib/channels.js";
 import { daemonFetch } from "../lib/daemon-client.js";
-import { summarizeTool } from "../lib/format-tool.js";
 import { readStdin } from "../lib/read-stdin.js";
 
 export async function run(args: string[]) {
@@ -18,7 +17,7 @@ export async function run(args: string[]) {
   const sender = agentSelf || userInfo().username;
 
   const driver = getChannelDriver("volute");
-  if (!driver?.sendAndStream || !driver.createConversation) {
+  if (!driver?.createConversation) {
     console.error("Volute driver not available");
     process.exit(1);
   }
@@ -34,17 +33,10 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  // Stream response
+  // Send message and wait for completion
   try {
-    for await (const event of driver.sendAndStream(env, conversationId, message)) {
-      if (event.type === "text") {
-        process.stdout.write(event.content);
-      } else if (event.type === "tool_use") {
-        process.stderr.write(`${summarizeTool(event.name, event.input)}\n`);
-      }
-      if (event.type === "done") break;
-    }
-    process.stdout.write("\n");
+    await driver.send(env, conversationId, message);
+    console.log("Message sent.");
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);

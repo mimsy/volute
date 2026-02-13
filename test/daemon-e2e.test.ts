@@ -283,7 +283,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     );
   });
 
-  it("message proxy streams ndjson response", async () => {
+  it("message proxy returns JSON response", async () => {
     if (!process.env.ANTHROPIC_API_KEY) {
       console.log("Skipping message test: ANTHROPIC_API_KEY not set");
       return;
@@ -323,39 +323,9 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     });
 
     assert.equal(msgRes.status, 200, `Message failed: ${msgRes.status}`);
-    assert.ok(msgRes.body, "Response should have a body");
 
-    // Read NDJSON stream
-    const reader = msgRes.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    const events: Array<{ type: string; [key: string]: unknown }> = [];
-
-    const readDeadline = Date.now() + 60000;
-    let done = false;
-    while (!done && Date.now() < readDeadline) {
-      const result = await reader.read();
-      if (result.done) break;
-      buffer += decoder.decode(result.value, { stream: true });
-
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const event = JSON.parse(line);
-          events.push(event);
-          if (event.type === "done") done = true;
-        } catch {}
-      }
-    }
-    reader.releaseLock();
-
-    assert.ok(events.length > 0, "Should receive at least one event");
-    assert.ok(
-      events.some((e) => e.type === "done"),
-      "Should receive a done event",
-    );
+    const body = (await msgRes.json()) as { ok: boolean };
+    assert.equal(body.ok, true, "Response should have ok: true");
 
     // Check history
     const historyRes = await daemonRequest(`/api/agents/${TEST_AGENT}/history`);

@@ -1,18 +1,15 @@
-import { Input, Telegraf } from "telegraf";
+import { Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
 import {
   type AgentPayload,
   buildChannelSlug,
   type ContentPart,
-  fireAndForget,
-  handleAgentMessage,
   loadEnv,
   loadFollowedChannels,
-  splitMessage,
+  sendToAgent,
   writeChannelEntry,
 } from "./sdk.js";
 
-const TELEGRAM_MAX_LENGTH = 4096;
 const TYPING_INTERVAL_MS = 5000;
 
 const env = loadEnv();
@@ -97,16 +94,11 @@ bot.on(message("text"), async (ctx) => {
   };
 
   if (isFollowedChat && !isMentioned) {
-    await fireAndForget(env, payload);
+    await sendToAgent(env, payload);
     return;
   }
 
-  await handleTelegramMessage(
-    ctx.chat.id,
-    payload,
-    (text) => ctx.reply(text),
-    (source) => ctx.replyWithPhoto(source),
-  );
+  await handleTelegramMessage(ctx.chat.id, payload);
 });
 
 bot.on(message("photo"), async (ctx) => {
@@ -186,55 +178,21 @@ bot.on(message("photo"), async (ctx) => {
   };
 
   if (isFollowedChat) {
-    await fireAndForget(env, payload);
+    await sendToAgent(env, payload);
     return;
   }
 
-  await handleTelegramMessage(
-    ctx.chat.id,
-    payload,
-    (text) => ctx.reply(text),
-    (source) => ctx.replyWithPhoto(source),
-  );
+  await handleTelegramMessage(ctx.chat.id, payload);
 });
 
-async function handleTelegramMessage(
-  chatId: number,
-  payload: AgentPayload,
-  reply: (text: string) => Promise<unknown>,
-  replyWithPhoto: (source: ReturnType<typeof Input.fromBuffer>) => Promise<unknown>,
-) {
+async function handleTelegramMessage(chatId: number, payload: AgentPayload) {
   const typingInterval = setInterval(() => {
     bot.telegram.sendChatAction(chatId, "typing").catch(() => {});
   }, TYPING_INTERVAL_MS);
   bot.telegram.sendChatAction(chatId, "typing").catch(() => {});
 
   try {
-    await handleAgentMessage(env, payload, {
-      onFlush: async (text, images) => {
-        for (const img of images) {
-          try {
-            await replyWithPhoto(Input.fromBuffer(Buffer.from(img.data, "base64")));
-          } catch (err) {
-            console.error(`Failed to send image: ${err}`);
-          }
-        }
-
-        if (!text) return;
-
-        const chunks = splitMessage(text, TELEGRAM_MAX_LENGTH);
-        for (const chunk of chunks) {
-          try {
-            await reply(chunk);
-          } catch (err) {
-            console.error(`Failed to send message: ${err}`);
-          }
-        }
-      },
-      onError: async (msg) => {
-        await reply(msg).catch(() => {});
-      },
-    });
+    await sendToAgent(env, payload);
   } finally {
     clearInterval(typingInterval);
   }

@@ -1,27 +1,16 @@
-import {
-  AttachmentBuilder,
-  ChannelType,
-  Client,
-  Events,
-  GatewayIntentBits,
-  type Message,
-  Partials,
-} from "discord.js";
+import { ChannelType, Client, Events, GatewayIntentBits, type Message, Partials } from "discord.js";
 import {
   type AgentPayload,
   buildChannelSlug,
   type ContentPart,
-  fireAndForget,
-  handleAgentMessage,
   loadEnv,
   loadFollowedChannels,
   reportTyping,
+  sendToAgent,
   slugify,
-  splitMessage,
   writeChannelEntry,
 } from "./sdk.js";
 
-const DISCORD_MAX_LENGTH = 2000;
 const TYPING_INTERVAL_MS = 8000;
 
 const env = loadEnv();
@@ -149,7 +138,7 @@ client.on(Events.MessageCreate, async (message) => {
   reportTyping(env, channelKey, senderName, false);
 
   if (isFollowedChannel && !isMentioned) {
-    await fireAndForget(env, payload);
+    await sendToAgent(env, payload);
     return;
   }
 
@@ -177,55 +166,8 @@ async function handleDiscordMessage(message: Message, payload: AgentPayload) {
     console.warn(`[discord] sendTyping failed: ${err}`);
   });
 
-  let replied = false;
-
   try {
-    await handleAgentMessage(env, payload, {
-      onFlush: async (text, images) => {
-        if (!text && images.length === 0) return;
-
-        const chunks = text ? splitMessage(text, DISCORD_MAX_LENGTH) : [];
-        const imageFiles = images.map((img, i) => {
-          const ext = img.media_type.split("/")[1] || "png";
-          return new AttachmentBuilder(Buffer.from(img.data, "base64"), {
-            name: `image-${i}.${ext}`,
-          });
-        });
-
-        if (chunks.length === 0 && imageFiles.length > 0) {
-          const sendFn = replied ? channel.send.bind(channel) : message.reply.bind(message);
-          await sendFn({ content: "\u200b", files: imageFiles }).catch((err: unknown) => {
-            console.error(`Failed to send message: ${err}`);
-          });
-          replied = true;
-          return;
-        }
-
-        for (let i = 0; i < chunks.length; i++) {
-          const isLast = i === chunks.length - 1;
-          const opts: { content: string; files?: AttachmentBuilder[] } = {
-            content: chunks[i],
-          };
-          if (isLast && imageFiles.length > 0) opts.files = imageFiles;
-
-          try {
-            if (!replied) {
-              await message.reply(opts);
-              replied = true;
-            } else {
-              await channel.send(opts);
-            }
-          } catch (err) {
-            console.error(`Failed to send message: ${err}`);
-          }
-        }
-      },
-      onError: async (msg) => {
-        await message.reply(msg).catch((err: unknown) => {
-          console.error(`[discord] failed to send error reply: ${err}`);
-        });
-      },
-    });
+    await sendToAgent(env, payload);
   } finally {
     clearInterval(typingInterval);
   }

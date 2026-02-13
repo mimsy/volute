@@ -1,5 +1,4 @@
 import { resolveChannelId as resolveChannelIdByDir } from "../connectors/sdk.js";
-import type { VoluteEvent } from "../types.js";
 import * as discord from "./channels/discord.js";
 import * as slack from "./channels/slack.js";
 import * as telegram from "./channels/telegram.js";
@@ -22,11 +21,6 @@ export type ChannelUser = {
 export type ChannelDriver = {
   read(env: Record<string, string>, channelId: string, limit: number): Promise<string>;
   send(env: Record<string, string>, channelId: string, message: string): Promise<void>;
-  sendAndStream?(
-    env: Record<string, string>,
-    channelId: string,
-    message: string,
-  ): AsyncIterable<VoluteEvent>;
   listConversations?(env: Record<string, string>): Promise<ChannelConversation[]>;
   listUsers?(env: Record<string, string>): Promise<ChannelUser[]>;
   createConversation?(

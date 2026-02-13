@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { collectPart, summarizeTool } from "../src/lib/format-tool.js";
+import { summarizeTool } from "../src/lib/format-tool.js";
 
 describe("summarizeTool", () => {
   it("uses path key", () => {
@@ -41,25 +41,5 @@ describe("summarizeTool", () => {
 
   it("prefers path over command", () => {
     assert.equal(summarizeTool("Tool", { path: "/a", command: "b" }), "[Tool /a]");
-  });
-});
-
-describe("collectPart", () => {
-  it("returns content for text events", () => {
-    assert.equal(collectPart({ type: "text", content: "hello" }), "hello");
-  });
-
-  it("returns empty string for text without content", () => {
-    assert.equal(collectPart({ type: "text" }), "");
-  });
-
-  it("returns tool summary for tool_use events", () => {
-    const result = collectPart({ type: "tool_use", name: "Read", input: { path: "/foo" } });
-    assert.equal(result, "[Read /foo]");
-  });
-
-  it("returns null for unknown event types", () => {
-    assert.equal(collectPart({ type: "done" }), null);
-    assert.equal(collectPart({ type: "tool_result" }), null);
   });
 });

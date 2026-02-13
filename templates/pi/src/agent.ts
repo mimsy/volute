@@ -177,7 +177,6 @@ export function createAgent(options: {
         const ae = event.assistantMessageEvent;
         if (ae.type === "text_delta") {
           logText(ae.delta);
-          broadcast(session, { type: "text", content: ae.delta });
         } else if (ae.type === "thinking_delta") {
           logThinking(ae.delta);
         }
@@ -186,14 +185,12 @@ export function createAgent(options: {
       if (event.type === "tool_execution_start") {
         toolArgs.set(event.toolCallId, event.args);
         logToolUse(event.toolName, event.args);
-        broadcast(session, { type: "tool_use", name: event.toolName, input: event.args });
       }
 
       if (event.type === "tool_execution_end") {
         const output =
           typeof event.result === "string" ? event.result : JSON.stringify(event.result);
         logToolResult(event.toolName, output, event.isError);
-        broadcast(session, { type: "tool_result", output, is_error: event.isError });
 
         // Auto-commit file changes in home/
         if ((event.toolName === "edit" || event.toolName === "write") && !event.isError) {

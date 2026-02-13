@@ -2,14 +2,11 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { stream } from "hono/streaming";
 import { getAgentManager } from "../../lib/agent-manager.js";
 import { deleteAgentUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { getConnectorManager } from "../../lib/connector-manager.js";
 import { getDb } from "../../lib/db.js";
-import { collectPart } from "../../lib/format-tool.js";
-import { readNdjson } from "../../lib/ndjson.js";
 import { agentDir, findAgent, readRegistry, removeAgent, voluteHome } from "../../lib/registry.js";
 import { getScheduler } from "../../lib/scheduler.js";
 import { agentMessages } from "../../lib/schema.js";
@@ -339,16 +336,7 @@ const app = new Hono<AuthEnv>()
         textContent,
       });
 
-      c.header("Content-Type", "application/x-ndjson");
-      const encoder = new TextEncoder();
-      return stream(c, async (s) => {
-        await s.write(
-          encoder.encode(
-            `${JSON.stringify({ type: "text", content: "[Token budget exceeded — message queued for next period]" })}\n`,
-          ),
-        );
-        await s.write(encoder.encode(`${JSON.stringify({ type: "done" })}\n`));
-      });
+      return c.json({ error: "Token budget exceeded — message queued for next period" }, 429);
     }
 
     // Enrich payload with currently-typing senders (exclude the receiving agent
@@ -377,69 +365,38 @@ const app = new Hono<AuthEnv>()
       forwardBody = JSON.stringify(parsed);
     }
 
-    let res: Response;
+    typingMap.set(channel, baseName, { persistent: true });
+
     try {
-      res = await fetch(`http://127.0.0.1:${port}/message`, {
+      const res = await fetch(`http://127.0.0.1:${port}/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: forwardBody,
       });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        console.error(`[daemon] agent ${name} responded with ${res.status}: ${text}`);
+        return c.json({ error: `Agent responded with ${res.status}` }, res.status as 500);
+      }
+
+      const result = (await res.json()) as {
+        ok: boolean;
+        usage?: { input_tokens: number; output_tokens: number };
+      };
+
+      // Record usage against budget
+      if (result.usage) {
+        budget.recordUsage(baseName, result.usage.input_tokens, result.usage.output_tokens);
+      }
+
+      return c.json({ ok: true });
     } catch (err) {
       console.error(`[daemon] agent ${name} unreachable on port ${port}:`, err);
       return c.json({ error: "Agent is not reachable" }, 502);
+    } finally {
+      typingMap.delete(channel, baseName);
     }
-
-    if (!res.ok) {
-      return c.json({ error: `Agent responded with ${res.status}` }, res.status as 500);
-    }
-
-    if (!res.body) {
-      return c.json({ error: "No response body from agent" }, 502);
-    }
-
-    // Stream NDJSON response back, accumulating text for persistence
-    c.header("Content-Type", "application/x-ndjson");
-    const encoder = new TextEncoder();
-    typingMap.set(channel, baseName, { persistent: true });
-    return stream(c, async (s) => {
-      try {
-        const textParts: string[] = [];
-        const toolParts: string[] = [];
-
-        for await (const event of readNdjson(res.body!)) {
-          // Intercept usage events — record against budget (no-op if unconfigured) and strip from stream
-          if (event.type === "usage") {
-            const input = typeof event.input_tokens === "number" ? event.input_tokens : 0;
-            const output = typeof event.output_tokens === "number" ? event.output_tokens : 0;
-            budget.recordUsage(baseName, input, output);
-            continue;
-          }
-          await s.write(encoder.encode(`${JSON.stringify(event)}\n`));
-          const part = collectPart(event);
-          if (part != null) {
-            if (event.type === "tool_use") toolParts.push(part);
-            else textParts.push(part);
-          }
-        }
-
-        const content = [textParts.join(""), ...toolParts].filter(Boolean).join("\n");
-        if (content) {
-          try {
-            await db.insert(agentMessages).values({
-              agent: baseName,
-              channel,
-              role: "assistant",
-              sender: baseName,
-              content,
-            });
-          } catch (err) {
-            console.error(`[daemon] failed to persist assistant response for ${baseName}:`, err);
-          }
-        }
-      } finally {
-        typingMap.delete(channel, baseName);
-      }
-    });
   })
   // Budget status
   .get("/:name/budget", async (c) => {

@@ -180,13 +180,10 @@ export function createAgent(options: {
           if (b.type === "thinking" && "thinking" in b && b.thinking) {
             logThinking(b.thinking as string);
           } else if (b.type === "text") {
-            const text = (b as { text: string }).text;
-            logText(text);
-            broadcastToSession(session, { type: "text", content: text });
+            logText((b as { text: string }).text);
           } else if (b.type === "tool_use") {
             const tb = b as { name: string; input: unknown };
             logToolUse(tb.name, tb.input);
-            broadcastToSession(session, { type: "tool_use", name: tb.name, input: tb.input });
           }
         }
       }

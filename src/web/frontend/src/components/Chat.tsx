@@ -37,7 +37,7 @@ export function Chat({
 }) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [input, setInput] = useState("");
-  const [streaming, setStreaming] = useState(false);
+  const [sending, setSending] = useState(false);
   const [pendingImages, setPendingImages] = useState<
     Array<{ media_type: string; data: string; preview: string }>
   >([]);
@@ -48,10 +48,6 @@ export function Chat({
   const typingTimerRef = useRef<number>(0);
   const [typingNames, setTypingNames] = useState<string[]>([]);
   const lastPollFingerprintRef = useRef("");
-
-  // Track current assistant blocks being built
-  const currentRef = useRef<ContentBlock[]>([]);
-  const streamingSenderRef = useRef<string | undefined>(undefined);
 
   const scrollToBottom = useCallback((force?: boolean) => {
     requestAnimationFrame(() => {
@@ -104,33 +100,49 @@ export function Chat({
     loadMessages(conversationId, true);
   }, [conversationId, loadMessages]);
 
-  // Poll for new messages when not streaming
+  // Subscribe to SSE conversation events for real-time updates
   useEffect(() => {
-    if (!conversationId || streaming) return;
-    const id = setInterval(() => loadMessages(conversationId), 3000);
-    return () => clearInterval(id);
-  }, [conversationId, streaming, loadMessages]);
+    if (!conversationId || !name) return;
+    const eventSource = new EventSource(
+      `/api/agents/${encodeURIComponent(name)}/conversations/${encodeURIComponent(conversationId)}/events`,
+    );
+    eventSource.onmessage = (ev) => {
+      if (!ev.data) return;
+      try {
+        const event = JSON.parse(ev.data);
+        if (event.type === "message") {
+          // New message arrived — reload conversation
+          loadMessages(conversationId, false);
+          scrollToBottom();
+        } else if (event.type === "typing") {
+          setTypingNames((event.senders as string[]).filter((n: string) => n !== username));
+        }
+      } catch {
+        // ignore parse errors
+      }
+    };
+    return () => eventSource.close();
+  }, [conversationId, name, username, loadMessages, scrollToBottom]);
 
-  // Poll typing indicators (skip while streaming — same pattern as message poll)
+  // Poll typing indicators as fallback
   useEffect(() => {
-    if (!conversationId || !name || streaming) return;
+    if (!conversationId || !name) return;
     let cancelled = false;
     const poll = () => {
       fetchTyping(name, `volute:${conversationId}`)
         .then((names) => {
           if (cancelled) return;
-          // Filter out the current user
           setTypingNames(names.filter((n) => n !== username));
         })
         .catch(() => {});
     };
-    poll(); // Initial fetch
-    const id = setInterval(poll, 3000);
+    poll();
+    const id = setInterval(poll, 5000);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [conversationId, name, username, streaming]);
+  }, [conversationId, name, username]);
 
   // Clear typing indicator on unmount
   useEffect(() => {
@@ -146,77 +158,28 @@ export function Chat({
       if (event.type === "meta") {
         convIdRef.current = event.conversationId;
         onConversationId(event.conversationId);
-        streamingSenderRef.current = event.senderName;
-        // Update the streaming entry with sender name immediately
-        if (event.senderName) {
-          setEntries((prev) => {
-            const next = [...prev];
-            const last = next[next.length - 1];
-            if (last?.role === "assistant") {
-              next[next.length - 1] = { ...last, senderName: event.senderName };
-            }
-            return next;
-          });
-        }
-        return;
       }
-
-      const blocks = currentRef.current;
-
-      if (event.type === "text") {
-        // Merge consecutive text blocks
-        const last = blocks[blocks.length - 1];
-        if (last && last.type === "text") {
-          last.text += event.content;
-        } else {
-          blocks.push({ type: "text", text: event.content });
-        }
-      } else if (event.type === "tool_use") {
-        blocks.push({ type: "tool_use", name: event.name, input: event.input });
-      } else if (event.type === "tool_result") {
-        blocks.push({
-          type: "tool_result",
-          output: event.output,
-          ...(event.is_error ? { is_error: true } : {}),
-        });
-      } else if (event.type === "done") {
-        setStreaming(false);
-        return;
-      } else if (event.type === "sync") {
-        // All responses (including forwarded) are persisted — re-fetch
-        const cid = convIdRef.current;
-        if (cid) loadMessages(cid);
-        return;
+      if (event.type === "done") {
+        setSending(false);
       }
-
-      setEntries((prev) => {
-        const next = [...prev];
-        next[next.length - 1] = {
-          role: "assistant",
-          blocks: [...blocks],
-          senderName: streamingSenderRef.current,
-        };
-        return next;
-      });
-      scrollToBottom();
     },
-    [onConversationId, scrollToBottom, loadMessages],
+    [onConversationId],
   );
 
-  const { send, stop } = useChatStream(name, onEvent);
+  const { send } = useChatStream(name, onEvent);
   const colorMap = useMemo(() => buildSenderColorMap(entries), [entries]);
 
   const handleSend = async () => {
     const message = input.trim();
     if (!message && pendingImages.length === 0) return;
-    if (streaming) return;
+    if (sending) return;
 
     const images = pendingImages.map(({ media_type, data }) => ({
       media_type,
       data,
     }));
 
-    // Build user blocks
+    // Build user blocks for optimistic UI
     const userBlocks: ContentBlock[] = [];
     if (message) {
       userBlocks.push({ type: "text", text: message });
@@ -231,18 +194,13 @@ export function Chat({
 
     setInput("");
     setPendingImages([]);
-    currentRef.current = [];
     if (inputRef.current) {
       inputRef.current.style.height = "auto";
       inputRef.current.style.overflow = "hidden";
     }
-    streamingSenderRef.current = name;
-    setEntries((prev) => [
-      ...prev,
-      { role: "user", blocks: userBlocks, senderName: username },
-      { role: "assistant", blocks: [], senderName: name },
-    ]);
-    setStreaming(true);
+    // Optimistic: show user's message immediately
+    setEntries((prev) => [...prev, { role: "user", blocks: userBlocks, senderName: username }]);
+    setSending(true);
     // Clear user's typing indicator
     if (convIdRef.current && name && username) {
       reportTyping(name, `volute:${convIdRef.current}`, username, false);
@@ -254,18 +212,7 @@ export function Chat({
       await send(message, convIdRef.current ?? undefined, images.length > 0 ? images : undefined);
     } catch (err) {
       console.error("Failed to send message:", err);
-      setStreaming(false);
-      setEntries((prev) => {
-        const next = [...prev];
-        const last = next[next.length - 1];
-        if (last?.role === "assistant" && last.blocks.length === 0) {
-          next[next.length - 1] = {
-            ...last,
-            blocks: [{ type: "text", text: "*Failed to send message.*" }],
-          };
-        }
-        return next;
-      });
+      setSending(false);
     }
   };
 
@@ -339,7 +286,7 @@ export function Chat({
             ) : (
               <AssistantMessage
                 blocks={entry.blocks}
-                isStreaming={streaming && i === entries.length - 1}
+                isStreaming={false}
                 senderName={entry.senderName}
                 color={entry.senderName ? colorMap.get(entry.senderName) : undefined}
               />
@@ -494,38 +441,22 @@ export function Chat({
             }
           }}
         />
-        {streaming ? (
-          <button
-            onClick={stop}
-            style={{
-              padding: "0 16px",
-              background: "var(--red-dim)",
-              color: "var(--red)",
-              borderRadius: "var(--radius)",
-              fontSize: 12,
-              fontWeight: 500,
-            }}
-          >
-            stop
-          </button>
-        ) : (
-          <button
-            onClick={handleSend}
-            disabled={!input.trim() && pendingImages.length === 0}
-            style={{
-              padding: "0 16px",
-              background:
-                input.trim() || pendingImages.length > 0 ? "var(--accent-dim)" : "var(--bg-3)",
-              color: input.trim() || pendingImages.length > 0 ? "var(--accent)" : "var(--text-2)",
-              borderRadius: "var(--radius)",
-              fontSize: 12,
-              fontWeight: 500,
-              transition: "all 0.15s",
-            }}
-          >
-            send
-          </button>
-        )}
+        <button
+          onClick={handleSend}
+          disabled={sending || (!input.trim() && pendingImages.length === 0)}
+          style={{
+            padding: "0 16px",
+            background:
+              input.trim() || pendingImages.length > 0 ? "var(--accent-dim)" : "var(--bg-3)",
+            color: input.trim() || pendingImages.length > 0 ? "var(--accent)" : "var(--text-2)",
+            borderRadius: "var(--radius)",
+            fontSize: 12,
+            fontWeight: 500,
+            transition: "all 0.15s",
+          }}
+        >
+          {sending ? "sending..." : "send"}
+        </button>
       </div>
     </div>
   );

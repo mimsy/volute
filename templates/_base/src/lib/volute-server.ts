@@ -33,25 +33,26 @@ export function createVoluteServer(options: {
       try {
         const body = JSON.parse(await readBody(req)) as VoluteRequest;
 
-        res.writeHead(200, {
-          "Content-Type": "application/x-ndjson",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-        });
+        let usage: { input_tokens: number; output_tokens: number } | undefined;
+        let done = false;
 
         const { unsubscribe } = router.route(body.content, body, (event) => {
-          try {
-            res.write(`${JSON.stringify(event)}\n`);
-            if (event.type === "done") {
-              res.end();
-            }
-          } catch (err) {
-            log("server", "write error, disconnecting:", err);
-            unsubscribe();
+          if (event.type === "usage") {
+            usage = { input_tokens: event.input_tokens, output_tokens: event.output_tokens };
+          }
+          if (event.type === "done") {
+            done = true;
+            const response: { ok: true; usage?: { input_tokens: number; output_tokens: number } } =
+              { ok: true };
+            if (usage) response.usage = usage;
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(response));
           }
         });
 
-        res.on("close", () => unsubscribe());
+        res.on("close", () => {
+          if (!done) unsubscribe();
+        });
       } catch (err) {
         if (err instanceof SyntaxError) {
           res.writeHead(400);

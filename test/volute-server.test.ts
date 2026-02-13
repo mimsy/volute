@@ -23,7 +23,7 @@ describe("volute server HTTP contract", () => {
       const messageId = `msg-${Date.now()}`;
       // Emit canned response asynchronously
       setTimeout(() => {
-        listener?.({ type: "text", content: "hello", messageId });
+        listener?.({ type: "usage", input_tokens: 10, output_tokens: 5, messageId });
         listener?.({ type: "done", messageId });
       }, 10);
       return { messageId, unsubscribe: () => {} };
@@ -57,7 +57,7 @@ describe("volute server HTTP contract", () => {
     assert.deepEqual(body, { status: "ok", name: "test-agent", version: "1.2.3" });
   });
 
-  it("POST /message streams NDJSON and passes content/channel/sender", async () => {
+  it("POST /message returns JSON with ok and usage", async () => {
     calls.length = 0;
 
     const res = await fetch(`${getUrl(server)}/message`, {
@@ -70,18 +70,11 @@ describe("volute server HTTP contract", () => {
     });
 
     assert.equal(res.status, 200);
-    assert.equal(res.headers.get("content-type"), "application/x-ndjson");
+    assert.equal(res.headers.get("content-type"), "application/json");
 
-    const text = await res.text();
-    const lines = text
-      .trim()
-      .split("\n")
-      .map((l) => JSON.parse(l));
-
-    assert.equal(lines.length, 2);
-    assert.equal(lines[0].type, "text");
-    assert.equal(lines[0].content, "hello");
-    assert.equal(lines[1].type, "done");
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.deepEqual(body.usage, { input_tokens: 10, output_tokens: 5 });
 
     assert.equal(calls.length, 1);
     assert.deepEqual(calls[0].content, [{ type: "text", text: "hi" }]);
@@ -104,12 +97,12 @@ describe("volute server HTTP contract", () => {
 });
 
 describe("volute server mid-turn interrupt", () => {
-  it("first message gets done when second message arrives", async () => {
+  it("first message gets response when second message arrives", async () => {
     let currentListener: Listener | undefined;
     let currentMessageId: string | undefined;
 
     const interruptRouter: Router = {
-      route(content, meta, listener) {
+      route(_content, _meta, listener) {
         const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
         // If mid-turn, emit done for previous message
@@ -123,7 +116,6 @@ describe("volute server mid-turn interrupt", () => {
         // Emit response after a delay (simulates agent processing)
         setTimeout(() => {
           if (currentMessageId === messageId) {
-            listener?.({ type: "text", content: "response", messageId });
             listener?.({ type: "done", messageId });
             currentListener = undefined;
             currentMessageId = undefined;
@@ -158,22 +150,17 @@ describe("volute server mid-turn interrupt", () => {
       body: JSON.stringify({ content: [{ type: "text", text: "msg2" }], channel: "web" }),
     });
 
-    // First message should end with just a done (interrupted, no text response)
+    // First message should get a JSON {ok: true} response (interrupted)
     const firstRes = await first;
-    const firstLines = (await firstRes.text())
-      .trim()
-      .split("\n")
-      .map((l) => JSON.parse(l));
-    assert.equal(firstLines[firstLines.length - 1].type, "done");
+    assert.equal(firstRes.status, 200);
+    const firstBody = await firstRes.json();
+    assert.equal(firstBody.ok, true);
 
-    // Second message should get a normal text+done response
+    // Second message should also get a JSON {ok: true} response
     const secondRes = await second;
-    const secondLines = (await secondRes.text())
-      .trim()
-      .split("\n")
-      .map((l) => JSON.parse(l));
-    assert.ok(secondLines.some((l: any) => l.type === "text"));
-    assert.equal(secondLines[secondLines.length - 1].type, "done");
+    assert.equal(secondRes.status, 200);
+    const secondBody = await secondRes.json();
+    assert.equal(secondBody.ok, true);
 
     await new Promise<void>((resolve) => srv.close(() => resolve()));
   });
