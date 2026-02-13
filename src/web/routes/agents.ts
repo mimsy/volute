@@ -4,6 +4,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
 import { getAgentManager } from "../../lib/agent-manager.js";
+import { deleteAgentUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { getConnectorManager } from "../../lib/connector-manager.js";
 import { getDb } from "../../lib/db.js";
@@ -249,6 +250,7 @@ const app = new Hono<AuthEnv>()
 
     removeAllVariants(name);
     removeAgent(name);
+    await deleteAgentUser(name);
 
     if (force && existsSync(dir)) {
       rmSync(dir, { recursive: true, force: true });

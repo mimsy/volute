@@ -177,6 +177,11 @@ export async function getOrCreateAgentUser(agentName: string): Promise<User> {
   }
 }
 
+export async function deleteAgentUser(agentName: string): Promise<void> {
+  const db = await getDb();
+  await db.delete(users).where(and(eq(users.username, agentName), eq(users.user_type, "agent")));
+}
+
 export async function approveUser(id: number): Promise<void> {
   const db = await getDb();
   await db

@@ -1,4 +1,5 @@
 import { existsSync, rmSync } from "node:fs";
+import { deleteAgentUser as deleteAgentDbUser } from "../lib/auth.js";
 import { deleteAgentUser } from "../lib/isolation.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { agentDir, findAgent, removeAgent } from "../lib/registry.js";
@@ -33,9 +34,10 @@ export async function run(args: string[]) {
 
   const dir = agentDir(name);
 
-  // Remove from registry and clean up variant tracking
+  // Remove from registry, clean up variant tracking and DB user
   removeAllVariants(name);
   removeAgent(name);
+  await deleteAgentDbUser(name);
   console.log(`Removed ${name} from registry.`);
 
   // Delete directory
