@@ -23,6 +23,7 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, "src/lib/auto-commit.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/format-prefix.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/startup.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/session-monitor.ts")));
 
       // Base router + file handler
       assert.ok(existsSync(resolve(composedDir, "src/lib/router.ts")));
@@ -36,6 +37,7 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, "src/lib/hooks/auto-commit.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/hooks/pre-compact.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/hooks/identity-reload.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/hooks/session-context.ts")));
 
       // Init files (from base + template)
       assert.ok(existsSync(resolve(composedDir, ".init/SOUL.md")));
@@ -43,11 +45,13 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, ".init/CLAUDE.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/memory/journal/.gitkeep")));
       assert.ok(existsSync(resolve(composedDir, ".init/.config/hooks/startup-context.sh")));
+      assert.ok(existsSync(resolve(composedDir, ".init/.config/scripts/session-reader.ts")));
       assert.ok(existsSync(resolve(composedDir, ".init/.claude/settings.json")));
 
       // Skills mapped to skillsDir
       assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "volute-agent/SKILL.md")));
       assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "memory/SKILL.md")));
+      assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "sessions/SKILL.md")));
       assert.ok(!existsSync(resolve(composedDir, "_skills")), "_skills should be removed");
 
       // Manifest should be removed from composed output
@@ -86,6 +90,7 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, "src/lib/auto-commit.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/format-prefix.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/startup.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/session-monitor.ts")));
 
       // Base router + file handler
       assert.ok(existsSync(resolve(composedDir, "src/lib/router.ts")));
@@ -95,6 +100,7 @@ describe("template composition", () => {
       // Template-specific source
       assert.ok(existsSync(resolve(composedDir, "src/server.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/agent.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/session-context-extension.ts")));
 
       // No agent-sdk-specific files
       assert.ok(!existsSync(resolve(composedDir, "src/lib/message-channel.ts")));
@@ -106,6 +112,7 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, ".init/MEMORY.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/AGENTS.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/.config/routes.json")));
+      assert.ok(existsSync(resolve(composedDir, ".init/.config/scripts/session-reader.ts")));
 
       // Pi overrides home/.config/volute.json.tmpl with provider-prefixed model
       assert.ok(existsSync(resolve(composedDir, "home/.config/volute.json.tmpl")));
@@ -113,6 +120,7 @@ describe("template composition", () => {
       // Skills mapped to skillsDir
       assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "volute-agent/SKILL.md")));
       assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "memory/SKILL.md")));
+      assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "sessions/SKILL.md")));
     } finally {
       rmSync(composedDir, { recursive: true, force: true });
     }
