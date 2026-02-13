@@ -11,6 +11,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { commitFileChange } from "./lib/auto-commit.js";
 import { log, logText, logThinking, logToolResult, logToolUse } from "./lib/logger.js";
+import { createSessionContextExtension } from "./lib/session-context-extension.js";
 import type {
   HandlerMeta,
   HandlerResolver,
@@ -137,11 +138,16 @@ export function createAgent(options: {
       retry: { enabled: true, maxRetries: 3 },
     });
 
+    const sessionContextExtension = createSessionContextExtension({
+      currentSession: session.name,
+      cwd: options.cwd,
+    });
+
     const resourceLoader = new DefaultResourceLoader({
       cwd: options.cwd,
       settingsManager,
       systemPrompt: options.systemPrompt,
-      extensionFactories: [preCompactExtension],
+      extensionFactories: [preCompactExtension, sessionContextExtension],
     });
     await resourceLoader.reload();
 
