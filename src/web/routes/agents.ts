@@ -12,7 +12,7 @@ import { readNdjson } from "../../lib/ndjson.js";
 import { agentDir, findAgent, readRegistry, removeAgent, voluteHome } from "../../lib/registry.js";
 import { getScheduler } from "../../lib/scheduler.js";
 import { agentMessages } from "../../lib/schema.js";
-import { getTokenBudget } from "../../lib/token-budget.js";
+import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "../../lib/token-budget.js";
 import { getTypingMap } from "../../lib/typing.js";
 import { checkHealth, findVariant, readVariants, removeAllVariants } from "../../lib/variants.js";
 import { readVoluteConfig } from "../../lib/volute-config.js";
@@ -144,7 +144,7 @@ const app = new Hono<AuthEnv>()
           getTokenBudget().setBudget(
             baseName,
             config.tokenBudget,
-            config.tokenBudgetPeriodMinutes ?? 60,
+            config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
           );
         }
       }
@@ -174,7 +174,10 @@ const app = new Hono<AuthEnv>()
 
     try {
       if (manager.isRunning(name)) {
-        if (!variantName) await connectorManager.stopConnectors(baseName);
+        if (!variantName) {
+          await connectorManager.stopConnectors(baseName);
+          getTokenBudget().removeBudget(baseName);
+        }
         await manager.stopAgent(name);
       }
 
@@ -188,7 +191,7 @@ const app = new Hono<AuthEnv>()
           getTokenBudget().setBudget(
             baseName,
             config.tokenBudget,
-            config.tokenBudgetPeriodMinutes ?? 60,
+            config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
           );
         }
       }
@@ -240,6 +243,7 @@ const app = new Hono<AuthEnv>()
     const manager = getAgentManager();
     if (manager.isRunning(name)) {
       await getConnectorManager().stopConnectors(name);
+      getTokenBudget().removeBudget(name);
       await manager.stopAgent(name);
     }
 
@@ -328,11 +332,9 @@ const app = new Hono<AuthEnv>()
       }
 
       budget.enqueue(baseName, {
-        body,
         channel,
         sender: (parsed?.sender as string) ?? null,
         textContent,
-        timestamp: Date.now(),
       });
 
       c.header("Content-Type", "application/x-ndjson");
@@ -356,18 +358,17 @@ const app = new Hono<AuthEnv>()
       forwardBody = JSON.stringify(parsed);
     }
 
-    // Inject budget warning into forwarded message if near limit
+    // Inject one-time budget warning (triggers once at >=80% per period)
     if (budgetStatus === "warning" && parsed) {
       const usage = budget.getUsage(baseName);
       const pct = usage?.percentUsed ?? 80;
-      const contentParts = Array.isArray(parsed.content) ? [...parsed.content] : parsed.content;
-      if (Array.isArray(contentParts)) {
-        contentParts.push({
-          type: "text",
-          text: `\n[System: Token budget is at ${pct}% — conserve tokens to avoid message queuing]`,
-        });
-        parsed.content = contentParts;
+      const warningText = `\n[System: Token budget is at ${pct}% — conserve tokens to avoid message queuing]`;
+      if (typeof parsed.content === "string") {
+        parsed.content = parsed.content + warningText;
+      } else if (Array.isArray(parsed.content)) {
+        parsed.content = [...parsed.content, { type: "text", text: warningText }];
       }
+      budget.acknowledgeWarning(baseName);
       forwardBody = JSON.stringify(parsed);
     }
 
@@ -401,10 +402,11 @@ const app = new Hono<AuthEnv>()
         const toolParts: string[] = [];
 
         for await (const event of readNdjson(res.body!)) {
-          // Intercept usage events — record and strip from forwarded stream
+          // Intercept usage events — record against budget (no-op if unconfigured) and strip from stream
           if (event.type === "usage") {
-            const u = event as { input_tokens: number; output_tokens: number };
-            budget.recordUsage(baseName, u.input_tokens, u.output_tokens);
+            const input = typeof event.input_tokens === "number" ? event.input_tokens : 0;
+            const output = typeof event.output_tokens === "number" ? event.output_tokens : 0;
+            budget.recordUsage(baseName, input, output);
             continue;
           }
           await s.write(encoder.encode(`${JSON.stringify(event)}\n`));

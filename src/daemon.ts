@@ -8,7 +8,7 @@ import { initConnectorManager } from "./lib/connector-manager.js";
 import { agentDir, readRegistry, setAgentRunning, voluteHome } from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
 import { getScheduler } from "./lib/scheduler.js";
-import { getTokenBudget } from "./lib/token-budget.js";
+import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "./lib/token-budget.js";
 import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
 import { readVoluteConfig } from "./lib/volute-config.js";
 import { cleanExpiredSessions } from "./web/middleware/auth.js";
@@ -93,7 +93,7 @@ export async function startDaemon(opts: {
         tokenBudget.setBudget(
           entry.name,
           config.tokenBudget,
-          config.tokenBudgetPeriodMinutes ?? 60,
+          config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
         );
       }
     } catch (err) {

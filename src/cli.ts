@@ -44,9 +44,6 @@ switch (command) {
   case "down":
     await import("./commands/down.js").then((m) => m.run(args));
     break;
-  case "restart":
-    await import("./commands/restart.js").then((m) => m.run(args));
-    break;
   case "setup":
     await import("./commands/setup.js").then((m) => m.run(args));
     break;

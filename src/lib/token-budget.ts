@@ -1,11 +1,12 @@
 import { daemonLoopback } from "./registry.js";
 
+export const DEFAULT_BUDGET_PERIOD_MINUTES = 60;
+const MAX_QUEUE_SIZE = 100;
+
 type QueuedMessage = {
-  body: string;
   channel: string;
   sender: string | null;
   textContent: string;
-  timestamp: number;
 };
 
 type BudgetState = {
@@ -35,6 +36,7 @@ export class TokenBudget {
   }
 
   setBudget(agent: string, tokenLimit: number, periodMinutes: number): void {
+    if (tokenLimit <= 0) return;
     const existing = this.budgets.get(agent);
     if (existing) {
       existing.tokenLimit = tokenLimit;
@@ -61,22 +63,29 @@ export class TokenBudget {
     state.tokensUsed += inputTokens + outputTokens;
   }
 
+  /** Returns current budget status. Does not mutate state — call acknowledgeWarning() after delivering a warning. */
   checkBudget(agent: string): "ok" | "warning" | "exceeded" {
     const state = this.budgets.get(agent);
     if (!state) return "ok";
 
     const pct = state.tokensUsed / state.tokenLimit;
     if (pct >= 1) return "exceeded";
-    if (pct >= 0.8 && !state.warningInjected) {
-      state.warningInjected = true;
-      return "warning";
-    }
+    if (pct >= 0.8 && !state.warningInjected) return "warning";
     return "ok";
+  }
+
+  /** Mark warning as delivered for this period. Call after successfully injecting the warning. */
+  acknowledgeWarning(agent: string): void {
+    const state = this.budgets.get(agent);
+    if (state) state.warningInjected = true;
   }
 
   enqueue(agent: string, message: QueuedMessage): void {
     const state = this.budgets.get(agent);
     if (!state) return;
+    if (state.queue.length >= MAX_QUEUE_SIZE) {
+      state.queue.shift();
+    }
     state.queue.push(message);
   }
 
@@ -119,14 +128,24 @@ export class TokenBudget {
 
         const queued = this.drain(agent);
         if (queued.length > 0) {
-          this.replay(agent, queued);
+          this.replay(agent, queued).catch((err) => {
+            console.error(`[token-budget] replay error for ${agent}:`, err);
+          });
         }
       }
     }
   }
 
   private async replay(agentName: string, messages: QueuedMessage[]): Promise<void> {
-    if (!this.daemonPort || !this.daemonToken) return;
+    if (!this.daemonPort || !this.daemonToken) {
+      console.error(
+        `[token-budget] cannot replay ${messages.length} message(s) for ${agentName}: daemon not configured`,
+      );
+      // Re-enqueue so messages aren't lost
+      const state = this.budgets.get(agentName);
+      if (state) state.queue.push(...messages);
+      return;
+    }
 
     const summary = messages
       .map((m) => {
@@ -169,7 +188,7 @@ export class TokenBudget {
           `[token-budget] replayed ${messages.length} queued message(s) for ${agentName}`,
         );
       }
-      // Drain the response stream
+      // Drain the response stream to close the connection
       try {
         const reader = res.body?.getReader();
         if (reader) {
@@ -184,6 +203,9 @@ export class TokenBudget {
       }
     } catch (err) {
       console.error(`[token-budget] failed to replay for ${agentName}:`, err);
+      // Re-enqueue so messages aren't lost
+      const state = this.budgets.get(agentName);
+      if (state) state.queue.push(...messages);
     } finally {
       clearTimeout(timeout);
     }
