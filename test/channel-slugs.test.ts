@@ -6,9 +6,10 @@ import { beforeEach, describe, it } from "node:test";
 import {
   buildChannelSlug,
   readChannelMap,
-  resolveChannelId,
+  resolveChannelId as resolveChannelIdSdk,
   writeChannelEntry,
 } from "../src/connectors/sdk.js";
+import { resolveChannelId as resolveChannelIdEnv } from "../src/lib/channels.js";
 import { slugify } from "../src/lib/slugify.js";
 
 describe("slugify", () => {
@@ -160,7 +161,7 @@ describe("writeChannelEntry", () => {
   });
 });
 
-describe("resolveChannelId", () => {
+describe("resolveChannelId (sdk)", () => {
   let tmp: string;
 
   beforeEach(() => {
@@ -170,7 +171,7 @@ describe("resolveChannelId", () => {
   it("returns platformId for known slug", () => {
     const entry = { platformId: "123456", platform: "discord" };
     writeChannelEntry(tmp, "discord:my-server/general", entry);
-    const id = resolveChannelId(tmp, "discord:my-server/general");
+    const id = resolveChannelIdSdk(tmp, "discord:my-server/general");
     assert.equal(id, "123456");
   });
 
@@ -178,12 +179,50 @@ describe("resolveChannelId", () => {
     const voluteDir = join(tmp, ".volute");
     mkdirSync(voluteDir, { recursive: true });
     writeFileSync(join(voluteDir, "channels.json"), JSON.stringify({}));
-    const id = resolveChannelId(tmp, "discord:my-server/general");
+    const id = resolveChannelIdSdk(tmp, "discord:my-server/general");
     assert.equal(id, "my-server/general");
   });
 
   it("returns slug suffix when file is missing", () => {
-    const id = resolveChannelId(tmp, "discord:some-channel");
+    const id = resolveChannelIdSdk(tmp, "discord:some-channel");
     assert.equal(id, "some-channel");
+  });
+});
+
+describe("resolveChannelId (env-based)", () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "volute-channel-test-"));
+  });
+
+  it("returns platformId for known slug when VOLUTE_AGENT_DIR is set", () => {
+    const entry = { platformId: "123456", platform: "discord" };
+    writeChannelEntry(tmp, "discord:my-server/general", entry);
+    const id = resolveChannelIdEnv({ VOLUTE_AGENT_DIR: tmp }, "discord:my-server/general");
+    assert.equal(id, "123456");
+  });
+
+  it("returns slug suffix when no VOLUTE_AGENT_DIR", () => {
+    const id = resolveChannelIdEnv({}, "discord:my-server/general");
+    assert.equal(id, "my-server/general");
+  });
+
+  it("returns slug suffix when channels.json missing", () => {
+    const id = resolveChannelIdEnv({ VOLUTE_AGENT_DIR: tmp }, "discord:some-channel");
+    assert.equal(id, "some-channel");
+  });
+
+  it("returns slug suffix when slug not in map", () => {
+    const voluteDir = join(tmp, ".volute");
+    mkdirSync(voluteDir, { recursive: true });
+    writeFileSync(join(voluteDir, "channels.json"), JSON.stringify({}));
+    const id = resolveChannelIdEnv({ VOLUTE_AGENT_DIR: tmp }, "discord:unknown-channel");
+    assert.equal(id, "unknown-channel");
+  });
+
+  it("returns full string when no colon present", () => {
+    const id = resolveChannelIdEnv({}, "nocolon");
+    assert.equal(id, "nocolon");
   });
 });

@@ -1,4 +1,6 @@
-import type { ChannelConversation, ChannelUser } from "../channels.js";
+import { writeChannelEntry } from "../../connectors/sdk.js";
+import { type ChannelConversation, type ChannelUser, resolveChannelId } from "../channels.js";
+import { slugify } from "../slugify.js";
 
 const API_BASE = "https://slack.com/api";
 
@@ -33,10 +35,11 @@ async function slackApi(
 
 export async function read(
   env: Record<string, string>,
-  channelId: string,
+  channelSlug: string,
   limit: number,
 ): Promise<string> {
   const token = requireToken(env);
+  const channelId = resolveChannelId(env, channelSlug);
   const data = (await slackApi(token, "conversations.history", {
     channel: channelId,
     limit,
@@ -51,10 +54,11 @@ export async function read(
 
 export async function send(
   env: Record<string, string>,
-  channelId: string,
+  channelSlug: string,
   message: string,
 ): Promise<void> {
   const token = requireToken(env);
+  const channelId = resolveChannelId(env, channelSlug);
   await slackApi(token, "chat.postMessage", {
     channel: channelId,
     text: message,
@@ -65,6 +69,11 @@ export async function listConversations(
   env: Record<string, string>,
 ): Promise<ChannelConversation[]> {
   const token = requireToken(env);
+
+  // Get workspace name for slug prefix
+  const authData = (await slackApi(token, "auth.test", {})) as { team?: string };
+  const teamName = authData.team ?? "workspace";
+
   const data = (await slackApi(token, "conversations.list", {
     types: "public_channel,private_channel,mpim,im",
     limit: 1000,
@@ -74,17 +83,44 @@ export async function listConversations(
       name?: string;
       is_im?: boolean;
       is_mpim?: boolean;
+      user?: string;
       num_members?: number;
     }[];
   };
+
+  // Build user ID to username map for DMs
+  const userMap = new Map<string, string>();
+  const imChannels = data.channels.filter((ch) => ch.is_im && ch.user);
+  if (imChannels.length > 0) {
+    const users = await listUsers(env);
+    for (const u of users) {
+      userMap.set(u.id, u.username);
+    }
+  }
 
   return data.channels.map((ch) => {
     let type: "dm" | "group" | "channel" = "channel";
     if (ch.is_im) type = "dm";
     else if (ch.is_mpim) type = "group";
+
+    let slug: string;
+    let name: string;
+    if (ch.is_im && ch.user) {
+      const username = userMap.get(ch.user) ?? ch.user;
+      slug = `slack:@${slugify(username)}`;
+      name = username;
+    } else if (ch.name) {
+      slug = `slack:${slugify(teamName)}/${slugify(ch.name)}`;
+      name = ch.name;
+    } else {
+      slug = `slack:${ch.id}`;
+      name = ch.id;
+    }
+
     return {
-      id: `slack:${ch.id}`,
-      name: ch.name ?? ch.id,
+      id: slug,
+      platformId: ch.id,
+      name,
       type,
       participantCount: ch.num_members,
     };
@@ -127,6 +163,8 @@ export async function createConversation(
     ids.push(user.id);
   }
 
+  const agentDir = env.VOLUTE_AGENT_DIR;
+
   if (name) {
     // Create named private channel and invite participants
     const createData = (await slackApi(token, "conversations.create", {
@@ -141,12 +179,43 @@ export async function createConversation(
         users: userId,
       });
     }
-    return channelId;
+
+    // Get workspace name for slug
+    const authData = (await slackApi(token, "auth.test", {})) as { team?: string };
+    const teamName = authData.team ?? "workspace";
+    const slug = `slack:${slugify(teamName)}/${slugify(name)}`;
+
+    if (agentDir) {
+      writeChannelEntry(agentDir, slug, {
+        platformId: channelId,
+        platform: "slack",
+        name,
+        type: "channel",
+      });
+    }
+
+    return slug;
   }
 
   // Open a DM or group DM (idempotent for same participants)
   const openData = (await slackApi(token, "conversations.open", {
     users: ids.join(","),
   })) as { channel: { id: string } };
-  return openData.channel.id;
+  const platformId = openData.channel.id;
+
+  const slug =
+    participants.length === 1
+      ? `slack:@${slugify(participants[0])}`
+      : `slack:@${participants.map(slugify).sort().join(",")}`;
+
+  if (agentDir) {
+    writeChannelEntry(agentDir, slug, {
+      platformId,
+      platform: "slack",
+      name: participants.join(", "),
+      type: participants.length === 1 ? "dm" : "group",
+    });
+  }
+
+  return slug;
 }

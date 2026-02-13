@@ -1,3 +1,4 @@
+import { writeChannelEntry } from "../connectors/sdk.js";
 import { CHANNELS, getChannelDriver } from "../lib/channels.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { loadMergedEnv } from "../lib/env.js";
@@ -63,14 +64,14 @@ async function readChannel(args: string[]) {
   }
 
   const agentName = resolveAgentName(flags);
-  const { platform, channelId } = parseUri(uri);
+  const { platform } = parseUri(uri);
   const driver = requireDriver(platform);
   const { dir } = resolveAgent(agentName);
-  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName };
+  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName, VOLUTE_AGENT_DIR: dir };
 
   try {
     const limit = flags.limit ?? 20;
-    const output = await driver.read(env, channelId, limit);
+    const output = await driver.read(env, uri, limit);
     console.log(output);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
@@ -92,20 +93,20 @@ async function sendChannel(args: string[]) {
   }
 
   const agentName = resolveAgentName(flags);
-  const { platform, channelId } = parseUri(uri);
+  const { platform } = parseUri(uri);
   const driver = requireDriver(platform);
   const { dir } = resolveAgent(agentName);
-  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName };
+  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName, VOLUTE_AGENT_DIR: dir };
 
   try {
-    await driver.send(env, channelId, message);
+    await driver.send(env, uri, message);
 
     // Persist outgoing message to agent_messages
     try {
       await daemonFetch(`/api/agents/${encodeURIComponent(agentName)}/history`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channel: `${platform}:${channelId}`, content: message }),
+        body: JSON.stringify({ channel: uri, content: message }),
       });
     } catch (err) {
       console.error(`Failed to persist to history: ${err instanceof Error ? err.message : err}`);
@@ -124,7 +125,7 @@ async function listChannels(args: string[]) {
   const platform = positional[0];
   const agentName = resolveAgentName(flags);
   const { dir } = resolveAgent(agentName);
-  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName };
+  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName, VOLUTE_AGENT_DIR: dir };
 
   const platforms = platform ? [platform] : Object.keys(CHANNELS);
 
@@ -135,6 +136,14 @@ async function listChannels(args: string[]) {
     try {
       const convs = await driver.listConversations(env);
       for (const conv of convs) {
+        // Populate channels.json with slug -> platformId mapping
+        writeChannelEntry(dir, conv.id, {
+          platformId: conv.platformId,
+          platform: p,
+          name: conv.name,
+          type: conv.type,
+        });
+
         const parts = [conv.id.padEnd(24), conv.name.padEnd(28), conv.type];
         if (conv.participantCount != null) {
           parts.push(String(conv.participantCount));
@@ -166,7 +175,7 @@ async function listUsers(args: string[]) {
 
   const agentName = resolveAgentName(flags);
   const { dir } = resolveAgent(agentName);
-  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName };
+  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName, VOLUTE_AGENT_DIR: dir };
 
   try {
     const users = await driver.listUsers(env);
@@ -202,12 +211,12 @@ async function createChannel(args: string[]) {
 
   const agentName = resolveAgentName(flags);
   const { dir } = resolveAgent(agentName);
-  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName };
+  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName, VOLUTE_AGENT_DIR: dir };
   const participants = flags.participants.split(",").map((s) => s.trim());
 
   try {
-    const id = await driver.createConversation(env, participants, flags.name);
-    console.log(`${platform}:${id}`);
+    const slug = await driver.createConversation(env, participants, flags.name);
+    console.log(slug);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
