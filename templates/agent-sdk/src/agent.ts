@@ -5,6 +5,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { createAutoCommitHook } from "./lib/hooks/auto-commit.js";
 import { createIdentityReloadHook } from "./lib/hooks/identity-reload.js";
 import { createPreCompactHook } from "./lib/hooks/pre-compact.js";
+import { createSessionContextHook } from "./lib/hooks/session-context.js";
 import { log, logText, logThinking, logToolUse } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
 import type {
@@ -136,6 +137,12 @@ export function createAgent(options: {
       });
     });
 
+    const sessionContext = createSessionContextHook({
+      currentSession: session.name,
+      sessionsDir: options.sessionsDir,
+      cwd: options.cwd,
+    });
+
     return query({
       prompt: session.channel.iterable,
       options: {
@@ -150,6 +157,7 @@ export function createAgent(options: {
         hooks: {
           PostToolUse: postToolUseHooks,
           PreCompact: [{ hooks: [preCompact.hook] }],
+          UserPromptSubmit: [{ hooks: [sessionContext.hook] }],
         },
       },
     });
