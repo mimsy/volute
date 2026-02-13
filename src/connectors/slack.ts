@@ -1,5 +1,6 @@
 import { App } from "@slack/bolt";
 import {
+  buildChannelSlug,
   type ContentPart,
   fireAndForget,
   handleAgentMessage,
@@ -7,6 +8,7 @@ import {
   loadFollowedChannels,
   onShutdown,
   splitMessage,
+  writeChannelEntry,
 } from "./sdk.js";
 
 const SLACK_MAX_LENGTH = 4000;
@@ -103,7 +105,25 @@ app.message(async ({ message, say }) => {
     console.warn(`Failed to get user info: ${err}`);
   }
 
-  const channelKey = `slack:${message.channel}`;
+  const channelKey = isDM
+    ? buildChannelSlug("slack", {
+        isDM: true,
+        senderName: senderName,
+      })
+    : buildChannelSlug("slack", {
+        channelName: channelName ?? message.channel,
+        serverName,
+      });
+
+  if (env.agentDir) {
+    writeChannelEntry(env.agentDir, channelKey, {
+      platformId: message.channel,
+      platform: "slack",
+      name: channelName ? `#${channelName}` : undefined,
+      server: serverName,
+      type: isDM ? "dm" : "channel",
+    });
+  }
 
   const participantCount = message.channel_type === "im" ? 2 : numMembers;
   const payload = {
