@@ -95,12 +95,14 @@ app.message(async ({ message, say }) => {
   }
 
   let senderName = message.user;
+  let senderUsername = message.user;
   try {
     const userInfo = (await app.client.users.info({
       user: message.user,
-    })) as { user?: { profile?: { display_name?: string; real_name?: string } } };
+    })) as { user?: { name?: string; profile?: { display_name?: string; real_name?: string } } };
     senderName =
       userInfo.user?.profile?.display_name || userInfo.user?.profile?.real_name || message.user;
+    senderUsername = userInfo.user?.name ?? message.user;
   } catch (err) {
     console.warn(`Failed to get user info: ${err}`);
   }
@@ -108,7 +110,7 @@ app.message(async ({ message, say }) => {
   const channelKey = isDM
     ? buildChannelSlug("slack", {
         isDM: true,
-        senderName: senderName,
+        senderName: senderUsername,
       })
     : buildChannelSlug("slack", {
         channelName: channelName ?? message.channel,

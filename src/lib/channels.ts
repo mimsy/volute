@@ -1,5 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolveChannelId as resolveChannelIdByDir } from "../connectors/sdk.js";
 import type { VoluteEvent } from "../types.js";
 import * as discord from "./channels/discord.js";
 import * as slack from "./channels/slack.js";
@@ -98,16 +97,5 @@ export function resolveChannelId(env: Record<string, string>, slug: string): str
     const colonIdx = slug.indexOf(":");
     return colonIdx !== -1 ? slug.slice(colonIdx + 1) : slug;
   }
-  const mapPath = resolve(agentDir, ".volute", "channels.json");
-  if (!existsSync(mapPath)) {
-    const colonIdx = slug.indexOf(":");
-    return colonIdx !== -1 ? slug.slice(colonIdx + 1) : slug;
-  }
-  try {
-    const map = JSON.parse(readFileSync(mapPath, "utf-8"));
-    const entry = map[slug];
-    if (entry?.platformId) return entry.platformId;
-  } catch {}
-  const colonIdx = slug.indexOf(":");
-  return colonIdx !== -1 ? slug.slice(colonIdx + 1) : slug;
+  return resolveChannelIdByDir(agentDir, slug);
 }

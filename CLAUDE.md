@@ -64,6 +64,7 @@ Each agent project (created from the template) has:
     ├── sessions/              # Per-session SDK state (e.g. sessions/main.json)
     ├── connectors/            # Connector configs (e.g. connectors/discord/config.json)
     ├── schedules.json         # Cron schedules for this agent
+    ├── channels.json          # Channel slug → platform ID mapping
     ├── variants.json          # Variant metadata
     ├── merged.json            # Post-merge context (temporary)
     ├── restart.json           # Restart signal for daemon
@@ -148,10 +149,11 @@ Agent-scoped commands (`variant`, `connector`, `schedule`, `channel`, `conversat
 | `db.ts` | libSQL database singleton at `~/.volute/volute.db` (WAL mode, foreign keys) |
 | `auth.ts` | bcrypt password hashing, first user auto-admin, pending approval flow, agent users |
 | `conversations.ts` | Conversation and message CRUD, multi-participant conversations |
-| `channels.ts` | ChannelProvider registry with optional drivers (read/send), display names, tool call visibility |
-| `channels/discord.ts` | Discord channel driver (read/send via REST API, env-based token) |
-| `channels/slack.ts` | Slack channel driver (read/send via Slack API) |
-| `channels/telegram.ts` | Telegram channel driver (send via Bot API; read not supported) |
+| `channels.ts` | ChannelProvider registry with optional drivers (read/send), display names, slug resolution via `channels.json` |
+| `channels/discord.ts` | Discord channel driver (read/send via REST API, slug-to-ID resolution) |
+| `channels/slack.ts` | Slack channel driver (read/send via Slack API, slug-to-ID resolution) |
+| `channels/telegram.ts` | Telegram channel driver (send via Bot API, slug-to-ID resolution; read not supported) |
+| `slugify.ts` | Shared slugify function for generating human-readable channel slugs |
 | `convert-session.ts` | Converts OpenClaw `session.jsonl` to Claude Agent SDK format |
 | `read-stdin.ts` | Reads piped stdin for send commands (returns undefined if TTY) |
 | `resolve-agent-name.ts` | Resolves agent name from `--agent` flag or `VOLUTE_AGENT` env var |
@@ -196,6 +198,7 @@ Agent-scoped commands (`variant`, `connector`, `schedule`, `channel`, `conversat
 - Centralized registry at `~/.volute/agents.json` maps agent names to ports, tracks `running` state
 - `resolveAgent()` supports `name@variant` syntax for addressing variants
 - AgentManager spawns agent servers as child processes with crash recovery (3s delay) and merge-restart
+- Channel URIs use human-readable slugs: `discord:my-server/general`, `slack:workspace/channel`, `telegram:@username`, `volute:conversation-title`. Connectors generate slugs and write slug→platformId mappings to `<agentDir>/.volute/channels.json`. Channel drivers resolve slugs back to platform IDs via this mapping.
 - Connector resolution: agent-specific → user-shared (`~/.volute/connectors/`) → built-in (`src/connectors/`)
 - Agent message flow: `volute-server` (HTTP) → `Router` (routing/formatting/batching) → `MessageHandler` (agent or file destination)
 - `MessageHandler` interface: `handle(content, meta, listener) => unsubscribe`; `HandlerResolver`: `(key: string) => MessageHandler`

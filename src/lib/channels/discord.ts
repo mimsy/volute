@@ -100,9 +100,11 @@ export async function listConversations(
   for (const dm of dms) {
     const recipients = dm.recipients?.map((r) => r.username) ?? [];
     const slug =
-      recipients.length === 1
-        ? `discord:@${slugify(recipients[0])}`
-        : `discord:@${recipients.map(slugify).sort().join(",")}`;
+      recipients.length === 0
+        ? `discord:${dm.id}`
+        : recipients.length === 1
+          ? `discord:@${slugify(recipients[0])}`
+          : `discord:@${recipients.map(slugify).sort().join(",")}`;
     results.push({
       id: slug,
       platformId: dm.id,
