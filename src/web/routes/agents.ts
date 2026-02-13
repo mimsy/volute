@@ -349,8 +349,11 @@ const app = new Hono<AuthEnv>()
       });
     }
 
-    // Enrich payload with currently-typing senders (exclude the receiving agent)
+    // Enrich payload with currently-typing senders (exclude the receiving agent
+    // and the message sender — they just sent a message, so they're not typing)
     const typingMap = getTypingMap();
+    const sender = (parsed?.sender as string) ?? "";
+    if (sender) typingMap.delete(channel, sender);
     const currentlyTyping = typingMap.get(channel).filter((s) => s !== baseName);
     let forwardBody = body;
     if (parsed && currentlyTyping.length > 0) {

@@ -145,6 +145,9 @@ client.on(Events.MessageCreate, async (message) => {
     ...(participantCount ? { participantCount } : {}),
   };
 
+  // Clear typing indicator — the user just sent a message, they're no longer typing
+  reportTyping(env, channelKey, senderName, false);
+
   if (isFollowedChannel && !isMentioned) {
     await fireAndForget(env, payload);
     return;
@@ -155,7 +158,7 @@ client.on(Events.MessageCreate, async (message) => {
 
 client.on(Events.TypingStart, (typing) => {
   if (typing.user.bot) return;
-  const sender = typing.member?.displayName ?? typing.user.username ?? typing.user.id ?? "unknown";
+  const sender = typing.user.displayName || typing.user.username || typing.user.id || "unknown";
   const typingChannel = typing.guild
     ? `discord:${slugify(typing.guild.name)}/${slugify("name" in typing.channel ? String((typing.channel as any).name) : typing.channel.id)}`
     : `discord:@${slugify(typing.user.username ?? typing.user.id)}`;
@@ -166,9 +169,13 @@ async function handleDiscordMessage(message: Message, payload: AgentPayload) {
   const channel = message.channel;
   if (!("sendTyping" in channel)) return;
   const typingInterval = setInterval(() => {
-    channel.sendTyping().catch(() => {});
+    channel.sendTyping().catch((err: unknown) => {
+      console.warn(`[discord] sendTyping failed: ${err}`);
+    });
   }, TYPING_INTERVAL_MS);
-  channel.sendTyping().catch(() => {});
+  channel.sendTyping().catch((err: unknown) => {
+    console.warn(`[discord] sendTyping failed: ${err}`);
+  });
 
   let replied = false;
 
@@ -214,7 +221,9 @@ async function handleDiscordMessage(message: Message, payload: AgentPayload) {
         }
       },
       onError: async (msg) => {
-        await message.reply(msg).catch(() => {});
+        await message.reply(msg).catch((err: unknown) => {
+          console.error(`[discord] failed to send error reply: ${err}`);
+        });
       },
     });
   } finally {
