@@ -57,4 +57,25 @@ describe("splitMessage", () => {
     assert.equal(chunks[1].length, 2000);
     assert.equal(chunks[2].length, 1000);
   });
+
+  it("returns single chunk when message exactly equals max length", () => {
+    const chunks = splitMessage("a".repeat(2000), 2000);
+    assert.deepEqual(chunks, ["a".repeat(2000)]);
+  });
+
+  it("strips the split-point newline from the next chunk", () => {
+    const message = "a".repeat(1500) + "\n" + "b".repeat(500);
+    const chunks = splitMessage(message, 1501);
+    assert.equal(chunks.length, 2);
+    assert.equal(chunks[0], "a".repeat(1500));
+    assert.equal(chunks[1], "b".repeat(500));
+  });
+
+  it("uses newline at exactly the midpoint", () => {
+    const message = "a".repeat(1000) + "\n" + "b".repeat(1500);
+    const chunks = splitMessage(message, 2000);
+    assert.equal(chunks.length, 2);
+    assert.equal(chunks[0], "a".repeat(1000));
+    assert.equal(chunks[1], "b".repeat(1500));
+  });
 });

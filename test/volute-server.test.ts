@@ -100,6 +100,7 @@ describe("volute server mid-turn interrupt", () => {
   it("first message gets response when second message arrives", async () => {
     let currentListener: Listener | undefined;
     let currentMessageId: string | undefined;
+    let firstDoneFired = false;
 
     const interruptRouter: Router = {
       route(_content, _meta, listener) {
@@ -107,6 +108,7 @@ describe("volute server mid-turn interrupt", () => {
 
         // If mid-turn, emit done for previous message
         if (currentListener && currentMessageId) {
+          firstDoneFired = true;
           currentListener({ type: "done", messageId: currentMessageId });
         }
 
@@ -161,6 +163,8 @@ describe("volute server mid-turn interrupt", () => {
     assert.equal(secondRes.status, 200);
     const secondBody = await secondRes.json();
     assert.equal(secondBody.ok, true);
+
+    assert.ok(firstDoneFired, "First listener should have received done (interrupt occurred)");
 
     await new Promise<void>((resolve) => srv.close(() => resolve()));
   });
@@ -225,5 +229,51 @@ describe("volute server client disconnect", () => {
     await new Promise<void>((resolve) => {
       srv.close(() => resolve());
     });
+  });
+});
+
+describe("volute server response without usage", () => {
+  let server: Server;
+
+  const noUsageRouter: Router = {
+    route(_content, _meta, listener) {
+      const messageId = `msg-${Date.now()}`;
+      setTimeout(() => {
+        listener?.({ type: "done", messageId });
+      }, 10);
+      return { messageId, unsubscribe: () => {} };
+    },
+    close() {},
+  };
+
+  before(() => {
+    server = createVoluteServer({
+      router: noUsageRouter,
+      port: 0,
+      name: "no-usage-agent",
+      version: "1.0.0",
+    });
+    return new Promise<void>((resolve) => {
+      server.listen(0, () => resolve());
+    });
+  });
+
+  after(() => {
+    return new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
+  it("returns ok with no usage key when router emits only done", async () => {
+    const res = await fetch(`${getUrl(server)}/message`, {
+      method: "POST",
+      body: JSON.stringify({
+        content: [{ type: "text", text: "hi" }],
+        channel: "web",
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual(body, { ok: true });
   });
 });

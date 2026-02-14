@@ -330,7 +330,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     // Check history
     const historyRes = await daemonRequest(`/api/agents/${TEST_AGENT}/history`);
     assert.equal(historyRes.status, 200);
-    const history = (await historyRes.json()) as Array<{ role: string }>;
+    const history = (await historyRes.json()) as Array<Record<string, unknown>>;
     assert.ok(history.length > 0, "History should have messages");
 
     // Stop agent
