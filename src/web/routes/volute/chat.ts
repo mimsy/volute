@@ -82,7 +82,6 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: "Conversation not found" }, 404);
       }
     } else {
-      const title = body.message ? body.message.slice(0, 80) : "Image message";
       // If sender is a registered agent, include them as a participant
       const participantIds: number[] = [];
       if (user.id !== 0) {
@@ -106,6 +105,10 @@ const app = new Hono<AuthEnv>()
       }
 
       if (!conversationId) {
+        // Title from participant names (e.g. "alice, mystery")
+        const participantNames = new Set([senderName, baseName]);
+        const title = [...participantNames].join(", ");
+
         const conv = await createConversation(baseName, "volute", {
           userId: user.id !== 0 ? user.id : undefined,
           title,
