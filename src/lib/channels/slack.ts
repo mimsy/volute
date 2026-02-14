@@ -62,11 +62,16 @@ export async function send(
   const token = requireToken(env);
   const channelId = resolveChannelId(env, channelSlug);
   const chunks = splitMessage(message, SLACK_MAX_LENGTH);
-  for (const chunk of chunks) {
-    await slackApi(token, "chat.postMessage", {
-      channel: channelId,
-      text: chunk,
-    });
+  for (let i = 0; i < chunks.length; i++) {
+    try {
+      await slackApi(token, "chat.postMessage", {
+        channel: channelId,
+        text: chunks[i],
+      });
+    } catch (err) {
+      const partial = i > 0 ? ` (${i}/${chunks.length} chunks were already sent)` : "";
+      throw new Error(`${err instanceof Error ? err.message : err}${partial}`);
+    }
   }
 }
 

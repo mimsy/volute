@@ -29,15 +29,16 @@ export async function send(
   const token = requireToken(env);
   const chatId = resolveChannelId(env, channelSlug);
   const chunks = splitMessage(message, TELEGRAM_MAX_LENGTH);
-  for (const chunk of chunks) {
+  for (let i = 0; i < chunks.length; i++) {
     const res = await fetch(`${API_BASE}/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text: chunk }),
+      body: JSON.stringify({ chat_id: chatId, text: chunks[i] }),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`Telegram API error: ${res.status} ${body}`);
+      const partial = i > 0 ? ` (${i}/${chunks.length} chunks were already sent)` : "";
+      throw new Error(`Telegram API error: ${res.status} ${body}${partial}`);
     }
   }
 }

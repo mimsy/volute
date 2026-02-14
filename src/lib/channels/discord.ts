@@ -53,17 +53,18 @@ export async function send(
   const token = requireToken(env);
   const channelId = resolveChannelId(env, channelSlug);
   const chunks = splitMessage(message, DISCORD_MAX_LENGTH);
-  for (const chunk of chunks) {
+  for (let i = 0; i < chunks.length; i++) {
     const res = await fetch(`${API_BASE}/channels/${channelId}/messages`, {
       method: "POST",
       headers: {
         Authorization: `Bot ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ content: chunk }),
+      body: JSON.stringify({ content: chunks[i] }),
     });
     if (!res.ok) {
-      throw new Error(`Discord API error: ${res.status} ${res.statusText}`);
+      const partial = i > 0 ? ` (${i}/${chunks.length} chunks were already sent)` : "";
+      throw new Error(`Discord API error: ${res.status} ${res.statusText}${partial}`);
     }
   }
 }
