@@ -18,7 +18,6 @@ export function History({ name }: { name: string }) {
   const [messages, setMessages] = useState<HistoryMessage[]>([]);
   const [channels, setChannels] = useState<string[]>([]);
   const [channel, setChannel] = useState("");
-  const [role, setRole] = useState("");
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
 
@@ -55,8 +54,6 @@ export function History({ name }: { name: string }) {
     load(0);
   }, [load]);
 
-  const filtered = role ? messages.filter((m) => m.role === role) : messages;
-
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       {/* Filters */}
@@ -77,22 +74,17 @@ export function History({ name }: { name: string }) {
             </option>
           ))}
         </select>
-        <select value={role} onChange={(e) => setRole(e.target.value)} style={selectStyle}>
-          <option value="">all roles</option>
-          <option value="user">user</option>
-          <option value="assistant">assistant</option>
-        </select>
       </div>
 
       {/* Messages */}
       <div style={{ flex: 1, overflow: "auto", paddingTop: 12 }}>
-        {filtered.length === 0 && !loading && (
+        {messages.length === 0 && !loading && (
           <div style={{ color: "var(--text-2)", textAlign: "center", padding: 40, fontSize: 13 }}>
             No messages found.
           </div>
         )}
-        {filtered.map((msg) => (
-          <HistoryEntry key={msg.id} msg={msg} />
+        {messages.map((msg) => (
+          <HistoryEntry key={msg.id} msg={msg} name={name} />
         ))}
         {hasMore && (
           <div style={{ padding: "16px 0", textAlign: "center" }}>
@@ -117,8 +109,8 @@ export function History({ name }: { name: string }) {
   );
 }
 
-function HistoryEntry({ msg }: { msg: HistoryMessage }) {
-  const isUser = msg.role === "user";
+function HistoryEntry({ msg, name }: { msg: HistoryMessage; name: string }) {
+  const isAgent = msg.sender === name;
   const date = new Date(msg.created_at);
   const time = date.toLocaleString(undefined, {
     month: "short",
@@ -132,7 +124,7 @@ function HistoryEntry({ msg }: { msg: HistoryMessage }) {
       <div style={{ display: "flex", gap: 10 }}>
         <span
           style={{
-            color: isUser ? "var(--blue)" : "var(--accent)",
+            color: !isAgent ? "var(--blue)" : "var(--accent)",
             fontSize: 11,
             fontWeight: 600,
             flexShrink: 0,
@@ -140,10 +132,10 @@ function HistoryEntry({ msg }: { msg: HistoryMessage }) {
             textTransform: "uppercase",
           }}
         >
-          {isUser ? (msg.sender ?? "user") : "agent"}
+          {!isAgent ? (msg.sender ?? "user") : "agent"}
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          {isUser ? (
+          {!isAgent ? (
             <div style={{ color: "var(--text-0)", whiteSpace: "pre-wrap" }}>{msg.content}</div>
           ) : (
             <div
