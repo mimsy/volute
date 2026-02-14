@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { resolve as resolvePath } from "node:path";
 import type { HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { flushAutoReply, type MessageChannelInfo } from "./lib/auto-reply.js";
 import { createAutoCommitHook } from "./lib/hooks/auto-commit.js";
 import { createIdentityReloadHook } from "./lib/hooks/identity-reload.js";
 import { createPreCompactHook } from "./lib/hooks/pre-compact.js";
@@ -36,6 +37,8 @@ type Session = {
   messageIds: (string | undefined)[];
   currentMessageId?: string;
   currentQuery?: ReturnType<typeof query>;
+  messageChannels: Map<string, MessageChannelInfo>;
+  autoReplyAccumulator: string;
 };
 
 function toSDKContent(content: VoluteContentPart[]): SDKContent {
@@ -169,6 +172,7 @@ export function createAgent(options: {
     for await (const msg of stream) {
       if (session.currentMessageId === undefined) {
         session.currentMessageId = session.messageIds.shift();
+        session.autoReplyAccumulator = "";
       }
       if ("session_id" in msg && msg.session_id) {
         if (!session.name.startsWith("new-")) {
@@ -181,13 +185,27 @@ export function createAgent(options: {
             logThinking(b.thinking as string);
           } else if (b.type === "text") {
             logText((b as { text: string }).text);
+            session.autoReplyAccumulator += (b as { text: string }).text;
           } else if (b.type === "tool_use") {
+            session.autoReplyAccumulator = flushAutoReply(
+              session.autoReplyAccumulator,
+              session.currentMessageId,
+              session.messageChannels,
+            );
             const tb = b as { name: string; input: unknown };
             logToolUse(tb.name, tb.input);
           }
         }
       }
       if (msg.type === "result") {
+        session.autoReplyAccumulator = flushAutoReply(
+          session.autoReplyAccumulator,
+          session.currentMessageId,
+          session.messageChannels,
+        );
+        if (session.currentMessageId) {
+          session.messageChannels.delete(session.currentMessageId);
+        }
         log("agent", `session "${session.name}": turn done`);
         const result = msg as { usage?: { input_tokens?: number; output_tokens?: number } };
         if (result.usage) {
@@ -214,6 +232,8 @@ export function createAgent(options: {
         session.currentQuery = q;
         await consumeStream(q, session);
       } catch (err) {
+        session.autoReplyAccumulator = "";
+        session.messageChannels.clear();
         if (savedSessionId) {
           log("agent", `session "${session.name}": resume failed, starting fresh:`, err);
           deleteSessionId(session.name);
@@ -245,6 +265,8 @@ export function createAgent(options: {
       channel: createMessageChannel(),
       listeners: new Set(),
       messageIds: [],
+      messageChannels: new Map(),
+      autoReplyAccumulator: "",
     };
     sessions.set(name, session);
 
@@ -272,6 +294,14 @@ export function createAgent(options: {
           if (event.messageId === meta.messageId) listener(event);
         };
         session.listeners.add(filteredListener);
+
+        // Track channel for auto-reply
+        if (meta.channel) {
+          session.messageChannels.set(meta.messageId, {
+            channel: meta.channel,
+            autoReply: meta.autoReply,
+          });
+        }
 
         // Interrupt if requested and session is mid-turn
         if (meta.interrupt && session.currentMessageId !== undefined && session.currentQuery) {

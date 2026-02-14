@@ -10,6 +10,7 @@ import {
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
 import { commitFileChange } from "./lib/auto-commit.js";
+import { flushAutoReply, type MessageChannelInfo } from "./lib/auto-reply.js";
 import { log, logText, logThinking, logToolResult, logToolUse } from "./lib/logger.js";
 import { createSessionContextExtension } from "./lib/session-context-extension.js";
 import type {
@@ -31,6 +32,8 @@ type PiSession = {
   unsubscribe?: () => void;
   messageIds: (string | undefined)[];
   currentMessageId?: string;
+  messageChannels: Map<string, MessageChannelInfo>;
+  autoReplyAccumulator: string;
 };
 
 function defaultCompactionMessage(): string {
@@ -99,10 +102,14 @@ export function createAgent(options: {
       ready: Promise.resolve(),
       listeners: new Set(),
       messageIds: [],
+      messageChannels: new Map(),
+      autoReplyAccumulator: "",
     };
     sessions.set(name, session);
 
     session.ready = initSession(session).catch((err) => {
+      session.autoReplyAccumulator = "";
+      session.messageChannels.clear();
       log("agent", `session "${session.name}": init failed:`, err);
     });
     return session;
@@ -171,18 +178,25 @@ export function createAgent(options: {
     session.unsubscribe = agentSession.subscribe((event) => {
       if (session.currentMessageId === undefined) {
         session.currentMessageId = session.messageIds.shift();
+        session.autoReplyAccumulator = "";
       }
 
       if (event.type === "message_update") {
         const ae = event.assistantMessageEvent;
         if (ae.type === "text_delta") {
           logText(ae.delta);
+          session.autoReplyAccumulator += ae.delta;
         } else if (ae.type === "thinking_delta") {
           logThinking(ae.delta);
         }
       }
 
       if (event.type === "tool_execution_start") {
+        session.autoReplyAccumulator = flushAutoReply(
+          session.autoReplyAccumulator,
+          session.currentMessageId,
+          session.messageChannels,
+        );
         toolArgs.set(event.toolCallId, event.args);
         logToolUse(event.toolName, event.args);
       }
@@ -204,6 +218,14 @@ export function createAgent(options: {
       }
 
       if (event.type === "agent_end") {
+        session.autoReplyAccumulator = flushAutoReply(
+          session.autoReplyAccumulator,
+          session.currentMessageId,
+          session.messageChannels,
+        );
+        if (session.currentMessageId) {
+          session.messageChannels.delete(session.currentMessageId);
+        }
         log("agent", `session "${session.name}": turn done`);
         broadcast(session, { type: "done" });
         session.currentMessageId = undefined;
@@ -248,6 +270,14 @@ export function createAgent(options: {
           if (event.messageId === meta.messageId) listener(event);
         };
         session.listeners.add(filteredListener);
+
+        // Track channel for auto-reply
+        if (meta.channel) {
+          session.messageChannels.set(meta.messageId, {
+            channel: meta.channel,
+            autoReply: meta.autoReply,
+          });
+        }
 
         // Track messageId (must be pushed before prompt)
         session.messageIds.push(meta.messageId);

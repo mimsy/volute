@@ -325,6 +325,50 @@ describe("resolveRoute", () => {
     assert.deepEqual(r.batch, { maxWait: 300 }); // 5 * 60
   });
 
+  // --- autoReply ---
+
+  it("returns autoReply: false when no rules exist", () => {
+    const r = expectAgent(resolveRoute({}, { channel: "web" }));
+    assert.equal(r.autoReply, false);
+  });
+
+  it("returns autoReply: false when no rules match", () => {
+    const config: RoutingConfig = {
+      rules: [{ channel: "discord:*", session: "discord", autoReply: true }],
+      default: "main",
+    };
+    const r = expectAgent(resolveRoute(config, { channel: "web" }));
+    assert.equal(r.autoReply, false);
+  });
+
+  it("returns autoReply: true when rule specifies it", () => {
+    const config: RoutingConfig = {
+      rules: [{ channel: "discord:*", session: "discord", autoReply: true }],
+      default: "main",
+    };
+    const r = expectAgent(resolveRoute(config, { channel: "discord:123" }));
+    assert.equal(r.autoReply, true);
+  });
+
+  it("defaults autoReply to false when rule omits it", () => {
+    const config: RoutingConfig = {
+      rules: [{ channel: "discord:*", session: "discord" }],
+      default: "main",
+    };
+    const r = expectAgent(resolveRoute(config, { channel: "discord:123" }));
+    assert.equal(r.autoReply, false);
+  });
+
+  it("autoReply is forced to false when batch is also configured", () => {
+    const config: RoutingConfig = {
+      rules: [{ channel: "discord:*", session: "discord", autoReply: true, batch: 5 }],
+      default: "main",
+    };
+    const r = expectAgent(resolveRoute(config, { channel: "discord:123" }));
+    assert.equal(r.autoReply, false);
+    assert.ok(r.batch != null, "batch should still be set");
+  });
+
   // --- Mixed destinations ---
 
   it("file destination rules work with match keys", () => {

@@ -13,6 +13,7 @@ export type RoutingRule = {
   path?: string; // file path for file destination
   interrupt?: boolean; // interrupt in-progress agent turn (default: true for agent)
   batch?: number | BatchConfig; // number = minutes (legacy), object = fine-grained control
+  autoReply?: boolean; // auto-send agent text output back to originating channel
   channel?: string;
   sender?: string;
   isDM?: boolean; // match on isDM metadata
@@ -31,6 +32,7 @@ export type ResolvedRoute =
       session: string;
       interrupt: boolean;
       batch?: BatchConfig;
+      autoReply: boolean;
       matched: boolean;
     }
   | { destination: "file"; path: string; matched: boolean };
@@ -63,7 +65,14 @@ function globMatch(pattern: string, value: string): boolean {
 }
 
 const GLOB_MATCH_KEYS = new Set(["channel", "sender"]);
-const NON_MATCH_KEYS = new Set(["session", "batch", "destination", "path", "interrupt"]);
+const NON_MATCH_KEYS = new Set([
+  "session",
+  "batch",
+  "destination",
+  "path",
+  "interrupt",
+  "autoReply",
+]);
 
 type MatchMeta = { channel?: string; sender?: string; isDM?: boolean; participantCount?: number };
 
@@ -107,29 +116,48 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
   const fallback = config.default ?? "main";
 
   if (!config.rules) {
-    return { destination: "agent", session: fallback, interrupt: true, matched: false };
+    return {
+      destination: "agent",
+      session: fallback,
+      interrupt: true,
+      autoReply: false,
+      matched: false,
+    };
   }
 
   for (const rule of config.rules) {
     if (ruleMatches(rule, meta)) {
       if (rule.destination === "file") {
+        if (rule.autoReply) {
+          log("routing", `autoReply is ignored for file destination rules`);
+        }
         if (!rule.path) {
           log("routing", `file destination rule missing path — falling through`);
           continue;
         }
         return { destination: "file", path: rule.path, matched: true };
       }
+      if (rule.autoReply && rule.batch != null) {
+        log("routing", `autoReply is not supported with batch mode — autoReply will be ignored`);
+      }
       return {
         destination: "agent",
         session: sanitizeSessionName(expandTemplate(rule.session ?? fallback, meta)),
         interrupt: rule.interrupt ?? true,
         batch: rule.batch != null ? normalizeBatch(rule.batch) : undefined,
+        autoReply: rule.batch != null ? false : (rule.autoReply ?? false),
         matched: true,
       };
     }
   }
 
-  return { destination: "agent", session: fallback, interrupt: true, matched: false };
+  return {
+    destination: "agent",
+    session: fallback,
+    interrupt: true,
+    autoReply: false,
+    matched: false,
+  };
 }
 
 function sanitizeSessionName(name: string): string {

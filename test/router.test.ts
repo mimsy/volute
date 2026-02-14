@@ -486,6 +486,69 @@ describe("router", () => {
     assert.ok(!text.includes("typing"), "should not include typing indicator");
   });
 
+  it("passes autoReply to handler meta when route has autoReply: true", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const configPath = join(dir, "routes.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        rules: [{ channel: "discord:*", session: "discord", autoReply: true }],
+      }),
+    );
+
+    const agent = mockAgentHandler();
+    const router = createRouter({ configPath, agentHandler: agent.resolver });
+
+    await waitForDone(router, [{ type: "text", text: "hello" }], { channel: "discord:general" });
+
+    assert.equal(agent.calls.length, 1);
+    assert.equal(agent.calls[0].meta.autoReply, true);
+    assert.equal(agent.calls[0].sessionName, "discord");
+  });
+
+  it("defaults autoReply to false when not specified in route", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const configPath = join(dir, "routes.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        rules: [{ channel: "web", session: "main" }],
+      }),
+    );
+
+    const agent = mockAgentHandler();
+    const router = createRouter({ configPath, agentHandler: agent.resolver });
+
+    await waitForDone(router, [{ type: "text", text: "hello" }], { channel: "web" });
+
+    assert.equal(agent.calls.length, 1);
+    assert.equal(agent.calls[0].meta.autoReply, false);
+  });
+
+  it("autoReply does not affect routing match behavior", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const configPath = join(dir, "routes.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        rules: [
+          { channel: "discord:*", session: "discord", autoReply: true },
+          { channel: "slack:*", session: "slack" },
+        ],
+      }),
+    );
+
+    const agent = mockAgentHandler();
+    const router = createRouter({ configPath, agentHandler: agent.resolver });
+
+    await waitForDone(router, [{ type: "text", text: "hi" }], { channel: "discord:general" });
+    await waitForDone(router, [{ type: "text", text: "hi" }], { channel: "slack:random" });
+
+    assert.equal(agent.calls.length, 2);
+    assert.equal(agent.calls[0].meta.autoReply, true);
+    assert.equal(agent.calls[1].meta.autoReply, false);
+  });
+
   it("batch mode includes typing from last message", async () => {
     const dir = mkdtempSync(join(tmpdir(), "router-test-"));
     const configPath = join(dir, "routes.json");

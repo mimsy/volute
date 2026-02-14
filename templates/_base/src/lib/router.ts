@@ -183,7 +183,11 @@ export function createRouter(options: {
 
     // Batch flushes are fire-and-forget — no HTTP response is waiting, so listener is a noop
     try {
-      handler.handle(content, { sessionName: buffer.sessionName, messageId }, () => {});
+      handler.handle(
+        content,
+        { sessionName: buffer.sessionName, messageId, autoReply: false },
+        () => {},
+      );
     } catch (err) {
       log("router", `error flushing batch for session ${buffer.sessionName}:`, err);
       return;
@@ -250,7 +254,7 @@ export function createRouter(options: {
       if (options.fileHandler) {
         const formatted = applyPrefix(content, meta);
         const fileHandler = options.fileHandler(filePath);
-        fileHandler.handle(formatted, { ...meta, messageId }, noop);
+        fileHandler.handle(formatted, { ...meta, messageId, autoReply: false }, noop);
       }
 
       // First message from this channel — send invite notification
@@ -261,7 +265,12 @@ export function createRouter(options: {
         const handler = options.agentHandler("main");
         handler.handle(
           notifContent,
-          { sessionName: "main", messageId: generateMessageId(), interrupt: true },
+          {
+            sessionName: "main",
+            messageId: generateMessageId(),
+            interrupt: true,
+            autoReply: false,
+          },
           noop,
         );
       }
@@ -275,7 +284,11 @@ export function createRouter(options: {
       if (options.fileHandler) {
         const formatted = applyPrefix(content, meta);
         const handler = options.fileHandler(resolved.path);
-        const unsubscribe = handler.handle(formatted, { ...meta, messageId }, safeListener);
+        const unsubscribe = handler.handle(
+          formatted,
+          { ...meta, messageId, autoReply: false },
+          safeListener,
+        );
         return { messageId, unsubscribe };
       }
       // No file handler configured — emit done and discard
@@ -335,7 +348,13 @@ export function createRouter(options: {
     const handler = options.agentHandler(sessionName);
     const unsubscribe = handler.handle(
       withTyping,
-      { ...meta, sessionName, messageId, interrupt: resolved.interrupt },
+      {
+        ...meta,
+        sessionName,
+        messageId,
+        interrupt: resolved.interrupt,
+        autoReply: resolved.autoReply,
+      },
       safeListener,
     );
     return { messageId, unsubscribe };
