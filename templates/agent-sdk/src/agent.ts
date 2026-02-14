@@ -1,14 +1,19 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { resolve as resolvePath } from "node:path";
 import type { HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { flushAutoReply, type MessageChannelInfo } from "./lib/auto-reply.js";
+import {
+  type AutoReplyTracker,
+  createAutoReplyTracker,
+  type MessageChannelInfo,
+} from "./lib/auto-reply.js";
+import { toSDKContent } from "./lib/content.js";
 import { createAutoCommitHook } from "./lib/hooks/auto-commit.js";
 import { createIdentityReloadHook } from "./lib/hooks/identity-reload.js";
 import { createPreCompactHook } from "./lib/hooks/pre-compact.js";
 import { createSessionContextHook } from "./lib/hooks/session-context.js";
-import { log, logText, logThinking, logToolUse } from "./lib/logger.js";
+import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
+import { createSessionStore } from "./lib/session-store.js";
+import { consumeStream } from "./lib/stream-consumer.js";
 import type {
   HandlerMeta,
   HandlerResolver,
@@ -18,18 +23,6 @@ import type {
   VoluteEvent,
 } from "./lib/types.js";
 
-type SDKContent = (
-  | { type: "text"; text: string }
-  | {
-      type: "image";
-      source: {
-        type: "base64";
-        media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-        data: string;
-      };
-    }
-)[];
-
 type Session = {
   name: string;
   channel: ReturnType<typeof createMessageChannel>;
@@ -38,24 +31,8 @@ type Session = {
   currentMessageId?: string;
   currentQuery?: ReturnType<typeof query>;
   messageChannels: Map<string, MessageChannelInfo>;
-  autoReplyAccumulator: string;
+  autoReply: AutoReplyTracker;
 };
-
-function toSDKContent(content: VoluteContentPart[]): SDKContent {
-  return content.map((part) => {
-    if (part.type === "text") {
-      return { type: "text" as const, text: part.text };
-    }
-    return {
-      type: "image" as const,
-      source: {
-        type: "base64" as const,
-        media_type: part.media_type as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
-        data: part.data,
-      },
-    };
-  });
-}
 
 export function createAgent(options: {
   systemPrompt: string;
@@ -69,6 +46,7 @@ export function createAgent(options: {
 }): { resolve: HandlerResolver; waitForCommits: () => Promise<void> } {
   const autoCommit = createAutoCommitHook(options.cwd);
   const identityReload = createIdentityReloadHook(options.cwd);
+  const sessionStore = createSessionStore(options.sessionsDir);
   const postToolUseHooks: { matcher: string; hooks: HookCallback[] }[] = [
     { matcher: "Edit|Write", hooks: [autoCommit.hook, identityReload.hook] },
   ];
@@ -78,38 +56,6 @@ export function createAgent(options: {
   const compactionMessage =
     options.compactionMessage ??
     `Context is getting long — compaction is about to summarize this conversation. Before that happens, save anything important to files (MEMORY.md, memory/journal/${today}.md, etc.) since those survive compaction. Focus on: decisions made, open tasks, and anything you'd need to pick up where you left off.`;
-
-  // --- Session persistence ---
-
-  function sessionFilePath(sessionName: string): string {
-    return resolvePath(options.sessionsDir, `${sessionName}.json`);
-  }
-
-  function loadSessionId(sessionName: string): string | undefined {
-    try {
-      const data = JSON.parse(readFileSync(sessionFilePath(sessionName), "utf-8"));
-      return data.sessionId;
-    } catch (err: any) {
-      if (err?.code !== "ENOENT") {
-        log("agent", `failed to load session file for "${sessionName}":`, err);
-      }
-      return undefined;
-    }
-  }
-
-  function saveSessionId(sessionName: string, sessionId: string) {
-    mkdirSync(options.sessionsDir, { recursive: true });
-    writeFileSync(sessionFilePath(sessionName), JSON.stringify({ sessionId }));
-  }
-
-  function deleteSessionId(sessionName: string) {
-    try {
-      const path = sessionFilePath(sessionName);
-      if (existsSync(path)) unlinkSync(path);
-    } catch (err) {
-      log("agent", `failed to delete session file for "${sessionName}":`, err);
-    }
-  }
 
   // --- Event broadcasting ---
 
@@ -168,79 +114,32 @@ export function createAgent(options: {
     });
   }
 
-  async function consumeStream(stream: ReturnType<typeof query>, session: Session) {
-    for await (const msg of stream) {
-      if (session.currentMessageId === undefined) {
-        session.currentMessageId = session.messageIds.shift();
-        session.autoReplyAccumulator = "";
-      }
-      if ("session_id" in msg && msg.session_id) {
-        if (!session.name.startsWith("new-")) {
-          saveSessionId(session.name, msg.session_id as string);
-        }
-      }
-      if (msg.type === "assistant") {
-        for (const b of msg.message.content) {
-          if (b.type === "thinking" && "thinking" in b && b.thinking) {
-            logThinking(b.thinking as string);
-          } else if (b.type === "text") {
-            logText((b as { text: string }).text);
-            session.autoReplyAccumulator += (b as { text: string }).text;
-          } else if (b.type === "tool_use") {
-            session.autoReplyAccumulator = flushAutoReply(
-              session.autoReplyAccumulator,
-              session.currentMessageId,
-              session.messageChannels,
-            );
-            const tb = b as { name: string; input: unknown };
-            logToolUse(tb.name, tb.input);
-          }
-        }
-      }
-      if (msg.type === "result") {
-        session.autoReplyAccumulator = flushAutoReply(
-          session.autoReplyAccumulator,
-          session.currentMessageId,
-          session.messageChannels,
-        );
-        if (session.currentMessageId) {
-          session.messageChannels.delete(session.currentMessageId);
-        }
-        log("agent", `session "${session.name}": turn done`);
-        const result = msg as { usage?: { input_tokens?: number; output_tokens?: number } };
-        if (result.usage) {
-          broadcastToSession(session, {
-            type: "usage",
-            input_tokens: result.usage.input_tokens ?? 0,
-            output_tokens: result.usage.output_tokens ?? 0,
-          });
-        }
-        broadcastToSession(session, { type: "done" });
-        session.currentMessageId = undefined;
-        if (identityReload.needsReload()) {
-          options.onIdentityReload?.();
-        }
-      }
-    }
-  }
-
   function startSession(session: Session, savedSessionId?: string) {
     (async () => {
       log("agent", `session "${session.name}": stream consumer started`);
+      const callbacks = {
+        onSessionId: (id: string) => {
+          if (!session.name.startsWith("new-")) sessionStore.save(session.name, id);
+        },
+        broadcast: (event: VoluteEvent) => broadcastToSession(session, event),
+        onTurnEnd: () => {
+          if (identityReload.needsReload()) options.onIdentityReload?.();
+        },
+      };
       try {
         const q = createStream(session, savedSessionId);
         session.currentQuery = q;
-        await consumeStream(q, session);
+        await consumeStream(q, session, callbacks);
       } catch (err) {
-        session.autoReplyAccumulator = "";
+        session.autoReply.reset();
         session.messageChannels.clear();
         if (savedSessionId) {
           log("agent", `session "${session.name}": resume failed, starting fresh:`, err);
-          deleteSessionId(session.name);
+          sessionStore.delete(session.name);
           try {
             const q = createStream(session);
             session.currentQuery = q;
-            await consumeStream(q, session);
+            await consumeStream(q, session, callbacks);
           } catch (retryErr) {
             log("agent", `session "${session.name}": stream consumer error:`, retryErr);
             broadcastToSession(session, { type: "done" });
@@ -260,18 +159,19 @@ export function createAgent(options: {
     const existing = sessions.get(name);
     if (existing) return existing;
 
+    const messageChannels = new Map<string, MessageChannelInfo>();
     const session: Session = {
       name,
       channel: createMessageChannel(),
       listeners: new Set(),
       messageIds: [],
-      messageChannels: new Map(),
-      autoReplyAccumulator: "",
+      messageChannels,
+      autoReply: createAutoReplyTracker(messageChannels),
     };
     sessions.set(name, session);
 
     const isEphemeral = name.startsWith("new-");
-    const savedSessionId = isEphemeral ? undefined : loadSessionId(name);
+    const savedSessionId = isEphemeral ? undefined : sessionStore.load(name);
     if (savedSessionId) {
       log("agent", `session "${name}": resuming ${savedSessionId}`);
     } else {
