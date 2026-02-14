@@ -188,19 +188,8 @@ export class TokenBudget {
           `[token-budget] replayed ${messages.length} queued message(s) for ${agentName}`,
         );
       }
-      // Drain the response stream to close the connection
-      try {
-        const reader = res.body?.getReader();
-        if (reader) {
-          try {
-            while (!(await reader.read()).done) {}
-          } finally {
-            reader.releaseLock();
-          }
-        }
-      } catch {
-        // Stream closed — safe to ignore
-      }
+      // Consume response body
+      await res.text().catch(() => {});
     } catch (err) {
       console.error(`[token-budget] failed to replay for ${agentName}:`, err);
       // Re-enqueue so messages aren't lost
