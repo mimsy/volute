@@ -6,6 +6,7 @@ import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { writeChannelEntry } from "../../../connectors/sdk.js";
 import { getOrCreateAgentUser } from "../../../lib/auth.js";
+import { subscribe } from "../../../lib/conversation-events.js";
 import {
   addMessage,
   type ContentBlock,
@@ -15,11 +16,9 @@ import {
   getParticipants,
   isParticipantOrOwner,
 } from "../../../lib/conversations.js";
-import { readNdjson } from "../../../lib/ndjson.js";
 import { agentDir, daemonLoopback, findAgent, voluteHome } from "../../../lib/registry.js";
 import { slugify } from "../../../lib/slugify.js";
 import { getTypingMap } from "../../../lib/typing.js";
-import type { VoluteEvent } from "../../../types.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
 const chatSchema = z.object({
@@ -37,8 +36,12 @@ const chatSchema = z.object({
 });
 
 function getDaemonUrl(): string {
-  const data = JSON.parse(readFileSync(resolve(voluteHome(), "daemon.json"), "utf-8"));
-  return `http://${daemonLoopback()}:${data.port}`;
+  try {
+    const data = JSON.parse(readFileSync(resolve(voluteHome(), "daemon.json"), "utf-8"));
+    return `http://${daemonLoopback()}:${data.port}`;
+  } catch (err) {
+    throw new Error(`Failed to read daemon config: ${err instanceof Error ? err.message : err}`);
+  }
 }
 
 function daemonFetchInternal(path: string, body: string): Promise<Response> {
@@ -52,247 +55,168 @@ function daemonFetchInternal(path: string, body: string): Promise<Response> {
   return fetch(`${daemonUrl}${path}`, { method: "POST", headers, body });
 }
 
-/** Accumulate a single ndjson event into a content block array. */
-function accumulateEvent(content: ContentBlock[], event: VoluteEvent): void {
-  if (event.type === "text") {
-    const last = content[content.length - 1];
-    if (last && last.type === "text") last.text += event.content;
-    else content.push({ type: "text", text: event.content });
-  } else if (event.type === "tool_use") {
-    content.push({ type: "tool_use", name: event.name, input: event.input });
-  } else if (event.type === "tool_result") {
-    content.push({
-      type: "tool_result",
-      output: event.output,
-      ...(event.is_error ? { is_error: true } : {}),
+const app = new Hono<AuthEnv>()
+  .post("/:name/chat", zValidator("json", chatSchema), async (c) => {
+    const name = c.req.param("name");
+    const [baseName] = name.split("@", 2);
+
+    const entry = findAgent(baseName);
+    if (!entry) return c.json({ error: "Agent not found" }, 404);
+
+    const body = c.req.valid("json");
+    if (!body.message && (!body.images || body.images.length === 0)) {
+      return c.json({ error: "message or images required" }, 400);
+    }
+
+    const user = c.get("user");
+    const agentUser = await getOrCreateAgentUser(baseName);
+
+    // Daemon token callers can override the sender name
+    const senderName = user.id === 0 && body.sender ? body.sender : user.username;
+
+    // Resolve or create conversation
+    let conversationId = body.conversationId;
+    if (conversationId) {
+      // Daemon token (id: 0) can access any conversation
+      if (user.id !== 0 && !(await isParticipantOrOwner(conversationId, user.id))) {
+        return c.json({ error: "Conversation not found" }, 404);
+      }
+    } else {
+      const title = body.message ? body.message.slice(0, 80) : "Image message";
+      // If sender is a registered agent, include them as a participant
+      const participantIds: number[] = [];
+      if (user.id !== 0) {
+        participantIds.push(user.id);
+      } else if (body.sender) {
+        // Check if sender is an agent — if so, add their agent user as participant
+        const senderAgent = findAgent(body.sender);
+        if (senderAgent) {
+          const senderAgentUser = await getOrCreateAgentUser(body.sender);
+          participantIds.push(senderAgentUser.id);
+        }
+      }
+      participantIds.push(agentUser.id);
+
+      // DM reuse: if exactly 2 participants, look for an existing conversation
+      if (participantIds.length === 2) {
+        const existing = await findDMConversation(baseName, participantIds as [number, number]);
+        if (existing) {
+          conversationId = existing;
+        }
+      }
+
+      if (!conversationId) {
+        const conv = await createConversation(baseName, "volute", {
+          userId: user.id !== 0 ? user.id : undefined,
+          title,
+          participantIds,
+        });
+        conversationId = conv.id;
+      }
+    }
+
+    // Build a human-readable channel slug for this conversation
+    const conv = await getConversation(conversationId);
+    const convTitle = conv?.title;
+    const channel = convTitle ? `volute:${slugify(convTitle)}` : `volute:${conversationId}`;
+
+    // Build content blocks
+    const contentBlocks: ContentBlock[] = [];
+    if (body.message) {
+      contentBlocks.push({ type: "text", text: body.message });
+    }
+    if (body.images) {
+      for (const img of body.images) {
+        contentBlocks.push({ type: "image", media_type: img.media_type, data: img.data });
+      }
+    }
+
+    // Save user message
+    await addMessage(conversationId, "user", senderName, contentBlocks);
+
+    // Find all agent participants for fan-out
+    const participants = await getParticipants(conversationId);
+    const agentParticipants = participants.filter((p) => p.userType === "agent");
+    const participantNames = participants.map((p) => p.username);
+
+    // Find running agent participants (excluding the sender)
+    const { getAgentManager } = await import("../../../lib/agent-manager.js");
+    const manager = getAgentManager();
+    const runningAgents = agentParticipants
+      .map((ap) => {
+        // Use the full name (with variant) for the addressed agent, base name for others
+        const agentKey = ap.username === baseName ? name : ap.username;
+        return manager.isRunning(agentKey) ? ap.username : null;
+      })
+      .filter((n): n is string => n !== null && n !== senderName);
+
+    // Build payload for daemon /message route
+    const isDM = participants.length === 2;
+
+    // Write slug → platformId mapping so channel drivers can resolve it
+    const dir = agentDir(baseName);
+    writeChannelEntry(dir, channel, {
+      platformId: conversationId!,
+      platform: "volute",
+      name: convTitle ?? undefined,
+      type: isDM ? "dm" : "group",
     });
-  }
-}
+    const typingMap = getTypingMap();
+    const currentlyTyping = typingMap.get(channel);
+    const payload = JSON.stringify({
+      content: contentBlocks,
+      channel,
+      sender: senderName,
+      participants: participantNames,
+      participantCount: participants.length,
+      isDM,
+      ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
+    });
 
-/** Consume an agent's ndjson response and persist to conversation messages. */
-async function consumeAndPersist(
-  res: Response,
-  conversationId: string,
-  agentName: string,
-): Promise<ContentBlock[]> {
-  if (!res.body) {
-    console.warn(`[chat] no response body from ${agentName}`);
-    return [];
-  }
-  const assistantContent: ContentBlock[] = [];
-  for await (const event of readNdjson(res.body)) {
-    accumulateEvent(assistantContent, event);
-    if (event.type === "done") break;
-  }
-  if (assistantContent.length === 0) return [];
+    // Fire-and-forget: send to all running agents via daemon /message route
+    for (const agentName of runningAgents) {
+      const targetName = agentName === baseName ? name : agentName;
+      daemonFetchInternal(`/api/agents/${encodeURIComponent(targetName)}/message`, payload).catch(
+        (err) => {
+          console.error(`[chat] agent ${agentName} unreachable via daemon:`, err);
+        },
+      );
+    }
 
-  try {
-    await addMessage(conversationId, "assistant", agentName, assistantContent);
-  } catch (err) {
-    console.error(`[chat] failed to persist conversation message from ${agentName}:`, err);
-  }
-  return assistantContent;
-}
-
-const app = new Hono<AuthEnv>().post("/:name/chat", zValidator("json", chatSchema), async (c) => {
-  const name = c.req.param("name");
-  const [baseName] = name.split("@", 2);
-
-  const entry = findAgent(baseName);
-  if (!entry) return c.json({ error: "Agent not found" }, 404);
-
-  const body = c.req.valid("json");
-  if (!body.message && (!body.images || body.images.length === 0)) {
-    return c.json({ error: "message or images required" }, 400);
-  }
-
-  const user = c.get("user");
-  const agentUser = await getOrCreateAgentUser(baseName);
-
-  // Daemon token callers can override the sender name
-  const senderName = user.id === 0 && body.sender ? body.sender : user.username;
-
-  // Resolve or create conversation
-  let conversationId = body.conversationId;
-  if (conversationId) {
-    // Daemon token (id: 0) can access any conversation
+    return c.json({ ok: true, conversationId });
+  })
+  // SSE endpoint for conversation events (new messages + typing)
+  .get("/:name/conversations/:id/events", async (c) => {
+    const conversationId = c.req.param("id");
+    const user = c.get("user");
+    // Daemon token (id: 0) bypasses participant check
     if (user.id !== 0 && !(await isParticipantOrOwner(conversationId, user.id))) {
       return c.json({ error: "Conversation not found" }, 404);
     }
-  } else {
-    const title = body.message ? body.message.slice(0, 80) : "Image message";
-    // If sender is a registered agent, include them as a participant
-    const participantIds: number[] = [];
-    if (user.id !== 0) {
-      participantIds.push(user.id);
-    } else if (body.sender) {
-      // Check if sender is an agent — if so, add their agent user as participant
-      const senderAgent = findAgent(body.sender);
-      if (senderAgent) {
-        const senderAgentUser = await getOrCreateAgentUser(body.sender);
-        participantIds.push(senderAgentUser.id);
-      }
-    }
-    participantIds.push(agentUser.id);
 
-    // DM reuse: if exactly 2 participants, look for an existing conversation
-    if (participantIds.length === 2) {
-      const existing = await findDMConversation(baseName, participantIds as [number, number]);
-      if (existing) {
-        conversationId = existing;
-      }
-    }
-
-    if (!conversationId) {
-      const conv = await createConversation(baseName, "volute", {
-        userId: user.id !== 0 ? user.id : undefined,
-        title,
-        participantIds,
-      });
-      conversationId = conv.id;
-    }
-  }
-
-  // Build a human-readable channel slug for this conversation
-  const conv = await getConversation(conversationId);
-  const convTitle = conv?.title;
-  const channel = convTitle ? `volute:${slugify(convTitle)}` : `volute:${conversationId}`;
-
-  // Build content blocks
-  const contentBlocks: ContentBlock[] = [];
-  if (body.message) {
-    contentBlocks.push({ type: "text", text: body.message });
-  }
-  if (body.images) {
-    for (const img of body.images) {
-      contentBlocks.push({ type: "image", media_type: img.media_type, data: img.data });
-    }
-  }
-
-  // Save user message
-  await addMessage(conversationId, "user", senderName, contentBlocks);
-
-  // Find all agent participants for fan-out
-  const participants = await getParticipants(conversationId);
-  const agentParticipants = participants.filter((p) => p.userType === "agent");
-  const participantNames = participants.map((p) => p.username);
-
-  // Find running agent participants (excluding the sender)
-  const { getAgentManager } = await import("../../../lib/agent-manager.js");
-  const manager = getAgentManager();
-  const runningAgents = agentParticipants
-    .map((ap) => {
-      // Use the full name (with variant) for the addressed agent, base name for others
-      const agentKey = ap.username === baseName ? name : ap.username;
-      return manager.isRunning(agentKey) ? ap.username : null;
-    })
-    .filter((n): n is string => n !== null && n !== senderName);
-
-  // Build payload for daemon /message route
-  const isDM = participants.length === 2;
-
-  // Write slug → platformId mapping so channel drivers can resolve it
-  const dir = agentDir(baseName);
-  writeChannelEntry(dir, channel, {
-    platformId: conversationId!,
-    platform: "volute",
-    name: convTitle ?? undefined,
-    type: isDM ? "dm" : "group",
-  });
-  const typingMap = getTypingMap();
-  const currentlyTyping = typingMap.get(channel);
-  const payload = JSON.stringify({
-    content: contentBlocks,
-    channel,
-    sender: senderName,
-    participants: participantNames,
-    participantCount: participants.length,
-    isDM,
-    ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
-  });
-
-  // Send to all agents via daemon /message route
-  const responses: { name: string; res: Response }[] = [];
-  for (const agentName of runningAgents) {
-    const targetName = agentName === baseName ? name : agentName;
-    try {
-      const res = await daemonFetchInternal(
-        `/api/agents/${encodeURIComponent(targetName)}/message`,
-        payload,
-      );
-      if (res.ok && res.body) {
-        responses.push({ name: agentName, res });
-      } else {
-        const errorBody = await res.text().catch(() => "");
-        console.error(
-          `[chat] agent ${agentName} responded with ${res.status}: ${errorBody.slice(0, 500)}`,
-        );
-      }
-    } catch (err) {
-      console.error(`[chat] agent ${agentName} unreachable via daemon:`, err);
-    }
-  }
-
-  // No running agents — message is persisted, return empty stream
-  if (responses.length === 0) {
     return streamSSE(c, async (stream) => {
-      await stream.writeSSE({
-        data: JSON.stringify({ type: "meta", conversationId }),
+      const unsubscribe = subscribe(conversationId, (event) => {
+        stream.writeSSE({ data: JSON.stringify(event) }).catch((err) => {
+          if (!stream.aborted) console.error("[chat] SSE write error:", err);
+        });
       });
-      await stream.writeSSE({ data: JSON.stringify({ type: "sync" }) });
-    });
-  }
 
-  // Stream the first agent's response to the client; consume others concurrently
-  const primary = responses[0];
-  const secondary = responses.slice(1);
+      // Keep-alive ping every 15s
+      const keepAlive = setInterval(() => {
+        stream.writeSSE({ data: "" }).catch((err) => {
+          if (!stream.aborted) console.error("[chat] SSE ping error:", err);
+        });
+      }, 15000);
 
-  // Start consuming secondary responses immediately (runs concurrently with primary streaming)
-  const secondaryPromises = secondary.map((s) => consumeAndPersist(s.res, conversationId!, s.name));
-
-  return streamSSE(c, async (stream) => {
-    await stream.writeSSE({
-      data: JSON.stringify({ type: "meta", conversationId, senderName: primary.name }),
-    });
-
-    const assistantContent: ContentBlock[] = [];
-
-    try {
-      for await (const event of readNdjson(primary.res.body!)) {
-        await stream.writeSSE({ data: JSON.stringify(event) });
-        accumulateEvent(assistantContent, event);
-        if (event.type === "done") break;
-      }
-    } catch (err) {
-      console.error(`[chat] error streaming response from ${primary.name}:`, err);
-      await stream.writeSSE({
-        data: JSON.stringify({ type: "error", message: "Stream interrupted" }),
+      // Wait until the client disconnects
+      await new Promise<void>((resolve) => {
+        stream.onAbort(() => {
+          unsubscribe();
+          clearInterval(keepAlive);
+          resolve();
+        });
       });
-    }
-
-    // Persist primary response to conversation messages (daemon already handled agent_messages)
-    if (assistantContent.length > 0) {
-      try {
-        await addMessage(conversationId!, "assistant", primary.name, assistantContent);
-      } catch (err) {
-        console.error(`[chat] failed to persist response from ${primary.name}:`, err);
-      }
-    }
-
-    // Wait for secondary agent responses to complete
-    const results = await Promise.allSettled(secondaryPromises);
-    for (let i = 0; i < results.length; i++) {
-      if (results[i].status === "rejected") {
-        console.error(
-          `[chat] secondary agent ${secondary[i].name} response failed:`,
-          (results[i] as PromiseRejectedResult).reason,
-        );
-      }
-    }
-
-    // Signal frontend that all responses are persisted
-    await stream.writeSSE({ data: JSON.stringify({ type: "sync" }) });
+    });
   });
-});
 
 export default app;

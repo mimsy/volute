@@ -1,9 +1,7 @@
 import { useCallback, useRef } from "react";
 import type { VoluteEvent } from "./api";
 
-export function useChatStream(name: string, onEvent: (event: VoluteEvent) => void) {
-  const abortRef = useRef<AbortController | null>(null);
-
+export function useChatSend(name: string, onEvent: (event: VoluteEvent) => void) {
   const send = useCallback(
     async (
       message: string,
@@ -11,10 +9,6 @@ export function useChatStream(name: string, onEvent: (event: VoluteEvent) => voi
       images?: Array<{ media_type: string; data: string }>,
       agentName?: string,
     ) => {
-      abortRef.current?.abort();
-      const controller = new AbortController();
-      abortRef.current = controller;
-
       const targetName = agentName || name;
       const res = await fetch(`/api/agents/${targetName}/chat`, {
         method: "POST",
@@ -24,45 +18,23 @@ export function useChatStream(name: string, onEvent: (event: VoluteEvent) => voi
           conversationId,
           images: images && images.length > 0 ? images : undefined,
         }),
-        signal: controller.signal,
       });
 
-      if (!res.ok || !res.body) throw new Error("Chat request failed");
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const json = line.slice(6);
-          if (!json) continue;
-          let event: VoluteEvent;
-          try {
-            event = JSON.parse(json) as VoluteEvent;
-          } catch {
-            continue;
-          }
-          onEvent(event);
-        }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(err.error ?? `Chat request failed: ${res.status}`);
       }
+
+      const data = (await res.json()) as { ok: boolean; conversationId: string };
+      // Emit meta event so Chat component knows the conversationId
+      onEvent({ type: "meta", conversationId: data.conversationId });
+      // Emit done — the actual messages will arrive via the SSE subscription
+      onEvent({ type: "done" });
     },
     [name, onEvent],
   );
 
-  const stop = useCallback(() => {
-    abortRef.current?.abort();
-  }, []);
-
-  return { send, stop };
+  return { send };
 }
 
 export function useLogStream(

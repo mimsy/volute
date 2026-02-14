@@ -17,6 +17,7 @@ import { createVoluteServer } from "./lib/volute-server.js";
 const { port } = parseArgs();
 const config = loadConfig();
 if (config.model) log("server", `using model: ${config.model}`);
+if (config.maxThinkingTokens) log("server", `max thinking tokens: ${config.maxThinkingTokens}`);
 
 const systemPrompt = loadSystemPrompt();
 const sessionsDir = resolve(".volute/sessions");
@@ -36,6 +37,7 @@ const agent = createAgent({
   cwd: resolve("home"),
   abortController,
   model: config.model,
+  maxThinkingTokens: config.maxThinkingTokens,
   sessionsDir,
   compactionMessage: config.compactionMessage,
   onIdentityReload: async () => {

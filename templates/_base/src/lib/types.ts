@@ -37,7 +37,7 @@ export type VoluteEvent = { messageId?: string } & (
 
 export type Listener = (event: VoluteEvent) => void;
 
-/** A handler that processes a single routed message and streams events to a listener. */
+/** A handler that processes a single routed message and emits events to a listener callback. */
 export type MessageHandler = {
   handle(content: VoluteContentPart[], meta: HandlerMeta, listener: Listener): () => void; // returns unsubscribe
 };

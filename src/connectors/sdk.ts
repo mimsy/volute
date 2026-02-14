@@ -8,12 +8,6 @@ export type ContentPart =
   | { type: "text"; text: string }
   | { type: "image"; media_type: string; data: string };
 
-export type NdjsonEvent =
-  | { type: "text"; content: string }
-  | { type: "image"; media_type: string; data: string }
-  | { type: "tool_use"; name: string; input: unknown }
-  | { type: "done" };
-
 export interface ConnectorEnv {
   agentPort: string;
   agentName: string;
@@ -32,11 +26,6 @@ export interface AgentPayload {
   channelName?: string;
   serverName?: string;
   participantCount?: number;
-}
-
-export interface FlushHandlers {
-  onFlush(text: string, images: { data: string; media_type: string }[]): Promise<void>;
-  onError(message: string): Promise<void>;
 }
 
 export function loadEnv(): ConnectorEnv {
@@ -85,42 +74,6 @@ export function splitMessage(text: string, maxLength: number): string[] {
   return chunks;
 }
 
-export async function* readNdjson(body: ReadableStream<Uint8Array>): AsyncGenerator<NdjsonEvent> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          yield JSON.parse(line) as NdjsonEvent;
-        } catch {
-          console.warn(`ndjson: skipping invalid line: ${line.slice(0, 100)}`);
-        }
-      }
-    }
-
-    if (buffer.trim()) {
-      try {
-        yield JSON.parse(buffer) as NdjsonEvent;
-      } catch {
-        console.warn(`ndjson: skipping invalid line: ${buffer.slice(0, 100)}`);
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
 export function getHeaders(env: ConnectorEnv): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (env.daemonUrl && env.daemonToken) {
@@ -159,35 +112,17 @@ export function reportTyping(
   });
 }
 
-export async function fireAndForget(env: ConnectorEnv, payload: AgentPayload): Promise<void> {
-  try {
-    const res = await fetch(`${env.baseUrl}/message`, {
-      method: "POST",
-      headers: getHeaders(env),
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      console.error(`fireAndForget: agent returned ${res.status}`);
-    }
-
-    // Drain the response body to close the connection properly
-    if (res.body) {
-      const reader = res.body.getReader();
-      while (!(await reader.read()).done) {}
-    }
-  } catch (err) {
-    console.error(`Failed to forward message: ${err}`);
-  }
-}
-
-export async function handleAgentMessage(
+export async function sendToAgent(
   env: ConnectorEnv,
   payload: AgentPayload,
-  handlers: FlushHandlers,
-): Promise<void> {
+): Promise<{ ok: boolean; error?: string }> {
+  const url =
+    env.daemonUrl && env.daemonToken
+      ? `${env.daemonUrl}/api/agents/${encodeURIComponent(env.agentName)}/message`
+      : `${env.baseUrl}/message`;
+
   try {
-    const res = await fetch(`${env.baseUrl}/message`, {
+    const res = await fetch(url, {
       method: "POST",
       headers: getHeaders(env),
       body: JSON.stringify(payload),
@@ -196,47 +131,16 @@ export async function handleAgentMessage(
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       console.error(`Agent returned ${res.status}: ${body}`);
-      await handlers.onError(`Error: agent returned ${res.status}`);
-      return;
+      return { ok: false, error: `Agent returned ${res.status}` };
     }
 
-    if (!res.body) {
-      await handlers.onError("Error: no response from agent");
-      return;
-    }
-
-    let accumulated = "";
-    const pendingImages: { data: string; media_type: string }[] = [];
-
-    for await (const event of readNdjson(res.body)) {
-      if (event.type === "text") {
-        accumulated += event.content;
-      } else if (event.type === "image") {
-        pendingImages.push({ data: event.data, media_type: event.media_type });
-      } else if (event.type === "tool_use") {
-        const text = accumulated.trim();
-        accumulated = "";
-        const images = pendingImages.splice(0);
-        if (text || images.length > 0) {
-          await handlers.onFlush(text, images);
-        }
-      } else if (event.type === "done") {
-        break;
-      }
-    }
-
-    const text = accumulated.trim();
-    const images = pendingImages.splice(0);
-    if (text || images.length > 0) {
-      await handlers.onFlush(text, images);
-    }
+    return { ok: true };
   } catch (err) {
-    console.error(`Failed to reach agent at ${env.baseUrl}/message:`, err);
-    const errMsg =
-      err instanceof TypeError && (err as any).cause?.code === "ECONNREFUSED"
-        ? "Agent is not running"
-        : `Error: ${err}`;
-    await handlers.onError(errMsg);
+    console.error(`Failed to forward message: ${err}`);
+    const isConnRefused =
+      err instanceof TypeError &&
+      (err.cause as NodeJS.ErrnoException | undefined)?.code === "ECONNREFUSED";
+    return { ok: false, error: isConnRefused ? "Agent is not running" : "Failed to reach agent" };
   }
 }
 

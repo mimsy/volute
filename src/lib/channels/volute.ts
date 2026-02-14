@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { writeChannelEntry } from "../../connectors/sdk.js";
-import type { VoluteEvent } from "../../types.js";
 import { type ChannelConversation, type ChannelUser, resolveChannelId } from "../channels.js";
 import { voluteHome } from "../registry.js";
 import { slugify } from "../slugify.js";
@@ -65,11 +64,11 @@ export async function read(
     .join("\n");
 }
 
-export async function* sendAndStream(
+export async function send(
   env: Record<string, string>,
   channelSlug: string,
   message: string,
-): AsyncGenerator<VoluteEvent> {
+): Promise<void> {
   const agentName = env.VOLUTE_AGENT;
   if (!agentName) throw new Error("VOLUTE_AGENT not set");
   const conversationId = resolveChannelId(env, channelSlug);
@@ -89,47 +88,6 @@ export async function* sendAndStream(
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error ?? `Failed to send: ${res.status}`);
-  }
-  if (!res.body) return;
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (!line.startsWith("data:")) continue;
-        const data = line.slice(5).trim();
-        if (!data) continue;
-        try {
-          const event = JSON.parse(data) as VoluteEvent;
-          yield event;
-          if (event.type === "done") return;
-        } catch (err) {
-          console.error(`[volute] failed to parse SSE data: ${data}`, err);
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-export async function send(
-  env: Record<string, string>,
-  channelSlug: string,
-  message: string,
-): Promise<void> {
-  for await (const event of sendAndStream(env, channelSlug, message)) {
-    if (event.type === "done") break;
   }
 }
 

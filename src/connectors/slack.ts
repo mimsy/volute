@@ -2,16 +2,12 @@ import { App } from "@slack/bolt";
 import {
   buildChannelSlug,
   type ContentPart,
-  fireAndForget,
-  handleAgentMessage,
   loadEnv,
   loadFollowedChannels,
   onShutdown,
-  splitMessage,
+  sendToAgent,
   writeChannelEntry,
 } from "./sdk.js";
-
-const SLACK_MAX_LENGTH = 4000;
 
 const env = loadEnv();
 
@@ -35,7 +31,7 @@ const app = new App({
 let botUserId: string | undefined;
 let serverName: string | undefined;
 
-app.message(async ({ message, say }) => {
+app.message(async ({ message }) => {
   if (message.subtype) return;
   if (!("user" in message) || !("text" in message)) return;
   if ("bot_id" in message && message.bot_id) return;
@@ -140,40 +136,22 @@ app.message(async ({ message, say }) => {
   };
 
   if (isFollowedChannel && !isMentioned) {
-    await fireAndForget(env, payload);
+    const result = await sendToAgent(env, payload);
+    if (!result.ok)
+      app.client.chat
+        .postMessage({
+          channel: message.channel,
+          text: result.error ?? "Failed to process message",
+        })
+        .catch(() => {});
     return;
   }
 
-  await handleAgentMessage(env, payload, {
-    onFlush: async (text, images) => {
-      for (const img of images) {
-        const ext = img.media_type.split("/")[1] || "png";
-        try {
-          await app.client.filesUploadV2({
-            channel_id: message.channel,
-            file: Buffer.from(img.data, "base64"),
-            filename: `image.${ext}`,
-          });
-        } catch (err) {
-          console.error(`Failed to upload image: ${err}`);
-        }
-      }
-
-      if (!text) return;
-
-      const chunks = splitMessage(text, SLACK_MAX_LENGTH);
-      for (const chunk of chunks) {
-        try {
-          await say(chunk);
-        } catch (err) {
-          console.error(`Failed to send message: ${err}`);
-        }
-      }
-    },
-    onError: async (msg) => {
-      await say(msg).catch(() => {});
-    },
-  });
+  const result = await sendToAgent(env, payload);
+  if (!result.ok)
+    app.client.chat
+      .postMessage({ channel: message.channel, text: result.error ?? "Failed to process message" })
+      .catch(() => {});
 });
 
 async function start() {

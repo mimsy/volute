@@ -24,48 +24,17 @@ export async function verify(port: number): Promise<boolean> {
       signal: AbortSignal.timeout(60000),
     });
 
-    if (!res.ok || !res.body) {
+    if (!res.ok) {
       console.error("  Test message: failed to send");
       return false;
     }
 
-    // Read ndjson stream looking for a done event
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let gotDone = false;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const event = JSON.parse(line);
-          if (event.type === "done") {
-            gotDone = true;
-          }
-        } catch {
-          // skip invalid lines
-        }
-      }
-
-      if (gotDone) {
-        reader.cancel();
-        break;
-      }
-    }
-
-    if (gotDone) {
+    const result = (await res.json()) as { ok?: boolean };
+    if (result.ok) {
       console.log("  Test message: OK");
       return true;
     } else {
-      console.error("  Test message: no done event received");
+      console.error("  Test message: unexpected response");
       return false;
     }
   } catch (e: unknown) {

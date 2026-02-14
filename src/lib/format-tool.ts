@@ -9,15 +9,3 @@ export function summarizeTool(name: string, input: unknown): string {
   }
   return `[${name}]`;
 }
-
-/** Extract a summary string from a VoluteEvent, or null if not relevant. */
-export function collectPart(event: {
-  type: string;
-  content?: string;
-  name?: string;
-  input?: unknown;
-}): string | null {
-  if (event.type === "text") return event.content ?? "";
-  if (event.type === "tool_use") return summarizeTool(event.name ?? "", event.input);
-  return null;
-}

@@ -1,18 +1,15 @@
-import { Input, Telegraf } from "telegraf";
+import { Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
 import {
   type AgentPayload,
   buildChannelSlug,
   type ContentPart,
-  fireAndForget,
-  handleAgentMessage,
   loadEnv,
   loadFollowedChannels,
-  splitMessage,
+  sendToAgent,
   writeChannelEntry,
 } from "./sdk.js";
 
-const TELEGRAM_MAX_LENGTH = 4096;
 const TYPING_INTERVAL_MS = 5000;
 
 const env = loadEnv();
@@ -97,16 +94,12 @@ bot.on(message("text"), async (ctx) => {
   };
 
   if (isFollowedChat && !isMentioned) {
-    await fireAndForget(env, payload);
+    const result = await sendToAgent(env, payload);
+    if (!result.ok) ctx.reply(result.error ?? "Failed to process message").catch(() => {});
     return;
   }
 
-  await handleTelegramMessage(
-    ctx.chat.id,
-    payload,
-    (text) => ctx.reply(text),
-    (source) => ctx.replyWithPhoto(source),
-  );
+  await handleTelegramMessage(ctx, payload);
 });
 
 bot.on(message("photo"), async (ctx) => {
@@ -186,55 +179,27 @@ bot.on(message("photo"), async (ctx) => {
   };
 
   if (isFollowedChat) {
-    await fireAndForget(env, payload);
+    const result = await sendToAgent(env, payload);
+    if (!result.ok) ctx.reply(result.error ?? "Failed to process message").catch(() => {});
     return;
   }
 
-  await handleTelegramMessage(
-    ctx.chat.id,
-    payload,
-    (text) => ctx.reply(text),
-    (source) => ctx.replyWithPhoto(source),
-  );
+  await handleTelegramMessage(ctx, payload);
 });
 
 async function handleTelegramMessage(
-  chatId: number,
+  ctx: { chat: { id: number }; reply: (text: string) => Promise<unknown> },
   payload: AgentPayload,
-  reply: (text: string) => Promise<unknown>,
-  replyWithPhoto: (source: ReturnType<typeof Input.fromBuffer>) => Promise<unknown>,
 ) {
+  const chatId = ctx.chat.id;
   const typingInterval = setInterval(() => {
     bot.telegram.sendChatAction(chatId, "typing").catch(() => {});
   }, TYPING_INTERVAL_MS);
   bot.telegram.sendChatAction(chatId, "typing").catch(() => {});
 
   try {
-    await handleAgentMessage(env, payload, {
-      onFlush: async (text, images) => {
-        for (const img of images) {
-          try {
-            await replyWithPhoto(Input.fromBuffer(Buffer.from(img.data, "base64")));
-          } catch (err) {
-            console.error(`Failed to send image: ${err}`);
-          }
-        }
-
-        if (!text) return;
-
-        const chunks = splitMessage(text, TELEGRAM_MAX_LENGTH);
-        for (const chunk of chunks) {
-          try {
-            await reply(chunk);
-          } catch (err) {
-            console.error(`Failed to send message: ${err}`);
-          }
-        }
-      },
-      onError: async (msg) => {
-        await reply(msg).catch(() => {});
-      },
-    });
+    const result = await sendToAgent(env, payload);
+    if (!result.ok) ctx.reply(result.error ?? "Failed to process message").catch(() => {});
   } finally {
     clearInterval(typingInterval);
   }

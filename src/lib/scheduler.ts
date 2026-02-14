@@ -136,20 +136,8 @@ export class Scheduler {
       } else {
         console.error(`[scheduler] fired "${schedule.id}" for ${agentName}`);
       }
-      // Wait for the full streaming response so we don't abandon
-      // the connection while the daemon is still persisting the reply
-      try {
-        const reader = res.body?.getReader();
-        if (reader) {
-          try {
-            while (!(await reader.read()).done) {}
-          } finally {
-            reader.releaseLock();
-          }
-        }
-      } catch {
-        // Stream closed or errored — safe to ignore
-      }
+      // Consume response body
+      await res.text().catch(() => {});
     } catch (err) {
       console.error(`[scheduler] failed to fire "${schedule.id}" for ${agentName}:`, err);
     } finally {

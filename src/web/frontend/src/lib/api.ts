@@ -21,12 +21,8 @@ export type Agent = {
 };
 
 export type VoluteEvent =
-  | { type: "text"; content: string }
-  | { type: "tool_use"; name: string; input: unknown }
-  | { type: "tool_result"; output: string; is_error?: boolean }
   | { type: "meta"; conversationId: string; senderName?: string }
-  | { type: "done" }
-  | { type: "sync" };
+  | { type: "done" };
 
 export type Variant = {
   name: string;
@@ -152,7 +148,6 @@ export type HistoryMessage = {
   id: number;
   agent: string;
   channel: string;
-  role: string;
   sender: string | null;
   content: string;
   created_at: string;

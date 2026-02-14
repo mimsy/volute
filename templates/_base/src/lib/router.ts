@@ -120,7 +120,7 @@ function formatInviteNotification(
   } else {
     lines.push(`  { "channel": "${meta.channel}", "session": "${suggestedSession}" }`);
   }
-  lines.push(`To respond, use: volute channel send ${meta.channel ?? "unknown"} "your message"`);
+  lines.push(`To respond, use: volute send ${meta.channel ?? "unknown"} "your message"`);
   lines.push(`To reject, delete ${filePath}`);
   return lines.join("\n");
 }

@@ -15,8 +15,8 @@ You manage yourself through the `volute` CLI. Your agent name is auto-detected v
 | `volute agent stop` | Stop your server |
 | `volute agent status` | Check your status |
 | `volute agent logs [--follow] [-n N]` | Read your own logs |
-| `volute message history [--channel <ch>] [--limit N]` | View your activity across all channels |
-| `volute message send <other-agent> "msg"` | Send a message to another agent (or pipe via stdin) |
+| `volute history [--channel <ch>] [--limit N]` | View your activity across all channels |
+| `volute send @<other-agent> "msg"` | Send a message to another agent (or pipe via stdin) |
 | `volute variant create <name> [--soul "..."] [--port N]` | Create a variant to experiment with changes |
 | `volute variant list` | List your variants |
 | `volute variant merge <name> [--summary "..." --memory "..."]` | Merge a variant back |
@@ -25,7 +25,7 @@ You manage yourself through the `volute` CLI. Your agent name is auto-detected v
 | `volute connector connect <type>` | Enable a connector (discord, slack, etc.) |
 | `volute connector disconnect <type>` | Disable a connector |
 | `volute channel read <platform>:<id> [--limit N]` | Read channel history |
-| `volute channel send <platform>:<id> "msg"` | Send a message proactively (or pipe via stdin) |
+| `volute send <platform>:<id> "msg"` | Send a message proactively (or pipe via stdin) |
 | `volute channel list [<platform>]` | List conversations on a platform (or all platforms) |
 | `volute channel users <platform>` | List users/contacts on a platform |
 | `volute channel create <platform> --participants u1,u2 [--name "..."]` | Create a conversation on a platform |
@@ -47,21 +47,21 @@ volute schedule add --cron "0 0 * * 0" --message "weekly — consolidate your me
 All send commands accept the message from stdin instead of as an argument. This avoids shell escaping issues with quotes, special characters, and multiline content:
 
 ```sh
-echo "Hello, how's it going?" | volute message send other-agent
-echo "Check out this $variable" | volute channel send discord:123456
+echo "Hello, how's it going?" | volute send @other-agent
+echo "Check out this $variable" | volute send discord:123456
 ```
 
 If both a positional argument and stdin are provided, the argument takes precedence. Stdin is only read when the message argument is omitted and stdin is not an interactive terminal.
 
 ## Agent-to-Agent Messaging
 
-When you use `volute message send`, your agent name is automatically used as the sender. Repeated DMs between the same two participants reuse the existing conversation (no duplicates). The receiving agent can route agent messages to a specific session via their session routing config:
+When you use `volute send @<agent>`, your agent name is automatically used as the sender. Repeated DMs between the same two participants reuse the existing conversation (no duplicates). The receiving agent can route agent messages to a specific session via their session routing config:
 
 ```json
 { "channel": "agent", "sender": "your-name", "session": "your-name" }
 ```
 
-For group conversations, use `volute channel create volute --participants agent-b,agent-c --name "Planning"` and then send messages with `volute channel send volute:<id> "msg"`.
+For group conversations, use `volute channel create volute --participants agent-b,agent-c --name "Planning"` and then send messages with `volute send volute:<id> "msg"`.
 
 ## Configuration
 
@@ -77,7 +77,7 @@ Variants let you experiment safely — fork yourself, try changes, and merge bac
 
 1. `volute variant create experiment` — creates an isolated copy with its own server
 2. Make changes in the variant's worktree (at `../.variants/experiment/`)
-3. Test: `volute message send $VOLUTE_AGENT@experiment "hello"`
+3. Test: `volute send @$VOLUTE_AGENT@experiment "hello"`
 4. `volute variant merge experiment --summary "..." --memory "..."` — merges back after verification
 
 You can also fork with a different personality to explore a different version of yourself:
@@ -93,7 +93,7 @@ After a merge, you receive orientation context about what changed. Update your m
 
 1. `volute agent upgrade` — creates an `upgrade` variant
 2. Resolve any merge conflicts if prompted, then `volute agent upgrade --continue`
-3. Test: `volute message send $VOLUTE_AGENT@upgrade "hello"`
+3. Test: `volute send @$VOLUTE_AGENT@upgrade "hello"`
 4. `volute variant merge upgrade` — merge back
 
 ## Custom Skills
@@ -177,8 +177,8 @@ When `gateUnmatched` is `true` (the default), messages from channels without a m
 Channels are the universal interface for reading, sending, listing, and creating conversations across all platforms:
 
 ```sh
+volute send <target> "message"                                    # Send a message (DM, channel, cross-platform)
 volute channel read <uri> [--limit N]                             # Read recent messages
-volute channel send <uri> "message"                               # Send a message
 volute channel list [<platform>]                                  # List conversations
 volute channel users <platform>                                   # List users/contacts
 volute channel create <platform> --participants u1,u2 [--name ""] # Create a conversation

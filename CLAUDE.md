@@ -41,7 +41,7 @@ Each agent project (created from the template) has:
 │   ├── consolidate.ts         # Memory consolidation script
 │   └── lib/
 │       ├── router.ts          # Message router: route resolution, prefix formatting, batch buffering
-│       ├── volute-server.ts   # Thin HTTP layer (~85 lines): /health, POST /message → ndjson
+│       ├── volute-server.ts   # Thin HTTP layer: /health, POST /message → JSON response
 │       ├── file-handler.ts    # File destination handler: appends messages to files
 │       ├── routing.ts         # Message routing: config loader, glob matcher, route resolution
 │       ├── types.ts           # ChannelMeta, HandlerMeta, MessageHandler, HandlerResolver, VoluteEvent
@@ -101,8 +101,8 @@ The daemon serves a Hono web server (default port 4200) with a React frontend.
 | `volute agent logs <name> [--follow] [-n N]` | Tail agent logs |
 | `volute agent upgrade <name>` | Upgrade agent to latest template |
 | `volute agent import <path> [--name <name>] [--session <path>]` | Import an OpenClaw workspace |
-| `volute message send <name> "<msg>"` | Send message, stream ndjson response (or pipe via stdin) |
-| `volute message history [--agent <name>]` | View message history |
+| `volute send <target> "<msg>" [--agent]` | Send a message (DM, channel, cross-platform) |
+| `volute history [--agent <name>]` | View message history |
 | `volute variant create <name> [--agent] [--soul "..."] [--port N] [--no-start] [--json]` | Create variant (worktree + server) |
 | `volute variant list [--agent] [--json]` | List variants with health status |
 | `volute variant merge <name> [--agent] [--summary "..." --memory "..."]` | Merge variant back and restart |
@@ -111,7 +111,6 @@ The daemon serves a Hono web server (default port 4200) with a React frontend.
 | `volute connector connect <type> [--agent]` | Enable a connector for an agent |
 | `volute connector disconnect <type> [--agent]` | Disable a connector for an agent |
 | `volute channel read <uri> [--agent]` | Read recent messages from a channel |
-| `volute channel send <uri> "<msg>" [--agent]` | Send a message to a channel (or pipe via stdin) |
 | `volute schedule list [--agent]` | List schedules for an agent |
 | `volute schedule add [--agent] --cron "..." --message "..."` | Add a cron schedule |
 | `volute schedule remove [--agent] --id <id>` | Remove a schedule |
@@ -144,7 +143,6 @@ Agent-scoped commands (`variant`, `connector`, `schedule`, `channel`, `conversat
 | `exec.ts` | Async wrappers around `execFile` (returns stdout) and `spawn` (inherits stdio) |
 | `env.ts` | Environment variables (shared `~/.volute/env.json` + agent-specific `.volute/env.json`) |
 | `format-tool.ts` | Shared tool call summarization (`[toolName primaryArg]` format) |
-| `ndjson.ts` | NDJSON stream reader, yields `VoluteEvent` objects |
 | `schema.ts` | Drizzle ORM schema (users, conversations, conversation_participants, messages, agent_messages) |
 | `db.ts` | libSQL database singleton at `~/.volute/volute.db` (WAL mode, foreign keys) |
 | `auth.ts` | bcrypt password hashing, first user auto-admin, pending approval flow, agent users |
@@ -157,6 +155,7 @@ Agent-scoped commands (`variant`, `connector`, `schedule`, `channel`, `conversat
 | `convert-session.ts` | Converts OpenClaw `session.jsonl` to Claude Agent SDK format |
 | `read-stdin.ts` | Reads piped stdin for send commands (returns undefined if TTY) |
 | `resolve-agent-name.ts` | Resolves agent name from `--agent` flag or `VOLUTE_AGENT` env var |
+| `conversation-events.ts` | In-process pub-sub for conversation events, consumed by SSE endpoint |
 | `isolation.ts` | Per-agent Linux user isolation (`VOLUTE_ISOLATION=user`), user/group management, chown |
 
 ### src/web/
@@ -168,7 +167,7 @@ Agent-scoped commands (`variant`, `connector`, `schedule`, `channel`, `conversat
 | `middleware/auth.ts` | Cookie-based auth middleware, in-memory session map |
 | `routes/auth.ts` | Login, register, logout, user management |
 | `routes/agents.ts` | List/start/stop agents, message proxy with persistence |
-| `routes/chat.ts` | POST `/api/agents/:name/chat` — streaming chat with fan-out to multiple agent participants |
+| `routes/chat.ts` | POST /chat — fire-and-forget to agents; GET /conversations/:id/events — SSE |
 | `routes/connectors.ts` | List/enable/disable connectors per agent |
 | `routes/schedules.ts` | CRUD schedules + webhook endpoint |
 | `routes/conversations.ts` | Conversation CRUD, group creation, participant management |
@@ -200,7 +199,7 @@ Agent-scoped commands (`variant`, `connector`, `schedule`, `channel`, `conversat
 - AgentManager spawns agent servers as child processes with crash recovery (3s delay) and merge-restart
 - Channel URIs use human-readable slugs: `discord:my-server/general`, `slack:workspace/channel`, `telegram:@username`, `volute:conversation-title`. Connectors generate slugs and write slug→platformId mappings to `<agentDir>/.volute/channels.json`. Channel drivers resolve slugs back to platform IDs via this mapping.
 - Connector resolution: agent-specific → user-shared (`~/.volute/connectors/`) → built-in (`src/connectors/`)
-- Agent message flow: `volute-server` (HTTP) → `Router` (routing/formatting/batching) → `MessageHandler` (agent or file destination)
+- Agent message flow: `volute-server` (JSON req/res) → `Router` (routing/formatting/batching) → `MessageHandler` (agent or file destination); web dashboard receives updates via SSE event channel
 - `MessageHandler` interface: `handle(content, meta, listener) => unsubscribe`; `HandlerResolver`: `(key: string) => MessageHandler`
 - Message routing via `routes.json` rules with glob matching, `isDM`/`participants` matching, template expansion (`${sender}`, `${channel}`), and file/agent destinations
 - Channel gating (`gateUnmatched`) holds unrecognized channels in `inbox/` until the agent adds a routing rule

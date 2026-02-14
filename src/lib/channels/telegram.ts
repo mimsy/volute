@@ -17,7 +17,7 @@ export async function read(
   _limit: number,
 ): Promise<string> {
   throw new Error(
-    "Telegram Bot API does not support reading chat history. Use volute channel send instead.",
+    "Telegram Bot API does not support reading chat history. Use volute send instead.",
   );
 }
 

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { publish } from "./conversation-events.js";
 import { getDb } from "./db.js";
 import { conversationParticipants, conversations, messages, users } from "./schema.js";
 
@@ -225,7 +226,7 @@ export async function addMessage(
     }
   }
 
-  return {
+  const msg = {
     id: result.id,
     conversation_id: conversationId,
     role,
@@ -233,6 +234,17 @@ export async function addMessage(
     content,
     created_at: result.created_at,
   };
+
+  publish(conversationId, {
+    type: "message",
+    id: msg.id,
+    role: msg.role as "user" | "assistant",
+    senderName: msg.sender_name,
+    content: msg.content,
+    createdAt: msg.created_at,
+  });
+
+  return msg;
 }
 
 export async function getMessages(conversationId: string): Promise<Message[]> {

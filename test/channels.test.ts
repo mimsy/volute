@@ -107,13 +107,12 @@ describe("channels", () => {
     });
   });
 
-  it("volute driver has listConversations, listUsers, createConversation, sendAndStream", () => {
+  it("volute driver has listConversations, listUsers, createConversation", () => {
     const driver = getChannelDriver("volute");
     assert.ok(driver);
     assert.equal(typeof driver.listConversations, "function");
     assert.equal(typeof driver.listUsers, "function");
     assert.equal(typeof driver.createConversation, "function");
-    assert.equal(typeof driver.sendAndStream, "function");
   });
 
   it("discord driver has listConversations, listUsers, createConversation", () => {
