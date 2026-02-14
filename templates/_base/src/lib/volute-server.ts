@@ -42,6 +42,7 @@ export function createVoluteServer(options: {
           }
           if (event.type === "done") {
             done = true;
+            clearTimeout(timeout);
             const response: { ok: true; usage?: { input_tokens: number; output_tokens: number } } =
               { ok: true };
             if (usage) response.usage = usage;
@@ -50,7 +51,20 @@ export function createVoluteServer(options: {
           }
         });
 
+        const timeout = setTimeout(
+          () => {
+            if (!done) {
+              done = true;
+              unsubscribe();
+              res.writeHead(504, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ ok: false, error: "Agent processing timed out" }));
+            }
+          },
+          5 * 60 * 1000,
+        );
+
         res.on("close", () => {
+          clearTimeout(timeout);
           if (!done) unsubscribe();
         });
       } catch (err) {

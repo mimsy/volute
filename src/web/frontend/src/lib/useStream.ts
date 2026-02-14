@@ -1,9 +1,7 @@
 import { useCallback, useRef } from "react";
 import type { VoluteEvent } from "./api";
 
-export function useChatStream(name: string, onEvent: (event: VoluteEvent) => void) {
-  const abortRef = useRef<AbortController | null>(null);
-
+export function useChatSend(name: string, onEvent: (event: VoluteEvent) => void) {
   const send = useCallback(
     async (
       message: string,
@@ -11,10 +9,6 @@ export function useChatStream(name: string, onEvent: (event: VoluteEvent) => voi
       images?: Array<{ media_type: string; data: string }>,
       agentName?: string,
     ) => {
-      abortRef.current?.abort();
-      const controller = new AbortController();
-      abortRef.current = controller;
-
       const targetName = agentName || name;
       const res = await fetch(`/api/agents/${targetName}/chat`, {
         method: "POST",
@@ -24,10 +18,12 @@ export function useChatStream(name: string, onEvent: (event: VoluteEvent) => voi
           conversationId,
           images: images && images.length > 0 ? images : undefined,
         }),
-        signal: controller.signal,
       });
 
-      if (!res.ok) throw new Error("Chat request failed");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(err.error ?? `Chat request failed: ${res.status}`);
+      }
 
       const data = (await res.json()) as { ok: boolean; conversationId: string };
       // Emit meta event so Chat component knows the conversationId
@@ -38,11 +34,7 @@ export function useChatStream(name: string, onEvent: (event: VoluteEvent) => voi
     [name, onEvent],
   );
 
-  const stop = useCallback(() => {
-    abortRef.current?.abort();
-  }, []);
-
-  return { send, stop };
+  return { send };
 }
 
 export function useLogStream(

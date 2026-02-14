@@ -238,7 +238,7 @@ export async function addMessage(
   publish(conversationId, {
     type: "message",
     id: msg.id,
-    role: msg.role,
+    role: msg.role as "user" | "assistant",
     senderName: msg.sender_name,
     content: msg.content,
     createdAt: msg.created_at,

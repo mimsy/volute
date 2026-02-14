@@ -8,7 +8,7 @@ import {
   type VoluteEvent,
 } from "../lib/api";
 import { renderMarkdown } from "../lib/marked";
-import { useChatStream } from "../lib/useStream";
+import { useChatSend } from "../lib/useStream";
 
 type ChatEntry = { role: "user" | "assistant"; blocks: ContentBlock[]; senderName?: string };
 
@@ -108,23 +108,22 @@ export function Chat({
     );
     eventSource.onmessage = (ev) => {
       if (!ev.data) return;
+      let event: any;
       try {
-        const event = JSON.parse(ev.data);
-        if (event.type === "message") {
-          // New message arrived — reload conversation
-          loadMessages(conversationId, false);
-          scrollToBottom();
-        } else if (event.type === "typing") {
-          setTypingNames((event.senders as string[]).filter((n: string) => n !== username));
-        }
+        event = JSON.parse(ev.data);
       } catch {
-        // ignore parse errors
+        return;
+      }
+      if (event.type === "message") {
+        // New message arrived — reload conversation
+        loadMessages(conversationId, false);
+        scrollToBottom();
       }
     };
     return () => eventSource.close();
   }, [conversationId, name, username, loadMessages, scrollToBottom]);
 
-  // Poll typing indicators as fallback
+  // Poll typing indicators
   useEffect(() => {
     if (!conversationId || !name) return;
     let cancelled = false;
@@ -166,7 +165,7 @@ export function Chat({
     [onConversationId],
   );
 
-  const { send } = useChatStream(name, onEvent);
+  const { send } = useChatSend(name, onEvent);
   const colorMap = useMemo(() => buildSenderColorMap(entries), [entries]);
 
   const handleSend = async () => {
@@ -212,6 +211,14 @@ export function Chat({
       await send(message, convIdRef.current ?? undefined, images.length > 0 ? images : undefined);
     } catch (err) {
       console.error("Failed to send message:", err);
+      setEntries((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          blocks: [{ type: "text", text: "*Failed to send message. Please try again.*" }],
+          senderName: "system",
+        },
+      ]);
       setSending(false);
     }
   };
@@ -286,7 +293,6 @@ export function Chat({
             ) : (
               <AssistantMessage
                 blocks={entry.blocks}
-                isStreaming={false}
                 senderName={entry.senderName}
                 color={entry.senderName ? colorMap.get(entry.senderName) : undefined}
               />
@@ -538,12 +544,10 @@ function UserMessage({
 
 function AssistantMessage({
   blocks,
-  isStreaming,
   senderName,
   color,
 }: {
   blocks: ContentBlock[];
-  isStreaming: boolean;
   senderName?: string;
   color?: string;
 }) {
@@ -579,8 +583,6 @@ function AssistantMessage({
     }
   }
 
-  const hasContent = items.length > 0;
-
   return (
     <div style={{ display: "flex", gap: 10 }}>
       <span
@@ -596,16 +598,6 @@ function AssistantMessage({
         {senderName || "agent"}
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        {!hasContent && isStreaming && (
-          <span
-            style={{
-              color: "var(--text-2)",
-              animation: "pulse 1.5s ease infinite",
-            }}
-          >
-            thinking...
-          </span>
-        )}
         {items.map((item, j) => {
           if (item.kind === "tool") {
             return <ToolUseBlock key={j} tool={item.tool} />;
@@ -635,19 +627,6 @@ function AssistantMessage({
                   __html: renderMarkdown(item.text),
                 }}
               />
-              {isStreaming && j === items.length - 1 && (
-                <span
-                  style={{
-                    display: "inline-block",
-                    width: 7,
-                    height: 14,
-                    background: "var(--accent)",
-                    marginLeft: 2,
-                    animation: "pulse 0.8s ease infinite",
-                    verticalAlign: "text-bottom",
-                  }}
-                />
-              )}
             </div>
           );
         })}

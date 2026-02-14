@@ -184,15 +184,24 @@ const app = new Hono<AuthEnv>()
   // SSE endpoint for conversation events (new messages + typing)
   .get("/:name/conversations/:id/events", async (c) => {
     const conversationId = c.req.param("id");
+    const user = c.get("user");
+    // Daemon token (id: 0) bypasses participant check
+    if (user.id !== 0 && !(await isParticipantOrOwner(conversationId, user.id))) {
+      return c.json({ error: "Conversation not found" }, 404);
+    }
 
     return streamSSE(c, async (stream) => {
       const unsubscribe = subscribe(conversationId, (event) => {
-        stream.writeSSE({ data: JSON.stringify(event) }).catch(() => {});
+        stream.writeSSE({ data: JSON.stringify(event) }).catch((err) => {
+          if (!stream.aborted) console.error("[chat] SSE write error:", err);
+        });
       });
 
       // Keep-alive ping every 15s
       const keepAlive = setInterval(() => {
-        stream.writeSSE({ data: "" }).catch(() => {});
+        stream.writeSSE({ data: "" }).catch((err) => {
+          if (!stream.aborted) console.error("[chat] SSE ping error:", err);
+        });
       }, 15000);
 
       // Wait until the client disconnects
