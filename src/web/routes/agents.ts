@@ -365,6 +365,8 @@ const app = new Hono<AuthEnv>()
     }
 
     typingMap.set(channel, baseName, { persistent: true });
+    const conversationId = (parsed?.conversationId as string) ?? null;
+    if (conversationId) typingMap.set(`volute:${conversationId}`, baseName, { persistent: true });
 
     try {
       const res = await fetch(`http://127.0.0.1:${port}/message`, {
@@ -395,6 +397,7 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Agent is not reachable" }, 502);
     } finally {
       typingMap.delete(channel, baseName);
+      if (conversationId) typingMap.delete(`volute:${conversationId}`, baseName);
     }
   })
   // Budget status

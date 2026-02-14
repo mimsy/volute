@@ -166,6 +166,7 @@ const app = new Hono<AuthEnv>()
     const payload = JSON.stringify({
       content: contentBlocks,
       channel,
+      conversationId,
       sender: senderName,
       participants: participantNames,
       participantCount: participants.length,
