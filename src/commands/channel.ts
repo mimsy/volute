@@ -3,7 +3,6 @@ import { CHANNELS, getChannelDriver } from "../lib/channels.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { loadMergedEnv } from "../lib/env.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { readStdin } from "../lib/read-stdin.js";
 import { resolveAgent } from "../lib/registry.js";
 import { resolveAgentName } from "../lib/resolve-agent-name.js";
 
@@ -13,9 +12,6 @@ export async function run(args: string[]) {
   switch (subcommand) {
     case "read":
       await readChannel(args.slice(1));
-      break;
-    case "send":
-      await sendChannel(args.slice(1));
       break;
     case "list":
       await listChannels(args.slice(1));
@@ -43,12 +39,10 @@ export async function run(args: string[]) {
 function printUsage() {
   console.log(`Usage:
   volute channel read <channel-uri> [--limit N] [--agent <name>]
-  volute channel send <channel-uri> "<message>" [--agent <name>]
   volute channel list [<platform>] [--agent <name>]
   volute channel users <platform> [--agent <name>]
   volute channel create <platform> --participants user1,user2 [--name "..."] [--agent <name>]
-  volute channel typing <channel-uri> [--agent <name>]
-  echo "message" | volute channel send <channel-uri> [--agent <name>]`);
+  volute channel typing <channel-uri> [--agent <name>]`);
 }
 
 async function readChannel(args: string[]) {
@@ -73,44 +67,6 @@ async function readChannel(args: string[]) {
     const limit = flags.limit ?? 20;
     const output = await driver.read(env, uri, limit);
     console.log(output);
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  }
-}
-
-async function sendChannel(args: string[]) {
-  const { positional, flags } = parseArgs(args, {
-    agent: { type: "string" },
-  });
-
-  const uri = positional[0];
-  const message = positional[1] ?? (await readStdin());
-  if (!uri || !message) {
-    console.error('Usage: volute channel send <channel-uri> "<message>" [--agent <name>]');
-    console.error('       echo "message" | volute channel send <channel-uri> [--agent <name>]');
-    process.exit(1);
-  }
-
-  const agentName = resolveAgentName(flags);
-  const { platform } = parseUri(uri);
-  const driver = requireDriver(platform);
-  const { dir } = resolveAgent(agentName);
-  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName, VOLUTE_AGENT_DIR: dir };
-
-  try {
-    await driver.send(env, uri, message);
-
-    // Persist outgoing message to agent_messages
-    try {
-      await daemonFetch(`/api/agents/${encodeURIComponent(agentName)}/history`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channel: uri, content: message }),
-      });
-    } catch (err) {
-      console.error(`Failed to persist to history: ${err instanceof Error ? err.message : err}`);
-    }
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);

@@ -20,8 +20,11 @@ switch (command) {
   case "agent":
     await import("./commands/agent.js").then((m) => m.run(args));
     break;
-  case "message":
-    await import("./commands/message.js").then((m) => m.run(args));
+  case "send":
+    await import("./commands/send.js").then((m) => m.run(args));
+    break;
+  case "history":
+    await import("./commands/history.js").then((m) => m.run(args));
     break;
   case "variant":
     await import("./commands/variant.js").then((m) => m.run(args));
@@ -73,8 +76,8 @@ Commands:
   volute agent upgrade <name>             Upgrade agent to latest template
   volute agent import <path>              Import an OpenClaw workspace
 
-  volute message send <name> "<msg>"      Send a message to an agent
-  volute message history [--agent <name>] View message history
+  volute send <target> "<msg>"             Send a message (agent DM, channel, etc.)
+  volute history [--agent <name>]          View message history
 
   volute variant create <name>            Create a variant (worktree + server)
   volute variant list                     List variants for an agent
@@ -85,7 +88,6 @@ Commands:
   volute connector disconnect <type>      Disable a connector for an agent
 
   volute channel read <uri>               Read recent messages from a channel
-  volute channel send <uri> "<msg>"       Send a message to a channel
   volute channel list [<platform>]        List conversations on a platform
   volute channel users <platform>         List users on a platform
   volute channel create <platform> ...    Create a conversation on a platform
@@ -112,7 +114,7 @@ Options:
   --version, -v                           Show version number
   --help, -h                              Show this help message
 
-Agent-scoped commands (variant, connector, schedule, channel, message history)
+Agent-scoped commands (send, history, variant, connector, schedule, channel)
 use --agent <name> or VOLUTE_AGENT env var to identify the agent.`);
     break;
   default:
