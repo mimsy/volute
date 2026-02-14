@@ -112,9 +112,17 @@ export function reportTyping(
   });
 }
 
-export async function sendToAgent(env: ConnectorEnv, payload: AgentPayload): Promise<void> {
+export async function sendToAgent(
+  env: ConnectorEnv,
+  payload: AgentPayload,
+): Promise<{ ok: boolean; error?: string }> {
+  const url =
+    env.daemonUrl && env.daemonToken
+      ? `${env.daemonUrl}/api/agents/${encodeURIComponent(env.agentName)}/message`
+      : `${env.baseUrl}/message`;
+
   try {
-    const res = await fetch(`${env.baseUrl}/message`, {
+    const res = await fetch(url, {
       method: "POST",
       headers: getHeaders(env),
       body: JSON.stringify(payload),
@@ -123,9 +131,13 @@ export async function sendToAgent(env: ConnectorEnv, payload: AgentPayload): Pro
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       console.error(`Agent returned ${res.status}: ${body}`);
+      return { ok: false, error: `Agent returned ${res.status}` };
     }
+
+    return { ok: true };
   } catch (err) {
     console.error(`Failed to forward message: ${err}`);
+    return { ok: false, error: "Failed to reach agent" };
   }
 }
 

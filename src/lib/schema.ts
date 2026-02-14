@@ -34,7 +34,6 @@ export const agentMessages = sqliteTable(
     id: integer("id").primaryKey({ autoIncrement: true }),
     agent: text("agent").notNull(),
     channel: text("channel").notNull(),
-    role: text("role").notNull(),
     sender: text("sender"),
     content: text("content").notNull(),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),

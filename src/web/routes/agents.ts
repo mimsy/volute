@@ -303,7 +303,6 @@ const app = new Hono<AuthEnv>()
         await db.insert(agentMessages).values({
           agent: baseName,
           channel,
-          role: "user",
           sender,
           content,
         });
@@ -411,7 +410,7 @@ const app = new Hono<AuthEnv>()
     const name = c.req.param("name");
     const [baseName] = name.split("@", 2);
 
-    let body: { channel: string; content: string };
+    let body: { channel: string; content: string; sender?: string };
     try {
       body = await c.req.json();
     } catch {
@@ -427,8 +426,7 @@ const app = new Hono<AuthEnv>()
       await db.insert(agentMessages).values({
         agent: baseName,
         channel: body.channel,
-        role: "assistant",
-        sender: baseName,
+        sender: body.sender ?? baseName,
         content: body.content,
       });
     } catch (err) {

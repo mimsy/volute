@@ -138,7 +138,8 @@ client.on(Events.MessageCreate, async (message) => {
   reportTyping(env, channelKey, senderName, false);
 
   if (isFollowedChannel && !isMentioned) {
-    await sendToAgent(env, payload);
+    const result = await sendToAgent(env, payload);
+    if (!result.ok) message.reply(result.error ?? "Failed to process message").catch(() => {});
     return;
   }
 
@@ -167,7 +168,8 @@ async function handleDiscordMessage(message: Message, payload: AgentPayload) {
   });
 
   try {
-    await sendToAgent(env, payload);
+    const result = await sendToAgent(env, payload);
+    if (!result.ok) message.reply(result.error ?? "Failed to process message").catch(() => {});
   } finally {
     clearInterval(typingInterval);
   }

@@ -136,11 +136,22 @@ app.message(async ({ message }) => {
   };
 
   if (isFollowedChannel && !isMentioned) {
-    await sendToAgent(env, payload);
+    const result = await sendToAgent(env, payload);
+    if (!result.ok)
+      app.client.chat
+        .postMessage({
+          channel: message.channel,
+          text: result.error ?? "Failed to process message",
+        })
+        .catch(() => {});
     return;
   }
 
-  await sendToAgent(env, payload);
+  const result = await sendToAgent(env, payload);
+  if (!result.ok)
+    app.client.chat
+      .postMessage({ channel: message.channel, text: result.error ?? "Failed to process message" })
+      .catch(() => {});
 });
 
 async function start() {

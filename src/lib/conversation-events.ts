@@ -1,13 +1,14 @@
-export type ConversationEvent =
-  | {
-      type: "message";
-      id: number;
-      role: string;
-      senderName: string | null;
-      content: unknown[];
-      createdAt: string;
-    }
-  | { type: "typing"; senders: string[] };
+import type { ContentBlock } from "./conversations.js";
+
+/** In-process pub-sub for conversation events. SSE endpoint subscribes per-conversation; conversations.ts publishes when messages are added. */
+export type ConversationEvent = {
+  type: "message";
+  id: number;
+  role: "user" | "assistant";
+  senderName: string | null;
+  content: ContentBlock[];
+  createdAt: string;
+};
 
 type Callback = (event: ConversationEvent) => void;
 
@@ -34,6 +35,8 @@ export function publish(conversationId: string, event: ConversationEvent): void 
       cb(event);
     } catch (err) {
       console.error("[conversation-events] subscriber threw:", err);
+      set.delete(cb);
+      if (set.size === 0) subscribers.delete(conversationId);
     }
   }
 }

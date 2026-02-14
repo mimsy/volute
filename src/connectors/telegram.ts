@@ -94,11 +94,12 @@ bot.on(message("text"), async (ctx) => {
   };
 
   if (isFollowedChat && !isMentioned) {
-    await sendToAgent(env, payload);
+    const result = await sendToAgent(env, payload);
+    if (!result.ok) ctx.reply(result.error ?? "Failed to process message").catch(() => {});
     return;
   }
 
-  await handleTelegramMessage(ctx.chat.id, payload);
+  await handleTelegramMessage(ctx, payload);
 });
 
 bot.on(message("photo"), async (ctx) => {
@@ -178,21 +179,27 @@ bot.on(message("photo"), async (ctx) => {
   };
 
   if (isFollowedChat) {
-    await sendToAgent(env, payload);
+    const result = await sendToAgent(env, payload);
+    if (!result.ok) ctx.reply(result.error ?? "Failed to process message").catch(() => {});
     return;
   }
 
-  await handleTelegramMessage(ctx.chat.id, payload);
+  await handleTelegramMessage(ctx, payload);
 });
 
-async function handleTelegramMessage(chatId: number, payload: AgentPayload) {
+async function handleTelegramMessage(
+  ctx: { chat: { id: number }; reply: (text: string) => Promise<unknown> },
+  payload: AgentPayload,
+) {
+  const chatId = ctx.chat.id;
   const typingInterval = setInterval(() => {
     bot.telegram.sendChatAction(chatId, "typing").catch(() => {});
   }, TYPING_INTERVAL_MS);
   bot.telegram.sendChatAction(chatId, "typing").catch(() => {});
 
   try {
-    await sendToAgent(env, payload);
+    const result = await sendToAgent(env, payload);
+    if (!result.ok) ctx.reply(result.error ?? "Failed to process message").catch(() => {});
   } finally {
     clearInterval(typingInterval);
   }
