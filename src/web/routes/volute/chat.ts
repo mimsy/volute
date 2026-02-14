@@ -156,14 +156,18 @@ const app = new Hono<AuthEnv>()
     // Build payload for daemon /message route
     const isDM = participants.length === 2;
 
-    // Write slug → platformId mapping so channel drivers can resolve it
-    const dir = agentDir(baseName);
-    writeChannelEntry(dir, channel, {
+    // Write slug → platformId mapping for all agent participants so they can resolve it
+    const channelEntry = {
       platformId: conversationId!,
       platform: "volute",
       name: convTitle ?? undefined,
-      type: isDM ? "dm" : "group",
-    });
+      type: (isDM ? "dm" : "group") as "dm" | "group",
+    };
+    for (const ap of agentParticipants) {
+      try {
+        writeChannelEntry(agentDir(ap.username), channel, channelEntry);
+      } catch {}
+    }
     const typingMap = getTypingMap();
     const currentlyTyping = typingMap.get(channel);
     const payload = JSON.stringify({
