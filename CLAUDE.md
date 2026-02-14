@@ -101,8 +101,8 @@ The daemon serves a Hono web server (default port 4200) with a React frontend.
 | `volute agent logs <name> [--follow] [-n N]` | Tail agent logs |
 | `volute agent upgrade <name>` | Upgrade agent to latest template |
 | `volute agent import <path> [--name <name>] [--session <path>]` | Import an OpenClaw workspace |
-| `volute message send <name> "<msg>"` | Send message to an agent (or pipe via stdin) |
-| `volute message history [--agent <name>]` | View message history |
+| `volute send <target> "<msg>" [--agent]` | Send a message (DM, channel, cross-platform) |
+| `volute history [--agent <name>]` | View message history |
 | `volute variant create <name> [--agent] [--soul "..."] [--port N] [--no-start] [--json]` | Create variant (worktree + server) |
 | `volute variant list [--agent] [--json]` | List variants with health status |
 | `volute variant merge <name> [--agent] [--summary "..." --memory "..."]` | Merge variant back and restart |
@@ -111,7 +111,6 @@ The daemon serves a Hono web server (default port 4200) with a React frontend.
 | `volute connector connect <type> [--agent]` | Enable a connector for an agent |
 | `volute connector disconnect <type> [--agent]` | Disable a connector for an agent |
 | `volute channel read <uri> [--agent]` | Read recent messages from a channel |
-| `volute channel send <uri> "<msg>" [--agent]` | Send a message to a channel (or pipe via stdin) |
 | `volute schedule list [--agent]` | List schedules for an agent |
 | `volute schedule add [--agent] --cron "..." --message "..."` | Add a cron schedule |
 | `volute schedule remove [--agent] --id <id>` | Remove a schedule |

@@ -23,7 +23,7 @@ volute agent create atlas
 volute agent start atlas
 
 # Talk to it
-volute message send atlas "hey, what can you do?"
+volute send @atlas "hey, what can you do?"
 ```
 
 You now have a running AI agent with persistent memory, auto-committing file changes, and session resume across restarts. Open `http://localhost:4200` for the web dashboard.
@@ -58,10 +58,10 @@ volute agent delete atlas --force   # also delete files
 ### Sending messages
 
 ```sh
-volute message send atlas "what's on your mind?"
+volute send @atlas "what's on your mind?"
 ```
 
-Responses stream back to your terminal in real time. The agent knows which channel each message came from — CLI, web, Discord, or system — and routes its response back to the source.
+The agent knows which channel each message came from — CLI, web, Discord, or system — and routes its response back to the source.
 
 ### Anatomy of an agent
 
@@ -95,7 +95,7 @@ This is the interesting part. Agents can fork themselves into isolated branches,
 volute variant create experiment --agent atlas
 
 # Talk to the variant directly
-volute message send atlas@experiment "try a different approach"
+volute send @atlas@experiment "try a different approach"
 
 # List all variants
 volute variant list --agent atlas
@@ -144,7 +144,7 @@ Read from and write to connector channels directly:
 
 ```sh
 volute channel read discord:123456789 --agent atlas         # recent messages
-volute channel send discord:123456789 "hello" --agent atlas # send a message
+volute send discord:123456789 "hello" --agent atlas        # send a message
 ```
 
 ## Schedules
@@ -191,7 +191,7 @@ volute agent upgrade atlas          # creates an "upgrade" variant
 # resolve conflicts if needed, then:
 volute agent upgrade atlas --continue
 # test:
-volute message send atlas@upgrade "are you working?"
+volute send @atlas@upgrade "are you working?"
 # merge:
 volute variant merge upgrade --agent atlas
 ```

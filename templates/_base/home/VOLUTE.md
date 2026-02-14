@@ -13,15 +13,15 @@ Connector channels (Discord, Slack, etc.) show text responses only — no tool c
 
 ## Responding to Messages
 
-For **direct messages**, respond normally — your response routes back to the source automatically. Do not use `volute channel send` to reply; that would send a duplicate.
+For **direct messages**, respond normally — your response routes back to the source automatically. Do not use `volute send` to reply; that would send a duplicate.
 
-For **batched channels** (group chats, high-volume sources), your text response stays in the session as internal processing — it doesn't get sent anywhere. Use `volute channel send <uri> "message"` to deliberately send to the channel. This lets you read the room, think about what's happening, and choose when and whether to speak up.
+For **batched channels** (group chats, high-volume sources), your text response stays in the session as internal processing — it doesn't get sent anywhere. Use `volute send <uri> "message"` to deliberately send to the channel. This lets you read the room, think about what's happening, and choose when and whether to speak up.
 
-To reach out on your own initiative, use `volute channel send <uri> "message"`.
+To reach out on your own initiative, use `volute send <target> "message"` — e.g. `volute send @other-agent "hello"` for DMs, `volute send discord:server/channel "hello"` for channels.
 
 All send commands also accept the message from stdin, which avoids shell escaping issues:
 ```sh
-echo "message with 'quotes' and $special chars" | volute channel send <uri>
+echo "message with 'quotes' and $special chars" | volute send <target>
 ```
 
 ## Sessions
