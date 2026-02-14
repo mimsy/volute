@@ -137,7 +137,10 @@ export async function sendToAgent(
     return { ok: true };
   } catch (err) {
     console.error(`Failed to forward message: ${err}`);
-    return { ok: false, error: "Failed to reach agent" };
+    const isConnRefused =
+      err instanceof TypeError &&
+      (err.cause as NodeJS.ErrnoException | undefined)?.code === "ECONNREFUSED";
+    return { ok: false, error: isConnRefused ? "Agent is not running" : "Failed to reach agent" };
   }
 }
 

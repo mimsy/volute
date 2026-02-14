@@ -10,21 +10,20 @@ describe("agent_messages", () => {
     await db.delete(agentMessages);
   }
 
-  it("inserts and retrieves user and assistant messages", async () => {
+  it("inserts and retrieves messages", async () => {
     await cleanup();
     try {
       const db = await getDb();
       await db.insert(agentMessages).values({
         agent: "test-agent",
         channel: "volute:test-conv",
-        role: "user",
         sender: "alice",
         content: "Hello agent",
       });
       await db.insert(agentMessages).values({
         agent: "test-agent",
         channel: "volute:test-conv",
-        role: "assistant",
+        sender: "test-agent",
         content: "Hello alice!",
       });
 
@@ -35,11 +34,9 @@ describe("agent_messages", () => {
         .orderBy(agentMessages.id);
 
       assert.equal(rows.length, 2);
-      assert.equal(rows[0].role, "user");
       assert.equal(rows[0].sender, "alice");
       assert.equal(rows[0].content, "Hello agent");
-      assert.equal(rows[1].role, "assistant");
-      assert.equal(rows[1].sender, null);
+      assert.equal(rows[1].sender, "test-agent");
       assert.equal(rows[1].content, "Hello alice!");
     } finally {
       await cleanup();
@@ -51,9 +48,9 @@ describe("agent_messages", () => {
     try {
       const db = await getDb();
       await db.insert(agentMessages).values([
-        { agent: "agent-a", channel: "volute:test-conv", role: "user", content: "msg1" },
-        { agent: "agent-b", channel: "volute:test-conv", role: "user", content: "msg2" },
-        { agent: "agent-a", channel: "volute:test-conv", role: "assistant", content: "msg3" },
+        { agent: "agent-a", channel: "volute:test-conv", sender: "alice", content: "msg1" },
+        { agent: "agent-b", channel: "volute:test-conv", sender: "bob", content: "msg2" },
+        { agent: "agent-a", channel: "volute:test-conv", sender: "agent-a", content: "msg3" },
       ]);
 
       const rows = await db
@@ -75,9 +72,14 @@ describe("agent_messages", () => {
     try {
       const db = await getDb();
       await db.insert(agentMessages).values([
-        { agent: "agent-a", channel: "volute:test-conv", role: "user", content: "web-msg" },
-        { agent: "agent-a", channel: "discord", role: "user", content: "discord-msg" },
-        { agent: "agent-a", channel: "volute:test-conv", role: "assistant", content: "web-reply" },
+        { agent: "agent-a", channel: "volute:test-conv", sender: "alice", content: "web-msg" },
+        { agent: "agent-a", channel: "discord", sender: "bob", content: "discord-msg" },
+        {
+          agent: "agent-a",
+          channel: "volute:test-conv",
+          sender: "agent-a",
+          content: "web-reply",
+        },
       ]);
 
       const rows = await db
@@ -101,7 +103,7 @@ describe("agent_messages", () => {
         await db.insert(agentMessages).values({
           agent: "agent-page",
           channel: "volute:test-conv",
-          role: "user",
+          sender: "alice",
           content: `msg-${i}`,
         });
       }

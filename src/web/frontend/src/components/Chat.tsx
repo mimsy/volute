@@ -120,6 +120,10 @@ export function Chat({
         scrollToBottom();
       }
     };
+    // Reload messages on reconnect to catch anything missed during the gap
+    eventSource.onopen = () => {
+      loadMessages(conversationId, false);
+    };
     return () => eventSource.close();
   }, [conversationId, name, username, loadMessages, scrollToBottom]);
 

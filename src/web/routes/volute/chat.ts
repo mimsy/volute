@@ -36,8 +36,12 @@ const chatSchema = z.object({
 });
 
 function getDaemonUrl(): string {
-  const data = JSON.parse(readFileSync(resolve(voluteHome(), "daemon.json"), "utf-8"));
-  return `http://${daemonLoopback()}:${data.port}`;
+  try {
+    const data = JSON.parse(readFileSync(resolve(voluteHome(), "daemon.json"), "utf-8"));
+    return `http://${daemonLoopback()}:${data.port}`;
+  } catch (err) {
+    throw new Error(`Failed to read daemon config: ${err instanceof Error ? err.message : err}`);
+  }
 }
 
 function daemonFetchInternal(path: string, body: string): Promise<Response> {

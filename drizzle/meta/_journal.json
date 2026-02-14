@@ -29,6 +29,13 @@
       "when": 1770770603615,
       "tag": "0003_clean_ego",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1771037065968,
+      "tag": "0004_magical_silverclaw",
+      "breakpoints": true
     }
   ]
 }
