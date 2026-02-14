@@ -141,8 +141,9 @@ Messages are routed to sessions based on rules in `.config/routes.json`. Rules a
 | `session` | Target session name. Supports `${sender}`, `${channel}` templates, or `$new` for a unique session per message |
 | `destination` | `"agent"` (default) or `"file"` |
 | `path` | File path when destination is `"file"` |
-| `batch` | Batch config (see below) |
+| `batch` | Batch config (see below) — incompatible with `autoReply` |
 | `interrupt` | Whether to interrupt an in-progress turn (default: `true`) |
+| `autoReply` | When `true`, your text output is automatically sent back to the originating channel. No need to use `volute send` for these conversations. Not supported with batch mode. |
 
 ### Batch config
 
