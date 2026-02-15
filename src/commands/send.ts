@@ -48,12 +48,12 @@ export async function run(args: string[]) {
     }
 
     const env: Record<string, string> = {
-      VOLUTE_AGENT: agentSelf || targetName,
+      VOLUTE_AGENT: targetName,
       VOLUTE_SENDER: sender,
     };
 
     try {
-      channelUri = await driver.createConversation(env, [sender, targetName]);
+      channelUri = await driver.createConversation(env, [sender]);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
