@@ -1,13 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { resolveVoluteBin } from "../lib/exec.js";
 import { ensureVoluteGroup } from "../lib/isolation.js";
 import { parseArgs } from "../lib/parse-args.js";
 
 const SERVICE_NAME = "volute.service";
 const SERVICE_PATH = `/etc/systemd/system/${SERVICE_NAME}`;
+const PROFILE_PATH = "/etc/profile.d/volute.sh";
+const WRAPPER_PATH = "/usr/local/bin/volute";
 const DATA_DIR = "/var/lib/volute";
 const AGENTS_DIR = "/agents";
 const HOST_RE = /^[a-zA-Z0-9.:_-]+$/;
@@ -106,6 +108,23 @@ function install(port?: number, host?: string): void {
   execFileSync("chmod", ["755", AGENTS_DIR]);
   console.log("Set permissions on directories");
 
+  // Write environment for CLI users so they can find the daemon
+  writeFileSync(
+    PROFILE_PATH,
+    `export VOLUTE_HOME=${DATA_DIR}\nexport VOLUTE_AGENTS_DIR=${AGENTS_DIR}\n`,
+  );
+  console.log(`Wrote ${PROFILE_PATH}`);
+
+  // If the binary is under a home directory (nvm), create a wrapper at /usr/local/bin
+  // so `sudo volute` works (sudo resets PATH and won't find nvm binaries)
+  const binDir = dirname(voluteBin);
+  if (voluteBin !== WRAPPER_PATH && !voluteBin.startsWith("/usr/bin")) {
+    const nodeBin = resolve(binDir, "node");
+    const wrapper = `#!/bin/sh\nexec "${nodeBin}" "${voluteBin}" "$@"\n`;
+    writeFileSync(WRAPPER_PATH, wrapper, { mode: 0o755 });
+    console.log(`Wrote ${WRAPPER_PATH} (wrapper for ${voluteBin})`);
+  }
+
   // Install systemd service
   writeFileSync(SERVICE_PATH, generateUnit(voluteBin, port, host ?? "0.0.0.0"));
   console.log(`Wrote ${SERVICE_PATH}`);
@@ -152,6 +171,8 @@ function uninstall(force: boolean): void {
     console.warn("Warning: failed to disable service (may already be stopped)");
   }
   unlinkSync(SERVICE_PATH);
+  if (existsSync(PROFILE_PATH)) unlinkSync(PROFILE_PATH);
+  if (existsSync(WRAPPER_PATH)) unlinkSync(WRAPPER_PATH);
   try {
     execFileSync("systemctl", ["daemon-reload"]);
   } catch {
