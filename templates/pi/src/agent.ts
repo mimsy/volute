@@ -1,5 +1,3 @@
-import type { ImageContent } from "@mariozechner/pi-ai";
-import { getModel, getModels } from "@mariozechner/pi-ai";
 import {
   AuthStorage,
   createAgentSession,
@@ -9,8 +7,15 @@ import {
   SessionManager,
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
-import { commitFileChange } from "./lib/auto-commit.js";
-import { log, logText, logThinking, logToolResult, logToolUse } from "./lib/logger.js";
+import {
+  type AutoReplyTracker,
+  createAutoReplyTracker,
+  type MessageChannelInfo,
+} from "./lib/auto-reply.js";
+import { extractImages, extractText } from "./lib/content.js";
+import { createEventHandler } from "./lib/event-handler.js";
+import { log } from "./lib/logger.js";
+import { resolveModel } from "./lib/resolve-model.js";
 import { createSessionContextExtension } from "./lib/session-context-extension.js";
 import type {
   HandlerMeta,
@@ -31,44 +36,13 @@ type PiSession = {
   unsubscribe?: () => void;
   messageIds: (string | undefined)[];
   currentMessageId?: string;
+  messageChannels: Map<string, MessageChannelInfo>;
+  autoReply: AutoReplyTracker;
 };
 
 function defaultCompactionMessage(): string {
   const today = new Date().toISOString().slice(0, 10);
   return `Context is getting long — compaction is about to summarize this conversation. Before that happens, save anything important to files (MEMORY.md, memory/journal/${today}.md, etc.) since those survive compaction. Focus on: decisions made, open tasks, and anything you'd need to pick up where you left off.`;
-}
-
-function resolveModel(modelStr: string) {
-  const [provider, ...rest] = modelStr.split(":");
-  const modelId = rest.join(":");
-
-  // Try exact match first, then prefix match against available models
-  let model = getModel(provider as any, modelId as any);
-  if (!model) {
-    const available = getModels(provider as any);
-    const found = available.find((m) => m.id.startsWith(modelId));
-    if (found) model = found;
-  }
-  if (!model) {
-    const available = getModels(provider as any);
-    throw new Error(
-      `Model not found: ${modelStr}\nAvailable ${provider} models: ${available.map((m) => m.id).join(", ")}`,
-    );
-  }
-  return model;
-}
-
-function extractText(content: VoluteContentPart[]): string {
-  return content
-    .filter((p): p is { type: "text"; text: string } => p.type === "text")
-    .map((p) => p.text)
-    .join("\n");
-}
-
-function extractImages(content: VoluteContentPart[]): ImageContent[] {
-  return content
-    .filter((p): p is { type: "image"; media_type: string; data: string } => p.type === "image")
-    .map((p) => ({ type: "image" as const, mimeType: p.media_type, data: p.data }));
 }
 
 export function createAgent(options: {
@@ -93,16 +67,21 @@ export function createAgent(options: {
     const existing = sessions.get(name);
     if (existing) return existing;
 
+    const messageChannels = new Map<string, MessageChannelInfo>();
     const session: PiSession = {
       name,
       agentSession: null,
       ready: Promise.resolve(),
       listeners: new Set(),
       messageIds: [],
+      messageChannels,
+      autoReply: createAutoReplyTracker(messageChannels),
     };
     sessions.set(name, session);
 
     session.ready = initSession(session).catch((err) => {
+      session.autoReply.reset();
+      session.messageChannels.clear();
       log("agent", `session "${session.name}": init failed:`, err);
     });
     return session;
@@ -165,50 +144,12 @@ export function createAgent(options: {
 
     session.agentSession = agentSession;
 
-    // Per-session event subscription
-    const toolArgs = new Map<string, any>();
-
-    session.unsubscribe = agentSession.subscribe((event) => {
-      if (session.currentMessageId === undefined) {
-        session.currentMessageId = session.messageIds.shift();
-      }
-
-      if (event.type === "message_update") {
-        const ae = event.assistantMessageEvent;
-        if (ae.type === "text_delta") {
-          logText(ae.delta);
-        } else if (ae.type === "thinking_delta") {
-          logThinking(ae.delta);
-        }
-      }
-
-      if (event.type === "tool_execution_start") {
-        toolArgs.set(event.toolCallId, event.args);
-        logToolUse(event.toolName, event.args);
-      }
-
-      if (event.type === "tool_execution_end") {
-        const output =
-          typeof event.result === "string" ? event.result : JSON.stringify(event.result);
-        logToolResult(event.toolName, output, event.isError);
-
-        // Auto-commit file changes in home/
-        if ((event.toolName === "edit" || event.toolName === "write") && !event.isError) {
-          const args = toolArgs.get(event.toolCallId);
-          const filePath = (args as { path?: string })?.path;
-          if (filePath) {
-            commitFileChange(filePath, options.cwd);
-          }
-        }
-        toolArgs.delete(event.toolCallId);
-      }
-
-      if (event.type === "agent_end") {
-        log("agent", `session "${session.name}": turn done`);
-        broadcast(session, { type: "done" });
-        session.currentMessageId = undefined;
-      }
-    });
+    session.unsubscribe = agentSession.subscribe(
+      createEventHandler(session, {
+        cwd: options.cwd,
+        broadcast: (event) => broadcast(session, event),
+      }),
+    );
 
     log("agent", `session "${session.name}": ready`);
   }
@@ -248,6 +189,14 @@ export function createAgent(options: {
           if (event.messageId === meta.messageId) listener(event);
         };
         session.listeners.add(filteredListener);
+
+        // Track channel for auto-reply
+        if (meta.channel) {
+          session.messageChannels.set(meta.messageId, {
+            channel: meta.channel,
+            autoReply: meta.autoReply,
+          });
+        }
 
         // Track messageId (must be pushed before prompt)
         session.messageIds.push(meta.messageId);

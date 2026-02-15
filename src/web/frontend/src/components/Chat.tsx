@@ -111,7 +111,8 @@ export function Chat({
       let event: any;
       try {
         event = JSON.parse(ev.data);
-      } catch {
+      } catch (err) {
+        console.warn("[chat] failed to parse SSE event:", err);
         return;
       }
       if (event.type === "message") {
@@ -137,7 +138,9 @@ export function Chat({
           if (cancelled) return;
           setTypingNames(names.filter((n) => n !== username));
         })
-        .catch(() => {});
+        .catch((err) => {
+          if (!cancelled) console.warn("[chat] typing poll error:", err);
+        });
     };
     poll();
     const id = setInterval(poll, 5000);

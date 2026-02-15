@@ -82,7 +82,6 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: "Conversation not found" }, 404);
       }
     } else {
-      const title = body.message ? body.message.slice(0, 80) : "Image message";
       // If sender is a registered agent, include them as a participant
       const participantIds: number[] = [];
       if (user.id !== 0) {
@@ -106,6 +105,10 @@ const app = new Hono<AuthEnv>()
       }
 
       if (!conversationId) {
+        // Title from participant names (e.g. "alice, mystery")
+        const participantNames = new Set([senderName, baseName]);
+        const title = [...participantNames].join(", ");
+
         const conv = await createConversation(baseName, "volute", {
           userId: user.id !== 0 ? user.id : undefined,
           title,
@@ -153,19 +156,26 @@ const app = new Hono<AuthEnv>()
     // Build payload for daemon /message route
     const isDM = participants.length === 2;
 
-    // Write slug → platformId mapping so channel drivers can resolve it
-    const dir = agentDir(baseName);
-    writeChannelEntry(dir, channel, {
+    // Write slug → platformId mapping for all agent participants so they can resolve it
+    const channelEntry = {
       platformId: conversationId!,
       platform: "volute",
       name: convTitle ?? undefined,
-      type: isDM ? "dm" : "group",
-    });
+      type: (isDM ? "dm" : "group") as "dm" | "group",
+    };
+    for (const ap of agentParticipants) {
+      try {
+        writeChannelEntry(agentDir(ap.username), channel, channelEntry);
+      } catch (err) {
+        console.warn(`[chat] failed to write channel entry for ${ap.username}:`, err);
+      }
+    }
     const typingMap = getTypingMap();
     const currentlyTyping = typingMap.get(channel);
     const payload = JSON.stringify({
       content: contentBlocks,
       channel,
+      conversationId,
       sender: senderName,
       participants: participantNames,
       participantCount: participants.length,
@@ -176,11 +186,16 @@ const app = new Hono<AuthEnv>()
     // Fire-and-forget: send to all running agents via daemon /message route
     for (const agentName of runningAgents) {
       const targetName = agentName === baseName ? name : agentName;
-      daemonFetchInternal(`/api/agents/${encodeURIComponent(targetName)}/message`, payload).catch(
-        (err) => {
+      daemonFetchInternal(`/api/agents/${encodeURIComponent(targetName)}/message`, payload)
+        .then(async (res) => {
+          if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            console.error(`[chat] agent ${agentName} responded ${res.status}: ${text}`);
+          }
+        })
+        .catch((err) => {
           console.error(`[chat] agent ${agentName} unreachable via daemon:`, err);
-        },
-      );
+        });
     }
 
     return c.json({ ok: true, conversationId });

@@ -59,28 +59,23 @@ describe("splitMessage", () => {
   });
 
   it("returns single chunk when message exactly equals max length", () => {
-    const message = "a".repeat(2000);
-    const chunks = splitMessage(message, 2000);
-    assert.equal(chunks.length, 1);
-    assert.equal(chunks[0], message);
+    const chunks = splitMessage("a".repeat(2000), 2000);
+    assert.deepEqual(chunks, ["a".repeat(2000)]);
   });
 
   it("strips the split-point newline from the next chunk", () => {
-    const before = "a".repeat(1990);
-    const after = "b".repeat(100);
-    const message = `${before}\n${after}`;
-    const chunks = splitMessage(message, 2000);
+    const message = "a".repeat(1500) + "\n" + "b".repeat(500);
+    const chunks = splitMessage(message, 1501);
     assert.equal(chunks.length, 2);
-    assert.equal(chunks[0], before);
-    assert.equal(chunks[1], after);
+    assert.equal(chunks[0], "a".repeat(1500));
+    assert.equal(chunks[1], "b".repeat(500));
   });
 
   it("uses newline at exactly the midpoint", () => {
-    const before = "a".repeat(1000);
-    const after = "b".repeat(1500);
-    const message = `${before}\n${after}`;
+    const message = "a".repeat(1000) + "\n" + "b".repeat(1500);
     const chunks = splitMessage(message, 2000);
-    assert.equal(chunks[0], before);
-    assert.equal(chunks[1], after);
+    assert.equal(chunks.length, 2);
+    assert.equal(chunks[0], "a".repeat(1000));
+    assert.equal(chunks[1], "b".repeat(1500));
   });
 });

@@ -92,9 +92,15 @@ const app = new Hono<AuthEnv>()
       }
     }
 
+    // Default title from participant names when none provided
+    let title = body.title;
+    if (!title && body.participantNames?.length) {
+      title = body.participantNames.join(", ");
+    }
+
     const conv = await createConversation(name, "volute", {
       userId: user.id !== 0 ? user.id : undefined,
-      title: body.title,
+      title,
       participantIds,
     });
 

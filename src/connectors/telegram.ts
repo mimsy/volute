@@ -95,7 +95,10 @@ bot.on(message("text"), async (ctx) => {
 
   if (isFollowedChat && !isMentioned) {
     const result = await sendToAgent(env, payload);
-    if (!result.ok) ctx.reply(result.error ?? "Failed to process message").catch(() => {});
+    if (!result.ok)
+      ctx.reply(result.error ?? "Failed to process message").catch((err) => {
+        console.warn(`[telegram] failed to send error reply: ${err}`);
+      });
     return;
   }
 
@@ -180,7 +183,10 @@ bot.on(message("photo"), async (ctx) => {
 
   if (isFollowedChat) {
     const result = await sendToAgent(env, payload);
-    if (!result.ok) ctx.reply(result.error ?? "Failed to process message").catch(() => {});
+    if (!result.ok)
+      ctx.reply(result.error ?? "Failed to process message").catch((err) => {
+        console.warn(`[telegram] failed to send error reply: ${err}`);
+      });
     return;
   }
 
@@ -199,7 +205,10 @@ async function handleTelegramMessage(
 
   try {
     const result = await sendToAgent(env, payload);
-    if (!result.ok) ctx.reply(result.error ?? "Failed to process message").catch(() => {});
+    if (!result.ok)
+      ctx.reply(result.error ?? "Failed to process message").catch((err) => {
+        console.warn(`[telegram] failed to send error reply: ${err}`);
+      });
   } finally {
     clearInterval(typingInterval);
   }

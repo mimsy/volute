@@ -70,8 +70,9 @@ export function useLogStream(
           }
         }
       })
-      .catch(() => {
-        // Stream ended or aborted
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.warn("[logs] stream error:", err);
       });
   }, [name, onLine]);
 
@@ -115,8 +116,9 @@ export function useSystemLogStream(onLine: (line: string) => void): {
           }
         }
       })
-      .catch(() => {
-        // Stream ended or aborted
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.warn("[system-logs] stream error:", err);
       });
   }, [onLine]);
 

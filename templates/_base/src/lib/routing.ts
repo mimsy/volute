@@ -11,16 +11,29 @@ export type RoutingRule = {
   session?: string;
   destination?: "agent" | "file";
   path?: string; // file path for file destination
-  interrupt?: boolean; // interrupt in-progress agent turn (default: true for agent)
-  batch?: number | BatchConfig; // number = minutes (legacy), object = fine-grained control
   channel?: string;
   sender?: string;
   isDM?: boolean; // match on isDM metadata
   participants?: number; // match on participant count (e.g. 2 = DM)
 };
 
+export type SessionConfig = {
+  autoReply?: boolean;
+  batch?: number | BatchConfig;
+  interrupt?: boolean;
+  instructions?: string;
+};
+
+export type ResolvedSessionConfig = {
+  autoReply: boolean;
+  batch?: BatchConfig;
+  interrupt: boolean;
+  instructions?: string;
+};
+
 export type RoutingConfig = {
   rules?: RoutingRule[];
+  sessions?: Record<string, SessionConfig>;
   default?: string;
   gateUnmatched?: boolean;
 };
@@ -29,8 +42,6 @@ export type ResolvedRoute =
   | {
       destination: "agent";
       session: string;
-      interrupt: boolean;
-      batch?: BatchConfig;
       matched: boolean;
     }
   | { destination: "file"; path: string; matched: boolean };
@@ -63,7 +74,7 @@ function globMatch(pattern: string, value: string): boolean {
 }
 
 const GLOB_MATCH_KEYS = new Set(["channel", "sender"]);
-const NON_MATCH_KEYS = new Set(["session", "batch", "destination", "path", "interrupt"]);
+const NON_MATCH_KEYS = new Set(["session", "destination", "path"]);
 
 type MatchMeta = { channel?: string; sender?: string; isDM?: boolean; participantCount?: number };
 
@@ -107,7 +118,7 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
   const fallback = config.default ?? "main";
 
   if (!config.rules) {
-    return { destination: "agent", session: fallback, interrupt: true, matched: false };
+    return { destination: "agent", session: fallback, matched: false };
   }
 
   for (const rule of config.rules) {
@@ -122,14 +133,42 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
       return {
         destination: "agent",
         session: sanitizeSessionName(expandTemplate(rule.session ?? fallback, meta)),
-        interrupt: rule.interrupt ?? true,
-        batch: rule.batch != null ? normalizeBatch(rule.batch) : undefined,
         matched: true,
       };
     }
   }
 
-  return { destination: "agent", session: fallback, interrupt: true, matched: false };
+  return { destination: "agent", session: fallback, matched: false };
+}
+
+/**
+ * Resolve session config by matching session name against glob-pattern keys in config.sessions.
+ * First match wins. Returns defaults if no match.
+ */
+export function resolveSessionConfig(
+  config: RoutingConfig,
+  sessionName: string,
+): ResolvedSessionConfig {
+  const defaults: ResolvedSessionConfig = { autoReply: false, interrupt: true };
+
+  if (!config.sessions) return defaults;
+
+  for (const [pattern, sessionConfig] of Object.entries(config.sessions)) {
+    if (globMatch(pattern, sessionName)) {
+      const batch = sessionConfig.batch != null ? normalizeBatch(sessionConfig.batch) : undefined;
+      if (sessionConfig.autoReply && batch != null) {
+        log("routing", `autoReply is not supported with batch mode — autoReply will be ignored`);
+      }
+      return {
+        autoReply: batch != null ? false : (sessionConfig.autoReply ?? false),
+        batch,
+        interrupt: sessionConfig.interrupt ?? true,
+        instructions: sessionConfig.instructions,
+      };
+    }
+  }
+
+  return defaults;
 }
 
 function sanitizeSessionName(name: string): string {
