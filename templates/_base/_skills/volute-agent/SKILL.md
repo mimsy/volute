@@ -108,24 +108,28 @@ Edit `home/.mcp.json` to configure MCP servers for your SDK session. This gives 
 
 Messages are routed to sessions based on rules in `.config/routes.json`. Rules are evaluated in order; first match wins. Unmatched messages go to the `default` session (defaults to `"main"`).
 
-### Rule syntax
+### Config syntax
 
 ```json
 {
   "rules": [
-    { "channel": "discord:*", "session": "discord", "batch": { "debounce": 20, "maxWait": 120, "triggers": ["@myagent"] } },
+    { "channel": "discord:*", "session": "discord" },
     { "channel": "volute:*", "isDM": true, "session": "${sender}" },
-    { "channel": "volute:*", "isDM": false, "session": "${channel}", "batch": { "debounce": 20, "maxWait": 120 } },
+    { "channel": "volute:*", "isDM": false, "session": "${channel}" },
     { "sender": "alice", "session": "alice" },
     { "channel": "system:*", "session": "$new" },
     { "channel": "discord:logs", "destination": "file", "path": "inbox/log.md" }
   ],
+  "sessions": {
+    "discord": { "batch": { "debounce": 20, "maxWait": 120, "triggers": ["@myagent"] }, "interrupt": false, "instructions": "Brief responses only." },
+    "volute:*": { "autoReply": true }
+  },
   "default": "main",
   "gateUnmatched": true
 }
 ```
 
-### Match criteria
+### Match criteria (rule fields)
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -141,13 +145,21 @@ Messages are routed to sessions based on rules in `.config/routes.json`. Rules a
 | `session` | Target session name. Supports `${sender}`, `${channel}` templates, or `$new` for a unique session per message |
 | `destination` | `"agent"` (default) or `"file"` |
 | `path` | File path when destination is `"file"` |
+
+### Session config
+
+The `sessions` section configures behavior per session. Keys are glob patterns matched against the resolved session name. First match wins.
+
+| Field | Description |
+|-------|-------------|
 | `batch` | Batch config (see below) — incompatible with `autoReply` |
 | `interrupt` | Whether to interrupt an in-progress turn (default: `true`) |
 | `autoReply` | When `true`, your text output is automatically sent back to the originating channel. No need to use `volute send` for these conversations. Not supported with batch mode. |
+| `instructions` | Instructions prepended to messages for this session (e.g. `"Brief responses only."`) |
 
 ### Batch config
 
-Batch mode buffers messages and delivers them together. Configure with an object:
+Batch mode buffers messages and delivers them together. Configure in the `sessions` section:
 
 | Field | Type | Description |
 |-------|------|-------------|

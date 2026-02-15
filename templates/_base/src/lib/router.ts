@@ -1,6 +1,11 @@
 import { formatPrefix, formatTypingSuffix } from "./format-prefix.js";
 import { log, logMessage } from "./logger.js";
-import { type BatchConfig, loadRoutingConfig, resolveRoute } from "./routing.js";
+import {
+  type BatchConfig,
+  loadRoutingConfig,
+  resolveRoute,
+  resolveSessionConfig,
+} from "./routing.js";
 import type { ChannelMeta, HandlerResolver, Listener, VoluteContentPart } from "./types.js";
 
 export type Router = {
@@ -72,6 +77,24 @@ function appendTypingSuffix(
   });
 }
 
+function prependInstructions(
+  content: VoluteContentPart[],
+  instructions: string | undefined,
+): VoluteContentPart[] {
+  if (!instructions) return content;
+  const prefix = `[Session instructions: ${instructions}]\n\n`;
+  const firstTextIdx = content.findIndex((p) => p.type === "text");
+  if (firstTextIdx === -1) {
+    return [{ type: "text", text: prefix.trimEnd() }, ...content];
+  }
+  return content.map((part, i) => {
+    if (i === firstTextIdx) {
+      return { type: "text" as const, text: prefix + (part as { text: string }).text };
+    }
+    return part;
+  });
+}
+
 function sanitizeChannelPath(channel: string): string {
   return channel
     .replace(/[/\\:]/g, "-")
@@ -107,18 +130,19 @@ function formatInviteNotification(
   lines.push("");
   lines.push(`Further messages will be saved to ${filePath}`);
   lines.push("");
-  lines.push("To accept, add a routing rule to .config/routes.json:");
+  lines.push("To accept, add to .config/routes.json:");
   const suggestedSession = sanitizeChannelPath(meta.channel ?? "unknown");
   const otherCount = (meta.participantCount ?? 1) - 1;
   if (otherCount > 1) {
+    lines.push(`  Rule: { "channel": "${meta.channel}", "session": "${suggestedSession}" }`);
     lines.push(
-      `  { "channel": "${meta.channel}", "session": "${suggestedSession}", "batch": { "debounce": 20, "maxWait": 120 } }`,
+      `  Session config: "${suggestedSession}": { "batch": { "debounce": 20, "maxWait": 120 } }`,
     );
     lines.push(
       `(batch recommended — ${otherCount} other participants may generate frequent messages)`,
     );
   } else {
-    lines.push(`  { "channel": "${meta.channel}", "session": "${suggestedSession}" }`);
+    lines.push(`  Rule: { "channel": "${meta.channel}", "session": "${suggestedSession}" }`);
   }
   lines.push(`To respond, use: volute send ${meta.channel ?? "unknown"} "your message"`);
   lines.push(`To reject, delete ${filePath}`);
@@ -175,9 +199,15 @@ export function createRouter(options: {
 
     const lastTyping = messages[messages.length - 1]?.typing;
     const typingSuffix = formatTypingSuffix(lastTyping);
-    const content: VoluteContentPart[] = [
+    let content: VoluteContentPart[] = [
       { type: "text", text: `${header}\n\n${body}${typingSuffix}` },
     ];
+
+    // Resolve session config for instructions
+    const config = options.configPath ? loadRoutingConfig(options.configPath) : {};
+    const sessionConfig = resolveSessionConfig(config, buffer.sessionName);
+    content = prependInstructions(content, sessionConfig.instructions);
+
     const messageId = generateMessageId();
     const handler = options.agentHandler(buffer.sessionName);
 
@@ -303,10 +333,12 @@ export function createRouter(options: {
       sessionName = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     }
 
+    const sessionConfig = resolveSessionConfig(config, sessionName);
+
     // Batch mode: buffer the message and return immediate done
-    if (resolved.batch != null) {
+    if (sessionConfig.batch != null) {
       const batchKey = `batch:${sessionName}`;
-      const batchConfig = resolved.batch;
+      const batchConfig = sessionConfig.batch;
 
       if (!batchBuffers.has(batchKey)) {
         batchBuffers.set(batchKey, {
@@ -345,15 +377,16 @@ export function createRouter(options: {
     // Direct dispatch to agent
     const formatted = applyPrefix(content, { ...meta, sessionName });
     const withTyping = appendTypingSuffix(formatted, meta.typing);
+    const withInstructions = prependInstructions(withTyping, sessionConfig.instructions);
     const handler = options.agentHandler(sessionName);
     const unsubscribe = handler.handle(
-      withTyping,
+      withInstructions,
       {
         ...meta,
         sessionName,
         messageId,
-        interrupt: resolved.interrupt,
-        autoReply: resolved.autoReply,
+        interrupt: sessionConfig.interrupt,
+        autoReply: sessionConfig.autoReply,
       },
       safeListener,
     );

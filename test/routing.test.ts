@@ -8,6 +8,7 @@ import {
   type ResolvedRoute,
   type RoutingConfig,
   resolveRoute,
+  resolveSessionConfig,
 } from "../templates/_base/src/lib/routing.js";
 
 /** Asserts route is agent-destined and returns the narrowed type. */
@@ -44,8 +45,6 @@ describe("resolveRoute", () => {
   it("returns agent destination with default session when no config", () => {
     const r = expectAgent(resolveRoute({}, { channel: "web" }));
     assert.equal(r.session, "main");
-    assert.equal(r.interrupt, true);
-    assert.equal(r.batch, undefined);
   });
 
   it("returns 'main' when config has no rules or default", () => {
@@ -60,7 +59,6 @@ describe("resolveRoute", () => {
     };
     const r = expectAgent(resolveRoute(config, { channel: "discord:123" }));
     assert.equal(r.session, "discord");
-    assert.equal(r.interrupt, true);
   });
 
   it("returns file destination when rule specifies it", () => {
@@ -80,7 +78,6 @@ describe("resolveRoute", () => {
     };
     const r = expectAgent(resolveRoute(config, { channel: "web" }));
     assert.equal(r.session, "fallback");
-    assert.equal(r.interrupt, true);
   });
 
   // --- Match criteria ---
@@ -257,118 +254,6 @@ describe("resolveRoute", () => {
     );
   });
 
-  // --- Interrupt ---
-
-  it("respects explicit interrupt setting", () => {
-    const config: RoutingConfig = {
-      rules: [{ channel: "system:*", session: "main", interrupt: false }],
-      default: "main",
-    };
-    const r = expectAgent(resolveRoute(config, { channel: "system:scheduler" }));
-    assert.equal(r.interrupt, false);
-  });
-
-  // --- Batch ---
-
-  it("normalizes batch number (minutes) to BatchConfig", () => {
-    const config: RoutingConfig = {
-      rules: [{ channel: "discord:*", session: "discord-feed", batch: 15 }],
-      default: "main",
-    };
-    const r = expectAgent(resolveRoute(config, { channel: "discord:123" }));
-    assert.deepEqual(r.batch, { maxWait: 900 }); // 15 * 60
-    assert.equal(r.session, "discord-feed");
-  });
-
-  it("passes through BatchConfig object", () => {
-    const config: RoutingConfig = {
-      rules: [
-        {
-          channel: "discord:*",
-          session: "discord-feed",
-          batch: { debounce: 20, maxWait: 120, triggers: ["@bot"] },
-        },
-      ],
-      default: "main",
-    };
-    const r = expectAgent(resolveRoute(config, { channel: "discord:123" }));
-    assert.deepEqual(r.batch, { debounce: 20, maxWait: 120, triggers: ["@bot"] });
-  });
-
-  it("returns undefined batch for matching rule without batch", () => {
-    const config: RoutingConfig = {
-      rules: [{ channel: "discord:*", session: "discord" }],
-      default: "main",
-    };
-    const r = expectAgent(resolveRoute(config, { channel: "discord:123" }));
-    assert.equal(r.batch, undefined);
-  });
-
-  it("returns no batch when no rules match", () => {
-    const config: RoutingConfig = {
-      rules: [{ channel: "discord:*", session: "discord-feed", batch: 15 }],
-      default: "main",
-    };
-    const r = expectAgent(resolveRoute(config, { channel: "web" }));
-    assert.equal(r.batch, undefined);
-  });
-
-  it("first matching rule wins for batch", () => {
-    const config: RoutingConfig = {
-      rules: [
-        { channel: "discord:*", session: "discord-fast", batch: 5 },
-        { channel: "discord:*", session: "discord-slow", batch: 30 },
-      ],
-      default: "main",
-    };
-    const r = expectAgent(resolveRoute(config, { channel: "discord:123" }));
-    assert.deepEqual(r.batch, { maxWait: 300 }); // 5 * 60
-  });
-
-  // --- autoReply ---
-
-  it("returns autoReply: false when no rules exist", () => {
-    const r = expectAgent(resolveRoute({}, { channel: "web" }));
-    assert.equal(r.autoReply, false);
-  });
-
-  it("returns autoReply: false when no rules match", () => {
-    const config: RoutingConfig = {
-      rules: [{ channel: "discord:*", session: "discord", autoReply: true }],
-      default: "main",
-    };
-    const r = expectAgent(resolveRoute(config, { channel: "web" }));
-    assert.equal(r.autoReply, false);
-  });
-
-  it("returns autoReply: true when rule specifies it", () => {
-    const config: RoutingConfig = {
-      rules: [{ channel: "discord:*", session: "discord", autoReply: true }],
-      default: "main",
-    };
-    const r = expectAgent(resolveRoute(config, { channel: "discord:123" }));
-    assert.equal(r.autoReply, true);
-  });
-
-  it("defaults autoReply to false when rule omits it", () => {
-    const config: RoutingConfig = {
-      rules: [{ channel: "discord:*", session: "discord" }],
-      default: "main",
-    };
-    const r = expectAgent(resolveRoute(config, { channel: "discord:123" }));
-    assert.equal(r.autoReply, false);
-  });
-
-  it("autoReply is forced to false when batch is also configured", () => {
-    const config: RoutingConfig = {
-      rules: [{ channel: "discord:*", session: "discord", autoReply: true, batch: 5 }],
-      default: "main",
-    };
-    const r = expectAgent(resolveRoute(config, { channel: "discord:123" }));
-    assert.equal(r.autoReply, false);
-    assert.ok(r.batch != null, "batch should still be set");
-  });
-
   // --- Mixed destinations ---
 
   it("file destination rules work with match keys", () => {
@@ -534,5 +419,89 @@ describe("resolveRoute", () => {
     const r = resolveRoute(config, { channel: "discord:logs" });
     assert.equal(r.matched, true);
     assert.equal(r.destination, "file");
+  });
+});
+
+describe("resolveSessionConfig", () => {
+  it("returns defaults when no sessions configured", () => {
+    const r = resolveSessionConfig({}, "main");
+    assert.equal(r.autoReply, false);
+    assert.equal(r.interrupt, true);
+    assert.equal(r.batch, undefined);
+    assert.equal(r.instructions, undefined);
+  });
+
+  it("matches exact session name", () => {
+    const config: RoutingConfig = {
+      sessions: { discord: { interrupt: false, autoReply: true } },
+    };
+    const r = resolveSessionConfig(config, "discord");
+    assert.equal(r.interrupt, false);
+    assert.equal(r.autoReply, true);
+  });
+
+  it("matches glob pattern", () => {
+    const config: RoutingConfig = {
+      sessions: { "volute:*": { autoReply: true } },
+    };
+    const r = resolveSessionConfig(config, "volute:conv-abc");
+    assert.equal(r.autoReply, true);
+  });
+
+  it("first match wins", () => {
+    const config: RoutingConfig = {
+      sessions: {
+        "discord:*": { interrupt: false },
+        "*": { interrupt: true, autoReply: true },
+      },
+    };
+    const r = resolveSessionConfig(config, "discord:general");
+    assert.equal(r.interrupt, false);
+    assert.equal(r.autoReply, false); // default, not from second pattern
+  });
+
+  it("normalizes batch number (minutes) to BatchConfig", () => {
+    const config: RoutingConfig = {
+      sessions: { discord: { batch: 15 } },
+    };
+    const r = resolveSessionConfig(config, "discord");
+    assert.deepEqual(r.batch, { maxWait: 900 }); // 15 * 60
+  });
+
+  it("passes through BatchConfig object", () => {
+    const config: RoutingConfig = {
+      sessions: {
+        discord: { batch: { debounce: 20, maxWait: 120, triggers: ["@bot"] } },
+      },
+    };
+    const r = resolveSessionConfig(config, "discord");
+    assert.deepEqual(r.batch, { debounce: 20, maxWait: 120, triggers: ["@bot"] });
+  });
+
+  it("autoReply is forced to false when batch is also configured", () => {
+    const config: RoutingConfig = {
+      sessions: { discord: { autoReply: true, batch: 5 } },
+    };
+    const r = resolveSessionConfig(config, "discord");
+    assert.equal(r.autoReply, false);
+    assert.ok(r.batch != null, "batch should still be set");
+  });
+
+  it("returns instructions when configured", () => {
+    const config: RoutingConfig = {
+      sessions: { discord: { instructions: "Brief responses only." } },
+    };
+    const r = resolveSessionConfig(config, "discord");
+    assert.equal(r.instructions, "Brief responses only.");
+  });
+
+  it("returns defaults for unmatched session", () => {
+    const config: RoutingConfig = {
+      sessions: { discord: { autoReply: true } },
+    };
+    const r = resolveSessionConfig(config, "slack");
+    assert.equal(r.autoReply, false);
+    assert.equal(r.interrupt, true);
+    assert.equal(r.batch, undefined);
   });
 });

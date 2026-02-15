@@ -152,7 +152,8 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "discord:*", session: "batch-test", batch: 0.001 }], // ~60ms maxWait
+        rules: [{ channel: "discord:*", session: "batch-test" }],
+        sessions: { "batch-test": { batch: 0.001 } }, // ~60ms maxWait
       }),
     );
 
@@ -185,7 +186,8 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "discord:*", session: "close-test", batch: 60 }], // long timer
+        rules: [{ channel: "discord:*", session: "close-test" }],
+        sessions: { "close-test": { batch: 60 } }, // long timer
       }),
     );
 
@@ -210,9 +212,8 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [
-          { channel: "discord:*", session: "debounce-test", batch: { debounce: 0.08 } }, // 80ms
-        ],
+        rules: [{ channel: "discord:*", session: "debounce-test" }],
+        sessions: { "debounce-test": { batch: { debounce: 0.08 } } }, // 80ms
       }),
     );
 
@@ -244,13 +245,10 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [
-          {
-            channel: "discord:*",
-            session: "maxwait-test",
-            batch: { debounce: 5, maxWait: 0.1 }, // 5s debounce, 100ms maxWait
-          },
-        ],
+        rules: [{ channel: "discord:*", session: "maxwait-test" }],
+        sessions: {
+          "maxwait-test": { batch: { debounce: 5, maxWait: 0.1 } }, // 5s debounce, 100ms maxWait
+        },
       }),
     );
 
@@ -282,13 +280,12 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [
-          {
-            channel: "discord:*",
-            session: "trigger-test",
+        rules: [{ channel: "discord:*", session: "trigger-test" }],
+        sessions: {
+          "trigger-test": {
             batch: { debounce: 60, maxWait: 300, triggers: ["@agent"] },
           },
-        ],
+        },
       }),
     );
 
@@ -322,13 +319,10 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [
-          {
-            channel: "discord:*",
-            session: "trigger-ci",
-            batch: { debounce: 60, triggers: ["@Agent"] },
-          },
-        ],
+        rules: [{ channel: "discord:*", session: "trigger-ci" }],
+        sessions: {
+          "trigger-ci": { batch: { debounce: 60, triggers: ["@Agent"] } },
+        },
       }),
     );
 
@@ -350,13 +344,10 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [
-          {
-            channel: "discord:*",
-            session: "trigger-only",
-            batch: { triggers: ["urgent"] },
-          },
-        ],
+        rules: [{ channel: "discord:*", session: "trigger-only" }],
+        sessions: {
+          "trigger-only": { batch: { triggers: ["urgent"] } },
+        },
       }),
     );
 
@@ -387,13 +378,10 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [
-          {
-            channel: "discord:*",
-            session: "uri-test",
-            batch: { debounce: 60, triggers: ["flush"] },
-          },
-        ],
+        rules: [{ channel: "discord:*", session: "uri-test" }],
+        sessions: {
+          "uri-test": { batch: { debounce: 60, triggers: ["flush"] } },
+        },
       }),
     );
 
@@ -486,13 +474,14 @@ describe("router", () => {
     assert.ok(!text.includes("typing"), "should not include typing indicator");
   });
 
-  it("passes autoReply to handler meta when route has autoReply: true", async () => {
+  it("passes autoReply to handler meta when session config has autoReply: true", async () => {
     const dir = mkdtempSync(join(tmpdir(), "router-test-"));
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "discord:*", session: "discord", autoReply: true }],
+        rules: [{ channel: "discord:*", session: "discord" }],
+        sessions: { discord: { autoReply: true } },
       }),
     );
 
@@ -506,7 +495,7 @@ describe("router", () => {
     assert.equal(agent.calls[0].sessionName, "discord");
   });
 
-  it("defaults autoReply to false when not specified in route", async () => {
+  it("defaults autoReply to false when no session config", async () => {
     const dir = mkdtempSync(join(tmpdir(), "router-test-"));
     const configPath = join(dir, "routes.json");
     writeFileSync(
@@ -525,16 +514,17 @@ describe("router", () => {
     assert.equal(agent.calls[0].meta.autoReply, false);
   });
 
-  it("autoReply does not affect routing match behavior", async () => {
+  it("autoReply from session config does not affect routing match behavior", async () => {
     const dir = mkdtempSync(join(tmpdir(), "router-test-"));
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
       JSON.stringify({
         rules: [
-          { channel: "discord:*", session: "discord", autoReply: true },
+          { channel: "discord:*", session: "discord" },
           { channel: "slack:*", session: "slack" },
         ],
+        sessions: { discord: { autoReply: true } },
       }),
     );
 
@@ -555,13 +545,10 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [
-          {
-            channel: "discord:*",
-            session: "typing-batch",
-            batch: { debounce: 60, triggers: ["flush"] },
-          },
-        ],
+        rules: [{ channel: "discord:*", session: "typing-batch" }],
+        sessions: {
+          "typing-batch": { batch: { debounce: 60, triggers: ["flush"] } },
+        },
       }),
     );
 
@@ -588,5 +575,30 @@ describe("router", () => {
     );
 
     router.close();
+  });
+
+  it("prepends session instructions to direct dispatch content", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const configPath = join(dir, "routes.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        rules: [{ channel: "discord:*", session: "discord" }],
+        sessions: { discord: { instructions: "Brief responses only." } },
+      }),
+    );
+
+    const agent = mockAgentHandler();
+    const router = createRouter({ configPath, agentHandler: agent.resolver });
+
+    await waitForDone(router, [{ type: "text", text: "hello" }], { channel: "discord:general" });
+
+    assert.equal(agent.calls.length, 1);
+    const text = batchText(agent.calls);
+    assert.ok(
+      text.includes("[Session instructions: Brief responses only.]"),
+      "should prepend session instructions",
+    );
+    assert.ok(text.includes("hello"), "should still include original message");
   });
 });
