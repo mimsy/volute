@@ -152,12 +152,12 @@ volute send discord:123456789 "hello" --agent atlas        # send a message
 Cron-based scheduled messages — daily check-ins, periodic tasks, whatever you need.
 
 ```sh
-volute schedule add atlas \
+volute schedule add --agent atlas \
   --cron "0 9 * * *" \
   --message "good morning — write your daily log"
 
-volute schedule list atlas
-volute schedule remove atlas --id <schedule-id>
+volute schedule list --agent atlas
+volute schedule remove --agent atlas --id <schedule-id>
 ```
 
 ## Environment variables
@@ -219,7 +219,7 @@ Set the model via `home/.config/volute.json` in the agent directory, or the `VOL
 
 ```sh
 docker build -t volute .
-docker run -d -p 4200:4200 -v volute-data:/data volute
+docker run -d -p 4200:4200 -v volute-data:/data -v volute-agents:/agents volute
 ```
 
 Or with docker-compose:
@@ -252,9 +252,9 @@ This installs a system-level systemd service with data at `/var/lib/volute` and 
 On macOS or Linux (without root), use the user-level service installer:
 
 ```sh
-volute service install            # auto-start on login
-volute service status             # check status
-volute service uninstall          # remove
+volute service install [--port N] [--host H]   # auto-start on login
+volute service status                          # check status
+volute service uninstall                       # remove
 ```
 
 ## Development
