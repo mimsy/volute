@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname } from "node:path";
 import { resolveVoluteBin } from "../lib/exec.js";
 import { ensureVoluteGroup } from "../lib/isolation.js";
 import { parseArgs } from "../lib/parse-args.js";
@@ -119,8 +119,7 @@ function install(port?: number, host?: string): void {
   // so `sudo volute` works (sudo resets PATH and won't find nvm binaries)
   const binDir = dirname(voluteBin);
   if (voluteBin !== WRAPPER_PATH && !voluteBin.startsWith("/usr/bin")) {
-    const nodeBin = resolve(binDir, "node");
-    const wrapper = `#!/bin/sh\nexec "${nodeBin}" "${voluteBin}" "$@"\n`;
+    const wrapper = `#!/bin/sh\nexport PATH="${binDir}:$PATH"\nexec "${voluteBin}" "$@"\n`;
     writeFileSync(WRAPPER_PATH, wrapper, { mode: 0o755 });
     console.log(`Wrote ${WRAPPER_PATH} (wrapper for ${voluteBin})`);
   }
