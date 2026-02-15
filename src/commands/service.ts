@@ -88,6 +88,13 @@ async function install(port?: number, host?: string): Promise<void> {
     await execFileAsync("launchctl", ["load", path]);
     console.log("Service installed and loaded. Volute daemon will start on login.");
   } else if (platform === "linux") {
+    if (process.getuid?.() === 0) {
+      console.error(
+        "Error: `volute service install` uses systemd user services, which don't work as root.",
+      );
+      console.error("Use `volute setup` instead to install a system-level service.");
+      process.exit(1);
+    }
     const path = unitPath();
     mkdirSync(resolve(homedir(), ".config", "systemd", "user"), { recursive: true });
     writeFileSync(path, generateUnit(voluteBin, port, host));
