@@ -143,7 +143,9 @@ app.message(async ({ message }) => {
           channel: message.channel,
           text: result.error ?? "Failed to process message",
         })
-        .catch(() => {});
+        .catch((err) => {
+          console.warn(`[slack] failed to send error reply: ${err}`);
+        });
     return;
   }
 
@@ -151,7 +153,9 @@ app.message(async ({ message }) => {
   if (!result.ok)
     app.client.chat
       .postMessage({ channel: message.channel, text: result.error ?? "Failed to process message" })
-      .catch(() => {});
+      .catch((err) => {
+        console.warn(`[slack] failed to send error reply: ${err}`);
+      });
 });
 
 async function start() {
