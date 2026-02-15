@@ -4,17 +4,22 @@ import { execFile as execFileCb, execFileSync, spawn } from "node:child_process"
 export function exec(
   cmd: string,
   args: string[],
-  options?: { cwd?: string; stdio?: "pipe" },
+  options?: { cwd?: string; uid?: number; gid?: number; env?: NodeJS.ProcessEnv },
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFileCb(cmd, args, { cwd: options?.cwd }, (err, stdout, stderr) => {
-      if (err) {
-        (err as Error & { stderr?: string }).stderr = stderr;
-        reject(err);
-      } else {
-        resolve(stdout);
-      }
-    });
+    execFileCb(
+      cmd,
+      args,
+      { cwd: options?.cwd, uid: options?.uid, gid: options?.gid, env: options?.env },
+      (err, stdout, stderr) => {
+        if (err) {
+          (err as Error & { stderr?: string }).stderr = stderr;
+          reject(err);
+        } else {
+          resolve(stdout);
+        }
+      },
+    );
   });
 }
 
@@ -31,11 +36,14 @@ export function resolveVoluteBin(): string {
 export function execInherit(
   cmd: string,
   args: string[],
-  options?: { cwd?: string },
+  options?: { cwd?: string; uid?: number; gid?: number; env?: NodeJS.ProcessEnv },
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
       cwd: options?.cwd,
+      uid: options?.uid,
+      gid: options?.gid,
+      env: options?.env,
       stdio: "inherit",
     });
     child.on("error", reject);

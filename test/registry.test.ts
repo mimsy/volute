@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import {
   addAgent,
+  agentDir,
   daemonLoopback,
   nextPort,
   readRegistry,
@@ -74,6 +75,26 @@ describe("registry", () => {
   it("stateDir handles name@variant format", () => {
     const dir = stateDir("my-agent@v1");
     assert.ok(dir.endsWith("/state/my-agent@v1"));
+  });
+});
+
+describe("agentDir", () => {
+  const originalAgentsDir = process.env.VOLUTE_AGENTS_DIR;
+  afterEach(() => {
+    if (originalAgentsDir === undefined) delete process.env.VOLUTE_AGENTS_DIR;
+    else process.env.VOLUTE_AGENTS_DIR = originalAgentsDir;
+  });
+
+  it("returns VOLUTE_AGENTS_DIR/<name> when env var is set", () => {
+    process.env.VOLUTE_AGENTS_DIR = "/agents";
+    assert.equal(agentDir("foo"), "/agents/foo");
+  });
+
+  it("falls back to VOLUTE_HOME/agents/<name> when env var is unset", () => {
+    delete process.env.VOLUTE_AGENTS_DIR;
+    const dir = agentDir("foo");
+    assert.ok(dir.startsWith(voluteHome()));
+    assert.ok(dir.endsWith("/agents/foo"));
   });
 });
 

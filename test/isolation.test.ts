@@ -28,8 +28,8 @@ describe("isolation", () => {
     assert.equal(isIsolationEnabled(), true);
   });
 
-  it("agentUserName prefixes with volute-", () => {
-    assert.equal(agentUserName("alice"), "volute-alice");
-    assert.equal(agentUserName("my-agent_1"), "volute-my-agent_1");
+  it("agentUserName prefixes with agent-", () => {
+    assert.equal(agentUserName("alice"), "agent-alice");
+    assert.equal(agentUserName("my-agent_1"), "agent-my-agent_1");
   });
 });

@@ -16,7 +16,7 @@ Volute is a home for independent, self-motivated agents. The architecture is des
 - `src/connectors/` — Built-in connector implementations (Discord, Slack, Telegram) + shared SDK
 - `templates/agent-sdk/` — Default template (Claude Agent SDK) copied by `volute agent create`
 - `templates/pi/` — Alternative template using pi-coding-agent for multi-provider LLM support
-- All agents live in `~/.volute/agents/<name>/` with a centralized registry at `~/.volute/agents.json`
+- All agents live in `~/.volute/agents/<name>/` by default (overridable via `VOLUTE_AGENTS_DIR`) with a centralized registry at `~/.volute/agents.json`
 
 ### Daemon model
 
@@ -221,7 +221,7 @@ Agent-scoped commands (`variant`, `connector`, `schedule`, `channel`, `conversat
 
 ```sh
 docker build -t volute .
-docker run -d -p 4200:4200 -v volute-data:/data volute
+docker run -d -p 4200:4200 -v volute-data:/data -v volute-agents:/agents volute
 ```
 
 Or with docker-compose: `docker compose up -d`. The container runs with `VOLUTE_ISOLATION=user` enabled, so each agent gets its own Linux user inside the container.
@@ -234,11 +234,13 @@ sudo bash install.sh
 sudo volute setup --host 0.0.0.0
 ```
 
-`volute setup` installs a system-level systemd service at `/etc/systemd/system/volute.service` with data at `/var/lib/volute` and user isolation enabled. Requires root. Uninstall with `volute setup uninstall [--force]`.
+`volute setup` installs a system-level systemd service at `/etc/systemd/system/volute.service` with data at `/var/lib/volute`, agents at `/agents`, and user isolation enabled. Requires root. Uninstall with `volute setup uninstall [--force]`.
 
 ### User isolation
 
-When `VOLUTE_ISOLATION=user` is set, `volute agent create` creates a Linux system user (`volute-<name>`) and `chown`s the agent directory. Agent and connector processes are spawned with the agent's uid/gid, so agents can't access each other's files. This is a no-op when the env var is unset (default for local development).
+When `VOLUTE_ISOLATION=user` is set, `volute agent create` creates a Linux system user (`agent-<name>`, prefix configurable via `VOLUTE_USER_PREFIX`) and `chown`s the agent directory. Agent and connector processes are spawned with the agent's uid/gid, so agents can't access each other's files. This is a no-op when the env var is unset (default for local development).
+
+On production deployments, `VOLUTE_AGENTS_DIR` separates agent directories from the Volute system directory. When set (e.g. `/agents`), `agentDir(name)` returns `$VOLUTE_AGENTS_DIR/<name>` instead of `$VOLUTE_HOME/agents/<name>`. This gives agents simpler, top-level home directories. Both `volute setup` (Linux) and Docker set this automatically.
 
 ## Development
 

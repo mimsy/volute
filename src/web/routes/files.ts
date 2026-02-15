@@ -1,14 +1,10 @@
 import { existsSync } from "node:fs";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
-import { z } from "zod";
 import { agentDir, findAgent } from "../../lib/registry.js";
 
 const ALLOWED_FILES = new Set(["SOUL.md", "MEMORY.md", "CLAUDE.md", "VOLUTE.md"]);
-
-const saveFileSchema = z.object({ content: z.string() });
 
 const app = new Hono()
   // List markdown files in home/
@@ -47,26 +43,6 @@ const app = new Hono()
 
     const content = await readFile(filePath, "utf-8");
     return c.json({ filename, content });
-  })
-  // Write a file
-  .put("/:name/files/:filename", zValidator("json", saveFileSchema), async (c) => {
-    const name = c.req.param("name");
-    const filename = c.req.param("filename");
-
-    if (!ALLOWED_FILES.has(filename)) {
-      return c.json({ error: "File not allowed" }, 403);
-    }
-
-    const entry = findAgent(name);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
-
-    const dir = agentDir(name);
-    const filePath = resolve(dir, "home", filename);
-
-    const { content } = c.req.valid("json");
-    await writeFile(filePath, content);
-
-    return c.json({ ok: true });
   });
 
 export default app;

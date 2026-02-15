@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
-import { z } from "zod";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
 import { conversations, messages, sessions, users } from "../src/lib/schema.js";
@@ -16,7 +14,6 @@ let sessionId: string;
 let testDir: string;
 
 const ALLOWED_FILES = new Set(["SOUL.md", "MEMORY.md", "CLAUDE.md", "VOLUTE.md"]);
-const saveFileSchema = z.object({ content: z.string() });
 
 async function cleanup() {
   const db = await getDb();
@@ -63,15 +60,6 @@ function createApp(agentDir: string) {
     if (!existsSync(filePath)) return c.json({ error: "File not found" }, 404);
     const content = await readFile(filePath, "utf-8");
     return c.json({ filename, content });
-  });
-
-  app.put("/api/agents/:name/files/:filename", zValidator("json", saveFileSchema), async (c) => {
-    const filename = c.req.param("filename");
-    if (!ALLOWED_FILES.has(filename)) return c.json({ error: "File not allowed" }, 403);
-    const filePath = resolve(agentDir, "home", filename);
-    const { content } = c.req.valid("json");
-    await writeFile(filePath, content);
-    return c.json({ ok: true });
   });
 
   return app;
@@ -122,42 +110,5 @@ describe("web files routes", () => {
     assert.equal(res.status, 403);
     const body = await res.json();
     assert.ok(body.error.includes("not allowed"));
-  });
-
-  it("PUT /:name/files/:filename — writes file", async () => {
-    const cookie = await setupAuth();
-    const dir = setupTestDir();
-    const app = createApp(dir);
-
-    const res = await app.request("/api/agents/test-agent/files/SOUL.md", {
-      method: "PUT",
-      headers: {
-        Cookie: `volute_session=${cookie}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ content: "# Updated Soul\nNew content" }),
-    });
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.ok(body.ok);
-
-    const content = readFileSync(resolve(dir, "home", "SOUL.md"), "utf-8");
-    assert.ok(content.includes("New content"));
-  });
-
-  it("PUT /:name/files/:filename — 403 for disallowed file", async () => {
-    const cookie = await setupAuth();
-    const dir = setupTestDir();
-    const app = createApp(dir);
-
-    const res = await app.request("/api/agents/test-agent/files/secret.txt", {
-      method: "PUT",
-      headers: {
-        Cookie: `volute_session=${cookie}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ content: "hacked" }),
-    });
-    assert.equal(res.status, 403);
   });
 });
