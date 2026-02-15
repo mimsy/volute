@@ -119,7 +119,7 @@ function install(port?: number, host?: string): void {
   // so `sudo volute` works (sudo resets PATH and won't find nvm binaries)
   const binDir = dirname(voluteBin);
   if (voluteBin !== WRAPPER_PATH && !voluteBin.startsWith("/usr/bin")) {
-    const wrapper = `#!/bin/sh\nexport PATH="${binDir}:$PATH"\nexec "${voluteBin}" "$@"\n`;
+    const wrapper = `#!/bin/sh\nexport PATH="${binDir}:$PATH"\nexport VOLUTE_HOME="${DATA_DIR}"\nexport VOLUTE_AGENTS_DIR="${AGENTS_DIR}"\nexec "${voluteBin}" "$@"\n`;
     writeFileSync(WRAPPER_PATH, wrapper, { mode: 0o755 });
     console.log(`Wrote ${WRAPPER_PATH} (wrapper for ${voluteBin})`);
   }

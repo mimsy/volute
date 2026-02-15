@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { parseArgs } from "../lib/parse-args.js";
@@ -17,12 +17,30 @@ export function readGlobalConfig(): GlobalConfig {
   }
 }
 
+function isSystemdServiceEnabled(): boolean {
+  try {
+    execFileSync("systemctl", ["is-enabled", "--quiet", "volute"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
     port: { type: "number" },
     host: { type: "string" },
     foreground: { type: "boolean" },
   });
+
+  // If managed by a system-level systemd service, redirect to systemctl
+  if (!flags.foreground && isSystemdServiceEnabled()) {
+    console.error("Volute is managed by a systemd service.");
+    console.error("Use: sudo systemctl start volute");
+    console.error("     sudo systemctl restart volute");
+    console.error("     systemctl status volute");
+    process.exit(1);
+  }
 
   // Read defaults from config file, CLI flags override
   const config = readGlobalConfig();

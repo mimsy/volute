@@ -1,16 +1,30 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { voluteHome } from "../lib/registry.js";
 
+function isSystemdServiceEnabled(): boolean {
+  try {
+    execFileSync("systemctl", ["is-enabled", "--quiet", "volute"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export type StopResult =
   | { stopped: true; clean: boolean }
-  | { stopped: false; reason: "not-running" | "orphan" | "kill-failed"; port?: number };
+  | { stopped: false; reason: "not-running" | "orphan" | "systemd" | "kill-failed"; port?: number };
 
 /**
  * Attempts to stop the running daemon. Returns a result instead of calling process.exit(),
  * so callers can decide how to handle each case.
  */
 export async function stopDaemon(): Promise<StopResult> {
+  if (isSystemdServiceEnabled()) {
+    return { stopped: false, reason: "systemd" };
+  }
+
   const home = voluteHome();
   const pidPath = resolve(home, "daemon.pid");
 
@@ -120,7 +134,10 @@ export async function run(_args: string[]) {
 
   if (result.stopped) return;
 
-  if (result.reason === "orphan") {
+  if (result.reason === "systemd") {
+    console.error("Volute is managed by a systemd service.");
+    console.error("Use: sudo systemctl stop volute");
+  } else if (result.reason === "orphan") {
     console.error(`Daemon appears to be running on port ${result.port} but PID file is missing.`);
     console.error(`Kill the process manually: lsof -ti :${result.port} | xargs kill`);
   } else if (result.reason === "not-running") {

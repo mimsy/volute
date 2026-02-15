@@ -9,6 +9,7 @@ import { parseArgs } from "../lib/parse-args.js";
 const execFileAsync = promisify(execFile);
 
 const HOST_RE = /^[a-zA-Z0-9.:_-]+$/;
+const SYSTEM_SERVICE_PATH = "/etc/systemd/system/volute.service";
 
 function validateHost(host: string): void {
   if (!HOST_RE.test(host)) {
@@ -88,6 +89,12 @@ async function install(port?: number, host?: string): Promise<void> {
     await execFileAsync("launchctl", ["load", path]);
     console.log("Service installed and loaded. Volute daemon will start on login.");
   } else if (platform === "linux") {
+    if (existsSync(SYSTEM_SERVICE_PATH)) {
+      console.error("A system-level Volute service is already installed (via `volute setup`).");
+      console.error("Use `systemctl status volute` to check its status.");
+      console.error("To remove it first: sudo volute setup uninstall");
+      process.exit(1);
+    }
     if (process.getuid?.() === 0) {
       console.error(
         "Error: `volute service install` uses systemd user services, which don't work as root.",
@@ -157,6 +164,24 @@ async function status(): Promise<void> {
       console.log("Service installed but not currently loaded.");
     }
   } else if (platform === "linux") {
+    // Check for system-level service first (installed via `volute setup`)
+    if (existsSync(SYSTEM_SERVICE_PATH)) {
+      try {
+        const { stdout } = await execFileAsync("systemctl", ["status", "volute", "--no-pager"]);
+        console.log(stdout);
+      } catch (err) {
+        const e = err as { stdout?: string; stderr?: string; message?: string };
+        if (e.stdout) {
+          console.log(e.stdout);
+        } else {
+          console.error("System service installed but could not retrieve status.");
+          if (e.stderr) console.error(e.stderr);
+          else if (e.message) console.error(e.message);
+          console.error("Try running: systemctl status volute");
+        }
+      }
+      return;
+    }
     if (!existsSync(unitPath())) {
       console.log("Service not installed.");
       return;
