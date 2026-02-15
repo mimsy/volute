@@ -173,7 +173,7 @@ export async function createConversation(
     ids.push(user.id);
   }
 
-  const agentDir = env.VOLUTE_AGENT_DIR;
+  const agentName = env.VOLUTE_AGENT;
 
   if (name) {
     // Create named private channel and invite participants
@@ -195,8 +195,8 @@ export async function createConversation(
     const teamName = authData.team ?? "workspace";
     const slug = `slack:${slugify(teamName)}/${slugify(name)}`;
 
-    if (agentDir) {
-      writeChannelEntry(agentDir, slug, {
+    if (agentName) {
+      writeChannelEntry(agentName, slug, {
         platformId: channelId,
         platform: "slack",
         name,
@@ -218,8 +218,8 @@ export async function createConversation(
       ? `slack:@${slugify(participants[0])}`
       : `slack:@${participants.map(slugify).sort().join(",")}`;
 
-  if (agentDir) {
-    writeChannelEntry(agentDir, slug, {
+  if (agentName) {
+    writeChannelEntry(agentName, slug, {
       platformId,
       platform: "slack",
       name: participants.join(", "),

@@ -41,7 +41,7 @@ const app = new Hono<AuthEnv>()
 
     // Check for missing required env vars
     const manager = getConnectorManager();
-    const envCheck = manager.checkConnectorEnv(type, dir);
+    const envCheck = manager.checkConnectorEnv(type, name, dir);
     if (envCheck) {
       return c.json(
         {

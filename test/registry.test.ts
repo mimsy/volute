@@ -6,7 +6,9 @@ import {
   nextPort,
   readRegistry,
   removeAgent,
+  stateDir,
   validateAgentName,
+  voluteHome,
 } from "../src/lib/registry.js";
 import { addVariant, removeAllVariants } from "../src/lib/variants.js";
 
@@ -61,6 +63,17 @@ describe("registry", () => {
 
   it("addAgent throws on invalid name", () => {
     assert.throws(() => addAgent("../evil", 4100), /Agent name must/);
+  });
+
+  it("stateDir returns path under VOLUTE_HOME/state", () => {
+    const dir = stateDir("my-agent");
+    assert.ok(dir.startsWith(voluteHome()));
+    assert.ok(dir.endsWith("/state/my-agent"));
+  });
+
+  it("stateDir handles name@variant format", () => {
+    const dir = stateDir("my-agent@v1");
+    assert.ok(dir.endsWith("/state/my-agent@v1"));
   });
 });
 

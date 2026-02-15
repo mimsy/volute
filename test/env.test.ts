@@ -58,8 +58,11 @@ describe("env", () => {
   });
 
   it("agentEnvPath returns correct path", () => {
-    const path = agentEnvPath("/home/user/.volute/agents/test");
-    assert.equal(path, "/home/user/.volute/agents/test/.volute/env.json");
+    const path = agentEnvPath("test");
+    assert.ok(
+      path.endsWith("/state/test/env.json"),
+      `Expected path ending with /state/test/env.json, got ${path}`,
+    );
   });
 
   it("sharedEnvPath returns path under VOLUTE_HOME", () => {

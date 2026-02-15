@@ -1,13 +1,13 @@
 import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { loadMergedEnv } from "./env.js";
 import { applyIsolation } from "./isolation.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "./json-state.js";
-import { agentDir, findAgent, setAgentRunning, voluteHome } from "./registry.js";
+import { agentDir, findAgent, setAgentRunning, stateDir, voluteHome } from "./registry.js";
 import { RotatingLog } from "./rotating-log.js";
-import { findVariant, setVariantRunning, validateBranchName } from "./variants.js";
+import { findVariant, setVariantRunning } from "./variants.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -25,6 +25,7 @@ export class AgentManager {
   private stopping = new Set<string>();
   private shuttingDown = false;
   private restartAttempts = new Map<string, number>();
+  private pendingContext = new Map<string, Record<string, unknown>>();
 
   private resolveTarget(name: string): {
     dir: string;
@@ -70,14 +71,17 @@ export class AgentManager {
       // Port not in use — good
     }
 
-    const voluteDir = resolve(dir, ".volute");
-    const logsDir = resolve(voluteDir, "logs");
+    const logsDir = resolve(stateDir(name), "logs");
     mkdirSync(logsDir, { recursive: true });
 
     const logStream = new RotatingLog(resolve(logsDir, "agent.log"));
-    const agentEnv = loadMergedEnv(dir);
-    const { VOLUTE_DAEMON_TOKEN: _, ...parentEnv } = process.env;
-    const env = { ...parentEnv, ...agentEnv, VOLUTE_AGENT: name };
+    const agentEnv = loadMergedEnv(name);
+    const env = {
+      ...process.env,
+      ...agentEnv,
+      VOLUTE_AGENT: name,
+      VOLUTE_STATE_DIR: stateDir(name),
+    };
     const tsxBin = resolve(dir, "node_modules", ".bin", "tsx");
 
     const spawnOpts: SpawnOptions = {
@@ -134,7 +138,7 @@ export class AgentManager {
 
     // Set up crash recovery after successful start
     if (this.restartAttempts.delete(name)) this.saveCrashAttempts();
-    this.setupCrashRecovery(name, child, dir, isVariant);
+    this.setupCrashRecovery(name, child);
     if (isVariant) {
       setVariantRunning(baseName, variantName!, true);
     } else {
@@ -142,87 +146,78 @@ export class AgentManager {
     }
 
     console.error(`[daemon] started agent ${name} on port ${port}`);
+
+    // Deliver any pending context (e.g. merge info) to the agent via HTTP
+    await this.deliverPendingContext(name);
   }
 
-  private setupCrashRecovery(
-    name: string,
-    child: ChildProcess,
-    dir: string,
-    isVariant: boolean,
-  ): void {
+  setPendingContext(name: string, context: Record<string, unknown>): void {
+    this.pendingContext.set(name, context);
+  }
+
+  private async deliverPendingContext(name: string): Promise<void> {
+    const context = this.pendingContext.get(name);
+    if (!context) return;
+    this.pendingContext.delete(name);
+
+    const tracked = this.agents.get(name);
+    if (!tracked) return;
+
+    const parts: string[] = [];
+    if (context.type === "merge" || context.type === "merged") {
+      parts.push(`[system] Variant "${context.name}" has been merged and you have been restarted.`);
+    } else {
+      parts.push("[system] You have been restarted.");
+    }
+    if (context.summary) parts.push(`Changes: ${context.summary}`);
+    if (context.justification) parts.push(`Why: ${context.justification}`);
+    if (context.memory) parts.push(`Context: ${context.memory}`);
+
+    try {
+      await fetch(`http://127.0.0.1:${tracked.port}/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: [{ type: "text", text: parts.join("\n") }],
+          channel: "system",
+        }),
+      });
+    } catch (err) {
+      console.error(`[daemon] failed to deliver pending context to ${name}:`, err);
+    }
+  }
+
+  private setupCrashRecovery(name: string, child: ChildProcess): void {
     child.on("exit", async (code) => {
       this.agents.delete(name);
       if (this.shuttingDown || this.stopping.has(name)) return;
 
       console.error(`[daemon] agent ${name} exited with code ${code}`);
 
-      // Variants don't support merge-restart
-      const wasRestart = isVariant ? false : await this.handleRestart(name, dir);
-      if (wasRestart) {
-        console.error(`[daemon] restarting ${name} immediately after merge`);
-        if (this.restartAttempts.delete(name)) this.saveCrashAttempts();
+      const attempts = this.restartAttempts.get(name) ?? 0;
+      if (attempts >= MAX_RESTART_ATTEMPTS) {
+        console.error(`[daemon] ${name} crashed ${attempts} times — giving up on restart`);
+        const [base, variant] = name.split("@", 2);
+        if (variant) {
+          setVariantRunning(base, variant, false);
+        } else {
+          setAgentRunning(name, false);
+        }
+        return;
+      }
+      const delay = Math.min(BASE_RESTART_DELAY * 2 ** attempts, MAX_RESTART_DELAY);
+      this.restartAttempts.set(name, attempts + 1);
+      this.saveCrashAttempts();
+      console.error(
+        `[daemon] crash recovery for ${name} — attempt ${attempts + 1}/${MAX_RESTART_ATTEMPTS}, restarting in ${delay}ms`,
+      );
+      setTimeout(() => {
+        if (this.shuttingDown) return;
         this.startAgent(name).catch((err) => {
-          console.error(`[daemon] failed to restart ${name} after merge:`, err);
+          console.error(`[daemon] failed to restart ${name}:`, err);
         });
-      } else {
-        const attempts = this.restartAttempts.get(name) ?? 0;
-        if (attempts >= MAX_RESTART_ATTEMPTS) {
-          console.error(`[daemon] ${name} crashed ${attempts} times — giving up on restart`);
-          const [base, variant] = name.split("@", 2);
-          if (variant) {
-            setVariantRunning(base, variant, false);
-          } else {
-            setAgentRunning(name, false);
-          }
-          return;
-        }
-        const delay = Math.min(BASE_RESTART_DELAY * 2 ** attempts, MAX_RESTART_DELAY);
-        this.restartAttempts.set(name, attempts + 1);
-        this.saveCrashAttempts();
-        console.error(
-          `[daemon] crash recovery for ${name} — attempt ${attempts + 1}/${MAX_RESTART_ATTEMPTS}, restarting in ${delay}ms`,
-        );
-        setTimeout(() => {
-          if (this.shuttingDown) return;
-          this.startAgent(name).catch((err) => {
-            console.error(`[daemon] failed to restart ${name}:`, err);
-          });
-        }, delay);
-      }
+      }, delay);
     });
-  }
-
-  private async handleRestart(name: string, dir: string): Promise<boolean> {
-    const restartPath = resolve(dir, ".volute", "restart.json");
-    if (!existsSync(restartPath)) return false;
-
-    try {
-      const signal = JSON.parse(readFileSync(restartPath, "utf-8"));
-      unlinkSync(restartPath);
-
-      if (signal.action === "merge" && signal.name) {
-        const err = validateBranchName(signal.name);
-        if (err) {
-          console.error(`[daemon] invalid variant name in restart.json for ${name}: ${err}`);
-          return false;
-        }
-        console.error(`[daemon] merging variant for ${name}: ${signal.name}`);
-        const mergeArgs = ["merge", name, signal.name];
-        if (signal.summary) mergeArgs.push("--summary", signal.summary);
-        if (signal.justification) mergeArgs.push("--justification", signal.justification);
-        if (signal.memory) mergeArgs.push("--memory", signal.memory);
-        const { VOLUTE_DAEMON_TOKEN: _t, ...mergeEnv } = process.env;
-        await execFileAsync("volute", mergeArgs, {
-          cwd: dir,
-          env: { ...mergeEnv, VOLUTE_SUPERVISOR: "1" },
-        });
-      }
-
-      return true;
-    } catch (e) {
-      console.error(`[daemon] failed to handle restart for ${name}:`, e);
-      return false;
-    }
   }
 
   async stopAgent(name: string): Promise<void> {

@@ -29,6 +29,12 @@ A single daemon process (`volute up`) manages all agents, connectors, and schedu
 
 CLI commands like `agent start`, `agent stop`, `message send`, `connector`, `variant` all proxy through the daemon API.
 
+### Centralized state directory
+
+Volute system state (logs, env, channel mappings, connector PIDs) lives in `~/.volute/state/<name>/`, separate from agent directories. This keeps agent projects portable — they contain only agent-owned state (sessions, cursors, connector configs). The `stateDir(name)` helper in `src/lib/registry.ts` resolves state paths. On daemon startup, `migrateAgentState()` copies any legacy `.volute/env.json`, `.volute/channels.json`, and `.volute/logs/` from agent directories to the centralized state dir.
+
+Agents receive `VOLUTE_STATE_DIR`, `VOLUTE_DAEMON_PORT`, and `VOLUTE_DAEMON_TOKEN` env vars from the daemon. Instead of file-based IPC (restart.json, merged.json), agents call the daemon's REST API via `daemonRestart()` and `daemonSend()` from `templates/_base/src/lib/daemon-client.ts`. The daemon delivers post-restart context (merge info) to agents via HTTP POST to the agent's `/message` endpoint.
+
 ### Agent project structure
 
 Each agent project (created from the template) has:
@@ -60,16 +66,12 @@ Each agent project (created from the template) has:
 │   │   └── routes.json         # Message routing config (optional)
 │   ├── memory/                # Daily logs (YYYY-MM-DD.md)
 │   └── .claude/skills/        # Skills (volute CLI reference, memory system)
-└── .volute/                   # Runtime state
+└── .volute/                   # Agent-internal runtime state
     ├── sessions/              # Per-session SDK state (e.g. sessions/main.json)
+    ├── session-cursors.json   # Session polling cursors
     ├── connectors/            # Connector configs (e.g. connectors/discord/config.json)
     ├── schedules.json         # Cron schedules for this agent
-    ├── channels.json          # Channel slug → platform ID mapping
-    ├── variants.json          # Variant metadata
-    ├── merged.json            # Post-merge context (temporary)
-    ├── restart.json           # Restart signal for daemon
-    ├── env.json               # Agent-specific environment variables
-    └── logs/                  # agent.log, discord.log
+    └── variants.json          # Variant metadata
 ```
 
 The SDK runs with `cwd: home/` so it picks up `CLAUDE.md` and `.claude/skills/` from there.
@@ -197,7 +199,7 @@ Agent-scoped commands (`variant`, `connector`, `schedule`, `channel`, `conversat
 - Centralized registry at `~/.volute/agents.json` maps agent names to ports, tracks `running` state
 - `resolveAgent()` supports `name@variant` syntax for addressing variants
 - AgentManager spawns agent servers as child processes with crash recovery (3s delay) and merge-restart
-- Channel URIs use human-readable slugs: `discord:my-server/general`, `slack:workspace/channel`, `telegram:@username`, `volute:conversation-title`. Connectors generate slugs and write slug→platformId mappings to `<agentDir>/.volute/channels.json`. Channel drivers resolve slugs back to platform IDs via this mapping.
+- Channel URIs use human-readable slugs: `discord:my-server/general`, `slack:workspace/channel`, `telegram:@username`, `volute:conversation-title`. Connectors generate slugs and write slug→platformId mappings to `~/.volute/state/<name>/channels.json`. Channel drivers resolve slugs back to platform IDs via this mapping.
 - Connector resolution: agent-specific → user-shared (`~/.volute/connectors/`) → built-in (`src/connectors/`)
 - Agent message flow: `volute-server` (JSON req/res) → `Router` (routing/formatting/batching) → `MessageHandler` (agent or file destination); web dashboard receives updates via SSE event channel
 - `MessageHandler` interface: `handle(content, meta, listener) => unsubscribe`; `HandlerResolver`: `(key: string) => MessageHandler`

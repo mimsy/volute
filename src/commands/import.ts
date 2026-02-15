@@ -145,7 +145,7 @@ export async function run(args: string[]) {
   }
 
   // Import connectors from openclaw.json
-  importOpenClawConnectors(dest);
+  importOpenClawConnectors(name, dest);
 
   console.log(`\nImported agent: ${name} (port ${port})`);
   console.log(`\n  volute agent start ${name}`);
@@ -267,7 +267,7 @@ type OpenClawDiscordConfig = {
 };
 
 /** Import connector config from ~/.openclaw/openclaw.json into the new agent. */
-export function importOpenClawConnectors(agentDirPath: string) {
+export function importOpenClawConnectors(agentName: string, agentDirPath: string) {
   const configPath = resolve(homedir(), ".openclaw/openclaw.json");
   if (!existsSync(configPath)) return;
 
@@ -283,7 +283,7 @@ export function importOpenClawConnectors(agentDirPath: string) {
   if (!discord?.enabled || !discord.token) return;
 
   // Write DISCORD_TOKEN to agent env
-  const envPath = agentEnvPath(agentDirPath);
+  const envPath = agentEnvPath(agentName);
   const env = readEnv(envPath);
   env.DISCORD_TOKEN = discord.token;
   writeEnv(envPath, env);

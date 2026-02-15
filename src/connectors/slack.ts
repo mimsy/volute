@@ -113,15 +113,13 @@ app.message(async ({ message }) => {
         serverName,
       });
 
-  if (env.agentDir) {
-    writeChannelEntry(env.agentDir, channelKey, {
-      platformId: message.channel,
-      platform: "slack",
-      name: channelName ? `#${channelName}` : undefined,
-      server: serverName,
-      type: isDM ? "dm" : "channel",
-    });
-  }
+  writeChannelEntry(env.agentName, channelKey, {
+    platformId: message.channel,
+    platform: "slack",
+    name: channelName ? `#${channelName}` : undefined,
+    server: serverName,
+    type: isDM ? "dm" : "channel",
+  });
 
   const participantCount = message.channel_type === "im" ? 2 : numMembers;
   const payload = {

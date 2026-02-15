@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { checkMissingEnvVars, getConnectorDef } from "./connector-defs.js";
 import { loadMergedEnv } from "./env.js";
 import { applyIsolation } from "./isolation.js";
-import { daemonLoopback, agentDir as getAgentDir, voluteHome } from "./registry.js";
+import { daemonLoopback, stateDir, voluteHome } from "./registry.js";
 import { RotatingLog } from "./rotating-log.js";
 import { readVoluteConfig } from "./volute-config.js";
 
@@ -53,6 +53,7 @@ export class ConnectorManager {
 
   checkConnectorEnv(
     type: string,
+    agentName: string,
     agentDir: string,
   ): { missing: { name: string; description: string }[]; connectorName: string } | null {
     // Check agent-specific, then user-shared connector dirs for custom connector.json
@@ -66,7 +67,7 @@ export class ConnectorManager {
     const def = getConnectorDef(type, connectorDir);
     if (!def) return null;
 
-    const env = loadMergedEnv(agentDir);
+    const env = loadMergedEnv(agentName);
     const missing = checkMissingEnvVars(def, env);
     if (missing.length === 0) return null;
 
@@ -104,7 +105,7 @@ export class ConnectorManager {
     }
 
     // Kill orphan connector from a previous daemon session
-    this.killOrphanConnector(agentDir, type);
+    this.killOrphanConnector(agentName, type);
 
     // Resolve connector code: agent-specific > user-shared > built-in
     const agentConnector = resolve(agentDir, "connectors", type, "index.ts");
@@ -128,12 +129,12 @@ export class ConnectorManager {
     }
 
     // Set up log file
-    const logsDir = resolve(agentDir, ".volute", "logs");
+    const logsDir = resolve(stateDir(agentName), "logs");
     mkdirSync(logsDir, { recursive: true });
     const logStream = new RotatingLog(resolve(logsDir, `${type}.log`));
 
     // Pass connector-specific env vars from agent env
-    const agentEnv = loadMergedEnv(agentDir);
+    const agentEnv = loadMergedEnv(agentName);
     const prefix = `${type.toUpperCase()}_`;
     const connectorEnv = Object.fromEntries(
       Object.entries(agentEnv).filter(([k]) => k.startsWith(prefix)),
@@ -170,7 +171,7 @@ export class ConnectorManager {
 
     // Track PID so orphans can be killed on next daemon startup
     if (child.pid) {
-      this.saveConnectorPid(agentDir, type, child.pid);
+      this.saveConnectorPid(agentName, type, child.pid);
     }
 
     if (!this.connectors.has(agentName)) {
@@ -247,7 +248,7 @@ export class ConnectorManager {
     this.stopping.delete(stopKey);
     this.restartAttempts.delete(stopKey);
     try {
-      this.removeConnectorPid(getAgentDir(agentName), type);
+      this.removeConnectorPid(agentName, type);
     } catch {}
     console.error(`[daemon] stopped connector ${type} for ${agentName}`);
   }
@@ -276,26 +277,26 @@ export class ConnectorManager {
     }));
   }
 
-  private connectorPidPath(agentDir: string, type: string): string {
-    return resolve(agentDir, ".volute", "connectors", `${type}.pid`);
+  private connectorPidPath(agentName: string, type: string): string {
+    return resolve(stateDir(agentName), "connectors", `${type}.pid`);
   }
 
-  private saveConnectorPid(agentDir: string, type: string, pid: number): void {
-    const pidPath = this.connectorPidPath(agentDir, type);
+  private saveConnectorPid(agentName: string, type: string, pid: number): void {
+    const pidPath = this.connectorPidPath(agentName, type);
     mkdirSync(dirname(pidPath), { recursive: true });
     writeFileSync(pidPath, String(pid));
   }
 
-  private removeConnectorPid(agentDir: string, type: string): void {
+  private removeConnectorPid(agentName: string, type: string): void {
     try {
-      unlinkSync(this.connectorPidPath(agentDir, type));
+      unlinkSync(this.connectorPidPath(agentName, type));
     } catch {
       // PID file may not exist — ignore
     }
   }
 
-  private killOrphanConnector(agentDir: string, type: string): void {
-    const pidPath = this.connectorPidPath(agentDir, type);
+  private killOrphanConnector(agentName: string, type: string): void {
+    const pidPath = this.connectorPidPath(agentName, type);
     if (!existsSync(pidPath)) return;
     try {
       const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);

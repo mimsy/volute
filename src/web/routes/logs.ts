@@ -3,15 +3,14 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { agentDir, findAgent } from "../../lib/registry.js";
+import { findAgent, stateDir } from "../../lib/registry.js";
 
 const app = new Hono().get("/:name/logs", async (c) => {
   const name = c.req.param("name");
   const entry = findAgent(name);
   if (!entry) return c.json({ error: "Agent not found" }, 404);
 
-  const dir = agentDir(name);
-  const logFile = resolve(dir, ".volute", "logs", "agent.log");
+  const logFile = resolve(stateDir(name), "logs", "agent.log");
 
   if (!existsSync(logFile)) {
     return c.json({ error: "No log file found" }, 404);

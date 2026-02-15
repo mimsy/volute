@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
+import { promisify } from "node:util";
 import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { getAgentManager } from "../../lib/agent-manager.js";
@@ -12,9 +14,17 @@ import { getScheduler } from "../../lib/scheduler.js";
 import { agentMessages } from "../../lib/schema.js";
 import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "../../lib/token-budget.js";
 import { getTypingMap } from "../../lib/typing.js";
-import { checkHealth, findVariant, readVariants, removeAllVariants } from "../../lib/variants.js";
+import {
+  checkHealth,
+  findVariant,
+  readVariants,
+  removeAllVariants,
+  validateBranchName,
+} from "../../lib/variants.js";
 import { readVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
+
+const execFileAsync = promisify(execFile);
 
 function extractTextContent(content: unknown): string {
   if (typeof content === "string") return content;
@@ -166,6 +176,7 @@ const app = new Hono<AuthEnv>()
     }
   })
   // Restart agent (supports name@variant) — admin only
+  // Accepts optional JSON body: { context?: { type: string, name?: string, summary?: string, ... } }
   .post("/:name/restart", requireAdmin, async (c) => {
     const name = c.req.param("name");
     const [baseName, variantName] = name.split("@", 2);
@@ -181,16 +192,56 @@ const app = new Hono<AuthEnv>()
       if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
     }
 
+    // Parse optional context from request body
+    let context: Record<string, unknown> | undefined;
+    try {
+      const body = await c.req.json();
+      if (body?.context) context = body.context as Record<string, unknown>;
+    } catch {
+      // No body or invalid JSON — no context
+    }
+
     const manager = getAgentManager();
     const connectorManager = getConnectorManager();
 
     try {
+      // Stop running agent and connectors
       if (manager.isRunning(name)) {
         if (!variantName) {
           await connectorManager.stopConnectors(baseName);
           getTokenBudget().removeBudget(baseName);
         }
         await manager.stopAgent(name);
+      }
+
+      // Handle agent-initiated merge: run merge subprocess before restart
+      if (context?.type === "merge" && context.name && !variantName) {
+        const mergeVariantName = String(context.name);
+        const branchErr = validateBranchName(mergeVariantName);
+        if (branchErr) {
+          return c.json({ error: `Invalid variant name: ${branchErr}` }, 400);
+        }
+        console.error(`[daemon] merging variant for ${baseName}: ${mergeVariantName}`);
+        const mergeArgs = [
+          "variant",
+          "merge",
+          mergeVariantName,
+          "--agent",
+          baseName,
+          "--skip-verify",
+        ];
+        if (context.summary) mergeArgs.push("--summary", String(context.summary));
+        if (context.justification) mergeArgs.push("--justification", String(context.justification));
+        if (context.memory) mergeArgs.push("--memory", String(context.memory));
+        await execFileAsync("volute", mergeArgs, {
+          cwd: agentDir(baseName),
+          env: { ...process.env, VOLUTE_SUPERVISOR: "1" },
+        });
+      }
+
+      // Store context for delivery after restart
+      if (context) {
+        manager.setPendingContext(name, context);
       }
 
       await manager.startAgent(name);

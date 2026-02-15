@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, it } from "node:test";
 import {
@@ -10,7 +9,11 @@ import {
   writeChannelEntry,
 } from "../src/connectors/sdk.js";
 import { resolveChannelId as resolveChannelIdEnv } from "../src/lib/channels.js";
+import { stateDir } from "../src/lib/registry.js";
 import { slugify } from "../src/lib/slugify.js";
+
+// Test agent name — stateDir will resolve to VOLUTE_HOME/state/test-channel-agent
+const TEST_AGENT = "test-channel-agent";
 
 describe("slugify", () => {
   it("converts spaces to hyphens", () => {
@@ -98,45 +101,36 @@ describe("buildChannelSlug", () => {
 });
 
 describe("readChannelMap", () => {
-  let tmp: string;
-
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), "volute-channel-test-"));
+    // Ensure state dir exists for our test agent
+    mkdirSync(stateDir(TEST_AGENT), { recursive: true });
   });
 
   it("returns empty object for missing file", () => {
-    const map = readChannelMap(tmp);
+    const map = readChannelMap("nonexistent-agent");
     assert.deepEqual(map, {});
   });
 
   it("returns parsed map for valid file", () => {
-    const voluteDir = join(tmp, ".volute");
-    mkdirSync(voluteDir, { recursive: true });
+    const dir = stateDir(TEST_AGENT);
     const entry = { platformId: "123", platform: "discord", name: "general" };
     writeFileSync(
-      join(voluteDir, "channels.json"),
+      join(dir, "channels.json"),
       JSON.stringify({ "discord:my-server/general": entry }),
     );
-    const map = readChannelMap(tmp);
+    const map = readChannelMap(TEST_AGENT);
     assert.deepEqual(map, { "discord:my-server/general": entry });
   });
 
   it("returns empty object for corrupt file", () => {
-    const voluteDir = join(tmp, ".volute");
-    mkdirSync(voluteDir, { recursive: true });
-    writeFileSync(join(voluteDir, "channels.json"), "not json");
-    const map = readChannelMap(tmp);
+    const dir = stateDir(TEST_AGENT);
+    writeFileSync(join(dir, "channels.json"), "not json");
+    const map = readChannelMap(TEST_AGENT);
     assert.deepEqual(map, {});
   });
 });
 
 describe("writeChannelEntry", () => {
-  let tmp: string;
-
-  beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), "volute-channel-test-"));
-  });
-
   it("creates file and writes entry", () => {
     const entry = {
       platformId: "123",
@@ -145,79 +139,67 @@ describe("writeChannelEntry", () => {
       server: "My Server",
       type: "channel" as const,
     };
-    writeChannelEntry(tmp, "discord:my-server/general", entry);
-    const data = JSON.parse(readFileSync(join(tmp, ".volute", "channels.json"), "utf-8"));
+    writeChannelEntry(TEST_AGENT, "discord:my-server/general", entry);
+    const data = JSON.parse(readFileSync(join(stateDir(TEST_AGENT), "channels.json"), "utf-8"));
     assert.deepEqual(data["discord:my-server/general"], entry);
   });
 
   it("merges with existing entries", () => {
     const entry1 = { platformId: "123", platform: "discord", name: "general" };
     const entry2 = { platformId: "456", platform: "discord", name: "random" };
-    writeChannelEntry(tmp, "discord:my-server/general", entry1);
-    writeChannelEntry(tmp, "discord:my-server/random", entry2);
-    const data = JSON.parse(readFileSync(join(tmp, ".volute", "channels.json"), "utf-8"));
+    writeChannelEntry(TEST_AGENT, "discord:my-server/general", entry1);
+    writeChannelEntry(TEST_AGENT, "discord:my-server/random", entry2);
+    const data = JSON.parse(readFileSync(join(stateDir(TEST_AGENT), "channels.json"), "utf-8"));
     assert.deepEqual(data["discord:my-server/general"], entry1);
     assert.deepEqual(data["discord:my-server/random"], entry2);
   });
 });
 
 describe("resolveChannelId (sdk)", () => {
-  let tmp: string;
-
-  beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), "volute-channel-test-"));
-  });
-
   it("returns platformId for known slug", () => {
     const entry = { platformId: "123456", platform: "discord" };
-    writeChannelEntry(tmp, "discord:my-server/general", entry);
-    const id = resolveChannelIdSdk(tmp, "discord:my-server/general");
+    writeChannelEntry(TEST_AGENT, "discord:my-server/general", entry);
+    const id = resolveChannelIdSdk(TEST_AGENT, "discord:my-server/general");
     assert.equal(id, "123456");
   });
 
   it("returns slug suffix for unknown slug", () => {
-    const voluteDir = join(tmp, ".volute");
-    mkdirSync(voluteDir, { recursive: true });
-    writeFileSync(join(voluteDir, "channels.json"), JSON.stringify({}));
-    const id = resolveChannelIdSdk(tmp, "discord:my-server/general");
+    const dir = stateDir(TEST_AGENT);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "channels.json"), JSON.stringify({}));
+    const id = resolveChannelIdSdk(TEST_AGENT, "discord:my-server/general");
     assert.equal(id, "my-server/general");
   });
 
   it("returns slug suffix when file is missing", () => {
-    const id = resolveChannelIdSdk(tmp, "discord:some-channel");
+    const id = resolveChannelIdSdk("missing-agent", "discord:some-channel");
     assert.equal(id, "some-channel");
   });
 });
 
 describe("resolveChannelId (env-based)", () => {
-  let tmp: string;
-
-  beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), "volute-channel-test-"));
-  });
-
-  it("returns platformId for known slug when VOLUTE_AGENT_DIR is set", () => {
+  it("returns platformId for known slug when VOLUTE_AGENT is set", () => {
     const entry = { platformId: "123456", platform: "discord" };
-    writeChannelEntry(tmp, "discord:my-server/general", entry);
-    const id = resolveChannelIdEnv({ VOLUTE_AGENT_DIR: tmp }, "discord:my-server/general");
+    writeChannelEntry(TEST_AGENT, "discord:my-server/general", entry);
+    const id = resolveChannelIdEnv({ VOLUTE_AGENT: TEST_AGENT }, "discord:my-server/general");
     assert.equal(id, "123456");
   });
 
-  it("returns slug suffix when no VOLUTE_AGENT_DIR", () => {
+  it("returns slug suffix when no VOLUTE_AGENT", () => {
     const id = resolveChannelIdEnv({}, "discord:my-server/general");
     assert.equal(id, "my-server/general");
   });
 
   it("returns slug suffix when channels.json missing", () => {
-    const id = resolveChannelIdEnv({ VOLUTE_AGENT_DIR: tmp }, "discord:some-channel");
+    const id = resolveChannelIdEnv({ VOLUTE_AGENT: "missing-agent" }, "discord:some-channel");
     assert.equal(id, "some-channel");
   });
 
   it("returns slug suffix when slug not in map", () => {
-    const voluteDir = join(tmp, ".volute");
-    mkdirSync(voluteDir, { recursive: true });
-    writeFileSync(join(voluteDir, "channels.json"), JSON.stringify({}));
-    const id = resolveChannelIdEnv({ VOLUTE_AGENT_DIR: tmp }, "discord:unknown-channel");
+    const dir = stateDir(TEST_AGENT);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "channels.json"), JSON.stringify({}));
+    const id = resolveChannelIdEnv({ VOLUTE_AGENT: TEST_AGENT }, "discord:unknown-channel");
     assert.equal(id, "unknown-channel");
   });
 

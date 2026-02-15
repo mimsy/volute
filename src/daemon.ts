@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { format } from "node:util";
 import { initAgentManager } from "./lib/agent-manager.js";
 import { initConnectorManager } from "./lib/connector-manager.js";
+import { migrateAgentState } from "./lib/migrate-state.js";
 import { agentDir, readRegistry, setAgentRunning, voluteHome } from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
 import { getScheduler } from "./lib/scheduler.js";
@@ -45,8 +46,9 @@ export async function startDaemon(opts: {
   // Use existing token if set (for testing), otherwise generate one
   const token = process.env.VOLUTE_DAEMON_TOKEN || randomBytes(32).toString("hex");
 
-  // Set token and hostname in environment so internal code can build correct URLs
+  // Set token, port, and hostname in environment so internal code can build correct URLs
   process.env.VOLUTE_DAEMON_TOKEN = token;
+  process.env.VOLUTE_DAEMON_PORT = String(port);
   process.env.VOLUTE_DAEMON_HOSTNAME = hostname;
 
   // Start web server — must succeed before writing PID/config files,
@@ -79,8 +81,17 @@ export async function startDaemon(opts: {
   const tokenBudget = getTokenBudget();
   tokenBudget.start(port, token);
 
-  // Start all agents that were previously running, then their connectors and schedules
+  // Migrate system state for all registered agents
   const registry = readRegistry();
+  for (const entry of registry) {
+    try {
+      migrateAgentState(entry.name);
+    } catch (err) {
+      console.error(`[daemon] failed to migrate state for ${entry.name}:`, err);
+    }
+  }
+
+  // Start all agents that were previously running, then their connectors and schedules
   for (const entry of registry) {
     if (!entry.running) continue;
     try {

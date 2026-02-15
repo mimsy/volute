@@ -74,14 +74,12 @@ bot.on(message("text"), async (ctx) => {
         channelName: chatTitle ?? String(ctx.chat.id),
       });
 
-  if (env.agentDir) {
-    writeChannelEntry(env.agentDir, channelSlug, {
-      platformId: String(ctx.chat.id),
-      platform: "telegram",
-      name: chatTitle,
-      type: isDM ? "dm" : "channel",
-    });
-  }
+  writeChannelEntry(env.agentName, channelSlug, {
+    platformId: String(ctx.chat.id),
+    platform: "telegram",
+    name: chatTitle,
+    type: isDM ? "dm" : "channel",
+  });
 
   const payload: AgentPayload = {
     content,
@@ -162,14 +160,12 @@ bot.on(message("photo"), async (ctx) => {
         channelName: chatTitle ?? String(ctx.chat.id),
       });
 
-  if (env.agentDir) {
-    writeChannelEntry(env.agentDir, channelSlug, {
-      platformId: String(ctx.chat.id),
-      platform: "telegram",
-      name: chatTitle,
-      type: isDM ? "dm" : "channel",
-    });
-  }
+  writeChannelEntry(env.agentName, channelSlug, {
+    platformId: String(ctx.chat.id),
+    platform: "telegram",
+    name: chatTitle,
+    type: isDM ? "dm" : "channel",
+  });
 
   const payload: AgentPayload = {
     content,

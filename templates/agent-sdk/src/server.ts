@@ -1,11 +1,11 @@
-import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { resolve } from "node:path";
 import { createAgent } from "./agent.js";
+import { daemonRestart } from "./lib/daemon-client.js";
 import { createFileHandlerResolver } from "./lib/file-handler.js";
 import { log } from "./lib/logger.js";
 import { createRouter } from "./lib/router.js";
 import {
-  handleMergeContext,
   loadConfig,
   loadPackageInfo,
   loadSystemPrompt,
@@ -43,14 +43,7 @@ const agent = createAgent({
   onIdentityReload: async () => {
     log("server", "identity file changed — restarting to reload");
     await agent.waitForCommits();
-    // Signal daemon to restart immediately (bypasses crash backoff)
-    try {
-      writeFileSync(resolve(".volute/restart.json"), JSON.stringify({ action: "reload" }));
-    } catch (err) {
-      log("server", "failed to write restart signal:", err);
-    }
-    server.close();
-    process.exit(0);
+    await daemonRestart({ type: "reload" });
   },
 });
 
@@ -71,9 +64,6 @@ server.listen(port, () => {
   const addr = server.address();
   const actualPort = typeof addr === "object" && addr ? addr.port : port;
   log("server", `listening on :${actualPort}`);
-  handleMergeContext((content) =>
-    router.route([{ type: "text", text: content }], { channel: "system" }),
-  );
 });
 
 setupShutdown();
