@@ -85,4 +85,48 @@ describe("RotatingLog", () => {
     // Just verify it didn't throw
     assert(existsSync(logPath));
   });
+
+  it("produces multiple rotated files (.1, .2, etc.)", async () => {
+    const logPath = join(dir, "test.log");
+    // maxSize=10, maxFiles=5 — each chunk triggers rotation on its own
+    const log = new RotatingLog(logPath, 10, 5);
+    await write(log, "aaaaaaaaaa"); // 10 bytes, size=10, no rotation yet
+    await write(log, "bbbbbbbbbbb"); // 11 bytes, size=21, rotation: current→.1, write to new
+    await write(log, "ccccccccccc"); // 11 bytes, rotation: .1→.2, current→.1
+    await end(log);
+
+    assert(existsSync(`${logPath}.1`), ".1 should exist");
+    assert(existsSync(`${logPath}.2`), ".2 should exist");
+    assert.equal(readFileSync(logPath, "utf-8"), "ccccccccccc");
+    assert.equal(readFileSync(`${logPath}.1`, "utf-8"), "bbbbbbbbbbb");
+    assert.equal(readFileSync(`${logPath}.2`, "utf-8"), "aaaaaaaaaa");
+  });
+
+  it("deletes oldest file when maxFiles exceeded", async () => {
+    const logPath = join(dir, "test.log");
+    // maxFiles=2 means we keep current + .1 + .2
+    const log = new RotatingLog(logPath, 5, 2);
+    await write(log, "aaaaaa"); // 6 bytes, triggers rotation → .1
+    await write(log, "bbbbbb"); // triggers rotation → .1 shifts to .2, current → .1
+    await write(log, "cccccc"); // triggers rotation → .2 deleted, .1 → .2, current → .1
+    await end(log);
+
+    assert(existsSync(`${logPath}.1`), ".1 should exist");
+    assert(existsSync(`${logPath}.2`), ".2 should exist");
+    assert(!existsSync(`${logPath}.3`), ".3 should not exist (maxFiles=2)");
+    assert.equal(readFileSync(logPath, "utf-8"), "cccccc");
+    assert.equal(readFileSync(`${logPath}.1`, "utf-8"), "bbbbbb");
+    assert.equal(readFileSync(`${logPath}.2`, "utf-8"), "aaaaaa");
+  });
+
+  it("maxFiles=1 keeps only one rotated file", async () => {
+    const logPath = join(dir, "test.log");
+    const log = new RotatingLog(logPath, 5, 1);
+    await write(log, "aaaaaa"); // triggers rotation → .1
+    await write(log, "bbbbbb"); // triggers rotation → .1 deleted, current → .1
+    await end(log);
+
+    assert(existsSync(`${logPath}.1`), ".1 should exist");
+    assert(!existsSync(`${logPath}.2`), ".2 should not exist (maxFiles=1)");
+  });
 });

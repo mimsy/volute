@@ -1,7 +1,13 @@
 import { existsSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { exec, execInherit } from "../lib/exec.js";
-import { chownAgentDir, createAgentUser, ensureVoluteGroup } from "../lib/isolation.js";
+import {
+  chownAgentDir,
+  createAgentUser,
+  ensureVoluteGroup,
+  getAgentUserIds,
+  isIsolationEnabled,
+} from "../lib/isolation.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { addAgent, agentDir, ensureVoluteHome, nextPort } from "../lib/registry.js";
 import {
@@ -47,14 +53,22 @@ export async function run(args: string[]) {
     const port = nextPort();
     addAgent(name, port);
 
+    // Set up per-agent user isolation (no-ops if VOLUTE_ISOLATION !== "user")
+    ensureVoluteGroup();
+    createAgentUser(name);
+    chownAgentDir(dest, name);
+
+    // Resolve uid/gid so npm install and git init run as the agent user
+    const ids = isIsolationEnabled() ? await getAgentUserIds(name) : undefined;
+
     // Install dependencies
     console.log("Installing dependencies...");
-    await execInherit("npm", ["install"], { cwd: dest });
+    await execInherit("npm", ["install"], { cwd: dest, uid: ids?.uid, gid: ids?.gid });
 
     // git init + template branch + initial commit (after install so lockfile is included)
     try {
-      await exec("git", ["init"], { cwd: dest });
-      await initTemplateBranch(dest, composedDir, manifest);
+      await exec("git", ["init"], { cwd: dest, uid: ids?.uid, gid: ids?.gid });
+      await initTemplateBranch(dest, composedDir, manifest, ids);
     } catch (err) {
       // Clean up partial git state so the repo isn't left on an orphan branch
       rmSync(resolve(dest, ".git"), { recursive: true, force: true });
@@ -64,11 +78,6 @@ export async function run(args: string[]) {
       );
       console.warn("Details:", (err as Error).message ?? err);
     }
-
-    // Set up per-agent user isolation (no-ops if VOLUTE_ISOLATION !== "user")
-    ensureVoluteGroup();
-    createAgentUser(name);
-    chownAgentDir(dest, name);
 
     console.log(`\nCreated agent: ${name} (port ${port})`);
     console.log(`\n  volute agent start ${name}`);
@@ -85,19 +94,22 @@ async function initTemplateBranch(
   projectRoot: string,
   composedDir: string,
   manifest: TemplateManifest,
+  ids?: { uid: number; gid: number },
 ) {
   // Compute template file paths (after renames, excluding .init/ identity files)
   const templateFiles = listFiles(composedDir)
     .filter((f) => !f.startsWith(".init/") && !f.startsWith(".init\\"))
     .map((f) => manifest.rename[f] ?? f);
 
+  const opts = { cwd: projectRoot, uid: ids?.uid, gid: ids?.gid };
+
   // Create orphan template branch with only template files
-  await exec("git", ["checkout", "--orphan", TEMPLATE_BRANCH], { cwd: projectRoot });
-  await exec("git", ["add", "--", ...templateFiles], { cwd: projectRoot });
-  await exec("git", ["commit", "-m", "template update"], { cwd: projectRoot });
+  await exec("git", ["checkout", "--orphan", TEMPLATE_BRANCH], opts);
+  await exec("git", ["add", "--", ...templateFiles], opts);
+  await exec("git", ["commit", "-m", "template update"], opts);
 
   // Create main from template branch (shared history enables clean upgrades)
-  await exec("git", ["checkout", "-b", "main"], { cwd: projectRoot });
-  await exec("git", ["add", "-A"], { cwd: projectRoot });
-  await exec("git", ["commit", "-m", "initial commit"], { cwd: projectRoot });
+  await exec("git", ["checkout", "-b", "main"], opts);
+  await exec("git", ["add", "-A"], opts);
+  await exec("git", ["commit", "-m", "initial commit"], opts);
 }

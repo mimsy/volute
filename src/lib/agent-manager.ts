@@ -1,5 +1,5 @@
 import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { loadMergedEnv } from "./env.js";
@@ -15,6 +15,10 @@ type TrackedAgent = {
   child: ChildProcess;
   port: number;
 };
+
+function agentPidPath(name: string): string {
+  return resolve(stateDir(name), "agent.pid");
+}
 
 const MAX_RESTART_ATTEMPTS = 5;
 const BASE_RESTART_DELAY = 3000;
@@ -59,7 +63,37 @@ export class AgentManager {
     const { dir, isVariant, baseName, variantName } = target;
     const port = target.port;
 
-    // Kill any orphan process on this port from a previous daemon session
+    // Kill any orphan process from a previous daemon session
+    const pidFile = agentPidPath(name);
+    try {
+      if (existsSync(pidFile)) {
+        const stalePid = parseInt(readFileSync(pidFile, "utf-8").trim(), 10);
+        if (stalePid > 0) {
+          try {
+            process.kill(stalePid, 0); // check if alive
+            // Verify this is actually an agent process before killing the group
+            const { stdout } = await execFileAsync("ps", ["-p", String(stalePid), "-o", "args="]);
+            if (stdout.includes("server.ts")) {
+              console.error(`[daemon] killing stale agent process ${stalePid} for ${name}`);
+              process.kill(-stalePid, "SIGTERM");
+              await new Promise((r) => setTimeout(r, 500));
+            } else {
+              console.error(
+                `[daemon] stale PID ${stalePid} for ${name} is not an agent process, skipping`,
+              );
+            }
+          } catch (err: unknown) {
+            if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
+              console.error(`[daemon] failed to check/kill stale process for ${name}:`, err);
+            }
+          }
+        }
+        rmSync(pidFile, { force: true });
+      }
+    } catch (err) {
+      console.error(`[daemon] failed to read PID file for ${name}:`, err);
+    }
+
     try {
       const res = await fetch(`http://127.0.0.1:${port}/health`);
       if (res.ok) {
@@ -81,6 +115,8 @@ export class AgentManager {
       ...agentEnv,
       VOLUTE_AGENT: name,
       VOLUTE_STATE_DIR: stateDir(name),
+      VOLUTE_AGENT_DIR: dir,
+      VOLUTE_AGENT_PORT: String(port),
     };
     const tsxBin = resolve(dir, "node_modules", ".bin", "tsx");
 
@@ -134,6 +170,15 @@ export class AgentManager {
         child.kill();
       } catch {}
       throw err;
+    }
+
+    // Save PID file for orphan detection on next daemon start
+    if (child.pid) {
+      try {
+        writeFileSync(pidFile, String(child.pid));
+      } catch (err) {
+        console.error(`[daemon] failed to write PID file for ${name}:`, err);
+      }
     }
 
     // Set up crash recovery after successful start
@@ -248,6 +293,7 @@ export class AgentManager {
 
     this.stopping.delete(name);
     if (this.restartAttempts.delete(name)) this.saveCrashAttempts();
+    rmSync(agentPidPath(name), { force: true });
 
     if (!this.shuttingDown) {
       const [baseName, variantName] = name.split("@", 2);

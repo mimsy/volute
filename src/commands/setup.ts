@@ -33,6 +33,11 @@ Environment=VOLUTE_AGENTS_DIR=${AGENTS_DIR}
 Environment=VOLUTE_ISOLATION=user
 Restart=on-failure
 RestartSec=5
+ProtectSystem=strict
+ReadWritePaths=${DATA_DIR} ${AGENTS_DIR}
+PrivateTmp=yes
+ProtectHome=yes
+RestrictSUIDSGID=yes
 
 [Install]
 WantedBy=multi-user.target
@@ -113,10 +118,16 @@ function uninstall(force: boolean): void {
       const members = output.split(":")[3]?.trim();
       if (members) {
         for (const user of members.split(",")) {
+          const u = user.trim();
           try {
-            execFileSync("userdel", [user.trim()], { stdio: "ignore" });
+            execFileSync("userdel", [u], { stdio: "ignore" });
           } catch {
-            console.warn(`Warning: failed to remove user ${user.trim()}`);
+            console.warn(`Warning: failed to remove user ${u}`);
+          }
+          try {
+            execFileSync("groupdel", [u], { stdio: "ignore" });
+          } catch {
+            // Per-user group may not exist — ignore
           }
         }
       }

@@ -86,14 +86,6 @@ export async function fetchFile(name: string, filename: string): Promise<FileCon
   return res.json();
 }
 
-export async function saveFile(name: string, filename: string, content: string): Promise<void> {
-  const res = await client.api.agents[":name"].files[":filename"].$put({
-    param: { name, filename },
-    json: { content },
-  });
-  if (!res.ok) throw new Error("Failed to save file");
-}
-
 export type Participant = {
   userId: number;
   username: string;

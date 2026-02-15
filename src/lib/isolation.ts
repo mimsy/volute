@@ -43,7 +43,7 @@ export function createAgentUser(name: string): void {
     // User doesn't exist — create it
   }
   try {
-    execFileSync("useradd", ["-r", "-M", "-g", "volute", "-s", "/usr/sbin/nologin", user], {
+    execFileSync("useradd", ["-r", "-M", "-G", "volute", "-s", "/usr/sbin/nologin", user], {
       stdio: "ignore",
     });
   } catch (err) {
@@ -86,6 +86,6 @@ export async function applyIsolation(spawnOpts: SpawnOptions, agentName: string)
 export function chownAgentDir(dir: string, name: string): void {
   if (!isIsolationEnabled()) return;
   const user = agentUserName(name);
-  execFileSync("chown", ["-R", `${user}:volute`, dir]);
+  execFileSync("chown", ["-R", `${user}:${user}`, dir]);
   execFileSync("chmod", ["700", dir]);
 }
