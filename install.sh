@@ -33,9 +33,13 @@ fi
 echo "Installing volute..."
 /usr/bin/npm install -g volute
 
-# Run setup
+# Run setup (writes /etc/profile.d/volute.sh for CLI env vars)
 echo "Running volute setup..."
 /usr/bin/volute setup --host 0.0.0.0
+
+# Source the profile so env vars are available in this session
+# shellcheck disable=SC1091
+[ -f /etc/profile.d/volute.sh ] && . /etc/profile.d/volute.sh
 
 echo ""
 echo "Volute is installed and running."

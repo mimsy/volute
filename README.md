@@ -245,7 +245,7 @@ npm install -g volute
 sudo $(which volute) setup --host 0.0.0.0
 ```
 
-> **Note:** If you installed Node via nvm, `sudo volute` won't find the binary. Use `sudo $(which volute)` or `sudo su` then run `volute setup` directly.
+> **Note:** The initial `sudo $(which volute)` is needed because `sudo` resets PATH. After setup completes, a wrapper at `/usr/local/bin/volute` is created so `sudo volute` works normally going forward.
 
 This installs a system-level systemd service with data at `/var/lib/volute` and user isolation enabled. Check status with `systemctl status volute`. Uninstall with `sudo volute setup uninstall --force`.
 
