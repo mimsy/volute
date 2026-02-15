@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.0](https://github.com/mimsy/volute/compare/volute-v0.7.0...volute-v0.8.0) (2026-02-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* linux deployment hardening and agent experience improvements ([#40](https://github.com/mimsy/volute/issues/40))
+* separate system state from agent directories ([#39](https://github.com/mimsy/volute/issues/39))
+* agent processing architecture overhaul ([#38](https://github.com/mimsy/volute/issues/38))
+* replace NDJSON streaming with JSON request-response and unified send ([#37](https://github.com/mimsy/volute/issues/37))
+
+### Features
+
+* agent processing architecture overhaul ([#38](https://github.com/mimsy/volute/issues/38)) ([a235a1e](https://github.com/mimsy/volute/commit/a235a1e6175c702722b79bf130fb6ae46c9afed8))
+* auto-chunk long messages in channel drivers ([#35](https://github.com/mimsy/volute/issues/35)) ([c941959](https://github.com/mimsy/volute/commit/c94195982f25e7d106e448302869e1ae0cecb26e))
+* linux deployment hardening and agent experience improvements ([#40](https://github.com/mimsy/volute/issues/40)) ([5233321](https://github.com/mimsy/volute/commit/5233321490b1371832eefced95e13b4656eb8f93))
+* replace NDJSON streaming with JSON request-response and unified send ([#37](https://github.com/mimsy/volute/issues/37)) ([e046df7](https://github.com/mimsy/volute/commit/e046df78fa655e3f263a84a949c53c01df8e4666))
+* separate system state from agent directories ([#39](https://github.com/mimsy/volute/issues/39)) ([4372a84](https://github.com/mimsy/volute/commit/4372a8444d6c5ae0cd76fbbff12ed779d69fcbfd))
+
 ## [0.7.0](https://github.com/mimsy/volute/compare/volute-v0.6.0...volute-v0.7.0) (2026-02-13)
 
 
