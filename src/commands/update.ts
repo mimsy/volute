@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { execInherit, resolveVoluteBin } from "../lib/exec.js";
@@ -5,6 +6,18 @@ import { voluteHome } from "../lib/registry.js";
 import { checkForUpdate } from "../lib/update-check.js";
 
 export async function run(_args: string[]) {
+  // If managed by systemd, the user should update and restart via systemctl
+  try {
+    execFileSync("systemctl", ["is-enabled", "--quiet", "volute"]);
+    console.error("Volute is managed by a systemd service.");
+    console.error("To update, run:");
+    console.error("  sudo npm install -g volute@latest");
+    console.error("  sudo systemctl restart volute");
+    process.exit(1);
+  } catch {
+    // Not a systemd-managed install — proceed normally
+  }
+
   const result = await checkForUpdate();
   if (result.checkFailed) {
     console.error("Could not reach npm registry. Check your network connection and try again.");
