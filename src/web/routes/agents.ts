@@ -16,11 +16,25 @@ import { checkHealth, findVariant, readVariants, removeAllVariants } from "../..
 import { readVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
+function extractTextContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return (content as { type: string; text?: string }[])
+      .filter((p) => p.type === "text" && p.text)
+      .map((p) => p.text)
+      .join("\n");
+  }
+  return JSON.stringify(content);
+}
+
 function getDaemonPort(): number | undefined {
   try {
     const data = JSON.parse(readFileSync(resolve(voluteHome(), "daemon.json"), "utf-8"));
     return data.port;
-  } catch {
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") {
+      console.error("[daemon] failed to read daemon.json:", err);
+    }
     return undefined;
   }
 }
@@ -289,17 +303,7 @@ const app = new Hono<AuthEnv>()
     if (parsed) {
       try {
         const sender = (parsed.sender as string) ?? null;
-        let content: string;
-        if (typeof parsed.content === "string") {
-          content = parsed.content;
-        } else if (Array.isArray(parsed.content)) {
-          content = (parsed.content as { type: string; text?: string }[])
-            .filter((p) => p.type === "text" && p.text)
-            .map((p) => p.text)
-            .join("\n");
-        } else {
-          content = JSON.stringify(parsed.content);
-        }
+        const content = extractTextContent(parsed.content);
         await db.insert(agentMessages).values({
           agent: baseName,
           channel,
@@ -316,18 +320,7 @@ const app = new Hono<AuthEnv>()
     const budgetStatus = budget.checkBudget(baseName);
 
     if (budgetStatus === "exceeded") {
-      // Extract text content for the queued summary
-      let textContent = "";
-      if (parsed) {
-        if (typeof parsed.content === "string") {
-          textContent = parsed.content;
-        } else if (Array.isArray(parsed.content)) {
-          textContent = (parsed.content as { type: string; text?: string }[])
-            .filter((p) => p.type === "text" && p.text)
-            .map((p) => p.text)
-            .join("\n");
-        }
-      }
+      const textContent = parsed ? extractTextContent(parsed.content) : "";
 
       budget.enqueue(baseName, {
         channel,
@@ -381,10 +374,13 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: `Agent responded with ${res.status}` }, res.status as 500);
       }
 
-      const result = (await res.json()) as {
-        ok: boolean;
-        usage?: { input_tokens: number; output_tokens: number };
-      };
+      let result: { ok: boolean; usage?: { input_tokens: number; output_tokens: number } };
+      try {
+        result = (await res.json()) as typeof result;
+      } catch (parseErr) {
+        console.error(`[daemon] agent ${name} returned non-JSON response:`, parseErr);
+        return c.json({ error: "Agent returned invalid response" }, 502);
+      }
 
       // Record usage against budget
       if (result.usage) {

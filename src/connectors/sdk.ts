@@ -116,10 +116,7 @@ export async function sendToAgent(
   env: ConnectorEnv,
   payload: AgentPayload,
 ): Promise<{ ok: boolean; error?: string }> {
-  const url =
-    env.daemonUrl && env.daemonToken
-      ? `${env.daemonUrl}/api/agents/${encodeURIComponent(env.agentName)}/message`
-      : `${env.baseUrl}/message`;
+  const url = `${env.baseUrl}/message`;
 
   try {
     const res = await fetch(url, {
@@ -192,7 +189,8 @@ export function readChannelMap(agentDir: string): Record<string, ChannelEntry> {
   if (!existsSync(filePath)) return {};
   try {
     return JSON.parse(readFileSync(filePath, "utf-8"));
-  } catch {
+  } catch (err) {
+    console.error(`[sdk] failed to parse ${filePath}:`, err);
     return {};
   }
 }

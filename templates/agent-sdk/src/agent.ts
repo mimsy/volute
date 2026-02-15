@@ -130,6 +130,13 @@ export function createAgent(options: {
         const q = createStream(session, savedSessionId);
         session.currentQuery = q;
         await consumeStream(q, session, callbacks);
+        // Stream ended — flush any pending auto-reply and broadcast done if no result was emitted
+        session.autoReply.flush(session.currentMessageId);
+        if (session.currentMessageId !== undefined) {
+          session.messageChannels.delete(session.currentMessageId);
+          broadcastToSession(session, { type: "done" });
+          session.currentMessageId = undefined;
+        }
       } catch (err) {
         session.autoReply.reset();
         session.messageChannels.clear();
@@ -140,6 +147,12 @@ export function createAgent(options: {
             const q = createStream(session);
             session.currentQuery = q;
             await consumeStream(q, session, callbacks);
+            session.autoReply.flush(session.currentMessageId);
+            if (session.currentMessageId !== undefined) {
+              session.messageChannels.delete(session.currentMessageId);
+              broadcastToSession(session, { type: "done" });
+              session.currentMessageId = undefined;
+            }
           } catch (retryErr) {
             log("agent", `session "${session.name}": stream consumer error:`, retryErr);
             broadcastToSession(session, { type: "done" });

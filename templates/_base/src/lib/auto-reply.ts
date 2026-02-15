@@ -39,7 +39,9 @@ function autoSend(channel: string, text: string): void {
   const proc = spawn("volute", ["send", channel], {
     stdio: ["pipe", "ignore", "pipe"],
   });
-  proc.stdin!.on("error", () => {});
+  proc.stdin!.on("error", (err) => {
+    log("agent", `auto-reply stdin error for ${channel}: ${err}`);
+  });
   proc.stdin!.write(text);
   proc.stdin!.end();
 

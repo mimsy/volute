@@ -166,7 +166,9 @@ const app = new Hono<AuthEnv>()
     for (const ap of agentParticipants) {
       try {
         writeChannelEntry(agentDir(ap.username), channel, channelEntry);
-      } catch {}
+      } catch (err) {
+        console.warn(`[chat] failed to write channel entry for ${ap.username}:`, err);
+      }
     }
     const typingMap = getTypingMap();
     const currentlyTyping = typingMap.get(channel);
@@ -184,11 +186,16 @@ const app = new Hono<AuthEnv>()
     // Fire-and-forget: send to all running agents via daemon /message route
     for (const agentName of runningAgents) {
       const targetName = agentName === baseName ? name : agentName;
-      daemonFetchInternal(`/api/agents/${encodeURIComponent(targetName)}/message`, payload).catch(
-        (err) => {
+      daemonFetchInternal(`/api/agents/${encodeURIComponent(targetName)}/message`, payload)
+        .then(async (res) => {
+          if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            console.error(`[chat] agent ${agentName} responded ${res.status}: ${text}`);
+          }
+        })
+        .catch((err) => {
           console.error(`[chat] agent ${agentName} unreachable via daemon:`, err);
-        },
-      );
+        });
     }
 
     return c.json({ ok: true, conversationId });

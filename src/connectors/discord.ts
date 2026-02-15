@@ -139,7 +139,10 @@ client.on(Events.MessageCreate, async (message) => {
 
   if (isFollowedChannel && !isMentioned) {
     const result = await sendToAgent(env, payload);
-    if (!result.ok) message.reply(result.error ?? "Failed to process message").catch(() => {});
+    if (!result.ok)
+      message.reply(result.error ?? "Failed to process message").catch((err) => {
+        console.warn(`[discord] failed to send error reply: ${err}`);
+      });
     return;
   }
 
@@ -169,7 +172,10 @@ async function handleDiscordMessage(message: Message, payload: AgentPayload) {
 
   try {
     const result = await sendToAgent(env, payload);
-    if (!result.ok) message.reply(result.error ?? "Failed to process message").catch(() => {});
+    if (!result.ok)
+      message.reply(result.error ?? "Failed to process message").catch((err) => {
+        console.warn(`[discord] failed to send error reply: ${err}`);
+      });
   } finally {
     clearInterval(typingInterval);
   }

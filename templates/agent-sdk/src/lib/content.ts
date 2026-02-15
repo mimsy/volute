@@ -22,20 +22,20 @@ const SUPPORTED_MEDIA_TYPES: Set<string> = new Set([
 ]);
 
 export function toSDKContent(content: VoluteContentPart[]): SDKContent {
-  return content
-    .map((part) => {
-      if (part.type === "text") {
-        return { type: "text" as const, text: part.text };
-      }
-      if (!SUPPORTED_MEDIA_TYPES.has(part.media_type)) return null;
-      return {
+  return content.flatMap((part): SDKContent => {
+    if (part.type === "text") {
+      return [{ type: "text" as const, text: part.text }];
+    }
+    if (!SUPPORTED_MEDIA_TYPES.has(part.media_type)) return [];
+    return [
+      {
         type: "image" as const,
         source: {
           type: "base64" as const,
           media_type: part.media_type as SupportedMediaType,
           data: part.data,
         },
-      };
-    })
-    .filter((p): p is NonNullable<typeof p> => p !== null);
+      },
+    ];
+  });
 }
