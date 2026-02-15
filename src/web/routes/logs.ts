@@ -53,8 +53,9 @@ const app = new Hono()
       return c.json({ error: "No log file found" }, 404);
     }
 
-    const n = c.req.query("n") ?? "50";
-    const tail = spawn("tail", ["-n", n, logFile]);
+    const nParam = parseInt(c.req.query("n") ?? "50", 10);
+    const n = Number.isFinite(nParam) && nParam > 0 ? Math.min(nParam, 10000) : 50;
+    const tail = spawn("tail", ["-n", String(n), logFile]);
 
     let output = "";
     tail.stdout.on("data", (data: Buffer) => {

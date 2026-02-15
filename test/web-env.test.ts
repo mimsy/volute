@@ -166,6 +166,36 @@ describe("web env routes — agent-scoped", () => {
     assert.equal(env.TO_DELETE, undefined);
   });
 
+  it("DELETE /:name/env/:key — 404 for nonexistent key", async () => {
+    const cookie = await setupAuth();
+    addAgent(TEST_AGENT, 4150);
+    const { default: app } = await import("../src/web/app.js");
+
+    const res = await app.request(`http://localhost/api/agents/${TEST_AGENT}/env/NONEXISTENT`, {
+      method: "DELETE",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        Origin: "http://localhost",
+      },
+    });
+    assert.equal(res.status, 404);
+  });
+
+  it("PUT /:name/env/:key — 400 for missing value field", async () => {
+    const cookie = await setupAuth();
+    addAgent(TEST_AGENT, 4150);
+    const { default: app } = await import("../src/web/app.js");
+
+    const res = await app.request(`http://localhost/api/agents/${TEST_AGENT}/env/KEY`, {
+      method: "PUT",
+      headers: postHeaders(cookie),
+      body: JSON.stringify({}),
+    });
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error: string };
+    assert.ok(body.error.includes("value"));
+  });
+
   it("PUT /:name/env/:key — 404 for nonexistent agent", async () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../src/web/app.js");
@@ -291,6 +321,32 @@ describe("web env routes — shared", () => {
 
     const env = readEnv(sharedEnvPath());
     assert.equal(env.DEL_KEY, undefined);
+  });
+
+  it("DELETE /api/env/:key — 404 for nonexistent key", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../src/web/app.js");
+
+    const res = await app.request("http://localhost/api/env/NONEXISTENT", {
+      method: "DELETE",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        Origin: "http://localhost",
+      },
+    });
+    assert.equal(res.status, 404);
+  });
+
+  it("PUT /api/env/:key — 400 for missing value field", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../src/web/app.js");
+
+    const res = await app.request("http://localhost/api/env/KEY", {
+      method: "PUT",
+      headers: postHeaders(cookie),
+      body: JSON.stringify({ wrong: "field" }),
+    });
+    assert.equal(res.status, 400);
   });
 
   it("PUT /api/env/:key — requires auth (401 without cookie)", async () => {

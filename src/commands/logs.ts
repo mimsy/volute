@@ -22,8 +22,13 @@ export async function run(args: string[]) {
       process.exit(1);
     }
 
+    if (!res.body) {
+      console.error("Server returned an empty response body for log streaming.");
+      process.exit(1);
+    }
+
     // Parse SSE stream
-    const reader = res.body!.getReader();
+    const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
 
@@ -42,8 +47,14 @@ export async function run(args: string[]) {
           }
         }
       }
-    } catch {
-      // Stream closed
+    } catch (err) {
+      const isCleanClose =
+        err instanceof Error &&
+        (err.name === "AbortError" || (err as NodeJS.ErrnoException).code === "ECONNRESET");
+      if (!isCleanClose) {
+        console.error(`Log stream error: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      }
     }
   } else {
     const n = flags.n ?? 50;

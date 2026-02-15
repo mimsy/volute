@@ -102,5 +102,21 @@ export async function run(args: string[]) {
       process.exit(1);
     }
     console.log("Message sent.");
+
+    // Persist outgoing to agent_messages if sender is a registered agent
+    if (process.env.VOLUTE_AGENT) {
+      try {
+        await daemonFetch(
+          urlOf(client.api.agents[":name"].history.$url({ param: { name: agentName } })),
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ channel: channelUri, content: message }),
+          },
+        );
+      } catch (err) {
+        console.error(`Failed to persist to history: ${err instanceof Error ? err.message : err}`);
+      }
+    }
   }
 }

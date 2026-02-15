@@ -128,7 +128,8 @@ async function connectConnector(args: string[]) {
           },
         );
         if (!envRes.ok) {
-          console.error(`Failed to set ${v.name}`);
+          const errBody = (await envRes.json().catch(() => ({}))) as { error?: string };
+          console.error(`Failed to set ${v.name}: ${errBody.error ?? `HTTP ${envRes.status}`}`);
           process.exit(1);
         }
       }

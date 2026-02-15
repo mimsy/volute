@@ -106,7 +106,8 @@ export async function run(args: string[]) {
           ),
         );
         if (!res.ok) {
-          console.error(`${key} not set`);
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          console.error(body.error ?? `${key} not set`);
           process.exit(1);
         }
         const data = (await res.json()) as { value: string };

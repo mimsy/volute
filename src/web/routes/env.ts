@@ -25,7 +25,15 @@ const app = new Hono<AuthEnv>()
     const name = c.req.param("name");
     if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
     const key = c.req.param("key");
-    const body = await c.req.json<{ value: string }>();
+    let body: { value?: string };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    if (typeof body.value !== "string") {
+      return c.json({ error: "Missing required field: value" }, 400);
+    }
     const path = agentEnvPath(name);
     const env = readEnv(path);
     env[key] = body.value;
@@ -38,6 +46,7 @@ const app = new Hono<AuthEnv>()
     const key = c.req.param("key");
     const path = agentEnvPath(name);
     const env = readEnv(path);
+    if (!(key in env)) return c.json({ error: "Key not found" }, 404);
     delete env[key];
     writeEnv(path, env);
     return c.json({ ok: true });
@@ -50,7 +59,15 @@ export const sharedEnvApp = new Hono<AuthEnv>()
   })
   .put("/:key", requireAdmin, async (c) => {
     const key = c.req.param("key");
-    const body = await c.req.json<{ value: string }>();
+    let body: { value?: string };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    if (typeof body.value !== "string") {
+      return c.json({ error: "Missing required field: value" }, 400);
+    }
     const path = sharedEnvPath();
     const env = readEnv(path);
     env[key] = body.value;
@@ -61,6 +78,7 @@ export const sharedEnvApp = new Hono<AuthEnv>()
     const key = c.req.param("key");
     const path = sharedEnvPath();
     const env = readEnv(path);
+    if (!(key in env)) return c.json({ error: "Key not found" }, 404);
     delete env[key];
     writeEnv(path, env);
     return c.json({ ok: true });
