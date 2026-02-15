@@ -1,11 +1,9 @@
 import { userInfo } from "node:os";
 import { getChannelDriver } from "../lib/channels.js";
 import { daemonFetch } from "../lib/daemon-client.js";
-import { loadMergedEnv } from "../lib/env.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { parseTarget } from "../lib/parse-target.js";
 import { readStdin } from "../lib/read-stdin.js";
-import { resolveAgent } from "../lib/registry.js";
 import { resolveAgentName } from "../lib/resolve-agent-name.js";
 
 export async function run(args: string[]) {
@@ -81,34 +79,19 @@ export async function run(args: string[]) {
       }
     }
   } else {
-    // For all other targets, resolve agent and send through the channel driver
+    // For all other targets, send through the daemon channel API
     const agentName = resolveAgentName(flags);
-    const { dir } = resolveAgent(agentName);
-    const env = {
-      ...loadMergedEnv(agentName),
-      VOLUTE_AGENT: agentName,
-      VOLUTE_AGENT_DIR: dir,
-    };
 
-    try {
-      await driver.send(env, channelUri, message);
-      console.log("Message sent.");
-    } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err));
+    const res = await daemonFetch(`/api/agents/${encodeURIComponent(agentName)}/channels/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform: parsed.platform, uri: channelUri, message }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: "Unknown error" }));
+      console.error((body as { error: string }).error);
       process.exit(1);
     }
-
-    // Persist outgoing to agent_messages
-    if (process.env.VOLUTE_AGENT) {
-      try {
-        await daemonFetch(`/api/agents/${encodeURIComponent(agentName)}/history`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ channel: channelUri, content: message }),
-        });
-      } catch (err) {
-        console.error(`Failed to persist to history: ${err instanceof Error ? err.message : err}`);
-      }
-    }
+    console.log("Message sent.");
   }
 }

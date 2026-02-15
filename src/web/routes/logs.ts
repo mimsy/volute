@@ -5,42 +5,67 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { findAgent, stateDir } from "../../lib/registry.js";
 
-const app = new Hono().get("/:name/logs", async (c) => {
-  const name = c.req.param("name");
-  const entry = findAgent(name);
-  if (!entry) return c.json({ error: "Agent not found" }, 404);
+const app = new Hono()
+  .get("/:name/logs", async (c) => {
+    const name = c.req.param("name");
+    const entry = findAgent(name);
+    if (!entry) return c.json({ error: "Agent not found" }, 404);
 
-  const logFile = resolve(stateDir(name), "logs", "agent.log");
+    const logFile = resolve(stateDir(name), "logs", "agent.log");
 
-  if (!existsSync(logFile)) {
-    return c.json({ error: "No log file found" }, 404);
-  }
+    if (!existsSync(logFile)) {
+      return c.json({ error: "No log file found" }, 404);
+    }
 
-  return streamSSE(c, async (stream) => {
-    const tail = spawn("tail", ["-n", "200", "-f", logFile]);
+    return streamSSE(c, async (stream) => {
+      const tail = spawn("tail", ["-n", "200", "-f", logFile]);
 
-    const onData = (data: Buffer) => {
-      const lines = data.toString().split("\n");
-      for (const line of lines) {
-        if (line) {
-          stream.writeSSE({ data: line }).catch(() => {});
+      const onData = (data: Buffer) => {
+        const lines = data.toString().split("\n");
+        for (const line of lines) {
+          if (line) {
+            stream.writeSSE({ data: line }).catch(() => {});
+          }
         }
-      }
-    };
+      };
 
-    tail.stdout.on("data", onData);
+      tail.stdout.on("data", onData);
 
-    // Clean up when client disconnects
-    stream.onAbort(() => {
-      tail.kill();
+      // Clean up when client disconnects
+      stream.onAbort(() => {
+        tail.kill();
+      });
+
+      // Keep stream alive until aborted
+      await new Promise<void>((resolve) => {
+        tail.on("exit", resolve);
+        stream.onAbort(resolve);
+      });
+    });
+  })
+  .get("/:name/logs/tail", async (c) => {
+    const name = c.req.param("name");
+    const entry = findAgent(name);
+    if (!entry) return c.json({ error: "Agent not found" }, 404);
+
+    const logFile = resolve(stateDir(name), "logs", "agent.log");
+    if (!existsSync(logFile)) {
+      return c.json({ error: "No log file found" }, 404);
+    }
+
+    const n = c.req.query("n") ?? "50";
+    const tail = spawn("tail", ["-n", n, logFile]);
+
+    let output = "";
+    tail.stdout.on("data", (data: Buffer) => {
+      output += data.toString();
     });
 
-    // Keep stream alive until aborted
     await new Promise<void>((resolve) => {
       tail.on("exit", resolve);
-      stream.onAbort(resolve);
     });
+
+    return c.text(output);
   });
-});
 
 export default app;

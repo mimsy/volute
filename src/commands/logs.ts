@@ -1,8 +1,5 @@
-import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { resolveAgent, stateDir } from "../lib/registry.js";
 import { resolveAgentName } from "../lib/resolve-agent-name.js";
 
 export async function run(args: string[]) {
@@ -14,16 +11,45 @@ export async function run(args: string[]) {
 
   const name = resolveAgentName(flags);
 
-  resolveAgent(name); // validate agent exists
-  const logFile = resolve(stateDir(name), "logs", "agent.log");
+  if (flags.follow) {
+    const res = await daemonFetch(`/api/agents/${encodeURIComponent(name)}/logs`);
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      console.error(body.error ?? `Server responded with ${res.status}`);
+      process.exit(1);
+    }
 
-  if (!existsSync(logFile)) {
-    console.error(`No log file found. Has ${name} been started?`);
-    process.exit(1);
+    // Parse SSE stream
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop()!;
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            process.stdout.write(line.slice(6) + "\n");
+          }
+        }
+      }
+    } catch {
+      // Stream closed
+    }
+  } else {
+    const n = flags.n ?? 50;
+    const res = await daemonFetch(`/api/agents/${encodeURIComponent(name)}/logs/tail?n=${n}`);
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      console.error(body.error ?? `Server responded with ${res.status}`);
+      process.exit(1);
+    }
+    console.log(await res.text());
   }
-
-  const tailArgs = [`-n`, String(flags.n ?? 50), ...(flags.follow ? ["-f"] : []), logFile];
-
-  const child = spawn("tail", tailArgs, { stdio: "inherit" });
-  child.on("exit", (code) => process.exit(code ?? 0));
 }

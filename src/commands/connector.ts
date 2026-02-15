@@ -1,7 +1,5 @@
 import { daemonFetch } from "../lib/daemon-client.js";
-import { agentEnvPath, readEnv, writeEnv } from "../lib/env.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { agentDir } from "../lib/registry.js";
 import { resolveAgentName } from "../lib/resolve-agent-name.js";
 
 export async function run(args: string[]) {
@@ -105,20 +103,25 @@ async function connectConnector(args: string[]) {
 
       console.error(`${connectorName} connector requires some environment variables.\n`);
 
-      const dir = agentDir(agentName);
-      const envPath = agentEnvPath(dir);
-      const env = readEnv(envPath);
-
       for (const v of missing) {
         const value = await promptValue(v.name, v.description);
         if (!value) {
           console.error(`No value provided for ${v.name}. Aborting.`);
           process.exit(1);
         }
-        env[v.name] = value;
+        const envRes = await daemonFetch(
+          `/api/agents/${encodeURIComponent(agentName)}/env/${encodeURIComponent(v.name)}`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ value }),
+          },
+        );
+        if (!envRes.ok) {
+          console.error(`Failed to set ${v.name}`);
+          process.exit(1);
+        }
       }
-
-      writeEnv(envPath, env);
       console.log("Environment variables saved.\n");
 
       // Retry
