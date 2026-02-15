@@ -1,3 +1,4 @@
+import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgentName } from "../lib/resolve-agent-name.js";
@@ -57,9 +58,13 @@ async function readChannel(args: string[]) {
   const { platform } = parseUri(uri);
   const limit = flags.limit ?? 20;
 
-  const res = await daemonFetch(
-    `/api/agents/${encodeURIComponent(agentName)}/channels/read?platform=${encodeURIComponent(platform)}&uri=${encodeURIComponent(uri)}&limit=${limit}`,
-  );
+  const client = getClient();
+  const url = client.api.agents[":name"].channels.read.$url({ param: { name: agentName } });
+  url.searchParams.set("platform", platform);
+  url.searchParams.set("uri", uri);
+  url.searchParams.set("limit", String(limit));
+
+  const res = await daemonFetch(urlOf(url));
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     console.error(body.error ?? `Server responded with ${res.status}`);
@@ -77,10 +82,11 @@ async function listChannels(args: string[]) {
   const platform = positional[0];
   const agentName = resolveAgentName(flags);
 
-  const url =
-    `/api/agents/${encodeURIComponent(agentName)}/channels/list` +
-    (platform ? `?platform=${encodeURIComponent(platform)}` : "");
-  const res = await daemonFetch(url);
+  const client = getClient();
+  const url = client.api.agents[":name"].channels.list.$url({ param: { name: agentName } });
+  if (platform) url.searchParams.set("platform", platform);
+
+  const res = await daemonFetch(urlOf(url));
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     console.error(body.error ?? `Server responded with ${res.status}`);
@@ -119,9 +125,11 @@ async function listUsers(args: string[]) {
 
   const agentName = resolveAgentName(flags);
 
-  const res = await daemonFetch(
-    `/api/agents/${encodeURIComponent(agentName)}/channels/users?platform=${encodeURIComponent(platform)}`,
-  );
+  const client = getClient();
+  const url = client.api.agents[":name"].channels.users.$url({ param: { name: agentName } });
+  url.searchParams.set("platform", platform);
+
+  const res = await daemonFetch(urlOf(url));
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     console.error(body.error ?? `Server responded with ${res.status}`);
@@ -152,11 +160,15 @@ async function createChannel(args: string[]) {
   const agentName = resolveAgentName(flags);
   const participants = flags.participants.split(",").map((s) => s.trim());
 
-  const res = await daemonFetch(`/api/agents/${encodeURIComponent(agentName)}/channels/create`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ platform, participants, name: flags.name }),
-  });
+  const client = getClient();
+  const res = await daemonFetch(
+    urlOf(client.api.agents[":name"].channels.create.$url({ param: { name: agentName } })),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform, participants, name: flags.name }),
+    },
+  );
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     console.error(body.error ?? `Server responded with ${res.status}`);
@@ -180,9 +192,11 @@ async function typingChannel(args: string[]) {
   const agentName = resolveAgentName(flags);
 
   try {
-    const res = await daemonFetch(
-      `/api/agents/${encodeURIComponent(agentName)}/typing?channel=${encodeURIComponent(uri)}`,
-    );
+    const client = getClient();
+    const url = client.api.agents[":name"].typing.$url({ param: { name: agentName } });
+    url.searchParams.set("channel", uri);
+
+    const res = await daemonFetch(urlOf(url));
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       console.error(body.error ?? `Server responded with ${res.status}`);

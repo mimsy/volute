@@ -1,3 +1,4 @@
+import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgentName } from "../lib/resolve-agent-name.js";
@@ -80,9 +81,14 @@ async function connectConnector(args: string[]) {
     process.exit(1);
   }
 
-  const url = `/api/agents/${encodeURIComponent(agentName)}/connectors/${encodeURIComponent(type)}`;
+  const client = getClient();
+  const connectorUrl = urlOf(
+    client.api.agents[":name"].connectors[":type"].$url({
+      param: { name: agentName, type },
+    }),
+  );
 
-  let res = await daemonFetch(url, { method: "POST" });
+  let res = await daemonFetch(connectorUrl, { method: "POST" });
 
   if (!res.ok) {
     const body = (await res.json().catch(() => ({ error: "Unknown error" }))) as
@@ -110,7 +116,11 @@ async function connectConnector(args: string[]) {
           process.exit(1);
         }
         const envRes = await daemonFetch(
-          `/api/agents/${encodeURIComponent(agentName)}/env/${encodeURIComponent(v.name)}`,
+          urlOf(
+            client.api.agents[":name"].env[":key"].$url({
+              param: { name: agentName, key: v.name },
+            }),
+          ),
           {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
@@ -125,7 +135,7 @@ async function connectConnector(args: string[]) {
       console.log("Environment variables saved.\n");
 
       // Retry
-      res = await daemonFetch(url, { method: "POST" });
+      res = await daemonFetch(connectorUrl, { method: "POST" });
       if (!res.ok) {
         const retryBody = await res.json().catch(() => ({ error: "Unknown error" }));
         console.error(
@@ -155,11 +165,14 @@ async function disconnectConnector(args: string[]) {
     process.exit(1);
   }
 
+  const client = getClient();
   const res = await daemonFetch(
-    `/api/agents/${encodeURIComponent(agentName)}/connectors/${encodeURIComponent(type)}`,
-    {
-      method: "DELETE",
-    },
+    urlOf(
+      client.api.agents[":name"].connectors[":type"].$url({
+        param: { name: agentName, type },
+      }),
+    ),
+    { method: "DELETE" },
   );
 
   if (!res.ok) {

@@ -1,3 +1,4 @@
+import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
 
@@ -48,6 +49,7 @@ export async function run(args: string[]) {
   });
 
   const subcommand = positional[0];
+  const client = getClient();
 
   switch (subcommand) {
     case "set": {
@@ -61,7 +63,11 @@ export async function run(args: string[]) {
       let res: Response;
       if (flags.agent) {
         res = await daemonFetch(
-          `/api/agents/${encodeURIComponent(flags.agent)}/env/${encodeURIComponent(key)}`,
+          urlOf(
+            client.api.agents[":name"].env[":key"].$url({
+              param: { name: flags.agent, key },
+            }),
+          ),
           {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
@@ -69,7 +75,7 @@ export async function run(args: string[]) {
           },
         );
       } else {
-        res = await daemonFetch(`/api/env/${encodeURIComponent(key)}`, {
+        res = await daemonFetch(urlOf(client.api.env[":key"].$url({ param: { key } })), {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ value }),
@@ -93,7 +99,11 @@ export async function run(args: string[]) {
       }
       if (flags.agent) {
         const res = await daemonFetch(
-          `/api/agents/${encodeURIComponent(flags.agent)}/env/${encodeURIComponent(key)}`,
+          urlOf(
+            client.api.agents[":name"].env[":key"].$url({
+              param: { name: flags.agent, key },
+            }),
+          ),
         );
         if (!res.ok) {
           console.error(`${key} not set`);
@@ -102,7 +112,7 @@ export async function run(args: string[]) {
         const data = (await res.json()) as { value: string };
         console.log(data.value);
       } else {
-        const res = await daemonFetch(`/api/env`);
+        const res = await daemonFetch(urlOf(client.api.env.$url()));
         if (!res.ok) {
           console.error(`Failed to read shared env`);
           process.exit(1);
@@ -120,7 +130,9 @@ export async function run(args: string[]) {
 
     case "list": {
       if (flags.agent) {
-        const res = await daemonFetch(`/api/agents/${encodeURIComponent(flags.agent)}/env`);
+        const res = await daemonFetch(
+          urlOf(client.api.agents[":name"].env.$url({ param: { name: flags.agent } })),
+        );
         if (!res.ok) {
           const body = (await res.json().catch(() => ({}))) as { error?: string };
           console.error(body.error ?? "Failed to list env");
@@ -142,7 +154,7 @@ export async function run(args: string[]) {
           console.log(`${key}=${value} [${scope}]`);
         }
       } else {
-        const res = await daemonFetch(`/api/env`);
+        const res = await daemonFetch(urlOf(client.api.env.$url()));
         if (!res.ok) {
           console.error("Failed to list shared env");
           process.exit(1);
@@ -171,11 +183,17 @@ export async function run(args: string[]) {
       let res: Response;
       if (flags.agent) {
         res = await daemonFetch(
-          `/api/agents/${encodeURIComponent(flags.agent)}/env/${encodeURIComponent(key)}`,
+          urlOf(
+            client.api.agents[":name"].env[":key"].$url({
+              param: { name: flags.agent, key },
+            }),
+          ),
           { method: "DELETE" },
         );
       } else {
-        res = await daemonFetch(`/api/env/${encodeURIComponent(key)}`, { method: "DELETE" });
+        res = await daemonFetch(urlOf(client.api.env[":key"].$url({ param: { key } })), {
+          method: "DELETE",
+        });
       }
       if (!res.ok) {
         const scope = flags.agent ? `agent:${flags.agent}` : "shared";

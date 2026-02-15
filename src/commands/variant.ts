@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
@@ -133,11 +134,14 @@ async function createVariant(args: string[]) {
   if (!noStart) {
     if (!json) console.log("Starting variant via daemon...");
     try {
+      const client = getClient();
       const res = await daemonFetch(
-        `/api/agents/${encodeURIComponent(`${agentName}@${variantName}`)}/start`,
-        {
-          method: "POST",
-        },
+        urlOf(
+          client.api.agents[":name"].start.$url({
+            param: { name: `${agentName}@${variantName}` },
+          }),
+        ),
+        { method: "POST" },
       );
       if (!res.ok) {
         const data = (await res.json()) as { error?: string };
@@ -359,11 +363,15 @@ async function mergeVariant(args: string[]) {
   };
   try {
     console.log("Restarting agent via daemon...");
-    const res = await daemonFetch(`/api/agents/${encodeURIComponent(agentName)}/restart`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ context }),
-    });
+    const client = getClient();
+    const res = await daemonFetch(
+      urlOf(client.api.agents[":name"].restart.$url({ param: { name: agentName } })),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ context }),
+      },
+    );
     if (res.ok) {
       console.log(`${agentName} restarted.`);
     } else {
@@ -397,9 +405,15 @@ async function deleteVariant(args: string[]) {
 
   // Stop the variant via daemon if running
   try {
-    await daemonFetch(`/api/agents/${encodeURIComponent(`${agentName}@${variantName}`)}/stop`, {
-      method: "POST",
-    });
+    const client = getClient();
+    await daemonFetch(
+      urlOf(
+        client.api.agents[":name"].stop.$url({
+          param: { name: `${agentName}@${variantName}` },
+        }),
+      ),
+      { method: "POST" },
+    );
   } catch {
     // Daemon not running or variant not running — that's fine
   }

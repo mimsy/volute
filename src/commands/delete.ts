@@ -21,10 +21,13 @@ export async function run(args: string[]) {
 
   // Stop via daemon if running
   try {
+    const { getClient, urlOf } = await import("../lib/api-client.js");
     const { daemonFetch } = await import("../lib/daemon-client.js");
-    const res = await daemonFetch(`/api/agents/${encodeURIComponent(name)}/stop`, {
-      method: "POST",
-    });
+    const client = getClient();
+    const res = await daemonFetch(
+      urlOf(client.api.agents[":name"].stop.$url({ param: { name } })),
+      { method: "POST" },
+    );
     if (res.ok) {
       console.log(`Stopped ${name}.`);
     }

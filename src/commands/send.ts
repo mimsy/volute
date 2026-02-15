@@ -1,4 +1,5 @@
 import { userInfo } from "node:os";
+import { getClient, urlOf } from "../lib/api-client.js";
 import { getChannelDriver } from "../lib/channels.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
@@ -69,11 +70,15 @@ export async function run(args: string[]) {
     // Persist outgoing to agent_messages if sender is a registered agent
     if (agentSelf) {
       try {
-        await daemonFetch(`/api/agents/${encodeURIComponent(agentSelf)}/history`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ channel: channelUri, content: message }),
-        });
+        const client = getClient();
+        await daemonFetch(
+          urlOf(client.api.agents[":name"].history.$url({ param: { name: agentSelf } })),
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ channel: channelUri, content: message }),
+          },
+        );
       } catch (err) {
         console.error(`Failed to persist to history: ${err instanceof Error ? err.message : err}`);
       }
@@ -82,11 +87,15 @@ export async function run(args: string[]) {
     // For all other targets, send through the daemon channel API
     const agentName = resolveAgentName(flags);
 
-    const res = await daemonFetch(`/api/agents/${encodeURIComponent(agentName)}/channels/send`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ platform: parsed.platform, uri: channelUri, message }),
-    });
+    const client = getClient();
+    const res = await daemonFetch(
+      urlOf(client.api.agents[":name"].channels.send.$url({ param: { name: agentName } })),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform: parsed.platform, uri: channelUri, message }),
+      },
+    );
     if (!res.ok) {
       const body = await res.json().catch(() => ({ error: "Unknown error" }));
       console.error((body as { error: string }).error);

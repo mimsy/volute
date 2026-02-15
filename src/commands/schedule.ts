@@ -1,3 +1,4 @@
+import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveAgentName } from "../lib/resolve-agent-name.js";
@@ -46,8 +47,11 @@ async function listSchedules(args: string[]) {
   });
 
   const agent = resolveAgentName(flags);
+  const client = getClient();
 
-  const res = await daemonFetch(`/api/agents/${encodeURIComponent(agent)}/schedules`);
+  const res = await daemonFetch(
+    urlOf(client.api.agents[":name"].schedules.$url({ param: { name: agent } })),
+  );
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
     console.error(data.error ?? `Failed to list schedules: ${res.status}`);
@@ -89,11 +93,15 @@ async function addSchedule(args: string[]) {
   const body: Record<string, string> = { cron: flags.cron, message: flags.message };
   if (flags.id) body.id = flags.id;
 
-  const res = await daemonFetch(`/api/agents/${encodeURIComponent(agent)}/schedules`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const client = getClient();
+  const res = await daemonFetch(
+    urlOf(client.api.agents[":name"].schedules.$url({ param: { name: agent } })),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
 
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
@@ -118,8 +126,13 @@ async function removeSchedule(args: string[]) {
     process.exit(1);
   }
 
+  const client = getClient();
   const res = await daemonFetch(
-    `/api/agents/${encodeURIComponent(agent)}/schedules/${encodeURIComponent(flags.id)}`,
+    urlOf(
+      client.api.agents[":name"].schedules[":id"].$url({
+        param: { name: agent, id: flags.id },
+      }),
+    ),
     { method: "DELETE" },
   );
 
