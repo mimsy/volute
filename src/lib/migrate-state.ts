@@ -23,12 +23,12 @@ export function migrateAgentState(name: string): void {
   const destLogs = resolve(dest, "logs");
   if (existsSync(srcLogs) && !existsSync(destLogs)) {
     mkdirSync(destLogs, { recursive: true });
-    try {
-      for (const file of readdirSync(srcLogs)) {
+    for (const file of readdirSync(srcLogs)) {
+      try {
         copyFileSync(resolve(srcLogs, file), resolve(destLogs, file));
+      } catch (err) {
+        console.error(`[migrate] failed to copy log ${file} for ${name}:`, err);
       }
-    } catch {
-      // Best effort
     }
   }
 }
