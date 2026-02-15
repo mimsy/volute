@@ -3,7 +3,7 @@ import { CHANNELS, getChannelDriver } from "../lib/channels.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { loadMergedEnv } from "../lib/env.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { resolveAgent } from "../lib/registry.js";
+import { agentDir } from "../lib/registry.js";
 import { resolveAgentName } from "../lib/resolve-agent-name.js";
 
 export async function run(args: string[]) {
@@ -60,8 +60,8 @@ async function readChannel(args: string[]) {
   const agentName = resolveAgentName(flags);
   const { platform } = parseUri(uri);
   const driver = requireDriver(platform);
-  const { dir } = resolveAgent(agentName);
-  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName, VOLUTE_AGENT_DIR: dir };
+  const dir = agentDir(agentName);
+  const env = { ...loadMergedEnv(agentName), VOLUTE_AGENT: agentName, VOLUTE_AGENT_DIR: dir };
 
   try {
     const limit = flags.limit ?? 20;
@@ -80,8 +80,8 @@ async function listChannels(args: string[]) {
 
   const platform = positional[0];
   const agentName = resolveAgentName(flags);
-  const { dir } = resolveAgent(agentName);
-  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName, VOLUTE_AGENT_DIR: dir };
+  const dir = agentDir(agentName);
+  const env = { ...loadMergedEnv(agentName), VOLUTE_AGENT: agentName, VOLUTE_AGENT_DIR: dir };
 
   const platforms = platform ? [platform] : Object.keys(CHANNELS);
 
@@ -93,7 +93,7 @@ async function listChannels(args: string[]) {
       const convs = await driver.listConversations(env);
       for (const conv of convs) {
         // Populate channels.json with slug -> platformId mapping
-        writeChannelEntry(dir, conv.id, {
+        writeChannelEntry(agentName, conv.id, {
           platformId: conv.platformId,
           platform: p,
           name: conv.name,
@@ -130,8 +130,8 @@ async function listUsers(args: string[]) {
   }
 
   const agentName = resolveAgentName(flags);
-  const { dir } = resolveAgent(agentName);
-  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName, VOLUTE_AGENT_DIR: dir };
+  const dir = agentDir(agentName);
+  const env = { ...loadMergedEnv(agentName), VOLUTE_AGENT: agentName, VOLUTE_AGENT_DIR: dir };
 
   try {
     const users = await driver.listUsers(env);
@@ -166,8 +166,8 @@ async function createChannel(args: string[]) {
   }
 
   const agentName = resolveAgentName(flags);
-  const { dir } = resolveAgent(agentName);
-  const env = { ...loadMergedEnv(dir), VOLUTE_AGENT: agentName, VOLUTE_AGENT_DIR: dir };
+  const dir = agentDir(agentName);
+  const env = { ...loadMergedEnv(agentName), VOLUTE_AGENT: agentName, VOLUTE_AGENT_DIR: dir };
   const participants = flags.participants.split(",").map((s) => s.trim());
 
   try {

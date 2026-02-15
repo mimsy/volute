@@ -346,27 +346,23 @@ async function mergeVariant(args: string[]) {
 
   console.log(`Variant ${variantName} merged and cleaned up.`);
 
-  // Write merged.json for post-restart orientation
-  const voluteDir = resolve(projectRoot, ".volute");
-  if (!existsSync(voluteDir)) mkdirSync(voluteDir, { recursive: true });
-  writeFileSync(
-    resolve(voluteDir, "merged.json"),
-    JSON.stringify({
-      name: variantName,
-      ...(flags.summary && { summary: flags.summary }),
-      ...(flags.justification && { justification: flags.justification }),
-      ...(flags.memory && { memory: flags.memory }),
-    }),
-  );
-
-  // If running under daemon (VOLUTE_SUPERVISOR env), the daemon handles restart
+  // If running under daemon (VOLUTE_SUPERVISOR env), the daemon handles restart and context delivery
   if (process.env.VOLUTE_SUPERVISOR) return;
 
-  // Restart agent via daemon API
+  // Restart agent via daemon API with merge context
+  const context = {
+    type: "merged",
+    name: variantName,
+    ...(flags.summary && { summary: flags.summary }),
+    ...(flags.justification && { justification: flags.justification }),
+    ...(flags.memory && { memory: flags.memory }),
+  };
   try {
     console.log("Restarting agent via daemon...");
     const res = await daemonFetch(`/api/agents/${encodeURIComponent(agentName)}/restart`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ context }),
     });
     if (res.ok) {
       console.log(`${agentName} restarted.`);

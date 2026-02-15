@@ -20,10 +20,10 @@ function tsxBin(cwd: string): string {
 export function spawnServer(
   cwd: string,
   port: number,
-  options?: { detached?: boolean },
+  options?: { detached?: boolean; logDir?: string },
 ): Promise<SpawnResult> {
   if (options?.detached) {
-    return spawnDetached(cwd, port);
+    return spawnDetached(cwd, port, options.logDir);
   }
   return spawnAttached(cwd, port);
 }
@@ -64,8 +64,8 @@ function spawnAttached(cwd: string, port: number): Promise<SpawnResult> {
  * Spawn with stdout/stderr redirected to a log file, then detect the port
  * by reading the log. The child survives parent exit and continues logging.
  */
-function spawnDetached(cwd: string, port: number): Promise<SpawnResult> {
-  const logsDir = resolve(cwd, ".volute", "logs");
+function spawnDetached(cwd: string, port: number, logDir?: string): Promise<SpawnResult> {
+  const logsDir = logDir ?? resolve(cwd, ".volute", "logs");
   mkdirSync(logsDir, { recursive: true });
   const logPath = resolve(logsDir, "agent.log");
   const logFd = openSync(logPath, "a");

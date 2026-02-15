@@ -1,4 +1,4 @@
-import { resolveChannelId as resolveChannelIdByDir } from "../connectors/sdk.js";
+import { resolveChannelId as resolveChannelIdByName } from "../connectors/sdk.js";
 import * as discord from "./channels/discord.js";
 import * as slack from "./channels/slack.js";
 import * as telegram from "./channels/telegram.js";
@@ -86,10 +86,10 @@ export function getChannelDriver(platform: string): ChannelDriver | null {
 /** Resolve a channel slug (e.g. "discord:my-server/general") to its platform ID via channels.json.
  *  Falls back to the slug suffix (part after colon) if not found. */
 export function resolveChannelId(env: Record<string, string>, slug: string): string {
-  const agentDir = env.VOLUTE_AGENT_DIR;
-  if (!agentDir) {
+  const agentName = env.VOLUTE_AGENT;
+  if (!agentName) {
     const colonIdx = slug.indexOf(":");
     return colonIdx !== -1 ? slug.slice(colonIdx + 1) : slug;
   }
-  return resolveChannelIdByDir(agentDir, slug);
+  return resolveChannelIdByName(agentName, slug);
 }

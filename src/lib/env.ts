@@ -1,13 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { voluteHome } from "./registry.js";
+import { stateDir, voluteHome } from "./registry.js";
 
 export function sharedEnvPath(): string {
   return resolve(voluteHome(), "env.json");
 }
 
-export function agentEnvPath(agentDir: string): string {
-  return resolve(agentDir, ".volute", "env.json");
+export function agentEnvPath(agentName: string): string {
+  return resolve(stateDir(agentName), "env.json");
 }
 
 export function readEnv(path: string): Record<string, string> {
@@ -24,8 +24,8 @@ export function writeEnv(path: string, env: Record<string, string>): void {
   writeFileSync(path, `${JSON.stringify(env, null, 2)}\n`, { mode: 0o600 });
 }
 
-export function loadMergedEnv(agentDir: string): Record<string, string> {
+export function loadMergedEnv(agentName: string): Record<string, string> {
   const shared = readEnv(sharedEnvPath());
-  const agent = readEnv(agentEnvPath(agentDir));
+  const agent = readEnv(agentEnvPath(agentName));
   return { ...shared, ...agent };
 }

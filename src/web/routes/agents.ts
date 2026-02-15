@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
+import { promisify } from "node:util";
 import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { getAgentManager } from "../../lib/agent-manager.js";
@@ -7,14 +9,52 @@ import { deleteAgentUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { getConnectorManager } from "../../lib/connector-manager.js";
 import { getDb } from "../../lib/db.js";
-import { agentDir, findAgent, readRegistry, removeAgent, voluteHome } from "../../lib/registry.js";
+import {
+  agentDir,
+  findAgent,
+  readRegistry,
+  removeAgent,
+  stateDir,
+  voluteHome,
+} from "../../lib/registry.js";
 import { getScheduler } from "../../lib/scheduler.js";
 import { agentMessages } from "../../lib/schema.js";
 import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "../../lib/token-budget.js";
 import { getTypingMap } from "../../lib/typing.js";
-import { checkHealth, findVariant, readVariants, removeAllVariants } from "../../lib/variants.js";
+import {
+  checkHealth,
+  findVariant,
+  readVariants,
+  removeAllVariants,
+  validateBranchName,
+} from "../../lib/variants.js";
 import { readVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
+
+const execFileAsync = promisify(execFile);
+
+/** Start agent server and (for base agents) connectors, schedules, and token budget. */
+async function startAgentFull(
+  name: string,
+  baseName: string,
+  variantName: string | undefined,
+): Promise<void> {
+  await getAgentManager().startAgent(name);
+  if (variantName) return;
+
+  const dir = agentDir(baseName);
+  const entry = findAgent(baseName)!;
+  await getConnectorManager().startConnectors(baseName, dir, entry.port, getDaemonPort());
+  getScheduler().loadSchedules(baseName);
+  const config = readVoluteConfig(dir);
+  if (config?.tokenBudget) {
+    getTokenBudget().setBudget(
+      baseName,
+      config.tokenBudget,
+      config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
+    );
+  }
+}
 
 function extractTextContent(content: unknown): string {
   if (typeof content === "string") return content;
@@ -139,33 +179,19 @@ const app = new Hono<AuthEnv>()
       if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
     }
 
-    const manager = getAgentManager();
-    if (manager.isRunning(name)) {
+    if (getAgentManager().isRunning(name)) {
       return c.json({ error: "Agent already running" }, 409);
     }
 
     try {
-      await manager.startAgent(name);
-      // Only start connectors/schedules for base agents, not variants
-      if (!variantName) {
-        const dir = agentDir(baseName);
-        await getConnectorManager().startConnectors(baseName, dir, entry.port, getDaemonPort());
-        getScheduler().loadSchedules(baseName);
-        const config = readVoluteConfig(dir);
-        if (config?.tokenBudget) {
-          getTokenBudget().setBudget(
-            baseName,
-            config.tokenBudget,
-            config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
-          );
-        }
-      }
+      await startAgentFull(name, baseName, variantName);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to start agent" }, 500);
     }
   })
   // Restart agent (supports name@variant) — admin only
+  // Accepts optional JSON body: { context?: { type: string, name?: string, summary?: string, ... } }
   .post("/:name/restart", requireAdmin, async (c) => {
     const name = c.req.param("name");
     const [baseName, variantName] = name.split("@", 2);
@@ -181,32 +207,61 @@ const app = new Hono<AuthEnv>()
       if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
     }
 
+    // Parse optional context from request body
+    let context: Record<string, unknown> | undefined;
+    const contentType = c.req.header("content-type");
+    if (contentType?.includes("application/json")) {
+      try {
+        const body = await c.req.json();
+        if (body?.context) context = body.context as Record<string, unknown>;
+      } catch (err) {
+        console.error(`[daemon] failed to parse restart context for ${name}:`, err);
+      }
+    }
+
     const manager = getAgentManager();
-    const connectorManager = getConnectorManager();
 
     try {
+      // Stop running agent and connectors
       if (manager.isRunning(name)) {
         if (!variantName) {
-          await connectorManager.stopConnectors(baseName);
+          await getConnectorManager().stopConnectors(baseName);
           getTokenBudget().removeBudget(baseName);
         }
         await manager.stopAgent(name);
       }
 
-      await manager.startAgent(name);
-      if (!variantName) {
-        const dir = agentDir(baseName);
-        await connectorManager.startConnectors(baseName, dir, entry.port, getDaemonPort());
-        getScheduler().loadSchedules(baseName);
-        const config = readVoluteConfig(dir);
-        if (config?.tokenBudget) {
-          getTokenBudget().setBudget(
-            baseName,
-            config.tokenBudget,
-            config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
-          );
+      // Handle agent-initiated merge: run merge subprocess before restart
+      if (context?.type === "merge" && context.name && !variantName) {
+        const mergeVariantName = String(context.name);
+        const branchErr = validateBranchName(mergeVariantName);
+        if (branchErr) {
+          return c.json({ error: `Invalid variant name: ${branchErr}` }, 400);
         }
+        console.error(`[daemon] merging variant for ${baseName}: ${mergeVariantName}`);
+        const mergeArgs = [
+          "variant",
+          "merge",
+          mergeVariantName,
+          "--agent",
+          baseName,
+          "--skip-verify",
+        ];
+        if (context.summary) mergeArgs.push("--summary", String(context.summary));
+        if (context.justification) mergeArgs.push("--justification", String(context.justification));
+        if (context.memory) mergeArgs.push("--memory", String(context.memory));
+        await execFileAsync("volute", mergeArgs, {
+          cwd: agentDir(baseName),
+          env: { ...process.env, VOLUTE_SUPERVISOR: "1" },
+        });
       }
+
+      // Store context for delivery after restart
+      if (context) {
+        manager.setPendingContext(name, context);
+      }
+
+      await startAgentFull(name, baseName, variantName);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to restart agent" }, 500);
@@ -262,6 +317,12 @@ const app = new Hono<AuthEnv>()
     removeAllVariants(name);
     removeAgent(name);
     await deleteAgentUser(name);
+
+    // Clean up centralized state directory (logs, env, channels)
+    const state = stateDir(name);
+    if (existsSync(state)) {
+      rmSync(state, { recursive: true, force: true });
+    }
 
     if (force && existsSync(dir)) {
       rmSync(dir, { recursive: true, force: true });

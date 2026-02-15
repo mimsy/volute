@@ -1,11 +1,11 @@
 import { agentEnvPath, loadMergedEnv, readEnv, sharedEnvPath, writeEnv } from "../lib/env.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { resolveAgent } from "../lib/registry.js";
+import { findAgent } from "../lib/registry.js";
 
 function getEnvPath(agentName: string | undefined): string {
   if (agentName) {
-    const { dir } = resolveAgent(agentName);
-    return agentEnvPath(dir);
+    if (!findAgent(agentName)) throw new Error(`Unknown agent: ${agentName}`);
+    return agentEnvPath(agentName);
   }
   return sharedEnvPath();
 }
@@ -82,8 +82,7 @@ export async function run(args: string[]) {
         process.exit(1);
       }
       if (flags.agent) {
-        const { dir } = resolveAgent(flags.agent);
-        const merged = loadMergedEnv(dir);
+        const merged = loadMergedEnv(flags.agent);
         if (key in merged) {
           console.log(merged[key]);
         } else {
@@ -104,9 +103,8 @@ export async function run(args: string[]) {
 
     case "list": {
       if (flags.agent) {
-        const { dir } = resolveAgent(flags.agent);
         const shared = readEnv(sharedEnvPath());
-        const agent = readEnv(agentEnvPath(dir));
+        const agent = readEnv(agentEnvPath(flags.agent));
         const allKeys = new Set([...Object.keys(shared), ...Object.keys(agent)]);
         if (allKeys.size === 0) {
           console.log("No environment variables set.");

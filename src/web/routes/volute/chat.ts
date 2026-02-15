@@ -16,7 +16,7 @@ import {
   getParticipants,
   isParticipantOrOwner,
 } from "../../../lib/conversations.js";
-import { agentDir, daemonLoopback, findAgent, voluteHome } from "../../../lib/registry.js";
+import { daemonLoopback, findAgent, voluteHome } from "../../../lib/registry.js";
 import { slugify } from "../../../lib/slugify.js";
 import { getTypingMap } from "../../../lib/typing.js";
 import type { AuthEnv } from "../../middleware/auth.js";
@@ -165,7 +165,7 @@ const app = new Hono<AuthEnv>()
     };
     for (const ap of agentParticipants) {
       try {
-        writeChannelEntry(agentDir(ap.username), channel, channelEntry);
+        writeChannelEntry(ap.username, channel, channelEntry);
       } catch (err) {
         console.warn(`[chat] failed to write channel entry for ${ap.username}:`, err);
       }

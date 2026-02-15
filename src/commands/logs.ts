@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "../lib/parse-args.js";
-import { resolveAgent } from "../lib/registry.js";
+import { resolveAgent, stateDir } from "../lib/registry.js";
 import { resolveAgentName } from "../lib/resolve-agent-name.js";
 
 export async function run(args: string[]) {
@@ -14,8 +14,8 @@ export async function run(args: string[]) {
 
   const name = resolveAgentName(flags);
 
-  const { dir } = resolveAgent(name);
-  const logFile = resolve(dir, ".volute", "logs", "agent.log");
+  resolveAgent(name); // validate agent exists
+  const logFile = resolve(stateDir(name), "logs", "agent.log");
 
   if (!existsSync(logFile)) {
     console.error(`No log file found. Has ${name} been started?`);

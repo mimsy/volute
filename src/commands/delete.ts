@@ -2,7 +2,7 @@ import { existsSync, rmSync } from "node:fs";
 import { deleteAgentUser as deleteAgentDbUser } from "../lib/auth.js";
 import { deleteAgentUser } from "../lib/isolation.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { agentDir, findAgent, removeAgent } from "../lib/registry.js";
+import { agentDir, findAgent, removeAgent, stateDir } from "../lib/registry.js";
 import { resolveAgentName } from "../lib/resolve-agent-name.js";
 import { removeAllVariants } from "../lib/variants.js";
 
@@ -39,6 +39,12 @@ export async function run(args: string[]) {
   removeAgent(name);
   await deleteAgentDbUser(name);
   console.log(`Removed ${name} from registry.`);
+
+  // Clean up state dir
+  const state = stateDir(name);
+  if (existsSync(state)) {
+    rmSync(state, { recursive: true, force: true });
+  }
 
   // Delete directory
   if (existsSync(dir)) {

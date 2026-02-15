@@ -97,6 +97,10 @@ export function agentDir(name: string): string {
   return resolve(voluteHome(), "agents", name);
 }
 
+export function stateDir(name: string): string {
+  return resolve(voluteHome(), "state", name);
+}
+
 export function nextPort(): number {
   const entries = readRegistry();
   const usedPorts = new Set(entries.map((e) => e.port));

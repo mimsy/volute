@@ -85,7 +85,7 @@ export async function run(args: string[]) {
     const agentName = resolveAgentName(flags);
     const { dir } = resolveAgent(agentName);
     const env = {
-      ...loadMergedEnv(dir),
+      ...loadMergedEnv(agentName),
       VOLUTE_AGENT: agentName,
       VOLUTE_AGENT_DIR: dir,
     };

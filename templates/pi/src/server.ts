@@ -4,7 +4,6 @@ import { createFileHandlerResolver } from "./lib/file-handler.js";
 import { log } from "./lib/logger.js";
 import { createRouter } from "./lib/router.js";
 import {
-  handleMergeContext,
   handleStartupContext,
   loadConfig,
   loadPackageInfo,
@@ -47,14 +46,9 @@ server.listen(port, async () => {
   const addr = server.address();
   const actualPort = typeof addr === "object" && addr ? addr.port : port;
   log("server", `listening on :${actualPort}`);
-  const hasMerge = handleMergeContext((content) =>
+  await handleStartupContext((content) =>
     router.route([{ type: "text", text: content }], { channel: "system" }),
   );
-  if (!hasMerge) {
-    await handleStartupContext((content) =>
-      router.route([{ type: "text", text: content }], { channel: "system" }),
-    );
-  }
 });
 
 setupShutdown();

@@ -189,9 +189,8 @@ export async function createConversation(
   const conv = (await res.json()) as { id: string };
   const slug = name ? `volute:${slugify(name)}` : `volute:${conv.id}`;
 
-  const agentDir = env.VOLUTE_AGENT_DIR;
-  if (agentDir) {
-    writeChannelEntry(agentDir, slug, {
+  if (agentName) {
+    writeChannelEntry(agentName, slug, {
       platformId: conv.id,
       platform: "volute",
       name: name ?? participants.join(", "),

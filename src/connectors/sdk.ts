@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { stateDir } from "../lib/registry.js";
 import { slugify } from "../lib/slugify.js";
 
 export { slugify } from "../lib/slugify.js";
@@ -184,8 +185,8 @@ export function buildChannelSlug(platform: string, meta: ChannelSlugMeta): strin
   return `${platform}:unknown`;
 }
 
-export function readChannelMap(agentDir: string): Record<string, ChannelEntry> {
-  const filePath = join(agentDir, ".volute", "channels.json");
+export function readChannelMap(agentName: string): Record<string, ChannelEntry> {
+  const filePath = join(stateDir(agentName), "channels.json");
   if (!existsSync(filePath)) return {};
   try {
     return JSON.parse(readFileSync(filePath, "utf-8"));
@@ -195,17 +196,17 @@ export function readChannelMap(agentDir: string): Record<string, ChannelEntry> {
   }
 }
 
-export function writeChannelEntry(agentDir: string, slug: string, entry: ChannelEntry): void {
-  const voluteDir = join(agentDir, ".volute");
-  mkdirSync(voluteDir, { recursive: true });
-  const filePath = join(voluteDir, "channels.json");
-  const map = readChannelMap(agentDir);
+export function writeChannelEntry(agentName: string, slug: string, entry: ChannelEntry): void {
+  const dir = stateDir(agentName);
+  mkdirSync(dir, { recursive: true });
+  const filePath = join(dir, "channels.json");
+  const map = readChannelMap(agentName);
   map[slug] = entry;
   writeFileSync(filePath, JSON.stringify(map, null, 2) + "\n");
 }
 
-export function resolveChannelId(agentDir: string, slug: string): string {
-  const map = readChannelMap(agentDir);
+export function resolveChannelId(agentName: string, slug: string): string {
+  const map = readChannelMap(agentName);
   if (map[slug]) {
     return map[slug].platformId;
   }

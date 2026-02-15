@@ -74,13 +74,15 @@ bot.on(message("text"), async (ctx) => {
         channelName: chatTitle ?? String(ctx.chat.id),
       });
 
-  if (env.agentDir) {
-    writeChannelEntry(env.agentDir, channelSlug, {
+  try {
+    writeChannelEntry(env.agentName, channelSlug, {
       platformId: String(ctx.chat.id),
       platform: "telegram",
       name: chatTitle,
       type: isDM ? "dm" : "channel",
     });
+  } catch (err) {
+    console.error(`[telegram] failed to write channel entry for ${channelSlug}:`, err);
   }
 
   const payload: AgentPayload = {
@@ -162,13 +164,15 @@ bot.on(message("photo"), async (ctx) => {
         channelName: chatTitle ?? String(ctx.chat.id),
       });
 
-  if (env.agentDir) {
-    writeChannelEntry(env.agentDir, channelSlug, {
+  try {
+    writeChannelEntry(env.agentName, channelSlug, {
       platformId: String(ctx.chat.id),
       platform: "telegram",
       name: chatTitle,
       type: isDM ? "dm" : "channel",
     });
+  } catch (err) {
+    console.error(`[telegram] failed to write channel entry for ${channelSlug}:`, err);
   }
 
   const payload: AgentPayload = {

@@ -113,14 +113,16 @@ app.message(async ({ message }) => {
         serverName,
       });
 
-  if (env.agentDir) {
-    writeChannelEntry(env.agentDir, channelKey, {
+  try {
+    writeChannelEntry(env.agentName, channelKey, {
       platformId: message.channel,
       platform: "slack",
       name: channelName ? `#${channelName}` : undefined,
       server: serverName,
       type: isDM ? "dm" : "channel",
     });
+  } catch (err) {
+    console.error(`[slack] failed to write channel entry for ${channelKey}:`, err);
   }
 
   const participantCount = message.channel_type === "im" ? 2 : numMembers;
