@@ -13,7 +13,7 @@ export function isIsolationEnabled(): boolean {
 export function agentUserName(agentName: string): string {
   const err = validateAgentName(agentName);
   if (err) throw new Error(`Invalid agent name for isolation: ${err}`);
-  const prefix = process.env.VOLUTE_USER_PREFIX ?? "volute-";
+  const prefix = process.env.VOLUTE_USER_PREFIX ?? "agent-";
   return `${prefix}${agentName}`;
 }
 

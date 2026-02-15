@@ -7,6 +7,7 @@ import { parseArgs } from "../lib/parse-args.js";
 const SERVICE_NAME = "volute.service";
 const SERVICE_PATH = `/etc/systemd/system/${SERVICE_NAME}`;
 const DATA_DIR = "/var/lib/volute";
+const AGENTS_DIR = "/agents";
 const HOST_RE = /^[a-zA-Z0-9.:_-]+$/;
 
 function validateHost(host: string): void {
@@ -28,6 +29,7 @@ After=network.target
 Type=exec
 ExecStart=${voluteBin} ${args.join(" ")}
 Environment=VOLUTE_HOME=${DATA_DIR}
+Environment=VOLUTE_AGENTS_DIR=${AGENTS_DIR}
 Environment=VOLUTE_ISOLATION=user
 Restart=on-failure
 RestartSec=5
@@ -56,13 +58,18 @@ function install(port?: number, host?: string): void {
   mkdirSync(DATA_DIR, { recursive: true });
   console.log(`Created ${DATA_DIR}`);
 
+  // Create agents directory
+  mkdirSync(AGENTS_DIR, { recursive: true });
+  console.log(`Created ${AGENTS_DIR}`);
+
   // Create volute group (idempotent)
   ensureVoluteGroup({ force: true });
   console.log("Ensured volute group exists");
 
-  // Set permissions on data directory
+  // Set permissions on data and agents directories
   execFileSync("chmod", ["755", DATA_DIR]);
-  console.log("Set permissions on data directory");
+  execFileSync("chmod", ["755", AGENTS_DIR]);
+  console.log("Set permissions on directories");
 
   // Install systemd service
   writeFileSync(SERVICE_PATH, generateUnit(voluteBin, port, host ?? "0.0.0.0"));
@@ -117,10 +124,14 @@ function uninstall(force: boolean): void {
       // Group may not exist — ignore
     }
 
-    // Remove data directory
+    // Remove data and agents directories
     if (existsSync(DATA_DIR)) {
       rmSync(DATA_DIR, { recursive: true, force: true });
       console.log(`Deleted ${DATA_DIR}`);
+    }
+    if (existsSync(AGENTS_DIR)) {
+      rmSync(AGENTS_DIR, { recursive: true, force: true });
+      console.log(`Deleted ${AGENTS_DIR}`);
     }
 
     // Remove group

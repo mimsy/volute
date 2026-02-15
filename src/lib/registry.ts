@@ -29,7 +29,8 @@ export type AgentEntry = {
 };
 
 export function ensureVoluteHome() {
-  mkdirSync(resolve(voluteHome(), "agents"), { recursive: true });
+  const agentsBase = process.env.VOLUTE_AGENTS_DIR ?? resolve(voluteHome(), "agents");
+  mkdirSync(agentsBase, { recursive: true });
 }
 
 export function readRegistry(): AgentEntry[] {
@@ -94,6 +95,9 @@ export function findAgent(name: string): AgentEntry | undefined {
 }
 
 export function agentDir(name: string): string {
+  if (process.env.VOLUTE_AGENTS_DIR) {
+    return resolve(process.env.VOLUTE_AGENTS_DIR, name);
+  }
   return resolve(voluteHome(), "agents", name);
 }
 
