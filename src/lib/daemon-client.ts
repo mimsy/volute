@@ -7,20 +7,36 @@ type DaemonConfig = { port: number; hostname?: string; token?: string };
 function readDaemonConfig(): DaemonConfig {
   const configPath = resolve(voluteHome(), "daemon.json");
   if (!existsSync(configPath)) {
-    console.error("Volute is not running. Start with: volute up");
+    // If a system service is installed, the issue is likely VOLUTE_HOME not being set
+    if (existsSync("/etc/systemd/system/volute.service") && !process.env.VOLUTE_HOME) {
+      console.error("Volute is running as a system service but VOLUTE_HOME is not set.");
+      console.error("Re-run setup to update the CLI wrapper: sudo volute setup");
+      console.error("Then start a new shell or run: source /etc/profile.d/volute.sh");
+    } else {
+      console.error("Volute is not running. Start with: volute up");
+    }
     process.exit(1);
   }
   try {
     return JSON.parse(readFileSync(configPath, "utf-8"));
-  } catch {
-    console.error("Volute is not running. Start with: volute up");
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EACCES") {
+      console.error(`Permission denied reading ${configPath}. Try: sudo volute ...`);
+    } else {
+      console.error("Volute is not running. Start with: volute up");
+    }
     process.exit(1);
   }
 }
 
 function buildUrl(config: DaemonConfig): string {
   const url = new URL("http://localhost");
-  url.hostname = config.hostname || "localhost";
+  let hostname = config.hostname || "localhost";
+  // Map bind-all addresses to loopback for connections
+  if (hostname === "0.0.0.0") hostname = "127.0.0.1";
+  if (hostname === "::") hostname = "[::1]";
+  url.hostname = hostname;
   url.port = String(config.port);
   return url.origin;
 }
