@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname } from "node:path";
 import { resolveVoluteBin } from "../lib/exec.js";
 import { ensureVoluteGroup } from "../lib/isolation.js";
 import { parseArgs } from "../lib/parse-args.js";
@@ -16,32 +18,60 @@ function validateHost(host: string): void {
   }
 }
 
+function buildServicePath(voluteBin: string): string {
+  // Include the volute binary's directory (which for nvm installs won't be on the
+  // default system PATH) plus standard paths for system tools (useradd, groupadd, etc.)
+  const binDir = dirname(voluteBin);
+  const standardPaths = [
+    "/usr/local/sbin",
+    "/usr/local/bin",
+    "/usr/sbin",
+    "/usr/bin",
+    "/sbin",
+    "/bin",
+  ];
+  const parts = standardPaths.includes(binDir) ? standardPaths : [binDir, ...standardPaths];
+  return parts.join(":");
+}
+
 function generateUnit(voluteBin: string, port?: number, host?: string): string {
   const args = ["up", "--foreground"];
   if (port != null) args.push("--port", String(port));
   if (host) args.push("--host", host);
 
-  return `[Unit]
-Description=Volute Agent Manager
-After=network.target
+  // ProtectHome=yes makes /home and /root inaccessible to the service.
+  // Skip it if the volute binary lives under the home directory (e.g. nvm installs).
+  const home = homedir();
+  const binUnderHome = voluteBin.startsWith(`${home}/`);
 
-[Service]
-Type=exec
-ExecStart=${voluteBin} ${args.join(" ")}
-Environment=VOLUTE_HOME=${DATA_DIR}
-Environment=VOLUTE_AGENTS_DIR=${AGENTS_DIR}
-Environment=VOLUTE_ISOLATION=user
-Restart=on-failure
-RestartSec=5
-ProtectSystem=strict
-ReadWritePaths=${DATA_DIR} ${AGENTS_DIR}
-PrivateTmp=yes
-ProtectHome=yes
-RestrictSUIDSGID=yes
+  const lines = [
+    "[Unit]",
+    "Description=Volute Agent Manager",
+    "After=network.target",
+    "",
+    "[Service]",
+    "Type=exec",
+    `ExecStart=${voluteBin} ${args.join(" ")}`,
+    `Environment=PATH=${buildServicePath(voluteBin)}`,
+    `Environment=VOLUTE_HOME=${DATA_DIR}`,
+    `Environment=VOLUTE_AGENTS_DIR=${AGENTS_DIR}`,
+    "Environment=VOLUTE_ISOLATION=user",
+    "Restart=on-failure",
+    "RestartSec=5",
+    "ProtectSystem=strict",
+    `ReadWritePaths=${DATA_DIR} ${AGENTS_DIR}`,
+    "PrivateTmp=yes",
+  ];
 
-[Install]
-WantedBy=multi-user.target
-`;
+  if (!binUnderHome) {
+    lines.push("ProtectHome=yes");
+  } else {
+    console.warn(`Warning: ProtectHome=yes omitted because volute binary is under ${home}.`);
+    console.warn("Consider installing Node.js system-wide for stronger sandboxing.");
+  }
+
+  lines.push("RestrictSUIDSGID=yes", "", "[Install]", "WantedBy=multi-user.target", "");
+  return lines.join("\n");
 }
 
 function install(port?: number, host?: string): void {
@@ -80,11 +110,29 @@ function install(port?: number, host?: string): void {
   writeFileSync(SERVICE_PATH, generateUnit(voluteBin, port, host ?? "0.0.0.0"));
   console.log(`Wrote ${SERVICE_PATH}`);
 
-  execFileSync("systemctl", ["daemon-reload"]);
-  execFileSync("systemctl", ["enable", "--now", SERVICE_NAME]);
-  console.log("Service installed, enabled, and started.");
-  console.log(`\nVolute daemon is running. Data directory: ${DATA_DIR}`);
-  console.log("Use `systemctl status volute` to check status.");
+  try {
+    execFileSync("systemctl", ["daemon-reload"]);
+  } catch (err) {
+    const e = err as { stderr?: string };
+    console.error(`Failed to reload systemd after writing ${SERVICE_PATH}.`);
+    if (e.stderr) console.error(e.stderr.toString().trim());
+    console.error(
+      "Try running `systemctl daemon-reload` manually, then `systemctl enable --now volute`.",
+    );
+    process.exit(1);
+  }
+  try {
+    execFileSync("systemctl", ["enable", "--now", SERVICE_NAME]);
+    console.log("Service installed, enabled, and started.");
+    console.log(`\nVolute daemon is running. Data directory: ${DATA_DIR}`);
+    console.log("Use `systemctl status volute` to check status.");
+  } catch (err) {
+    const e = err as { stderr?: string };
+    console.error("Service installed but failed to start.");
+    if (e.stderr) console.error(e.stderr.toString().trim());
+    console.error("Check `journalctl -xeu volute.service` for details.");
+    process.exit(1);
+  }
 }
 
 function uninstall(force: boolean): void {
