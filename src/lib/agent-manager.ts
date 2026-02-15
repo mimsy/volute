@@ -158,10 +158,11 @@ export class AgentManager {
   private async deliverPendingContext(name: string): Promise<void> {
     const context = this.pendingContext.get(name);
     if (!context) return;
-    this.pendingContext.delete(name);
 
     const tracked = this.agents.get(name);
     if (!tracked) return;
+
+    this.pendingContext.delete(name);
 
     const parts: string[] = [];
     if (context.type === "merge" || context.type === "merged") {

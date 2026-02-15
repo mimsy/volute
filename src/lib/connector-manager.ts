@@ -249,7 +249,9 @@ export class ConnectorManager {
     this.restartAttempts.delete(stopKey);
     try {
       this.removeConnectorPid(agentName, type);
-    } catch {}
+    } catch (err) {
+      console.error(`[daemon] failed to remove PID file for ${type}/${agentName}:`, err);
+    }
     console.error(`[daemon] stopped connector ${type} for ${agentName}`);
   }
 

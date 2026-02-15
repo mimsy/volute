@@ -110,13 +110,17 @@ client.on(Events.MessageCreate, async (message) => {
         serverName: message.guild?.name,
       });
 
-  writeChannelEntry(env.agentName, channelKey, {
-    platformId: message.channelId,
-    platform: "discord",
-    name: channelName ? `#${channelName}` : undefined,
-    server: message.guild?.name,
-    type: isDM ? "dm" : "channel",
-  });
+  try {
+    writeChannelEntry(env.agentName, channelKey, {
+      platformId: message.channelId,
+      platform: "discord",
+      name: channelName ? `#${channelName}` : undefined,
+      server: message.guild?.name,
+      type: isDM ? "dm" : "channel",
+    });
+  } catch (err) {
+    console.error(`[discord] failed to write channel entry for ${channelKey}:`, err);
+  }
 
   // Determine participant count: DMs are always 1:1 for bots, guild channels use memberCount
   const participantCount = isDM ? 2 : message.guild?.memberCount;

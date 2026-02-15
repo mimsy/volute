@@ -9,7 +9,14 @@ import { deleteAgentUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { getConnectorManager } from "../../lib/connector-manager.js";
 import { getDb } from "../../lib/db.js";
-import { agentDir, findAgent, readRegistry, removeAgent, voluteHome } from "../../lib/registry.js";
+import {
+  agentDir,
+  findAgent,
+  readRegistry,
+  removeAgent,
+  stateDir,
+  voluteHome,
+} from "../../lib/registry.js";
 import { getScheduler } from "../../lib/scheduler.js";
 import { agentMessages } from "../../lib/schema.js";
 import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "../../lib/token-budget.js";
@@ -25,6 +32,29 @@ import { readVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 const execFileAsync = promisify(execFile);
+
+/** Start agent server and (for base agents) connectors, schedules, and token budget. */
+async function startAgentFull(
+  name: string,
+  baseName: string,
+  variantName: string | undefined,
+): Promise<void> {
+  await getAgentManager().startAgent(name);
+  if (variantName) return;
+
+  const dir = agentDir(baseName);
+  const entry = findAgent(baseName)!;
+  await getConnectorManager().startConnectors(baseName, dir, entry.port, getDaemonPort());
+  getScheduler().loadSchedules(baseName);
+  const config = readVoluteConfig(dir);
+  if (config?.tokenBudget) {
+    getTokenBudget().setBudget(
+      baseName,
+      config.tokenBudget,
+      config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
+    );
+  }
+}
 
 function extractTextContent(content: unknown): string {
   if (typeof content === "string") return content;
@@ -149,27 +179,12 @@ const app = new Hono<AuthEnv>()
       if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
     }
 
-    const manager = getAgentManager();
-    if (manager.isRunning(name)) {
+    if (getAgentManager().isRunning(name)) {
       return c.json({ error: "Agent already running" }, 409);
     }
 
     try {
-      await manager.startAgent(name);
-      // Only start connectors/schedules for base agents, not variants
-      if (!variantName) {
-        const dir = agentDir(baseName);
-        await getConnectorManager().startConnectors(baseName, dir, entry.port, getDaemonPort());
-        getScheduler().loadSchedules(baseName);
-        const config = readVoluteConfig(dir);
-        if (config?.tokenBudget) {
-          getTokenBudget().setBudget(
-            baseName,
-            config.tokenBudget,
-            config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
-          );
-        }
-      }
+      await startAgentFull(name, baseName, variantName);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to start agent" }, 500);
@@ -194,21 +209,23 @@ const app = new Hono<AuthEnv>()
 
     // Parse optional context from request body
     let context: Record<string, unknown> | undefined;
-    try {
-      const body = await c.req.json();
-      if (body?.context) context = body.context as Record<string, unknown>;
-    } catch {
-      // No body or invalid JSON — no context
+    const contentType = c.req.header("content-type");
+    if (contentType?.includes("application/json")) {
+      try {
+        const body = await c.req.json();
+        if (body?.context) context = body.context as Record<string, unknown>;
+      } catch (err) {
+        console.error(`[daemon] failed to parse restart context for ${name}:`, err);
+      }
     }
 
     const manager = getAgentManager();
-    const connectorManager = getConnectorManager();
 
     try {
       // Stop running agent and connectors
       if (manager.isRunning(name)) {
         if (!variantName) {
-          await connectorManager.stopConnectors(baseName);
+          await getConnectorManager().stopConnectors(baseName);
           getTokenBudget().removeBudget(baseName);
         }
         await manager.stopAgent(name);
@@ -244,20 +261,7 @@ const app = new Hono<AuthEnv>()
         manager.setPendingContext(name, context);
       }
 
-      await manager.startAgent(name);
-      if (!variantName) {
-        const dir = agentDir(baseName);
-        await connectorManager.startConnectors(baseName, dir, entry.port, getDaemonPort());
-        getScheduler().loadSchedules(baseName);
-        const config = readVoluteConfig(dir);
-        if (config?.tokenBudget) {
-          getTokenBudget().setBudget(
-            baseName,
-            config.tokenBudget,
-            config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
-          );
-        }
-      }
+      await startAgentFull(name, baseName, variantName);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to restart agent" }, 500);
@@ -313,6 +317,12 @@ const app = new Hono<AuthEnv>()
     removeAllVariants(name);
     removeAgent(name);
     await deleteAgentUser(name);
+
+    // Clean up centralized state directory (logs, env, channels)
+    const state = stateDir(name);
+    if (existsSync(state)) {
+      rmSync(state, { recursive: true, force: true });
+    }
 
     if (force && existsSync(dir)) {
       rmSync(dir, { recursive: true, force: true });
