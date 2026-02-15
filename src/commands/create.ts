@@ -60,15 +60,17 @@ export async function run(args: string[]) {
 
     // Resolve uid/gid so npm install and git init run as the agent user
     const ids = isIsolationEnabled() ? await getAgentUserIds(name) : undefined;
+    // Set HOME to agent dir so npm/git use agent-owned cache paths
+    const env = ids ? { ...process.env, HOME: dest } : undefined;
 
     // Install dependencies
     console.log("Installing dependencies...");
-    await execInherit("npm", ["install"], { cwd: dest, uid: ids?.uid, gid: ids?.gid });
+    await execInherit("npm", ["install"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
 
     // git init + template branch + initial commit (after install so lockfile is included)
     try {
-      await exec("git", ["init"], { cwd: dest, uid: ids?.uid, gid: ids?.gid });
-      await initTemplateBranch(dest, composedDir, manifest, ids);
+      await exec("git", ["init"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
+      await initTemplateBranch(dest, composedDir, manifest, ids, env);
     } catch (err) {
       // Clean up partial git state so the repo isn't left on an orphan branch
       rmSync(resolve(dest, ".git"), { recursive: true, force: true });
@@ -95,13 +97,14 @@ async function initTemplateBranch(
   composedDir: string,
   manifest: TemplateManifest,
   ids?: { uid: number; gid: number },
+  env?: NodeJS.ProcessEnv,
 ) {
   // Compute template file paths (after renames, excluding .init/ identity files)
   const templateFiles = listFiles(composedDir)
     .filter((f) => !f.startsWith(".init/") && !f.startsWith(".init\\"))
     .map((f) => manifest.rename[f] ?? f);
 
-  const opts = { cwd: projectRoot, uid: ids?.uid, gid: ids?.gid };
+  const opts = { cwd: projectRoot, uid: ids?.uid, gid: ids?.gid, env };
 
   // Create orphan template branch with only template files
   await exec("git", ["checkout", "--orphan", TEMPLATE_BRANCH], opts);

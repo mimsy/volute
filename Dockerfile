@@ -2,11 +2,13 @@ FROM node:22-slim
 
 # git needed for agent git init + variants
 RUN apt-get update && apt-get install -y --no-install-recommends git \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && git config --system user.name "Volute" \
+    && git config --system user.email "volute@localhost"
 
 WORKDIR /opt/volute
 COPY package*.json ./
-RUN npm ci --production
+RUN npm ci --production --ignore-scripts
 COPY dist/ dist/
 COPY drizzle/ drizzle/
 COPY templates/ templates/
