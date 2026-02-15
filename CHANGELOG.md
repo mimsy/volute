@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/mimsy/volute/compare/volute-v0.8.0...volute-v0.8.1) (2026-02-15)
+
+
+### Bug Fixes
+
+* linux deployment issues with nvm and systemd ([#42](https://github.com/mimsy/volute/issues/42)) ([2b9e4fd](https://github.com/mimsy/volute/commit/2b9e4fd7d7dc109b4db8abdb6bc6d1474b3a2982))
+
 ## [0.8.0](https://github.com/mimsy/volute/compare/volute-v0.7.0...volute-v0.8.0) (2026-02-15)
 
 
