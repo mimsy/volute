@@ -1,9 +1,6 @@
-import { writeChannelEntry } from "../connectors/sdk.js";
-import { CHANNELS, getChannelDriver } from "../lib/channels.js";
+import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
-import { loadMergedEnv } from "../lib/env.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { agentDir } from "../lib/registry.js";
 import { resolveAgentName } from "../lib/resolve-agent-name.js";
 
 export async function run(args: string[]) {
@@ -59,18 +56,22 @@ async function readChannel(args: string[]) {
 
   const agentName = resolveAgentName(flags);
   const { platform } = parseUri(uri);
-  const driver = requireDriver(platform);
-  const dir = agentDir(agentName);
-  const env = { ...loadMergedEnv(agentName), VOLUTE_AGENT: agentName, VOLUTE_AGENT_DIR: dir };
+  const limit = flags.limit ?? 20;
 
-  try {
-    const limit = flags.limit ?? 20;
-    const output = await driver.read(env, uri, limit);
-    console.log(output);
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
+  const client = getClient();
+  const url = client.api.agents[":name"].channels.read.$url({ param: { name: agentName } });
+  url.searchParams.set("platform", platform);
+  url.searchParams.set("uri", uri);
+  url.searchParams.set("limit", String(limit));
+
+  const res = await daemonFetch(urlOf(url));
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    console.error(body.error ?? `Server responded with ${res.status}`);
     process.exit(1);
   }
+  const output = await res.text();
+  console.log(output);
 }
 
 async function listChannels(args: string[]) {
@@ -80,34 +81,33 @@ async function listChannels(args: string[]) {
 
   const platform = positional[0];
   const agentName = resolveAgentName(flags);
-  const dir = agentDir(agentName);
-  const env = { ...loadMergedEnv(agentName), VOLUTE_AGENT: agentName, VOLUTE_AGENT_DIR: dir };
 
-  const platforms = platform ? [platform] : Object.keys(CHANNELS);
+  const client = getClient();
+  const url = client.api.agents[":name"].channels.list.$url({ param: { name: agentName } });
+  if (platform) url.searchParams.set("platform", platform);
 
-  for (const p of platforms) {
-    const driver = getChannelDriver(p);
-    if (!driver?.listConversations) continue;
+  const res = await daemonFetch(urlOf(url));
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    console.error(body.error ?? `Server responded with ${res.status}`);
+    process.exit(1);
+  }
 
-    try {
-      const convs = await driver.listConversations(env);
-      for (const conv of convs) {
-        // Populate channels.json with slug -> platformId mapping
-        writeChannelEntry(agentName, conv.id, {
-          platformId: conv.platformId,
-          platform: p,
-          name: conv.name,
-          type: conv.type,
-        });
-
-        const parts = [conv.id.padEnd(24), conv.name.padEnd(28), conv.type];
-        if (conv.participantCount != null) {
-          parts.push(String(conv.participantCount));
-        }
-        console.log(parts.join("  "));
+  const results = (await res.json()) as Record<
+    string,
+    { id: string; name: string; type: string; participantCount?: number; error?: string }[]
+  >;
+  for (const [p, convs] of Object.entries(results)) {
+    for (const conv of convs) {
+      if (conv.error) {
+        console.error(`${p}: ${conv.error}`);
+        continue;
       }
-    } catch (err) {
-      console.error(`${p}: ${err instanceof Error ? err.message : String(err)}`);
+      const parts = [conv.id.padEnd(24), conv.name.padEnd(28), conv.type];
+      if (conv.participantCount != null) {
+        parts.push(String(conv.participantCount));
+      }
+      console.log(parts.join("  "));
     }
   }
 }
@@ -123,24 +123,22 @@ async function listUsers(args: string[]) {
     process.exit(1);
   }
 
-  const driver = requireDriver(platform);
-  if (!driver.listUsers) {
-    console.error(`Platform ${platform} does not support listing users`);
+  const agentName = resolveAgentName(flags);
+
+  const client = getClient();
+  const url = client.api.agents[":name"].channels.users.$url({ param: { name: agentName } });
+  url.searchParams.set("platform", platform);
+
+  const res = await daemonFetch(urlOf(url));
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    console.error(body.error ?? `Server responded with ${res.status}`);
     process.exit(1);
   }
 
-  const agentName = resolveAgentName(flags);
-  const dir = agentDir(agentName);
-  const env = { ...loadMergedEnv(agentName), VOLUTE_AGENT: agentName, VOLUTE_AGENT_DIR: dir };
-
-  try {
-    const users = await driver.listUsers(env);
-    for (const user of users) {
-      console.log(`${user.username.padEnd(20)}  ${user.id.padEnd(20)}  ${user.type ?? ""}`);
-    }
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
+  const users = (await res.json()) as { username: string; id: string; type?: string }[];
+  for (const user of users) {
+    console.log(`${user.username.padEnd(20)}  ${user.id.padEnd(20)}  ${user.type ?? ""}`);
   }
 }
 
@@ -159,24 +157,25 @@ async function createChannel(args: string[]) {
     process.exit(1);
   }
 
-  const driver = requireDriver(platform);
-  if (!driver.createConversation) {
-    console.error(`Platform ${platform} does not support creating conversations`);
-    process.exit(1);
-  }
-
   const agentName = resolveAgentName(flags);
-  const dir = agentDir(agentName);
-  const env = { ...loadMergedEnv(agentName), VOLUTE_AGENT: agentName, VOLUTE_AGENT_DIR: dir };
   const participants = flags.participants.split(",").map((s) => s.trim());
 
-  try {
-    const slug = await driver.createConversation(env, participants, flags.name);
-    console.log(slug);
-  } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
+  const client = getClient();
+  const res = await daemonFetch(
+    urlOf(client.api.agents[":name"].channels.create.$url({ param: { name: agentName } })),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform, participants, name: flags.name }),
+    },
+  );
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    console.error(body.error ?? `Server responded with ${res.status}`);
     process.exit(1);
   }
+  const data = (await res.json()) as { slug: string };
+  console.log(data.slug);
 }
 
 async function typingChannel(args: string[]) {
@@ -193,9 +192,11 @@ async function typingChannel(args: string[]) {
   const agentName = resolveAgentName(flags);
 
   try {
-    const res = await daemonFetch(
-      `/api/agents/${encodeURIComponent(agentName)}/typing?channel=${encodeURIComponent(uri)}`,
-    );
+    const client = getClient();
+    const url = client.api.agents[":name"].typing.$url({ param: { name: agentName } });
+    url.searchParams.set("channel", uri);
+
+    const res = await daemonFetch(urlOf(url));
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       console.error(body.error ?? `Server responded with ${res.status}`);
@@ -218,13 +219,4 @@ function parseUri(uri: string): { platform: string; channelId: string } {
     process.exit(1);
   }
   return { platform: uri.slice(0, colonIdx), channelId: uri.slice(colonIdx + 1) };
-}
-
-function requireDriver(platform: string) {
-  const driver = getChannelDriver(platform);
-  if (!driver) {
-    console.error(`No channel driver for platform: ${platform}`);
-    process.exit(1);
-  }
-  return driver;
 }

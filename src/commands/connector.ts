@@ -1,7 +1,6 @@
+import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
-import { agentEnvPath, readEnv, writeEnv } from "../lib/env.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { agentDir } from "../lib/registry.js";
 import { resolveAgentName } from "../lib/resolve-agent-name.js";
 
 export async function run(args: string[]) {
@@ -82,9 +81,14 @@ async function connectConnector(args: string[]) {
     process.exit(1);
   }
 
-  const url = `/api/agents/${encodeURIComponent(agentName)}/connectors/${encodeURIComponent(type)}`;
+  const client = getClient();
+  const connectorUrl = urlOf(
+    client.api.agents[":name"].connectors[":type"].$url({
+      param: { name: agentName, type },
+    }),
+  );
 
-  let res = await daemonFetch(url, { method: "POST" });
+  let res = await daemonFetch(connectorUrl, { method: "POST" });
 
   if (!res.ok) {
     const body = (await res.json().catch(() => ({ error: "Unknown error" }))) as
@@ -105,24 +109,34 @@ async function connectConnector(args: string[]) {
 
       console.error(`${connectorName} connector requires some environment variables.\n`);
 
-      const dir = agentDir(agentName);
-      const envPath = agentEnvPath(dir);
-      const env = readEnv(envPath);
-
       for (const v of missing) {
         const value = await promptValue(v.name, v.description);
         if (!value) {
           console.error(`No value provided for ${v.name}. Aborting.`);
           process.exit(1);
         }
-        env[v.name] = value;
+        const envRes = await daemonFetch(
+          urlOf(
+            client.api.agents[":name"].env[":key"].$url({
+              param: { name: agentName, key: v.name },
+            }),
+          ),
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ value }),
+          },
+        );
+        if (!envRes.ok) {
+          const errBody = (await envRes.json().catch(() => ({}))) as { error?: string };
+          console.error(`Failed to set ${v.name}: ${errBody.error ?? `HTTP ${envRes.status}`}`);
+          process.exit(1);
+        }
       }
-
-      writeEnv(envPath, env);
       console.log("Environment variables saved.\n");
 
       // Retry
-      res = await daemonFetch(url, { method: "POST" });
+      res = await daemonFetch(connectorUrl, { method: "POST" });
       if (!res.ok) {
         const retryBody = await res.json().catch(() => ({ error: "Unknown error" }));
         console.error(
@@ -152,11 +166,14 @@ async function disconnectConnector(args: string[]) {
     process.exit(1);
   }
 
+  const client = getClient();
   const res = await daemonFetch(
-    `/api/agents/${encodeURIComponent(agentName)}/connectors/${encodeURIComponent(type)}`,
-    {
-      method: "DELETE",
-    },
+    urlOf(
+      client.api.agents[":name"].connectors[":type"].$url({
+        param: { name: agentName, type },
+      }),
+    ),
+    { method: "DELETE" },
   );
 
   if (!res.ok) {

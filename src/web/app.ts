@@ -7,7 +7,9 @@ import { checkForUpdateCached, getCurrentVersion } from "../lib/update-check.js"
 import { authMiddleware } from "./middleware/auth.js";
 import agents from "./routes/agents.js";
 import auth from "./routes/auth.js";
+import channels from "./routes/channels.js";
 import connectors from "./routes/connectors.js";
+import envRoutes, { sharedEnvApp } from "./routes/env.js";
 import files from "./routes/files.js";
 import logs from "./routes/logs.js";
 import schedules from "./routes/schedules.js";
@@ -78,6 +80,7 @@ app.use("/api/*", csrf());
 app.use("/api/agents/*", authMiddleware);
 app.use("/api/conversations/*", authMiddleware);
 app.use("/api/system/*", authMiddleware);
+app.use("/api/env/*", authMiddleware);
 
 // Chain route registrations to capture types
 const routes = app
@@ -92,7 +95,10 @@ const routes = app
   .route("/api/agents", typing)
   .route("/api/agents", variants)
   .route("/api/agents", files)
+  .route("/api/agents", channels)
+  .route("/api/agents", envRoutes)
   .route("/api/agents", conversations)
+  .route("/api/env", sharedEnvApp)
   .route("/api/conversations", userConversations);
 
 export default app;

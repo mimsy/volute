@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
+import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { exec, execInherit } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
@@ -257,8 +258,13 @@ async function installAndVerify(agentName: string, worktreeDir: string) {
   // Start variant via daemon
   console.log("Starting upgrade variant...");
   try {
+    const client = getClient();
     const res = await daemonFetch(
-      `/api/agents/${encodeURIComponent(`${agentName}@${VARIANT_NAME}`)}/start`,
+      urlOf(
+        client.api.agents[":name"].start.$url({
+          param: { name: `${agentName}@${VARIANT_NAME}` },
+        }),
+      ),
       { method: "POST" },
     );
     if (!res.ok) {

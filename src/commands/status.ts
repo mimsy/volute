@@ -1,3 +1,4 @@
+import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 
 type VariantInfo = {
@@ -16,10 +17,11 @@ type AgentInfo = {
 
 export async function run(args: string[]) {
   const name = args[0];
+  const client = getClient();
 
   if (!name) {
     // List all agents
-    const res = await daemonFetch("/api/agents");
+    const res = await daemonFetch(urlOf(client.api.agents.$url()));
     if (!res.ok) {
       const data = (await res.json()) as { error?: string };
       console.error(data.error ?? `Failed to get status: ${res.status}`);
@@ -50,7 +52,7 @@ export async function run(args: string[]) {
   }
 
   // Single agent status
-  const res = await daemonFetch(`/api/agents/${encodeURIComponent(name)}`);
+  const res = await daemonFetch(urlOf(client.api.agents[":name"].$url({ param: { name } })));
 
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };

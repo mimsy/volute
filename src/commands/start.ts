@@ -1,3 +1,4 @@
+import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { resolveAgent } from "../lib/registry.js";
 
@@ -9,8 +10,9 @@ export async function run(args: string[]) {
   }
 
   const { entry } = resolveAgent(name);
+  const client = getClient();
 
-  const res = await daemonFetch(`/api/agents/${encodeURIComponent(name)}/start`, {
+  const res = await daemonFetch(urlOf(client.api.agents[":name"].start.$url({ param: { name } })), {
     method: "POST",
   });
 
