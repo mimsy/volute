@@ -159,7 +159,9 @@ The `sessions` section configures behavior per session. Keys are glob patterns m
 
 ### Batch config
 
-Batch mode buffers messages and delivers them together. Configure in the `sessions` section:
+Batch mode buffers messages and delivers them together. Configure in the `sessions` section.
+
+`batch` can be a number (minutes, converted to `maxWait` in seconds) or an object:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -168,6 +170,7 @@ Batch mode buffers messages and delivers them together. Configure in the `sessio
 | `triggers` | string[] | Patterns that cause immediate flush (case-insensitive substring match) |
 
 Examples:
+- `120` — shorthand: flush after 2 hours max (equivalent to `{ "maxWait": 7200 }`)
 - `{ "debounce": 20, "maxWait": 120 }` — flush after 20s of quiet, or 2 minutes max
 - `{ "debounce": 20, "maxWait": 120, "triggers": ["@myagent"] }` — same, but flush immediately on @mention
 - `{ "triggers": ["urgent"] }` — no timer, flush only on trigger (or immediately if no timers)
