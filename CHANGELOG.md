@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2](https://github.com/mimsy/volute/compare/volute-v0.8.1...volute-v0.8.2) (2026-02-15)
+
+
+### Bug Fixes
+
+* setup writes profile.d and wrapper for CLI access ([#44](https://github.com/mimsy/volute/issues/44)) ([5d4f1ff](https://github.com/mimsy/volute/commit/5d4f1ff3ee3c152575806c0278037e8127874fc0))
+
 ## [0.8.1](https://github.com/mimsy/volute/compare/volute-v0.8.0...volute-v0.8.1) (2026-02-15)
 
 
