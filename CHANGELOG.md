@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0](https://github.com/mimsy/volute/compare/volute-v0.8.3...volute-v0.9.0) (2026-02-15)
+
+
+### Features
+
+* route CLI commands through daemon API ([#48](https://github.com/mimsy/volute/issues/48)) ([7d68d0a](https://github.com/mimsy/volute/commit/7d68d0aee010c8b4b057f4d8548af430dda50da0))
+
+## [0.8.3](https://github.com/mimsy/volute/compare/volute-v0.8.2...volute-v0.8.3) (2026-02-15)
+
+
+### Bug Fixes
+
+* systemd service detection and wrapper PATH fix ([#46](https://github.com/mimsy/volute/issues/46)) ([ca1e07f](https://github.com/mimsy/volute/commit/ca1e07f213b65d4aee344272885f5cb68406a654))
+
 ## [0.8.2](https://github.com/mimsy/volute/compare/volute-v0.8.1...volute-v0.8.2) (2026-02-15)
 
 
