@@ -60,8 +60,8 @@ function generateUnit(voluteBin: string, port?: number, host?: string): string {
     "Environment=VOLUTE_ISOLATION=user",
     "Restart=on-failure",
     "RestartSec=5",
-    "ProtectSystem=strict",
-    `ReadWritePaths=${DATA_DIR} ${AGENTS_DIR} /etc`,
+    "ProtectSystem=true",
+    `ReadWritePaths=${DATA_DIR} ${AGENTS_DIR}`,
     "PrivateTmp=yes",
   ];
 
