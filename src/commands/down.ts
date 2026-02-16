@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
+import { getClient, urlOf } from "../lib/api-client.js";
+import { daemonFetch } from "../lib/daemon-client.js";
 import { voluteHome } from "../lib/registry.js";
 
 function isSystemdServiceEnabled(): boolean {
@@ -135,8 +137,10 @@ export async function run(_args: string[]) {
   if (result.stopped) return;
 
   if (result.reason === "systemd") {
-    console.error("Volute is managed by a systemd service.");
-    console.error("Use: sudo systemctl stop volute");
+    const client = getClient();
+    await daemonFetch(urlOf(client.api.system.stop.$url()), { method: "POST" });
+    console.log("Daemon stopped.");
+    return;
   } else if (result.reason === "orphan") {
     console.error(`Daemon appears to be running on port ${result.port} but PID file is missing.`);
     console.error(`Kill the process manually: lsof -ti :${result.port} | xargs kill`);

@@ -1,10 +1,5 @@
-import { existsSync, rmSync } from "node:fs";
-import { deleteAgentUser as deleteAgentDbUser } from "../lib/auth.js";
-import { deleteAgentUser } from "../lib/isolation.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { agentDir, findAgent, removeAgent, stateDir } from "../lib/registry.js";
 import { resolveAgentName } from "../lib/resolve-agent-name.js";
-import { removeAllVariants } from "../lib/variants.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -13,51 +8,27 @@ export async function run(args: string[]) {
 
   const name = resolveAgentName({ agent: positional[0] });
 
-  const entry = findAgent(name);
-  if (!entry) {
-    console.error(`Unknown agent: ${name}`);
+  const { daemonFetch } = await import("../lib/daemon-client.js");
+  const { getClient, urlOf } = await import("../lib/api-client.js");
+  const client = getClient();
+
+  const url =
+    urlOf(client.api.agents[":name"].$url({ param: { name } })) +
+    (flags.force ? "?force=true" : "");
+
+  const res = await daemonFetch(url, { method: "DELETE" });
+
+  const data = (await res.json()) as { ok?: boolean; error?: string };
+
+  if (!res.ok) {
+    console.error(data.error ?? "Failed to delete agent");
     process.exit(1);
   }
 
-  // Stop via daemon if running
-  try {
-    const { getClient, urlOf } = await import("../lib/api-client.js");
-    const { daemonFetch } = await import("../lib/daemon-client.js");
-    const client = getClient();
-    const res = await daemonFetch(
-      urlOf(client.api.agents[":name"].stop.$url({ param: { name } })),
-      { method: "POST" },
-    );
-    if (res.ok) {
-      console.log(`Stopped ${name}.`);
-    }
-  } catch {
-    // Daemon not running, that's fine
-  }
-
-  const dir = agentDir(name);
-
-  // Remove from registry, clean up variant tracking and DB user
-  removeAllVariants(name);
-  removeAgent(name);
-  await deleteAgentDbUser(name);
-  console.log(`Removed ${name} from registry.`);
-
-  // Clean up state dir
-  const state = stateDir(name);
-  if (existsSync(state)) {
-    rmSync(state, { recursive: true, force: true });
-  }
-
-  // Delete directory
-  if (existsSync(dir)) {
-    if (!flags.force) {
-      console.log(`Directory: ${dir}`);
-      console.log("Use --force to also delete the agent directory.");
-    } else {
-      rmSync(dir, { recursive: true, force: true });
-      deleteAgentUser(name);
-      console.log(`Deleted ${dir}`);
-    }
+  console.log(`Removed ${name}.`);
+  if (flags.force) {
+    console.log("Deleted agent directory.");
+  } else {
+    console.log("Use --force to also delete the agent directory.");
   }
 }

@@ -1,37 +1,72 @@
-import { execFile } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { resolve } from "node:path";
-import { promisify } from "node:util";
 import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
+import {
+  findOpenClawSession,
+  importOpenClawConnectors,
+  importPiSession,
+  parseNameFromIdentity,
+} from "../../commands/import.js";
 import { getAgentManager } from "../../lib/agent-manager.js";
 import { deleteAgentUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { getConnectorManager } from "../../lib/connector-manager.js";
+import { consolidateMemory } from "../../lib/consolidate.js";
+import { convertSession } from "../../lib/convert-session.js";
 import { getDb } from "../../lib/db.js";
+import { exec } from "../../lib/exec.js";
 import {
+  chownAgentDir,
+  createAgentUser,
+  deleteAgentUser as deleteIsolationUser,
+  ensureVoluteGroup,
+  getAgentUserIds,
+  isIsolationEnabled,
+} from "../../lib/isolation.js";
+import {
+  addAgent,
   agentDir,
+  ensureVoluteHome,
   findAgent,
+  nextPort,
   readRegistry,
   removeAgent,
   stateDir,
+  validateAgentName,
   voluteHome,
 } from "../../lib/registry.js";
 import { getScheduler } from "../../lib/scheduler.js";
 import { agentMessages } from "../../lib/schema.js";
+import {
+  applyInitFiles,
+  composeTemplate,
+  copyTemplateToDir,
+  findTemplatesRoot,
+  listFiles,
+  type TemplateManifest,
+} from "../../lib/template.js";
 import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "../../lib/token-budget.js";
 import { getTypingMap } from "../../lib/typing.js";
 import {
+  addVariant,
   checkHealth,
   findVariant,
   readVariants,
   removeAllVariants,
+  removeVariant,
   validateBranchName,
 } from "../../lib/variants.js";
 import { readVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
-
-const execFileAsync = promisify(execFile);
 
 /** Start agent server and (for base agents) connectors, schedules, and token budget. */
 async function startAgentFull(
@@ -124,8 +159,323 @@ async function getAgentStatus(name: string, port: number) {
   return { status, channels };
 }
 
-// List all agents
+const TEMPLATE_BRANCH = "volute/template";
+
+/**
+ * Create the volute/template tracking branch and main branch with shared history.
+ * Enables clean 3-way merges on the first `volute agent upgrade`.
+ */
+async function initTemplateBranch(
+  projectRoot: string,
+  composedDir: string,
+  manifest: TemplateManifest,
+  ids?: { uid: number; gid: number },
+  env?: NodeJS.ProcessEnv,
+) {
+  const templateFiles = listFiles(composedDir)
+    .filter((f) => !f.startsWith(".init/") && !f.startsWith(".init\\"))
+    .map((f) => manifest.rename[f] ?? f);
+
+  const opts = { cwd: projectRoot, uid: ids?.uid, gid: ids?.gid, env };
+
+  await exec("git", ["checkout", "--orphan", TEMPLATE_BRANCH], opts);
+  await exec("git", ["add", "--", ...templateFiles], opts);
+  await exec("git", ["commit", "-m", "template update"], opts);
+
+  await exec("git", ["checkout", "-b", "main"], opts);
+  await exec("git", ["add", "-A"], opts);
+  await exec("git", ["commit", "-m", "initial commit"], opts);
+}
+
+/**
+ * Update the volute/template orphan branch with the latest template files.
+ * Uses a temporary worktree to avoid touching the main working directory.
+ */
+async function updateTemplateBranch(projectRoot: string, template: string, agentName: string) {
+  const tempWorktree = resolve(projectRoot, ".variants", "_template_update");
+
+  let branchExists = false;
+  try {
+    await exec("git", ["rev-parse", "--verify", TEMPLATE_BRANCH], { cwd: projectRoot });
+    branchExists = true;
+  } catch {
+    // branch doesn't exist
+  }
+
+  // Clean up any existing temp worktree
+  try {
+    await exec("git", ["worktree", "remove", "--force", tempWorktree], { cwd: projectRoot });
+  } catch {
+    // doesn't exist
+  }
+  if (existsSync(tempWorktree)) {
+    rmSync(tempWorktree, { recursive: true, force: true });
+  }
+
+  const templatesRoot = findTemplatesRoot();
+  const { composedDir, manifest } = composeTemplate(templatesRoot, template);
+
+  try {
+    if (branchExists) {
+      await exec("git", ["worktree", "add", tempWorktree, TEMPLATE_BRANCH], {
+        cwd: projectRoot,
+      });
+    } else {
+      await exec("git", ["worktree", "add", "--detach", tempWorktree], { cwd: projectRoot });
+      await exec("git", ["checkout", "--orphan", TEMPLATE_BRANCH], { cwd: tempWorktree });
+      await exec("git", ["rm", "-rf", "--cached", "."], { cwd: tempWorktree });
+      await exec("git", ["clean", "-fd"], { cwd: tempWorktree });
+    }
+
+    if (branchExists) {
+      await exec("git", ["rm", "-rf", "."], { cwd: tempWorktree }).catch(() => {});
+    }
+
+    copyTemplateToDir(composedDir, tempWorktree, agentName, manifest);
+
+    const initDir = resolve(tempWorktree, ".init");
+    if (existsSync(initDir)) {
+      rmSync(initDir, { recursive: true, force: true });
+    }
+
+    await exec("git", ["add", "-A"], { cwd: tempWorktree });
+
+    try {
+      await exec("git", ["diff", "--cached", "--quiet"], { cwd: tempWorktree });
+    } catch {
+      await exec("git", ["commit", "-m", "template update"], { cwd: tempWorktree });
+    }
+  } finally {
+    try {
+      await exec("git", ["worktree", "remove", "--force", tempWorktree], { cwd: projectRoot });
+    } catch {
+      // best effort cleanup
+    }
+    if (existsSync(tempWorktree)) {
+      rmSync(tempWorktree, { recursive: true, force: true });
+    }
+    rmSync(composedDir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Merge the template branch into the current worktree.
+ * Returns true if there are merge conflicts.
+ */
+async function mergeTemplateBranch(worktreeDir: string): Promise<boolean> {
+  try {
+    await exec(
+      "git",
+      ["merge", TEMPLATE_BRANCH, "--allow-unrelated-histories", "-m", "merge template update"],
+      { cwd: worktreeDir },
+    );
+    return false;
+  } catch (e: unknown) {
+    try {
+      const status = await exec("git", ["status", "--porcelain"], { cwd: worktreeDir });
+      const hasConflictMarkers = status
+        .split("\n")
+        .some((line) => line.startsWith("UU") || line.startsWith("AA"));
+      if (hasConflictMarkers) return true;
+    } catch {
+      // fall through to rethrow
+    }
+    throw e;
+  }
+}
+
+// Create agent — admin only
 const app = new Hono<AuthEnv>()
+  .post("/", requireAdmin, async (c) => {
+    let body: { name: string; template?: string };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+
+    const { name, template = "agent-sdk" } = body;
+
+    const nameErr = validateAgentName(name);
+    if (nameErr) return c.json({ error: nameErr }, 400);
+
+    if (findAgent(name)) return c.json({ error: `Agent already exists: ${name}` }, 409);
+
+    ensureVoluteHome();
+    const dest = agentDir(name);
+
+    if (existsSync(dest)) return c.json({ error: "Agent directory already exists" }, 409);
+
+    const templatesRoot = findTemplatesRoot();
+    const { composedDir, manifest } = composeTemplate(templatesRoot, template);
+
+    try {
+      copyTemplateToDir(composedDir, dest, name, manifest);
+      applyInitFiles(dest);
+
+      const port = nextPort();
+      addAgent(name, port);
+
+      // Set up per-agent user isolation (no-ops if VOLUTE_ISOLATION !== "user")
+      ensureVoluteGroup();
+      createAgentUser(name);
+      chownAgentDir(dest, name);
+
+      const ids = isIsolationEnabled() ? await getAgentUserIds(name) : undefined;
+      const env = ids ? { ...process.env, HOME: dest } : undefined;
+
+      // Install dependencies
+      await exec("npm", ["install"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
+
+      // git init + template branch + initial commit
+      try {
+        await exec("git", ["init"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
+        await initTemplateBranch(dest, composedDir, manifest, ids, env);
+      } catch {
+        rmSync(resolve(dest, ".git"), { recursive: true, force: true });
+      }
+
+      return c.json({ ok: true, name, port, message: `Created agent: ${name} (port ${port})` });
+    } catch (err) {
+      // Clean up partial state
+      if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
+      try {
+        removeAgent(name);
+      } catch {
+        // ignore cleanup errors
+      }
+      return c.json({ error: err instanceof Error ? err.message : "Failed to create agent" }, 500);
+    } finally {
+      rmSync(composedDir, { recursive: true, force: true });
+    }
+  })
+  // Import agent from OpenClaw workspace — admin only
+  .post("/import", requireAdmin, async (c) => {
+    let body: { workspacePath: string; name?: string; template?: string; sessionPath?: string };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+
+    const wsDir = body.workspacePath;
+    if (
+      !wsDir ||
+      !existsSync(resolve(wsDir, "SOUL.md")) ||
+      !existsSync(resolve(wsDir, "IDENTITY.md"))
+    ) {
+      return c.json({ error: "Invalid workspace: missing SOUL.md or IDENTITY.md" }, 400);
+    }
+
+    const soul = readFileSync(resolve(wsDir, "SOUL.md"), "utf-8");
+    const identity = readFileSync(resolve(wsDir, "IDENTITY.md"), "utf-8");
+    const userPath = resolve(wsDir, "USER.md");
+    const user = existsSync(userPath) ? readFileSync(userPath, "utf-8") : "";
+
+    const name = body.name ?? parseNameFromIdentity(identity) ?? "imported-agent";
+    const template = body.template ?? "agent-sdk";
+
+    const nameErr = validateAgentName(name);
+    if (nameErr) return c.json({ error: nameErr }, 400);
+
+    if (findAgent(name)) return c.json({ error: `Agent already exists: ${name}` }, 409);
+
+    const mergedSoul = `${soul.trimEnd()}\n\n---\n\n${identity.trimEnd()}\n`;
+    const mergedMemoryExtra = user ? `\n\n---\n\n${user.trimEnd()}\n` : "";
+
+    ensureVoluteHome();
+    const dest = agentDir(name);
+
+    if (existsSync(dest)) return c.json({ error: "Agent directory already exists" }, 409);
+
+    const templatesRoot = findTemplatesRoot();
+    const { composedDir, manifest } = composeTemplate(templatesRoot, template);
+
+    try {
+      copyTemplateToDir(composedDir, dest, name, manifest);
+
+      // Apply init files
+      const initDir = resolve(dest, ".init");
+      if (existsSync(initDir)) {
+        cpSync(initDir, resolve(dest, "home"), { recursive: true });
+        rmSync(initDir, { recursive: true, force: true });
+      }
+
+      // Write SOUL.md (with IDENTITY.md merged in)
+      writeFileSync(resolve(dest, "home/SOUL.md"), mergedSoul);
+
+      // Copy or create MEMORY.md
+      const wsMemoryPath = resolve(wsDir, "MEMORY.md");
+      const hasMemory = existsSync(wsMemoryPath);
+      if (hasMemory) {
+        const existingMemory = readFileSync(wsMemoryPath, "utf-8");
+        writeFileSync(
+          resolve(dest, "home/MEMORY.md"),
+          `${existingMemory.trimEnd()}${mergedMemoryExtra}`,
+        );
+      } else if (user) {
+        writeFileSync(resolve(dest, "home/MEMORY.md"), `${user.trimEnd()}\n`);
+      }
+
+      // Copy memory/*.md daily logs
+      const wsMemoryDir = resolve(wsDir, "memory");
+      let dailyLogCount = 0;
+      if (existsSync(wsMemoryDir)) {
+        const destMemoryDir = resolve(dest, "home/memory");
+        const files = readdirSync(wsMemoryDir).filter((f) => f.endsWith(".md"));
+        for (const file of files) {
+          cpSync(resolve(wsMemoryDir, file), resolve(destMemoryDir, file));
+        }
+        dailyLogCount = files.length;
+      }
+
+      // Assign port and register
+      const port = nextPort();
+      addAgent(name, port);
+
+      // Install dependencies
+      await exec("npm", ["install"], { cwd: dest });
+
+      // Consolidate memory if no MEMORY.md but daily logs exist
+      if (!hasMemory && dailyLogCount > 0) {
+        await consolidateMemory(dest);
+      }
+
+      // git init + initial commit
+      await exec("git", ["init"], { cwd: dest });
+      await exec("git", ["add", "-A"], { cwd: dest });
+      await exec("git", ["commit", "-m", "import from OpenClaw"], { cwd: dest });
+
+      // Import session
+      const sessionFile = body.sessionPath ? resolve(body.sessionPath) : findOpenClawSession(wsDir);
+      if (sessionFile && existsSync(sessionFile)) {
+        if (template === "pi") {
+          importPiSession(sessionFile, dest);
+        } else if (template === "agent-sdk") {
+          const sessionId = convertSession({ sessionPath: sessionFile, projectDir: dest });
+          const voluteDir = resolve(dest, ".volute");
+          mkdirSync(voluteDir, { recursive: true });
+          writeFileSync(resolve(voluteDir, "session.json"), JSON.stringify({ sessionId }));
+        }
+      }
+
+      // Import connectors
+      importOpenClawConnectors(name, dest);
+
+      return c.json({ ok: true, name, port, message: `Imported agent: ${name} (port ${port})` });
+    } catch (err) {
+      if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
+      try {
+        removeAgent(name);
+      } catch {
+        // ignore cleanup errors
+      }
+      return c.json({ error: err instanceof Error ? err.message : "Failed to import agent" }, 500);
+    } finally {
+      rmSync(composedDir, { recursive: true, force: true });
+    }
+  })
+  // List all agents
   .get("/", async (c) => {
     const entries = readRegistry();
     const agents = await Promise.all(
@@ -231,7 +581,7 @@ const app = new Hono<AuthEnv>()
         await manager.stopAgent(name);
       }
 
-      // Handle agent-initiated merge: run merge subprocess before restart
+      // Handle agent-initiated merge: perform merge operations directly
       if (context?.type === "merge" && context.name && !variantName) {
         const mergeVariantName = String(context.name);
         const branchErr = validateBranchName(mergeVariantName);
@@ -239,21 +589,57 @@ const app = new Hono<AuthEnv>()
           return c.json({ error: `Invalid variant name: ${branchErr}` }, 400);
         }
         console.error(`[daemon] merging variant for ${baseName}: ${mergeVariantName}`);
-        const mergeArgs = [
-          "variant",
-          "merge",
-          mergeVariantName,
-          "--agent",
-          baseName,
-          "--skip-verify",
-        ];
-        if (context.summary) mergeArgs.push("--summary", String(context.summary));
-        if (context.justification) mergeArgs.push("--justification", String(context.justification));
-        if (context.memory) mergeArgs.push("--memory", String(context.memory));
-        await execFileAsync("volute", mergeArgs, {
-          cwd: agentDir(baseName),
-          env: { ...process.env, VOLUTE_SUPERVISOR: "1" },
-        });
+        const variant = findVariant(baseName, mergeVariantName);
+        if (variant) {
+          const projectRoot = agentDir(baseName);
+
+          // Auto-commit variant worktree
+          if (existsSync(variant.path)) {
+            const status = (
+              await exec("git", ["status", "--porcelain"], { cwd: variant.path })
+            ).trim();
+            if (status) {
+              try {
+                await exec("git", ["add", "-A"], { cwd: variant.path });
+                await exec(
+                  "git",
+                  ["commit", "-m", "Auto-commit uncommitted changes before merge"],
+                  { cwd: variant.path },
+                );
+              } catch {}
+            }
+          }
+
+          // Auto-commit main worktree
+          const mainStatus = (
+            await exec("git", ["status", "--porcelain"], { cwd: projectRoot })
+          ).trim();
+          if (mainStatus) {
+            try {
+              await exec("git", ["add", "-A"], { cwd: projectRoot });
+              await exec("git", ["commit", "-m", "Auto-commit uncommitted changes before merge"], {
+                cwd: projectRoot,
+              });
+            } catch {}
+          }
+
+          // Merge, cleanup worktree/branch, reinstall
+          await exec("git", ["merge", variant.branch], { cwd: projectRoot });
+          if (existsSync(variant.path)) {
+            try {
+              await exec("git", ["worktree", "remove", "--force", variant.path], {
+                cwd: projectRoot,
+              });
+            } catch {}
+          }
+          try {
+            await exec("git", ["branch", "-D", variant.branch], { cwd: projectRoot });
+          } catch {}
+          removeVariant(baseName, mergeVariantName);
+          try {
+            await exec("npm", ["install"], { cwd: projectRoot });
+          } catch {}
+        }
       }
 
       // Store context for delivery after restart
@@ -326,9 +712,134 @@ const app = new Hono<AuthEnv>()
 
     if (force && existsSync(dir)) {
       rmSync(dir, { recursive: true, force: true });
+      deleteIsolationUser(name);
     }
 
     return c.json({ ok: true });
+  })
+  // Upgrade agent — admin only
+  .post("/:name/upgrade", requireAdmin, async (c) => {
+    const agentName = c.req.param("name");
+    const entry = findAgent(agentName);
+    if (!entry) return c.json({ error: "Agent not found" }, 404);
+
+    const dir = agentDir(agentName);
+    if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
+
+    let body: { template?: string; continue?: boolean } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      // Empty body is fine
+    }
+
+    const template = body.template ?? "agent-sdk";
+    const UPGRADE_VARIANT = "upgrade";
+
+    if (body.continue) {
+      // Continue upgrade after conflict resolution
+      const worktreeDir = resolve(dir, ".variants", UPGRADE_VARIANT);
+      if (!existsSync(worktreeDir)) {
+        return c.json({ error: "No upgrade in progress" }, 400);
+      }
+
+      const status = await exec("git", ["status", "--porcelain"], { cwd: worktreeDir });
+      const hasConflicts = status
+        .split("\n")
+        .some((line) => line.startsWith("UU") || line.startsWith("AA"));
+      if (hasConflicts) {
+        return c.json({ error: "Unresolved conflicts remain" }, 409);
+      }
+
+      try {
+        await exec("git", ["add", "-A"], { cwd: worktreeDir });
+        await exec("git", ["commit", "--no-edit"], { cwd: worktreeDir });
+      } catch {
+        // commit may already be done
+      }
+
+      await exec("npm", ["install"], { cwd: worktreeDir });
+
+      const variantPort = nextPort();
+      addVariant(agentName, {
+        name: UPGRADE_VARIANT,
+        branch: UPGRADE_VARIANT,
+        path: worktreeDir,
+        port: variantPort,
+        created: new Date().toISOString(),
+      });
+
+      await getAgentManager().startAgent(`${agentName}@${UPGRADE_VARIANT}`);
+
+      return c.json({
+        ok: true,
+        name: agentName,
+        variant: UPGRADE_VARIANT,
+        port: variantPort,
+      });
+    }
+
+    // Fresh upgrade
+    const worktreeDir = resolve(dir, ".variants", UPGRADE_VARIANT);
+
+    if (existsSync(worktreeDir)) {
+      return c.json(
+        { error: "Upgrade variant already exists. Use continue or delete it first." },
+        409,
+      );
+    }
+
+    // Clean up stale worktree refs and leftover branch
+    await exec("git", ["worktree", "prune"], { cwd: dir });
+    try {
+      await exec("git", ["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
+    } catch {
+      // branch doesn't exist
+    }
+
+    // Update template branch
+    await updateTemplateBranch(dir, template, agentName);
+
+    // Create upgrade worktree
+    const parentDir = resolve(dir, ".variants");
+    if (!existsSync(parentDir)) {
+      mkdirSync(parentDir, { recursive: true });
+    }
+
+    await exec("git", ["worktree", "add", "-b", UPGRADE_VARIANT, worktreeDir], { cwd: dir });
+
+    // Merge template branch
+    const hasConflicts = await mergeTemplateBranch(worktreeDir);
+
+    if (hasConflicts) {
+      return c.json({
+        ok: false,
+        conflicts: true,
+        worktreeDir,
+        message: "Merge conflicts detected. Resolve them, then run with continue.",
+      });
+    }
+
+    // Install, register, start
+    await exec("npm", ["install"], { cwd: worktreeDir });
+
+    const variantPort = nextPort();
+    addVariant(agentName, {
+      name: UPGRADE_VARIANT,
+      branch: UPGRADE_VARIANT,
+      path: worktreeDir,
+      port: variantPort,
+      created: new Date().toISOString(),
+    });
+
+    await getAgentManager().startAgent(`${agentName}@${UPGRADE_VARIANT}`);
+
+    return c.json({
+      ok: true,
+      name: agentName,
+      variant: UPGRADE_VARIANT,
+      port: variantPort,
+    });
   })
   // Proxy message to agent
   .post("/:name/message", async (c) => {
