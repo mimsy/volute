@@ -135,7 +135,8 @@ export class ConnectorManager {
 
     // State dir is created by root — chown so the agent user can write channels.json, etc.
     if (isIsolationEnabled()) {
-      chownAgentDir(agentStateDir, agentName);
+      const [base] = agentName.split("@", 2);
+      chownAgentDir(agentStateDir, base);
     }
 
     const logStream = new RotatingLog(resolve(logsDir, `${type}.log`));

@@ -106,6 +106,17 @@ describe("checkForUpdate", () => {
     assert.equal(result.updateAvailable, true);
   });
 
+  it("force=true bypasses cache even when within TTL", async () => {
+    writeFileSync(cacheFile(), JSON.stringify({ latest: "99.0.0", checkedAt: Date.now() }));
+    const result = await checkForUpdate(true);
+    // With force=true, cache should be skipped — either fetches fresh or fails
+    if (result.checkFailed) {
+      assert.equal(result.updateAvailable, false);
+    } else {
+      assert.notEqual(result.latest, "99.0.0");
+    }
+  });
+
   it("does not throw on stale cache (checkFailed or fresh result)", async () => {
     writeFileSync(cacheFile(), JSON.stringify({ latest: "0.0.1", checkedAt: 0 }));
     const result = await checkForUpdate();
