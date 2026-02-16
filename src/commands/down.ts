@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
+import { getClient, urlOf } from "../lib/api-client.js";
+import { daemonFetch } from "../lib/daemon-client.js";
 import { voluteHome } from "../lib/registry.js";
 
 function isSystemdServiceEnabled(): boolean {
@@ -135,8 +137,42 @@ export async function run(_args: string[]) {
   if (result.stopped) return;
 
   if (result.reason === "systemd") {
-    console.error("Volute is managed by a systemd service.");
-    console.error("Use: sudo systemctl stop volute");
+    const client = getClient();
+    await daemonFetch(urlOf(client.api.system.stop.$url()), { method: "POST" });
+
+    // Verify daemon actually stopped
+    const home = voluteHome();
+    const configPath = resolve(home, "daemon.json");
+    let hostname = "localhost";
+    let port = 4200;
+    if (existsSync(configPath)) {
+      try {
+        const config = JSON.parse(readFileSync(configPath, "utf-8"));
+        hostname = config.hostname || "localhost";
+        port = config.port ?? 4200;
+      } catch {}
+    }
+    if (hostname === "0.0.0.0") hostname = "127.0.0.1";
+    if (hostname === "::") hostname = "[::1]";
+    const url = new URL("http://localhost");
+    url.hostname = hostname;
+    url.port = String(port);
+    const healthUrl = `${url.origin}/api/health`;
+
+    const maxWait = 10_000;
+    const start = Date.now();
+    while (Date.now() - start < maxWait) {
+      await new Promise((r) => setTimeout(r, 500));
+      try {
+        await fetch(healthUrl);
+      } catch {
+        console.log("Daemon stopped.");
+        return;
+      }
+    }
+
+    console.error("Daemon may not have stopped. Check with: volute service status");
+    process.exit(1);
   } else if (result.reason === "orphan") {
     console.error(`Daemon appears to be running on port ${result.port} but PID file is missing.`);
     console.error(`Kill the process manually: lsof -ti :${result.port} | xargs kill`);
