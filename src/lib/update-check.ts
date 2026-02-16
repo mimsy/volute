@@ -86,17 +86,19 @@ export function isNewer(current: string, latest: string): boolean {
   return false;
 }
 
-export async function checkForUpdate(): Promise<UpdateCheckResult> {
+export async function checkForUpdate(force = false): Promise<UpdateCheckResult> {
   const current = getCurrentVersion();
 
-  // Check cache first
-  const cache = readCache();
-  if (cache && Date.now() - cache.checkedAt < CACHE_TTL) {
-    return {
-      current,
-      latest: cache.latest,
-      updateAvailable: isNewer(current, cache.latest),
-    };
+  // Check cache first (skip if forced)
+  if (!force) {
+    const cache = readCache();
+    if (cache && Date.now() - cache.checkedAt < CACHE_TTL) {
+      return {
+        current,
+        latest: cache.latest,
+        updateAvailable: isNewer(current, cache.latest),
+      };
+    }
   }
 
   try {

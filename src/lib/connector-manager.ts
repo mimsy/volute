@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { dirname, resolve } from "node:path";
 import { checkMissingEnvVars, getConnectorDef } from "./connector-defs.js";
 import { loadMergedEnv } from "./env.js";
-import { applyIsolation } from "./isolation.js";
+import { applyIsolation, chownAgentDir, isIsolationEnabled } from "./isolation.js";
 import { daemonLoopback, stateDir, voluteHome } from "./registry.js";
 import { RotatingLog } from "./rotating-log.js";
 import { readVoluteConfig } from "./volute-config.js";
@@ -129,8 +129,15 @@ export class ConnectorManager {
     }
 
     // Set up log file
-    const logsDir = resolve(stateDir(agentName), "logs");
+    const agentStateDir = stateDir(agentName);
+    const logsDir = resolve(agentStateDir, "logs");
     mkdirSync(logsDir, { recursive: true });
+
+    // State dir is created by root — chown so the agent user can write channels.json, etc.
+    if (isIsolationEnabled()) {
+      chownAgentDir(agentStateDir, agentName);
+    }
+
     const logStream = new RotatingLog(resolve(logsDir, `${type}.log`));
 
     // Pass connector-specific env vars from agent env
