@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/mimsy/volute/compare/volute-v0.11.0...volute-v0.11.1) (2026-02-16)
+
+
+### Bug Fixes
+
+* per-agent CLAUDE_CONFIG_DIR for isolated agent processes ([#60](https://github.com/mimsy/volute/issues/60)) ([1512981](https://github.com/mimsy/volute/commit/1512981036252687ba1e6130f3f58b1bb8dfe67c))
+
 ## [0.11.0](https://github.com/mimsy/volute/compare/volute-v0.10.2...volute-v0.11.0) (2026-02-16)
 
 
