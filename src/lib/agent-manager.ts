@@ -1,9 +1,9 @@
 import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { loadMergedEnv } from "./env.js";
-import { applyIsolation } from "./isolation.js";
+import { applyIsolation, chownAgentDir, isIsolationEnabled } from "./isolation.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "./json-state.js";
 import { agentDir, findAgent, setAgentRunning, stateDir, voluteHome } from "./registry.js";
 import { RotatingLog } from "./rotating-log.js";
@@ -110,7 +110,7 @@ export class AgentManager {
 
     const logStream = new RotatingLog(resolve(logsDir, "agent.log"));
     const agentEnv = loadMergedEnv(name);
-    const env = {
+    const env: Record<string, string | undefined> = {
       ...process.env,
       ...agentEnv,
       VOLUTE_AGENT: name,
@@ -118,6 +118,43 @@ export class AgentManager {
       VOLUTE_AGENT_DIR: dir,
       VOLUTE_AGENT_PORT: String(port),
     };
+
+    // Node's spawn() with uid/gid doesn't set supplementary groups, so the agent
+    // process can't write to the shared CLAUDE_CONFIG_DIR even if it's group-writable.
+    // Give each agent its own writable config dir with a symlink to shared credentials.
+    if (isIsolationEnabled() && process.env.CLAUDE_CONFIG_DIR) {
+      const agentClaudeDir = resolve(dir, ".claude-config");
+      try {
+        mkdirSync(agentClaudeDir, { recursive: true });
+      } catch (err) {
+        throw new Error(
+          `Cannot start agent ${name}: failed to create config directory at ${agentClaudeDir}: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+      const sharedCreds = resolve(process.env.CLAUDE_CONFIG_DIR, ".credentials.json");
+      const agentCreds = resolve(agentClaudeDir, ".credentials.json");
+      if (existsSync(sharedCreds)) {
+        if (!existsSync(agentCreds)) {
+          try {
+            symlinkSync(sharedCreds, agentCreds);
+          } catch (err) {
+            console.error(
+              `[daemon] failed to symlink credentials for ${name}: ${err instanceof Error ? err.message : err}`,
+            );
+          }
+        }
+      } else {
+        console.warn(
+          `[daemon] shared credentials not found at ${sharedCreds} for agent ${name}. ` +
+            `Copy ~/.claude/.credentials.json to ${process.env.CLAUDE_CONFIG_DIR}/.credentials.json ` +
+            `or set ANTHROPIC_API_KEY in the agent's environment.`,
+        );
+      }
+      const baseName = name.split("@", 2)[0];
+      chownAgentDir(agentClaudeDir, baseName);
+      env.CLAUDE_CONFIG_DIR = agentClaudeDir;
+    }
+
     const tsxBin = resolve(dir, "node_modules", ".bin", "tsx");
 
     const spawnOpts: SpawnOptions = {
