@@ -17,7 +17,7 @@ import {
   isParticipantOrOwner,
 } from "../../../lib/conversations.js";
 import { daemonLoopback, findAgent, voluteHome } from "../../../lib/registry.js";
-import { slugify } from "../../../lib/slugify.js";
+import { buildVoluteSlug } from "../../../lib/slugify.js";
 import { getTypingMap } from "../../../lib/typing.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
@@ -154,12 +154,12 @@ const app = new Hono<AuthEnv>()
     // Build channel slug — @username for DMs (matching the volute channel driver)
     const isDM = participants.length === 2;
     function channelForAgent(agentUsername: string): string {
-      if (isDM) {
-        const other = participants.find((p) => p.username !== agentUsername);
-        const otherSlug = other ? slugify(other.username) : "";
-        return otherSlug ? `volute:@${otherSlug}` : `volute:${conversationId}`;
-      }
-      return convTitle ? `volute:${slugify(convTitle)}` : `volute:${conversationId}`;
+      return buildVoluteSlug({
+        participants,
+        agentUsername,
+        convTitle,
+        conversationId: conversationId!,
+      });
     }
 
     // Write slug → platformId mapping for all agent participants so they can resolve it

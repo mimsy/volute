@@ -135,8 +135,14 @@ export class ConnectorManager {
 
     // State dir is created by root — chown so the agent user can write channels.json, etc.
     if (isIsolationEnabled()) {
-      const [base] = agentName.split("@", 2);
-      chownAgentDir(agentStateDir, base);
+      try {
+        const [base] = agentName.split("@", 2);
+        chownAgentDir(agentStateDir, base);
+      } catch (err) {
+        throw new Error(
+          `Cannot start connector ${type} for ${agentName}: failed to set ownership on state directory ${agentStateDir}: ${err instanceof Error ? err.message : err}`,
+        );
+      }
     }
 
     const logStream = new RotatingLog(resolve(logsDir, `${type}.log`));

@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { type ChannelConversation, type ChannelUser, resolveChannelId } from "../channels.js";
 import { voluteHome } from "../registry.js";
-import { slugify } from "../slugify.js";
+import { buildVoluteSlug } from "../slugify.js";
 
 function getDaemonConfig(): { url: string; token?: string } {
   const configPath = resolve(voluteHome(), "daemon.json");
@@ -130,14 +130,12 @@ export async function listConversations(
       console.error(`[volute] failed to fetch participants for ${conv.id}:`, err);
     }
     const isDM = participants.length === 2;
-    let slug: string;
-    if (isDM) {
-      const other = participants.find((p) => p.username !== agentName);
-      const otherSlug = other ? slugify(other.username) : "";
-      slug = otherSlug ? `volute:@${otherSlug}` : `volute:${conv.id}`;
-    } else {
-      slug = conv.title ? `volute:${slugify(conv.title)}` : `volute:${conv.id}`;
-    }
+    const slug = buildVoluteSlug({
+      participants,
+      agentUsername: agentName,
+      convTitle: conv.title,
+      conversationId: conv.id,
+    });
     results.push({
       id: slug,
       platformId: conv.id,
