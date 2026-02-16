@@ -124,6 +124,8 @@ export async function listConversations(
       );
       if (pRes.ok) {
         participants = (await pRes.json()) as { username: string }[];
+      } else {
+        console.error(`[volute] failed to fetch participants for ${conv.id}: HTTP ${pRes.status}`);
       }
     } catch (err) {
       console.error(`[volute] failed to fetch participants for ${conv.id}:`, err);
@@ -132,7 +134,8 @@ export async function listConversations(
     let slug: string;
     if (isDM) {
       const other = participants.find((p) => p.username !== agentName);
-      slug = other ? `volute:@${slugify(other.username)}` : `volute:${conv.id}`;
+      const otherSlug = other ? slugify(other.username) : "";
+      slug = otherSlug ? `volute:@${otherSlug}` : `volute:${conv.id}`;
     } else {
       slug = conv.title ? `volute:${slugify(conv.title)}` : `volute:${conv.id}`;
     }
@@ -193,21 +196,27 @@ export async function createConversation(
     throw new Error(data.error ?? `Failed to create conversation: ${res.status}`);
   }
   const conv = (await res.json()) as { id: string };
-  const isDM = participants.length <= 1;
-  const slug =
-    isDM && participants.length === 1
-      ? `volute:@${slugify(participants[0])}`
-      : name
-        ? `volute:${slugify(name)}`
-        : `volute:${conv.id}`;
+  const isDM = participants.length === 1;
+  const participantSlug = isDM ? slugify(participants[0]) : "";
+  const slug = participantSlug
+    ? `volute:@${participantSlug}`
+    : name
+      ? `volute:${slugify(name)}`
+      : `volute:${conv.id}`;
 
   if (agentName) {
-    writeChannelEntry(agentName, slug, {
-      platformId: conv.id,
-      platform: "volute",
-      name: name ?? participants.join(", "),
-      type: isDM ? "dm" : "group",
-    });
+    try {
+      writeChannelEntry(agentName, slug, {
+        platformId: conv.id,
+        platform: "volute",
+        name: name ?? participants.join(", "),
+        type: isDM ? "dm" : "group",
+      });
+    } catch {
+      // Permission denied in isolation mode (sender can't write to target agent's state dir).
+      // Fall back to conversation ID so resolveChannelId can extract it directly.
+      return `volute:${conv.id}`;
+    }
   }
 
   return slug;
