@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.0](https://github.com/mimsy/volute/compare/volute-v0.10.2...volute-v0.11.0) (2026-02-16)
+
+
+### Features
+
+* add CLAUDE_CONFIG_DIR to system setup for shared agent credentials ([#56](https://github.com/mimsy/volute/issues/56)) ([b824aae](https://github.com/mimsy/volute/commit/b824aaea5b5399752554d26074cf94b54825fd64))
+* unified service mode detection for daemon lifecycle commands ([#59](https://github.com/mimsy/volute/issues/59)) ([66862e5](https://github.com/mimsy/volute/commit/66862e574311d7bbd8881070c94b5286324dd5f1))
+
+
+### Bug Fixes
+
+* fix daemon message proxy handling and agent server robustness ([#58](https://github.com/mimsy/volute/issues/58)) ([c6a533f](https://github.com/mimsy/volute/commit/c6a533f0c6413a654a822c368736d3786edc9951))
+
 ## [0.10.2](https://github.com/mimsy/volute/compare/volute-v0.10.1...volute-v0.10.2) (2026-02-16)
 
 
