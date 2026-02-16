@@ -105,7 +105,8 @@ function install(port?: number, host?: string): void {
   ensureVoluteGroup({ force: true });
   console.log("Ensured volute group exists");
 
-  // Create shared Claude config directory for agent-sdk agents (after group exists)
+  // Create shared Claude config directory for credentials (readable by volute group).
+  // Agents get their own per-agent CLAUDE_CONFIG_DIR for writable SDK state (debug, cache).
   mkdirSync(CLAUDE_DIR, { recursive: true });
   execFileSync("chown", ["root:volute", CLAUDE_DIR]);
   execFileSync("chmod", ["750", CLAUDE_DIR]);

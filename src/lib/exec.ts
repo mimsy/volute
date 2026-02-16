@@ -23,6 +23,21 @@ export function exec(
   });
 }
 
+/**
+ * Run a git command, adding `-c safe.directory=<cwd>` when isolation is enabled
+ * so the root-owned daemon can operate on agent-owned repositories.
+ */
+export function gitExec(
+  args: string[],
+  options: { cwd: string; uid?: number; gid?: number; env?: NodeJS.ProcessEnv },
+): Promise<string> {
+  const fullArgs =
+    process.env.VOLUTE_ISOLATION === "user"
+      ? ["-c", `safe.directory=${options.cwd}`, ...args]
+      : args;
+  return exec("git", fullArgs, options);
+}
+
 /** Resolve the absolute path to the `volute` binary. Throws if not found on PATH. */
 export function resolveVoluteBin(): string {
   try {

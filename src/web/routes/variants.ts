@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import { getAgentManager } from "../../lib/agent-manager.js";
-import { exec } from "../../lib/exec.js";
+import { exec, gitExec } from "../../lib/exec.js";
+import { chownAgentDir } from "../../lib/isolation.js";
 import { agentDir, findAgent, nextPort } from "../../lib/registry.js";
 import { spawnServer } from "../../lib/spawn-server.js";
 import {
@@ -63,7 +64,7 @@ const app = new Hono<AuthEnv>()
 
     // Create git worktree
     try {
-      await exec("git", ["worktree", "add", "-b", variantName, variantDir], { cwd: projectRoot });
+      await gitExec(["worktree", "add", "-b", variantName, variantDir], { cwd: projectRoot });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       return c.json({ error: `Failed to create worktree: ${msg}` }, 500);
@@ -93,6 +94,9 @@ const app = new Hono<AuthEnv>()
     };
 
     addVariant(agentName, variant);
+
+    // Fix ownership — daemon runs as root but agent needs to own its files
+    chownAgentDir(projectRoot, agentName);
 
     // Start variant via agent manager unless noStart
     if (!body.noStart) {
@@ -135,11 +139,11 @@ const app = new Hono<AuthEnv>()
 
     // Auto-commit any uncommitted changes in the variant worktree
     if (existsSync(variant.path)) {
-      const status = (await exec("git", ["status", "--porcelain"], { cwd: variant.path })).trim();
+      const status = (await gitExec(["status", "--porcelain"], { cwd: variant.path })).trim();
       if (status) {
         try {
-          await exec("git", ["add", "-A"], { cwd: variant.path });
-          await exec("git", ["commit", "-m", "Auto-commit uncommitted changes before merge"], {
+          await gitExec(["add", "-A"], { cwd: variant.path });
+          await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
             cwd: variant.path,
           });
         } catch (e) {
@@ -179,11 +183,11 @@ const app = new Hono<AuthEnv>()
     }
 
     // Auto-commit any uncommitted changes in the main worktree
-    const mainStatus = (await exec("git", ["status", "--porcelain"], { cwd: projectRoot })).trim();
+    const mainStatus = (await gitExec(["status", "--porcelain"], { cwd: projectRoot })).trim();
     if (mainStatus) {
       try {
-        await exec("git", ["add", "-A"], { cwd: projectRoot });
-        await exec("git", ["commit", "-m", "Auto-commit uncommitted changes before merge"], {
+        await gitExec(["add", "-A"], { cwd: projectRoot });
+        await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
           cwd: projectRoot,
         });
       } catch (e) {
@@ -196,7 +200,7 @@ const app = new Hono<AuthEnv>()
 
     // Merge branch
     try {
-      await exec("git", ["merge", variant.branch], { cwd: projectRoot });
+      await gitExec(["merge", variant.branch], { cwd: projectRoot });
     } catch (e) {
       return c.json({ error: "Merge failed. Resolve conflicts manually." }, 500);
     }
@@ -204,7 +208,7 @@ const app = new Hono<AuthEnv>()
     // Remove worktree
     if (existsSync(variant.path)) {
       try {
-        await exec("git", ["worktree", "remove", "--force", variant.path], { cwd: projectRoot });
+        await gitExec(["worktree", "remove", "--force", variant.path], { cwd: projectRoot });
       } catch {
         // Best effort
       }
@@ -212,7 +216,7 @@ const app = new Hono<AuthEnv>()
 
     // Delete branch
     try {
-      await exec("git", ["branch", "-D", variant.branch], { cwd: projectRoot });
+      await gitExec(["branch", "-D", variant.branch], { cwd: projectRoot });
     } catch {
       // Best effort
     }
@@ -226,6 +230,9 @@ const app = new Hono<AuthEnv>()
     } catch {
       // Best effort — agent restart will still be attempted
     }
+
+    // Fix ownership — daemon runs as root but agent needs to own its files
+    chownAgentDir(projectRoot, agentName);
 
     // Restart agent via agent manager with merge context
     const manager = getAgentManager();
@@ -278,7 +285,7 @@ const app = new Hono<AuthEnv>()
     // Remove the git worktree
     if (existsSync(variant.path)) {
       try {
-        await exec("git", ["worktree", "remove", "--force", variant.path], { cwd: projectRoot });
+        await gitExec(["worktree", "remove", "--force", variant.path], { cwd: projectRoot });
       } catch {
         // Best effort
       }
@@ -286,13 +293,16 @@ const app = new Hono<AuthEnv>()
 
     // Delete the git branch
     try {
-      await exec("git", ["branch", "-D", variant.branch], { cwd: projectRoot });
+      await gitExec(["branch", "-D", variant.branch], { cwd: projectRoot });
     } catch {
       // Best effort
     }
 
     // Remove from variants.json
     removeVariant(agentName, variantName);
+
+    // Fix ownership — worktree removal modifies .git/worktrees/ as root
+    chownAgentDir(projectRoot, agentName);
 
     return c.json({ ok: true });
   });
