@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { writeChannelEntry } from "../../connectors/sdk.js";
 import { type ChannelConversation, type ChannelUser, resolveChannelId } from "../channels.js";
 import { voluteHome } from "../registry.js";
 import { slugify } from "../slugify.js";
@@ -196,28 +195,7 @@ export async function createConversation(
     throw new Error(data.error ?? `Failed to create conversation: ${res.status}`);
   }
   const conv = (await res.json()) as { id: string };
-  const isDM = participants.length === 1;
-  const participantSlug = isDM ? slugify(participants[0]) : "";
-  const slug = participantSlug
-    ? `volute:@${participantSlug}`
-    : name
-      ? `volute:${slugify(name)}`
-      : `volute:${conv.id}`;
-
-  if (agentName) {
-    try {
-      writeChannelEntry(agentName, slug, {
-        platformId: conv.id,
-        platform: "volute",
-        name: name ?? participants.join(", "),
-        type: isDM ? "dm" : "group",
-      });
-    } catch {
-      // Permission denied in isolation mode (sender can't write to target agent's state dir).
-      // Fall back to conversation ID so resolveChannelId can extract it directly.
-      return `volute:${conv.id}`;
-    }
-  }
-
-  return slug;
+  // Return the conversation ID directly — resolveChannelId extracts it from the slug.
+  // Pretty @username slugs are generated dynamically by listConversations.
+  return `volute:${conv.id}`;
 }
