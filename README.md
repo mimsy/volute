@@ -36,6 +36,7 @@ One background process runs everything. `volute up` starts it; `volute down` sto
 volute up              # start (default port 4200)
 volute up --port 8080  # custom port
 volute down            # stop all agents and shut down
+volute status          # check daemon status, version, and agents
 ```
 
 The daemon handles agent lifecycle, crash recovery (auto-restarts after 3 seconds), connector processes, scheduled messages, and the web dashboard.
@@ -232,7 +233,7 @@ The container runs with per-agent user isolation enabled — each agent gets its
 
 ### Bare metal (Linux / Raspberry Pi)
 
-One-liner install on a fresh Debian/Ubuntu system:
+One-liner install on a fresh Linux system (Debian/Ubuntu, RHEL/Fedora, Arch, Alpine, SUSE):
 
 ```sh
 curl -fsSL <install-url> | sudo bash

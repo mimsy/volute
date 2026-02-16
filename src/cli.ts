@@ -59,6 +59,9 @@ switch (command) {
   case "update":
     await import("./commands/update.js").then((m) => m.run(args));
     break;
+  case "status":
+    await import("./commands/status.js").then((m) => m.run(args));
+    break;
   case "--help":
   case "-h":
   case undefined:
@@ -109,6 +112,7 @@ Commands:
   volute setup uninstall [--force]        Remove system service + isolation
 
   volute update                           Update to latest version
+  volute status                           Show daemon status and agents
 
 Options:
   --version, -v                           Show version number

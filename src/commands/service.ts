@@ -5,11 +5,16 @@ import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { resolveVoluteBin } from "../lib/exec.js";
 import { parseArgs } from "../lib/parse-args.js";
+import {
+  LAUNCHD_PLIST_LABEL,
+  LAUNCHD_PLIST_PATH,
+  SYSTEM_SERVICE_PATH,
+  USER_SYSTEMD_UNIT,
+} from "../lib/service-mode.js";
 
 const execFileAsync = promisify(execFile);
 
 const HOST_RE = /^[a-zA-Z0-9.:_-]+$/;
-const SYSTEM_SERVICE_PATH = "/etc/systemd/system/volute.service";
 
 function validateHost(host: string): void {
   if (!HOST_RE.test(host)) {
@@ -22,9 +27,6 @@ function escapeXml(s: string): string {
 }
 
 // macOS launchd
-const PLIST_LABEL = "com.volute.daemon";
-const plistPath = () => resolve(homedir(), "Library", "LaunchAgents", `${PLIST_LABEL}.plist`);
-
 function generatePlist(voluteBin: string, port?: number, host?: string): string {
   const args = ["up", "--foreground"];
   if (port != null) args.push("--port", String(port));
@@ -35,7 +37,7 @@ function generatePlist(voluteBin: string, port?: number, host?: string): string 
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>${PLIST_LABEL}</string>
+  <string>${LAUNCHD_PLIST_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
     ${[voluteBin, ...args].map((a) => `<string>${escapeXml(a)}</string>`).join("\n    ")}
@@ -53,9 +55,6 @@ function generatePlist(voluteBin: string, port?: number, host?: string): string 
 }
 
 // Linux systemd
-const unitName = "volute.service";
-const unitPath = () => resolve(homedir(), ".config", "systemd", "user", unitName);
-
 function generateUnit(voluteBin: string, port?: number, host?: string): string {
   const args = ["up", "--foreground"];
   if (port != null) args.push("--port", String(port));
@@ -82,7 +81,7 @@ async function install(port?: number, host?: string): Promise<void> {
   const platform = process.platform;
 
   if (platform === "darwin") {
-    const path = plistPath();
+    const path = LAUNCHD_PLIST_PATH;
     mkdirSync(resolve(homedir(), "Library", "LaunchAgents"), { recursive: true });
     writeFileSync(path, generatePlist(voluteBin, port, host));
     console.log(`Wrote ${path}`);
@@ -102,7 +101,7 @@ async function install(port?: number, host?: string): Promise<void> {
       console.error("Use `volute setup` instead to install a system-level service.");
       process.exit(1);
     }
-    const path = unitPath();
+    const path = USER_SYSTEMD_UNIT;
     mkdirSync(resolve(homedir(), ".config", "systemd", "user"), { recursive: true });
     writeFileSync(path, generateUnit(voluteBin, port, host));
     console.log(`Wrote ${path}`);
@@ -118,7 +117,7 @@ async function uninstall(): Promise<void> {
   const platform = process.platform;
 
   if (platform === "darwin") {
-    const path = plistPath();
+    const path = LAUNCHD_PLIST_PATH;
     if (existsSync(path)) {
       try {
         await execFileAsync("launchctl", ["unload", path]);
@@ -131,7 +130,7 @@ async function uninstall(): Promise<void> {
       console.log("Service not installed.");
     }
   } else if (platform === "linux") {
-    const path = unitPath();
+    const path = USER_SYSTEMD_UNIT;
     if (existsSync(path)) {
       try {
         await execFileAsync("systemctl", ["--user", "disable", "--now", "volute"]);
@@ -153,12 +152,12 @@ async function status(): Promise<void> {
   const platform = process.platform;
 
   if (platform === "darwin") {
-    if (!existsSync(plistPath())) {
+    if (!existsSync(LAUNCHD_PLIST_PATH)) {
       console.log("Service not installed.");
       return;
     }
     try {
-      const { stdout } = await execFileAsync("launchctl", ["list", PLIST_LABEL]);
+      const { stdout } = await execFileAsync("launchctl", ["list", LAUNCHD_PLIST_LABEL]);
       console.log(stdout);
     } catch {
       console.log("Service installed but not currently loaded.");
@@ -182,7 +181,7 @@ async function status(): Promise<void> {
       }
       return;
     }
-    if (!existsSync(unitPath())) {
+    if (!existsSync(USER_SYSTEMD_UNIT)) {
       console.log("Service not installed.");
       return;
     }

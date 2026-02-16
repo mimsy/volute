@@ -16,7 +16,7 @@
     "anthropic"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "bin": {
     "volute": "dist/cli.js"

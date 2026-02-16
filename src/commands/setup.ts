@@ -5,9 +5,9 @@ import { dirname } from "node:path";
 import { resolveVoluteBin } from "../lib/exec.js";
 import { ensureVoluteGroup } from "../lib/isolation.js";
 import { parseArgs } from "../lib/parse-args.js";
+import { SYSTEM_SERVICE_PATH } from "../lib/service-mode.js";
 
 const SERVICE_NAME = "volute.service";
-const SERVICE_PATH = `/etc/systemd/system/${SERVICE_NAME}`;
 const PROFILE_PATH = "/etc/profile.d/volute.sh";
 const WRAPPER_PATH = "/usr/local/bin/volute";
 const DATA_DIR = "/var/lib/volute";
@@ -133,14 +133,14 @@ function install(port?: number, host?: string): void {
   }
 
   // Install systemd service
-  writeFileSync(SERVICE_PATH, generateUnit(voluteBin, port, host ?? "0.0.0.0"));
-  console.log(`Wrote ${SERVICE_PATH}`);
+  writeFileSync(SYSTEM_SERVICE_PATH, generateUnit(voluteBin, port, host ?? "0.0.0.0"));
+  console.log(`Wrote ${SYSTEM_SERVICE_PATH}`);
 
   try {
     execFileSync("systemctl", ["daemon-reload"]);
   } catch (err) {
     const e = err as { stderr?: string };
-    console.error(`Failed to reload systemd after writing ${SERVICE_PATH}.`);
+    console.error(`Failed to reload systemd after writing ${SYSTEM_SERVICE_PATH}.`);
     if (e.stderr) console.error(e.stderr.toString().trim());
     console.error(
       "Try running `systemctl daemon-reload` manually, then `systemctl enable --now volute`.",
@@ -150,6 +150,9 @@ function install(port?: number, host?: string): void {
   try {
     execFileSync("systemctl", ["enable", "--now", SERVICE_NAME]);
     console.log("Service installed, enabled, and started.");
+    console.log(
+      "Run `source /etc/profile.d/volute.sh` or start a new shell to use volute CLI commands.",
+    );
     console.log(`\nVolute daemon is running. Data directory: ${DATA_DIR}`);
     console.log("Use `systemctl status volute` to check status.");
     console.log(
@@ -170,7 +173,7 @@ function uninstall(force: boolean): void {
     process.exit(1);
   }
 
-  if (!existsSync(SERVICE_PATH)) {
+  if (!existsSync(SYSTEM_SERVICE_PATH)) {
     console.log("Service not installed.");
     return;
   }
@@ -180,7 +183,7 @@ function uninstall(force: boolean): void {
   } catch {
     console.warn("Warning: failed to disable service (may already be stopped)");
   }
-  unlinkSync(SERVICE_PATH);
+  unlinkSync(SYSTEM_SERVICE_PATH);
   if (existsSync(PROFILE_PATH)) unlinkSync(PROFILE_PATH);
   if (existsSync(WRAPPER_PATH)) unlinkSync(WRAPPER_PATH);
   try {
