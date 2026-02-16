@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.3](https://github.com/mimsy/volute/compare/volute-v0.11.2...volute-v0.11.3) (2026-02-16)
+
+
+### Bug Fixes
+
+* use writeFileSync for credential copy and add missing chownAgentDir ([#64](https://github.com/mimsy/volute/issues/64)) ([793100e](https://github.com/mimsy/volute/commit/793100eaf26ebe6ba991087a0856bea17583ba16))
+
 ## [0.11.2](https://github.com/mimsy/volute/compare/volute-v0.11.1...volute-v0.11.2) (2026-02-16)
 
 
