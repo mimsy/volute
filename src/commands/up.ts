@@ -1,8 +1,9 @@
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { parseArgs } from "../lib/parse-args.js";
 import { voluteHome } from "../lib/registry.js";
+import { getServiceMode, modeLabel, pollHealth, startService } from "../lib/service-mode.js";
 
 type GlobalConfig = { hostname?: string; port?: number };
 
@@ -17,15 +18,6 @@ export function readGlobalConfig(): GlobalConfig {
   }
 }
 
-function isSystemdServiceEnabled(): boolean {
-  try {
-    execFileSync("systemctl", ["is-enabled", "--quiet", "volute"]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
     port: { type: "number" },
@@ -33,13 +25,25 @@ export async function run(args: string[]) {
     foreground: { type: "boolean" },
   });
 
-  // If managed by a system-level systemd service, redirect to systemctl
-  if (!flags.foreground && isSystemdServiceEnabled()) {
-    console.error("Volute is managed by a systemd service.");
-    console.error("Use: sudo systemctl start volute");
-    console.error("     sudo systemctl restart volute");
-    console.error("     systemctl status volute");
-    process.exit(1);
+  const mode = getServiceMode();
+  if (!flags.foreground && mode !== "manual") {
+    console.log(`Starting volute (${modeLabel(mode)})...`);
+    try {
+      await startService(mode);
+    } catch (err) {
+      console.error(`Failed to start service: ${err instanceof Error ? err.message : err}`);
+      process.exit(1);
+    }
+    const config = readGlobalConfig();
+    const h = flags.host ?? config.hostname ?? "127.0.0.1";
+    const p = flags.port ?? config.port ?? 4200;
+    if (await pollHealth(h, p)) {
+      console.log(`Volute daemon running on ${h}:${p}`);
+    } else {
+      console.error("Service started but daemon did not become healthy within 30s.");
+      process.exit(1);
+    }
+    return;
   }
 
   // Read defaults from config file, CLI flags override
@@ -68,10 +72,13 @@ export async function run(args: string[]) {
   try {
     const res = await fetch(`http://${pollHost}:${port}/api/health`);
     if (res.ok) {
-      console.error(
-        `Port ${port} is already in use by a Volute daemon. Use 'volute down' first, or kill the process on that port.`,
-      );
-      process.exit(1);
+      const body = await res.json().catch(() => null);
+      if (body && (body as { ok?: boolean }).ok) {
+        console.error(
+          `Port ${port} is already in use by a Volute daemon. Use 'volute down' first, or kill the process on that port.`,
+        );
+        process.exit(1);
+      }
     }
   } catch {
     // Port not responding — good, we can proceed

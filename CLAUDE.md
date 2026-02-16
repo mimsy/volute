@@ -143,6 +143,7 @@ The daemon serves a Hono web server (default port 4200) with a React frontend.
 | `volute service status` | Check service status |
 | `volute setup [--port N] [--host H]` | Install system service with user isolation (Linux, requires root) |
 | `volute setup uninstall [--force]` | Remove system service (--force removes data + users) |
+| `volute status` | Show daemon status, version, and agents |
 | `volute update` | Check for updates |
 
 Agent-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `channel`) use `--agent <name>` or `VOLUTE_AGENT` env var.
@@ -189,6 +190,7 @@ Agent-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `c
 | `resolve-agent-name.ts` | Resolves agent name from `--agent` flag or `VOLUTE_AGENT` env var |
 | `token-budget.ts` | Per-agent token budget enforcement |
 | `typing.ts` | Typing indicator tracking |
+| `service-mode.ts` | Service mode detection (manual/systemd/launchd), service control, health polling, daemon config reader |
 | `update-check.ts` | npm update check on CLI invocation |
 | `verify.ts` | Agent verification utilities |
 | `volute-config.ts` | Agent volute.json config reader |

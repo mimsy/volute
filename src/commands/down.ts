@@ -1,32 +1,25 @@
-import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
-import { getClient, urlOf } from "../lib/api-client.js";
-import { daemonFetch } from "../lib/daemon-client.js";
 import { voluteHome } from "../lib/registry.js";
-
-function isSystemdServiceEnabled(): boolean {
-  try {
-    execFileSync("systemctl", ["is-enabled", "--quiet", "volute"]);
-    return true;
-  } catch {
-    return false;
-  }
-}
+import {
+  getServiceMode,
+  modeLabel,
+  pollHealthDown,
+  readDaemonConfig,
+  stopService,
+} from "../lib/service-mode.js";
 
 export type StopResult =
   | { stopped: true; clean: boolean }
-  | { stopped: false; reason: "not-running" | "orphan" | "systemd" | "kill-failed"; port?: number };
+  | { stopped: false; reason: "not-running" }
+  | { stopped: false; reason: "orphan"; port: number }
+  | { stopped: false; reason: "kill-failed" };
 
 /**
  * Attempts to stop the running daemon. Returns a result instead of calling process.exit(),
  * so callers can decide how to handle each case.
  */
 export async function stopDaemon(): Promise<StopResult> {
-  if (isSystemdServiceEnabled()) {
-    return { stopped: false, reason: "systemd" };
-  }
-
   const home = voluteHome();
   const pidPath = resolve(home, "daemon.pid");
 
@@ -88,7 +81,7 @@ export async function stopDaemon(): Promise<StopResult> {
       console.error(
         `Failed to send SIGTERM to daemon (pid ${pid}): ${e instanceof Error ? e.message : e}`,
       );
-      return { stopped: false, reason: "kill-failed", port: pid };
+      return { stopped: false, reason: "kill-failed" };
     }
   }
 
@@ -132,52 +125,37 @@ export async function stopDaemon(): Promise<StopResult> {
 }
 
 export async function run(_args: string[]) {
-  const result = await stopDaemon();
+  const mode = getServiceMode();
 
+  if (mode !== "manual") {
+    console.log(`Stopping volute (${modeLabel(mode)})...`);
+    try {
+      await stopService(mode);
+    } catch (err) {
+      console.error(`Failed to stop service: ${err instanceof Error ? err.message : err}`);
+      process.exit(1);
+    }
+    const { hostname, port } = readDaemonConfig();
+    if (await pollHealthDown(hostname, port)) {
+      console.log("Daemon stopped.");
+    } else {
+      console.error("Service stopped but daemon may still be responding.");
+      process.exit(1);
+    }
+    return;
+  }
+
+  // Manual mode
+  const result = await stopDaemon();
   if (result.stopped) return;
 
-  if (result.reason === "systemd") {
-    const client = getClient();
-    await daemonFetch(urlOf(client.api.system.stop.$url()), { method: "POST" });
-
-    // Verify daemon actually stopped
-    const home = voluteHome();
-    const configPath = resolve(home, "daemon.json");
-    let hostname = "localhost";
-    let port = 4200;
-    if (existsSync(configPath)) {
-      try {
-        const config = JSON.parse(readFileSync(configPath, "utf-8"));
-        hostname = config.hostname || "localhost";
-        port = config.port ?? 4200;
-      } catch {}
-    }
-    if (hostname === "0.0.0.0") hostname = "127.0.0.1";
-    if (hostname === "::") hostname = "[::1]";
-    const url = new URL("http://localhost");
-    url.hostname = hostname;
-    url.port = String(port);
-    const healthUrl = `${url.origin}/api/health`;
-
-    const maxWait = 10_000;
-    const start = Date.now();
-    while (Date.now() - start < maxWait) {
-      await new Promise((r) => setTimeout(r, 500));
-      try {
-        await fetch(healthUrl);
-      } catch {
-        console.log("Daemon stopped.");
-        return;
-      }
-    }
-
-    console.error("Daemon may not have stopped. Check with: volute service status");
-    process.exit(1);
-  } else if (result.reason === "orphan") {
+  if (result.reason === "orphan") {
     console.error(`Daemon appears to be running on port ${result.port} but PID file is missing.`);
     console.error(`Kill the process manually: lsof -ti :${result.port} | xargs kill`);
-  } else if (result.reason === "not-running") {
-    console.error("Daemon is not running (no PID file found).");
+    process.exit(1);
+  } else if (result.reason === "kill-failed") {
+    process.exit(1);
   }
-  process.exit(1);
+  // not-running: exit 0 (idempotent)
+  console.log("Daemon is not running.");
 }

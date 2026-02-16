@@ -1,4 +1,4 @@
-FROM node:22-slim
+FROM node:24-slim
 
 # git needed for agent git init + variants
 RUN apt-get update && apt-get install -y --no-install-recommends git \
