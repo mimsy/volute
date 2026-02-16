@@ -12,7 +12,7 @@ import {
 import { checkForUpdate } from "../lib/update-check.js";
 
 export async function run(_args: string[]) {
-  const result = await checkForUpdate();
+  const result = await checkForUpdate(true);
   if (result.checkFailed) {
     console.error("Could not reach npm registry. Check your network connection and try again.");
     process.exit(1);
