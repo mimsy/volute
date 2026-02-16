@@ -321,7 +321,7 @@ const app = new Hono<AuthEnv>()
       chownAgentDir(dest, name);
 
       const ids = isIsolationEnabled() ? await getAgentUserIds(name) : undefined;
-      const env = ids ? { ...process.env, HOME: dest } : undefined;
+      const env = ids ? { ...process.env, HOME: resolve(dest, "home") } : undefined;
 
       // Install dependencies
       await exec("npm", ["install"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
@@ -442,7 +442,7 @@ const app = new Hono<AuthEnv>()
       chownAgentDir(dest, name);
 
       const ids = isIsolationEnabled() ? await getAgentUserIds(name) : undefined;
-      const env = ids ? { ...process.env, HOME: dest } : undefined;
+      const env = ids ? { ...process.env, HOME: resolve(dest, "home") } : undefined;
 
       // Install dependencies
       await exec("npm", ["install"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });

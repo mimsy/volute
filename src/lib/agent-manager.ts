@@ -131,11 +131,15 @@ export class AgentManager {
       VOLUTE_AGENT_PORT: String(port),
     };
 
+    if (isIsolationEnabled()) {
+      env.HOME = resolve(dir, "home");
+    }
+
     // Node's spawn() with uid/gid doesn't set supplementary groups, so the agent
     // process can't read the shared CLAUDE_CONFIG_DIR even if it's group-readable.
     // Give each agent its own config dir with a copy of the shared credentials.
     if (isIsolationEnabled() && process.env.CLAUDE_CONFIG_DIR) {
-      const agentClaudeDir = resolve(dir, ".claude");
+      const agentClaudeDir = resolve(dir, "home", ".claude");
       try {
         mkdirSync(agentClaudeDir, { recursive: true });
       } catch (err) {
