@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.2](https://github.com/mimsy/volute/compare/volute-v0.11.1...volute-v0.11.2) (2026-02-16)
+
+
+### Bug Fixes
+
+* fix git ownership and credential access for isolated agents ([#62](https://github.com/mimsy/volute/issues/62)) ([312df0f](https://github.com/mimsy/volute/commit/312df0f1d6ef8aaa5404ae47c95086325148a84b))
+
 ## [0.11.1](https://github.com/mimsy/volute/compare/volute-v0.11.0...volute-v0.11.1) (2026-02-16)
 
 
