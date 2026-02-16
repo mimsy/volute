@@ -24,9 +24,10 @@ export function ensureVoluteGroup(opts?: { force?: boolean }): void {
     execFileSync("getent", ["group", "volute"], { stdio: "ignore" });
   } catch {
     try {
-      execFileSync("groupadd", ["volute"], { stdio: "ignore" });
+      execFileSync("groupadd", ["volute"], { stdio: ["ignore", "ignore", "pipe"] });
     } catch (err) {
-      throw new Error(`Failed to create volute group: ${err}`);
+      const stderr = (err as { stderr?: Buffer })?.stderr?.toString().trim();
+      throw new Error(`Failed to create volute group${stderr ? `: ${stderr}` : ""}`);
     }
   }
 }
@@ -44,10 +45,11 @@ export function createAgentUser(name: string): void {
   }
   try {
     execFileSync("useradd", ["-r", "-M", "-G", "volute", "-s", "/usr/sbin/nologin", user], {
-      stdio: "ignore",
+      stdio: ["ignore", "ignore", "pipe"],
     });
   } catch (err) {
-    throw new Error(`Failed to create user ${user}: ${err}`);
+    const stderr = (err as { stderr?: Buffer })?.stderr?.toString().trim();
+    throw new Error(`Failed to create user ${user}${stderr ? `: ${stderr}` : ""}`);
   }
 }
 
@@ -86,6 +88,16 @@ export async function applyIsolation(spawnOpts: SpawnOptions, agentName: string)
 export function chownAgentDir(dir: string, name: string): void {
   if (!isIsolationEnabled()) return;
   const user = agentUserName(name);
-  execFileSync("chown", ["-R", `${user}:${user}`, dir]);
-  execFileSync("chmod", ["700", dir]);
+  try {
+    execFileSync("chown", ["-R", `${user}:${user}`, dir], { stdio: ["ignore", "ignore", "pipe"] });
+  } catch (err) {
+    const stderr = (err as { stderr?: Buffer })?.stderr?.toString().trim();
+    throw new Error(`Failed to chown ${dir} to ${user}${stderr ? `: ${stderr}` : ""}`);
+  }
+  try {
+    execFileSync("chmod", ["700", dir], { stdio: ["ignore", "ignore", "pipe"] });
+  } catch (err) {
+    const stderr = (err as { stderr?: Buffer })?.stderr?.toString().trim();
+    throw new Error(`Failed to chmod ${dir}${stderr ? `: ${stderr}` : ""}`);
+  }
 }
