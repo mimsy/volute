@@ -328,14 +328,23 @@ const app = new Hono<AuthEnv>()
       await exec("npm", ["install"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
 
       // git init + template branch + initial commit
+      let gitWarning: string | undefined;
       try {
         await exec("git", ["init"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
         await initTemplateBranch(dest, composedDir, manifest, ids, env);
       } catch {
         rmSync(resolve(dest, ".git"), { recursive: true, force: true });
+        gitWarning =
+          "Git setup failed — variants and upgrades won't be available until git is initialized.";
       }
 
-      return c.json({ ok: true, name, port, message: `Created agent: ${name} (port ${port})` });
+      return c.json({
+        ok: true,
+        name,
+        port,
+        message: `Created agent: ${name} (port ${port})`,
+        ...(gitWarning && { warning: gitWarning }),
+      });
     } catch (err) {
       // Clean up partial state
       if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
@@ -394,12 +403,7 @@ const app = new Hono<AuthEnv>()
     try {
       copyTemplateToDir(composedDir, dest, name, manifest);
 
-      // Apply init files
-      const initDir = resolve(dest, ".init");
-      if (existsSync(initDir)) {
-        cpSync(initDir, resolve(dest, "home"), { recursive: true });
-        rmSync(initDir, { recursive: true, force: true });
-      }
+      applyInitFiles(dest);
 
       // Write SOUL.md (with IDENTITY.md merged in)
       writeFileSync(resolve(dest, "home/SOUL.md"), mergedSoul);
@@ -433,8 +437,16 @@ const app = new Hono<AuthEnv>()
       const port = nextPort();
       addAgent(name, port);
 
+      // Set up per-agent user isolation (no-ops if VOLUTE_ISOLATION !== "user")
+      ensureVoluteGroup();
+      createAgentUser(name);
+      chownAgentDir(dest, name);
+
+      const ids = isIsolationEnabled() ? await getAgentUserIds(name) : undefined;
+      const env = ids ? { ...process.env, HOME: dest } : undefined;
+
       // Install dependencies
-      await exec("npm", ["install"], { cwd: dest });
+      await exec("npm", ["install"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
 
       // Consolidate memory if no MEMORY.md but daily logs exist
       if (!hasMemory && dailyLogCount > 0) {
@@ -442,9 +454,14 @@ const app = new Hono<AuthEnv>()
       }
 
       // git init + initial commit
-      await exec("git", ["init"], { cwd: dest });
-      await exec("git", ["add", "-A"], { cwd: dest });
-      await exec("git", ["commit", "-m", "import from OpenClaw"], { cwd: dest });
+      await exec("git", ["init"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
+      await exec("git", ["add", "-A"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
+      await exec("git", ["commit", "-m", "import from OpenClaw"], {
+        cwd: dest,
+        uid: ids?.uid,
+        gid: ids?.gid,
+        env,
+      });
 
       // Import session
       const sessionFile = body.sessionPath ? resolve(body.sessionPath) : findOpenClawSession(wsDir);
@@ -606,7 +623,12 @@ const app = new Hono<AuthEnv>()
                   ["commit", "-m", "Auto-commit uncommitted changes before merge"],
                   { cwd: variant.path },
                 );
-              } catch {}
+              } catch (e) {
+                console.error(
+                  `[daemon] failed to auto-commit variant worktree for ${baseName}:`,
+                  e,
+                );
+              }
             }
           }
 
@@ -620,7 +642,9 @@ const app = new Hono<AuthEnv>()
               await exec("git", ["commit", "-m", "Auto-commit uncommitted changes before merge"], {
                 cwd: projectRoot,
               });
-            } catch {}
+            } catch (e) {
+              console.error(`[daemon] failed to auto-commit main worktree for ${baseName}:`, e);
+            }
           }
 
           // Merge, cleanup worktree/branch, reinstall
@@ -638,7 +662,9 @@ const app = new Hono<AuthEnv>()
           removeVariant(baseName, mergeVariantName);
           try {
             await exec("npm", ["install"], { cwd: projectRoot });
-          } catch {}
+          } catch (e) {
+            console.error(`[daemon] npm install failed after merge for ${baseName}:`, e);
+          }
         }
       }
 
@@ -754,29 +780,46 @@ const app = new Hono<AuthEnv>()
       try {
         await exec("git", ["add", "-A"], { cwd: worktreeDir });
         await exec("git", ["commit", "--no-edit"], { cwd: worktreeDir });
-      } catch {
-        // commit may already be done
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!msg.includes("nothing to commit")) throw e;
       }
 
-      await exec("npm", ["install"], { cwd: worktreeDir });
+      try {
+        await exec("npm", ["install"], { cwd: worktreeDir });
 
-      const variantPort = nextPort();
-      addVariant(agentName, {
-        name: UPGRADE_VARIANT,
-        branch: UPGRADE_VARIANT,
-        path: worktreeDir,
-        port: variantPort,
-        created: new Date().toISOString(),
-      });
+        const variantPort = nextPort();
+        addVariant(agentName, {
+          name: UPGRADE_VARIANT,
+          branch: UPGRADE_VARIANT,
+          path: worktreeDir,
+          port: variantPort,
+          created: new Date().toISOString(),
+        });
 
-      await getAgentManager().startAgent(`${agentName}@${UPGRADE_VARIANT}`);
+        await getAgentManager().startAgent(`${agentName}@${UPGRADE_VARIANT}`);
 
-      return c.json({
-        ok: true,
-        name: agentName,
-        variant: UPGRADE_VARIANT,
-        port: variantPort,
-      });
+        return c.json({
+          ok: true,
+          name: agentName,
+          variant: UPGRADE_VARIANT,
+          port: variantPort,
+        });
+      } catch (err) {
+        try {
+          removeVariant(agentName, UPGRADE_VARIANT);
+        } catch {}
+        try {
+          await exec("git", ["worktree", "remove", "--force", worktreeDir], { cwd: dir });
+        } catch {}
+        try {
+          await exec("git", ["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
+        } catch {}
+        return c.json(
+          { error: err instanceof Error ? err.message : "Failed to continue upgrade" },
+          500,
+        );
+      }
     }
 
     // Fresh upgrade
@@ -821,25 +864,41 @@ const app = new Hono<AuthEnv>()
     }
 
     // Install, register, start
-    await exec("npm", ["install"], { cwd: worktreeDir });
+    try {
+      await exec("npm", ["install"], { cwd: worktreeDir });
 
-    const variantPort = nextPort();
-    addVariant(agentName, {
-      name: UPGRADE_VARIANT,
-      branch: UPGRADE_VARIANT,
-      path: worktreeDir,
-      port: variantPort,
-      created: new Date().toISOString(),
-    });
+      const variantPort = nextPort();
+      addVariant(agentName, {
+        name: UPGRADE_VARIANT,
+        branch: UPGRADE_VARIANT,
+        path: worktreeDir,
+        port: variantPort,
+        created: new Date().toISOString(),
+      });
 
-    await getAgentManager().startAgent(`${agentName}@${UPGRADE_VARIANT}`);
+      await getAgentManager().startAgent(`${agentName}@${UPGRADE_VARIANT}`);
 
-    return c.json({
-      ok: true,
-      name: agentName,
-      variant: UPGRADE_VARIANT,
-      port: variantPort,
-    });
+      return c.json({
+        ok: true,
+        name: agentName,
+        variant: UPGRADE_VARIANT,
+        port: variantPort,
+      });
+    } catch (err) {
+      try {
+        removeVariant(agentName, UPGRADE_VARIANT);
+      } catch {}
+      try {
+        await exec("git", ["worktree", "remove", "--force", worktreeDir], { cwd: dir });
+      } catch {}
+      try {
+        await exec("git", ["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
+      } catch {}
+      return c.json(
+        { error: err instanceof Error ? err.message : "Failed to complete upgrade" },
+        500,
+      );
+    }
   })
   // Proxy message to agent
   .post("/:name/message", async (c) => {

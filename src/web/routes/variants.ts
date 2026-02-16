@@ -237,17 +237,19 @@ const app = new Hono<AuthEnv>()
       ...(body.memory && { memory: body.memory }),
     };
 
+    let restartWarning: string | undefined;
     try {
       if (manager.isRunning(agentName)) {
         await manager.stopAgent(agentName);
       }
       manager.setPendingContext(agentName, context);
       await manager.startAgent(agentName);
-    } catch {
-      // Agent restart failed — merge still succeeded
+    } catch (e) {
+      restartWarning = `Merge succeeded but agent restart failed: ${e instanceof Error ? e.message : String(e)}`;
+      console.error(`[daemon] ${restartWarning}`);
     }
 
-    return c.json({ ok: true });
+    return c.json({ ok: true, ...(restartWarning && { warning: restartWarning }) });
   })
   // Delete variant — admin only
   .delete("/:name/variants/:variant", requireAdmin, async (c) => {
