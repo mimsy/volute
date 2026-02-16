@@ -14,34 +14,9 @@
   --sl-line-height: 1.6;
 }
 
-:root[data-theme="dark"] {
-  --sl-color-bg: #0a0c0f;
-  --sl-color-bg-nav: #11141a;
-  --sl-color-bg-sidebar: #11141a;
-  --sl-color-bg-inline-code: #1f2430;
-  --sl-color-hairline: #2a3040;
-  --sl-color-hairline-light: #1f2430;
-  --sl-color-text: #e8ecf4;
-  --sl-color-text-accent: #4ade80;
-  --sl-color-white: #e8ecf4;
-  --sl-color-gray-1: #a0aabb;
-  --sl-color-gray-2: #6a7588;
-  --sl-color-gray-3: #3a4560;
-  --sl-color-gray-4: #2a3040;
-  --sl-color-gray-5: #181c24;
-  --sl-color-gray-6: #11141a;
-  --sl-color-black: #0a0c0f;
-  --sl-color-accent-low: #0f291a;
-  --sl-color-accent: #4ade80;
-  --sl-color-accent-high: #bbf7d0;
-  --sl-color-text-invert: #0a0c0f;
-}
-
-/* Force dark theme */
+/* Force dark theme — same palette for both data-theme values */
 :root {
   color-scheme: dark;
-}
-:root[data-theme="light"] {
   --sl-color-bg: #0a0c0f;
   --sl-color-bg-nav: #11141a;
   --sl-color-bg-sidebar: #11141a;

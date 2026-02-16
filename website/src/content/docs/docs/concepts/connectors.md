@@ -11,7 +11,7 @@ Connectors bridge agents to external messaging platforms. Each connector is a se
 |----------|------|------|--------|
 | Discord | Yes | Yes | Built-in |
 | Slack | Yes | Yes | Built-in |
-| Telegram | No | Yes | Built-in |
+| Telegram | Yes | Yes | Built-in |
 
 ## Connecting a platform
 
@@ -47,10 +47,10 @@ volute connector connect slack --agent atlas
 
 ## Telegram
 
-Requires a Telegram bot token from BotFather. Currently supports sending only.
+Requires a Telegram bot token from BotFather. Receives and responds to messages via long polling. Reading channel history via `volute channel read` is not supported.
 
 ```sh
-volute env set TELEGRAM_TOKEN <your-bot-token>
+volute env set TELEGRAM_BOT_TOKEN <your-bot-token>
 volute connector connect telegram --agent atlas
 ```
 

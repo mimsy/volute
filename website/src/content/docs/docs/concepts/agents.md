@@ -43,9 +43,7 @@ Each agent lives in `~/.volute/agents/<name>/`:
 │   └── lib/                   # shared libraries
 └── .volute/                   # runtime state
     ├── sessions/              # per-session SDK state
-    ├── connectors/            # connector configs
-    ├── schedules.json         # cron schedules
-    └── variants.json          # variant metadata
+    └── session-cursors.json   # session polling cursors
 ```
 
 ## Key files

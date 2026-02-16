@@ -69,13 +69,13 @@ volute agent status <name>
 View agent logs.
 
 ```sh
-volute agent logs <name> [--follow] [-n <lines>]
+volute agent logs <name> [--follow] [--n <lines>]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--follow` | Stream logs in real-time |
-| `-n` | Number of lines to show (default: 50) |
+| `--n` | Number of lines to show (default: 50) |
 
 ## agent delete
 
@@ -112,10 +112,11 @@ volute variant merge upgrade --agent atlas
 Import an OpenClaw workspace.
 
 ```sh
-volute agent import <path> [--name <name>] [--session <path>]
+volute agent import <path> [--name <name>] [--session <path>] [--template <name>]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--name` | Override the agent name |
 | `--session` | Path to session.jsonl to convert |
+| `--template` | Template to use (default: `agent-sdk`) |

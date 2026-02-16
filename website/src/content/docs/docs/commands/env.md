@@ -22,12 +22,8 @@ Without `--agent`, the variable is shared across all agents. With `--agent`, it'
 Get an environment variable's value.
 
 ```sh
-volute env get <key> [--agent <name>] [--reveal]
+volute env get <key> [--agent <name>]
 ```
-
-| Flag | Description |
-|------|-------------|
-| `--reveal` | Show the actual value (values are masked by default) |
 
 ## env list
 

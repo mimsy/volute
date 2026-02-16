@@ -38,7 +38,7 @@ Shows variant name, port, health status, and branch.
 Merge a variant back into the main agent.
 
 ```sh
-volute variant merge <name> [--agent <agent>] [--summary "<text>"] [--memory "<text>"] [--justification "<text>"]
+volute variant merge <name> [--agent <agent>] [--summary "<text>"] [--memory "<text>"] [--justification "<text>"] [--skip-verify]
 ```
 
 | Flag | Description |
@@ -47,6 +47,7 @@ volute variant merge <name> [--agent <agent>] [--summary "<text>"] [--memory "<t
 | `--summary` | Summary of changes for post-merge context |
 | `--memory` | Memory updates to include |
 | `--justification` | Justification for the merge |
+| `--skip-verify` | Skip server health verification before merge |
 
 ## variant delete
 

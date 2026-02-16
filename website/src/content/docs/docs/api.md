@@ -59,21 +59,17 @@ Send a message to an agent. The body should be JSON:
 
 Stream agent logs. Supports `follow` query parameter for real-time streaming.
 
-### GET /api/agents/:name/status
-
-Get detailed agent status.
-
 ## Connectors
 
 ### GET /api/agents/:name/connectors
 
 List connectors for an agent.
 
-### POST /api/agents/:name/connectors/:type/connect
+### POST /api/agents/:name/connectors/:type
 
 Enable a connector.
 
-### POST /api/agents/:name/connectors/:type/disconnect
+### DELETE /api/agents/:name/connectors/:type
 
 Disable a connector.
 
@@ -138,10 +134,6 @@ Create a new conversation.
 ### GET /health
 
 Health check endpoint. Returns `200 OK`.
-
-### GET /api/system/status
-
-System status including daemon version and uptime.
 
 ### GET /api/system/update
 

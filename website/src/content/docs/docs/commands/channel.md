@@ -40,7 +40,7 @@ volute channel users <platform> [--agent <name>]
 Create a new conversation on a platform.
 
 ```sh
-volute channel create <platform> --participants <user1,user2> [--agent <name>]
+volute channel create <platform> --participants <user1,user2> [--name "<title>"] [--agent <name>]
 ```
 
 ## channel typing
