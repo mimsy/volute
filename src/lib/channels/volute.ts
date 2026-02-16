@@ -113,29 +113,35 @@ export async function listConversations(
     participants?: { userId: number }[];
   }[];
 
-  // Fetch participant counts
+  // Fetch participants for each conversation
   const results: ChannelConversation[] = [];
   for (const conv of convs) {
-    let participantCount: number | undefined;
+    let participants: { username: string }[] = [];
     try {
       const pRes = await fetch(
         `${url}/api/agents/${encodeURIComponent(agentName)}/conversations/${encodeURIComponent(conv.id)}/participants`,
         { headers },
       );
       if (pRes.ok) {
-        const participants = (await pRes.json()) as unknown[];
-        participantCount = participants.length;
+        participants = (await pRes.json()) as { username: string }[];
       }
     } catch (err) {
       console.error(`[volute] failed to fetch participants for ${conv.id}:`, err);
     }
-    const slug = conv.title ? `volute:${slugify(conv.title)}` : `volute:${conv.id}`;
+    const isDM = participants.length === 2;
+    let slug: string;
+    if (isDM) {
+      const other = participants.find((p) => p.username !== agentName);
+      slug = other ? `volute:@${slugify(other.username)}` : `volute:${conv.id}`;
+    } else {
+      slug = conv.title ? `volute:${slugify(conv.title)}` : `volute:${conv.id}`;
+    }
     results.push({
       id: slug,
       platformId: conv.id,
       name: conv.title ?? "(untitled)",
-      type: participantCount === 2 ? "dm" : "group",
-      participantCount,
+      type: isDM ? "dm" : "group",
+      participantCount: participants.length,
     });
   }
   return results;
@@ -187,14 +193,20 @@ export async function createConversation(
     throw new Error(data.error ?? `Failed to create conversation: ${res.status}`);
   }
   const conv = (await res.json()) as { id: string };
-  const slug = name ? `volute:${slugify(name)}` : `volute:${conv.id}`;
+  const isDM = participants.length <= 1;
+  const slug =
+    isDM && participants.length === 1
+      ? `volute:@${slugify(participants[0])}`
+      : name
+        ? `volute:${slugify(name)}`
+        : `volute:${conv.id}`;
 
   if (agentName) {
     writeChannelEntry(agentName, slug, {
       platformId: conv.id,
       platform: "volute",
       name: name ?? participants.join(", "),
-      type: participants.length <= 1 ? "dm" : "group",
+      type: isDM ? "dm" : "group",
     });
   }
 
