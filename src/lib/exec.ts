@@ -24,17 +24,15 @@ export function exec(
 }
 
 /**
- * Run a git command, adding `-c safe.directory=<cwd>` when isolation is enabled
- * so the root-owned daemon can operate on agent-owned repositories.
+ * Run a git command, adding `-c safe.directory=*` when isolation is enabled
+ * so the root-owned daemon can operate on agent-owned repositories and worktrees.
  */
 export function gitExec(
   args: string[],
   options: { cwd: string; uid?: number; gid?: number; env?: NodeJS.ProcessEnv },
 ): Promise<string> {
   const fullArgs =
-    process.env.VOLUTE_ISOLATION === "user"
-      ? ["-c", `safe.directory=${options.cwd}`, ...args]
-      : args;
+    process.env.VOLUTE_ISOLATION === "user" ? ["-c", "safe.directory=*", ...args] : args;
   return exec("git", fullArgs, options);
 }
 
