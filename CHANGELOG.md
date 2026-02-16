@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/mimsy/volute/compare/volute-v0.10.0...volute-v0.10.1) (2026-02-16)
+
+
+### Bug Fixes
+
+* fix useradd under systemd sandboxing and surface isolation errors ([#52](https://github.com/mimsy/volute/issues/52)) ([90e8f62](https://github.com/mimsy/volute/commit/90e8f621dbc7904e54b6907945a3d3518ccdf2bd))
+
 ## [0.10.0](https://github.com/mimsy/volute/compare/volute-v0.9.0...volute-v0.10.0) (2026-02-16)
 
 
