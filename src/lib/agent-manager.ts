@@ -1,5 +1,5 @@
 import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { loadMergedEnv } from "./env.js";
@@ -120,10 +120,10 @@ export class AgentManager {
     };
 
     // Node's spawn() with uid/gid doesn't set supplementary groups, so the agent
-    // process can't write to the shared CLAUDE_CONFIG_DIR even if it's group-writable.
-    // Give each agent its own writable config dir with a symlink to shared credentials.
+    // process can't read the shared CLAUDE_CONFIG_DIR even if it's group-readable.
+    // Give each agent its own config dir with a copy of the shared credentials.
     if (isIsolationEnabled() && process.env.CLAUDE_CONFIG_DIR) {
-      const agentClaudeDir = resolve(dir, ".claude-config");
+      const agentClaudeDir = resolve(dir, ".claude");
       try {
         mkdirSync(agentClaudeDir, { recursive: true });
       } catch (err) {
@@ -134,14 +134,12 @@ export class AgentManager {
       const sharedCreds = resolve(process.env.CLAUDE_CONFIG_DIR, ".credentials.json");
       const agentCreds = resolve(agentClaudeDir, ".credentials.json");
       if (existsSync(sharedCreds)) {
-        if (!existsSync(agentCreds)) {
-          try {
-            symlinkSync(sharedCreds, agentCreds);
-          } catch (err) {
-            console.error(
-              `[daemon] failed to symlink credentials for ${name}: ${err instanceof Error ? err.message : err}`,
-            );
-          }
+        try {
+          copyFileSync(sharedCreds, agentCreds);
+        } catch (err) {
+          throw new Error(
+            `Cannot start agent ${name}: failed to copy credentials to ${agentClaudeDir}: ${err instanceof Error ? err.message : err}`,
+          );
         }
       } else {
         console.warn(

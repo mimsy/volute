@@ -23,7 +23,7 @@ import { getConnectorManager } from "../../lib/connector-manager.js";
 import { consolidateMemory } from "../../lib/consolidate.js";
 import { convertSession } from "../../lib/convert-session.js";
 import { getDb } from "../../lib/db.js";
-import { exec } from "../../lib/exec.js";
+import { exec, gitExec } from "../../lib/exec.js";
 import {
   chownAgentDir,
   createAgentUser,
@@ -178,13 +178,13 @@ async function initTemplateBranch(
 
   const opts = { cwd: projectRoot, uid: ids?.uid, gid: ids?.gid, env };
 
-  await exec("git", ["checkout", "--orphan", TEMPLATE_BRANCH], opts);
-  await exec("git", ["add", "--", ...templateFiles], opts);
-  await exec("git", ["commit", "-m", "template update"], opts);
+  await gitExec(["checkout", "--orphan", TEMPLATE_BRANCH], opts);
+  await gitExec(["add", "--", ...templateFiles], opts);
+  await gitExec(["commit", "-m", "template update"], opts);
 
-  await exec("git", ["checkout", "-b", "main"], opts);
-  await exec("git", ["add", "-A"], opts);
-  await exec("git", ["commit", "-m", "initial commit"], opts);
+  await gitExec(["checkout", "-b", "main"], opts);
+  await gitExec(["add", "-A"], opts);
+  await gitExec(["commit", "-m", "initial commit"], opts);
 }
 
 /**
@@ -196,7 +196,7 @@ async function updateTemplateBranch(projectRoot: string, template: string, agent
 
   let branchExists = false;
   try {
-    await exec("git", ["rev-parse", "--verify", TEMPLATE_BRANCH], { cwd: projectRoot });
+    await gitExec(["rev-parse", "--verify", TEMPLATE_BRANCH], { cwd: projectRoot });
     branchExists = true;
   } catch {
     // branch doesn't exist
@@ -204,7 +204,7 @@ async function updateTemplateBranch(projectRoot: string, template: string, agent
 
   // Clean up any existing temp worktree
   try {
-    await exec("git", ["worktree", "remove", "--force", tempWorktree], { cwd: projectRoot });
+    await gitExec(["worktree", "remove", "--force", tempWorktree], { cwd: projectRoot });
   } catch {
     // doesn't exist
   }
@@ -217,18 +217,18 @@ async function updateTemplateBranch(projectRoot: string, template: string, agent
 
   try {
     if (branchExists) {
-      await exec("git", ["worktree", "add", tempWorktree, TEMPLATE_BRANCH], {
+      await gitExec(["worktree", "add", tempWorktree, TEMPLATE_BRANCH], {
         cwd: projectRoot,
       });
     } else {
-      await exec("git", ["worktree", "add", "--detach", tempWorktree], { cwd: projectRoot });
-      await exec("git", ["checkout", "--orphan", TEMPLATE_BRANCH], { cwd: tempWorktree });
-      await exec("git", ["rm", "-rf", "--cached", "."], { cwd: tempWorktree });
-      await exec("git", ["clean", "-fd"], { cwd: tempWorktree });
+      await gitExec(["worktree", "add", "--detach", tempWorktree], { cwd: projectRoot });
+      await gitExec(["checkout", "--orphan", TEMPLATE_BRANCH], { cwd: tempWorktree });
+      await gitExec(["rm", "-rf", "--cached", "."], { cwd: tempWorktree });
+      await gitExec(["clean", "-fd"], { cwd: tempWorktree });
     }
 
     if (branchExists) {
-      await exec("git", ["rm", "-rf", "."], { cwd: tempWorktree }).catch(() => {});
+      await gitExec(["rm", "-rf", "."], { cwd: tempWorktree }).catch(() => {});
     }
 
     copyTemplateToDir(composedDir, tempWorktree, agentName, manifest);
@@ -238,16 +238,16 @@ async function updateTemplateBranch(projectRoot: string, template: string, agent
       rmSync(initDir, { recursive: true, force: true });
     }
 
-    await exec("git", ["add", "-A"], { cwd: tempWorktree });
+    await gitExec(["add", "-A"], { cwd: tempWorktree });
 
     try {
-      await exec("git", ["diff", "--cached", "--quiet"], { cwd: tempWorktree });
+      await gitExec(["diff", "--cached", "--quiet"], { cwd: tempWorktree });
     } catch {
-      await exec("git", ["commit", "-m", "template update"], { cwd: tempWorktree });
+      await gitExec(["commit", "-m", "template update"], { cwd: tempWorktree });
     }
   } finally {
     try {
-      await exec("git", ["worktree", "remove", "--force", tempWorktree], { cwd: projectRoot });
+      await gitExec(["worktree", "remove", "--force", tempWorktree], { cwd: projectRoot });
     } catch {
       // best effort cleanup
     }
@@ -264,15 +264,14 @@ async function updateTemplateBranch(projectRoot: string, template: string, agent
  */
 async function mergeTemplateBranch(worktreeDir: string): Promise<boolean> {
   try {
-    await exec(
-      "git",
+    await gitExec(
       ["merge", TEMPLATE_BRANCH, "--allow-unrelated-histories", "-m", "merge template update"],
       { cwd: worktreeDir },
     );
     return false;
   } catch (e: unknown) {
     try {
-      const status = await exec("git", ["status", "--porcelain"], { cwd: worktreeDir });
+      const status = await gitExec(["status", "--porcelain"], { cwd: worktreeDir });
       const hasConflictMarkers = status
         .split("\n")
         .some((line) => line.startsWith("UU") || line.startsWith("AA"));
@@ -330,7 +329,7 @@ const app = new Hono<AuthEnv>()
       // git init + template branch + initial commit
       let gitWarning: string | undefined;
       try {
-        await exec("git", ["init"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
+        await gitExec(["init"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
         await initTemplateBranch(dest, composedDir, manifest, ids, env);
       } catch {
         rmSync(resolve(dest, ".git"), { recursive: true, force: true });
@@ -454,9 +453,9 @@ const app = new Hono<AuthEnv>()
       }
 
       // git init + initial commit
-      await exec("git", ["init"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
-      await exec("git", ["add", "-A"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
-      await exec("git", ["commit", "-m", "import from OpenClaw"], {
+      await gitExec(["init"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
+      await gitExec(["add", "-A"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
+      await gitExec(["commit", "-m", "import from OpenClaw"], {
         cwd: dest,
         uid: ids?.uid,
         gid: ids?.gid,
@@ -612,17 +611,13 @@ const app = new Hono<AuthEnv>()
 
           // Auto-commit variant worktree
           if (existsSync(variant.path)) {
-            const status = (
-              await exec("git", ["status", "--porcelain"], { cwd: variant.path })
-            ).trim();
+            const status = (await gitExec(["status", "--porcelain"], { cwd: variant.path })).trim();
             if (status) {
               try {
-                await exec("git", ["add", "-A"], { cwd: variant.path });
-                await exec(
-                  "git",
-                  ["commit", "-m", "Auto-commit uncommitted changes before merge"],
-                  { cwd: variant.path },
-                );
+                await gitExec(["add", "-A"], { cwd: variant.path });
+                await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
+                  cwd: variant.path,
+                });
               } catch (e) {
                 console.error(
                   `[daemon] failed to auto-commit variant worktree for ${baseName}:`,
@@ -634,12 +629,12 @@ const app = new Hono<AuthEnv>()
 
           // Auto-commit main worktree
           const mainStatus = (
-            await exec("git", ["status", "--porcelain"], { cwd: projectRoot })
+            await gitExec(["status", "--porcelain"], { cwd: projectRoot })
           ).trim();
           if (mainStatus) {
             try {
-              await exec("git", ["add", "-A"], { cwd: projectRoot });
-              await exec("git", ["commit", "-m", "Auto-commit uncommitted changes before merge"], {
+              await gitExec(["add", "-A"], { cwd: projectRoot });
+              await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
                 cwd: projectRoot,
               });
             } catch (e) {
@@ -648,16 +643,16 @@ const app = new Hono<AuthEnv>()
           }
 
           // Merge, cleanup worktree/branch, reinstall
-          await exec("git", ["merge", variant.branch], { cwd: projectRoot });
+          await gitExec(["merge", variant.branch], { cwd: projectRoot });
           if (existsSync(variant.path)) {
             try {
-              await exec("git", ["worktree", "remove", "--force", variant.path], {
+              await gitExec(["worktree", "remove", "--force", variant.path], {
                 cwd: projectRoot,
               });
             } catch {}
           }
           try {
-            await exec("git", ["branch", "-D", variant.branch], { cwd: projectRoot });
+            await gitExec(["branch", "-D", variant.branch], { cwd: projectRoot });
           } catch {}
           removeVariant(baseName, mergeVariantName);
           try {
@@ -665,6 +660,7 @@ const app = new Hono<AuthEnv>()
           } catch (e) {
             console.error(`[daemon] npm install failed after merge for ${baseName}:`, e);
           }
+          chownAgentDir(projectRoot, baseName);
         }
       }
 
@@ -769,7 +765,7 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: "No upgrade in progress" }, 400);
       }
 
-      const status = await exec("git", ["status", "--porcelain"], { cwd: worktreeDir });
+      const status = await gitExec(["status", "--porcelain"], { cwd: worktreeDir });
       const hasConflicts = status
         .split("\n")
         .some((line) => line.startsWith("UU") || line.startsWith("AA"));
@@ -778,8 +774,8 @@ const app = new Hono<AuthEnv>()
       }
 
       try {
-        await exec("git", ["add", "-A"], { cwd: worktreeDir });
-        await exec("git", ["commit", "--no-edit"], { cwd: worktreeDir });
+        await gitExec(["add", "-A"], { cwd: worktreeDir });
+        await gitExec(["commit", "--no-edit"], { cwd: worktreeDir });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (!msg.includes("nothing to commit")) throw e;
@@ -797,6 +793,7 @@ const app = new Hono<AuthEnv>()
           created: new Date().toISOString(),
         });
 
+        chownAgentDir(dir, agentName);
         await getAgentManager().startAgent(`${agentName}@${UPGRADE_VARIANT}`);
 
         return c.json({
@@ -810,11 +807,19 @@ const app = new Hono<AuthEnv>()
           removeVariant(agentName, UPGRADE_VARIANT);
         } catch {}
         try {
-          await exec("git", ["worktree", "remove", "--force", worktreeDir], { cwd: dir });
+          await gitExec(["worktree", "remove", "--force", worktreeDir], { cwd: dir });
         } catch {}
         try {
-          await exec("git", ["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
+          await gitExec(["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
         } catch {}
+        try {
+          chownAgentDir(dir, agentName);
+        } catch (chownErr) {
+          console.error(
+            `[daemon] failed to fix ownership during upgrade cleanup for ${agentName}:`,
+            chownErr,
+          );
+        }
         return c.json(
           { error: err instanceof Error ? err.message : "Failed to continue upgrade" },
           500,
@@ -833,9 +838,9 @@ const app = new Hono<AuthEnv>()
     }
 
     // Clean up stale worktree refs and leftover branch
-    await exec("git", ["worktree", "prune"], { cwd: dir });
+    await gitExec(["worktree", "prune"], { cwd: dir });
     try {
-      await exec("git", ["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
+      await gitExec(["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
     } catch {
       // branch doesn't exist
     }
@@ -849,10 +854,13 @@ const app = new Hono<AuthEnv>()
       mkdirSync(parentDir, { recursive: true });
     }
 
-    await exec("git", ["worktree", "add", "-b", UPGRADE_VARIANT, worktreeDir], { cwd: dir });
+    await gitExec(["worktree", "add", "-b", UPGRADE_VARIANT, worktreeDir], { cwd: dir });
 
     // Merge template branch
     const hasConflicts = await mergeTemplateBranch(worktreeDir);
+
+    // Fix ownership — daemon runs as root but agent needs to own its files
+    chownAgentDir(dir, agentName);
 
     if (hasConflicts) {
       return c.json({
@@ -876,6 +884,7 @@ const app = new Hono<AuthEnv>()
         created: new Date().toISOString(),
       });
 
+      chownAgentDir(dir, agentName);
       await getAgentManager().startAgent(`${agentName}@${UPGRADE_VARIANT}`);
 
       return c.json({
@@ -889,11 +898,19 @@ const app = new Hono<AuthEnv>()
         removeVariant(agentName, UPGRADE_VARIANT);
       } catch {}
       try {
-        await exec("git", ["worktree", "remove", "--force", worktreeDir], { cwd: dir });
+        await gitExec(["worktree", "remove", "--force", worktreeDir], { cwd: dir });
       } catch {}
       try {
-        await exec("git", ["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
+        await gitExec(["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
       } catch {}
+      try {
+        chownAgentDir(dir, agentName);
+      } catch (chownErr) {
+        console.error(
+          `[daemon] failed to fix ownership during upgrade cleanup for ${agentName}:`,
+          chownErr,
+        );
+      }
       return c.json(
         { error: err instanceof Error ? err.message : "Failed to complete upgrade" },
         500,
