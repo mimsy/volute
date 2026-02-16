@@ -105,8 +105,15 @@ export class AgentManager {
       // Port not in use — good
     }
 
-    const logsDir = resolve(stateDir(name), "logs");
+    const agentStateDir = stateDir(name);
+    const logsDir = resolve(agentStateDir, "logs");
     mkdirSync(logsDir, { recursive: true });
+
+    // State dir is created by root — chown so the agent user can write channels.json, etc.
+    if (isIsolationEnabled()) {
+      const [base] = name.split("@", 2);
+      chownAgentDir(agentStateDir, base);
+    }
 
     const logStream = new RotatingLog(resolve(logsDir, "agent.log"));
     const agentEnv = loadMergedEnv(name);
