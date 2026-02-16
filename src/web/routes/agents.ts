@@ -812,7 +812,14 @@ const app = new Hono<AuthEnv>()
         try {
           await gitExec(["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
         } catch {}
-        chownAgentDir(dir, agentName);
+        try {
+          chownAgentDir(dir, agentName);
+        } catch (chownErr) {
+          console.error(
+            `[daemon] failed to fix ownership during upgrade cleanup for ${agentName}:`,
+            chownErr,
+          );
+        }
         return c.json(
           { error: err instanceof Error ? err.message : "Failed to continue upgrade" },
           500,
@@ -896,6 +903,14 @@ const app = new Hono<AuthEnv>()
       try {
         await gitExec(["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
       } catch {}
+      try {
+        chownAgentDir(dir, agentName);
+      } catch (chownErr) {
+        console.error(
+          `[daemon] failed to fix ownership during upgrade cleanup for ${agentName}:`,
+          chownErr,
+        );
+      }
       return c.json(
         { error: err instanceof Error ? err.message : "Failed to complete upgrade" },
         500,

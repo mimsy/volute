@@ -1,5 +1,5 @@
 import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { loadMergedEnv } from "./env.js";
@@ -123,7 +123,7 @@ export class AgentManager {
     // process can't read the shared CLAUDE_CONFIG_DIR even if it's group-readable.
     // Give each agent its own config dir with a copy of the shared credentials.
     if (isIsolationEnabled() && process.env.CLAUDE_CONFIG_DIR) {
-      const agentClaudeDir = resolve(dir, ".claude-config");
+      const agentClaudeDir = resolve(dir, ".claude");
       try {
         mkdirSync(agentClaudeDir, { recursive: true });
       } catch (err) {
@@ -135,10 +135,12 @@ export class AgentManager {
       const agentCreds = resolve(agentClaudeDir, ".credentials.json");
       if (existsSync(sharedCreds)) {
         try {
-          copyFileSync(sharedCreds, agentCreds);
+          // Write via read+write instead of copyFileSync to avoid EPERM from
+          // cross-filesystem copy_file_range or pre-existing agent-owned files.
+          writeFileSync(agentCreds, readFileSync(sharedCreds));
         } catch (err) {
-          console.error(
-            `[daemon] failed to copy credentials for ${name}: ${err instanceof Error ? err.message : err}`,
+          throw new Error(
+            `Cannot start agent ${name}: failed to copy credentials to ${agentClaudeDir}: ${err instanceof Error ? err.message : err}`,
           );
         }
       } else {
