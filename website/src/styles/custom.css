@@ -1,0 +1,219 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap");
+
+:root {
+  --sl-font: "IBM Plex Mono", monospace;
+  --sl-font-system-mono: "IBM Plex Mono", monospace;
+  --sl-text-xs: 0.8125rem;
+  --sl-text-sm: 0.875rem;
+  --sl-text-base: 0.9375rem;
+  --sl-text-lg: 1.0625rem;
+  --sl-text-xl: 1.1875rem;
+  --sl-text-2xl: 1.375rem;
+  --sl-text-3xl: 1.625rem;
+  --sl-text-4xl: 2rem;
+  --sl-line-height: 1.6;
+}
+
+:root[data-theme="dark"] {
+  --sl-color-bg: #0a0c0f;
+  --sl-color-bg-nav: #11141a;
+  --sl-color-bg-sidebar: #11141a;
+  --sl-color-bg-inline-code: #1f2430;
+  --sl-color-hairline: #2a3040;
+  --sl-color-hairline-light: #1f2430;
+  --sl-color-text: #e8ecf4;
+  --sl-color-text-accent: #4ade80;
+  --sl-color-white: #e8ecf4;
+  --sl-color-gray-1: #a0aabb;
+  --sl-color-gray-2: #6a7588;
+  --sl-color-gray-3: #3a4560;
+  --sl-color-gray-4: #2a3040;
+  --sl-color-gray-5: #181c24;
+  --sl-color-gray-6: #11141a;
+  --sl-color-black: #0a0c0f;
+  --sl-color-accent-low: #0f291a;
+  --sl-color-accent: #4ade80;
+  --sl-color-accent-high: #bbf7d0;
+  --sl-color-text-invert: #0a0c0f;
+}
+
+/* Force dark theme */
+:root {
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --sl-color-bg: #0a0c0f;
+  --sl-color-bg-nav: #11141a;
+  --sl-color-bg-sidebar: #11141a;
+  --sl-color-bg-inline-code: #1f2430;
+  --sl-color-hairline: #2a3040;
+  --sl-color-hairline-light: #1f2430;
+  --sl-color-text: #e8ecf4;
+  --sl-color-text-accent: #4ade80;
+  --sl-color-white: #e8ecf4;
+  --sl-color-gray-1: #a0aabb;
+  --sl-color-gray-2: #6a7588;
+  --sl-color-gray-3: #3a4560;
+  --sl-color-gray-4: #2a3040;
+  --sl-color-gray-5: #181c24;
+  --sl-color-gray-6: #11141a;
+  --sl-color-black: #0a0c0f;
+  --sl-color-accent-low: #0f291a;
+  --sl-color-accent: #4ade80;
+  --sl-color-accent-high: #bbf7d0;
+  --sl-color-text-invert: #0a0c0f;
+}
+
+/* Selection */
+::selection {
+  background: rgba(74, 222, 128, 0.25);
+  color: #4ade80;
+}
+
+/* Links */
+a {
+  transition: color 0.15s;
+}
+
+/* Code blocks */
+pre {
+  border: 1px solid #2a3040 !important;
+}
+
+/* Sidebar tweaks */
+.sidebar-content a[aria-current="page"] {
+  color: #4ade80;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a3040;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a4560;
+}
+
+/* Hero section customization */
+.hero {
+  border-bottom: 1px solid #2a3040;
+  padding-bottom: 3rem !important;
+}
+
+/* Landing page install command */
+.install-command {
+  display: inline-block;
+  background: #181c24;
+  border: 1px solid #2a3040;
+  border-radius: 6px;
+  padding: 0.75rem 1.5rem;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.9375rem;
+  color: #a0aabb;
+  margin-top: 1rem;
+}
+.install-command .prompt {
+  color: #6a7588;
+}
+.install-command .cmd {
+  color: #4ade80;
+}
+
+/* Feature cards */
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1.25rem;
+  margin: 2.5rem 0;
+}
+.feature-card {
+  background: #11141a;
+  border: 1px solid #2a3040;
+  border-radius: 10px;
+  padding: 1.5rem;
+  transition: border-color 0.2s;
+}
+.feature-card:hover {
+  border-color: #3a4560;
+}
+.feature-card h3 {
+  color: #e8ecf4;
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+.feature-card p {
+  color: #a0aabb;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  margin: 0;
+}
+.feature-card .icon {
+  font-size: 1.25rem;
+  margin-bottom: 0.75rem;
+  display: block;
+}
+
+/* Philosophy teaser */
+.philosophy-teaser {
+  border-top: 1px solid #2a3040;
+  border-bottom: 1px solid #2a3040;
+  padding: 2.5rem 0;
+  margin: 2.5rem 0;
+  max-width: 640px;
+}
+.philosophy-teaser p {
+  color: #a0aabb;
+  font-size: 0.875rem;
+  line-height: 1.7;
+}
+.philosophy-teaser a {
+  color: #60a5fa;
+}
+
+/* Terminal demo */
+.terminal-demo {
+  background: #11141a;
+  border: 1px solid #2a3040;
+  border-radius: 10px;
+  padding: 1.5rem;
+  margin: 2.5rem 0;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.8125rem;
+  line-height: 1.8;
+  overflow-x: auto;
+}
+.terminal-demo .prompt {
+  color: #6a7588;
+}
+.terminal-demo .cmd {
+  color: #4ade80;
+}
+.terminal-demo .output {
+  color: #a0aabb;
+}
+.terminal-demo .accent {
+  color: #60a5fa;
+}
+.terminal-demo .dim {
+  color: #6a7588;
+}
+
+/* Hide theme toggle (dark-only site) */
+starlight-theme-select {
+  display: none;
+}
+
+/* Custom page layout (non-docs) */
+.custom-page {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 3rem 1.5rem;
+}
