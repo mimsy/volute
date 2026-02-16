@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.2](https://github.com/mimsy/volute/compare/volute-v0.10.1...volute-v0.10.2) (2026-02-16)
+
+
+### Bug Fixes
+
+* use ProtectSystem=true to fix useradd locking ([#54](https://github.com/mimsy/volute/issues/54)) ([91004e5](https://github.com/mimsy/volute/commit/91004e56a4f2a0559b921de0b99e4f2d6ab673af))
+
 ## [0.10.1](https://github.com/mimsy/volute/compare/volute-v0.10.0...volute-v0.10.1) (2026-02-16)
 
 
