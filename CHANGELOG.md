@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/mimsy/volute/compare/volute-v0.9.0...volute-v0.10.0) (2026-02-16)
+
+
+### Features
+
+* route remaining CLI commands through daemon API ([#50](https://github.com/mimsy/volute/issues/50)) ([41959ff](https://github.com/mimsy/volute/commit/41959ff1219a90b0f98cca52985d63c267ce37a6))
+
 ## [0.9.0](https://github.com/mimsy/volute/compare/volute-v0.8.3...volute-v0.9.0) (2026-02-15)
 
 
