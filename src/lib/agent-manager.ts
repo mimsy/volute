@@ -1,5 +1,5 @@
 import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { loadMergedEnv } from "./env.js";
@@ -135,7 +135,9 @@ export class AgentManager {
       const agentCreds = resolve(agentClaudeDir, ".credentials.json");
       if (existsSync(sharedCreds)) {
         try {
-          copyFileSync(sharedCreds, agentCreds);
+          // Write via read+write instead of copyFileSync to avoid EPERM from
+          // cross-filesystem copy_file_range or pre-existing agent-owned files.
+          writeFileSync(agentCreds, readFileSync(sharedCreds));
         } catch (err) {
           throw new Error(
             `Cannot start agent ${name}: failed to copy credentials to ${agentClaudeDir}: ${err instanceof Error ? err.message : err}`,
