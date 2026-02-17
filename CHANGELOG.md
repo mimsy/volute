@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.12.0](https://github.com/mimsy/volute/compare/volute-v0.11.4...volute-v0.12.0) (2026-02-17)
+
+
+### Features
+
+* use [@username](https://github.com/username) DM slugs for volute conversations ([#69](https://github.com/mimsy/volute/issues/69)) ([44b9d4d](https://github.com/mimsy/volute/commit/44b9d4ddd29e76191a91649e81af8e17599896dc))
+
+
+### Bug Fixes
+
+* use agent home/ dir for HOME and CLAUDE_CONFIG_DIR in isolation ([#70](https://github.com/mimsy/volute/issues/70)) ([f759882](https://github.com/mimsy/volute/commit/f7598822386dbdc34ffa7a1f0798f4ebd553684c))
+
 ## [0.11.4](https://github.com/mimsy/volute/compare/volute-v0.11.3...volute-v0.11.4) (2026-02-16)
 
 
