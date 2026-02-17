@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.2](https://github.com/mimsy/volute/compare/volute-v0.13.1...volute-v0.13.2) (2026-02-17)
+
+
+### Bug Fixes
+
+* remove shared CLAUDE_CONFIG_DIR, use default $HOME/.claude per agent ([#77](https://github.com/mimsy/volute/issues/77)) ([d4e5600](https://github.com/mimsy/volute/commit/d4e56003e5395f7a3a0d83bc057143abc112188f))
+
 ## [0.13.1](https://github.com/mimsy/volute/compare/volute-v0.13.0...volute-v0.13.1) (2026-02-17)
 
 
