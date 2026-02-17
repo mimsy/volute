@@ -29,8 +29,8 @@ export function ensureVoluteGroup(opts?: { force?: boolean }): void {
   }
 }
 
-/** Create a system user for an agent. */
-export function createAgentUser(name: string): void {
+/** Create a system user for an agent. `homeDir` sets the passwd home directory. */
+export function createAgentUser(name: string, homeDir?: string): void {
   if (!isIsolationEnabled()) return;
   const user = agentUserName(name);
   try {
@@ -41,7 +41,10 @@ export function createAgentUser(name: string): void {
     // User doesn't exist — create it
   }
   try {
-    execFileSync("useradd", ["-r", "-M", "-G", "volute", "-s", "/usr/sbin/nologin", user], {
+    const args = ["-r", "-M", "-G", "volute", "-s", "/usr/sbin/nologin"];
+    if (homeDir) args.push("-d", homeDir);
+    args.push(user);
+    execFileSync("useradd", args, {
       stdio: ["ignore", "ignore", "pipe"],
     });
   } catch (err) {

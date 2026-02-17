@@ -315,12 +315,13 @@ const app = new Hono<AuthEnv>()
       addAgent(name, port);
 
       // Set up per-agent user isolation (no-ops if VOLUTE_ISOLATION !== "user")
+      const homeDir = resolve(dest, "home");
       ensureVoluteGroup();
-      createAgentUser(name);
+      createAgentUser(name, homeDir);
       chownAgentDir(dest, name);
 
       const agentName = isIsolationEnabled() ? name : undefined;
-      const env = agentName ? { ...process.env, HOME: resolve(dest, "home") } : undefined;
+      const env = agentName ? { ...process.env, HOME: homeDir } : undefined;
 
       // Install dependencies
       await exec("npm", ["install"], { cwd: dest, agentName, env });
@@ -436,12 +437,13 @@ const app = new Hono<AuthEnv>()
       addAgent(name, port);
 
       // Set up per-agent user isolation (no-ops if VOLUTE_ISOLATION !== "user")
+      const homeDir = resolve(dest, "home");
       ensureVoluteGroup();
-      createAgentUser(name);
+      createAgentUser(name, homeDir);
       chownAgentDir(dest, name);
 
       const agentName = isIsolationEnabled() ? name : undefined;
-      const env = agentName ? { ...process.env, HOME: resolve(dest, "home") } : undefined;
+      const env = agentName ? { ...process.env, HOME: homeDir } : undefined;
 
       // Install dependencies
       await exec("npm", ["install"], { cwd: dest, agentName, env });
