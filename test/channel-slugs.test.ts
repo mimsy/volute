@@ -10,7 +10,7 @@ import {
 } from "../src/connectors/sdk.js";
 import { resolveChannelId as resolveChannelIdEnv } from "../src/lib/channels.js";
 import { stateDir } from "../src/lib/registry.js";
-import { slugify } from "../src/lib/slugify.js";
+import { buildVoluteSlug, slugify } from "../src/lib/slugify.js";
 
 // Test agent name — stateDir will resolve to VOLUTE_HOME/state/test-channel-agent
 const TEST_AGENT = "test-channel-agent";
@@ -42,6 +42,86 @@ describe("slugify", () => {
 
   it("lowercases uppercase letters", () => {
     assert.equal(slugify("Hello World"), "hello-world");
+  });
+});
+
+describe("buildVoluteSlug", () => {
+  it("generates @username slug for the other participant in a DM", () => {
+    const slug = buildVoluteSlug({
+      participants: [{ username: "bot" }, { username: "alice" }],
+      agentUsername: "bot",
+      convTitle: "bot, alice",
+      conversationId: "conv-123",
+    });
+    assert.equal(slug, "volute:@alice");
+  });
+
+  it("each agent in a multi-agent DM gets a different slug", () => {
+    const participants = [{ username: "agent1" }, { username: "agent2" }];
+    const slug1 = buildVoluteSlug({
+      participants,
+      agentUsername: "agent1",
+      convTitle: null,
+      conversationId: "conv-456",
+    });
+    const slug2 = buildVoluteSlug({
+      participants,
+      agentUsername: "agent2",
+      convTitle: null,
+      conversationId: "conv-456",
+    });
+    assert.equal(slug1, "volute:@agent2");
+    assert.equal(slug2, "volute:@agent1");
+  });
+
+  it("falls back to conversation ID when slugify produces empty string", () => {
+    const slug = buildVoluteSlug({
+      participants: [{ username: "bot" }, { username: "!!!" }],
+      agentUsername: "bot",
+      convTitle: null,
+      conversationId: "conv-789",
+    });
+    assert.equal(slug, "volute:conv-789");
+  });
+
+  it("uses title-based slug for group conversations", () => {
+    const slug = buildVoluteSlug({
+      participants: [{ username: "bot" }, { username: "alice" }, { username: "bob" }],
+      agentUsername: "bot",
+      convTitle: "Project Chat",
+      conversationId: "conv-abc",
+    });
+    assert.equal(slug, "volute:project-chat");
+  });
+
+  it("falls back to conversation ID for untitled groups", () => {
+    const slug = buildVoluteSlug({
+      participants: [{ username: "bot" }, { username: "alice" }, { username: "bob" }],
+      agentUsername: "bot",
+      convTitle: null,
+      conversationId: "conv-def",
+    });
+    assert.equal(slug, "volute:conv-def");
+  });
+
+  it("falls back to conversation ID for single-participant conversations", () => {
+    const slug = buildVoluteSlug({
+      participants: [{ username: "bot" }],
+      agentUsername: "bot",
+      convTitle: null,
+      conversationId: "conv-solo",
+    });
+    assert.equal(slug, "volute:conv-solo");
+  });
+
+  it("falls back to conversation ID with no participants and no title", () => {
+    const slug = buildVoluteSlug({
+      participants: [],
+      agentUsername: "bot",
+      convTitle: null,
+      conversationId: "conv-empty",
+    });
+    assert.equal(slug, "volute:conv-empty");
   });
 });
 

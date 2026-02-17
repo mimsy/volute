@@ -1,9 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { writeChannelEntry } from "../../connectors/sdk.js";
 import { type ChannelConversation, type ChannelUser, resolveChannelId } from "../channels.js";
 import { voluteHome } from "../registry.js";
-import { slugify } from "../slugify.js";
+import { buildVoluteSlug } from "../slugify.js";
 
 function getDaemonConfig(): { url: string; token?: string } {
   const configPath = resolve(voluteHome(), "daemon.json");
@@ -113,29 +112,36 @@ export async function listConversations(
     participants?: { userId: number }[];
   }[];
 
-  // Fetch participant counts
+  // Fetch participants for each conversation
   const results: ChannelConversation[] = [];
   for (const conv of convs) {
-    let participantCount: number | undefined;
+    let participants: { username: string }[] = [];
     try {
       const pRes = await fetch(
         `${url}/api/agents/${encodeURIComponent(agentName)}/conversations/${encodeURIComponent(conv.id)}/participants`,
         { headers },
       );
       if (pRes.ok) {
-        const participants = (await pRes.json()) as unknown[];
-        participantCount = participants.length;
+        participants = (await pRes.json()) as { username: string }[];
+      } else {
+        console.error(`[volute] failed to fetch participants for ${conv.id}: HTTP ${pRes.status}`);
       }
     } catch (err) {
       console.error(`[volute] failed to fetch participants for ${conv.id}:`, err);
     }
-    const slug = conv.title ? `volute:${slugify(conv.title)}` : `volute:${conv.id}`;
+    const isDM = participants.length === 2;
+    const slug = buildVoluteSlug({
+      participants,
+      agentUsername: agentName,
+      convTitle: conv.title,
+      conversationId: conv.id,
+    });
     results.push({
       id: slug,
       platformId: conv.id,
       name: conv.title ?? "(untitled)",
-      type: participantCount === 2 ? "dm" : "group",
-      participantCount,
+      type: isDM ? "dm" : "group",
+      participantCount: participants.length,
     });
   }
   return results;
@@ -187,16 +193,7 @@ export async function createConversation(
     throw new Error(data.error ?? `Failed to create conversation: ${res.status}`);
   }
   const conv = (await res.json()) as { id: string };
-  const slug = name ? `volute:${slugify(name)}` : `volute:${conv.id}`;
-
-  if (agentName) {
-    writeChannelEntry(agentName, slug, {
-      platformId: conv.id,
-      platform: "volute",
-      name: name ?? participants.join(", "),
-      type: participants.length <= 1 ? "dm" : "group",
-    });
-  }
-
-  return slug;
+  // Return the conversation ID directly — resolveChannelId extracts it from the slug.
+  // Pretty @username slugs are generated dynamically by listConversations.
+  return `volute:${conv.id}`;
 }

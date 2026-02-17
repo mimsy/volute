@@ -111,7 +111,13 @@ export class AgentManager {
 
     // State dir is created by root — chown so the agent user can write channels.json, etc.
     if (isIsolationEnabled()) {
-      chownAgentDir(agentStateDir, baseName);
+      try {
+        chownAgentDir(agentStateDir, baseName);
+      } catch (err) {
+        throw new Error(
+          `Cannot start agent ${name}: failed to set ownership on state directory ${agentStateDir}: ${err instanceof Error ? err.message : err}`,
+        );
+      }
     }
 
     const logStream = new RotatingLog(resolve(logsDir, "agent.log"));

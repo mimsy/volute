@@ -17,7 +17,7 @@ import {
   isParticipantOrOwner,
 } from "../../../lib/conversations.js";
 import { daemonLoopback, findAgent, voluteHome } from "../../../lib/registry.js";
-import { slugify } from "../../../lib/slugify.js";
+import { buildVoluteSlug } from "../../../lib/slugify.js";
 import { getTypingMap } from "../../../lib/typing.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
@@ -118,10 +118,8 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    // Build a human-readable channel slug for this conversation
     const conv = await getConversation(conversationId);
     const convTitle = conv?.title;
-    const channel = convTitle ? `volute:${slugify(convTitle)}` : `volute:${conversationId}`;
 
     // Build content blocks
     const contentBlocks: ContentBlock[] = [];
@@ -153,8 +151,16 @@ const app = new Hono<AuthEnv>()
       })
       .filter((n): n is string => n !== null && n !== senderName);
 
-    // Build payload for daemon /message route
+    // Build channel slug — @username for DMs (matching the volute channel driver)
     const isDM = participants.length === 2;
+    function channelForAgent(agentUsername: string): string {
+      return buildVoluteSlug({
+        participants,
+        agentUsername,
+        convTitle,
+        conversationId: conversationId!,
+      });
+    }
 
     // Write slug → platformId mapping for all agent participants so they can resolve it
     const channelEntry = {
@@ -165,27 +171,28 @@ const app = new Hono<AuthEnv>()
     };
     for (const ap of agentParticipants) {
       try {
-        writeChannelEntry(ap.username, channel, channelEntry);
+        writeChannelEntry(ap.username, channelForAgent(ap.username), channelEntry);
       } catch (err) {
         console.warn(`[chat] failed to write channel entry for ${ap.username}:`, err);
       }
     }
-    const typingMap = getTypingMap();
-    const currentlyTyping = typingMap.get(channel);
-    const payload = JSON.stringify({
-      content: contentBlocks,
-      channel,
-      conversationId,
-      sender: senderName,
-      participants: participantNames,
-      participantCount: participants.length,
-      isDM,
-      ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
-    });
 
     // Fire-and-forget: send to all running agents via daemon /message route
     for (const agentName of runningAgents) {
       const targetName = agentName === baseName ? name : agentName;
+      const channel = channelForAgent(agentName);
+      const typingMap = getTypingMap();
+      const currentlyTyping = typingMap.get(channel);
+      const payload = JSON.stringify({
+        content: contentBlocks,
+        channel,
+        conversationId,
+        sender: senderName,
+        participants: participantNames,
+        participantCount: participants.length,
+        isDM,
+        ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
+      });
       daemonFetchInternal(`/api/agents/${encodeURIComponent(targetName)}/message`, payload)
         .then(async (res) => {
           if (!res.ok) {
