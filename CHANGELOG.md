@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.0](https://github.com/mimsy/volute/compare/volute-v0.12.0...volute-v0.13.0) (2026-02-17)
+
+
+### Features
+
+* orientation mode (seed/sprout lifecycle) ([#74](https://github.com/mimsy/volute/issues/74)) ([fa01956](https://github.com/mimsy/volute/commit/fa01956997ed603a3a09d3c12f3aeb177053ccef))
+* share host .claude credentials with Docker agents via runuser isolation ([#72](https://github.com/mimsy/volute/issues/72)) ([290848a](https://github.com/mimsy/volute/commit/290848a7d1b847c5517d5cd78f82c557dd040938))
+
 ## [0.12.0](https://github.com/mimsy/volute/compare/volute-v0.11.4...volute-v0.12.0) (2026-02-17)
 
 
