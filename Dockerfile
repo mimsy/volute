@@ -16,7 +16,6 @@ COPY templates/ templates/
 ENV VOLUTE_HOME=/data
 ENV VOLUTE_AGENTS_DIR=/agents
 ENV VOLUTE_ISOLATION=user
-ENV CLAUDE_CONFIG_DIR=/data/.claude
 EXPOSE 4200
 VOLUME /data
 VOLUME /agents

@@ -1,5 +1,5 @@
 import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { loadMergedEnv } from "./env.js";
@@ -133,14 +133,6 @@ export class AgentManager {
 
     if (isIsolationEnabled()) {
       env.HOME = resolve(dir, "home");
-
-      // Pre-create CLAUDE_CONFIG_DIR/projects/ with sgid so agents can create
-      // their own subdirectories within the shared config dir.
-      if (process.env.CLAUDE_CONFIG_DIR) {
-        const projectsDir = resolve(process.env.CLAUDE_CONFIG_DIR, "projects");
-        mkdirSync(projectsDir, { recursive: true });
-        chmodSync(projectsDir, 0o2770);
-      }
     }
 
     const tsxBin = resolve(dir, "node_modules", ".bin", "tsx");
