@@ -294,6 +294,7 @@ const createAgentSchema = z.object({
   template: z.string().optional(),
   stage: z.enum(["seed", "mind"]).optional(),
   description: z.string().optional(),
+  model: z.string().optional(),
 });
 
 // Create agent — admin only
@@ -319,6 +320,15 @@ const app = new Hono<AuthEnv>()
     try {
       copyTemplateToDir(composedDir, dest, name, manifest);
       applyInitFiles(dest);
+
+      if (body.model) {
+        const configPath = resolve(dest, "home/.config/config.json");
+        const existing = existsSync(configPath)
+          ? JSON.parse(readFileSync(configPath, "utf-8"))
+          : {};
+        existing.model = body.model;
+        writeFileSync(configPath, `${JSON.stringify(existing, null, 2)}\n`);
+      }
 
       if (body.stage === "seed") {
         // Write orientation SOUL.md

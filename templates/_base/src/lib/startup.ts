@@ -17,11 +17,15 @@ export function parseArgs(): { port: number } {
 }
 
 export function loadConfig(): { model?: string; compactionMessage?: string } {
-  try {
-    return JSON.parse(readFileSync(resolve("home/.config/volute.json"), "utf-8"));
-  } catch {
-    return {};
+  // Agent-own config lives in config.json; fall back to volute.json for older agents
+  for (const file of ["home/.config/config.json", "home/.config/volute.json"]) {
+    try {
+      return JSON.parse(readFileSync(resolve(file), "utf-8"));
+    } catch {
+      // try next
+    }
   }
+  return {};
 }
 
 function loadFile(path: string): string {

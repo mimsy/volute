@@ -24,7 +24,13 @@ export async function run(args: string[]) {
   const createRes = await daemonFetch(urlOf(client.api.agents.$url()), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, template, stage: "seed", description: flags.description }),
+    body: JSON.stringify({
+      name,
+      template,
+      stage: "seed",
+      description: flags.description,
+      model: flags.model,
+    }),
   });
 
   const createData = (await createRes.json()) as {
@@ -37,21 +43,6 @@ export async function run(args: string[]) {
   if (!createRes.ok) {
     console.error(createData.error ?? "Failed to create agent");
     process.exit(1);
-  }
-
-  // Set model if provided
-  if (flags.model) {
-    const envRes = await daemonFetch(
-      urlOf(client.api.agents[":name"].env[":key"].$url({ param: { name, key: "VOLUTE_MODEL" } })),
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value: flags.model }),
-      },
-    );
-    if (!envRes.ok) {
-      console.error("Warning: failed to set model");
-    }
   }
 
   // Start the agent

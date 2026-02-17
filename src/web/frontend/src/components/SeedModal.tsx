@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { createSeedAgent, startAgent } from "../lib/api";
 
+const inputStyle = {
+  background: "var(--bg-2)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius)",
+  padding: "8px 10px",
+  color: "var(--text-0)",
+  fontSize: 13,
+  outline: "none",
+  fontFamily: "var(--mono)",
+} as const;
+
 export function SeedModal({
   onClose,
   onCreated,
@@ -10,6 +21,8 @@ export function SeedModal({
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [template, setTemplate] = useState("agent-sdk");
+  const [model, setModel] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const nameRef = useRef<HTMLInputElement>(null);
@@ -24,7 +37,11 @@ export function SeedModal({
     setLoading(true);
     setError("");
     try {
-      await createSeedAgent(trimmed, description.trim() || undefined);
+      await createSeedAgent(trimmed, {
+        description: description.trim() || undefined,
+        template,
+        model: model.trim() || undefined,
+      });
       await startAgent(trimmed);
       onCreated(trimmed);
     } catch (e) {
@@ -69,16 +86,7 @@ export function SeedModal({
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. luna"
             onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-            style={{
-              background: "var(--bg-2)",
-              border: "1px solid var(--border)",
-              borderRadius: "var(--radius)",
-              padding: "8px 10px",
-              color: "var(--text-0)",
-              fontSize: 13,
-              outline: "none",
-              fontFamily: "var(--mono)",
-            }}
+            style={inputStyle}
           />
         </label>
 
@@ -89,16 +97,30 @@ export function SeedModal({
             onChange={(e) => setDescription(e.target.value)}
             placeholder="A curious agent who loves poetry..."
             onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-            style={{
-              background: "var(--bg-2)",
-              border: "1px solid var(--border)",
-              borderRadius: "var(--radius)",
-              padding: "8px 10px",
-              color: "var(--text-0)",
-              fontSize: 13,
-              outline: "none",
-              fontFamily: "var(--mono)",
-            }}
+            style={inputStyle}
+          />
+        </label>
+
+        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ color: "var(--text-2)", fontSize: 11 }}>Template</span>
+          <select
+            value={template}
+            onChange={(e) => setTemplate(e.target.value)}
+            style={{ ...inputStyle, appearance: "auto" }}
+          >
+            <option value="agent-sdk">agent-sdk</option>
+            <option value="pi">pi</option>
+          </select>
+        </label>
+
+        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ color: "var(--text-2)", fontSize: 11 }}>Model (optional)</span>
+          <input
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder="e.g. claude-sonnet-4-5-20250929"
+            onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+            style={inputStyle}
           />
         </label>
 

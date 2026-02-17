@@ -267,10 +267,16 @@ export async function fetchTyping(agentName: string, channel: string): Promise<s
 
 export async function createSeedAgent(
   name: string,
-  description?: string,
+  opts?: { description?: string; template?: string; model?: string },
 ): Promise<{ name: string; port: number }> {
   const res = await client.api.agents.$post({
-    json: { name, stage: "seed" as const, description },
+    json: {
+      name,
+      stage: "seed" as const,
+      description: opts?.description,
+      template: opts?.template,
+      model: opts?.model,
+    },
   });
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
