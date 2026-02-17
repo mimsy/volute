@@ -29,7 +29,6 @@ import {
   createAgentUser,
   deleteAgentUser as deleteIsolationUser,
   ensureVoluteGroup,
-  getAgentUserIds,
   isIsolationEnabled,
 } from "../../lib/isolation.js";
 import {
@@ -169,14 +168,14 @@ async function initTemplateBranch(
   projectRoot: string,
   composedDir: string,
   manifest: TemplateManifest,
-  ids?: { uid: number; gid: number },
+  agentName?: string,
   env?: NodeJS.ProcessEnv,
 ) {
   const templateFiles = listFiles(composedDir)
     .filter((f) => !f.startsWith(".init/") && !f.startsWith(".init\\"))
     .map((f) => manifest.rename[f] ?? f);
 
-  const opts = { cwd: projectRoot, uid: ids?.uid, gid: ids?.gid, env };
+  const opts = { cwd: projectRoot, agentName, env };
 
   await gitExec(["checkout", "--orphan", TEMPLATE_BRANCH], opts);
   await gitExec(["add", "--", ...templateFiles], opts);
@@ -320,17 +319,17 @@ const app = new Hono<AuthEnv>()
       createAgentUser(name);
       chownAgentDir(dest, name);
 
-      const ids = isIsolationEnabled() ? await getAgentUserIds(name) : undefined;
-      const env = ids ? { ...process.env, HOME: resolve(dest, "home") } : undefined;
+      const agentName = isIsolationEnabled() ? name : undefined;
+      const env = agentName ? { ...process.env, HOME: resolve(dest, "home") } : undefined;
 
       // Install dependencies
-      await exec("npm", ["install"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
+      await exec("npm", ["install"], { cwd: dest, agentName, env });
 
       // git init + template branch + initial commit
       let gitWarning: string | undefined;
       try {
-        await gitExec(["init"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
-        await initTemplateBranch(dest, composedDir, manifest, ids, env);
+        await gitExec(["init"], { cwd: dest, agentName, env });
+        await initTemplateBranch(dest, composedDir, manifest, agentName, env);
       } catch {
         rmSync(resolve(dest, ".git"), { recursive: true, force: true });
         gitWarning =
@@ -441,11 +440,11 @@ const app = new Hono<AuthEnv>()
       createAgentUser(name);
       chownAgentDir(dest, name);
 
-      const ids = isIsolationEnabled() ? await getAgentUserIds(name) : undefined;
-      const env = ids ? { ...process.env, HOME: resolve(dest, "home") } : undefined;
+      const agentName = isIsolationEnabled() ? name : undefined;
+      const env = agentName ? { ...process.env, HOME: resolve(dest, "home") } : undefined;
 
       // Install dependencies
-      await exec("npm", ["install"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
+      await exec("npm", ["install"], { cwd: dest, agentName, env });
 
       // Consolidate memory if no MEMORY.md but daily logs exist
       if (!hasMemory && dailyLogCount > 0) {
@@ -453,14 +452,9 @@ const app = new Hono<AuthEnv>()
       }
 
       // git init + initial commit
-      await gitExec(["init"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
-      await gitExec(["add", "-A"], { cwd: dest, uid: ids?.uid, gid: ids?.gid, env });
-      await gitExec(["commit", "-m", "import from OpenClaw"], {
-        cwd: dest,
-        uid: ids?.uid,
-        gid: ids?.gid,
-        env,
-      });
+      await gitExec(["init"], { cwd: dest, agentName, env });
+      await gitExec(["add", "-A"], { cwd: dest, agentName, env });
+      await gitExec(["commit", "-m", "import from OpenClaw"], { cwd: dest, agentName, env });
 
       // Import session
       const sessionFile = body.sessionPath ? resolve(body.sessionPath) : findOpenClawSession(wsDir);
