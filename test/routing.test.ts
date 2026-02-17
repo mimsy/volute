@@ -37,6 +37,22 @@ describe("loadRoutingConfig", () => {
     assert.equal(config.rules?.length, 1);
     assert.equal(config.default, "main");
   });
+
+  it("normalizes flat array to { rules: [...] }", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sessions-test-"));
+    const path = join(dir, "routes.json");
+    writeFileSync(
+      path,
+      JSON.stringify([
+        { channel: "system", session: "system" },
+        { channel: "volute:@aswever", session: "volute-@aswever" },
+      ]),
+    );
+    const config = loadRoutingConfig(path);
+    assert.equal(config.rules?.length, 2);
+    assert.equal(config.rules?.[0].channel, "system");
+    assert.equal(config.rules?.[1].session, "volute-@aswever");
+  });
 });
 
 describe("resolveRoute", () => {

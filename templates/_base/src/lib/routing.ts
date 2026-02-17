@@ -54,7 +54,10 @@ export function normalizeBatch(batch: number | BatchConfig): BatchConfig {
 
 export function loadRoutingConfig(configPath: string): RoutingConfig {
   try {
-    return JSON.parse(readFileSync(configPath, "utf-8"));
+    const parsed = JSON.parse(readFileSync(configPath, "utf-8"));
+    // Normalize flat arrays (e.g. [{channel, session}, ...]) to { rules: [...] }
+    if (Array.isArray(parsed)) return { rules: parsed };
+    return parsed;
   } catch (err: any) {
     if (err?.code !== "ENOENT") {
       log("routing", `failed to load ${configPath}:`, err);

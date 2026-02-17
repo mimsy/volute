@@ -329,6 +329,34 @@ const app = new Hono<AuthEnv>()
         writeFileSync(configPath, `${JSON.stringify(existing, null, 2)}\n`);
       }
 
+      const port = nextPort();
+      addAgent(name, port, body.stage);
+
+      // Set up per-agent user isolation (no-ops if VOLUTE_ISOLATION !== "user")
+      const homeDir = resolve(dest, "home");
+      ensureVoluteGroup();
+      createAgentUser(name, homeDir);
+      chownAgentDir(dest, name);
+
+      const agentName = isIsolationEnabled() ? name : undefined;
+      const env = agentName ? { ...process.env, HOME: homeDir } : undefined;
+
+      // Install dependencies
+      await exec("npm", ["install"], { cwd: dest, agentName, env });
+
+      // git init + template branch + initial commit (before seed modifications
+      // so that initTemplateBranch can git-add all template files)
+      let gitWarning: string | undefined;
+      try {
+        await gitExec(["init"], { cwd: dest, agentName, env });
+        await initTemplateBranch(dest, composedDir, manifest, agentName, env);
+      } catch (err) {
+        console.error(`[daemon] git setup failed for ${name}:`, err);
+        rmSync(resolve(dest, ".git"), { recursive: true, force: true });
+        gitWarning =
+          "Git setup failed — variants and upgrades won't be available until git is initialized.";
+      }
+
       if (body.stage === "seed") {
         // Write orientation SOUL.md
         const descLine = body.description
@@ -345,32 +373,6 @@ const app = new Hono<AuthEnv>()
           const skillPath = resolve(skillsDir, skill);
           if (existsSync(skillPath)) rmSync(skillPath, { recursive: true, force: true });
         }
-      }
-
-      const port = nextPort();
-      addAgent(name, port, body.stage);
-
-      // Set up per-agent user isolation (no-ops if VOLUTE_ISOLATION !== "user")
-      const homeDir = resolve(dest, "home");
-      ensureVoluteGroup();
-      createAgentUser(name, homeDir);
-      chownAgentDir(dest, name);
-
-      const agentName = isIsolationEnabled() ? name : undefined;
-      const env = agentName ? { ...process.env, HOME: homeDir } : undefined;
-
-      // Install dependencies
-      await exec("npm", ["install"], { cwd: dest, agentName, env });
-
-      // git init + template branch + initial commit
-      let gitWarning: string | undefined;
-      try {
-        await gitExec(["init"], { cwd: dest, agentName, env });
-        await initTemplateBranch(dest, composedDir, manifest, agentName, env);
-      } catch {
-        rmSync(resolve(dest, ".git"), { recursive: true, force: true });
-        gitWarning =
-          "Git setup failed — variants and upgrades won't be available until git is initialized.";
       }
 
       return c.json({

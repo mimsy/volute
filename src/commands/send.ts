@@ -36,7 +36,18 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  const parsed = parseTarget(target);
+  let parsed = parseTarget(target);
+
+  // If bare name matches a registered agent, treat as a DM (e.g. "sprout" → "@sprout")
+  if (!parsed.isDM && parsed.platform === "volute" && findAgent(parsed.identifier)) {
+    parsed = {
+      platform: "volute",
+      identifier: `@${parsed.identifier}`,
+      uri: `volute:@${parsed.identifier}`,
+      isDM: true,
+    };
+  }
+
   const driver = getChannelDriver(parsed.platform);
   if (!driver) {
     console.error(`No driver for platform: ${parsed.platform}`);
