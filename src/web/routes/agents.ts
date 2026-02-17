@@ -43,7 +43,6 @@ import {
   nextPort,
   readRegistry,
   removeAgent,
-  setAgentStage,
   stateDir,
   validateAgentName,
   voluteHome,
