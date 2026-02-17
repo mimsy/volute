@@ -18,6 +18,27 @@ export type EventHandlerOptions = {
 
 export function createEventHandler(session: EventSession, options: EventHandlerOptions) {
   const toolArgs = new Map<string, any>();
+  let textBuf = "";
+  let thinkingBuf = "";
+
+  function flushText() {
+    if (textBuf) {
+      logText(textBuf);
+      textBuf = "";
+    }
+  }
+
+  function flushThinking() {
+    if (thinkingBuf) {
+      logThinking(thinkingBuf);
+      thinkingBuf = "";
+    }
+  }
+
+  function flushBuffers() {
+    flushThinking();
+    flushText();
+  }
 
   return (event: any) => {
     try {
@@ -29,14 +50,26 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
       if (event.type === "message_update") {
         const ae = event.assistantMessageEvent;
         if (ae.type === "text_delta") {
-          logText(ae.delta);
+          if (thinkingBuf) flushThinking();
+          textBuf += ae.delta;
           session.autoReply.accumulate(ae.delta);
+          // Log complete lines as they arrive
+          for (let nl = textBuf.indexOf("\n"); nl !== -1; nl = textBuf.indexOf("\n")) {
+            logText(textBuf.slice(0, nl + 1));
+            textBuf = textBuf.slice(nl + 1);
+          }
         } else if (ae.type === "thinking_delta") {
-          logThinking(ae.delta);
+          if (textBuf) flushText();
+          thinkingBuf += ae.delta;
+          for (let nl = thinkingBuf.indexOf("\n"); nl !== -1; nl = thinkingBuf.indexOf("\n")) {
+            logThinking(thinkingBuf.slice(0, nl + 1));
+            thinkingBuf = thinkingBuf.slice(nl + 1);
+          }
         }
       }
 
       if (event.type === "tool_execution_start") {
+        flushBuffers();
         session.autoReply.flush(session.currentMessageId);
         toolArgs.set(event.toolCallId, event.args);
         logToolUse(event.toolName, event.args);
@@ -59,6 +92,7 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
       }
 
       if (event.type === "agent_end") {
+        flushBuffers();
         session.autoReply.flush(session.currentMessageId);
         if (session.currentMessageId) {
           session.messageChannels.delete(session.currentMessageId);
