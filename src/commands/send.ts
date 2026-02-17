@@ -42,6 +42,14 @@ export async function run(args: string[]) {
     const agentSelf = process.env.VOLUTE_AGENT;
     const sender = agentSelf || userInfo().username;
 
+    if (targetName === "system") {
+      console.error(
+        "Can't send to @system — system messages are automated.\n" +
+          'To reply to a person, use their username from the message prefix (e.g. volute send @username "msg").',
+      );
+      process.exit(1);
+    }
+
     if (!driver.createConversation) {
       console.error("Volute driver does not support creating conversations");
       process.exit(1);
