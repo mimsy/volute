@@ -27,6 +27,15 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
+  // Catch attempts to reply to system messages (with or without @)
+  if (target === "system" || target === "@system") {
+    console.error(
+      "Can't send to system — system messages are automated.\n" +
+        'To reply to a person, use their username from the message prefix (e.g. volute send @username "msg").',
+    );
+    process.exit(1);
+  }
+
   const parsed = parseTarget(target);
   const driver = getChannelDriver(parsed.platform);
   if (!driver) {
@@ -41,14 +50,6 @@ export async function run(args: string[]) {
     const targetName = parsed.identifier.slice(1); // strip @
     const agentSelf = process.env.VOLUTE_AGENT;
     const sender = agentSelf || userInfo().username;
-
-    if (targetName === "system") {
-      console.error(
-        "Can't send to @system — system messages are automated.\n" +
-          'To reply to a person, use their username from the message prefix (e.g. volute send @username "msg").',
-      );
-      process.exit(1);
-    }
 
     if (!driver.createConversation) {
       console.error("Volute driver does not support creating conversations");
