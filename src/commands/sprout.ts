@@ -46,9 +46,6 @@ export async function run(_args: string[]) {
     process.exit(1);
   }
 
-  // Flip stage
-  setAgentStage(agentName, "mind");
-
   // Install full skills: compose template, copy skills, remove orientation
   const templatesRoot = findTemplatesRoot();
   const { composedDir, manifest } = composeTemplate(templatesRoot, "agent-sdk");
@@ -56,7 +53,7 @@ export async function run(_args: string[]) {
     const skillsDir = resolve(dir, manifest.skillsDir);
     const composedSkillsDir = resolve(composedDir, manifest.skillsDir);
 
-    // Copy full skills from template
+    // Copy full skills from template (must match the skill list in agents.ts seed creation)
     for (const skill of ["volute-agent", "memory", "sessions"]) {
       const src = resolve(composedSkillsDir, skill);
       if (existsSync(src)) {
@@ -72,6 +69,9 @@ export async function run(_args: string[]) {
   } finally {
     rmSync(composedDir, { recursive: true, force: true });
   }
+
+  // Flip stage only after skills are successfully installed
+  setAgentStage(agentName, "mind");
 
   // Restart with sprouted context
   const { daemonFetch } = await import("../lib/daemon-client.js");
