@@ -8,8 +8,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { resolve } from "node:path";
+import { zValidator } from "@hono/zod-validator";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
+import { z } from "zod";
 import {
   findOpenClawSession,
   importOpenClawConnectors,
@@ -21,6 +23,7 @@ import { deleteAgentUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { getConnectorManager } from "../../lib/connector-manager.js";
 import { consolidateMemory } from "../../lib/consolidate.js";
+import { addMessage } from "../../lib/conversations.js";
 import { convertSession } from "../../lib/convert-session.js";
 import { getDb } from "../../lib/db.js";
 import { exec, gitExec } from "../../lib/exec.js";
@@ -46,7 +49,7 @@ import {
   voluteHome,
 } from "../../lib/registry.js";
 import { getScheduler } from "../../lib/scheduler.js";
-import { agentMessages } from "../../lib/schema.js";
+import { agentMessages, conversations } from "../../lib/schema.js";
 import {
   applyInitFiles,
   composeTemplate,
@@ -287,15 +290,17 @@ async function mergeTemplateBranch(worktreeDir: string): Promise<boolean> {
   }
 }
 
+const createAgentSchema = z.object({
+  name: z.string(),
+  template: z.string().optional(),
+  stage: z.enum(["seed", "mind"]).optional(),
+  description: z.string().optional(),
+});
+
 // Create agent — admin only
 const app = new Hono<AuthEnv>()
-  .post("/", requireAdmin, async (c) => {
-    let body: { name: string; template?: string; stage?: "seed" | "mind"; description?: string };
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON" }, 400);
-    }
+  .post("/", requireAdmin, zValidator("json", createAgentSchema), async (c) => {
+    const body = c.req.valid("json");
 
     const { name, template = "agent-sdk" } = body;
 
@@ -690,6 +695,25 @@ const app = new Hono<AuthEnv>()
       // Store context for delivery after restart
       if (context) {
         manager.setPendingContext(name, context);
+      }
+
+      // Inject "[seed has sprouted]" system message into active volute conversations
+      if (context?.type === "sprouted" && !variantName) {
+        try {
+          const db = await getDb();
+          const activeConvs = await db
+            .select({ id: conversations.id })
+            .from(conversations)
+            .where(eq(conversations.agent_name, baseName))
+            .all();
+          for (const conv of activeConvs) {
+            await addMessage(conv.id, "assistant", "system", [
+              { type: "text", text: "[seed has sprouted]" },
+            ]);
+          }
+        } catch (err) {
+          console.error(`[daemon] failed to inject sprouted message for ${baseName}:`, err);
+        }
       }
 
       await startAgentFull(name, baseName, variantName);

@@ -8,12 +8,14 @@ import { AgentDetail } from "./pages/AgentDetail";
 import { Chats } from "./pages/Chats";
 import { Dashboard } from "./pages/Dashboard";
 
-function parseHash(): { page: string; name?: string; conversationId?: string } {
+function parseHash(): { page: string; name?: string; conversationId?: string; agentName?: string } {
   const hash = window.location.hash.slice(1) || "/";
   if (hash === "/agents") return { page: "agents" };
   if (hash === "/logs") return { page: "logs" };
   const chatsMatch = hash.match(/^\/chats\/(.+)$/);
   if (chatsMatch) return { page: "chats", conversationId: chatsMatch[1] };
+  const chatsAgentMatch = hash.match(/^\/chats\?agent=(.+)$/);
+  if (chatsAgentMatch) return { page: "chats", agentName: decodeURIComponent(chatsAgentMatch[1]) };
   const match = hash.match(/^\/agent\/(.+)$/);
   if (match) return { page: "agent", name: match[1] };
   return { page: "chats" };
@@ -186,7 +188,11 @@ export function App() {
             <>
               {route.page === "agents" && <Dashboard />}
               {route.page === "chats" && (
-                <Chats conversationId={route.conversationId} username={user.username} />
+                <Chats
+                  conversationId={route.conversationId}
+                  agentName={route.agentName}
+                  username={user.username}
+                />
               )}
               {route.page === "agent" && route.name && <AgentDetail name={route.name} />}
               {route.page === "logs" && <SystemLogs />}

@@ -7,6 +7,7 @@ import {
   type ContentBlock,
   createConversation,
   deleteConversation,
+  getMessages,
   getParticipants,
 } from "../src/lib/conversations.js";
 import { getDb } from "../src/lib/db.js";
@@ -292,5 +293,26 @@ describe("web conversations routes", () => {
       body: JSON.stringify({}),
     });
     assert.equal(res.status, 400);
+  });
+
+  it("addMessage — system sprouted message appears in conversation", async () => {
+    await setupAuth();
+
+    const conv = await createConversation("test-agent", "volute", {
+      participantIds: [userId],
+    });
+    await addMessage(conv.id, "user", "conv-admin", [{ type: "text", text: "Hello" }]);
+    await addMessage(conv.id, "assistant", "system", [
+      { type: "text", text: "[seed has sprouted]" },
+    ]);
+
+    const msgs = await getMessages(conv.id);
+    assert.equal(msgs.length, 2);
+    assert.equal(msgs[1].role, "assistant");
+    assert.equal(msgs[1].sender_name, "system");
+    assert.equal(msgs[1].content[0].type, "text");
+    assert.equal((msgs[1].content[0] as { text: string }).text, "[seed has sprouted]");
+
+    await deleteConversation(conv.id);
   });
 });
