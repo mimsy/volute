@@ -43,24 +43,27 @@ export async function createConversation(
 ): Promise<Conversation> {
   const db = await getDb();
   const id = randomUUID();
-  await db.insert(conversations).values({
-    id,
-    agent_name: agentName,
-    channel,
-    user_id: opts?.userId ?? null,
-    title: opts?.title ?? null,
-  });
 
-  // Add participants if provided
-  if (opts?.participantIds && opts.participantIds.length > 0) {
-    await db.insert(conversationParticipants).values(
-      opts.participantIds.map((uid, i) => ({
-        conversation_id: id,
-        user_id: uid,
-        role: i === 0 ? "owner" : "member",
-      })),
-    );
-  }
+  await db.transaction(async (tx) => {
+    await tx.insert(conversations).values({
+      id,
+      agent_name: agentName,
+      channel,
+      user_id: opts?.userId ?? null,
+      title: opts?.title ?? null,
+    });
+
+    // Add participants if provided
+    if (opts?.participantIds && opts.participantIds.length > 0) {
+      await tx.insert(conversationParticipants).values(
+        opts.participantIds.map((uid, i) => ({
+          conversation_id: id,
+          user_id: uid,
+          role: i === 0 ? "owner" : "member",
+        })),
+      );
+    }
+  });
 
   return {
     id,
