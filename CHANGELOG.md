@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/mimsy/volute/compare/volute-v0.13.0...volute-v0.13.1) (2026-02-17)
+
+
+### Bug Fixes
+
+* remove RestrictSUIDSGID from systemd unit, fix daemon-e2e port collision ([#75](https://github.com/mimsy/volute/issues/75)) ([714cb31](https://github.com/mimsy/volute/commit/714cb31d4d9a69e0bb3eea4bde7bed0a87325f2b))
+
 ## [0.13.0](https://github.com/mimsy/volute/compare/volute-v0.12.0...volute-v0.13.0) (2026-02-17)
 
 
