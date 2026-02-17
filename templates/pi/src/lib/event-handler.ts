@@ -43,6 +43,7 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
   return (event: any) => {
     try {
       if (session.currentMessageId === undefined) {
+        flushBuffers(); // flush any leftover from a turn that ended without agent_end
         session.currentMessageId = session.messageIds.shift();
         session.autoReply.reset();
       }
@@ -102,7 +103,7 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         session.currentMessageId = undefined;
       }
     } catch (err) {
-      log("agent", `session "${session.name}": event handler error:`, err);
+      log("agent", `session "${session.name}": event handler error (${event?.type}):`, err);
     }
   };
 }

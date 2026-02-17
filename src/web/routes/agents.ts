@@ -350,7 +350,8 @@ const app = new Hono<AuthEnv>()
       try {
         await gitExec(["init"], { cwd: dest, agentName, env });
         await initTemplateBranch(dest, composedDir, manifest, agentName, env);
-      } catch {
+      } catch (err) {
+        console.error(`[daemon] git setup failed for ${name}:`, err);
         rmSync(resolve(dest, ".git"), { recursive: true, force: true });
         gitWarning =
           "Git setup failed — variants and upgrades won't be available until git is initialized.";
