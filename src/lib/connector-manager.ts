@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { dirname, resolve } from "node:path";
 import { checkMissingEnvVars, getConnectorDef } from "./connector-defs.js";
 import { loadMergedEnv } from "./env.js";
-import { applyIsolation, chownAgentDir, isIsolationEnabled } from "./isolation.js";
+import { chownAgentDir, isIsolationEnabled, wrapForIsolation } from "./isolation.js";
 import { daemonLoopback, stateDir, voluteHome } from "./registry.js";
 import { RotatingLog } from "./rotating-log.js";
 import { readVoluteConfig } from "./volute-config.js";
@@ -171,9 +171,9 @@ export class ConnectorManager {
       },
     };
 
-    await applyIsolation(spawnOpts, agentName);
+    const [spawnCmd, spawnArgs] = wrapForIsolation(runtime, [connectorScript], agentName);
 
-    const child = spawn(runtime, [connectorScript], spawnOpts);
+    const child = spawn(spawnCmd, spawnArgs, spawnOpts);
 
     let lastStderr = "";
 

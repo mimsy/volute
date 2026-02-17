@@ -16,9 +16,11 @@ COPY templates/ templates/
 ENV VOLUTE_HOME=/data
 ENV VOLUTE_AGENTS_DIR=/agents
 ENV VOLUTE_ISOLATION=user
+ENV CLAUDE_CONFIG_DIR=/data/.claude
 EXPOSE 4200
 VOLUME /data
 VOLUME /agents
 
-# Root inside container to manage agent users — isolated from host
-ENTRYPOINT ["node", "dist/daemon.js", "--host", "0.0.0.0", "--foreground"]
+COPY docker/entrypoint.sh /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["node", "dist/daemon.js", "--host", "0.0.0.0", "--foreground"]

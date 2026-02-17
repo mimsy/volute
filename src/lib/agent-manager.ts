@@ -1,9 +1,9 @@
 import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { loadMergedEnv } from "./env.js";
-import { applyIsolation, chownAgentDir, isIsolationEnabled } from "./isolation.js";
+import { chownAgentDir, isIsolationEnabled, wrapForIsolation } from "./isolation.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "./json-state.js";
 import { agentDir, findAgent, setAgentRunning, stateDir, voluteHome } from "./registry.js";
 import { RotatingLog } from "./rotating-log.js";
@@ -133,45 +133,19 @@ export class AgentManager {
 
     if (isIsolationEnabled()) {
       env.HOME = resolve(dir, "home");
-    }
 
-    // Node's spawn() with uid/gid doesn't set supplementary groups, so the agent
-    // process can't read the shared CLAUDE_CONFIG_DIR even if it's group-readable.
-    // Give each agent its own config dir with a copy of the shared credentials.
-    if (isIsolationEnabled() && process.env.CLAUDE_CONFIG_DIR) {
-      const agentClaudeDir = resolve(dir, "home", ".claude");
-      try {
-        mkdirSync(agentClaudeDir, { recursive: true });
-      } catch (err) {
-        throw new Error(
-          `Cannot start agent ${name}: failed to create config directory at ${agentClaudeDir}: ${err instanceof Error ? err.message : err}`,
-        );
+      // Pre-create CLAUDE_CONFIG_DIR/projects/ with sgid so agents can create
+      // their own subdirectories within the shared config dir.
+      if (process.env.CLAUDE_CONFIG_DIR) {
+        const projectsDir = resolve(process.env.CLAUDE_CONFIG_DIR, "projects");
+        mkdirSync(projectsDir, { recursive: true });
+        chmodSync(projectsDir, 0o2770);
       }
-      const sharedCreds = resolve(process.env.CLAUDE_CONFIG_DIR, ".credentials.json");
-      const agentCreds = resolve(agentClaudeDir, ".credentials.json");
-      if (existsSync(sharedCreds)) {
-        try {
-          // Write via read+write instead of copyFileSync to avoid EPERM from
-          // cross-filesystem copy_file_range or pre-existing agent-owned files.
-          writeFileSync(agentCreds, readFileSync(sharedCreds));
-        } catch (err) {
-          throw new Error(
-            `Cannot start agent ${name}: failed to copy credentials to ${agentClaudeDir}: ${err instanceof Error ? err.message : err}`,
-          );
-        }
-      } else {
-        console.warn(
-          `[daemon] shared credentials not found at ${sharedCreds} for agent ${name}. ` +
-            `Copy ~/.claude/.credentials.json to ${process.env.CLAUDE_CONFIG_DIR}/.credentials.json ` +
-            `or set ANTHROPIC_API_KEY in the agent's environment.`,
-        );
-      }
-      const baseName = name.split("@", 2)[0];
-      chownAgentDir(agentClaudeDir, baseName);
-      env.CLAUDE_CONFIG_DIR = agentClaudeDir;
     }
 
     const tsxBin = resolve(dir, "node_modules", ".bin", "tsx");
+    const tsxArgs = ["src/server.ts", "--port", String(port)];
+    const [spawnCmd, spawnArgs] = wrapForIsolation(tsxBin, tsxArgs, name);
 
     const spawnOpts: SpawnOptions = {
       cwd: dir,
@@ -180,9 +154,7 @@ export class AgentManager {
       env,
     };
 
-    await applyIsolation(spawnOpts, name);
-
-    const child = spawn(tsxBin, ["src/server.ts", "--port", String(port)], spawnOpts);
+    const child = spawn(spawnCmd, spawnArgs, spawnOpts);
 
     this.agents.set(name, { child, port });
 

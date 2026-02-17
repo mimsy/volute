@@ -1,8 +1,5 @@
-import { execFile, execFileSync, type SpawnOptions } from "node:child_process";
-import { promisify } from "node:util";
+import { execFileSync } from "node:child_process";
 import { validateAgentName } from "./registry.js";
-
-const execFileAsync = promisify(execFile);
 
 /** Returns true when per-agent Linux user isolation is enabled. */
 export function isIsolationEnabled(): boolean {
@@ -32,8 +29,8 @@ export function ensureVoluteGroup(opts?: { force?: boolean }): void {
   }
 }
 
-/** Create a system user for an agent. */
-export function createAgentUser(name: string): void {
+/** Create a system user for an agent. `homeDir` sets the passwd home directory. */
+export function createAgentUser(name: string, homeDir?: string): void {
   if (!isIsolationEnabled()) return;
   const user = agentUserName(name);
   try {
@@ -44,7 +41,10 @@ export function createAgentUser(name: string): void {
     // User doesn't exist — create it
   }
   try {
-    execFileSync("useradd", ["-r", "-M", "-G", "volute", "-s", "/usr/sbin/nologin", user], {
+    const args = ["-r", "-M", "-G", "volute", "-s", "/usr/sbin/nologin"];
+    if (homeDir) args.push("-d", homeDir);
+    args.push(user);
+    execFileSync("useradd", args, {
       stdio: ["ignore", "ignore", "pipe"],
     });
   } catch (err) {
@@ -64,24 +64,21 @@ export function deleteAgentUser(name: string): void {
   }
 }
 
-/** Get uid and gid for an agent's system user. */
-export async function getAgentUserIds(name: string): Promise<{ uid: number; gid: number }> {
-  const user = agentUserName(name);
-  const { stdout: uidStr } = await execFileAsync("id", ["-u", user]);
-  const { stdout: gidStr } = await execFileAsync("id", ["-g", user]);
-  return { uid: parseInt(uidStr.trim(), 10), gid: parseInt(gidStr.trim(), 10) };
-}
-
 /**
- * Apply isolation uid/gid to spawn options if isolation is enabled.
+ * Wrap a command with `runuser -u <user> --` if isolation is enabled.
+ * Unlike Node's uid/gid spawn options, runuser calls initgroups() which sets
+ * supplementary groups, allowing agents to access group-writable shared directories.
  * Resolves the base agent name from a potentially composite "name@variant" key.
  */
-export async function applyIsolation(spawnOpts: SpawnOptions, agentName: string): Promise<void> {
-  if (!isIsolationEnabled()) return;
+export function wrapForIsolation(
+  cmd: string,
+  args: string[],
+  agentName: string,
+): [string, string[]] {
+  if (!isIsolationEnabled()) return [cmd, args];
   const baseName = agentName.split("@", 2)[0];
-  const { uid, gid } = await getAgentUserIds(baseName);
-  spawnOpts.uid = uid;
-  spawnOpts.gid = gid;
+  const user = agentUserName(baseName);
+  return ["runuser", ["-u", user, "--", cmd, ...args]];
 }
 
 /** Set ownership of an agent directory to its system user. */

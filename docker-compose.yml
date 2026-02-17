@@ -6,6 +6,7 @@ services:
     volumes:
       - volute-data:/data
       - volute-agents:/agents
+      - ~/.claude:/data/.claude
     restart: unless-stopped
 
 volumes:

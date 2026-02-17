@@ -86,6 +86,20 @@ describe("daemon e2e", { timeout: 120000 }, () => {
   function cleanupAgent() {
     try {
       if (findAgent(TEST_AGENT)) {
+        const entry = findAgent(TEST_AGENT);
+        if (entry) {
+          // Kill any orphan process on the agent's port from a previous crashed run
+          try {
+            const pids = execFileSync("lsof", ["-ti", `:${entry.port}`, "-sTCP:LISTEN"], {
+              encoding: "utf-8",
+            }).trim();
+            for (const pid of pids.split("\n").filter(Boolean)) {
+              try {
+                process.kill(parseInt(pid, 10), "SIGTERM");
+              } catch {}
+            }
+          } catch {}
+        }
         removeAgent(TEST_AGENT);
       }
       const dir = agentDir(TEST_AGENT);
@@ -292,9 +306,10 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     // Start agent
     const startRes = await daemonRequest(`/api/agents/${TEST_AGENT}/start`, { method: "POST" });
     // May already be running from previous test or 409 if so
+    const startBody = await startRes.text();
     assert.ok(
       startRes.status === 200 || startRes.status === 409,
-      `Start: expected 200 or 409, got ${startRes.status}`,
+      `Start: expected 200 or 409, got ${startRes.status}: ${startBody}`,
     );
 
     // Wait for health

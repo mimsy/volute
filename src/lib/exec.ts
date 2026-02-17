@@ -1,16 +1,20 @@
 import { execFile as execFileCb, execFileSync, spawn } from "node:child_process";
+import { wrapForIsolation } from "./isolation.js";
 
 /** Promise wrapper around child_process.execFile. Returns stdout as a string. */
 export function exec(
   cmd: string,
   args: string[],
-  options?: { cwd?: string; uid?: number; gid?: number; env?: NodeJS.ProcessEnv },
+  options?: { cwd?: string; agentName?: string; env?: NodeJS.ProcessEnv },
 ): Promise<string> {
+  const [wrappedCmd, wrappedArgs] = options?.agentName
+    ? wrapForIsolation(cmd, args, options.agentName)
+    : [cmd, args];
   return new Promise((resolve, reject) => {
     execFileCb(
-      cmd,
-      args,
-      { cwd: options?.cwd, uid: options?.uid, gid: options?.gid, env: options?.env },
+      wrappedCmd,
+      wrappedArgs,
+      { cwd: options?.cwd, env: options?.env },
       (err, stdout, stderr) => {
         if (err) {
           (err as Error & { stderr?: string }).stderr = stderr;
@@ -29,7 +33,7 @@ export function exec(
  */
 export function gitExec(
   args: string[],
-  options: { cwd: string; uid?: number; gid?: number; env?: NodeJS.ProcessEnv },
+  options: { cwd: string; agentName?: string; env?: NodeJS.ProcessEnv },
 ): Promise<string> {
   const fullArgs =
     process.env.VOLUTE_ISOLATION === "user"
@@ -51,13 +55,14 @@ export function resolveVoluteBin(): string {
 export function execInherit(
   cmd: string,
   args: string[],
-  options?: { cwd?: string; uid?: number; gid?: number; env?: NodeJS.ProcessEnv },
+  options?: { cwd?: string; agentName?: string; env?: NodeJS.ProcessEnv },
 ): Promise<void> {
+  const [wrappedCmd, wrappedArgs] = options?.agentName
+    ? wrapForIsolation(cmd, args, options.agentName)
+    : [cmd, args];
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, {
+    const child = spawn(wrappedCmd, wrappedArgs, {
       cwd: options?.cwd,
-      uid: options?.uid,
-      gid: options?.gid,
       env: options?.env,
       stdio: "inherit",
     });
