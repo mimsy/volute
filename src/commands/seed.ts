@@ -1,0 +1,85 @@
+import { parseArgs } from "../lib/parse-args.js";
+
+export async function run(args: string[]) {
+  const { positional, flags } = parseArgs(args, {
+    template: { type: "string" },
+    model: { type: "string" },
+    description: { type: "string" },
+  });
+
+  const name = positional[0];
+  if (!name) {
+    console.error(
+      "Usage: volute seed <name> [--template <name>] [--model <model>] [--description <text>]",
+    );
+    process.exit(1);
+  }
+
+  const template = flags.template ?? "agent-sdk";
+  const { daemonFetch } = await import("../lib/daemon-client.js");
+  const { getClient, urlOf } = await import("../lib/api-client.js");
+  const client = getClient();
+
+  // Create agent as seed
+  const createRes = await daemonFetch(urlOf(client.api.agents.$url()), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, template, stage: "seed", description: flags.description }),
+  });
+
+  const createData = (await createRes.json()) as {
+    ok?: boolean;
+    error?: string;
+    name?: string;
+    port?: number;
+  };
+
+  if (!createRes.ok) {
+    console.error(createData.error ?? "Failed to create agent");
+    process.exit(1);
+  }
+
+  // Set model if provided
+  if (flags.model) {
+    const envRes = await daemonFetch(
+      urlOf(client.api.agents[":name"].env[":key"].$url({ param: { name, key: "VOLUTE_MODEL" } })),
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: flags.model }),
+      },
+    );
+    if (!envRes.ok) {
+      console.error("Warning: failed to set model");
+    }
+  }
+
+  // Start the agent
+  const startRes = await daemonFetch(
+    urlOf(client.api.agents[":name"].start.$url({ param: { name } })),
+    { method: "POST" },
+  );
+
+  if (!startRes.ok) {
+    const startData = (await startRes.json()) as { error?: string };
+    console.error(startData.error ?? "Failed to start agent");
+    process.exit(1);
+  }
+
+  // Send initial orientation message
+  const initialMessage =
+    "You've just been created. A human planted you as a seed. Start a conversation with them — introduce yourself, ask questions, and begin exploring who you want to be.";
+  await daemonFetch(urlOf(client.api.agents[":name"].message.$url({ param: { name } })), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      content: [{ type: "text", text: initialMessage }],
+      channel: "system",
+      sender: "system",
+    }),
+  });
+
+  console.log(`\nSeeded agent: ${name} (port ${createData.port})`);
+  console.log(`\nTalk to your new agent:`);
+  console.log(`  volute send @${name} "hello"`);
+}

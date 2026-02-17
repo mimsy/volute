@@ -36,6 +36,8 @@ const app = new Hono<AuthEnv>()
     }
     const entry = findAgent(name);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (entry.stage === "seed")
+      return c.json({ error: "Seed agents cannot use connectors — sprout first" }, 403);
 
     const dir = agentDir(name);
 

@@ -26,6 +26,7 @@ export type AgentEntry = {
   port: number;
   created: string;
   running: boolean;
+  stage?: "seed" | "mind";
 };
 
 export function ensureVoluteHome() {
@@ -40,7 +41,7 @@ export function readRegistry(): AgentEntry[] {
     const entries = JSON.parse(readFileSync(registryPath, "utf-8")) as Array<
       Omit<AgentEntry, "running"> & { running?: boolean }
     >;
-    return entries.map((e) => ({ ...e, running: e.running ?? false }));
+    return entries.map((e) => ({ ...e, running: e.running ?? false, stage: e.stage ?? "mind" }));
   } catch {
     return [];
   }
@@ -67,12 +68,12 @@ export function validateAgentName(name: string): string | null {
   return null;
 }
 
-export function addAgent(name: string, port: number) {
+export function addAgent(name: string, port: number, stage?: "seed" | "mind") {
   const err = validateAgentName(name);
   if (err) throw new Error(err);
   const entries = readRegistry();
   const filtered = entries.filter((e) => e.name !== name);
-  filtered.push({ name, port, created: new Date().toISOString(), running: false });
+  filtered.push({ name, port, created: new Date().toISOString(), running: false, stage });
   writeRegistry(filtered);
 }
 
@@ -86,6 +87,15 @@ export function setAgentRunning(name: string, running: boolean) {
   const entry = entries.find((e) => e.name === name);
   if (entry) {
     entry.running = running;
+    writeRegistry(entries);
+  }
+}
+
+export function setAgentStage(name: string, stage: "seed" | "mind") {
+  const entries = readRegistry();
+  const entry = entries.find((e) => e.name === name);
+  if (entry) {
+    entry.stage = stage;
     writeRegistry(entries);
   }
 }

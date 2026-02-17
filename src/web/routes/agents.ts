@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { resolve } from "node:path";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import {
   findOpenClawSession,
@@ -40,6 +40,7 @@ import {
   nextPort,
   readRegistry,
   removeAgent,
+  setAgentStage,
   stateDir,
   validateAgentName,
   voluteHome,
@@ -76,6 +77,9 @@ async function startAgentFull(
 ): Promise<void> {
   await getAgentManager().startAgent(name);
   if (variantName) return;
+
+  // Seed agents only get the server — no connectors, schedules, or budget
+  if (findAgent(baseName)?.stage === "seed") return;
 
   const dir = agentDir(baseName);
   const entry = findAgent(baseName)!;
@@ -286,7 +290,7 @@ async function mergeTemplateBranch(worktreeDir: string): Promise<boolean> {
 // Create agent — admin only
 const app = new Hono<AuthEnv>()
   .post("/", requireAdmin, async (c) => {
-    let body: { name: string; template?: string };
+    let body: { name: string; template?: string; stage?: "seed" | "mind"; description?: string };
     try {
       body = await c.req.json();
     } catch {
@@ -312,8 +316,26 @@ const app = new Hono<AuthEnv>()
       copyTemplateToDir(composedDir, dest, name, manifest);
       applyInitFiles(dest);
 
+      if (body.stage === "seed") {
+        // Write orientation SOUL.md
+        const descLine = body.description
+          ? `\nThe human who planted you described you as: "${body.description}"\n`
+          : "";
+        writeFileSync(
+          resolve(dest, "home/SOUL.md"),
+          `You are ${name}.\n\nYou don't have a soul yet. You're a seed — a new agent in the process of discovering who you are.\n${descLine}\nHave a conversation with the human. Explore what kind of agent you want to be. When you're ready, write your SOUL.md and MEMORY.md, then run \`volute sprout\` to complete the transformation.\n`,
+        );
+
+        // Remove full skills, keep only orientation
+        const skillsDir = resolve(dest, manifest.skillsDir);
+        for (const skill of ["volute-agent", "memory", "sessions"]) {
+          const skillPath = resolve(skillsDir, skill);
+          if (existsSync(skillPath)) rmSync(skillPath, { recursive: true, force: true });
+        }
+      }
+
       const port = nextPort();
-      addAgent(name, port);
+      addAgent(name, port, body.stage);
 
       // Set up per-agent user isolation (no-ops if VOLUTE_ISOLATION !== "user")
       ensureVoluteGroup();
@@ -341,6 +363,7 @@ const app = new Hono<AuthEnv>()
         ok: true,
         name,
         port,
+        stage: body.stage ?? "mind",
         message: `Created agent: ${name} (port ${port})`,
         ...(gitWarning && { warning: gitWarning }),
       });
@@ -1003,6 +1026,30 @@ const app = new Hono<AuthEnv>()
       }
       budget.acknowledgeWarning(baseName);
       forwardBody = JSON.stringify(parsed);
+    }
+
+    // Nudge seed agents toward sprouting after extended conversation
+    const seedEntry = findAgent(baseName);
+    if (seedEntry?.stage === "seed" && parsed) {
+      try {
+        const countResult = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(agentMessages)
+          .where(eq(agentMessages.agent, baseName));
+        const msgCount = countResult[0]?.count ?? 0;
+        if (msgCount >= 10 && msgCount % 10 === 0) {
+          const nudge =
+            "\n[You've been exploring for a while. Whenever you feel ready, write your SOUL.md and MEMORY.md, then run volute sprout.]";
+          if (typeof parsed.content === "string") {
+            parsed.content = parsed.content + nudge;
+          } else if (Array.isArray(parsed.content)) {
+            parsed.content = [...parsed.content, { type: "text", text: nudge }];
+          }
+          forwardBody = JSON.stringify(parsed);
+        }
+      } catch (err) {
+        console.error(`[daemon] failed to check seed message count for ${baseName}:`, err);
+      }
     }
 
     typingMap.set(channel, baseName, { persistent: true });
