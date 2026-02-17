@@ -12,7 +12,6 @@ const PROFILE_PATH = "/etc/profile.d/volute.sh";
 const WRAPPER_PATH = "/usr/local/bin/volute";
 const DATA_DIR = "/var/lib/volute";
 const AGENTS_DIR = "/agents";
-const CLAUDE_DIR = `${DATA_DIR}/.claude`;
 const HOST_RE = /^[a-zA-Z0-9.:_-]+$/;
 
 function validateHost(host: string): void {
@@ -59,7 +58,6 @@ function generateUnit(voluteBin: string, port?: number, host?: string): string {
     `Environment=VOLUTE_HOME=${DATA_DIR}`,
     `Environment=VOLUTE_AGENTS_DIR=${AGENTS_DIR}`,
     "Environment=VOLUTE_ISOLATION=user",
-    `Environment=CLAUDE_CONFIG_DIR=${CLAUDE_DIR}`,
     "Restart=on-failure",
     "RestartSec=5",
     "ProtectSystem=true",
@@ -74,7 +72,7 @@ function generateUnit(voluteBin: string, port?: number, host?: string): string {
     console.warn("Consider installing Node.js system-wide for stronger sandboxing.");
   }
 
-  lines.push("", "[Install]", "WantedBy=multi-user.target", "");
+  lines.push("RestrictSUIDSGID=yes", "", "[Install]", "WantedBy=multi-user.target", "");
   return lines.join("\n");
 }
 
@@ -104,13 +102,6 @@ function install(port?: number, host?: string): void {
   // Create volute group (idempotent)
   ensureVoluteGroup({ force: true });
   console.log("Ensured volute group exists");
-
-  // Create shared Claude config directory (group-writable by volute group).
-  // The sgid bit ensures new files/dirs inherit the volute group ownership.
-  mkdirSync(CLAUDE_DIR, { recursive: true });
-  execFileSync("chown", ["root:volute", CLAUDE_DIR]);
-  execFileSync("chmod", ["2770", CLAUDE_DIR]);
-  console.log(`Created ${CLAUDE_DIR}`);
 
   // Set permissions on data and agents directories
   execFileSync("chmod", ["755", DATA_DIR]);
@@ -156,9 +147,6 @@ function install(port?: number, host?: string): void {
     );
     console.log(`\nVolute daemon is running. Data directory: ${DATA_DIR}`);
     console.log("Use `systemctl status volute` to check status.");
-    console.log(
-      `\nFor agent-sdk agents, copy ~/.claude/.credentials.json to ${CLAUDE_DIR}/.credentials.json`,
-    );
   } catch (err) {
     const e = err as { stderr?: string };
     console.error("Service installed but failed to start.");
