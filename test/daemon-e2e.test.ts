@@ -7,10 +7,12 @@ import { agentDir, findAgent, removeAgent } from "../src/lib/registry.js";
 // Strip GIT_* env vars that hook runners (e.g. pre-push) inject, so that
 // spawned processes (like `volute create` which runs `git init`) don't
 // accidentally operate on the parent repo.
+const AGENT_BASE_PORT = 15100 + Math.floor(Math.random() * 800);
 const cleanEnv: Record<string, string> = {};
 for (const [k, v] of Object.entries(process.env)) {
   if (!k.startsWith("GIT_") && v !== undefined) cleanEnv[k] = v;
 }
+cleanEnv.VOLUTE_BASE_PORT = String(AGENT_BASE_PORT);
 
 const TEST_AGENT = "e2e-test-agent";
 const PORT = 14200 + Math.floor(Math.random() * 800);
@@ -49,7 +51,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     daemon = spawn("npx", ["tsx", "src/daemon.ts", "--port", String(PORT), "--foreground"], {
       cwd: process.cwd(),
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...cleanEnv, VOLUTE_DAEMON_TOKEN: TOKEN },
+      env: { ...cleanEnv, VOLUTE_DAEMON_TOKEN: TOKEN, VOLUTE_BASE_PORT: String(AGENT_BASE_PORT) },
     });
 
     // Collect stderr for debugging
@@ -221,7 +223,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     daemon = spawn("npx", ["tsx", "src/daemon.ts", "--port", String(PORT), "--foreground"], {
       cwd: process.cwd(),
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...cleanEnv, VOLUTE_DAEMON_TOKEN: TOKEN },
+      env: { ...cleanEnv, VOLUTE_DAEMON_TOKEN: TOKEN, VOLUTE_BASE_PORT: String(AGENT_BASE_PORT) },
     });
     daemon.stderr?.on("data", (data: Buffer) => {
       process.stderr.write(`[daemon] ${data}`);
@@ -279,7 +281,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     daemon = spawn("npx", ["tsx", "src/daemon.ts", "--port", String(PORT), "--foreground"], {
       cwd: process.cwd(),
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...cleanEnv, VOLUTE_DAEMON_TOKEN: TOKEN },
+      env: { ...cleanEnv, VOLUTE_DAEMON_TOKEN: TOKEN, VOLUTE_BASE_PORT: String(AGENT_BASE_PORT) },
     });
     daemon.stderr?.on("data", (data: Buffer) => {
       process.stderr.write(`[daemon] ${data}`);

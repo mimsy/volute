@@ -124,7 +124,8 @@ export function nextPort(): number {
       if (v.port) usedPorts.add(v.port);
     }
   }
-  let port = 4100;
+  const basePort = parseInt(process.env.VOLUTE_BASE_PORT || "4100", 10);
+  let port = basePort;
   while (usedPorts.has(port)) port++;
   if (port > 65535) throw new Error("No available ports — all ports 4100-65535 are allocated");
   return port;

@@ -74,7 +74,7 @@ function generateUnit(voluteBin: string, port?: number, host?: string): string {
     console.warn("Consider installing Node.js system-wide for stronger sandboxing.");
   }
 
-  lines.push("RestrictSUIDSGID=yes", "", "[Install]", "WantedBy=multi-user.target", "");
+  lines.push("", "[Install]", "WantedBy=multi-user.target", "");
   return lines.join("\n");
 }
 
