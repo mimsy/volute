@@ -39,6 +39,8 @@ const app = new Hono<AuthEnv>()
     const agentName = c.req.param("name");
     const entry = findAgent(agentName);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (entry.stage === "seed")
+      return c.json({ error: "Seed agents cannot create variants — sprout first" }, 403);
 
     let body: { name: string; soul?: string; port?: number; noStart?: boolean };
     try {

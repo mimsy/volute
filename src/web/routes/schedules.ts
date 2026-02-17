@@ -26,7 +26,10 @@ const app = new Hono<AuthEnv>()
   // Add schedule — admin only
   .post("/:name/schedules", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
+    const entry = findAgent(name);
+    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (entry.stage === "seed")
+      return c.json({ error: "Seed agents cannot use schedules — sprout first" }, 403);
 
     const body = (await c.req.json()) as Partial<Schedule>;
     if (!body.cron || !body.message) {

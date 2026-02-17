@@ -40,6 +40,25 @@ export function AgentCard({ agent }: { agent: Agent }) {
         >
           {agent.name}
         </span>
+        {agent.stage === "seed" && (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              padding: "2px 8px",
+              borderRadius: "var(--radius)",
+              background: "rgba(251, 191, 36, 0.08)",
+              color: "var(--yellow)",
+              fontSize: 11,
+              fontWeight: 500,
+              letterSpacing: "0.02em",
+              textTransform: "uppercase",
+            }}
+          >
+            seed
+          </span>
+        )}
         <StatusBadge status={agent.status} />
       </div>
       <div

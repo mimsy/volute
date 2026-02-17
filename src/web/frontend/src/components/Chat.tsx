@@ -29,11 +29,13 @@ export function Chat({
   username,
   conversationId,
   onConversationId,
+  stage,
 }: {
   name: string;
   username?: string;
   conversationId: string | null;
   onConversationId: (id: string) => void;
+  stage?: "seed" | "mind";
 }) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [input, setInput] = useState("");
@@ -72,7 +74,7 @@ export function Chat({
       return fetchFn
         .then((msgs) => {
           // Skip re-render if messages haven't changed (prevents scrollbar flicker from polling)
-          const fingerprint = msgs.length + ":" + (msgs[msgs.length - 1]?.id ?? "");
+          const fingerprint = `${msgs.length}:${msgs[msgs.length - 1]?.id ?? ""}`;
           if (!forceScroll && fingerprint === lastPollFingerprintRef.current) return;
           lastPollFingerprintRef.current = fingerprint;
 
@@ -126,7 +128,7 @@ export function Chat({
       loadMessages(conversationId, false);
     };
     return () => eventSource.close();
-  }, [conversationId, name, username, loadMessages, scrollToBottom]);
+  }, [conversationId, name, loadMessages, scrollToBottom]);
 
   // Poll typing indicators
   useEffect(() => {
@@ -262,6 +264,24 @@ export function Chat({
         height: "100%",
       }}
     >
+      {/* Orientation header */}
+      {stage === "seed" && (
+        <div
+          style={{
+            padding: "6px 12px",
+            textAlign: "center",
+            color: "var(--yellow)",
+            fontSize: 11,
+            fontWeight: 500,
+            letterSpacing: "0.05em",
+            textTransform: "uppercase",
+            opacity: 0.6,
+            borderBottom: "1px solid rgba(251, 191, 36, 0.1)",
+          }}
+        >
+          orientation
+        </div>
+      )}
       {/* Messages */}
       <div
         ref={scrollRef}
@@ -283,29 +303,60 @@ export function Chat({
             Send a message to start chatting.
           </div>
         )}
-        {entries.map((entry, i) => (
-          <div
-            key={i}
-            style={{
-              marginBottom: 16,
-              animation: "fadeIn 0.2s ease both",
-            }}
-          >
-            {entry.role === "user" ? (
-              <UserMessage
-                blocks={entry.blocks}
-                senderName={entry.senderName}
-                color={entry.senderName ? colorMap.get(entry.senderName) : undefined}
-              />
-            ) : (
-              <AssistantMessage
-                blocks={entry.blocks}
-                senderName={entry.senderName}
-                color={entry.senderName ? colorMap.get(entry.senderName) : undefined}
-              />
-            )}
-          </div>
-        ))}
+        {entries.map((entry, i) => {
+          // Render system divider messages (e.g. "[seed has sprouted]")
+          if (
+            entry.senderName === "system" &&
+            entry.blocks.length === 1 &&
+            entry.blocks[0].type === "text"
+          ) {
+            const text = entry.blocks[0].text;
+            const dividerMatch = text.match(/^\[(.+)\]$/);
+            if (dividerMatch) {
+              return (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    margin: "20px 0",
+                    color: "var(--text-2)",
+                    fontSize: 11,
+                    letterSpacing: "0.03em",
+                  }}
+                >
+                  <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+                  <span>{dividerMatch[1]}</span>
+                  <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+                </div>
+              );
+            }
+          }
+          return (
+            <div
+              key={i}
+              style={{
+                marginBottom: 16,
+                animation: "fadeIn 0.2s ease both",
+              }}
+            >
+              {entry.role === "user" ? (
+                <UserMessage
+                  blocks={entry.blocks}
+                  senderName={entry.senderName}
+                  color={entry.senderName ? colorMap.get(entry.senderName) : undefined}
+                />
+              ) : (
+                <AssistantMessage
+                  blocks={entry.blocks}
+                  senderName={entry.senderName}
+                  color={entry.senderName ? colorMap.get(entry.senderName) : undefined}
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* Image preview strip */}

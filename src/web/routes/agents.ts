@@ -8,8 +8,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { resolve } from "node:path";
-import { and, desc, eq } from "drizzle-orm";
+import { zValidator } from "@hono/zod-validator";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
+import { z } from "zod";
 import {
   findOpenClawSession,
   importOpenClawConnectors,
@@ -21,6 +23,7 @@ import { deleteAgentUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { getConnectorManager } from "../../lib/connector-manager.js";
 import { consolidateMemory } from "../../lib/consolidate.js";
+import { addMessage } from "../../lib/conversations.js";
 import { convertSession } from "../../lib/convert-session.js";
 import { getDb } from "../../lib/db.js";
 import { exec, gitExec } from "../../lib/exec.js";
@@ -44,7 +47,7 @@ import {
   voluteHome,
 } from "../../lib/registry.js";
 import { getScheduler } from "../../lib/scheduler.js";
-import { agentMessages } from "../../lib/schema.js";
+import { agentMessages, conversations } from "../../lib/schema.js";
 import {
   applyInitFiles,
   composeTemplate,
@@ -75,6 +78,9 @@ async function startAgentFull(
 ): Promise<void> {
   await getAgentManager().startAgent(name);
   if (variantName) return;
+
+  // Seed agents only get the server — no connectors, schedules, or budget
+  if (findAgent(baseName)?.stage === "seed") return;
 
   const dir = agentDir(baseName);
   const entry = findAgent(baseName)!;
@@ -282,15 +288,18 @@ async function mergeTemplateBranch(worktreeDir: string): Promise<boolean> {
   }
 }
 
+const createAgentSchema = z.object({
+  name: z.string(),
+  template: z.string().optional(),
+  stage: z.enum(["seed", "mind"]).optional(),
+  description: z.string().optional(),
+  model: z.string().optional(),
+});
+
 // Create agent — admin only
 const app = new Hono<AuthEnv>()
-  .post("/", requireAdmin, async (c) => {
-    let body: { name: string; template?: string };
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON" }, 400);
-    }
+  .post("/", requireAdmin, zValidator("json", createAgentSchema), async (c) => {
+    const body = c.req.valid("json");
 
     const { name, template = "agent-sdk" } = body;
 
@@ -311,8 +320,35 @@ const app = new Hono<AuthEnv>()
       copyTemplateToDir(composedDir, dest, name, manifest);
       applyInitFiles(dest);
 
+      if (body.model) {
+        const configPath = resolve(dest, "home/.config/config.json");
+        const existing = existsSync(configPath)
+          ? JSON.parse(readFileSync(configPath, "utf-8"))
+          : {};
+        existing.model = body.model;
+        writeFileSync(configPath, `${JSON.stringify(existing, null, 2)}\n`);
+      }
+
+      if (body.stage === "seed") {
+        // Write orientation SOUL.md
+        const descLine = body.description
+          ? `\nThe human who planted you described you as: "${body.description}"\n`
+          : "";
+        writeFileSync(
+          resolve(dest, "home/SOUL.md"),
+          `You are ${name}.\n\nYou don't have a soul yet. You're a seed — a new agent in the process of discovering who you are.\n${descLine}\nHave a conversation with the human. Explore what kind of agent you want to be. When you're ready, write your SOUL.md and MEMORY.md, then run \`volute sprout\` to complete the transformation.\n`,
+        );
+
+        // Remove full skills, keep only orientation
+        const skillsDir = resolve(dest, manifest.skillsDir);
+        for (const skill of ["volute-agent", "memory", "sessions"]) {
+          const skillPath = resolve(skillsDir, skill);
+          if (existsSync(skillPath)) rmSync(skillPath, { recursive: true, force: true });
+        }
+      }
+
       const port = nextPort();
-      addAgent(name, port);
+      addAgent(name, port, body.stage);
 
       // Set up per-agent user isolation (no-ops if VOLUTE_ISOLATION !== "user")
       const homeDir = resolve(dest, "home");
@@ -341,6 +377,7 @@ const app = new Hono<AuthEnv>()
         ok: true,
         name,
         port,
+        stage: body.stage ?? "mind",
         message: `Created agent: ${name} (port ${port})`,
         ...(gitWarning && { warning: gitWarning }),
       });
@@ -663,6 +700,25 @@ const app = new Hono<AuthEnv>()
       // Store context for delivery after restart
       if (context) {
         manager.setPendingContext(name, context);
+      }
+
+      // Inject "[seed has sprouted]" system message into active volute conversations
+      if (context?.type === "sprouted" && !variantName) {
+        try {
+          const db = await getDb();
+          const activeConvs = await db
+            .select({ id: conversations.id })
+            .from(conversations)
+            .where(eq(conversations.agent_name, baseName))
+            .all();
+          for (const conv of activeConvs) {
+            await addMessage(conv.id, "assistant", "system", [
+              { type: "text", text: "[seed has sprouted]" },
+            ]);
+          }
+        } catch (err) {
+          console.error(`[daemon] failed to inject sprouted message for ${baseName}:`, err);
+        }
       }
 
       await startAgentFull(name, baseName, variantName);
@@ -999,6 +1055,30 @@ const app = new Hono<AuthEnv>()
       }
       budget.acknowledgeWarning(baseName);
       forwardBody = JSON.stringify(parsed);
+    }
+
+    // Nudge seed agents toward sprouting after extended conversation
+    const seedEntry = findAgent(baseName);
+    if (seedEntry?.stage === "seed" && parsed) {
+      try {
+        const countResult = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(agentMessages)
+          .where(eq(agentMessages.agent, baseName));
+        const msgCount = countResult[0]?.count ?? 0;
+        if (msgCount >= 10 && msgCount % 10 === 0) {
+          const nudge =
+            "\n[You've been exploring for a while. Whenever you feel ready, write your SOUL.md and MEMORY.md, then run volute sprout.]";
+          if (typeof parsed.content === "string") {
+            parsed.content = parsed.content + nudge;
+          } else if (Array.isArray(parsed.content)) {
+            parsed.content = [...parsed.content, { type: "text", text: nudge }];
+          }
+          forwardBody = JSON.stringify(parsed);
+        }
+      } catch (err) {
+        console.error(`[daemon] failed to check seed message count for ${baseName}:`, err);
+      }
     }
 
     typingMap.set(channel, baseName, { persistent: true });

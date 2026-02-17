@@ -16,16 +16,19 @@ type ConversationWithParticipants = Conversation & { participants: Participant[]
 
 export function Chats({
   conversationId: initialId,
+  agentName: initialAgent,
   username,
 }: {
   conversationId?: string;
+  agentName?: string;
   username: string;
 }) {
   const [conversations, setConversations] = useState<ConversationWithParticipants[]>([]);
   const [activeId, setActiveId] = useState<string | null>(initialId ?? null);
   const [showNewChat, setShowNewChat] = useState(false);
   const [showGroupModal, setShowGroupModal] = useState(false);
-  const [newChatAgent, setNewChatAgent] = useState<string | null>(null);
+  const [newChatAgent, setNewChatAgent] = useState<string | null>(initialAgent ?? null);
+  const [agents, setAgents] = useState<Agent[]>([]);
 
   const activeConv = conversations.find((c) => c.id === activeId);
   const agentName = activeConv?.agent_name ?? "";
@@ -34,6 +37,9 @@ export function Chats({
     fetchAllConversations()
       .then(setConversations)
       .catch((e) => console.error("Failed to fetch conversations:", e));
+    fetchAgents()
+      .then(setAgents)
+      .catch((e) => console.error("Failed to fetch agents:", e));
   }, []);
 
   useEffect(() => {
@@ -108,6 +114,7 @@ export function Chats({
 
   // The agent name to use for the Chat component: from active conversation or new chat pick
   const chatAgentName = newChatAgent || agentName;
+  const chatAgent = agents.find((a) => a.name === chatAgentName);
 
   function getConversationLabel(conv: ConversationWithParticipants): string {
     if (conv.title) return conv.title;
@@ -211,9 +218,25 @@ export function Chats({
                       whiteSpace: "nowrap",
                       fontSize: 12,
                       color: conv.id === activeId ? "var(--text-0)" : "var(--text-1)",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
                     }}
                   >
-                    {getConversationLabel(conv)}
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {getConversationLabel(conv)}
+                    </span>
+                    {agents.find((a) => a.name === conv.agent_name)?.stage === "seed" && (
+                      <span
+                        style={{
+                          fontSize: 9,
+                          color: "var(--yellow)",
+                          flexShrink: 0,
+                        }}
+                      >
+                        seed
+                      </span>
+                    )}
                   </div>
                   <button
                     onClick={(e) => handleDelete(e, conv.id)}
@@ -273,6 +296,7 @@ export function Chats({
             username={username}
             conversationId={activeId}
             onConversationId={handleConversationId}
+            stage={chatAgent?.stage}
           />
         ) : (
           <div

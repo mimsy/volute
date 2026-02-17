@@ -62,6 +62,12 @@ switch (command) {
   case "status":
     await import("./commands/status.js").then((m) => m.run(args));
     break;
+  case "seed":
+    await import("./commands/seed.js").then((m) => m.run(args));
+    break;
+  case "sprout":
+    await import("./commands/sprout.js").then((m) => m.run(args));
+    break;
   case "--help":
   case "-h":
   case undefined:
@@ -110,6 +116,9 @@ Commands:
   volute service status                   Check service status
   volute setup [--port N] [--host H]      Install system service with user isolation
   volute setup uninstall [--force]        Remove system service + isolation
+
+  volute seed <name>                      Plant a seed agent (orientation mode)
+  volute sprout                           Complete orientation, become a full agent
 
   volute update                           Update to latest version
   volute status                           Show daemon status and agents

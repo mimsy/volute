@@ -5,6 +5,7 @@ import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { parseTarget } from "../lib/parse-target.js";
 import { readStdin } from "../lib/read-stdin.js";
+import { findAgent } from "../lib/registry.js";
 import { resolveAgentName } from "../lib/resolve-agent-name.js";
 
 export async function run(args: string[]) {
@@ -23,6 +24,15 @@ export async function run(args: string[]) {
     console.error('  volute send @other-agent "hello"');
     console.error('  volute send animal-chat "hello everyone"');
     console.error('  volute send discord:server/channel "hello"');
+    process.exit(1);
+  }
+
+  // Catch attempts to reply to system messages (with or without @)
+  if (target === "system" || target === "@system") {
+    console.error(
+      "Can't send to system — system messages are automated.\n" +
+        'To reply to a person, use their username from the message prefix (e.g. volute send @username "msg").',
+    );
     process.exit(1);
   }
 
@@ -46,19 +56,24 @@ export async function run(args: string[]) {
       process.exit(1);
     }
 
+    // When an agent sends to a non-agent (human), use the sender agent's context
+    // so the conversation is created under the agent (humans aren't in the registry).
+    const targetIsAgent = !!findAgent(targetName);
+    const contextAgent = agentSelf && !targetIsAgent ? agentSelf : targetName;
+    const participants = agentSelf && !targetIsAgent ? [targetName] : [sender];
+
     const env: Record<string, string> = {
-      VOLUTE_AGENT: targetName,
+      VOLUTE_AGENT: contextAgent,
       VOLUTE_SENDER: sender,
     };
 
     try {
-      channelUri = await driver.createConversation(env, [sender]);
+      channelUri = await driver.createConversation(env, participants);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
     }
 
-    // Send using the target agent's context
     try {
       await driver.send(env, channelUri, message);
       console.log("Message sent.");

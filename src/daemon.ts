@@ -96,6 +96,8 @@ export async function startDaemon(opts: {
     if (!entry.running) continue;
     try {
       await manager.startAgent(entry.name);
+      // Seed agents only get the server — no connectors, schedules, or budget
+      if (entry.stage === "seed") continue;
       const dir = agentDir(entry.name);
       await connectors.startConnectors(entry.name, dir, entry.port, port);
       scheduler.loadSchedules(entry.name);

@@ -46,12 +46,17 @@ export async function run(_args: string[]) {
   try {
     const res = await fetch(`${baseUrl}/api/agents`, { headers });
     if (res.ok) {
-      const agents = (await res.json()) as Array<{ name: string; running: boolean }>;
+      const agents = (await res.json()) as Array<{
+        name: string;
+        running: boolean;
+        stage?: string;
+      }>;
       if (agents.length > 0) {
         console.log(`\nAgents (${agents.length}):`);
         for (const agent of agents) {
           const status = agent.running ? "running" : "stopped";
-          console.log(`  ${agent.name}: ${status}`);
+          const label = agent.stage === "seed" ? " (seed)" : "";
+          console.log(`  ${agent.name}: ${status}${label}`);
         }
       } else {
         console.log("\nNo agents configured.");

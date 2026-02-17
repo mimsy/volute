@@ -237,6 +237,10 @@ export class AgentManager {
     const parts: string[] = [];
     if (context.type === "merge" || context.type === "merged") {
       parts.push(`[system] Variant "${context.name}" has been merged and you have been restarted.`);
+    } else if (context.type === "sprouted") {
+      parts.push(
+        "[system] You've sprouted. You now have full agent capabilities — connectors, schedules, variants, and the complete volute CLI. Check your new skills for details.",
+      );
     } else {
       parts.push("[system] You have been restarted.");
     }

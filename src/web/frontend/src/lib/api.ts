@@ -17,6 +17,7 @@ export type Agent = {
   port: number;
   created: string;
   status: "running" | "stopped" | "starting";
+  stage?: "seed" | "mind";
   channels: Channel[];
 };
 
@@ -262,4 +263,24 @@ export async function fetchTyping(agentName: string, channel: string): Promise<s
   if (!res.ok) throw new Error(`Failed to fetch typing (${res.status})`);
   const data = (await res.json()) as { typing: string[] };
   return data.typing;
+}
+
+export async function createSeedAgent(
+  name: string,
+  opts?: { description?: string; template?: string; model?: string },
+): Promise<{ name: string; port: number }> {
+  const res = await client.api.agents.$post({
+    json: {
+      name,
+      stage: "seed" as const,
+      description: opts?.description,
+      template: opts?.template,
+      model: opts?.model,
+    },
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to create agent");
+  }
+  return res.json() as Promise<{ name: string; port: number }>;
 }

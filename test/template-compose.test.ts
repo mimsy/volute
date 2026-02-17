@@ -14,7 +14,7 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, ".gitignore")));
       assert.ok(existsSync(resolve(composedDir, "biome.json.tmpl")));
       assert.ok(existsSync(resolve(composedDir, "tsconfig.json")));
-      assert.ok(existsSync(resolve(composedDir, "home/.config/volute.json.tmpl")));
+      assert.ok(existsSync(resolve(composedDir, "home/.config/config.json.tmpl")));
 
       // Base shared source
       assert.ok(existsSync(resolve(composedDir, "src/lib/types.ts")));
@@ -66,7 +66,7 @@ describe("template composition", () => {
       // Manifest shape
       assert.deepEqual(Object.keys(manifest.rename).sort(), [
         "biome.json.tmpl",
-        "home/.config/volute.json.tmpl",
+        "home/.config/config.json.tmpl",
         "package.json.tmpl",
       ]);
       assert.ok(manifest.substitute.includes("package.json"));
@@ -114,8 +114,8 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, ".init/.config/routes.json")));
       assert.ok(existsSync(resolve(composedDir, ".init/.config/scripts/session-reader.ts")));
 
-      // Pi overrides home/.config/volute.json.tmpl with provider-prefixed model
-      assert.ok(existsSync(resolve(composedDir, "home/.config/volute.json.tmpl")));
+      // Pi overrides home/.config/config.json.tmpl with its own default model
+      assert.ok(existsSync(resolve(composedDir, "home/.config/config.json.tmpl")));
 
       // Skills mapped to skillsDir
       assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "volute-agent/SKILL.md")));
