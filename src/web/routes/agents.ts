@@ -35,6 +35,7 @@ import {
   ensureVoluteGroup,
   isIsolationEnabled,
 } from "../../lib/isolation.js";
+import log from "../../lib/logger.js";
 import {
   addAgent,
   agentDir,
@@ -572,7 +573,8 @@ const app = new Hono<AuthEnv>()
       let items: string[];
       try {
         items = readdirSync(pagesDir);
-      } catch {
+      } catch (err) {
+        log.warn("Failed to read pages dir", { agent: entry.name, error: (err as Error).message });
         continue;
       }
 
@@ -599,7 +601,13 @@ const app = new Hono<AuthEnv>()
               });
             }
           }
-        } catch {}
+        } catch (err) {
+          log.warn("Failed to stat page item", {
+            agent: entry.name,
+            item,
+            error: (err as Error).message,
+          });
+        }
       }
     }
 
