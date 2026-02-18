@@ -29,9 +29,9 @@ const MAX_RESTART_DELAY = 60000;
 
 export class ConnectorManager {
   private connectors = new Map<string, Map<string, TrackedConnector>>();
-  private stopping = new Set<string>(); // "agent:type" keys currently being explicitly stopped
+  private stopping = new Set<string>(); // "mind:type" keys currently being explicitly stopped
   private shuttingDown = false;
-  private restartAttempts = new Map<string, number>(); // "agent:type" -> count
+  private restartAttempts = new Map<string, number>(); // "mind:type" -> count
 
   async startConnectors(
     mindName: string,
@@ -56,7 +56,7 @@ export class ConnectorManager {
     mindName: string,
     mindDir: string,
   ): { missing: { name: string; description: string }[]; connectorName: string } | null {
-    // Check agent-specific, then user-shared connector dirs for custom connector.json
+    // Check mind-specific, then user-shared connector dirs for custom connector.json
     const mindConnectorDir = resolve(mindDir, "connectors", type);
     const userConnectorDir = resolve(voluteHome(), "connectors", type);
     const connectorDir = existsSync(mindConnectorDir)
@@ -107,7 +107,7 @@ export class ConnectorManager {
     // Kill orphan connector from a previous daemon session
     this.killOrphanConnector(mindName, type);
 
-    // Resolve connector code: agent-specific > user-shared > built-in
+    // Resolve connector code: mind-specific > user-shared > built-in
     const mindConnector = resolve(mindDir, "connectors", type, "index.ts");
     const userConnector = resolve(voluteHome(), "connectors", type, "index.ts");
     const builtinConnector = this.resolveBuiltinConnector(type);
@@ -133,7 +133,7 @@ export class ConnectorManager {
     const logsDir = resolve(mindStateDir, "logs");
     mkdirSync(logsDir, { recursive: true });
 
-    // State dir is created by root — chown so the agent user can write channels.json, etc.
+    // State dir is created by root — chown so the mind user can write channels.json, etc.
     if (isIsolationEnabled()) {
       try {
         const [base] = mindName.split("@", 2);
@@ -147,7 +147,7 @@ export class ConnectorManager {
 
     const logStream = new RotatingLog(resolve(logsDir, `${type}.log`));
 
-    // Pass connector-specific env vars from agent env
+    // Pass connector-specific env vars from mind env
     const mindEnv = loadMergedEnv(mindName);
     const prefix = `${type.toUpperCase()}_`;
     const connectorEnv = Object.fromEntries(
@@ -280,8 +280,8 @@ export class ConnectorManager {
 
   async stopAll(): Promise<void> {
     this.shuttingDown = true;
-    const agents = [...this.connectors.keys()];
-    await Promise.all(agents.map((name) => this.stopConnectors(name)));
+    const minds = [...this.connectors.keys()];
+    await Promise.all(minds.map((name) => this.stopConnectors(name)));
   }
 
   getConnectorStatus(mindName: string): { type: string; running: boolean }[] {

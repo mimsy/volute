@@ -363,14 +363,14 @@ export async function findDMConversation(
   participantIds: [number, number],
 ): Promise<string | null> {
   const db = await getDb();
-  // Find conversations for this agent with exactly these two participants
-  const agentConvs = await db
+  // Find conversations for this mind with exactly these two participants
+  const mindConvs = await db
     .select({ id: conversations.id })
     .from(conversations)
     .where(eq(conversations.mind_name, mindName))
     .all();
 
-  for (const conv of agentConvs) {
+  for (const conv of mindConvs) {
     const rows = await db
       .select({ user_id: conversationParticipants.user_id })
       .from(conversationParticipants)

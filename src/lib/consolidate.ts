@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 /**
  * One-shot memory consolidation using the Anthropic Messages API directly.
- * Reads daily logs from an agent directory and produces consolidated MEMORY.md content.
+ * Reads daily logs from a mind directory and produces consolidated MEMORY.md content.
  * No SDK dependency — works for any template.
  */
 export async function consolidateMemory(mindDir: string): Promise<void> {

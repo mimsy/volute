@@ -35,14 +35,14 @@ export class TokenBudget {
     this.interval = null;
   }
 
-  setBudget(agent: string, tokenLimit: number, periodMinutes: number): void {
+  setBudget(mind: string, tokenLimit: number, periodMinutes: number): void {
     if (tokenLimit <= 0) return;
-    const existing = this.budgets.get(agent);
+    const existing = this.budgets.get(mind);
     if (existing) {
       existing.tokenLimit = tokenLimit;
       existing.periodMinutes = periodMinutes;
     } else {
-      this.budgets.set(agent, {
+      this.budgets.set(mind, {
         tokensUsed: 0,
         periodStart: Date.now(),
         periodMinutes,
@@ -53,19 +53,19 @@ export class TokenBudget {
     }
   }
 
-  removeBudget(agent: string): void {
-    this.budgets.delete(agent);
+  removeBudget(mind: string): void {
+    this.budgets.delete(mind);
   }
 
-  recordUsage(agent: string, inputTokens: number, outputTokens: number): void {
-    const state = this.budgets.get(agent);
+  recordUsage(mind: string, inputTokens: number, outputTokens: number): void {
+    const state = this.budgets.get(mind);
     if (!state) return;
     state.tokensUsed += inputTokens + outputTokens;
   }
 
   /** Returns current budget status. Does not mutate state — call acknowledgeWarning() after delivering a warning. */
-  checkBudget(agent: string): "ok" | "warning" | "exceeded" {
-    const state = this.budgets.get(agent);
+  checkBudget(mind: string): "ok" | "warning" | "exceeded" {
+    const state = this.budgets.get(mind);
     if (!state) return "ok";
 
     const pct = state.tokensUsed / state.tokenLimit;
@@ -75,13 +75,13 @@ export class TokenBudget {
   }
 
   /** Mark warning as delivered for this period. Call after successfully injecting the warning. */
-  acknowledgeWarning(agent: string): void {
-    const state = this.budgets.get(agent);
+  acknowledgeWarning(mind: string): void {
+    const state = this.budgets.get(mind);
     if (state) state.warningInjected = true;
   }
 
-  enqueue(agent: string, message: QueuedMessage): void {
-    const state = this.budgets.get(agent);
+  enqueue(mind: string, message: QueuedMessage): void {
+    const state = this.budgets.get(mind);
     if (!state) return;
     if (state.queue.length >= MAX_QUEUE_SIZE) {
       state.queue.shift();
@@ -89,15 +89,15 @@ export class TokenBudget {
     state.queue.push(message);
   }
 
-  drain(agent: string): QueuedMessage[] {
-    const state = this.budgets.get(agent);
+  drain(mind: string): QueuedMessage[] {
+    const state = this.budgets.get(mind);
     if (!state) return [];
     const messages = state.queue;
     state.queue = [];
     return messages;
   }
 
-  getUsage(agent: string): {
+  getUsage(mind: string): {
     tokensUsed: number;
     tokenLimit: number;
     periodMinutes: number;
@@ -105,7 +105,7 @@ export class TokenBudget {
     queueLength: number;
     percentUsed: number;
   } | null {
-    const state = this.budgets.get(agent);
+    const state = this.budgets.get(mind);
     if (!state) return null;
     return {
       tokensUsed: state.tokensUsed,
@@ -119,17 +119,17 @@ export class TokenBudget {
 
   tick(): void {
     const now = Date.now();
-    for (const [agent, state] of this.budgets) {
+    for (const [mind, state] of this.budgets) {
       const elapsed = now - state.periodStart;
       if (elapsed >= state.periodMinutes * 60_000) {
         state.tokensUsed = 0;
         state.periodStart = now;
         state.warningInjected = false;
 
-        const queued = this.drain(agent);
+        const queued = this.drain(mind);
         if (queued.length > 0) {
-          this.replay(agent, queued).catch((err) => {
-            console.error(`[token-budget] replay error for ${agent}:`, err);
+          this.replay(mind, queued).catch((err) => {
+            console.error(`[token-budget] replay error for ${mind}:`, err);
           });
         }
       }

@@ -136,7 +136,7 @@ export function copyTemplateToDir(
 
 /**
  * Copy .init/ files into home/ and remove .init/.
- * Called during agent creation (not during upgrades).
+ * Called during mind creation (not during upgrades).
  */
 export function applyInitFiles(destDir: string) {
   const initDir = resolve(destDir, ".init");

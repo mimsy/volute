@@ -7,7 +7,7 @@ import { readVoluteConfig, type Schedule } from "./volute-config.js";
 export class Scheduler {
   private schedules = new Map<string, Schedule[]>();
   private interval: ReturnType<typeof setInterval> | null = null;
-  private lastFired = new Map<string, number>(); // "agent:scheduleId" → epoch minute
+  private lastFired = new Map<string, number>(); // "mind:scheduleId" → epoch minute
   private daemonPort: number | null = null;
   private daemonToken: string | null = null;
 
@@ -56,27 +56,27 @@ export class Scheduler {
 
   private tick(): void {
     // Hot-reload schedules from config on every tick
-    for (const agent of this.schedules.keys()) {
-      this.loadSchedules(agent);
+    for (const mind of this.schedules.keys()) {
+      this.loadSchedules(mind);
     }
 
     const now = new Date();
-    for (const [agent, schedules] of this.schedules) {
+    for (const [mind, schedules] of this.schedules) {
       for (const schedule of schedules) {
         if (!schedule.enabled) continue;
-        if (this.shouldFire(schedule, now, agent)) {
-          this.fire(agent, schedule);
+        if (this.shouldFire(schedule, now, mind)) {
+          this.fire(mind, schedule);
         }
       }
     }
   }
 
-  private shouldFire(schedule: Schedule, now: Date, agent: string): boolean {
+  private shouldFire(schedule: Schedule, now: Date, mind: string): boolean {
     try {
       const interval = CronExpressionParser.parse(schedule.cron);
       const prev = interval.prev().toDate();
       const epochMinute = Math.floor(now.getTime() / 60000);
-      const key = `${agent}:${schedule.id}`;
+      const key = `${mind}:${schedule.id}`;
       if (this.lastFired.get(key) === epochMinute) return false;
       const prevMinute = Math.floor(prev.getTime() / 60000);
       if (prevMinute === epochMinute) {
@@ -86,10 +86,7 @@ export class Scheduler {
       }
       return false;
     } catch (err) {
-      console.error(
-        `[scheduler] invalid cron "${schedule.cron}" for ${agent}:${schedule.id}:`,
-        err,
-      );
+      console.error(`[scheduler] invalid cron "${schedule.cron}" for ${mind}:${schedule.id}:`, err);
       return false;
     }
   }

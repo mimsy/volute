@@ -29,7 +29,7 @@ export function exec(
 
 /**
  * Run a git command, adding `-c safe.directory=<cwd>` when isolation is enabled
- * so the root-owned daemon can operate on agent-owned repositories.
+ * so the root-owned daemon can operate on mind-owned repositories.
  */
 export function gitExec(
   args: string[],
