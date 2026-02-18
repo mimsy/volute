@@ -61,38 +61,8 @@ export function Home({ username }: { username: string }) {
 
   return (
     <div style={{ maxWidth: 800, animation: "fadeIn 0.2s ease both" }}>
-      {/* Quick links */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
-        <a
-          href="#/chats"
-          style={{
-            padding: "8px 16px",
-            background: "var(--accent-dim)",
-            color: "var(--accent)",
-            borderRadius: "var(--radius)",
-            fontSize: 12,
-            fontWeight: 500,
-          }}
-        >
-          open chat
-        </a>
-        <a
-          href="#/agents"
-          style={{
-            padding: "8px 16px",
-            background: "var(--bg-2)",
-            color: "var(--text-1)",
-            borderRadius: "var(--radius)",
-            fontSize: 12,
-            border: "1px solid var(--border)",
-          }}
-        >
-          all agents
-        </a>
-      </div>
-
       {/* Agents */}
-      <Section title="agents">
+      <Section title="agents" href="#/agents" linkLabel="all agents">
         {agents.length === 0 ? (
           <div style={{ color: "var(--text-2)", fontSize: 12 }}>
             No agents registered. Run{" "}
@@ -110,7 +80,7 @@ export function Home({ username }: { username: string }) {
 
       {/* Recent conversations */}
       {recentConversations.length > 0 && (
-        <Section title="recent conversations">
+        <Section title="recent conversations" href="#/chats" linkLabel="open chat">
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {recentConversations.map((conv) => (
               <ConversationCard key={conv.id} conv={conv} username={username} agents={agents} />
@@ -122,19 +92,41 @@ export function Home({ username }: { username: string }) {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  href,
+  linkLabel,
+  children,
+}: {
+  title: string;
+  href?: string;
+  linkLabel?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div style={{ marginBottom: 24 }}>
       <div
         style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
           fontSize: 11,
-          color: "var(--text-2)",
           textTransform: "uppercase",
           letterSpacing: "0.05em",
           marginBottom: 8,
         }}
       >
-        {title}
+        <span style={{ color: "var(--text-2)" }}>{title}</span>
+        {href && linkLabel && (
+          <a
+            href={href}
+            style={{ color: "var(--text-2)", fontSize: 10, textTransform: "none" }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-1)")}
+            onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}
+          >
+            {linkLabel} &rarr;
+          </a>
+        )}
       </div>
       {children}
     </div>
