@@ -115,7 +115,7 @@ describe("volute server mid-turn interrupt", () => {
         currentListener = listener;
         currentMessageId = messageId;
 
-        // Emit response after a delay (simulates agent processing)
+        // Emit response after a delay (simulates mind processing)
         setTimeout(() => {
           if (currentMessageId === messageId) {
             listener?.({ type: "done", messageId });

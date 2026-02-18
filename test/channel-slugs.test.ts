@@ -57,21 +57,21 @@ describe("buildVoluteSlug", () => {
   });
 
   it("each mind in a multi-mind DM gets a different slug", () => {
-    const participants = [{ username: "agent1" }, { username: "agent2" }];
+    const participants = [{ username: "mind1" }, { username: "mind2" }];
     const slug1 = buildVoluteSlug({
       participants,
-      mindUsername: "agent1",
+      mindUsername: "mind1",
       convTitle: null,
       conversationId: "conv-456",
     });
     const slug2 = buildVoluteSlug({
       participants,
-      mindUsername: "agent2",
+      mindUsername: "mind2",
       convTitle: null,
       conversationId: "conv-456",
     });
-    assert.equal(slug1, "volute:@agent2");
-    assert.equal(slug2, "volute:@agent1");
+    assert.equal(slug1, "volute:@mind2");
+    assert.equal(slug2, "volute:@mind1");
   });
 
   it("falls back to conversation ID when slugify produces empty string", () => {

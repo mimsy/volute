@@ -1137,7 +1137,7 @@ const app = new Hono<AuthEnv>()
       forwardBody = JSON.stringify(parsed);
     }
 
-    // Nudge seed agents toward sprouting after extended conversation
+    // Nudge seed minds toward sprouting after extended conversation
     const seedEntry = findMind(baseName);
     if (seedEntry?.stage === "seed" && parsed) {
       try {
