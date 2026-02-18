@@ -907,7 +907,7 @@ const app = new Hono<AuthEnv>()
 
       try {
         await gitExec(["add", "-A"], { cwd: worktreeDir });
-        await gitExec(["commit", "--no-edit"], { cwd: worktreeDir });
+        await gitExec(["commit", "-m", "merge template update"], { cwd: worktreeDir });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (!msg.includes("nothing to commit")) throw e;
