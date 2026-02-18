@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { AgentCard } from "../components/AgentCard";
+import { MindCard } from "../components/MindCard";
 import { SeedModal } from "../components/SeedModal";
-import { type Agent, fetchAgents } from "../lib/api";
+import { fetchMinds, type Mind } from "../lib/api";
 
 export function Dashboard() {
-  const [agents, setAgents] = useState<Agent[]>([]);
+  const [minds, setMinds] = useState<Mind[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [showSeedModal, setShowSeedModal] = useState(false);
@@ -13,9 +13,9 @@ export function Dashboard() {
     let active = true;
     const poll = async () => {
       try {
-        const data = await fetchAgents();
+        const data = await fetchMinds();
         if (active) {
-          setAgents(data);
+          setMinds(data);
           setError("");
           setLoading(false);
         }
@@ -35,9 +35,9 @@ export function Dashboard() {
     };
   }, []);
 
-  const handleSeedCreated = (agentName: string) => {
+  const handleSeedCreated = (mindName: string) => {
     setShowSeedModal(false);
-    window.location.hash = `#/chats?agent=${agentName}`;
+    window.location.hash = `#/chats?mind=${mindName}`;
   };
 
   if (error) {
@@ -48,7 +48,7 @@ export function Dashboard() {
     return null;
   }
 
-  if (agents.length === 0) {
+  if (minds.length === 0) {
     return (
       <div
         style={{
@@ -58,9 +58,9 @@ export function Dashboard() {
           fontSize: 14,
         }}
       >
-        <div style={{ marginBottom: 8 }}>No agents registered.</div>
+        <div style={{ marginBottom: 8 }}>No minds registered.</div>
         <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 16 }}>
-          <code style={{ color: "var(--text-1)" }}>volute agent create &lt;name&gt;</code>
+          <code style={{ color: "var(--text-1)" }}>volute mind create &lt;name&gt;</code>
           <span style={{ color: "var(--text-2)" }}>or</span>
           <button
             onClick={() => setShowSeedModal(true)}
@@ -112,15 +112,15 @@ export function Dashboard() {
           maxWidth: 1200,
         }}
       >
-        {agents.map((agent, i) => (
+        {minds.map((mind, i) => (
           <div
-            key={agent.name}
+            key={mind.name}
             style={{
               animation: "fadeIn 0.3s ease both",
               animationDelay: `${i * 50}ms`,
             }}
           >
-            <AgentCard agent={agent} />
+            <MindCard mind={mind} />
           </div>
         ))}
       </div>

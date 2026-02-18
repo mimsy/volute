@@ -16,7 +16,7 @@ When a message arrives, you automatically receive a brief summary of new activit
 To see which sessions are active:
 
 ```sh
-ls ../.volute/sessions/       # agent-sdk template
+ls ../.volute/sessions/       # claude template
 ls ../.volute/pi-sessions/    # pi template
 ```
 

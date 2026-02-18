@@ -35,7 +35,7 @@ export function Chat({
   username?: string;
   conversationId: string | null;
   onConversationId: (id: string) => void;
-  stage?: "seed" | "mind";
+  stage?: "seed" | "sprouted";
 }) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [input, setInput] = useState("");
@@ -106,7 +106,7 @@ export function Chat({
   useEffect(() => {
     if (!conversationId || !name) return;
     const eventSource = new EventSource(
-      `/api/agents/${encodeURIComponent(name)}/conversations/${encodeURIComponent(conversationId)}/events`,
+      `/api/minds/${encodeURIComponent(name)}/conversations/${encodeURIComponent(conversationId)}/events`,
     );
     eventSource.onmessage = (ev) => {
       if (!ev.data) return;
@@ -653,7 +653,7 @@ function AssistantMessage({
           textTransform: "uppercase",
         }}
       >
-        {senderName || "agent"}
+        {senderName || "mind"}
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
         {items.map((item, j) => {

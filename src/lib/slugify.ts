@@ -12,13 +12,13 @@ export function slugify(text: string): string {
  */
 export function buildVoluteSlug(opts: {
   participants: { username: string }[];
-  agentUsername: string;
+  mindUsername: string;
   convTitle: string | null | undefined;
   conversationId: string;
 }): string {
   const isDM = opts.participants.length === 2;
   if (isDM) {
-    const other = opts.participants.find((p) => p.username !== opts.agentUsername);
+    const other = opts.participants.find((p) => p.username !== opts.mindUsername);
     const otherSlug = other ? slugify(other.username) : "";
     return otherSlug ? `volute:@${otherSlug}` : `volute:${opts.conversationId}`;
   }

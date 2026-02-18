@@ -3,15 +3,15 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { findAgent, stateDir } from "../../lib/registry.js";
+import { findMind, stateDir } from "../../lib/registry.js";
 
 const app = new Hono()
   .get("/:name/logs", async (c) => {
     const name = c.req.param("name");
-    const entry = findAgent(name);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    const entry = findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    const logFile = resolve(stateDir(name), "logs", "agent.log");
+    const logFile = resolve(stateDir(name), "logs", "mind.log");
 
     if (!existsSync(logFile)) {
       return c.json({ error: "No log file found" }, 404);
@@ -45,10 +45,10 @@ const app = new Hono()
   })
   .get("/:name/logs/tail", async (c) => {
     const name = c.req.param("name");
-    const entry = findAgent(name);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    const entry = findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    const logFile = resolve(stateDir(name), "logs", "agent.log");
+    const logFile = resolve(stateDir(name), "logs", "mind.log");
     if (!existsSync(logFile)) {
       return c.json({ error: "No log file found" }, 404);
     }

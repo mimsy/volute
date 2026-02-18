@@ -17,7 +17,7 @@ export function parseArgs(): { port: number } {
 }
 
 export function loadConfig(): { model?: string; compactionMessage?: string } {
-  // Agent-own config lives in config.json; fall back to volute.json for older agents
+  // Mind-own config lives in config.json; fall back to volute.json for older minds
   for (const file of ["home/.config/config.json", "home/.config/volute.json"]) {
     try {
       return JSON.parse(readFileSync(resolve(file), "utf-8"));

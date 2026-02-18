@@ -6,10 +6,10 @@ export async function run(args: string[]) {
   });
 
   const name = positional[0];
-  const template = flags.template ?? "agent-sdk";
+  const template = flags.template ?? "claude";
 
   if (!name) {
-    console.error("Usage: volute agent create <name> [--template <name>]");
+    console.error("Usage: volute mind create <name> [--template <name>]");
     process.exit(1);
   }
 
@@ -17,7 +17,7 @@ export async function run(args: string[]) {
   const { getClient, urlOf } = await import("../lib/api-client.js");
   const client = getClient();
 
-  const res = await daemonFetch(urlOf(client.api.agents.$url()), {
+  const res = await daemonFetch(urlOf(client.api.minds.$url()), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, template }),
@@ -32,10 +32,10 @@ export async function run(args: string[]) {
   };
 
   if (!res.ok) {
-    console.error(data.error ?? "Failed to create agent");
+    console.error(data.error ?? "Failed to create mind");
     process.exit(1);
   }
 
-  console.log(`\n${data.message ?? `Created agent: ${data.name} (port ${data.port})`}`);
-  console.log(`\n  volute agent start ${data.name ?? name}`);
+  console.log(`\n${data.message ?? `Created mind: ${data.name} (port ${data.port})`}`);
+  console.log(`\n  volute mind start ${data.name ?? name}`);
 }

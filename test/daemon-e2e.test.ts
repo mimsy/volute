@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { after, before, describe, it } from "node:test";
-import { agentDir, findAgent, removeAgent } from "../src/lib/registry.js";
+import { findMind, mindDir, removeMind } from "../src/lib/registry.js";
 
 // Strip GIT_* env vars that hook runners (e.g. pre-push) inject, so that
 // spawned processes (like `volute create` which runs `git init`) don't
@@ -87,8 +87,8 @@ describe("daemon e2e", { timeout: 120000 }, () => {
 
   function cleanupAgent() {
     try {
-      if (findAgent(TEST_AGENT)) {
-        const entry = findAgent(TEST_AGENT);
+      if (findMind(TEST_AGENT)) {
+        const entry = findMind(TEST_AGENT);
         if (entry) {
           // Kill any orphan process on the agent's port from a previous crashed run
           try {
@@ -102,9 +102,9 @@ describe("daemon e2e", { timeout: 120000 }, () => {
             }
           } catch {}
         }
-        removeAgent(TEST_AGENT);
+        removeMind(TEST_AGENT);
       }
-      const dir = agentDir(TEST_AGENT);
+      const dir = mindDir(TEST_AGENT);
       if (existsSync(dir)) {
         rmSync(dir, { recursive: true, force: true });
       }
@@ -119,12 +119,12 @@ describe("daemon e2e", { timeout: 120000 }, () => {
   });
 
   it("unauthenticated request returns 401", async () => {
-    const res = await fetch(`${BASE_URL}/api/agents`);
+    const res = await fetch(`${BASE_URL}/api/minds`);
     assert.equal(res.status, 401);
   });
 
-  it("GET /api/agents returns empty array initially", async () => {
-    const res = await daemonRequest("/api/agents");
+  it("GET /api/minds returns empty array initially", async () => {
+    const res = await daemonRequest("/api/minds");
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.ok(Array.isArray(body));
@@ -132,7 +132,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
 
   it("agent lifecycle: create, start, status, stop", async () => {
     // Create agent via CLI
-    execFileSync("npx", ["tsx", "src/cli.ts", "agent", "create", TEST_AGENT], {
+    execFileSync("npx", ["tsx", "src/cli.ts", "mind", "create", TEST_AGENT], {
       cwd: process.cwd(),
       stdio: "pipe",
       timeout: 30000,
@@ -140,7 +140,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     });
 
     // Install agent dependencies
-    const dir = agentDir(TEST_AGENT);
+    const dir = mindDir(TEST_AGENT);
     assert.ok(existsSync(dir), "Agent directory should exist after create");
     execFileSync("npm", ["install"], {
       cwd: dir,
@@ -154,7 +154,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     await waitForHealth();
 
     // Verify agent appears in listing
-    const listRes = await daemonRequest("/api/agents");
+    const listRes = await daemonRequest("/api/minds");
     assert.equal(listRes.status, 200);
     const agents = (await listRes.json()) as Array<{ name: string; status: string }>;
     const testEntry = agents.find((a) => a.name === TEST_AGENT);
@@ -162,11 +162,11 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.equal(testEntry.status, "stopped");
 
     // Start agent
-    const startRes = await daemonRequest(`/api/agents/${TEST_AGENT}/start`, { method: "POST" });
+    const startRes = await daemonRequest(`/api/minds/${TEST_AGENT}/start`, { method: "POST" });
     assert.equal(startRes.status, 200, `Start failed: ${await startRes.text()}`);
 
     // Status should show running
-    const statusRes = await daemonRequest(`/api/agents/${TEST_AGENT}`);
+    const statusRes = await daemonRequest(`/api/minds/${TEST_AGENT}`);
     assert.equal(statusRes.status, 200);
     const agentStatus = (await statusRes.json()) as { name: string; status: string };
     assert.equal(agentStatus.name, TEST_AGENT);
@@ -176,11 +176,11 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     );
 
     // Stop agent
-    const stopRes = await daemonRequest(`/api/agents/${TEST_AGENT}/stop`, { method: "POST" });
+    const stopRes = await daemonRequest(`/api/minds/${TEST_AGENT}/stop`, { method: "POST" });
     assert.equal(stopRes.status, 200);
 
     // Status should show stopped
-    const stoppedRes = await daemonRequest(`/api/agents/${TEST_AGENT}`);
+    const stoppedRes = await daemonRequest(`/api/minds/${TEST_AGENT}`);
     assert.equal(stoppedRes.status, 200);
     const stoppedStatus = (await stoppedRes.json()) as { status: string };
     assert.equal(stoppedStatus.status, "stopped");
@@ -188,14 +188,14 @@ describe("daemon e2e", { timeout: 120000 }, () => {
 
   it("agents persist running state across daemon restart", async () => {
     // Start agent
-    const startRes = await daemonRequest(`/api/agents/${TEST_AGENT}/start`, { method: "POST" });
+    const startRes = await daemonRequest(`/api/minds/${TEST_AGENT}/start`, { method: "POST" });
     assert.ok(
       startRes.status === 200 || startRes.status === 409,
       `Start: expected 200 or 409, got ${startRes.status}`,
     );
 
     // Verify running
-    const statusRes = await daemonRequest(`/api/agents/${TEST_AGENT}`);
+    const statusRes = await daemonRequest(`/api/minds/${TEST_AGENT}`);
     const status = (await statusRes.json()) as { status: string };
     assert.ok(
       status.status === "running" || status.status === "starting",
@@ -215,7 +215,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     });
 
     // Registry should still show running: true
-    const entry = findAgent(TEST_AGENT);
+    const entry = findMind(TEST_AGENT);
     assert.ok(entry, "Agent should still be in registry");
     assert.equal(entry.running, true, "Agent should still be marked as running in registry");
 
@@ -235,7 +235,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     const deadline = Date.now() + 30000;
     let restored = false;
     while (Date.now() < deadline) {
-      const res = await daemonRequest(`/api/agents/${TEST_AGENT}`);
+      const res = await daemonRequest(`/api/minds/${TEST_AGENT}`);
       const s = (await res.json()) as { status: string };
       if (s.status === "running") {
         restored = true;
@@ -246,17 +246,17 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.ok(restored, "Agent should be auto-restored after daemon restart");
 
     // Stop agent for subsequent tests
-    await daemonRequest(`/api/agents/${TEST_AGENT}/stop`, { method: "POST" });
+    await daemonRequest(`/api/minds/${TEST_AGENT}/stop`, { method: "POST" });
   });
 
   it("stopped agents stay stopped across daemon restart", async () => {
     // Agent should be stopped from the previous test — verify
-    const statusRes = await daemonRequest(`/api/agents/${TEST_AGENT}`);
+    const statusRes = await daemonRequest(`/api/minds/${TEST_AGENT}`);
     const status = (await statusRes.json()) as { status: string };
     assert.equal(status.status, "stopped", "Agent should be stopped before this test");
 
     // Verify registry shows running: false
-    const entryBefore = findAgent(TEST_AGENT);
+    const entryBefore = findMind(TEST_AGENT);
     assert.ok(entryBefore, "Agent should be in registry");
     assert.equal(entryBefore.running, false, "Agent should be marked as not running in registry");
 
@@ -273,7 +273,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     });
 
     // Registry should still show running: false
-    const entryAfter = findAgent(TEST_AGENT);
+    const entryAfter = findMind(TEST_AGENT);
     assert.ok(entryAfter, "Agent should still be in registry");
     assert.equal(entryAfter.running, false, "Stopped agent should remain not running in registry");
 
@@ -290,7 +290,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     await waitForHealth();
 
     // Agent should still be stopped — not auto-started
-    const restoredRes = await daemonRequest(`/api/agents/${TEST_AGENT}`);
+    const restoredRes = await daemonRequest(`/api/minds/${TEST_AGENT}`);
     const restoredStatus = (await restoredRes.json()) as { status: string };
     assert.equal(
       restoredStatus.status,
@@ -306,7 +306,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     }
 
     // Start agent
-    const startRes = await daemonRequest(`/api/agents/${TEST_AGENT}/start`, { method: "POST" });
+    const startRes = await daemonRequest(`/api/minds/${TEST_AGENT}/start`, { method: "POST" });
     // May already be running from previous test or 409 if so
     const startBody = await startRes.text();
     assert.ok(
@@ -318,7 +318,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     const healthDeadline = Date.now() + 30000;
     let agentHealthy = false;
     while (Date.now() < healthDeadline) {
-      const statusRes = await daemonRequest(`/api/agents/${TEST_AGENT}`);
+      const statusRes = await daemonRequest(`/api/minds/${TEST_AGENT}`);
       const status = (await statusRes.json()) as { status: string };
       if (status.status === "running") {
         agentHealthy = true;
@@ -329,7 +329,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.ok(agentHealthy, "Agent should become healthy");
 
     // Send message
-    const msgRes = await daemonRequest(`/api/agents/${TEST_AGENT}/message`, {
+    const msgRes = await daemonRequest(`/api/minds/${TEST_AGENT}/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -345,12 +345,12 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.equal(body.ok, true, "Response should have ok: true");
 
     // Check history
-    const historyRes = await daemonRequest(`/api/agents/${TEST_AGENT}/history`);
+    const historyRes = await daemonRequest(`/api/minds/${TEST_AGENT}/history`);
     assert.equal(historyRes.status, 200);
     const history = (await historyRes.json()) as Array<Record<string, unknown>>;
     assert.ok(history.length > 0, "History should have messages");
 
     // Stop agent
-    await daemonRequest(`/api/agents/${TEST_AGENT}/stop`, { method: "POST" });
+    await daemonRequest(`/api/minds/${TEST_AGENT}/stop`, { method: "POST" });
   });
 });

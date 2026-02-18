@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, it } from "node:test";
-import { agentEnvPath, readEnv, sharedEnvPath, writeEnv } from "../src/lib/env.js";
+import { mindEnvPath, readEnv, sharedEnvPath, writeEnv } from "../src/lib/env.js";
 
 describe("env", () => {
   let tmp: string;
@@ -32,8 +32,8 @@ describe("env", () => {
 
   it("loadMergedEnv merges shared and agent envs with agent winning", () => {
     // Set up a fake agent dir structure
-    const agentDir = join(tmp, "agent");
-    const voluteDir = join(agentDir, ".volute");
+    const mindDir = join(tmp, "agent");
+    const voluteDir = join(mindDir, ".volute");
     mkdirSync(voluteDir, { recursive: true });
 
     // Write shared env to a known location — we test the merge logic by
@@ -57,8 +57,8 @@ describe("env", () => {
     assert.deepEqual(readEnv(path), {});
   });
 
-  it("agentEnvPath returns correct path", () => {
-    const path = agentEnvPath("test");
+  it("mindEnvPath returns correct path", () => {
+    const path = mindEnvPath("test");
     assert.ok(
       path.endsWith("/state/test/env.json"),
       `Expected path ending with /state/test/env.json, got ${path}`,

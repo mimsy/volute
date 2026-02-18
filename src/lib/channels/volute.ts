@@ -29,8 +29,8 @@ export async function read(
   channelSlug: string,
   limit: number,
 ): Promise<string> {
-  const agentName = env.VOLUTE_AGENT;
-  if (!agentName) throw new Error("VOLUTE_AGENT not set");
+  const mindName = env.VOLUTE_MIND;
+  if (!mindName) throw new Error("VOLUTE_MIND not set");
   const conversationId = resolveChannelId(env, channelSlug);
 
   const { url, token } = getDaemonConfig();
@@ -38,7 +38,7 @@ export async function read(
   if (token) headers.Authorization = `Bearer ${token}`;
 
   const res = await fetch(
-    `${url}/api/agents/${encodeURIComponent(agentName)}/conversations/${encodeURIComponent(conversationId)}/messages`,
+    `${url}/api/minds/${encodeURIComponent(mindName)}/conversations/${encodeURIComponent(conversationId)}/messages`,
     { headers },
   );
   if (!res.ok) {
@@ -68,8 +68,8 @@ export async function send(
   channelSlug: string,
   message: string,
 ): Promise<void> {
-  const agentName = env.VOLUTE_AGENT;
-  if (!agentName) throw new Error("VOLUTE_AGENT not set");
+  const mindName = env.VOLUTE_MIND;
+  if (!mindName) throw new Error("VOLUTE_MIND not set");
   const conversationId = resolveChannelId(env, channelSlug);
 
   const { url, token } = getDaemonConfig();
@@ -79,10 +79,10 @@ export async function send(
   };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`${url}/api/agents/${encodeURIComponent(agentName)}/chat`, {
+  const res = await fetch(`${url}/api/minds/${encodeURIComponent(mindName)}/chat`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ message, conversationId, sender: env.VOLUTE_SENDER ?? agentName }),
+    body: JSON.stringify({ message, conversationId, sender: env.VOLUTE_SENDER ?? mindName }),
   });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -93,14 +93,14 @@ export async function send(
 export async function listConversations(
   env: Record<string, string>,
 ): Promise<ChannelConversation[]> {
-  const agentName = env.VOLUTE_AGENT;
-  if (!agentName) throw new Error("VOLUTE_AGENT not set");
+  const mindName = env.VOLUTE_MIND;
+  if (!mindName) throw new Error("VOLUTE_MIND not set");
 
   const { url, token } = getDaemonConfig();
   const headers: Record<string, string> = { Origin: url };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`${url}/api/agents/${encodeURIComponent(agentName)}/conversations`, {
+  const res = await fetch(`${url}/api/minds/${encodeURIComponent(mindName)}/conversations`, {
     headers,
   });
   if (!res.ok) {
@@ -118,7 +118,7 @@ export async function listConversations(
     let participants: { username: string }[] = [];
     try {
       const pRes = await fetch(
-        `${url}/api/agents/${encodeURIComponent(agentName)}/conversations/${encodeURIComponent(conv.id)}/participants`,
+        `${url}/api/minds/${encodeURIComponent(mindName)}/conversations/${encodeURIComponent(conv.id)}/participants`,
         { headers },
       );
       if (pRes.ok) {
@@ -132,7 +132,7 @@ export async function listConversations(
     const isDM = participants.length === 2;
     const slug = buildVoluteSlug({
       participants,
-      agentUsername: agentName,
+      mindUsername: mindName,
       convTitle: conv.title,
       conversationId: conv.id,
     });
@@ -173,8 +173,8 @@ export async function createConversation(
   participants: string[],
   name?: string,
 ): Promise<string> {
-  const agentName = env.VOLUTE_AGENT;
-  if (!agentName) throw new Error("VOLUTE_AGENT not set");
+  const mindName = env.VOLUTE_MIND;
+  if (!mindName) throw new Error("VOLUTE_MIND not set");
 
   const { url, token } = getDaemonConfig();
   const headers: Record<string, string> = {
@@ -183,7 +183,7 @@ export async function createConversation(
   };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`${url}/api/agents/${encodeURIComponent(agentName)}/conversations`, {
+  const res = await fetch(`${url}/api/minds/${encodeURIComponent(mindName)}/conversations`, {
     method: "POST",
     headers,
     body: JSON.stringify({ participantNames: participants, title: name }),

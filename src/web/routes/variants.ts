@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Hono } from "hono";
-import { getAgentManager } from "../../lib/agent-manager.js";
 import { exec, gitExec } from "../../lib/exec.js";
-import { chownAgentDir } from "../../lib/isolation.js";
-import { agentDir, findAgent, nextPort } from "../../lib/registry.js";
+import { chownMindDir } from "../../lib/isolation.js";
+import { getMindManager } from "../../lib/mind-manager.js";
+import { findMind, mindDir, nextPort } from "../../lib/registry.js";
 import { spawnServer } from "../../lib/spawn-server.js";
 import {
   addVariant,
@@ -20,7 +20,7 @@ import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 const app = new Hono<AuthEnv>()
   .get("/:name/variants", async (c) => {
     const name = c.req.param("name");
-    const entry = findAgent(name);
+    const entry = findMind(name);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
     const variants = readVariants(name);
@@ -36,8 +36,8 @@ const app = new Hono<AuthEnv>()
   })
   // Create variant — admin only
   .post("/:name/variants", requireAdmin, async (c) => {
-    const agentName = c.req.param("name");
-    const entry = findAgent(agentName);
+    const mindName = c.req.param("name");
+    const entry = findMind(mindName);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
     if (entry.stage === "seed")
       return c.json({ error: "Seed agents cannot create variants — sprout first" }, 403);
@@ -55,7 +55,7 @@ const app = new Hono<AuthEnv>()
     const err = validateBranchName(variantName);
     if (err) return c.json({ error: err }, 400);
 
-    const projectRoot = agentDir(agentName);
+    const projectRoot = mindDir(mindName);
     const variantDir = resolve(projectRoot, ".variants", variantName);
 
     if (existsSync(variantDir)) {
@@ -95,15 +95,15 @@ const app = new Hono<AuthEnv>()
       created: new Date().toISOString(),
     };
 
-    addVariant(agentName, variant);
+    addVariant(mindName, variant);
 
     // Fix ownership — daemon runs as root but agent needs to own its files
-    chownAgentDir(projectRoot, agentName);
+    chownMindDir(projectRoot, mindName);
 
     // Start variant via agent manager unless noStart
     if (!body.noStart) {
       try {
-        await getAgentManager().startAgent(`${agentName}@${variantName}`);
+        await getMindManager().startMind(`${mindName}@${variantName}`);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         return c.json({ error: `Variant created but failed to start: ${msg}` }, 500);
@@ -117,13 +117,13 @@ const app = new Hono<AuthEnv>()
   })
   // Merge variant — admin only
   .post("/:name/variants/:variant/merge", requireAdmin, async (c) => {
-    const agentName = c.req.param("name");
+    const mindName = c.req.param("name");
     const variantName = c.req.param("variant");
 
-    const entry = findAgent(agentName);
+    const entry = findMind(mindName);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
-    const variant = findVariant(agentName, variantName);
+    const variant = findVariant(mindName, variantName);
     if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
 
     const branchErr = validateBranchName(variant.branch);
@@ -137,7 +137,7 @@ const app = new Hono<AuthEnv>()
       // No body is fine — all fields optional
     }
 
-    const projectRoot = agentDir(agentName);
+    const projectRoot = mindDir(mindName);
 
     // Auto-commit any uncommitted changes in the variant worktree
     if (existsSync(variant.path)) {
@@ -224,7 +224,7 @@ const app = new Hono<AuthEnv>()
     }
 
     // Remove from variants.json
-    removeVariant(agentName, variantName);
+    removeVariant(mindName, variantName);
 
     // Reinstall dependencies
     try {
@@ -234,10 +234,10 @@ const app = new Hono<AuthEnv>()
     }
 
     // Fix ownership — daemon runs as root but agent needs to own its files
-    chownAgentDir(projectRoot, agentName);
+    chownMindDir(projectRoot, mindName);
 
     // Restart agent via agent manager with merge context
-    const manager = getAgentManager();
+    const manager = getMindManager();
     const context = {
       type: "merged",
       name: variantName,
@@ -248,11 +248,11 @@ const app = new Hono<AuthEnv>()
 
     let restartWarning: string | undefined;
     try {
-      if (manager.isRunning(agentName)) {
-        await manager.stopAgent(agentName);
+      if (manager.isRunning(mindName)) {
+        await manager.stopMind(mindName);
       }
-      manager.setPendingContext(agentName, context);
-      await manager.startAgent(agentName);
+      manager.setPendingContext(mindName, context);
+      await manager.startMind(mindName);
     } catch (e) {
       restartWarning = `Merge succeeded but agent restart failed: ${e instanceof Error ? e.message : String(e)}`;
       console.error(`[daemon] ${restartWarning}`);
@@ -262,23 +262,23 @@ const app = new Hono<AuthEnv>()
   })
   // Delete variant — admin only
   .delete("/:name/variants/:variant", requireAdmin, async (c) => {
-    const agentName = c.req.param("name");
+    const mindName = c.req.param("name");
     const variantName = c.req.param("variant");
 
-    const entry = findAgent(agentName);
+    const entry = findMind(mindName);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
-    const variant = findVariant(agentName, variantName);
+    const variant = findVariant(mindName, variantName);
     if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
 
-    const projectRoot = agentDir(agentName);
-    const manager = getAgentManager();
-    const compositeKey = `${agentName}@${variantName}`;
+    const projectRoot = mindDir(mindName);
+    const manager = getMindManager();
+    const compositeKey = `${mindName}@${variantName}`;
 
     // Stop the variant if running
     if (manager.isRunning(compositeKey)) {
       try {
-        await manager.stopAgent(compositeKey);
+        await manager.stopMind(compositeKey);
       } catch {
         // Best effort
       }
@@ -301,10 +301,10 @@ const app = new Hono<AuthEnv>()
     }
 
     // Remove from variants.json
-    removeVariant(agentName, variantName);
+    removeVariant(mindName, variantName);
 
     // Fix ownership — worktree removal modifies .git/worktrees/ as root
-    chownAgentDir(projectRoot, agentName);
+    chownMindDir(projectRoot, mindName);
 
     return c.json({ ok: true });
   });

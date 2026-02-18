@@ -3,10 +3,11 @@ import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { format } from "node:util";
-import { initAgentManager } from "./lib/agent-manager.js";
 import { initConnectorManager } from "./lib/connector-manager.js";
-import { migrateAgentState } from "./lib/migrate-state.js";
-import { agentDir, readRegistry, setAgentRunning, voluteHome } from "./lib/registry.js";
+import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
+import { migrateMindState } from "./lib/migrate-state.js";
+import { initMindManager } from "./lib/mind-manager.js";
+import { mindDir, readRegistry, setMindRunning, voluteHome } from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
 import { getScheduler } from "./lib/scheduler.js";
 import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "./lib/token-budget.js";
@@ -43,6 +44,9 @@ export async function startDaemon(opts: {
 
   mkdirSync(home, { recursive: true });
 
+  // One-time migration: agents.json → minds.json, agents/ → minds/
+  migrateAgentsToMinds();
+
   // Use existing token if set (for testing), otherwise generate one
   const token = process.env.VOLUTE_DAEMON_TOKEN || randomBytes(32).toString("hex");
 
@@ -72,8 +76,8 @@ export async function startDaemon(opts: {
     mode: 0o644,
   });
 
-  // Start agent manager, connector manager, and scheduler
-  const manager = initAgentManager();
+  // Start mind manager, connector manager, and scheduler
+  const manager = initMindManager();
   manager.loadCrashAttempts();
   const connectors = initConnectorManager();
   const scheduler = getScheduler();
@@ -81,24 +85,24 @@ export async function startDaemon(opts: {
   const tokenBudget = getTokenBudget();
   tokenBudget.start(port, token);
 
-  // Migrate system state for all registered agents
+  // Migrate system state for all registered minds
   const registry = readRegistry();
   for (const entry of registry) {
     try {
-      migrateAgentState(entry.name);
+      migrateMindState(entry.name);
     } catch (err) {
       console.error(`[daemon] failed to migrate state for ${entry.name}:`, err);
     }
   }
 
-  // Start all agents that were previously running, then their connectors and schedules
+  // Start all minds that were previously running, then their connectors and schedules
   for (const entry of registry) {
     if (!entry.running) continue;
     try {
-      await manager.startAgent(entry.name);
-      // Seed agents only get the server — no connectors, schedules, or budget
+      await manager.startMind(entry.name);
+      // Seed minds only get the server — no connectors, schedules, or budget
       if (entry.stage === "seed") continue;
-      const dir = agentDir(entry.name);
+      const dir = mindDir(entry.name);
       await connectors.startConnectors(entry.name, dir, entry.port, port);
       scheduler.loadSchedules(entry.name);
       const config = readVoluteConfig(dir);
@@ -110,20 +114,20 @@ export async function startDaemon(opts: {
         );
       }
     } catch (err) {
-      console.error(`[daemon] failed to start agent ${entry.name}:`, err);
-      setAgentRunning(entry.name, false);
+      console.error(`[daemon] failed to start mind ${entry.name}:`, err);
+      setMindRunning(entry.name, false);
     }
   }
 
   // Restore running variants
   const runningVariants = getAllRunningVariants();
-  for (const { agentName, variant } of runningVariants) {
-    const compositeKey = `${agentName}@${variant.name}`;
+  for (const { mindName, variant } of runningVariants) {
+    const compositeKey = `${mindName}@${variant.name}`;
     try {
-      await manager.startAgent(compositeKey);
+      await manager.startMind(compositeKey);
     } catch (err) {
       console.error(`[daemon] failed to start variant ${compositeKey}:`, err);
-      setVariantRunning(agentName, variant.name, false);
+      setVariantRunning(mindName, variant.name, false);
     }
   }
 

@@ -1,7 +1,7 @@
 {
   "name": "volute",
   "version": "0.13.2",
-  "description": "CLI for creating and managing self-modifying AI agents powered by the Claude Agent SDK",
+  "description": "CLI for creating and managing self-modifying AI minds powered by the Claude Agent SDK",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -11,7 +11,7 @@
   "keywords": [
     "cli",
     "ai",
-    "agents",
+    "minds",
     "claude",
     "anthropic"
   ],
@@ -36,7 +36,7 @@
     "lint:fix": "biome check --write src/ test/",
     "format": "biome format --write src/ test/",
     "typecheck": "tsc --noEmit",
-    "typecheck:templates": "tsc --noEmit -p templates/agent-sdk/tsconfig.json && tsc --noEmit -p templates/pi/tsconfig.json",
+    "typecheck:templates": "tsc --noEmit -p templates/claude/tsconfig.json && tsc --noEmit -p templates/pi/tsconfig.json",
     "lint:templates": "biome check templates/",
     "typecheck:web": "tsc --noEmit -p src/web/frontend/tsconfig.json",
     "prepare": "lefthook install",

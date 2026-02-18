@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { approveUser, createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
-import { agentEnvPath, readEnv, sharedEnvPath, writeEnv } from "../src/lib/env.js";
-import { addAgent, removeAgent } from "../src/lib/registry.js";
+import { mindEnvPath, readEnv, sharedEnvPath, writeEnv } from "../src/lib/env.js";
+import { addMind, removeMind } from "../src/lib/registry.js";
 import { conversations, messages, sessions, users } from "../src/lib/schema.js";
 import { createSession, deleteSession } from "../src/web/middleware/auth.js";
 
@@ -19,9 +19,9 @@ async function cleanup() {
   await db.delete(users);
   // Clean up env files
   writeEnv(sharedEnvPath(), {});
-  writeEnv(agentEnvPath(TEST_AGENT), {});
+  writeEnv(mindEnvPath(TEST_AGENT), {});
   try {
-    removeAgent(TEST_AGENT);
+    removeMind(TEST_AGENT);
   } catch {
     // ignore if not registered
   }
@@ -53,29 +53,29 @@ describe("web env routes — agent-scoped", () => {
 
   it("GET /:name/env — returns shared and agent env", async () => {
     const cookie = await setupAuth();
-    addAgent(TEST_AGENT, 4150);
+    addMind(TEST_AGENT, 4150);
     writeEnv(sharedEnvPath(), { SHARED_KEY: "shared_val" });
-    writeEnv(agentEnvPath(TEST_AGENT), { AGENT_KEY: "agent_val" });
+    writeEnv(mindEnvPath(TEST_AGENT), { AGENT_KEY: "agent_val" });
 
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request(`/api/agents/${TEST_AGENT}/env`, {
+    const res = await app.request(`/api/minds/${TEST_AGENT}/env`, {
       headers: getHeaders(cookie),
     });
     assert.equal(res.status, 200);
     const body = (await res.json()) as {
       shared: Record<string, string>;
-      agent: Record<string, string>;
+      mind: Record<string, string>;
     };
     assert.equal(body.shared.SHARED_KEY, "shared_val");
-    assert.equal(body.agent.AGENT_KEY, "agent_val");
+    assert.equal(body.mind.AGENT_KEY, "agent_val");
   });
 
   it("GET /:name/env — 404 for nonexistent agent", async () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request("/api/agents/nonexistent-env-agent/env", {
+    const res = await app.request("/api/minds/nonexistent-env-agent/env", {
       headers: getHeaders(cookie),
     });
     assert.equal(res.status, 404);
@@ -85,11 +85,11 @@ describe("web env routes — agent-scoped", () => {
 
   it("PUT /:name/env/:key — sets agent env var", async () => {
     const cookie = await setupAuth();
-    addAgent(TEST_AGENT, 4150);
+    addMind(TEST_AGENT, 4150);
 
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/agents/${TEST_AGENT}/env/MY_KEY`, {
+    const res = await app.request(`http://localhost/api/minds/${TEST_AGENT}/env/MY_KEY`, {
       method: "PUT",
       headers: postHeaders(cookie),
       body: JSON.stringify({ value: "my_value" }),
@@ -99,18 +99,18 @@ describe("web env routes — agent-scoped", () => {
     assert.equal(body.ok, true);
 
     // Verify it was written
-    const env = readEnv(agentEnvPath(TEST_AGENT));
+    const env = readEnv(mindEnvPath(TEST_AGENT));
     assert.equal(env.MY_KEY, "my_value");
   });
 
   it("GET /:name/env/:key — returns value after setting", async () => {
     const cookie = await setupAuth();
-    addAgent(TEST_AGENT, 4150);
-    writeEnv(agentEnvPath(TEST_AGENT), { TEST_VAR: "hello" });
+    addMind(TEST_AGENT, 4150);
+    writeEnv(mindEnvPath(TEST_AGENT), { TEST_VAR: "hello" });
 
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request(`/api/agents/${TEST_AGENT}/env/TEST_VAR`, {
+    const res = await app.request(`/api/minds/${TEST_AGENT}/env/TEST_VAR`, {
       headers: getHeaders(cookie),
     });
     assert.equal(res.status, 200);
@@ -120,11 +120,11 @@ describe("web env routes — agent-scoped", () => {
 
   it("GET /:name/env/:key — 404 for missing key", async () => {
     const cookie = await setupAuth();
-    addAgent(TEST_AGENT, 4150);
+    addMind(TEST_AGENT, 4150);
 
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request(`/api/agents/${TEST_AGENT}/env/NONEXISTENT_KEY`, {
+    const res = await app.request(`/api/minds/${TEST_AGENT}/env/NONEXISTENT_KEY`, {
       headers: getHeaders(cookie),
     });
     assert.equal(res.status, 404);
@@ -132,12 +132,12 @@ describe("web env routes — agent-scoped", () => {
 
   it("GET /:name/env/:key — returns merged value from shared env", async () => {
     const cookie = await setupAuth();
-    addAgent(TEST_AGENT, 4150);
+    addMind(TEST_AGENT, 4150);
     writeEnv(sharedEnvPath(), { FROM_SHARED: "shared_val" });
 
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request(`/api/agents/${TEST_AGENT}/env/FROM_SHARED`, {
+    const res = await app.request(`/api/minds/${TEST_AGENT}/env/FROM_SHARED`, {
       headers: getHeaders(cookie),
     });
     assert.equal(res.status, 200);
@@ -147,12 +147,12 @@ describe("web env routes — agent-scoped", () => {
 
   it("DELETE /:name/env/:key — removes agent env var", async () => {
     const cookie = await setupAuth();
-    addAgent(TEST_AGENT, 4150);
-    writeEnv(agentEnvPath(TEST_AGENT), { TO_DELETE: "val" });
+    addMind(TEST_AGENT, 4150);
+    writeEnv(mindEnvPath(TEST_AGENT), { TO_DELETE: "val" });
 
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/agents/${TEST_AGENT}/env/TO_DELETE`, {
+    const res = await app.request(`http://localhost/api/minds/${TEST_AGENT}/env/TO_DELETE`, {
       method: "DELETE",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -162,16 +162,16 @@ describe("web env routes — agent-scoped", () => {
     assert.equal(res.status, 200);
 
     // Verify it was removed
-    const env = readEnv(agentEnvPath(TEST_AGENT));
+    const env = readEnv(mindEnvPath(TEST_AGENT));
     assert.equal(env.TO_DELETE, undefined);
   });
 
   it("DELETE /:name/env/:key — 404 for nonexistent key", async () => {
     const cookie = await setupAuth();
-    addAgent(TEST_AGENT, 4150);
+    addMind(TEST_AGENT, 4150);
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/agents/${TEST_AGENT}/env/NONEXISTENT`, {
+    const res = await app.request(`http://localhost/api/minds/${TEST_AGENT}/env/NONEXISTENT`, {
       method: "DELETE",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -183,10 +183,10 @@ describe("web env routes — agent-scoped", () => {
 
   it("PUT /:name/env/:key — 400 for missing value field", async () => {
     const cookie = await setupAuth();
-    addAgent(TEST_AGENT, 4150);
+    addMind(TEST_AGENT, 4150);
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/agents/${TEST_AGENT}/env/KEY`, {
+    const res = await app.request(`http://localhost/api/minds/${TEST_AGENT}/env/KEY`, {
       method: "PUT",
       headers: postHeaders(cookie),
       body: JSON.stringify({}),
@@ -200,7 +200,7 @@ describe("web env routes — agent-scoped", () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request("http://localhost/api/agents/nonexistent-env-agent/env/KEY", {
+    const res = await app.request("http://localhost/api/minds/nonexistent-env-agent/env/KEY", {
       method: "PUT",
       headers: postHeaders(cookie),
       body: JSON.stringify({ value: "val" }),
@@ -212,7 +212,7 @@ describe("web env routes — agent-scoped", () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request("http://localhost/api/agents/nonexistent-env-agent/env/KEY", {
+    const res = await app.request("http://localhost/api/minds/nonexistent-env-agent/env/KEY", {
       method: "DELETE",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -225,7 +225,7 @@ describe("web env routes — agent-scoped", () => {
   it("PUT /:name/env/:key — requires auth (401 without cookie)", async () => {
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/agents/${TEST_AGENT}/env/KEY`, {
+    const res = await app.request(`http://localhost/api/minds/${TEST_AGENT}/env/KEY`, {
       method: "PUT",
       headers: { Origin: "http://localhost", "Content-Type": "application/json" },
       body: JSON.stringify({ value: "val" }),
@@ -239,10 +239,10 @@ describe("web env routes — agent-scoped", () => {
     await approveUser(user2.id);
     const cookie2 = await createSession(user2.id);
 
-    addAgent(TEST_AGENT, 4150);
+    addMind(TEST_AGENT, 4150);
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/agents/${TEST_AGENT}/env/KEY`, {
+    const res = await app.request(`http://localhost/api/minds/${TEST_AGENT}/env/KEY`, {
       method: "PUT",
       headers: {
         Cookie: `volute_session=${cookie2}`,

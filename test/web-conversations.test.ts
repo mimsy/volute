@@ -26,8 +26,8 @@ let userId: number;
 
 function createApp() {
   const app = new Hono();
-  app.use("/api/agents/*", authMiddleware);
-  app.route("/api/agents", conversationsRoute);
+  app.use("/api/minds/*", authMiddleware);
+  app.route("/api/minds", conversationsRoute);
   return app;
 }
 
@@ -61,14 +61,14 @@ describe("web conversations routes", () => {
     });
     await addMessage(conv.id, "user", "conv-admin", [{ type: "text", text: "Hello" }]);
 
-    const res = await app.request("/api/agents/test-agent/conversations", {
+    const res = await app.request("/api/minds/test-agent/conversations", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.ok(Array.isArray(body));
     assert.equal(body.length, 1);
-    assert.equal(body[0].agent_name, "test-agent");
+    assert.equal(body[0].mind_name, "test-agent");
 
     await deleteConversation(conv.id);
   });
@@ -84,7 +84,7 @@ describe("web conversations routes", () => {
     await addMessage(conv.id, "user", "conv-admin", blocks);
     await addMessage(conv.id, "assistant", "test-agent", [{ type: "text", text: "Response" }]);
 
-    const res = await app.request(`/api/agents/test-agent/conversations/${conv.id}/messages`, {
+    const res = await app.request(`/api/minds/test-agent/conversations/${conv.id}/messages`, {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
@@ -106,7 +106,7 @@ describe("web conversations routes", () => {
     });
     await addMessage(conv.id, "user", "conv-admin", [{ type: "text", text: "To delete" }]);
 
-    const res = await app.request(`/api/agents/test-agent/conversations/${conv.id}`, {
+    const res = await app.request(`/api/minds/test-agent/conversations/${conv.id}`, {
       method: "DELETE",
       headers: { Cookie: `volute_session=${cookie}` },
     });
@@ -115,7 +115,7 @@ describe("web conversations routes", () => {
     assert.ok(body.ok);
 
     // Verify conversation is gone (returns 404)
-    const msgsRes = await app.request(`/api/agents/test-agent/conversations/${conv.id}/messages`, {
+    const msgsRes = await app.request(`/api/minds/test-agent/conversations/${conv.id}/messages`, {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(msgsRes.status, 404);
@@ -123,7 +123,7 @@ describe("web conversations routes", () => {
 
   it("GET /:name/conversations — requires auth", async () => {
     const app = createApp();
-    const res = await app.request("/api/agents/test-agent/conversations");
+    const res = await app.request("/api/minds/test-agent/conversations");
     assert.equal(res.status, 401);
   });
 
@@ -142,13 +142,13 @@ describe("web conversations routes", () => {
     const cookie2 = await createSession(user2.id);
 
     // Second user should not see the first user's conversation
-    const res = await app.request(`/api/agents/test-agent/conversations/${conv.id}/messages`, {
+    const res = await app.request(`/api/minds/test-agent/conversations/${conv.id}/messages`, {
       headers: { Cookie: `volute_session=${cookie2}` },
     });
     assert.equal(res.status, 404);
 
     // First user can still see it
-    const res2 = await app.request(`/api/agents/test-agent/conversations/${conv.id}/messages`, {
+    const res2 = await app.request(`/api/minds/test-agent/conversations/${conv.id}/messages`, {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res2.status, 200);
@@ -170,14 +170,14 @@ describe("web conversations routes", () => {
     const cookie2 = await createSession(user2.id);
 
     // Second user cannot delete
-    const res = await app.request(`/api/agents/test-agent/conversations/${conv.id}`, {
+    const res = await app.request(`/api/minds/test-agent/conversations/${conv.id}`, {
       method: "DELETE",
       headers: { Cookie: `volute_session=${cookie2}` },
     });
     assert.equal(res.status, 404);
 
     // First user can still delete
-    const res2 = await app.request(`/api/agents/test-agent/conversations/${conv.id}`, {
+    const res2 = await app.request(`/api/minds/test-agent/conversations/${conv.id}`, {
       method: "DELETE",
       headers: { Cookie: `volute_session=${cookie}` },
     });
@@ -194,7 +194,7 @@ describe("web conversations routes", () => {
       participantIds: [userId],
     });
 
-    const res = await app.request(`/api/agents/test-agent/conversations/${conv.id}/participants`, {
+    const res = await app.request(`/api/minds/test-agent/conversations/${conv.id}/participants`, {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
@@ -218,7 +218,7 @@ describe("web conversations routes", () => {
     await approveUser(user2.id);
     const cookie2 = await createSession(user2.id);
 
-    const res = await app.request(`/api/agents/test-agent/conversations/${conv.id}/participants`, {
+    const res = await app.request(`/api/minds/test-agent/conversations/${conv.id}/participants`, {
       headers: { Cookie: `volute_session=${cookie2}` },
     });
     assert.equal(res.status, 404);
@@ -235,7 +235,7 @@ describe("web conversations routes", () => {
     const user2 = await createUser("group-member", "pass");
     await approveUser(user2.id);
 
-    const res = await app.request("/api/agents/test-agent/conversations", {
+    const res = await app.request("/api/minds/test-agent/conversations", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -265,7 +265,7 @@ describe("web conversations routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const res = await app.request("/api/agents/test-agent/conversations", {
+    const res = await app.request("/api/minds/test-agent/conversations", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -284,7 +284,7 @@ describe("web conversations routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const res = await app.request("/api/agents/test-agent/conversations", {
+    const res = await app.request("/api/minds/test-agent/conversations", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie}`,

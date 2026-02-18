@@ -44,7 +44,7 @@ function maskValue(value: string): string {
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
-    agent: { type: "string" },
+    mind: { type: "string" },
     reveal: { type: "boolean" },
   });
 
@@ -55,17 +55,17 @@ export async function run(args: string[]) {
     case "set": {
       const key = positional[1];
       if (!key) {
-        console.error("Usage: volute env set <KEY> [<VALUE>] [--agent <name>]");
+        console.error("Usage: volute env set <KEY> [<VALUE>] [--mind <name>]");
         process.exit(1);
       }
       const value = positional[2] ?? (await promptValue(key));
 
       let res: Response;
-      if (flags.agent) {
+      if (flags.mind) {
         res = await daemonFetch(
           urlOf(
-            client.api.agents[":name"].env[":key"].$url({
-              param: { name: flags.agent, key },
+            client.api.minds[":name"].env[":key"].$url({
+              param: { name: flags.mind, key },
             }),
           ),
           {
@@ -86,7 +86,7 @@ export async function run(args: string[]) {
         console.error(body.error ?? `Failed to set ${key}`);
         process.exit(1);
       }
-      const scope = flags.agent ? `agent:${flags.agent}` : "shared";
+      const scope = flags.mind ? `mind:${flags.mind}` : "shared";
       console.log(`Set ${key} [${scope}]`);
       break;
     }
@@ -94,14 +94,14 @@ export async function run(args: string[]) {
     case "get": {
       const key = positional[1];
       if (!key) {
-        console.error("Usage: volute env get <KEY> [--agent <name>]");
+        console.error("Usage: volute env get <KEY> [--mind <name>]");
         process.exit(1);
       }
-      if (flags.agent) {
+      if (flags.mind) {
         const res = await daemonFetch(
           urlOf(
-            client.api.agents[":name"].env[":key"].$url({
-              param: { name: flags.agent, key },
+            client.api.minds[":name"].env[":key"].$url({
+              param: { name: flags.mind, key },
             }),
           ),
         );
@@ -130,9 +130,9 @@ export async function run(args: string[]) {
     }
 
     case "list": {
-      if (flags.agent) {
+      if (flags.mind) {
         const res = await daemonFetch(
-          urlOf(client.api.agents[":name"].env.$url({ param: { name: flags.agent } })),
+          urlOf(client.api.minds[":name"].env.$url({ param: { name: flags.mind } })),
         );
         if (!res.ok) {
           const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -141,16 +141,16 @@ export async function run(args: string[]) {
         }
         const data = (await res.json()) as {
           shared: Record<string, string>;
-          agent: Record<string, string>;
+          mind: Record<string, string>;
         };
-        const allKeys = new Set([...Object.keys(data.shared), ...Object.keys(data.agent)]);
+        const allKeys = new Set([...Object.keys(data.shared), ...Object.keys(data.mind)]);
         if (allKeys.size === 0) {
           console.log("No environment variables set.");
           return;
         }
         for (const key of [...allKeys].sort()) {
-          const scope = key in data.agent ? "agent" : "shared";
-          const raw = key in data.agent ? data.agent[key] : data.shared[key];
+          const scope = key in data.mind ? "mind" : "shared";
+          const raw = key in data.mind ? data.mind[key] : data.shared[key];
           const value = flags.reveal ? raw : maskValue(raw);
           console.log(`${key}=${value} [${scope}]`);
         }
@@ -177,16 +177,16 @@ export async function run(args: string[]) {
     case "remove": {
       const key = positional[1];
       if (!key) {
-        console.error("Usage: volute env remove <KEY> [--agent <name>]");
+        console.error("Usage: volute env remove <KEY> [--mind <name>]");
         process.exit(1);
       }
 
       let res: Response;
-      if (flags.agent) {
+      if (flags.mind) {
         res = await daemonFetch(
           urlOf(
-            client.api.agents[":name"].env[":key"].$url({
-              param: { name: flags.agent, key },
+            client.api.minds[":name"].env[":key"].$url({
+              param: { name: flags.mind, key },
             }),
           ),
           { method: "DELETE" },
@@ -197,11 +197,11 @@ export async function run(args: string[]) {
         });
       }
       if (!res.ok) {
-        const scope = flags.agent ? `agent:${flags.agent}` : "shared";
+        const scope = flags.mind ? `mind:${flags.mind}` : "shared";
         console.error(`${key} not set in ${scope} scope`);
         process.exit(1);
       }
-      const scope = flags.agent ? `agent:${flags.agent}` : "shared";
+      const scope = flags.mind ? `mind:${flags.mind}` : "shared";
       console.log(`Removed ${key} [${scope}]`);
       break;
     }
@@ -209,10 +209,10 @@ export async function run(args: string[]) {
     case "--help":
     case "-h":
     case undefined:
-      console.log(`Usage: volute env <set|get|list|remove> [--agent <name>]`);
+      console.log(`Usage: volute env <set|get|list|remove> [--mind <name>]`);
       break;
     default:
-      console.error(`Usage: volute env <set|get|list|remove> [--agent <name>]`);
+      console.error(`Usage: volute env <set|get|list|remove> [--mind <name>]`);
       console.error(`\nUnknown subcommand: ${subcommand}`);
       process.exit(1);
   }

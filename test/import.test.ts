@@ -167,8 +167,8 @@ describe("import: findOpenClawSession", () => {
   const fakeAgentsDir = resolve(scratchDir, "agents");
   const workspaceDir = "/fake/workspace";
 
-  function makeSession(agentName: string, filename: string, cwd: string) {
-    const sessionsDir = resolve(fakeAgentsDir, agentName, "sessions");
+  function makeSession(mindName: string, filename: string, cwd: string) {
+    const sessionsDir = resolve(fakeAgentsDir, mindName, "sessions");
     mkdirSync(sessionsDir, { recursive: true });
     const sessionPath = resolve(sessionsDir, filename);
     writeJsonl(sessionPath, [
@@ -270,7 +270,7 @@ describe("import: importOpenClawConnectors", () => {
   });
 
   // Mirror of importOpenClawConnectors from import.ts
-  function importOpenClawConnectors(agentDirPath: string, configPath: string) {
+  function importOpenClawConnectors(dirPath: string, configPath: string) {
     if (!existsSync(configPath)) return;
 
     let config: {
@@ -293,7 +293,7 @@ describe("import: importOpenClawConnectors", () => {
     if (!discord?.enabled || !discord.token) return;
 
     // Write DISCORD_TOKEN to agent env
-    const envPath = resolve(agentDirPath, ".volute", "env.json");
+    const envPath = resolve(dirPath, ".volute", "env.json");
     let env: Record<string, string> = {};
     if (existsSync(envPath)) {
       try {
@@ -316,7 +316,7 @@ describe("import: importOpenClawConnectors", () => {
     }
 
     // Enable discord connector in volute.json
-    const voluteConfigPath = resolve(agentDirPath, "home/.config/volute.json");
+    const voluteConfigPath = resolve(dirPath, "home/.config/volute.json");
     let voluteConfig: {
       model?: string;
       connectors?: string[];

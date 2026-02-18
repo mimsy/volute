@@ -5,13 +5,13 @@ import { HTTPException } from "hono/http-exception";
 import log from "../lib/logger.js";
 import { checkForUpdateCached, getCurrentVersion } from "../lib/update-check.js";
 import { authMiddleware } from "./middleware/auth.js";
-import agents from "./routes/agents.js";
 import auth from "./routes/auth.js";
 import channels from "./routes/channels.js";
 import connectors from "./routes/connectors.js";
 import envRoutes, { sharedEnvApp } from "./routes/env.js";
 import files from "./routes/files.js";
 import logs from "./routes/logs.js";
+import minds from "./routes/minds.js";
 import pages from "./routes/pages.js";
 import schedules from "./routes/schedules.js";
 import system from "./routes/system.js";
@@ -78,12 +78,12 @@ app.use("/api/*", bodyLimit({ maxSize: 10 * 1024 * 1024 }));
 app.use("/api/*", csrf());
 
 // Protected API routes
-app.use("/api/agents/*", authMiddleware);
+app.use("/api/minds/*", authMiddleware);
 app.use("/api/conversations/*", authMiddleware);
 app.use("/api/system/*", authMiddleware);
 app.use("/api/env/*", authMiddleware);
 
-// Agent pages (public, no auth)
+// Mind pages (public, no auth)
 app.route("/pages", pages);
 
 // Chain route registrations to capture types
@@ -91,17 +91,17 @@ const routes = app
   .route("/api/auth", auth)
   .route("/api/system", system)
   .route("/api/system", update)
-  .route("/api/agents", agents)
-  .route("/api/agents", chat)
-  .route("/api/agents", connectors)
-  .route("/api/agents", schedules)
-  .route("/api/agents", logs)
-  .route("/api/agents", typing)
-  .route("/api/agents", variants)
-  .route("/api/agents", files)
-  .route("/api/agents", channels)
-  .route("/api/agents", envRoutes)
-  .route("/api/agents", conversations)
+  .route("/api/minds", minds)
+  .route("/api/minds", chat)
+  .route("/api/minds", connectors)
+  .route("/api/minds", schedules)
+  .route("/api/minds", logs)
+  .route("/api/minds", typing)
+  .route("/api/minds", variants)
+  .route("/api/minds", files)
+  .route("/api/minds", channels)
+  .route("/api/minds", envRoutes)
+  .route("/api/minds", conversations)
   .route("/api/env", sharedEnvApp)
   .route("/api/conversations", userConversations);
 

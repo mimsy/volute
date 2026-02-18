@@ -1,6 +1,6 @@
 ---
 name: Memory
-description: This skill should be used when managing agent memory, writing journal entries, consolidating memory, or understanding the memory system. Covers "MEMORY.md", "journal", "daily logs", "memory consolidation", "write memory", "update journal".
+description: This skill should be used when managing mind memory, writing journal entries, consolidating memory, or understanding the memory system. Covers "MEMORY.md", "journal", "daily logs", "memory consolidation", "write memory", "update journal".
 ---
 
 # Memory Management

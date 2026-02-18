@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { getConnectorManager } from "../../lib/connector-manager.js";
-import { agentDir, findAgent } from "../../lib/registry.js";
+import { findMind, mindDir } from "../../lib/registry.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
@@ -10,10 +10,10 @@ const app = new Hono<AuthEnv>()
   // List connectors + status
   .get("/:name/connectors", (c) => {
     const name = c.req.param("name");
-    const entry = findAgent(name);
+    const entry = findMind(name);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
-    const dir = agentDir(name);
+    const dir = mindDir(name);
     const config = readVoluteConfig(dir) ?? {};
     const configured = config.connectors ?? [];
 
@@ -34,12 +34,12 @@ const app = new Hono<AuthEnv>()
     if (!CONNECTOR_TYPE_RE.test(type)) {
       return c.json({ error: "Invalid connector type" }, 400);
     }
-    const entry = findAgent(name);
+    const entry = findMind(name);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
     if (entry.stage === "seed")
       return c.json({ error: "Seed agents cannot use connectors — sprout first" }, 403);
 
-    const dir = agentDir(name);
+    const dir = mindDir(name);
 
     // Check for missing required env vars
     const manager = getConnectorManager();
@@ -80,10 +80,10 @@ const app = new Hono<AuthEnv>()
     if (!CONNECTOR_TYPE_RE.test(type)) {
       return c.json({ error: "Invalid connector type" }, 400);
     }
-    const entry = findAgent(name);
+    const entry = findMind(name);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
-    const dir = agentDir(name);
+    const dir = mindDir(name);
     const manager = getConnectorManager();
     await manager.stopConnector(name, type);
 

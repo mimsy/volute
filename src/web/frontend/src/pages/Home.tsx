@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { StatusBadge } from "../components/StatusBadge";
 import {
-  type Agent,
   type Conversation,
-  fetchAgents,
   fetchAllConversations,
+  fetchMinds,
   fetchRecentPages,
   type LastMessageSummary,
+  type Mind,
   type Participant,
   type RecentPage,
 } from "../lib/api";
@@ -23,19 +23,19 @@ function getConversationLabel(conv: ConversationWithDetails, username: string): 
     if (other) return `@${other.username}`;
   }
   if (conv.title) return conv.title;
-  const agents = participants.filter((p) => p.userType === "agent");
-  if (agents.length > 0) return agents.map((a) => a.username).join(", ");
+  const minds = participants.filter((p) => p.userType === "mind");
+  if (minds.length > 0) return minds.map((a) => a.username).join(", ");
   return "Untitled";
 }
 
 export function Home({ username }: { username: string }) {
-  const [agents, setAgents] = useState<Agent[]>([]);
+  const [minds, setMinds] = useState<Mind[]>([]);
   const [conversations, setConversations] = useState<ConversationWithDetails[]>([]);
   const [recentPages, setRecentPages] = useState<RecentPage[]>([]);
 
   useEffect(() => {
-    fetchAgents()
-      .then(setAgents)
+    fetchMinds()
+      .then(setMinds)
       .catch(() => {});
     fetchAllConversations()
       .then(setConversations)
@@ -45,8 +45,8 @@ export function Home({ username }: { username: string }) {
       .catch(() => {});
   }, []);
 
-  // Sort agents: running first, then by most recent activity
-  const sortedAgents = [...agents].sort((a, b) => {
+  // Sort minds: running first, then by most recent activity
+  const sortedMinds = [...minds].sort((a, b) => {
     if (a.status === "running" && b.status !== "running") return -1;
     if (a.status !== "running" && b.status === "running") return 1;
     const aTime = a.lastActiveAt ?? "";
@@ -65,18 +65,18 @@ export function Home({ username }: { username: string }) {
 
   return (
     <div style={{ maxWidth: 800, animation: "fadeIn 0.2s ease both" }}>
-      {/* Agents */}
-      <Section title="agents" href="#/agents" linkLabel="all agents">
-        {agents.length === 0 ? (
+      {/* Minds */}
+      <Section title="minds" href="#/minds" linkLabel="all minds">
+        {minds.length === 0 ? (
           <div style={{ color: "var(--text-2)", fontSize: 12 }}>
-            No agents registered. Run{" "}
-            <code style={{ color: "var(--text-1)" }}>volute agent create &lt;name&gt;</code> to get
+            No minds registered. Run{" "}
+            <code style={{ color: "var(--text-1)" }}>volute mind create &lt;name&gt;</code> to get
             started.
           </div>
         ) : (
           <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 4 }}>
-            {sortedAgents.map((a) => (
-              <AgentCard key={a.name} agent={a} />
+            {sortedMinds.map((a) => (
+              <MindCard key={a.name} mind={a} />
             ))}
           </div>
         )}
@@ -87,7 +87,7 @@ export function Home({ username }: { username: string }) {
         <Section title="recent conversations" href="#/chats" linkLabel="open chat">
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {recentConversations.map((conv) => (
-              <ConversationCard key={conv.id} conv={conv} username={username} agents={agents} />
+              <ConversationCard key={conv.id} conv={conv} username={username} minds={minds} />
             ))}
           </div>
         </Section>
@@ -99,7 +99,7 @@ export function Home({ username }: { username: string }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {recentPages.map((page) => (
               <a
-                key={`${page.agent}/${page.file}`}
+                key={`${page.mind}/${page.file}`}
                 href={page.url}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -120,7 +120,7 @@ export function Home({ username }: { username: string }) {
                 onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
               >
                 <span>
-                  <span style={{ color: "var(--text-2)" }}>{page.agent}/</span>
+                  <span style={{ color: "var(--text-2)" }}>{page.mind}/</span>
                   {page.file}
                 </span>
                 <span style={{ color: "var(--text-2)", fontSize: 10 }}>
@@ -176,21 +176,21 @@ function Section({
   );
 }
 
-function getDisplayStatus(agent: Agent): string {
-  if (agent.status !== "running") return agent.status;
-  if (!agent.lastActiveAt) return "running";
-  const ago = Date.now() - new Date(`${agent.lastActiveAt}Z`).getTime();
+function getDisplayStatus(mind: Mind): string {
+  if (mind.status !== "running") return mind.status;
+  if (!mind.lastActiveAt) return "running";
+  const ago = Date.now() - new Date(`${mind.lastActiveAt}Z`).getTime();
   return ago < 5 * 60_000 ? "active" : "running";
 }
 
-function AgentCard({ agent }: { agent: Agent }) {
-  const channels = agent.channels.filter(
+function MindCard({ mind }: { mind: Mind }) {
+  const channels = mind.channels.filter(
     (ch) => ch.name !== "web" && ch.name !== "volute" && ch.status === "connected",
   );
 
   return (
     <a
-      href={`#/agent/${agent.name}`}
+      href={`#/mind/${mind.name}`}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -207,11 +207,9 @@ function AgentCard({ agent }: { agent: Agent }) {
       onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <span style={{ color: "var(--text-0)", fontWeight: 500, fontSize: 13 }}>{agent.name}</span>
-        <StatusBadge status={getDisplayStatus(agent)} />
-        {agent.stage === "seed" && (
-          <span style={{ fontSize: 9, color: "var(--yellow)" }}>seed</span>
-        )}
+        <span style={{ color: "var(--text-0)", fontWeight: 500, fontSize: 13 }}>{mind.name}</span>
+        <StatusBadge status={getDisplayStatus(mind)} />
+        {mind.stage === "seed" && <span style={{ fontSize: 9, color: "var(--yellow)" }}>seed</span>}
       </div>
       {channels.length > 0 && (
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -232,7 +230,7 @@ function AgentCard({ agent }: { agent: Agent }) {
         </div>
       )}
       <div style={{ fontSize: 10, color: "var(--text-2)" }}>
-        {agent.lastActiveAt ? `active ${formatRelativeTime(agent.lastActiveAt)}` : "no activity"}
+        {mind.lastActiveAt ? `active ${formatRelativeTime(mind.lastActiveAt)}` : "no activity"}
       </div>
     </a>
   );
@@ -241,14 +239,14 @@ function AgentCard({ agent }: { agent: Agent }) {
 function ConversationCard({
   conv,
   username,
-  agents,
+  minds,
 }: {
   conv: ConversationWithDetails;
   username: string;
-  agents: Agent[];
+  minds: Mind[];
 }) {
   const label = getConversationLabel(conv, username);
-  const isSeed = agents.find((a) => a.name === conv.agent_name)?.stage === "seed";
+  const isSeed = minds.find((a) => a.name === conv.mind_name)?.stage === "seed";
   const msg = conv.lastMessage;
 
   let preview = "";

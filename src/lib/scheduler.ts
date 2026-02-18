@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "./json-state.js";
-import { agentDir, daemonLoopback, findAgent, voluteHome } from "./registry.js";
+import { daemonLoopback, findMind, mindDir, voluteHome } from "./registry.js";
 import { readVoluteConfig, type Schedule } from "./volute-config.js";
 
 export class Scheduler {
@@ -38,20 +38,20 @@ export class Scheduler {
     clearJsonMap(this.statePath, this.lastFired);
   }
 
-  loadSchedules(agentName: string): void {
-    const dir = agentDir(agentName);
+  loadSchedules(mindName: string): void {
+    const dir = mindDir(mindName);
     const config = readVoluteConfig(dir);
     if (!config) return; // Config read failed — keep existing schedules
     const schedules = config.schedules ?? [];
     if (schedules.length > 0) {
-      this.schedules.set(agentName, schedules);
+      this.schedules.set(mindName, schedules);
     } else {
-      this.schedules.delete(agentName);
+      this.schedules.delete(mindName);
     }
   }
 
-  unloadSchedules(agentName: string): void {
-    this.schedules.delete(agentName);
+  unloadSchedules(mindName: string): void {
+    this.schedules.delete(mindName);
   }
 
   private tick(): void {
@@ -94,8 +94,8 @@ export class Scheduler {
     }
   }
 
-  private async fire(agentName: string, schedule: Schedule): Promise<void> {
-    const entry = findAgent(agentName);
+  private async fire(mindName: string, schedule: Schedule): Promise<void> {
+    const entry = findMind(mindName);
     if (!entry) return;
 
     const body = JSON.stringify({
@@ -110,9 +110,9 @@ export class Scheduler {
     try {
       let res: Response;
       if (this.daemonPort && this.daemonToken) {
-        // Route through daemon so messages are recorded in agent_messages
+        // Route through daemon so messages are recorded in mind_messages
         const daemonUrl = `http://${daemonLoopback()}:${this.daemonPort}`;
-        res = await fetch(`${daemonUrl}/api/agents/${encodeURIComponent(agentName)}/message`, {
+        res = await fetch(`${daemonUrl}/api/minds/${encodeURIComponent(mindName)}/message`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -132,14 +132,14 @@ export class Scheduler {
         });
       }
       if (!res.ok) {
-        console.error(`[scheduler] "${schedule.id}" for ${agentName} got HTTP ${res.status}`);
+        console.error(`[scheduler] "${schedule.id}" for ${mindName} got HTTP ${res.status}`);
       } else {
-        console.error(`[scheduler] fired "${schedule.id}" for ${agentName}`);
+        console.error(`[scheduler] fired "${schedule.id}" for ${mindName}`);
       }
       // Consume response body
       await res.text().catch(() => {});
     } catch (err) {
-      console.error(`[scheduler] failed to fire "${schedule.id}" for ${agentName}:`, err);
+      console.error(`[scheduler] failed to fire "${schedule.id}" for ${mindName}:`, err);
     } finally {
       clearTimeout(timeout);
     }

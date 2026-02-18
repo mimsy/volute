@@ -69,7 +69,7 @@ function batchText(calls: { content: VoluteContentPart[] }[]): string {
 describe("router", () => {
   it("routes to agent handler with default session", async () => {
     const agent = mockAgentHandler();
-    const router = createRouter({ agentHandler: agent.resolver });
+    const router = createRouter({ mindHandler: agent.resolver });
 
     await waitForDone(router, [{ type: "text", text: "hi" }], { channel: "web" });
 
@@ -91,7 +91,7 @@ describe("router", () => {
     const file = mockFileHandler();
     const router = createRouter({
       configPath,
-      agentHandler: agent.resolver,
+      mindHandler: agent.resolver,
       fileHandler: file.resolver,
     });
 
@@ -113,7 +113,7 @@ describe("router", () => {
     );
 
     const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const router = createRouter({ configPath, mindHandler: agent.resolver });
 
     const events = await waitForDone(router, [{ type: "text", text: "msg" }], {
       channel: "discord:123",
@@ -135,7 +135,7 @@ describe("router", () => {
     );
 
     const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const router = createRouter({ configPath, mindHandler: agent.resolver });
 
     await waitForDone(router, [{ type: "text", text: "a" }], { channel: "system:scheduler" });
     await waitForDone(router, [{ type: "text", text: "b" }], { channel: "system:scheduler" });
@@ -158,7 +158,7 @@ describe("router", () => {
     );
 
     const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const router = createRouter({ configPath, mindHandler: agent.resolver });
 
     // Route two messages — they should be buffered, not sent immediately
     router.route([{ type: "text", text: "msg1" }], { channel: "discord:123", sender: "alice" });
@@ -192,7 +192,7 @@ describe("router", () => {
     );
 
     const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const router = createRouter({ configPath, mindHandler: agent.resolver });
 
     router.route([{ type: "text", text: "buffered msg" }], {
       channel: "discord:123",
@@ -218,7 +218,7 @@ describe("router", () => {
     );
 
     const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const router = createRouter({ configPath, mindHandler: agent.resolver });
 
     router.route([{ type: "text", text: "msg1" }], { channel: "discord:123", sender: "alice" });
     assert.equal(agent.calls.length, 0);
@@ -253,7 +253,7 @@ describe("router", () => {
     );
 
     const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const router = createRouter({ configPath, mindHandler: agent.resolver });
 
     // Send messages rapidly — debounce would keep resetting, but maxWait should force flush
     router.route([{ type: "text", text: "msg1" }], { channel: "discord:123", sender: "alice" });
@@ -290,7 +290,7 @@ describe("router", () => {
     );
 
     const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const router = createRouter({ configPath, mindHandler: agent.resolver });
 
     // First message doesn't trigger
     router.route([{ type: "text", text: "hello everyone" }], {
@@ -327,7 +327,7 @@ describe("router", () => {
     );
 
     const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const router = createRouter({ configPath, mindHandler: agent.resolver });
 
     router.route([{ type: "text", text: "hey @AGENT help" }], {
       channel: "discord:123",
@@ -352,7 +352,7 @@ describe("router", () => {
     );
 
     const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const router = createRouter({ configPath, mindHandler: agent.resolver });
 
     // Non-trigger — no debounce or maxWait configured, so flushes immediately
     router.route([{ type: "text", text: "casual message" }], {
@@ -386,7 +386,7 @@ describe("router", () => {
     );
 
     const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const router = createRouter({ configPath, mindHandler: agent.resolver });
 
     // Send with channelName (human-readable) — URI should still appear
     router.route([{ type: "text", text: "hello" }], {
@@ -423,7 +423,7 @@ describe("router", () => {
     writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
 
     const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const router = createRouter({ configPath, mindHandler: agent.resolver });
 
     await waitForDone(router, [{ type: "text", text: "hello" }], {
       channel: "web",
@@ -442,7 +442,7 @@ describe("router", () => {
     writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
 
     const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const router = createRouter({ configPath, mindHandler: agent.resolver });
 
     await waitForDone(router, [{ type: "text", text: "hello" }], {
       channel: "web",
@@ -461,7 +461,7 @@ describe("router", () => {
     writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
 
     const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const router = createRouter({ configPath, mindHandler: agent.resolver });
 
     await waitForDone(router, [{ type: "text", text: "hello" }], {
       channel: "web",
@@ -486,7 +486,7 @@ describe("router", () => {
     );
 
     const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const router = createRouter({ configPath, mindHandler: agent.resolver });
 
     await waitForDone(router, [{ type: "text", text: "hello" }], { channel: "discord:general" });
 
@@ -506,7 +506,7 @@ describe("router", () => {
     );
 
     const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const router = createRouter({ configPath, mindHandler: agent.resolver });
 
     await waitForDone(router, [{ type: "text", text: "hello" }], { channel: "web" });
 
@@ -529,7 +529,7 @@ describe("router", () => {
     );
 
     const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const router = createRouter({ configPath, mindHandler: agent.resolver });
 
     await waitForDone(router, [{ type: "text", text: "hi" }], { channel: "discord:general" });
     await waitForDone(router, [{ type: "text", text: "hi" }], { channel: "slack:random" });
@@ -553,7 +553,7 @@ describe("router", () => {
     );
 
     const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const router = createRouter({ configPath, mindHandler: agent.resolver });
 
     router.route([{ type: "text", text: "msg1" }], {
       channel: "discord:123",
@@ -589,7 +589,7 @@ describe("router", () => {
     );
 
     const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const router = createRouter({ configPath, mindHandler: agent.resolver });
 
     await waitForDone(router, [{ type: "text", text: "hello" }], { channel: "discord:general" });
 

@@ -86,10 +86,10 @@ export function getChannelDriver(platform: string): ChannelDriver | null {
 /** Resolve a channel slug (e.g. "discord:my-server/general") to its platform ID via channels.json.
  *  Falls back to the slug suffix (part after colon) if not found. */
 export function resolveChannelId(env: Record<string, string>, slug: string): string {
-  const agentName = env.VOLUTE_AGENT;
-  if (!agentName) {
+  const mindName = env.VOLUTE_MIND;
+  if (!mindName) {
     const colonIdx = slug.indexOf(":");
     return colonIdx !== -1 ? slug.slice(colonIdx + 1) : slug;
   }
-  return resolveChannelIdByName(agentName, slug);
+  return resolveChannelIdByName(mindName, slug);
 }

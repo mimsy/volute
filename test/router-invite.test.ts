@@ -15,7 +15,7 @@ function createTestHandlers() {
   const agentCalls = new Map<string, HandlerCall[]>();
   const fileCalls = new Map<string, HandlerCall[]>();
 
-  const agentHandler = (session: string) => ({
+  const mindHandler = (session: string) => ({
     handle(content: VoluteContentPart[], meta: HandlerMeta, listener: Listener) {
       const calls = agentCalls.get(session) ?? [];
       calls.push({ content, meta });
@@ -35,7 +35,7 @@ function createTestHandlers() {
     },
   });
 
-  return { agentHandler, fileHandler, agentCalls, fileCalls };
+  return { mindHandler, fileHandler, agentCalls, fileCalls };
 }
 
 function writeConfig(dir: string, config: object): string {
@@ -57,8 +57,8 @@ describe("router invite gating", () => {
       default: "main",
     });
 
-    const { agentHandler, fileHandler, agentCalls, fileCalls } = createTestHandlers();
-    const router = createRouter({ configPath, agentHandler, fileHandler });
+    const { mindHandler, fileHandler, agentCalls, fileCalls } = createTestHandlers();
+    const router = createRouter({ configPath, mindHandler, fileHandler });
 
     const events: string[] = [];
     router.route(
@@ -100,8 +100,8 @@ describe("router invite gating", () => {
       default: "main",
     });
 
-    const { agentHandler, fileHandler, agentCalls, fileCalls } = createTestHandlers();
-    const router = createRouter({ configPath, agentHandler, fileHandler });
+    const { mindHandler, fileHandler, agentCalls, fileCalls } = createTestHandlers();
+    const router = createRouter({ configPath, mindHandler, fileHandler });
 
     // First message — triggers invite
     router.route([{ type: "text", text: "first" }], { channel: "discord:456", sender: "bob" });
@@ -139,8 +139,8 @@ describe("router invite gating", () => {
       default: "main",
     });
 
-    const { agentHandler, fileHandler, agentCalls, fileCalls } = createTestHandlers();
-    const router = createRouter({ configPath, agentHandler, fileHandler });
+    const { mindHandler, fileHandler, agentCalls, fileCalls } = createTestHandlers();
+    const router = createRouter({ configPath, mindHandler, fileHandler });
 
     router.route([{ type: "text", text: "hello" }], { channel: "web", sender: "alice" });
     await waitMicrotask();
@@ -162,8 +162,8 @@ describe("router invite gating", () => {
       default: "fallback",
     });
 
-    const { agentHandler, fileHandler, agentCalls, fileCalls } = createTestHandlers();
-    const router = createRouter({ configPath, agentHandler, fileHandler });
+    const { mindHandler, fileHandler, agentCalls, fileCalls } = createTestHandlers();
+    const router = createRouter({ configPath, mindHandler, fileHandler });
 
     router.route([{ type: "text", text: "hello" }], { channel: "discord:789", sender: "charlie" });
     await waitMicrotask();
@@ -184,8 +184,8 @@ describe("router invite gating", () => {
       rules: [],
     });
 
-    const { agentHandler, fileHandler, agentCalls, fileCalls } = createTestHandlers();
-    const router = createRouter({ configPath, agentHandler, fileHandler });
+    const { mindHandler, fileHandler, agentCalls, fileCalls } = createTestHandlers();
+    const router = createRouter({ configPath, mindHandler, fileHandler });
 
     router.route([{ type: "text", text: "hey there" }], {
       channel: "volute:conv-abc123",
@@ -211,8 +211,8 @@ describe("router invite gating", () => {
       rules: [],
     });
 
-    const { agentHandler, fileHandler, agentCalls } = createTestHandlers();
-    const router = createRouter({ configPath, agentHandler, fileHandler });
+    const { mindHandler, fileHandler, agentCalls } = createTestHandlers();
+    const router = createRouter({ configPath, mindHandler, fileHandler });
 
     router.route([{ type: "text", text: "group message" }], {
       channel: "discord:general",
@@ -244,8 +244,8 @@ describe("router invite gating", () => {
       rules: [],
     });
 
-    const { agentHandler, fileHandler, agentCalls } = createTestHandlers();
-    const router = createRouter({ configPath, agentHandler, fileHandler });
+    const { mindHandler, fileHandler, agentCalls } = createTestHandlers();
+    const router = createRouter({ configPath, mindHandler, fileHandler });
 
     router.route([{ type: "text", text: "hey" }], {
       channel: "volute:dm-123",
@@ -266,8 +266,8 @@ describe("router invite gating", () => {
       rules: [],
     });
 
-    const { agentHandler, fileHandler, agentCalls } = createTestHandlers();
-    const router = createRouter({ configPath, agentHandler, fileHandler });
+    const { mindHandler, fileHandler, agentCalls } = createTestHandlers();
+    const router = createRouter({ configPath, mindHandler, fileHandler });
 
     router.route([{ type: "text", text: "hello" }], {
       channel: "discord:general",
@@ -287,8 +287,8 @@ describe("router invite gating", () => {
       rules: [],
     });
 
-    const { agentHandler, fileHandler, agentCalls } = createTestHandlers();
-    const router = createRouter({ configPath, agentHandler, fileHandler });
+    const { mindHandler, fileHandler, agentCalls } = createTestHandlers();
+    const router = createRouter({ configPath, mindHandler, fileHandler });
 
     router.route([{ type: "text", text: "hi" }], {
       channel: "volute:conv-xyz",
@@ -311,9 +311,9 @@ describe("router invite gating", () => {
       rules: [],
     });
 
-    const { agentHandler, agentCalls } = createTestHandlers();
+    const { mindHandler, agentCalls } = createTestHandlers();
     // No fileHandler provided
-    const router = createRouter({ configPath, agentHandler });
+    const router = createRouter({ configPath, mindHandler });
 
     const events: string[] = [];
     router.route(

@@ -49,7 +49,7 @@ describe("buildVoluteSlug", () => {
   it("generates @username slug for the other participant in a DM", () => {
     const slug = buildVoluteSlug({
       participants: [{ username: "bot" }, { username: "alice" }],
-      agentUsername: "bot",
+      mindUsername: "bot",
       convTitle: "bot, alice",
       conversationId: "conv-123",
     });
@@ -60,13 +60,13 @@ describe("buildVoluteSlug", () => {
     const participants = [{ username: "agent1" }, { username: "agent2" }];
     const slug1 = buildVoluteSlug({
       participants,
-      agentUsername: "agent1",
+      mindUsername: "agent1",
       convTitle: null,
       conversationId: "conv-456",
     });
     const slug2 = buildVoluteSlug({
       participants,
-      agentUsername: "agent2",
+      mindUsername: "agent2",
       convTitle: null,
       conversationId: "conv-456",
     });
@@ -77,7 +77,7 @@ describe("buildVoluteSlug", () => {
   it("falls back to conversation ID when slugify produces empty string", () => {
     const slug = buildVoluteSlug({
       participants: [{ username: "bot" }, { username: "!!!" }],
-      agentUsername: "bot",
+      mindUsername: "bot",
       convTitle: null,
       conversationId: "conv-789",
     });
@@ -87,7 +87,7 @@ describe("buildVoluteSlug", () => {
   it("uses title-based slug for group conversations", () => {
     const slug = buildVoluteSlug({
       participants: [{ username: "bot" }, { username: "alice" }, { username: "bob" }],
-      agentUsername: "bot",
+      mindUsername: "bot",
       convTitle: "Project Chat",
       conversationId: "conv-abc",
     });
@@ -97,7 +97,7 @@ describe("buildVoluteSlug", () => {
   it("falls back to conversation ID for untitled groups", () => {
     const slug = buildVoluteSlug({
       participants: [{ username: "bot" }, { username: "alice" }, { username: "bob" }],
-      agentUsername: "bot",
+      mindUsername: "bot",
       convTitle: null,
       conversationId: "conv-def",
     });
@@ -107,7 +107,7 @@ describe("buildVoluteSlug", () => {
   it("falls back to conversation ID for single-participant conversations", () => {
     const slug = buildVoluteSlug({
       participants: [{ username: "bot" }],
-      agentUsername: "bot",
+      mindUsername: "bot",
       convTitle: null,
       conversationId: "conv-solo",
     });
@@ -117,7 +117,7 @@ describe("buildVoluteSlug", () => {
   it("falls back to conversation ID with no participants and no title", () => {
     const slug = buildVoluteSlug({
       participants: [],
-      agentUsername: "bot",
+      mindUsername: "bot",
       convTitle: null,
       conversationId: "conv-empty",
     });
@@ -258,20 +258,20 @@ describe("resolveChannelId (sdk)", () => {
 });
 
 describe("resolveChannelId (env-based)", () => {
-  it("returns platformId for known slug when VOLUTE_AGENT is set", () => {
+  it("returns platformId for known slug when VOLUTE_MIND is set", () => {
     const entry = { platformId: "123456", platform: "discord" };
     writeChannelEntry(TEST_AGENT, "discord:my-server/general", entry);
-    const id = resolveChannelIdEnv({ VOLUTE_AGENT: TEST_AGENT }, "discord:my-server/general");
+    const id = resolveChannelIdEnv({ VOLUTE_MIND: TEST_AGENT }, "discord:my-server/general");
     assert.equal(id, "123456");
   });
 
-  it("returns slug suffix when no VOLUTE_AGENT", () => {
+  it("returns slug suffix when no VOLUTE_MIND", () => {
     const id = resolveChannelIdEnv({}, "discord:my-server/general");
     assert.equal(id, "my-server/general");
   });
 
   it("returns slug suffix when channels.json missing", () => {
-    const id = resolveChannelIdEnv({ VOLUTE_AGENT: "missing-agent" }, "discord:some-channel");
+    const id = resolveChannelIdEnv({ VOLUTE_MIND: "missing-agent" }, "discord:some-channel");
     assert.equal(id, "some-channel");
   });
 
@@ -279,7 +279,7 @@ describe("resolveChannelId (env-based)", () => {
     const dir = stateDir(TEST_AGENT);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "channels.json"), JSON.stringify({}));
-    const id = resolveChannelIdEnv({ VOLUTE_AGENT: TEST_AGENT }, "discord:unknown-channel");
+    const id = resolveChannelIdEnv({ VOLUTE_MIND: TEST_AGENT }, "discord:unknown-channel");
     assert.equal(id, "unknown-channel");
   });
 

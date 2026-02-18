@@ -110,7 +110,7 @@ export function History({ name }: { name: string }) {
 }
 
 function HistoryEntry({ msg, name }: { msg: HistoryMessage; name: string }) {
-  const isAgent = msg.sender === name;
+  const isMind = msg.sender === name;
   const date = new Date(msg.created_at);
   const time = date.toLocaleString(undefined, {
     month: "short",
@@ -124,7 +124,7 @@ function HistoryEntry({ msg, name }: { msg: HistoryMessage; name: string }) {
       <div style={{ display: "flex", gap: 10 }}>
         <span
           style={{
-            color: !isAgent ? "var(--blue)" : "var(--accent)",
+            color: !isMind ? "var(--blue)" : "var(--accent)",
             fontSize: 11,
             fontWeight: 600,
             flexShrink: 0,
@@ -132,10 +132,10 @@ function HistoryEntry({ msg, name }: { msg: HistoryMessage; name: string }) {
             textTransform: "uppercase",
           }}
         >
-          {!isAgent ? (msg.sender ?? "user") : "agent"}
+          {!isMind ? (msg.sender ?? "user") : "mind"}
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          {!isAgent ? (
+          {!isMind ? (
             <div style={{ color: "var(--text-0)", whiteSpace: "pre-wrap" }}>{msg.content}</div>
           ) : (
             <div

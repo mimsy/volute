@@ -4,24 +4,24 @@ import { History } from "../components/History";
 import { LogViewer } from "../components/LogViewer";
 import { StatusBadge } from "../components/StatusBadge";
 import { VariantList } from "../components/VariantList";
-import { type Agent, fetchAgent, startAgent, stopAgent } from "../lib/api";
+import { fetchMind, type Mind, startMind, stopMind } from "../lib/api";
 
 const TABS = ["History", "Logs", "Files", "Variants", "Connections"] as const;
 type Tab = (typeof TABS)[number];
 
-export function AgentDetail({ name }: { name: string }) {
-  const [agent, setAgent] = useState<Agent | null>(null);
+export function MindDetail({ name }: { name: string }) {
+  const [mind, setMind] = useState<Mind | null>(null);
   const [tab, setTab] = useState<Tab>("History");
   const [error, setError] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
 
   const refresh = useCallback(() => {
-    fetchAgent(name)
+    fetchMind(name)
       .then((a) => {
-        setAgent(a);
+        setMind(a);
         setError("");
       })
-      .catch(() => setError("Agent not found"));
+      .catch(() => setError("Mind not found"));
   }, [name]);
 
   useEffect(() => {
@@ -33,7 +33,7 @@ export function AgentDetail({ name }: { name: string }) {
   const handleStart = async () => {
     setActionLoading(true);
     try {
-      await startAgent(name);
+      await startMind(name);
       refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start");
@@ -44,7 +44,7 @@ export function AgentDetail({ name }: { name: string }) {
   const handleStop = async () => {
     setActionLoading(true);
     try {
-      await stopAgent(name);
+      await stopMind(name);
       refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to stop");
@@ -52,11 +52,11 @@ export function AgentDetail({ name }: { name: string }) {
     setActionLoading(false);
   };
 
-  if (error && !agent) {
+  if (error && !mind) {
     return <div style={{ color: "var(--red)", padding: 24 }}>{error}</div>;
   }
 
-  if (!agent) {
+  if (!mind) {
     return <div style={{ color: "var(--text-2)", padding: 24 }}>Loading...</div>;
   }
 
@@ -69,7 +69,7 @@ export function AgentDetail({ name }: { name: string }) {
         animation: "fadeIn 0.2s ease both",
       }}
     >
-      {/* Agent header */}
+      {/* Mind header */}
       <div
         style={{
           display: "flex",
@@ -80,18 +80,18 @@ export function AgentDetail({ name }: { name: string }) {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <StatusBadge status={agent.status} />
-          <span style={{ color: "var(--text-2)", fontSize: 12 }}>:{agent.port}</span>
-          {agent.channels
+          <StatusBadge status={mind.status} />
+          <span style={{ color: "var(--text-2)", fontSize: 12 }}>:{mind.port}</span>
+          {mind.channels
             .filter((ch) => ch.name !== "web" && ch.status === "connected")
             .map((ch) => (
               <StatusBadge key={ch.name} status="connected" />
             ))}
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {agent.hasPages && (
+          {mind.hasPages && (
             <a
-              href={`/pages/${agent.name}/`}
+              href={`/pages/${mind.name}/`}
               target="_blank"
               rel="noopener noreferrer"
               style={{
@@ -108,7 +108,7 @@ export function AgentDetail({ name }: { name: string }) {
               Pages
             </a>
           )}
-          {agent.status === "stopped" ? (
+          {mind.status === "stopped" ? (
             <button
               onClick={handleStart}
               disabled={actionLoading}
@@ -182,15 +182,15 @@ export function AgentDetail({ name }: { name: string }) {
         {tab === "Logs" && <LogViewer name={name} />}
         {tab === "Files" && <FileEditor name={name} />}
         {tab === "Variants" && <VariantList name={name} />}
-        {tab === "Connections" && <ConnectionsTab agent={agent} />}
+        {tab === "Connections" && <ConnectionsTab mind={mind} />}
       </div>
     </div>
   );
 }
 
-function ConnectionsTab({ agent }: { agent: Agent }) {
+function ConnectionsTab({ mind }: { mind: Mind }) {
   // Filter to external channels (not web) that are connected
-  const connectedChannels = agent.channels.filter(
+  const connectedChannels = mind.channels.filter(
     (ch) => ch.name !== "web" && ch.status === "connected",
   );
 

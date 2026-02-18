@@ -35,15 +35,15 @@ function setupGitRepo(dir: string) {
 }
 
 describe("template helpers", () => {
-  it("findTemplatesDir finds agent-sdk template", () => {
-    const dir = findTemplatesDir("agent-sdk");
-    assert.ok(dir.includes("templates/agent-sdk"));
+  it("findTemplatesDir finds claude template", () => {
+    const dir = findTemplatesDir("claude");
+    assert.ok(dir.includes("templates/claude"));
     assert.ok(existsSync(dir));
   });
 
   it("findTemplatesDir exits for unknown template", () => {
     // We can't easily test process.exit, so just verify the known template works
-    const dir = findTemplatesDir("agent-sdk");
+    const dir = findTemplatesDir("claude");
     assert.ok(existsSync(dir));
   });
 
@@ -52,7 +52,7 @@ describe("template helpers", () => {
     if (existsSync(dest)) rmSync(dest, { recursive: true });
 
     const templatesRoot = findTemplatesRoot();
-    const { composedDir, manifest } = composeTemplate(templatesRoot, "agent-sdk");
+    const { composedDir, manifest } = composeTemplate(templatesRoot, "claude");
     try {
       copyTemplateToDir(composedDir, dest, "test-agent", manifest);
     } finally {
@@ -102,7 +102,7 @@ describe("template helpers", () => {
     if (existsSync(dest)) rmSync(dest, { recursive: true });
 
     const templatesRoot = findTemplatesRoot();
-    const { composedDir, manifest } = composeTemplate(templatesRoot, "agent-sdk");
+    const { composedDir, manifest } = composeTemplate(templatesRoot, "claude");
     try {
       copyTemplateToDir(composedDir, dest, "test-agent", manifest);
     } finally {

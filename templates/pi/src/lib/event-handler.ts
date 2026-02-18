@@ -98,12 +98,12 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         if (session.currentMessageId) {
           session.messageChannels.delete(session.currentMessageId);
         }
-        log("agent", `session "${session.name}": turn done`);
+        log("mind", `session "${session.name}": turn done`);
         options.broadcast({ type: "done" });
         session.currentMessageId = undefined;
       }
     } catch (err) {
-      log("agent", `session "${session.name}": event handler error (${event?.type}):`, err);
+      log("mind", `session "${session.name}": event handler error (${event?.type}):`, err);
     }
   };
 }

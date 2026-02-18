@@ -136,13 +136,13 @@ export class TokenBudget {
     }
   }
 
-  private async replay(agentName: string, messages: QueuedMessage[]): Promise<void> {
+  private async replay(mindName: string, messages: QueuedMessage[]): Promise<void> {
     if (!this.daemonPort || !this.daemonToken) {
       console.error(
-        `[token-budget] cannot replay ${messages.length} message(s) for ${agentName}: daemon not configured`,
+        `[token-budget] cannot replay ${messages.length} message(s) for ${mindName}: daemon not configured`,
       );
       // Re-enqueue so messages aren't lost
-      const state = this.budgets.get(agentName);
+      const state = this.budgets.get(mindName);
       if (state) state.queue.push(...messages);
       return;
     }
@@ -171,7 +171,7 @@ export class TokenBudget {
     const timeout = setTimeout(() => controller.abort(), 120_000);
 
     try {
-      const res = await fetch(`${daemonUrl}/api/agents/${encodeURIComponent(agentName)}/message`, {
+      const res = await fetch(`${daemonUrl}/api/minds/${encodeURIComponent(mindName)}/message`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -182,18 +182,18 @@ export class TokenBudget {
         signal: controller.signal,
       });
       if (!res.ok) {
-        console.error(`[token-budget] replay for ${agentName} got HTTP ${res.status}`);
+        console.error(`[token-budget] replay for ${mindName} got HTTP ${res.status}`);
       } else {
         console.error(
-          `[token-budget] replayed ${messages.length} queued message(s) for ${agentName}`,
+          `[token-budget] replayed ${messages.length} queued message(s) for ${mindName}`,
         );
       }
       // Consume response body
       await res.text().catch(() => {});
     } catch (err) {
-      console.error(`[token-budget] failed to replay for ${agentName}:`, err);
+      console.error(`[token-budget] failed to replay for ${mindName}:`, err);
       // Re-enqueue so messages aren't lost
-      const state = this.budgets.get(agentName);
+      const state = this.budgets.get(mindName);
       if (state) state.queue.push(...messages);
     } finally {
       clearTimeout(timeout);

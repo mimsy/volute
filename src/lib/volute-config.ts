@@ -29,13 +29,13 @@ function readJson(path: string): VoluteConfig | null {
   }
 }
 
-export function readVoluteConfig(agentDir: string): VoluteConfig | null {
-  const path = resolve(agentDir, "home/.config/volute.json");
+export function readVoluteConfig(mindDir: string): VoluteConfig | null {
+  const path = resolve(mindDir, "home/.config/volute.json");
   return readJson(path);
 }
 
-export function writeVoluteConfig(agentDir: string, config: VoluteConfig) {
-  const path = resolve(agentDir, "home/.config/volute.json");
+export function writeVoluteConfig(mindDir: string, config: VoluteConfig) {
+  const path = resolve(mindDir, "home/.config/volute.json");
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
 }

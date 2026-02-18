@@ -7,10 +7,10 @@ export function useChatSend(name: string, onEvent: (event: VoluteEvent) => void)
       message: string,
       conversationId?: string,
       images?: Array<{ media_type: string; data: string }>,
-      agentName?: string,
+      mindName?: string,
     ) => {
-      const targetName = agentName || name;
-      const res = await fetch(`/api/agents/${targetName}/chat`, {
+      const targetName = mindName || name;
+      const res = await fetch(`/api/minds/${targetName}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -48,7 +48,7 @@ export function useLogStream(
     const controller = new AbortController();
     abortRef.current = controller;
 
-    fetch(`/api/agents/${name}/logs`, { signal: controller.signal })
+    fetch(`/api/minds/${name}/logs`, { signal: controller.signal })
       .then(async (res) => {
         if (!res.ok || !res.body) return;
         const reader = res.body.getReader();

@@ -5,7 +5,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { writeChannelEntry } from "../../../connectors/sdk.js";
-import { getOrCreateAgentUser } from "../../../lib/auth.js";
+import { getOrCreateMindUser } from "../../../lib/auth.js";
 import { subscribe } from "../../../lib/conversation-events.js";
 import {
   addMessage,
@@ -16,7 +16,7 @@ import {
   getParticipants,
   isParticipantOrOwner,
 } from "../../../lib/conversations.js";
-import { daemonLoopback, findAgent, voluteHome } from "../../../lib/registry.js";
+import { daemonLoopback, findMind, voluteHome } from "../../../lib/registry.js";
 import { buildVoluteSlug } from "../../../lib/slugify.js";
 import { getTypingMap } from "../../../lib/typing.js";
 import type { AuthEnv } from "../../middleware/auth.js";
@@ -60,7 +60,7 @@ const app = new Hono<AuthEnv>()
     const name = c.req.param("name");
     const [baseName] = name.split("@", 2);
 
-    const entry = findAgent(baseName);
+    const entry = findMind(baseName);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
     const body = c.req.valid("json");
@@ -69,7 +69,7 @@ const app = new Hono<AuthEnv>()
     }
 
     const user = c.get("user");
-    const agentUser = await getOrCreateAgentUser(baseName);
+    const mindUser = await getOrCreateMindUser(baseName);
 
     // Daemon token callers can override the sender name
     const senderName = user.id === 0 && body.sender ? body.sender : user.username;
@@ -88,13 +88,13 @@ const app = new Hono<AuthEnv>()
         participantIds.push(user.id);
       } else if (body.sender) {
         // Check if sender is an agent — if so, add their agent user as participant
-        const senderAgent = findAgent(body.sender);
-        if (senderAgent) {
-          const senderAgentUser = await getOrCreateAgentUser(body.sender);
+        const senderMind = findMind(body.sender);
+        if (senderMind) {
+          const senderAgentUser = await getOrCreateMindUser(body.sender);
           participantIds.push(senderAgentUser.id);
         }
       }
-      participantIds.push(agentUser.id);
+      participantIds.push(mindUser.id);
 
       // DM reuse: if exactly 2 participants, look for an existing conversation
       if (participantIds.length === 2) {
@@ -137,13 +137,13 @@ const app = new Hono<AuthEnv>()
 
     // Find all agent participants for fan-out
     const participants = await getParticipants(conversationId);
-    const agentParticipants = participants.filter((p) => p.userType === "agent");
+    const mindParticipants = participants.filter((p) => p.userType === "mind");
     const participantNames = participants.map((p) => p.username);
 
     // Find running agent participants (excluding the sender)
-    const { getAgentManager } = await import("../../../lib/agent-manager.js");
-    const manager = getAgentManager();
-    const runningAgents = agentParticipants
+    const { getMindManager } = await import("../../../lib/mind-manager.js");
+    const manager = getMindManager();
+    const runningMinds = mindParticipants
       .map((ap) => {
         // Use the full name (with variant) for the addressed agent, base name for others
         const agentKey = ap.username === baseName ? name : ap.username;
@@ -153,10 +153,10 @@ const app = new Hono<AuthEnv>()
 
     // Build channel slug — @username for DMs (matching the volute channel driver)
     const isDM = participants.length === 2;
-    function channelForAgent(agentUsername: string): string {
+    function channelForAgent(mindUsername: string): string {
       return buildVoluteSlug({
         participants,
-        agentUsername,
+        mindUsername,
         convTitle,
         conversationId: conversationId!,
       });
@@ -169,7 +169,7 @@ const app = new Hono<AuthEnv>()
       name: convTitle ?? undefined,
       type: (isDM ? "dm" : "group") as "dm" | "group",
     };
-    for (const ap of agentParticipants) {
+    for (const ap of mindParticipants) {
       try {
         writeChannelEntry(ap.username, channelForAgent(ap.username), channelEntry);
       } catch (err) {
@@ -178,9 +178,9 @@ const app = new Hono<AuthEnv>()
     }
 
     // Fire-and-forget: send to all running agents via daemon /message route
-    for (const agentName of runningAgents) {
-      const targetName = agentName === baseName ? name : agentName;
-      const channel = channelForAgent(agentName);
+    for (const mindName of runningMinds) {
+      const targetName = mindName === baseName ? name : mindName;
+      const channel = channelForAgent(mindName);
       const typingMap = getTypingMap();
       const currentlyTyping = typingMap.get(channel);
       const payload = JSON.stringify({
@@ -193,15 +193,15 @@ const app = new Hono<AuthEnv>()
         isDM,
         ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
       });
-      daemonFetchInternal(`/api/agents/${encodeURIComponent(targetName)}/message`, payload)
+      daemonFetchInternal(`/api/minds/${encodeURIComponent(targetName)}/message`, payload)
         .then(async (res) => {
           if (!res.ok) {
             const text = await res.text().catch(() => "");
-            console.error(`[chat] agent ${agentName} responded ${res.status}: ${text}`);
+            console.error(`[chat] agent ${mindName} responded ${res.status}: ${text}`);
           }
         })
         .catch((err) => {
-          console.error(`[chat] agent ${agentName} unreachable via daemon:`, err);
+          console.error(`[chat] agent ${mindName} unreachable via daemon:`, err);
         });
     }
 

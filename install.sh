@@ -155,8 +155,8 @@ main() {
   echo "  Run 'source /etc/profile.d/volute.sh' or start a new shell to use volute CLI commands."
   echo ""
   echo "  systemctl status volute      Check daemon status"
-  echo "  volute agent create <name>   Create a new agent"
-  echo "  volute agent start <name>    Start an agent"
+  echo "  volute mind create <name>    Create a new mind"
+  echo "  volute mind start <name>     Start a mind"
 }
 
 main "$@"

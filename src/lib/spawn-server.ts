@@ -67,7 +67,7 @@ function spawnAttached(cwd: string, port: number): Promise<SpawnResult> {
 function spawnDetached(cwd: string, port: number, logDir?: string): Promise<SpawnResult> {
   const logsDir = logDir ?? resolve(cwd, ".volute", "logs");
   mkdirSync(logsDir, { recursive: true });
-  const logPath = resolve(logsDir, "agent.log");
+  const logPath = resolve(logsDir, "mind.log");
   const logFd = openSync(logPath, "a");
 
   const child = spawn(tsxBin(cwd), ["src/server.ts", "--port", String(port)], {

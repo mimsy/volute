@@ -1,7 +1,7 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
-import { getOrCreateAgentUser, getUser, getUserByUsername } from "../../../lib/auth.js";
+import { getOrCreateMindUser, getUser, getUserByUsername } from "../../../lib/auth.js";
 import {
   createConversation,
   deleteConversationForUser,
@@ -12,7 +12,7 @@ import {
   isParticipantOrOwner,
   listConversationsForUser,
 } from "../../../lib/conversations.js";
-import { findAgent } from "../../../lib/registry.js";
+import { findMind } from "../../../lib/registry.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
 const createConvSchema = z.object({
@@ -29,12 +29,12 @@ const app = new Hono<AuthEnv>()
     // Daemon token (id: 0) lists as the agent
     let lookupId = user.id;
     if (user.id === 0) {
-      const agentUser = await getOrCreateAgentUser(name);
-      lookupId = agentUser.id;
+      const mindUser = await getOrCreateMindUser(name);
+      lookupId = mindUser.id;
     }
 
     const all = await listConversationsForUser(lookupId);
-    const convs = all.filter((c) => c.agent_name === name);
+    const convs = all.filter((c) => c.mind_name === name);
     return c.json(convs);
   })
   .post("/:name/conversations", zValidator("json", createConvSchema), async (c) => {
@@ -47,12 +47,12 @@ const app = new Hono<AuthEnv>()
     }
 
     // Ensure the named agent is a participant
-    const agentUser = await getOrCreateAgentUser(name);
+    const mindUser = await getOrCreateMindUser(name);
 
     // Build participant list: creator first (owner), then agent, then others
     const participantSet = new Set<number>();
     if (user.id !== 0) participantSet.add(user.id);
-    participantSet.add(agentUser.id);
+    participantSet.add(mindUser.id);
     for (const id of body.participantIds ?? []) participantSet.add(id);
 
     // Resolve participant names to IDs (auto-creating agent users for registered agents)
@@ -64,8 +64,8 @@ const app = new Hono<AuthEnv>()
           continue;
         }
         // If name matches a registered agent, auto-create agent user
-        if (findAgent(pname)) {
-          const au = await getOrCreateAgentUser(pname);
+        if (findMind(pname)) {
+          const au = await getOrCreateMindUser(pname);
           participantSet.add(au.id);
           continue;
         }
@@ -75,7 +75,7 @@ const app = new Hono<AuthEnv>()
 
     // Validate all participant IDs exist
     for (const id of participantSet) {
-      if (id === user.id || id === agentUser.id) continue;
+      if (id === user.id || id === mindUser.id) continue;
       const u = await getUser(id);
       if (!u) return c.json({ error: `User ${id} not found` }, 400);
     }

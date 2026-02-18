@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { eq } from "drizzle-orm";
-import { getOrCreateAgentUser } from "../src/lib/auth.js";
+import { getOrCreateMindUser } from "../src/lib/auth.js";
 import {
   addMessage,
   addParticipant,
@@ -103,7 +103,7 @@ describe("conversation participants", () => {
   it("creates conversation with participants", async () => {
     const db = await getDb();
     // Create test users
-    const agentUser = await getOrCreateAgentUser("test-agent-p");
+    const agentUser = await getOrCreateMindUser("test-agent-p");
     const [humanUser] = await db
       .insert(users)
       .values({ username: "test-human-p", password_hash: "!test", role: "user" })
@@ -191,7 +191,7 @@ describe("conversation participants", () => {
   });
 
   it("getParticipants returns user_type info", async () => {
-    const agentUser = await getOrCreateAgentUser("agent-type-test");
+    const agentUser = await getOrCreateMindUser("agent-type-test");
     const db = await getDb();
 
     try {
@@ -201,7 +201,7 @@ describe("conversation participants", () => {
 
       const participants = await getParticipants(conv.id);
       assert.equal(participants.length, 1);
-      assert.equal(participants[0].userType, "agent");
+      assert.equal(participants[0].userType, "mind");
 
       await deleteConversation(conv.id);
     } finally {
@@ -211,7 +211,7 @@ describe("conversation participants", () => {
 
   it("findDMConversation finds existing 2-person conversation", async () => {
     const db = await getDb();
-    const agentUser = await getOrCreateAgentUser("dm-test-agent");
+    const agentUser = await getOrCreateMindUser("dm-test-agent");
     const [humanUser] = await db
       .insert(users)
       .values({ username: "dm-test-human", password_hash: "!test", role: "user" })
@@ -243,7 +243,7 @@ describe("conversation participants", () => {
 
   it("findDMConversation ignores 3+ person conversations", async () => {
     const db = await getDb();
-    const agentUser = await getOrCreateAgentUser("dm-skip-agent");
+    const agentUser = await getOrCreateMindUser("dm-skip-agent");
     const [user1] = await db
       .insert(users)
       .values({ username: "dm-skip-1", password_hash: "!test", role: "user" })

@@ -31,7 +31,7 @@ const agent = createAgent({
 
 const router = createRouter({
   configPath: resolve("home/.config/routes.json"),
-  agentHandler: agent.resolve,
+  mindHandler: agent.resolve,
   fileHandler: createFileHandlerResolver(resolve("home")),
 });
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createSeedAgent, startAgent } from "../lib/api";
+import { createSeedMind, startMind } from "../lib/api";
 
 const inputStyle = {
   background: "var(--bg-2)",
@@ -37,12 +37,12 @@ export function SeedModal({
     setLoading(true);
     setError("");
     try {
-      await createSeedAgent(trimmed, {
+      await createSeedMind(trimmed, {
         description: description.trim() || undefined,
         template,
         model: model.trim() || undefined,
       });
-      await startAgent(trimmed);
+      await startMind(trimmed);
       onCreated(trimmed);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to create");
@@ -95,7 +95,7 @@ export function SeedModal({
           <input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="A curious agent who loves poetry..."
+            placeholder="A curious mind who loves poetry..."
             onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
             style={inputStyle}
           />

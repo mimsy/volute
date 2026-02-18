@@ -125,7 +125,7 @@ describe("variant running state", () => {
     addVariant(testAgent, makeVariant("b", { running: false }));
     addVariant(testAgent, makeVariant("c", { running: true }));
     const running = getAllRunningVariants();
-    const forAgent = running.filter((r) => r.agentName === testAgent);
+    const forAgent = running.filter((r) => r.mindName === testAgent);
     assert.equal(forAgent.length, 2);
     const names = forAgent.map((r) => r.variant.name).sort();
     assert.deepStrictEqual(names, ["a", "c"]);
@@ -134,7 +134,7 @@ describe("variant running state", () => {
   it("getAllRunningVariants returns empty when none running", () => {
     addVariant(testAgent, makeVariant("a"));
     const running = getAllRunningVariants();
-    const forAgent = running.filter((r) => r.agentName === testAgent);
+    const forAgent = running.filter((r) => r.mindName === testAgent);
     assert.equal(forAgent.length, 0);
   });
 });

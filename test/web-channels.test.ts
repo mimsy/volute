@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
-import { addAgent, removeAgent } from "../src/lib/registry.js";
+import { addMind, removeMind } from "../src/lib/registry.js";
 import { conversations, messages, sessions, users } from "../src/lib/schema.js";
 import { createSession } from "../src/web/middleware/auth.js";
 
@@ -17,7 +17,7 @@ async function cleanup() {
   await db.delete(conversations);
   await db.delete(users);
   try {
-    removeAgent(TEST_AGENT);
+    removeMind(TEST_AGENT);
   } catch {
     // ignore if not registered
   }
@@ -53,14 +53,11 @@ describe("web channels routes", () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request(
-      "http://localhost/api/agents/nonexistent-ch-agent/channels/send",
-      {
-        method: "POST",
-        headers: postHeaders(cookie),
-        body: JSON.stringify({ platform: "discord", uri: "test:chan", message: "hi" }),
-      },
-    );
+    const res = await app.request("http://localhost/api/minds/nonexistent-ch-agent/channels/send", {
+      method: "POST",
+      headers: postHeaders(cookie),
+      body: JSON.stringify({ platform: "discord", uri: "test:chan", message: "hi" }),
+    });
     assert.equal(res.status, 404);
     const body = (await res.json()) as { error: string };
     assert.ok(body.error);
@@ -68,10 +65,10 @@ describe("web channels routes", () => {
 
   it("POST /:name/channels/send — 400 for invalid platform", async () => {
     const cookie = await setupAuth();
-    addAgent(TEST_AGENT, 4160);
+    addMind(TEST_AGENT, 4160);
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/agents/${TEST_AGENT}/channels/send`, {
+    const res = await app.request(`http://localhost/api/minds/${TEST_AGENT}/channels/send`, {
       method: "POST",
       headers: postHeaders(cookie),
       body: JSON.stringify({ platform: "nonexistent-platform", uri: "test:chan", message: "hi" }),
@@ -88,7 +85,7 @@ describe("web channels routes", () => {
     const { default: app } = await import("../src/web/app.js");
 
     const res = await app.request(
-      "/api/agents/nonexistent-ch-agent/channels/read?platform=discord&uri=test:chan",
+      "/api/minds/nonexistent-ch-agent/channels/read?platform=discord&uri=test:chan",
       { headers: getHeaders(cookie) },
     );
     assert.equal(res.status, 404);
@@ -96,10 +93,10 @@ describe("web channels routes", () => {
 
   it("GET /:name/channels/read — 400 when missing platform or uri", async () => {
     const cookie = await setupAuth();
-    addAgent(TEST_AGENT, 4160);
+    addMind(TEST_AGENT, 4160);
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request(`/api/agents/${TEST_AGENT}/channels/read`, {
+    const res = await app.request(`/api/minds/${TEST_AGENT}/channels/read`, {
       headers: getHeaders(cookie),
     });
     assert.equal(res.status, 400);
@@ -109,11 +106,11 @@ describe("web channels routes", () => {
 
   it("GET /:name/channels/read — 400 for invalid platform", async () => {
     const cookie = await setupAuth();
-    addAgent(TEST_AGENT, 4160);
+    addMind(TEST_AGENT, 4160);
     const { default: app } = await import("../src/web/app.js");
 
     const res = await app.request(
-      `/api/agents/${TEST_AGENT}/channels/read?platform=bogus&uri=test`,
+      `/api/minds/${TEST_AGENT}/channels/read?platform=bogus&uri=test`,
       { headers: getHeaders(cookie) },
     );
     assert.equal(res.status, 400);
@@ -127,7 +124,7 @@ describe("web channels routes", () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request("/api/agents/nonexistent-ch-agent/channels/list", {
+    const res = await app.request("/api/minds/nonexistent-ch-agent/channels/list", {
       headers: getHeaders(cookie),
     });
     assert.equal(res.status, 404);
@@ -135,13 +132,13 @@ describe("web channels routes", () => {
 
   it("GET /:name/channels/list — returns object keyed by platform", async () => {
     const cookie = await setupAuth();
-    addAgent(TEST_AGENT, 4160);
+    addMind(TEST_AGENT, 4160);
     const { default: app } = await import("../src/web/app.js");
 
     // This will attempt to list conversations for all platforms.
     // Platforms without credentials will return errors in their arrays,
     // but the overall response should be 200 with an object.
-    const res = await app.request(`/api/agents/${TEST_AGENT}/channels/list`, {
+    const res = await app.request(`/api/minds/${TEST_AGENT}/channels/list`, {
       headers: getHeaders(cookie),
     });
     assert.equal(res.status, 200);
@@ -157,7 +154,7 @@ describe("web channels routes", () => {
     const { default: app } = await import("../src/web/app.js");
 
     const res = await app.request(
-      "/api/agents/nonexistent-ch-agent/channels/users?platform=discord",
+      "/api/minds/nonexistent-ch-agent/channels/users?platform=discord",
       { headers: getHeaders(cookie) },
     );
     assert.equal(res.status, 404);
@@ -165,10 +162,10 @@ describe("web channels routes", () => {
 
   it("GET /:name/channels/users — 400 when missing platform", async () => {
     const cookie = await setupAuth();
-    addAgent(TEST_AGENT, 4160);
+    addMind(TEST_AGENT, 4160);
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request(`/api/agents/${TEST_AGENT}/channels/users`, {
+    const res = await app.request(`/api/minds/${TEST_AGENT}/channels/users`, {
       headers: getHeaders(cookie),
     });
     assert.equal(res.status, 400);
@@ -178,11 +175,11 @@ describe("web channels routes", () => {
 
   it("GET /:name/channels/users — 400 for platform without listUsers", async () => {
     const cookie = await setupAuth();
-    addAgent(TEST_AGENT, 4160);
+    addMind(TEST_AGENT, 4160);
     const { default: app } = await import("../src/web/app.js");
 
     // 'system' channel has no driver at all
-    const res = await app.request(`/api/agents/${TEST_AGENT}/channels/users?platform=system`, {
+    const res = await app.request(`/api/minds/${TEST_AGENT}/channels/users?platform=system`, {
       headers: getHeaders(cookie),
     });
     assert.equal(res.status, 400);
@@ -197,7 +194,7 @@ describe("web channels routes", () => {
     const { default: app } = await import("../src/web/app.js");
 
     const res = await app.request(
-      "http://localhost/api/agents/nonexistent-ch-agent/channels/create",
+      "http://localhost/api/minds/nonexistent-ch-agent/channels/create",
       {
         method: "POST",
         headers: postHeaders(cookie),
@@ -209,11 +206,11 @@ describe("web channels routes", () => {
 
   it("POST /:name/channels/create — 400 for platform without createConversation", async () => {
     const cookie = await setupAuth();
-    addAgent(TEST_AGENT, 4160);
+    addMind(TEST_AGENT, 4160);
     const { default: app } = await import("../src/web/app.js");
 
     // 'system' has no driver
-    const res = await app.request(`http://localhost/api/agents/${TEST_AGENT}/channels/create`, {
+    const res = await app.request(`http://localhost/api/minds/${TEST_AGENT}/channels/create`, {
       method: "POST",
       headers: postHeaders(cookie),
       body: JSON.stringify({ platform: "system", participants: ["user1"] }),
@@ -228,7 +225,7 @@ describe("web channels routes", () => {
   it("POST /:name/channels/send — requires auth (401 without cookie)", async () => {
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/agents/${TEST_AGENT}/channels/send`, {
+    const res = await app.request(`http://localhost/api/minds/${TEST_AGENT}/channels/send`, {
       method: "POST",
       headers: { Origin: "http://localhost", "Content-Type": "application/json" },
       body: JSON.stringify({ platform: "discord", uri: "test:chan", message: "hi" }),
@@ -240,7 +237,7 @@ describe("web channels routes", () => {
     const { default: app } = await import("../src/web/app.js");
 
     const res = await app.request(
-      `/api/agents/${TEST_AGENT}/channels/read?platform=discord&uri=test`,
+      `/api/minds/${TEST_AGENT}/channels/read?platform=discord&uri=test`,
     );
     assert.equal(res.status, 401);
   });

@@ -19,8 +19,7 @@ import {
   importPiSession,
   parseNameFromIdentity,
 } from "../../commands/import.js";
-import { getAgentManager } from "../../lib/agent-manager.js";
-import { deleteAgentUser } from "../../lib/auth.js";
+import { deleteMindUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { getConnectorManager } from "../../lib/connector-manager.js";
 import { consolidateMemory } from "../../lib/consolidate.js";
@@ -29,27 +28,28 @@ import { convertSession } from "../../lib/convert-session.js";
 import { getDb } from "../../lib/db.js";
 import { exec, gitExec } from "../../lib/exec.js";
 import {
-  chownAgentDir,
-  createAgentUser,
-  deleteAgentUser as deleteIsolationUser,
+  chownMindDir,
+  createMindUser,
+  deleteMindUser as deleteIsolationUser,
   ensureVoluteGroup,
   isIsolationEnabled,
 } from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
+import { getMindManager } from "../../lib/mind-manager.js";
 import {
-  addAgent,
-  agentDir,
+  addMind,
   ensureVoluteHome,
-  findAgent,
+  findMind,
+  mindDir,
   nextPort,
   readRegistry,
-  removeAgent,
+  removeMind,
   stateDir,
-  validateAgentName,
+  validateMindName,
   voluteHome,
 } from "../../lib/registry.js";
 import { getScheduler } from "../../lib/scheduler.js";
-import { agentMessages, conversations } from "../../lib/schema.js";
+import { conversations, mindMessages } from "../../lib/schema.js";
 import {
   applyInitFiles,
   composeTemplate,
@@ -72,20 +72,20 @@ import {
 import { readVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
-/** Start agent server and (for base agents) connectors, schedules, and token budget. */
+/** Start mind server and (for base agents) connectors, schedules, and token budget. */
 async function startAgentFull(
   name: string,
   baseName: string,
   variantName: string | undefined,
 ): Promise<void> {
-  await getAgentManager().startAgent(name);
+  await getMindManager().startMind(name);
   if (variantName) return;
 
   // Seed agents only get the server — no connectors, schedules, or budget
-  if (findAgent(baseName)?.stage === "seed") return;
+  if (findMind(baseName)?.stage === "seed") return;
 
-  const dir = agentDir(baseName);
-  const entry = findAgent(baseName)!;
+  const dir = mindDir(baseName);
+  const entry = findMind(baseName)!;
   await getConnectorManager().startConnectors(baseName, dir, entry.port, getDaemonPort());
   getScheduler().loadSchedules(baseName);
   const config = readVoluteConfig(dir);
@@ -129,7 +129,7 @@ type ChannelStatus = {
 };
 
 async function getAgentStatus(name: string, port: number) {
-  const manager = getAgentManager();
+  const manager = getMindManager();
   let status: "running" | "stopped" | "starting" = "stopped";
 
   if (manager.isRunning(name)) {
@@ -137,7 +137,7 @@ async function getAgentStatus(name: string, port: number) {
     status = health.ok ? "running" : "starting";
   }
 
-  const channelConfig = readVoluteConfig(agentDir(name))?.channels;
+  const channelConfig = readVoluteConfig(mindDir(name))?.channels;
   const channels: ChannelStatus[] = [];
 
   // Built-in channels (e.g. volute)
@@ -170,20 +170,20 @@ const TEMPLATE_BRANCH = "volute/template";
 
 /**
  * Create the volute/template tracking branch and main branch with shared history.
- * Enables clean 3-way merges on the first `volute agent upgrade`.
+ * Enables clean 3-way merges on the first `volute mind upgrade`.
  */
 async function initTemplateBranch(
   projectRoot: string,
   composedDir: string,
   manifest: TemplateManifest,
-  agentName?: string,
+  mindName?: string,
   env?: NodeJS.ProcessEnv,
 ) {
   const templateFiles = listFiles(composedDir)
     .filter((f) => !f.startsWith(".init/") && !f.startsWith(".init\\"))
     .map((f) => manifest.rename[f] ?? f);
 
-  const opts = { cwd: projectRoot, agentName, env };
+  const opts = { cwd: projectRoot, mindName, env };
 
   await gitExec(["checkout", "--orphan", TEMPLATE_BRANCH], opts);
   await gitExec(["add", "--", ...templateFiles], opts);
@@ -198,7 +198,7 @@ async function initTemplateBranch(
  * Update the volute/template orphan branch with the latest template files.
  * Uses a temporary worktree to avoid touching the main working directory.
  */
-async function updateTemplateBranch(projectRoot: string, template: string, agentName: string) {
+async function updateTemplateBranch(projectRoot: string, template: string, mindName: string) {
   const tempWorktree = resolve(projectRoot, ".variants", "_template_update");
 
   let branchExists = false;
@@ -238,7 +238,7 @@ async function updateTemplateBranch(projectRoot: string, template: string, agent
       await gitExec(["rm", "-rf", "."], { cwd: tempWorktree }).catch(() => {});
     }
 
-    copyTemplateToDir(composedDir, tempWorktree, agentName, manifest);
+    copyTemplateToDir(composedDir, tempWorktree, mindName, manifest);
 
     const initDir = resolve(tempWorktree, ".init");
     if (existsSync(initDir)) {
@@ -293,25 +293,25 @@ async function mergeTemplateBranch(worktreeDir: string): Promise<boolean> {
 const createAgentSchema = z.object({
   name: z.string(),
   template: z.string().optional(),
-  stage: z.enum(["seed", "mind"]).optional(),
+  stage: z.enum(["seed", "sprouted"]).optional(),
   description: z.string().optional(),
   model: z.string().optional(),
 });
 
-// Create agent — admin only
+// Create mind — admin only
 const app = new Hono<AuthEnv>()
   .post("/", requireAdmin, zValidator("json", createAgentSchema), async (c) => {
     const body = c.req.valid("json");
 
-    const { name, template = "agent-sdk" } = body;
+    const { name, template = "claude" } = body;
 
-    const nameErr = validateAgentName(name);
+    const nameErr = validateMindName(name);
     if (nameErr) return c.json({ error: nameErr }, 400);
 
-    if (findAgent(name)) return c.json({ error: `Agent already exists: ${name}` }, 409);
+    if (findMind(name)) return c.json({ error: `Agent already exists: ${name}` }, 409);
 
     ensureVoluteHome();
-    const dest = agentDir(name);
+    const dest = mindDir(name);
 
     if (existsSync(dest)) return c.json({ error: "Agent directory already exists" }, 409);
 
@@ -332,26 +332,26 @@ const app = new Hono<AuthEnv>()
       }
 
       const port = nextPort();
-      addAgent(name, port, body.stage);
+      addMind(name, port, body.stage);
 
-      // Set up per-agent user isolation (no-ops if VOLUTE_ISOLATION !== "user")
+      // Set up per-mind user isolation (no-ops if VOLUTE_ISOLATION !== "user")
       const homeDir = resolve(dest, "home");
       ensureVoluteGroup();
-      createAgentUser(name, homeDir);
-      chownAgentDir(dest, name);
+      createMindUser(name, homeDir);
+      chownMindDir(dest, name);
 
-      const agentName = isIsolationEnabled() ? name : undefined;
-      const env = agentName ? { ...process.env, HOME: homeDir } : undefined;
+      const mindName = isIsolationEnabled() ? name : undefined;
+      const env = mindName ? { ...process.env, HOME: homeDir } : undefined;
 
       // Install dependencies
-      await exec("npm", ["install"], { cwd: dest, agentName, env });
+      await exec("npm", ["install"], { cwd: dest, mindName, env });
 
       // git init + template branch + initial commit (before seed modifications
       // so that initTemplateBranch can git-add all template files)
       let gitWarning: string | undefined;
       try {
-        await gitExec(["init"], { cwd: dest, agentName, env });
-        await initTemplateBranch(dest, composedDir, manifest, agentName, env);
+        await gitExec(["init"], { cwd: dest, mindName, env });
+        await initTemplateBranch(dest, composedDir, manifest, mindName, env);
       } catch (err) {
         console.error(`[daemon] git setup failed for ${name}:`, err);
         rmSync(resolve(dest, ".git"), { recursive: true, force: true });
@@ -366,12 +366,12 @@ const app = new Hono<AuthEnv>()
           : "";
         writeFileSync(
           resolve(dest, "home/SOUL.md"),
-          `You are ${name}.\n\nYou don't have a soul yet. You're a seed — a new agent in the process of discovering who you are.\n${descLine}\nHave a conversation with the human. Explore what kind of agent you want to be. When you're ready, write your SOUL.md and MEMORY.md, then run \`volute sprout\` to complete the transformation.\n`,
+          `You are ${name}.\n\nYou don't have a soul yet. You're a seed — a new mind in the process of discovering who you are.\n${descLine}\nHave a conversation with the human. Explore what kind of mind you want to be. When you're ready, write your SOUL.md and MEMORY.md, then run \`volute sprout\` to complete the transformation.\n`,
         );
 
         // Remove full skills, keep only orientation
         const skillsDir = resolve(dest, manifest.skillsDir);
-        for (const skill of ["volute-agent", "memory", "sessions"]) {
+        for (const skill of ["volute-mind", "memory", "sessions"]) {
           const skillPath = resolve(skillsDir, skill);
           if (existsSync(skillPath)) rmSync(skillPath, { recursive: true, force: true });
         }
@@ -382,23 +382,23 @@ const app = new Hono<AuthEnv>()
         name,
         port,
         stage: body.stage ?? "mind",
-        message: `Created agent: ${name} (port ${port})`,
+        message: `Created mind: ${name} (port ${port})`,
         ...(gitWarning && { warning: gitWarning }),
       });
     } catch (err) {
       // Clean up partial state
       if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
       try {
-        removeAgent(name);
+        removeMind(name);
       } catch {
         // ignore cleanup errors
       }
-      return c.json({ error: err instanceof Error ? err.message : "Failed to create agent" }, 500);
+      return c.json({ error: err instanceof Error ? err.message : "Failed to create mind" }, 500);
     } finally {
       rmSync(composedDir, { recursive: true, force: true });
     }
   })
-  // Import agent from OpenClaw workspace — admin only
+  // Import mind from OpenClaw workspace — admin only
   .post("/import", requireAdmin, async (c) => {
     let body: { workspacePath: string; name?: string; template?: string; sessionPath?: string };
     try {
@@ -421,19 +421,19 @@ const app = new Hono<AuthEnv>()
     const userPath = resolve(wsDir, "USER.md");
     const user = existsSync(userPath) ? readFileSync(userPath, "utf-8") : "";
 
-    const name = body.name ?? parseNameFromIdentity(identity) ?? "imported-agent";
-    const template = body.template ?? "agent-sdk";
+    const name = body.name ?? parseNameFromIdentity(identity) ?? "imported-mind";
+    const template = body.template ?? "claude";
 
-    const nameErr = validateAgentName(name);
+    const nameErr = validateMindName(name);
     if (nameErr) return c.json({ error: nameErr }, 400);
 
-    if (findAgent(name)) return c.json({ error: `Agent already exists: ${name}` }, 409);
+    if (findMind(name)) return c.json({ error: `Agent already exists: ${name}` }, 409);
 
     const mergedSoul = `${soul.trimEnd()}\n\n---\n\n${identity.trimEnd()}\n`;
     const mergedMemoryExtra = user ? `\n\n---\n\n${user.trimEnd()}\n` : "";
 
     ensureVoluteHome();
-    const dest = agentDir(name);
+    const dest = mindDir(name);
 
     if (existsSync(dest)) return c.json({ error: "Agent directory already exists" }, 409);
 
@@ -475,19 +475,19 @@ const app = new Hono<AuthEnv>()
 
       // Assign port and register
       const port = nextPort();
-      addAgent(name, port);
+      addMind(name, port);
 
-      // Set up per-agent user isolation (no-ops if VOLUTE_ISOLATION !== "user")
+      // Set up per-mind user isolation (no-ops if VOLUTE_ISOLATION !== "user")
       const homeDir = resolve(dest, "home");
       ensureVoluteGroup();
-      createAgentUser(name, homeDir);
-      chownAgentDir(dest, name);
+      createMindUser(name, homeDir);
+      chownMindDir(dest, name);
 
-      const agentName = isIsolationEnabled() ? name : undefined;
-      const env = agentName ? { ...process.env, HOME: homeDir } : undefined;
+      const mindName = isIsolationEnabled() ? name : undefined;
+      const env = mindName ? { ...process.env, HOME: homeDir } : undefined;
 
       // Install dependencies
-      await exec("npm", ["install"], { cwd: dest, agentName, env });
+      await exec("npm", ["install"], { cwd: dest, mindName, env });
 
       // Consolidate memory if no MEMORY.md but daily logs exist
       if (!hasMemory && dailyLogCount > 0) {
@@ -495,16 +495,16 @@ const app = new Hono<AuthEnv>()
       }
 
       // git init + initial commit
-      await gitExec(["init"], { cwd: dest, agentName, env });
-      await gitExec(["add", "-A"], { cwd: dest, agentName, env });
-      await gitExec(["commit", "-m", "import from OpenClaw"], { cwd: dest, agentName, env });
+      await gitExec(["init"], { cwd: dest, mindName, env });
+      await gitExec(["add", "-A"], { cwd: dest, mindName, env });
+      await gitExec(["commit", "-m", "import from OpenClaw"], { cwd: dest, mindName, env });
 
       // Import session
       const sessionFile = body.sessionPath ? resolve(body.sessionPath) : findOpenClawSession(wsDir);
       if (sessionFile && existsSync(sessionFile)) {
         if (template === "pi") {
           importPiSession(sessionFile, dest);
-        } else if (template === "agent-sdk") {
+        } else if (template === "claude") {
           const sessionId = convertSession({ sessionPath: sessionFile, projectDir: dest });
           const voluteDir = resolve(dest, ".volute");
           mkdirSync(voluteDir, { recursive: true });
@@ -515,15 +515,15 @@ const app = new Hono<AuthEnv>()
       // Import connectors
       importOpenClawConnectors(name, dest);
 
-      return c.json({ ok: true, name, port, message: `Imported agent: ${name} (port ${port})` });
+      return c.json({ ok: true, name, port, message: `Imported mind: ${name} (port ${port})` });
     } catch (err) {
       if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
       try {
-        removeAgent(name);
+        removeMind(name);
       } catch {
         // ignore cleanup errors
       }
-      return c.json({ error: err instanceof Error ? err.message : "Failed to import agent" }, 500);
+      return c.json({ error: err instanceof Error ? err.message : "Failed to import mind" }, 500);
     } finally {
       rmSync(composedDir, { recursive: true, force: true });
     }
@@ -536,12 +536,12 @@ const app = new Hono<AuthEnv>()
       const db = await getDb();
       const lastActiveRows = await db
         .select({
-          agent: agentMessages.agent,
-          lastActiveAt: sql<string>`MAX(${agentMessages.created_at})`,
+          mind: mindMessages.mind,
+          lastActiveAt: sql<string>`MAX(${mindMessages.created_at})`,
         })
-        .from(agentMessages)
-        .groupBy(agentMessages.agent);
-      lastActiveMap = new Map(lastActiveRows.map((r) => [r.agent, r.lastActiveAt]));
+        .from(mindMessages)
+        .groupBy(mindMessages.mind);
+      lastActiveMap = new Map(lastActiveRows.map((r) => [r.mind, r.lastActiveAt]));
     } catch {
       // Non-essential: degrade gracefully without activity data
     }
@@ -549,7 +549,7 @@ const app = new Hono<AuthEnv>()
     const agents = await Promise.all(
       entries.map(async (entry) => {
         const { status, channels } = await getAgentStatus(entry.name, entry.port);
-        const hasPages = existsSync(resolve(agentDir(entry.name), "home", "pages"));
+        const hasPages = existsSync(resolve(mindDir(entry.name), "home", "pages"));
         return {
           ...entry,
           status,
@@ -564,17 +564,17 @@ const app = new Hono<AuthEnv>()
   // Recent pages across all agents
   .get("/pages/recent", async (c) => {
     const entries = readRegistry();
-    const pages: { agent: string; file: string; modified: string; url: string }[] = [];
+    const pages: { mind: string; file: string; modified: string; url: string }[] = [];
 
     for (const entry of entries) {
-      const pagesDir = resolve(agentDir(entry.name), "home", "pages");
+      const pagesDir = resolve(mindDir(entry.name), "home", "pages");
       if (!existsSync(pagesDir)) continue;
 
       let items: string[];
       try {
         items = readdirSync(pagesDir);
       } catch (err) {
-        log.warn("Failed to read pages dir", { agent: entry.name, error: (err as Error).message });
+        log.warn("Failed to read pages dir", { mind: entry.name, error: (err as Error).message });
         continue;
       }
 
@@ -584,7 +584,7 @@ const app = new Hono<AuthEnv>()
           const s = statSync(fullPath);
           if (s.isFile()) {
             pages.push({
-              agent: entry.name,
+              mind: entry.name,
               file: item,
               modified: s.mtime.toISOString(),
               url: `/pages/${entry.name}/${item}`,
@@ -594,7 +594,7 @@ const app = new Hono<AuthEnv>()
             if (existsSync(indexPath)) {
               const indexStat = statSync(indexPath);
               pages.push({
-                agent: entry.name,
+                mind: entry.name,
                 file: join(item, "index.html"),
                 modified: indexStat.mtime.toISOString(),
                 url: `/pages/${entry.name}/${item}/`,
@@ -603,7 +603,7 @@ const app = new Hono<AuthEnv>()
           }
         } catch (err) {
           log.warn("Failed to stat page item", {
-            agent: entry.name,
+            mind: entry.name,
             item,
             error: (err as Error).message,
           });
@@ -614,19 +614,19 @@ const app = new Hono<AuthEnv>()
     pages.sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime());
     return c.json(pages.slice(0, 10));
   })
-  // Get single agent
+  // Get single mind
   .get("/:name", async (c) => {
     const name = c.req.param("name");
-    const entry = findAgent(name);
+    const entry = findMind(name);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
-    if (!existsSync(agentDir(name))) return c.json({ error: "Agent directory missing" }, 404);
+    if (!existsSync(mindDir(name))) return c.json({ error: "Agent directory missing" }, 404);
 
     const { status, channels } = await getAgentStatus(name, entry.port);
 
     // Include variant info
     const variants = readVariants(name);
-    const manager = getAgentManager();
+    const manager = getMindManager();
     const variantStatuses = await Promise.all(
       variants.map(async (v) => {
         const compositeKey = `${name}@${v.name}`;
@@ -639,26 +639,26 @@ const app = new Hono<AuthEnv>()
       }),
     );
 
-    const hasPages = existsSync(resolve(agentDir(name), "home", "pages"));
+    const hasPages = existsSync(resolve(mindDir(name), "home", "pages"));
     return c.json({ ...entry, status, channels, variants: variantStatuses, hasPages });
   })
-  // Start agent (supports name@variant) — admin only
+  // Start mind (supports name@variant) — admin only
   .post("/:name/start", requireAdmin, async (c) => {
     const name = c.req.param("name");
     const [baseName, variantName] = name.split("@", 2);
 
-    const entry = findAgent(baseName);
+    const entry = findMind(baseName);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
     if (variantName) {
       const variant = findVariant(baseName, variantName);
       if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
     } else {
-      const dir = agentDir(baseName);
+      const dir = mindDir(baseName);
       if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
     }
 
-    if (getAgentManager().isRunning(name)) {
+    if (getMindManager().isRunning(name)) {
       return c.json({ error: "Agent already running" }, 409);
     }
 
@@ -666,23 +666,23 @@ const app = new Hono<AuthEnv>()
       await startAgentFull(name, baseName, variantName);
       return c.json({ ok: true });
     } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : "Failed to start agent" }, 500);
+      return c.json({ error: err instanceof Error ? err.message : "Failed to start mind" }, 500);
     }
   })
-  // Restart agent (supports name@variant) — admin only
+  // Restart mind (supports name@variant) — admin only
   // Accepts optional JSON body: { context?: { type: string, name?: string, summary?: string, ... } }
   .post("/:name/restart", requireAdmin, async (c) => {
     const name = c.req.param("name");
     const [baseName, variantName] = name.split("@", 2);
 
-    const entry = findAgent(baseName);
+    const entry = findMind(baseName);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
     if (variantName) {
       const variant = findVariant(baseName, variantName);
       if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
     } else {
-      const dir = agentDir(baseName);
+      const dir = mindDir(baseName);
       if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
     }
 
@@ -698,19 +698,19 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    const manager = getAgentManager();
+    const manager = getMindManager();
 
     try {
-      // Stop running agent and connectors
+      // Stop running mind and connectors
       if (manager.isRunning(name)) {
         if (!variantName) {
           await getConnectorManager().stopConnectors(baseName);
           getTokenBudget().removeBudget(baseName);
         }
-        await manager.stopAgent(name);
+        await manager.stopMind(name);
       }
 
-      // Handle agent-initiated merge: perform merge operations directly
+      // Handle mind-initiated merge: perform merge operations directly
       if (context?.type === "merge" && context.name && !variantName) {
         const mergeVariantName = String(context.name);
         const branchErr = validateBranchName(mergeVariantName);
@@ -720,7 +720,7 @@ const app = new Hono<AuthEnv>()
         console.error(`[daemon] merging variant for ${baseName}: ${mergeVariantName}`);
         const variant = findVariant(baseName, mergeVariantName);
         if (variant) {
-          const projectRoot = agentDir(baseName);
+          const projectRoot = mindDir(baseName);
 
           // Auto-commit variant worktree
           if (existsSync(variant.path)) {
@@ -773,7 +773,7 @@ const app = new Hono<AuthEnv>()
           } catch (e) {
             console.error(`[daemon] npm install failed after merge for ${baseName}:`, e);
           }
-          chownAgentDir(projectRoot, baseName);
+          chownMindDir(projectRoot, baseName);
         }
       }
 
@@ -789,7 +789,7 @@ const app = new Hono<AuthEnv>()
           const activeConvs = await db
             .select({ id: conversations.id })
             .from(conversations)
-            .where(eq(conversations.agent_name, baseName))
+            .where(eq(conversations.mind_name, baseName))
             .all();
           for (const conv of activeConvs) {
             await addMessage(conv.id, "assistant", "system", [
@@ -804,15 +804,15 @@ const app = new Hono<AuthEnv>()
       await startAgentFull(name, baseName, variantName);
       return c.json({ ok: true });
     } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : "Failed to restart agent" }, 500);
+      return c.json({ error: err instanceof Error ? err.message : "Failed to restart mind" }, 500);
     }
   })
-  // Stop agent (supports name@variant) — admin only
+  // Stop mind (supports name@variant) — admin only
   .post("/:name/stop", requireAdmin, async (c) => {
     const name = c.req.param("name");
     const [baseName, variantName] = name.split("@", 2);
 
-    const entry = findAgent(baseName);
+    const entry = findMind(baseName);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
     if (variantName) {
@@ -820,7 +820,7 @@ const app = new Hono<AuthEnv>()
       if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
     }
 
-    const manager = getAgentManager();
+    const manager = getMindManager();
     if (!manager.isRunning(name)) {
       return c.json({ error: "Agent is not running" }, 409);
     }
@@ -831,32 +831,32 @@ const app = new Hono<AuthEnv>()
         getScheduler().unloadSchedules(baseName);
         getTokenBudget().removeBudget(baseName);
       }
-      await manager.stopAgent(name);
+      await manager.stopMind(name);
       return c.json({ ok: true });
     } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : "Failed to stop agent" }, 500);
+      return c.json({ error: err instanceof Error ? err.message : "Failed to stop mind" }, 500);
     }
   })
-  // Delete agent — admin only
+  // Delete mind — admin only
   .delete("/:name", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    const entry = findAgent(name);
+    const entry = findMind(name);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
-    const dir = agentDir(name);
+    const dir = mindDir(name);
     const force = c.req.query("force") === "true";
 
-    // Stop connectors and agent if running
-    const manager = getAgentManager();
+    // Stop connectors and mind if running
+    const manager = getMindManager();
     if (manager.isRunning(name)) {
       await getConnectorManager().stopConnectors(name);
       getTokenBudget().removeBudget(name);
-      await manager.stopAgent(name);
+      await manager.stopMind(name);
     }
 
     removeAllVariants(name);
-    removeAgent(name);
-    await deleteAgentUser(name);
+    removeMind(name);
+    await deleteMindUser(name);
 
     // Clean up centralized state directory (logs, env, channels)
     const state = stateDir(name);
@@ -871,13 +871,13 @@ const app = new Hono<AuthEnv>()
 
     return c.json({ ok: true });
   })
-  // Upgrade agent — admin only
+  // Upgrade mind — admin only
   .post("/:name/upgrade", requireAdmin, async (c) => {
-    const agentName = c.req.param("name");
-    const entry = findAgent(agentName);
+    const mindName = c.req.param("name");
+    const entry = findMind(mindName);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
-    const dir = agentDir(agentName);
+    const dir = mindDir(mindName);
     if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
 
     let body: { template?: string; continue?: boolean } = {};
@@ -887,7 +887,7 @@ const app = new Hono<AuthEnv>()
       // Empty body is fine
     }
 
-    const template = body.template ?? "agent-sdk";
+    const template = body.template ?? "claude";
     const UPGRADE_VARIANT = "upgrade";
 
     if (body.continue) {
@@ -917,7 +917,7 @@ const app = new Hono<AuthEnv>()
         await exec("npm", ["install"], { cwd: worktreeDir });
 
         const variantPort = nextPort();
-        addVariant(agentName, {
+        addVariant(mindName, {
           name: UPGRADE_VARIANT,
           branch: UPGRADE_VARIANT,
           path: worktreeDir,
@@ -925,18 +925,18 @@ const app = new Hono<AuthEnv>()
           created: new Date().toISOString(),
         });
 
-        chownAgentDir(dir, agentName);
-        await getAgentManager().startAgent(`${agentName}@${UPGRADE_VARIANT}`);
+        chownMindDir(dir, mindName);
+        await getMindManager().startMind(`${mindName}@${UPGRADE_VARIANT}`);
 
         return c.json({
           ok: true,
-          name: agentName,
+          name: mindName,
           variant: UPGRADE_VARIANT,
           port: variantPort,
         });
       } catch (err) {
         try {
-          removeVariant(agentName, UPGRADE_VARIANT);
+          removeVariant(mindName, UPGRADE_VARIANT);
         } catch {}
         try {
           await gitExec(["worktree", "remove", "--force", worktreeDir], { cwd: dir });
@@ -945,10 +945,10 @@ const app = new Hono<AuthEnv>()
           await gitExec(["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
         } catch {}
         try {
-          chownAgentDir(dir, agentName);
+          chownMindDir(dir, mindName);
         } catch (chownErr) {
           console.error(
-            `[daemon] failed to fix ownership during upgrade cleanup for ${agentName}:`,
+            `[daemon] failed to fix ownership during upgrade cleanup for ${mindName}:`,
             chownErr,
           );
         }
@@ -978,7 +978,7 @@ const app = new Hono<AuthEnv>()
     }
 
     // Update template branch
-    await updateTemplateBranch(dir, template, agentName);
+    await updateTemplateBranch(dir, template, mindName);
 
     // Create upgrade worktree
     const parentDir = resolve(dir, ".variants");
@@ -991,8 +991,8 @@ const app = new Hono<AuthEnv>()
     // Merge template branch
     const hasConflicts = await mergeTemplateBranch(worktreeDir);
 
-    // Fix ownership — daemon runs as root but agent needs to own its files
-    chownAgentDir(dir, agentName);
+    // Fix ownership — daemon runs as root but mind needs to own its files
+    chownMindDir(dir, mindName);
 
     if (hasConflicts) {
       return c.json({
@@ -1008,7 +1008,7 @@ const app = new Hono<AuthEnv>()
       await exec("npm", ["install"], { cwd: worktreeDir });
 
       const variantPort = nextPort();
-      addVariant(agentName, {
+      addVariant(mindName, {
         name: UPGRADE_VARIANT,
         branch: UPGRADE_VARIANT,
         path: worktreeDir,
@@ -1016,18 +1016,18 @@ const app = new Hono<AuthEnv>()
         created: new Date().toISOString(),
       });
 
-      chownAgentDir(dir, agentName);
-      await getAgentManager().startAgent(`${agentName}@${UPGRADE_VARIANT}`);
+      chownMindDir(dir, mindName);
+      await getMindManager().startMind(`${mindName}@${UPGRADE_VARIANT}`);
 
       return c.json({
         ok: true,
-        name: agentName,
+        name: mindName,
         variant: UPGRADE_VARIANT,
         port: variantPort,
       });
     } catch (err) {
       try {
-        removeVariant(agentName, UPGRADE_VARIANT);
+        removeVariant(mindName, UPGRADE_VARIANT);
       } catch {}
       try {
         await gitExec(["worktree", "remove", "--force", worktreeDir], { cwd: dir });
@@ -1036,10 +1036,10 @@ const app = new Hono<AuthEnv>()
         await gitExec(["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
       } catch {}
       try {
-        chownAgentDir(dir, agentName);
+        chownMindDir(dir, mindName);
       } catch (chownErr) {
         console.error(
-          `[daemon] failed to fix ownership during upgrade cleanup for ${agentName}:`,
+          `[daemon] failed to fix ownership during upgrade cleanup for ${mindName}:`,
           chownErr,
         );
       }
@@ -1049,12 +1049,12 @@ const app = new Hono<AuthEnv>()
       );
     }
   })
-  // Proxy message to agent
+  // Proxy message to mind
   .post("/:name/message", async (c) => {
     const name = c.req.param("name");
     const [baseName, variantName] = name.split("@", 2);
 
-    const entry = findAgent(baseName);
+    const entry = findMind(baseName);
     if (!entry) return c.json({ error: "Agent not found" }, 404);
 
     let port = entry.port;
@@ -1064,7 +1064,7 @@ const app = new Hono<AuthEnv>()
       port = variant.port;
     }
 
-    if (!getAgentManager().isRunning(name)) {
+    if (!getMindManager().isRunning(name)) {
       return c.json({ error: "Agent is not running" }, 409);
     }
 
@@ -1084,8 +1084,8 @@ const app = new Hono<AuthEnv>()
       try {
         const sender = (parsed.sender as string) ?? null;
         const content = extractTextContent(parsed.content);
-        await db.insert(agentMessages).values({
-          agent: baseName,
+        await db.insert(mindMessages).values({
+          mind: baseName,
           channel,
           sender,
           content,
@@ -1111,7 +1111,7 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Token budget exceeded — message queued for next period" }, 429);
     }
 
-    // Enrich payload with currently-typing senders (exclude the receiving agent
+    // Enrich payload with currently-typing senders (exclude the receiving mind
     // and the message sender — they just sent a message, so they're not typing)
     const typingMap = getTypingMap();
     const sender = (parsed?.sender as string) ?? "";
@@ -1138,13 +1138,13 @@ const app = new Hono<AuthEnv>()
     }
 
     // Nudge seed agents toward sprouting after extended conversation
-    const seedEntry = findAgent(baseName);
+    const seedEntry = findMind(baseName);
     if (seedEntry?.stage === "seed" && parsed) {
       try {
         const countResult = await db
           .select({ count: sql<number>`count(*)` })
-          .from(agentMessages)
-          .where(eq(agentMessages.agent, baseName));
+          .from(mindMessages)
+          .where(eq(mindMessages.mind, baseName));
         const msgCount = countResult[0]?.count ?? 0;
         if (msgCount >= 10 && msgCount % 10 === 0) {
           const nudge =
@@ -1174,7 +1174,7 @@ const app = new Hono<AuthEnv>()
 
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        console.error(`[daemon] agent ${name} responded with ${res.status}: ${text}`);
+        console.error(`[daemon] mind ${name} responded with ${res.status}: ${text}`);
         return c.json({ error: `Agent responded with ${res.status}` }, res.status as 500);
       }
 
@@ -1182,7 +1182,7 @@ const app = new Hono<AuthEnv>()
       try {
         result = (await res.json()) as typeof result;
       } catch (parseErr) {
-        console.error(`[daemon] agent ${name} returned non-JSON response:`, parseErr);
+        console.error(`[daemon] mind ${name} returned non-JSON response:`, parseErr);
         return c.json({ error: "Agent returned invalid response" }, 502);
       }
 
@@ -1193,7 +1193,7 @@ const app = new Hono<AuthEnv>()
 
       return c.json({ ok: true });
     } catch (err) {
-      console.error(`[daemon] agent ${name} unreachable on port ${port}:`, err);
+      console.error(`[daemon] mind ${name} unreachable on port ${port}:`, err);
       return c.json({ error: "Agent is not reachable" }, 502);
     } finally {
       typingMap.delete(channel, baseName);
@@ -1208,7 +1208,7 @@ const app = new Hono<AuthEnv>()
     if (!usage) return c.json({ error: "No budget configured" }, 404);
     return c.json(usage);
   })
-  // Persist external channel send to agent_messages
+  // Persist external channel send to mind_messages
   .post("/:name/history", async (c) => {
     const name = c.req.param("name");
     const [baseName] = name.split("@", 2);
@@ -1226,8 +1226,8 @@ const app = new Hono<AuthEnv>()
 
     const db = await getDb();
     try {
-      await db.insert(agentMessages).values({
-        agent: baseName,
+      await db.insert(mindMessages).values({
+        mind: baseName,
         channel: body.channel,
         sender: body.sender ?? baseName,
         content: body.content,
@@ -1244,9 +1244,9 @@ const app = new Hono<AuthEnv>()
     const name = c.req.param("name");
     const db = await getDb();
     const rows = await db
-      .selectDistinct({ channel: agentMessages.channel })
-      .from(agentMessages)
-      .where(eq(agentMessages.agent, name));
+      .selectDistinct({ channel: mindMessages.channel })
+      .from(mindMessages)
+      .where(eq(mindMessages.mind, name));
     return c.json(rows.map((r) => r.channel));
   })
   .get("/:name/history", async (c) => {
@@ -1256,16 +1256,16 @@ const app = new Hono<AuthEnv>()
     const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
 
     const db = await getDb();
-    const conditions = [eq(agentMessages.agent, name)];
+    const conditions = [eq(mindMessages.mind, name)];
     if (channel) {
-      conditions.push(eq(agentMessages.channel, channel));
+      conditions.push(eq(mindMessages.channel, channel));
     }
 
     const rows = await db
       .select()
-      .from(agentMessages)
+      .from(mindMessages)
       .where(and(...conditions))
-      .orderBy(desc(agentMessages.created_at))
+      .orderBy(desc(mindMessages.created_at))
       .limit(limit)
       .offset(offset);
 

@@ -5,7 +5,7 @@ import { z } from "zod";
 import {
   approveUser,
   createUser,
-  getOrCreateAgentUser,
+  getOrCreateMindUser,
   getUser,
   getUserByUsername,
   listPendingUsers,
@@ -33,14 +33,14 @@ const admin = new Hono<AuthEnv>()
     const user = c.get("user");
     if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
 
-    // Ensure all registered agents have user records
-    const agents = readRegistry();
-    for (const agent of agents) {
-      await getOrCreateAgentUser(agent.name);
+    // Ensure all registered minds have user records
+    const minds = readRegistry();
+    for (const mind of minds) {
+      await getOrCreateMindUser(mind.name);
     }
 
     const type = c.req.query("type");
-    if (type === "human" || type === "agent") {
+    if (type === "human" || type === "mind") {
       return c.json(await listUsersByType(type));
     }
     return c.json(await listUsers());

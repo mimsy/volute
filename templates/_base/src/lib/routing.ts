@@ -9,7 +9,7 @@ export type BatchConfig = {
 
 export type RoutingRule = {
   session?: string;
-  destination?: "agent" | "file";
+  destination?: "mind" | "file";
   path?: string; // file path for file destination
   channel?: string;
   sender?: string;
@@ -40,7 +40,7 @@ export type RoutingConfig = {
 
 export type ResolvedRoute =
   | {
-      destination: "agent";
+      destination: "mind";
       session: string;
       matched: boolean;
     }
@@ -121,7 +121,7 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
   const fallback = config.default ?? "main";
 
   if (!config.rules) {
-    return { destination: "agent", session: fallback, matched: false };
+    return { destination: "mind", session: fallback, matched: false };
   }
 
   for (const rule of config.rules) {
@@ -134,14 +134,14 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
         return { destination: "file", path: rule.path, matched: true };
       }
       return {
-        destination: "agent",
+        destination: "mind",
         session: sanitizeSessionName(expandTemplate(rule.session ?? fallback, meta)),
         matched: true,
       };
     }
   }
 
-  return { destination: "agent", session: fallback, matched: false };
+  return { destination: "mind", session: fallback, matched: false };
 }
 
 /**

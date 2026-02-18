@@ -28,9 +28,9 @@ async function setupAuth() {
 // Build a test app that mirrors the variants route but uses agent name lookup
 function createApp(agentExists: boolean) {
   const app = new Hono();
-  app.use("/api/agents/*", authMiddleware);
+  app.use("/api/minds/*", authMiddleware);
 
-  app.get("/api/agents/:name/variants", async (c) => {
+  app.get("/api/minds/:name/variants", async (c) => {
     if (!agentExists) return c.json({ error: "Agent not found" }, 404);
 
     const variants = readVariants(testAgent);
@@ -52,7 +52,7 @@ describe("web variants routes", () => {
     const cookie = await setupAuth();
     const app = createApp(false);
 
-    const res = await app.request("/api/agents/nonexistent-agent/variants", {
+    const res = await app.request("/api/minds/nonexistent-agent/variants", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 404);
@@ -62,7 +62,7 @@ describe("web variants routes", () => {
     const cookie = await setupAuth();
     const app = createApp(true);
 
-    const res = await app.request("/api/agents/test-agent/variants", {
+    const res = await app.request("/api/minds/test-agent/variants", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
@@ -73,7 +73,7 @@ describe("web variants routes", () => {
 
   it("GET /:name/variants — requires auth", async () => {
     const app = createApp(false);
-    const res = await app.request("/api/agents/test-agent/variants");
+    const res = await app.request("/api/minds/test-agent/variants");
     assert.equal(res.status, 401);
   });
 });
