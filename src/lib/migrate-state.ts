@@ -1,10 +1,10 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { agentDir, stateDir } from "./registry.js";
+import { mindDir, stateDir } from "./registry.js";
 
-/** Migrate system state files from agent's .volute/ to the centralized state dir. */
-export function migrateAgentState(name: string): void {
-  const src = resolve(agentDir(name), ".volute");
+/** Migrate system state files from mind's .volute/ to the centralized state dir. */
+export function migrateMindState(name: string): void {
+  const src = resolve(mindDir(name), ".volute");
   if (!existsSync(src)) return;
 
   const dest = stateDir(name);

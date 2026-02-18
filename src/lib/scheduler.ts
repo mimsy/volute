@@ -1,13 +1,13 @@
 import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "./json-state.js";
-import { agentDir, daemonLoopback, findAgent, voluteHome } from "./registry.js";
+import { daemonLoopback, findMind, mindDir, voluteHome } from "./registry.js";
 import { readVoluteConfig, type Schedule } from "./volute-config.js";
 
 export class Scheduler {
   private schedules = new Map<string, Schedule[]>();
   private interval: ReturnType<typeof setInterval> | null = null;
-  private lastFired = new Map<string, number>(); // "agent:scheduleId" → epoch minute
+  private lastFired = new Map<string, number>(); // "mind:scheduleId" → epoch minute
   private daemonPort: number | null = null;
   private daemonToken: string | null = null;
 
@@ -38,45 +38,45 @@ export class Scheduler {
     clearJsonMap(this.statePath, this.lastFired);
   }
 
-  loadSchedules(agentName: string): void {
-    const dir = agentDir(agentName);
+  loadSchedules(mindName: string): void {
+    const dir = mindDir(mindName);
     const config = readVoluteConfig(dir);
     if (!config) return; // Config read failed — keep existing schedules
     const schedules = config.schedules ?? [];
     if (schedules.length > 0) {
-      this.schedules.set(agentName, schedules);
+      this.schedules.set(mindName, schedules);
     } else {
-      this.schedules.delete(agentName);
+      this.schedules.delete(mindName);
     }
   }
 
-  unloadSchedules(agentName: string): void {
-    this.schedules.delete(agentName);
+  unloadSchedules(mindName: string): void {
+    this.schedules.delete(mindName);
   }
 
   private tick(): void {
     // Hot-reload schedules from config on every tick
-    for (const agent of this.schedules.keys()) {
-      this.loadSchedules(agent);
+    for (const mind of this.schedules.keys()) {
+      this.loadSchedules(mind);
     }
 
     const now = new Date();
-    for (const [agent, schedules] of this.schedules) {
+    for (const [mind, schedules] of this.schedules) {
       for (const schedule of schedules) {
         if (!schedule.enabled) continue;
-        if (this.shouldFire(schedule, now, agent)) {
-          this.fire(agent, schedule);
+        if (this.shouldFire(schedule, now, mind)) {
+          this.fire(mind, schedule);
         }
       }
     }
   }
 
-  private shouldFire(schedule: Schedule, now: Date, agent: string): boolean {
+  private shouldFire(schedule: Schedule, now: Date, mind: string): boolean {
     try {
       const interval = CronExpressionParser.parse(schedule.cron);
       const prev = interval.prev().toDate();
       const epochMinute = Math.floor(now.getTime() / 60000);
-      const key = `${agent}:${schedule.id}`;
+      const key = `${mind}:${schedule.id}`;
       if (this.lastFired.get(key) === epochMinute) return false;
       const prevMinute = Math.floor(prev.getTime() / 60000);
       if (prevMinute === epochMinute) {
@@ -86,16 +86,13 @@ export class Scheduler {
       }
       return false;
     } catch (err) {
-      console.error(
-        `[scheduler] invalid cron "${schedule.cron}" for ${agent}:${schedule.id}:`,
-        err,
-      );
+      console.error(`[scheduler] invalid cron "${schedule.cron}" for ${mind}:${schedule.id}:`, err);
       return false;
     }
   }
 
-  private async fire(agentName: string, schedule: Schedule): Promise<void> {
-    const entry = findAgent(agentName);
+  private async fire(mindName: string, schedule: Schedule): Promise<void> {
+    const entry = findMind(mindName);
     if (!entry) return;
 
     const body = JSON.stringify({
@@ -110,9 +107,9 @@ export class Scheduler {
     try {
       let res: Response;
       if (this.daemonPort && this.daemonToken) {
-        // Route through daemon so messages are recorded in agent_messages
+        // Route through daemon so messages are recorded in mind_messages
         const daemonUrl = `http://${daemonLoopback()}:${this.daemonPort}`;
-        res = await fetch(`${daemonUrl}/api/agents/${encodeURIComponent(agentName)}/message`, {
+        res = await fetch(`${daemonUrl}/api/minds/${encodeURIComponent(mindName)}/message`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -123,7 +120,7 @@ export class Scheduler {
           signal: controller.signal,
         });
       } else {
-        // Fallback to direct agent fetch
+        // Fallback to direct mind fetch
         res = await fetch(`http://127.0.0.1:${entry.port}/message`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -132,14 +129,14 @@ export class Scheduler {
         });
       }
       if (!res.ok) {
-        console.error(`[scheduler] "${schedule.id}" for ${agentName} got HTTP ${res.status}`);
+        console.error(`[scheduler] "${schedule.id}" for ${mindName} got HTTP ${res.status}`);
       } else {
-        console.error(`[scheduler] fired "${schedule.id}" for ${agentName}`);
+        console.error(`[scheduler] fired "${schedule.id}" for ${mindName}`);
       }
       // Consume response body
       await res.text().catch(() => {});
     } catch (err) {
-      console.error(`[scheduler] failed to fire "${schedule.id}" for ${agentName}:`, err);
+      console.error(`[scheduler] failed to fire "${schedule.id}" for ${mindName}:`, err);
     } finally {
       clearTimeout(timeout);
     }

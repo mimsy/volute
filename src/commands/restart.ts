@@ -1,23 +1,23 @@
 import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
-import { resolveAgent } from "../lib/registry.js";
-import { resolveAgentName } from "../lib/resolve-agent-name.js";
+import { resolveMind } from "../lib/registry.js";
+import { resolveMindName } from "../lib/resolve-mind-name.js";
 
 export async function run(args: string[]) {
-  const name = resolveAgentName({ agent: args[0] });
+  const name = resolveMindName({ mind: args[0] });
 
-  const { entry } = resolveAgent(name);
+  const { entry } = resolveMind(name);
   const client = getClient();
 
   const res = await daemonFetch(
-    urlOf(client.api.agents[":name"].restart.$url({ param: { name } })),
+    urlOf(client.api.minds[":name"].restart.$url({ param: { name } })),
     { method: "POST" },
   );
 
   const data = (await res.json()) as { ok?: boolean; error?: string };
 
   if (!res.ok) {
-    console.error(data.error || "Failed to restart agent");
+    console.error(data.error || "Failed to restart mind");
     process.exit(1);
   }
 

@@ -1,7 +1,7 @@
 import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { resolveAgentName } from "../lib/resolve-agent-name.js";
+import { resolveMindName } from "../lib/resolve-mind-name.js";
 
 export async function run(args: string[]) {
   const subcommand = args[0];
@@ -26,8 +26,8 @@ export async function run(args: string[]) {
 
 function printUsage() {
   console.log(`Usage:
-  volute connector connect <type> [--agent <name>]
-  volute connector disconnect <type> [--agent <name>]`);
+  volute connector connect <type> [--mind <name>]
+  volute connector disconnect <type> [--mind <name>]`);
 }
 
 async function promptValue(key: string, description: string): Promise<string> {
@@ -70,21 +70,21 @@ type MissingEnvResponse = {
 
 async function connectConnector(args: string[]) {
   const { positional, flags } = parseArgs(args, {
-    agent: { type: "string" },
+    mind: { type: "string" },
   });
 
-  const agentName = resolveAgentName(flags);
+  const mindName = resolveMindName(flags);
   const type = positional[0];
 
   if (!type) {
-    console.error("Usage: volute connector connect <type> [--agent <name>]");
+    console.error("Usage: volute connector connect <type> [--mind <name>]");
     process.exit(1);
   }
 
   const client = getClient();
   const connectorUrl = urlOf(
-    client.api.agents[":name"].connectors[":type"].$url({
-      param: { name: agentName, type },
+    client.api.minds[":name"].connectors[":type"].$url({
+      param: { name: mindName, type },
     }),
   );
 
@@ -103,7 +103,7 @@ async function connectConnector(args: string[]) {
         for (const v of missing) {
           console.error(`  ${v.name} — ${v.description}`);
         }
-        console.error(`\nSet them with: volute env set <KEY> --agent ${agentName}`);
+        console.error(`\nSet them with: volute env set <KEY> --mind ${mindName}`);
         process.exit(1);
       }
 
@@ -117,8 +117,8 @@ async function connectConnector(args: string[]) {
         }
         const envRes = await daemonFetch(
           urlOf(
-            client.api.agents[":name"].env[":key"].$url({
-              param: { name: agentName, key: v.name },
+            client.api.minds[":name"].env[":key"].$url({
+              param: { name: mindName, key: v.name },
             }),
           ),
           {
@@ -150,27 +150,27 @@ async function connectConnector(args: string[]) {
     }
   }
 
-  console.log(`${type} connector for ${agentName} started.`);
+  console.log(`${type} connector for ${mindName} started.`);
 }
 
 async function disconnectConnector(args: string[]) {
   const { positional, flags } = parseArgs(args, {
-    agent: { type: "string" },
+    mind: { type: "string" },
   });
 
-  const agentName = resolveAgentName(flags);
+  const mindName = resolveMindName(flags);
   const type = positional[0];
 
   if (!type) {
-    console.error("Usage: volute connector disconnect <type> [--agent <name>]");
+    console.error("Usage: volute connector disconnect <type> [--mind <name>]");
     process.exit(1);
   }
 
   const client = getClient();
   const res = await daemonFetch(
     urlOf(
-      client.api.agents[":name"].connectors[":type"].$url({
-        param: { name: agentName, type },
+      client.api.minds[":name"].connectors[":type"].$url({
+        param: { name: mindName, type },
       }),
     ),
     { method: "DELETE" },
@@ -182,5 +182,5 @@ async function disconnectConnector(args: string[]) {
     process.exit(1);
   }
 
-  console.log(`${type} connector for ${agentName} stopped.`);
+  console.log(`${type} connector for ${mindName} stopped.`);
 }

@@ -179,9 +179,9 @@ export async function createConversation(
   const dm = (await res.json()) as { id: string };
   const slug = `discord:@${slugify(participants[0])}`;
 
-  const agentName = env.VOLUTE_AGENT;
-  if (agentName) {
-    writeChannelEntry(agentName, slug, {
+  const mindName = env.VOLUTE_MIND;
+  if (mindName) {
+    writeChannelEntry(mindName, slug, {
       platformId: dm.id,
       platform: "discord",
       name: participants[0],

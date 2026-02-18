@@ -49,7 +49,7 @@ export async function consumeStream(
       if (session.currentMessageId) {
         session.messageChannels.delete(session.currentMessageId);
       }
-      log("agent", `session "${session.name}": turn done`);
+      log("mind", `session "${session.name}": turn done`);
       const result = msg as { usage?: { input_tokens?: number; output_tokens?: number } };
       if (result.usage) {
         callbacks.broadcast({

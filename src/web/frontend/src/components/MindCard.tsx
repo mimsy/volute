@@ -1,10 +1,10 @@
-import type { Agent } from "../lib/api";
+import type { Mind } from "../lib/api";
 import { StatusBadge } from "./StatusBadge";
 
-export function AgentCard({ agent }: { agent: Agent }) {
+export function MindCard({ mind }: { mind: Mind }) {
   return (
     <a
-      href={`#/agent/${agent.name}`}
+      href={`#/mind/${mind.name}`}
       style={{
         display: "block",
         padding: 20,
@@ -38,9 +38,9 @@ export function AgentCard({ agent }: { agent: Agent }) {
             color: "var(--text-0)",
           }}
         >
-          {agent.name}
+          {mind.name}
         </span>
-        {agent.stage === "seed" && (
+        {mind.stage === "seed" && (
           <span
             style={{
               display: "inline-flex",
@@ -59,7 +59,7 @@ export function AgentCard({ agent }: { agent: Agent }) {
             seed
           </span>
         )}
-        <StatusBadge status={agent.status} />
+        <StatusBadge status={mind.status} />
       </div>
       <div
         style={{
@@ -70,8 +70,8 @@ export function AgentCard({ agent }: { agent: Agent }) {
           fontSize: 12,
         }}
       >
-        <span>:{agent.port}</span>
-        {agent.channels
+        <span>:{mind.port}</span>
+        {mind.channels
           .filter((ch) => ch.name !== "web" && ch.status === "connected")
           .map((ch) => (
             <span

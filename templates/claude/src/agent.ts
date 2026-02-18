@@ -34,7 +34,7 @@ type Session = {
   autoReply: AutoReplyTracker;
 };
 
-export function createAgent(options: {
+export function createMind(options: {
   systemPrompt: string;
   cwd: string;
   abortController: AbortController;
@@ -66,7 +66,7 @@ export function createAgent(options: {
       try {
         listener(tagged);
       } catch (err) {
-        log("agent", "listener threw during broadcast:", err);
+        log("mind", "listener threw during broadcast:", err);
       }
     }
   }
@@ -116,7 +116,7 @@ export function createAgent(options: {
 
   function startSession(session: Session, savedSessionId?: string) {
     (async () => {
-      log("agent", `session "${session.name}": stream consumer started`);
+      log("mind", `session "${session.name}": stream consumer started`);
       const callbacks = {
         onSessionId: (id: string) => {
           if (!session.name.startsWith("new-")) sessionStore.save(session.name, id);
@@ -141,7 +141,7 @@ export function createAgent(options: {
         session.autoReply.reset();
         session.messageChannels.clear();
         if (savedSessionId) {
-          log("agent", `session "${session.name}": resume failed, starting fresh:`, err);
+          log("mind", `session "${session.name}": resume failed, starting fresh:`, err);
           sessionStore.delete(session.name);
           try {
             const q = createStream(session);
@@ -154,17 +154,17 @@ export function createAgent(options: {
               session.currentMessageId = undefined;
             }
           } catch (retryErr) {
-            log("agent", `session "${session.name}": stream consumer error:`, retryErr);
+            log("mind", `session "${session.name}": stream consumer error:`, retryErr);
             broadcastToSession(session, { type: "done" });
             sessions.delete(session.name);
           }
         } else {
-          log("agent", `session "${session.name}": stream consumer error:`, err);
+          log("mind", `session "${session.name}": stream consumer error:`, err);
           broadcastToSession(session, { type: "done" });
           sessions.delete(session.name);
         }
       }
-      log("agent", `session "${session.name}": stream consumer ended`);
+      log("mind", `session "${session.name}": stream consumer ended`);
     })();
   }
 
@@ -186,9 +186,9 @@ export function createAgent(options: {
     const isEphemeral = name.startsWith("new-");
     const savedSessionId = isEphemeral ? undefined : sessionStore.load(name);
     if (savedSessionId) {
-      log("agent", `session "${name}": resuming ${savedSessionId}`);
+      log("mind", `session "${name}": resuming ${savedSessionId}`);
     } else {
-      log("agent", `session "${name}": starting fresh`);
+      log("mind", `session "${name}": starting fresh`);
     }
 
     startSession(session, savedSessionId);
@@ -218,7 +218,7 @@ export function createAgent(options: {
 
         // Interrupt if requested and session is mid-turn
         if (meta.interrupt && session.currentMessageId !== undefined && session.currentQuery) {
-          log("agent", `session "${sessionName}": interrupting current turn`);
+          log("mind", `session "${sessionName}": interrupting current turn`);
           session.currentQuery.interrupt();
         }
 

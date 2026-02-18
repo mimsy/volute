@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { eq } from "drizzle-orm";
-import { getOrCreateAgentUser } from "../src/lib/auth.js";
+import { getOrCreateMindUser } from "../src/lib/auth.js";
 import {
   addMessage,
   addParticipant,
@@ -20,7 +20,7 @@ import { messages, users } from "../src/lib/schema.js";
 
 describe("conversations", () => {
   it("round-trips ContentBlock[] through addMessage/getMessages", async () => {
-    const conv = await createConversation("test-agent", "test");
+    const conv = await createConversation("test-mind", "test");
     try {
       const blocks: ContentBlock[] = [
         { type: "text", text: "Hello" },
@@ -28,7 +28,7 @@ describe("conversations", () => {
         { type: "tool_result", output: "file contents" },
         { type: "text", text: "Here is the file." },
       ];
-      await addMessage(conv.id, "assistant", "test-agent", blocks);
+      await addMessage(conv.id, "assistant", "test-mind", blocks);
 
       const msgs = await getMessages(conv.id);
       assert.equal(msgs.length, 1);
@@ -39,14 +39,14 @@ describe("conversations", () => {
   });
 
   it("reads legacy plain-string messages as [{ type: 'text', text }]", async () => {
-    const conv = await createConversation("test-agent", "test-legacy");
+    const conv = await createConversation("test-mind", "test-legacy");
     try {
       // Manually insert a plain string (simulating legacy data)
       const db = await getDb();
       await db.insert(messages).values({
         conversation_id: conv.id,
         role: "assistant",
-        sender_name: "agent",
+        sender_name: "mind",
         content: "plain text response",
       });
 
@@ -59,7 +59,7 @@ describe("conversations", () => {
   });
 
   it("stores user message and extracts title from first text block", async () => {
-    const conv = await createConversation("test-agent", "test-title");
+    const conv = await createConversation("test-mind", "test-title");
     try {
       const blocks: ContentBlock[] = [
         { type: "image", media_type: "image/png", data: "abc123" },
@@ -77,13 +77,13 @@ describe("conversations", () => {
   });
 
   it("handles tool_result with is_error flag", async () => {
-    const conv = await createConversation("test-agent", "test-error");
+    const conv = await createConversation("test-mind", "test-error");
     try {
       const blocks: ContentBlock[] = [
         { type: "tool_use", name: "bash", input: { command: "exit 1" } },
         { type: "tool_result", output: "command failed", is_error: true },
       ];
-      await addMessage(conv.id, "assistant", "agent", blocks);
+      await addMessage(conv.id, "assistant", "mind", blocks);
 
       const msgs = await getMessages(conv.id);
       assert.equal(msgs.length, 1);
@@ -103,21 +103,21 @@ describe("conversation participants", () => {
   it("creates conversation with participants", async () => {
     const db = await getDb();
     // Create test users
-    const agentUser = await getOrCreateAgentUser("test-agent-p");
+    const mindUser = await getOrCreateMindUser("test-mind-p");
     const [humanUser] = await db
       .insert(users)
       .values({ username: "test-human-p", password_hash: "!test", role: "user" })
       .returning({ id: users.id });
 
     try {
-      const conv = await createConversation("test-agent-p", "volute", {
-        participantIds: [humanUser.id, agentUser.id],
+      const conv = await createConversation("test-mind-p", "volute", {
+        participantIds: [humanUser.id, mindUser.id],
       });
 
       const participants = await getParticipants(conv.id);
       assert.equal(participants.length, 2);
       assert.ok(participants.some((p) => p.username === "test-human-p"));
-      assert.ok(participants.some((p) => p.username === "test-agent-p"));
+      assert.ok(participants.some((p) => p.username === "test-mind-p"));
 
       // First participant gets "owner" role
       const owner = participants.find((p) => p.userId === humanUser.id);
@@ -126,7 +126,7 @@ describe("conversation participants", () => {
       await deleteConversation(conv.id);
     } finally {
       await db.delete(users).where(eq(users.id, humanUser.id));
-      await db.delete(users).where(eq(users.id, agentUser.id));
+      await db.delete(users).where(eq(users.id, mindUser.id));
     }
   });
 
@@ -142,7 +142,7 @@ describe("conversation participants", () => {
       .returning({ id: users.id });
 
     try {
-      const conv = await createConversation("test-agent", "volute");
+      const conv = await createConversation("test-mind", "volute");
 
       // Initially no participants
       assert.equal(await isParticipant(conv.id, user1.id), false);
@@ -176,7 +176,7 @@ describe("conversation participants", () => {
       .returning({ id: users.id });
 
     try {
-      const conv = await createConversation("test-agent", "volute", {
+      const conv = await createConversation("test-mind", "volute", {
         participantIds: [user1.id],
       });
 
@@ -191,59 +191,59 @@ describe("conversation participants", () => {
   });
 
   it("getParticipants returns user_type info", async () => {
-    const agentUser = await getOrCreateAgentUser("agent-type-test");
+    const mindUser = await getOrCreateMindUser("mind-type-test");
     const db = await getDb();
 
     try {
-      const conv = await createConversation("agent-type-test", "volute", {
-        participantIds: [agentUser.id],
+      const conv = await createConversation("mind-type-test", "volute", {
+        participantIds: [mindUser.id],
       });
 
       const participants = await getParticipants(conv.id);
       assert.equal(participants.length, 1);
-      assert.equal(participants[0].userType, "agent");
+      assert.equal(participants[0].userType, "mind");
 
       await deleteConversation(conv.id);
     } finally {
-      await db.delete(users).where(eq(users.id, agentUser.id));
+      await db.delete(users).where(eq(users.id, mindUser.id));
     }
   });
 
   it("findDMConversation finds existing 2-person conversation", async () => {
     const db = await getDb();
-    const agentUser = await getOrCreateAgentUser("dm-test-agent");
+    const mindUser = await getOrCreateMindUser("dm-test-mind");
     const [humanUser] = await db
       .insert(users)
       .values({ username: "dm-test-human", password_hash: "!test", role: "user" })
       .returning({ id: users.id });
 
     try {
-      const conv = await createConversation("dm-test-agent", "volute", {
-        participantIds: [humanUser.id, agentUser.id],
+      const conv = await createConversation("dm-test-mind", "volute", {
+        participantIds: [humanUser.id, mindUser.id],
       });
 
-      const found = await findDMConversation("dm-test-agent", [humanUser.id, agentUser.id]);
+      const found = await findDMConversation("dm-test-mind", [humanUser.id, mindUser.id]);
       assert.equal(found, conv.id);
 
       // Reversed order should also find it
-      const found2 = await findDMConversation("dm-test-agent", [agentUser.id, humanUser.id]);
+      const found2 = await findDMConversation("dm-test-mind", [mindUser.id, humanUser.id]);
       assert.equal(found2, conv.id);
 
       await deleteConversation(conv.id);
     } finally {
       await db.delete(users).where(eq(users.id, humanUser.id));
-      await db.delete(users).where(eq(users.id, agentUser.id));
+      await db.delete(users).where(eq(users.id, mindUser.id));
     }
   });
 
   it("findDMConversation returns null when no match", async () => {
-    const result = await findDMConversation("nonexistent-agent", [999, 998]);
+    const result = await findDMConversation("nonexistent-mind", [999, 998]);
     assert.equal(result, null);
   });
 
   it("findDMConversation ignores 3+ person conversations", async () => {
     const db = await getDb();
-    const agentUser = await getOrCreateAgentUser("dm-skip-agent");
+    const mindUser = await getOrCreateMindUser("dm-skip-mind");
     const [user1] = await db
       .insert(users)
       .values({ username: "dm-skip-1", password_hash: "!test", role: "user" })
@@ -255,19 +255,19 @@ describe("conversation participants", () => {
 
     try {
       // Create a 3-person conversation
-      const conv = await createConversation("dm-skip-agent", "volute", {
-        participantIds: [user1.id, agentUser.id, user2.id],
+      const conv = await createConversation("dm-skip-mind", "volute", {
+        participantIds: [user1.id, mindUser.id, user2.id],
       });
 
-      // Should not find it as a DM between user1 and agent
-      const found = await findDMConversation("dm-skip-agent", [user1.id, agentUser.id]);
+      // Should not find it as a DM between user1 and mind
+      const found = await findDMConversation("dm-skip-mind", [user1.id, mindUser.id]);
       assert.equal(found, null);
 
       await deleteConversation(conv.id);
     } finally {
       await db.delete(users).where(eq(users.id, user1.id));
       await db.delete(users).where(eq(users.id, user2.id));
-      await db.delete(users).where(eq(users.id, agentUser.id));
+      await db.delete(users).where(eq(users.id, mindUser.id));
     }
   });
 });

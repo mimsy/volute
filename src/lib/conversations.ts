@@ -12,7 +12,7 @@ export type ContentBlock =
 
 export type Conversation = {
   id: string;
-  agent_name: string;
+  mind_name: string;
   channel: string;
   user_id: number | null;
   title: string | null;
@@ -23,7 +23,7 @@ export type Conversation = {
 export type Participant = {
   userId: number;
   username: string;
-  userType: "human" | "agent";
+  userType: "human" | "mind";
   role: "owner" | "member";
 };
 
@@ -37,7 +37,7 @@ export type Message = {
 };
 
 export async function createConversation(
-  agentName: string,
+  mindName: string,
   channel: string,
   opts?: { userId?: number; title?: string; participantIds?: number[] },
 ): Promise<Conversation> {
@@ -47,7 +47,7 @@ export async function createConversation(
   await db.transaction(async (tx) => {
     await tx.insert(conversations).values({
       id,
-      agent_name: agentName,
+      mind_name: mindName,
       channel,
       user_id: opts?.userId ?? null,
       title: opts?.title ?? null,
@@ -67,7 +67,7 @@ export async function createConversation(
 
   return {
     id,
-    agent_name: agentName,
+    mind_name: mindName,
     channel,
     user_id: opts?.userId ?? null,
     title: opts?.title ?? null,
@@ -77,7 +77,7 @@ export async function createConversation(
 }
 
 export async function getOrCreateConversation(
-  agentName: string,
+  mindName: string,
   channel: string,
   opts?: { userId?: number },
 ): Promise<Conversation> {
@@ -85,13 +85,13 @@ export async function getOrCreateConversation(
   const existing = await db
     .select()
     .from(conversations)
-    .where(and(eq(conversations.agent_name, agentName), eq(conversations.channel, channel)))
+    .where(and(eq(conversations.mind_name, mindName), eq(conversations.channel, channel)))
     .orderBy(desc(conversations.updated_at))
     .limit(1)
     .get();
 
   if (existing) return existing as Conversation;
-  return createConversation(agentName, channel, opts);
+  return createConversation(mindName, channel, opts);
 }
 
 export async function getConversation(id: string): Promise<Conversation | null> {
@@ -306,7 +306,7 @@ export async function listConversationsWithParticipants(
     arr.push({
       userId: r.userId,
       username: r.username,
-      userType: r.userType as "human" | "agent",
+      userType: r.userType as "human" | "mind",
       role: r.role as "owner" | "member",
     });
   }
@@ -359,18 +359,18 @@ export async function listConversationsWithParticipants(
 }
 
 export async function findDMConversation(
-  agentName: string,
+  mindName: string,
   participantIds: [number, number],
 ): Promise<string | null> {
   const db = await getDb();
-  // Find conversations for this agent with exactly these two participants
-  const agentConvs = await db
+  // Find conversations for this mind with exactly these two participants
+  const mindConvs = await db
     .select({ id: conversations.id })
     .from(conversations)
-    .where(eq(conversations.agent_name, agentName))
+    .where(eq(conversations.mind_name, mindName))
     .all();
 
-  for (const conv of agentConvs) {
+  for (const conv of mindConvs) {
     const rows = await db
       .select({ user_id: conversationParticipants.user_id })
       .from(conversationParticipants)

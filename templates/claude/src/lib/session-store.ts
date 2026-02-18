@@ -20,7 +20,7 @@ export function createSessionStore(sessionsDir: string): SessionStore {
         return typeof data.sessionId === "string" ? data.sessionId : undefined;
       } catch (err: any) {
         if (err?.code !== "ENOENT") {
-          log("agent", `failed to load session file for "${name}":`, err);
+          log("mind", `failed to load session file for "${name}":`, err);
         }
         return undefined;
       }
@@ -36,7 +36,7 @@ export function createSessionStore(sessionsDir: string): SessionStore {
         const path = filePath(name);
         if (existsSync(path)) unlinkSync(path);
       } catch (err) {
-        log("agent", `failed to delete session file for "${name}":`, err);
+        log("mind", `failed to delete session file for "${name}":`, err);
       }
     },
   };

@@ -111,7 +111,7 @@ export function composeTemplate(
 export function copyTemplateToDir(
   composedDir: string,
   destDir: string,
-  agentName: string,
+  mindName: string,
   manifest: TemplateManifest,
 ) {
   cpSync(composedDir, destDir, { recursive: true });
@@ -129,14 +129,14 @@ export function copyTemplateToDir(
     const path = resolve(destDir, file);
     if (existsSync(path)) {
       const content = readFileSync(path, "utf-8");
-      writeFileSync(path, content.replaceAll("{{name}}", agentName));
+      writeFileSync(path, content.replaceAll("{{name}}", mindName));
     }
   }
 }
 
 /**
  * Copy .init/ files into home/ and remove .init/.
- * Called during agent creation (not during upgrades).
+ * Called during mind creation (not during upgrades).
  */
 export function applyInitFiles(destDir: string) {
   const initDir = resolve(destDir, ".init");

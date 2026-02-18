@@ -46,18 +46,18 @@ function setupTestDir() {
 
 /**
  * Build a test app that mirrors the pages route but uses our test directory.
- * This avoids needing a real agent registry.
+ * This avoids needing a real mind registry.
  */
-function createApp(agentBaseDir: string) {
+function createApp(mindBaseDir: string) {
   const app = new Hono();
 
   app.get("/pages/:name/*", async (c) => {
     const name = c.req.param("name");
 
-    // Simulate agent check — we only recognize "test-agent"
-    if (name !== "test-agent") return c.text("Not found", 404);
+    // Simulate mind check — we only recognize "test-mind"
+    if (name !== "test-mind") return c.text("Not found", 404);
 
-    const pagesRoot = resolve(agentBaseDir, "home", "pages");
+    const pagesRoot = resolve(mindBaseDir, "home", "pages");
     const wildcard = c.req.path.replace(`/pages/${name}`, "") || "/";
     const requestedPath = resolve(pagesRoot, wildcard.slice(1));
 
@@ -99,7 +99,7 @@ describe("web pages routes", () => {
     const dir = setupTestDir();
     const app = createApp(dir);
 
-    const res = await app.request("/pages/test-agent/index.html");
+    const res = await app.request("/pages/test-mind/index.html");
     assert.equal(res.status, 200);
     assert.equal(res.headers.get("content-type"), "text/html");
     const body = await res.text();
@@ -110,7 +110,7 @@ describe("web pages routes", () => {
     const dir = setupTestDir();
     const app = createApp(dir);
 
-    const res = await app.request("/pages/test-agent/style.css");
+    const res = await app.request("/pages/test-mind/style.css");
     assert.equal(res.status, 200);
     assert.equal(res.headers.get("content-type"), "text/css");
     const body = await res.text();
@@ -121,7 +121,7 @@ describe("web pages routes", () => {
     const dir = setupTestDir();
     const app = createApp(dir);
 
-    const res = await app.request("/pages/test-agent/app.js");
+    const res = await app.request("/pages/test-mind/app.js");
     assert.equal(res.status, 200);
     assert.equal(res.headers.get("content-type"), "application/javascript");
   });
@@ -130,7 +130,7 @@ describe("web pages routes", () => {
     const dir = setupTestDir();
     const app = createApp(dir);
 
-    const res = await app.request("/pages/test-agent/about/");
+    const res = await app.request("/pages/test-mind/about/");
     assert.equal(res.status, 200);
     assert.equal(res.headers.get("content-type"), "text/html");
     const body = await res.text();
@@ -141,7 +141,7 @@ describe("web pages routes", () => {
     const dir = setupTestDir();
     const app = createApp(dir);
 
-    const res = await app.request("/pages/test-agent/");
+    const res = await app.request("/pages/test-mind/");
     assert.equal(res.status, 200);
     assert.equal(res.headers.get("content-type"), "text/html");
     const body = await res.text();
@@ -154,7 +154,7 @@ describe("web pages routes", () => {
 
     // Hono normalizes `../` out of the URL before routing, so the request
     // either doesn't match the route or resolves to a non-existent file
-    const res = await app.request("/pages/test-agent/../../../etc/passwd");
+    const res = await app.request("/pages/test-mind/../../../etc/passwd");
     assert.ok(res.status === 403 || res.status === 404);
   });
 
@@ -162,7 +162,7 @@ describe("web pages routes", () => {
     const dir = setupTestDir();
     const app = createApp(dir);
 
-    const res = await app.request("/pages/test-agent/../SOUL.md");
+    const res = await app.request("/pages/test-mind/../SOUL.md");
     assert.ok(res.status === 403 || res.status === 404);
   });
 
@@ -179,11 +179,11 @@ describe("web pages routes", () => {
     const dir = setupTestDir();
     const app = createApp(dir);
 
-    const res = await app.request("/pages/test-agent/missing.html");
+    const res = await app.request("/pages/test-mind/missing.html");
     assert.equal(res.status, 404);
   });
 
-  it("returns 404 for unknown agent", async () => {
+  it("returns 404 for unknown mind", async () => {
     const dir = setupTestDir();
     const app = createApp(dir);
 
@@ -196,7 +196,7 @@ describe("web pages routes", () => {
     const app = createApp(dir);
 
     // No Cookie header — should still work
-    const res = await app.request("/pages/test-agent/index.html");
+    const res = await app.request("/pages/test-mind/index.html");
     assert.equal(res.status, 200);
   });
 });

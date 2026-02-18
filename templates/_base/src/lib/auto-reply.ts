@@ -21,7 +21,7 @@ export function createAutoReplyTracker(
     const info = currentMessageId ? messageChannels.get(currentMessageId) : undefined;
     if (info?.autoReply && info.channel) {
       daemonSend(info.channel, text).catch((err) => {
-        log("agent", `auto-reply to ${info.channel} failed: ${err}`);
+        log("mind", `auto-reply to ${info.channel} failed: ${err}`);
       });
     }
   }

@@ -1,19 +1,19 @@
 import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { resolveAgentName } from "../lib/resolve-agent-name.js";
+import { resolveMindName } from "../lib/resolve-mind-name.js";
 
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
-    agent: { type: "string" },
+    mind: { type: "string" },
     channel: { type: "string" },
     limit: { type: "string" },
   });
 
-  const name = resolveAgentName(flags);
+  const name = resolveMindName(flags);
   const client = getClient();
 
-  const url = client.api.agents[":name"].history.$url({ param: { name } });
+  const url = client.api.minds[":name"].history.$url({ param: { name } });
   if (flags.channel) url.searchParams.set("channel", flags.channel);
   if (flags.limit) url.searchParams.set("limit", flags.limit);
 

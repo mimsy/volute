@@ -149,7 +149,7 @@ export function ConversationList({
       </div>
       {showGroupModal && (
         <GroupModal
-          agentName={name}
+          mindName={name}
           onClose={() => setShowGroupModal(false)}
           onCreated={handleGroupCreated}
         />
@@ -159,11 +159,11 @@ export function ConversationList({
 }
 
 function GroupModal({
-  agentName,
+  mindName,
   onClose,
   onCreated,
 }: {
-  agentName: string;
+  mindName: string;
   onClose: () => void;
   onCreated: (conv: Conversation) => void;
 }) {
@@ -176,11 +176,11 @@ function GroupModal({
   useEffect(() => {
     fetchAvailableUsers()
       .then((all) => {
-        // Filter out the current agent (they're auto-added) and show the rest
-        setUsers(all.filter((u) => u.username !== agentName));
+        // Filter out the current mind (they're auto-added) and show the rest
+        setUsers(all.filter((u) => u.username !== mindName));
       })
       .catch(() => setError("Failed to load users"));
-  }, [agentName]);
+  }, [mindName]);
 
   const toggle = (id: number) => {
     setSelected((prev) => {
@@ -195,7 +195,7 @@ function GroupModal({
     setLoading(true);
     setError("");
     try {
-      const conv = await createGroupConversation(agentName, [...selected], title || undefined);
+      const conv = await createGroupConversation(mindName, [...selected], title || undefined);
       onCreated(conv);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to create");
@@ -250,7 +250,7 @@ function GroupModal({
         />
 
         <div style={{ color: "var(--text-2)", fontSize: 11 }}>
-          Select participants (agent "{agentName}" auto-included):
+          Select participants (mind "{mindName}" auto-included):
         </div>
 
         <div style={{ flex: 1, overflow: "auto", maxHeight: 200 }}>

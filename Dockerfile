@@ -1,6 +1,6 @@
 FROM node:24-slim
 
-# git needed for agent git init + variants
+# git needed for mind git init + variants
 RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/* \
     && git config --system user.name "Volute" \
@@ -14,11 +14,11 @@ COPY drizzle/ drizzle/
 COPY templates/ templates/
 
 ENV VOLUTE_HOME=/data
-ENV VOLUTE_AGENTS_DIR=/agents
+ENV VOLUTE_MINDS_DIR=/minds
 ENV VOLUTE_ISOLATION=user
 EXPOSE 4200
 VOLUME /data
-VOLUME /agents
+VOLUME /minds
 
 COPY docker/entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]

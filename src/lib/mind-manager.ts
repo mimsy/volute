@@ -3,29 +3,29 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { loadMergedEnv } from "./env.js";
-import { chownAgentDir, isIsolationEnabled, wrapForIsolation } from "./isolation.js";
+import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "./isolation.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "./json-state.js";
-import { agentDir, findAgent, setAgentRunning, stateDir, voluteHome } from "./registry.js";
+import { findMind, mindDir, setMindRunning, stateDir, voluteHome } from "./registry.js";
 import { RotatingLog } from "./rotating-log.js";
 import { findVariant, setVariantRunning } from "./variants.js";
 
 const execFileAsync = promisify(execFile);
 
-type TrackedAgent = {
+type TrackedMind = {
   child: ChildProcess;
   port: number;
 };
 
-function agentPidPath(name: string): string {
-  return resolve(stateDir(name), "agent.pid");
+function mindPidPath(name: string): string {
+  return resolve(stateDir(name), "mind.pid");
 }
 
 const MAX_RESTART_ATTEMPTS = 5;
 const BASE_RESTART_DELAY = 3000;
 const MAX_RESTART_DELAY = 60000;
 
-export class AgentManager {
-  private agents = new Map<string, TrackedAgent>();
+export class MindManager {
+  private minds = new Map<string, TrackedMind>();
   private stopping = new Set<string>();
   private shuttingDown = false;
   private restartAttempts = new Map<string, number>();
@@ -40,23 +40,23 @@ export class AgentManager {
   } {
     const [baseName, variantName] = name.split("@", 2);
 
-    const entry = findAgent(baseName);
-    if (!entry) throw new Error(`Unknown agent: ${baseName}`);
+    const entry = findMind(baseName);
+    if (!entry) throw new Error(`Unknown mind: ${baseName}`);
 
     if (variantName) {
       const variant = findVariant(baseName, variantName);
-      if (!variant) throw new Error(`Unknown variant: ${variantName} (agent: ${baseName})`);
+      if (!variant) throw new Error(`Unknown variant: ${variantName} (mind: ${baseName})`);
       return { dir: variant.path, port: variant.port, isVariant: true, baseName, variantName };
     }
 
-    const dir = agentDir(baseName);
-    if (!existsSync(dir)) throw new Error(`Agent directory missing: ${dir}`);
+    const dir = mindDir(baseName);
+    if (!existsSync(dir)) throw new Error(`Mind directory missing: ${dir}`);
     return { dir, port: entry.port, isVariant: false, baseName };
   }
 
-  async startAgent(name: string): Promise<void> {
-    if (this.agents.has(name)) {
-      throw new Error(`Agent ${name} is already running`);
+  async startMind(name: string): Promise<void> {
+    if (this.minds.has(name)) {
+      throw new Error(`Mind ${name} is already running`);
     }
 
     const target = this.resolveTarget(name);
@@ -64,22 +64,22 @@ export class AgentManager {
     const port = target.port;
 
     // Kill any orphan process from a previous daemon session
-    const pidFile = agentPidPath(name);
+    const pidFile = mindPidPath(name);
     try {
       if (existsSync(pidFile)) {
         const stalePid = parseInt(readFileSync(pidFile, "utf-8").trim(), 10);
         if (stalePid > 0) {
           try {
             process.kill(stalePid, 0); // check if alive
-            // Verify this is actually an agent process before killing the group
+            // Verify this is actually a mind process before killing the group
             const { stdout } = await execFileAsync("ps", ["-p", String(stalePid), "-o", "args="]);
             if (stdout.includes("server.ts")) {
-              console.error(`[daemon] killing stale agent process ${stalePid} for ${name}`);
+              console.error(`[daemon] killing stale mind process ${stalePid} for ${name}`);
               process.kill(-stalePid, "SIGTERM");
               await new Promise((r) => setTimeout(r, 500));
             } else {
               console.error(
-                `[daemon] stale PID ${stalePid} for ${name} is not an agent process, skipping`,
+                `[daemon] stale PID ${stalePid} for ${name} is not a mind process, skipping`,
               );
             }
           } catch (err: unknown) {
@@ -105,30 +105,32 @@ export class AgentManager {
       // Port not in use — good
     }
 
-    const agentStateDir = stateDir(name);
-    const logsDir = resolve(agentStateDir, "logs");
+    const mindStateDir = stateDir(name);
+    const logsDir = resolve(mindStateDir, "logs");
     mkdirSync(logsDir, { recursive: true });
 
-    // State dir is created by root — chown so the agent user can write channels.json, etc.
+    // State dir is created by root — chown so the mind user can write channels.json, etc.
     if (isIsolationEnabled()) {
       try {
-        chownAgentDir(agentStateDir, baseName);
+        chownMindDir(mindStateDir, baseName);
       } catch (err) {
         throw new Error(
-          `Cannot start agent ${name}: failed to set ownership on state directory ${agentStateDir}: ${err instanceof Error ? err.message : err}`,
+          `Cannot start mind ${name}: failed to set ownership on state directory ${mindStateDir}: ${err instanceof Error ? err.message : err}`,
         );
       }
     }
 
-    const logStream = new RotatingLog(resolve(logsDir, "agent.log"));
-    const agentEnv = loadMergedEnv(name);
+    const logStream = new RotatingLog(resolve(logsDir, "mind.log"));
+    const mindEnv = loadMergedEnv(name);
     const env: Record<string, string | undefined> = {
       ...process.env,
-      ...agentEnv,
-      VOLUTE_AGENT: name,
+      ...mindEnv,
+      VOLUTE_MIND: name,
       VOLUTE_STATE_DIR: stateDir(name),
-      VOLUTE_AGENT_DIR: dir,
-      VOLUTE_AGENT_PORT: String(port),
+      VOLUTE_MIND_DIR: dir,
+      VOLUTE_MIND_PORT: String(port),
+      // Strip CLAUDECODE so the Agent SDK can spawn Claude Code subprocesses
+      CLAUDECODE: undefined,
     };
 
     if (isIsolationEnabled()) {
@@ -148,7 +150,7 @@ export class AgentManager {
 
     const child = spawn(spawnCmd, spawnArgs, spawnOpts);
 
-    this.agents.set(name, { child, port });
+    this.minds.set(name, { child, port });
 
     // Pipe output to log file and check for listening
     child.stdout?.pipe(logStream);
@@ -158,7 +160,7 @@ export class AgentManager {
     try {
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
-          reject(new Error(`Agent ${name} did not start within 30s`));
+          reject(new Error(`Mind ${name} did not start within 30s`));
         }, 30000);
 
         function checkOutput(data: Buffer) {
@@ -178,11 +180,11 @@ export class AgentManager {
 
         child.on("exit", (code) => {
           clearTimeout(timeout);
-          reject(new Error(`Agent ${name} exited with code ${code} during startup`));
+          reject(new Error(`Mind ${name} exited with code ${code} during startup`));
         });
       });
     } catch (err) {
-      this.agents.delete(name);
+      this.minds.delete(name);
       try {
         child.kill();
       } catch {}
@@ -204,12 +206,12 @@ export class AgentManager {
     if (isVariant) {
       setVariantRunning(baseName, variantName!, true);
     } else {
-      setAgentRunning(name, true);
+      setMindRunning(name, true);
     }
 
-    console.error(`[daemon] started agent ${name} on port ${port}`);
+    console.error(`[daemon] started mind ${name} on port ${port}`);
 
-    // Deliver any pending context (e.g. merge info) to the agent via HTTP
+    // Deliver any pending context (e.g. merge info) to the mind via HTTP
     await this.deliverPendingContext(name);
   }
 
@@ -221,7 +223,7 @@ export class AgentManager {
     const context = this.pendingContext.get(name);
     if (!context) return;
 
-    const tracked = this.agents.get(name);
+    const tracked = this.minds.get(name);
     if (!tracked) return;
 
     this.pendingContext.delete(name);
@@ -231,7 +233,7 @@ export class AgentManager {
       parts.push(`[system] Variant "${context.name}" has been merged and you have been restarted.`);
     } else if (context.type === "sprouted") {
       parts.push(
-        "[system] You've sprouted. You now have full agent capabilities — connectors, schedules, variants, and the complete volute CLI. Check your new skills for details.",
+        "[system] You've sprouted. You now have full capabilities — connectors, schedules, variants, and the complete volute CLI. Check your new skills for details.",
       );
     } else {
       parts.push("[system] You have been restarted.");
@@ -256,10 +258,10 @@ export class AgentManager {
 
   private setupCrashRecovery(name: string, child: ChildProcess): void {
     child.on("exit", async (code) => {
-      this.agents.delete(name);
+      this.minds.delete(name);
       if (this.shuttingDown || this.stopping.has(name)) return;
 
-      console.error(`[daemon] agent ${name} exited with code ${code}`);
+      console.error(`[daemon] mind ${name} exited with code ${code}`);
 
       const attempts = this.restartAttempts.get(name) ?? 0;
       if (attempts >= MAX_RESTART_ATTEMPTS) {
@@ -268,7 +270,7 @@ export class AgentManager {
         if (variant) {
           setVariantRunning(base, variant, false);
         } else {
-          setAgentRunning(name, false);
+          setMindRunning(name, false);
         }
         return;
       }
@@ -280,20 +282,20 @@ export class AgentManager {
       );
       setTimeout(() => {
         if (this.shuttingDown) return;
-        this.startAgent(name).catch((err) => {
+        this.startMind(name).catch((err) => {
           console.error(`[daemon] failed to restart ${name}:`, err);
         });
       }, delay);
     });
   }
 
-  async stopAgent(name: string): Promise<void> {
-    const tracked = this.agents.get(name);
+  async stopMind(name: string): Promise<void> {
+    const tracked = this.minds.get(name);
     if (!tracked) return;
 
     this.stopping.add(name);
     const { child } = tracked;
-    this.agents.delete(name);
+    this.minds.delete(name);
 
     await new Promise<void>((resolve) => {
       child.on("exit", () => resolve());
@@ -314,37 +316,37 @@ export class AgentManager {
 
     this.stopping.delete(name);
     if (this.restartAttempts.delete(name)) this.saveCrashAttempts();
-    rmSync(agentPidPath(name), { force: true });
+    rmSync(mindPidPath(name), { force: true });
 
     if (!this.shuttingDown) {
       const [baseName, variantName] = name.split("@", 2);
       if (variantName) {
         setVariantRunning(baseName, variantName, false);
       } else {
-        setAgentRunning(name, false);
+        setMindRunning(name, false);
       }
     }
 
-    console.error(`[daemon] stopped agent ${name}`);
+    console.error(`[daemon] stopped mind ${name}`);
   }
 
-  async restartAgent(name: string): Promise<void> {
-    await this.stopAgent(name);
-    await this.startAgent(name);
+  async restartMind(name: string): Promise<void> {
+    await this.stopMind(name);
+    await this.startMind(name);
   }
 
   async stopAll(): Promise<void> {
     this.shuttingDown = true;
-    const names = [...this.agents.keys()];
-    await Promise.all(names.map((name) => this.stopAgent(name)));
+    const names = [...this.minds.keys()];
+    await Promise.all(names.map((name) => this.stopMind(name)));
   }
 
   isRunning(name: string): boolean {
-    return this.agents.has(name);
+    return this.minds.has(name);
   }
 
-  getRunningAgents(): string[] {
-    return [...this.agents.keys()];
+  getRunningMinds(): string[] {
+    return [...this.minds.keys()];
   }
 
   private get crashAttemptsPath(): string {
@@ -391,15 +393,15 @@ async function killProcessOnPort(port: number): Promise<void> {
   }
 }
 
-let instance: AgentManager | null = null;
+let instance: MindManager | null = null;
 
-export function initAgentManager(): AgentManager {
-  if (instance) throw new Error("AgentManager already initialized");
-  instance = new AgentManager();
+export function initMindManager(): MindManager {
+  if (instance) throw new Error("MindManager already initialized");
+  instance = new MindManager();
   return instance;
 }
 
-export function getAgentManager(): AgentManager {
-  if (!instance) instance = new AgentManager();
+export function getMindManager(): MindManager {
+  if (!instance) instance = new MindManager();
   return instance;
 }

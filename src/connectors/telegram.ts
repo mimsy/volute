@@ -1,12 +1,12 @@
 import { Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
 import {
-  type AgentPayload,
   buildChannelSlug,
   type ContentPart,
   loadEnv,
   loadFollowedChannels,
-  sendToAgent,
+  type MindPayload,
+  sendToMind,
   writeChannelEntry,
 } from "./sdk.js";
 
@@ -75,7 +75,7 @@ bot.on(message("text"), async (ctx) => {
       });
 
   try {
-    writeChannelEntry(env.agentName, channelSlug, {
+    writeChannelEntry(env.mindName, channelSlug, {
       platformId: String(ctx.chat.id),
       platform: "telegram",
       name: chatTitle,
@@ -85,7 +85,7 @@ bot.on(message("text"), async (ctx) => {
     console.error(`[telegram] failed to write channel entry for ${channelSlug}:`, err);
   }
 
-  const payload: AgentPayload = {
+  const payload: MindPayload = {
     content,
     channel: channelSlug,
     sender: senderName,
@@ -96,7 +96,7 @@ bot.on(message("text"), async (ctx) => {
   };
 
   if (isFollowedChat && !isMentioned) {
-    const result = await sendToAgent(env, payload);
+    const result = await sendToMind(env, payload);
     if (!result.ok)
       ctx.reply(result.error ?? "Failed to process message").catch((err) => {
         console.warn(`[telegram] failed to send error reply: ${err}`);
@@ -165,7 +165,7 @@ bot.on(message("photo"), async (ctx) => {
       });
 
   try {
-    writeChannelEntry(env.agentName, channelSlug, {
+    writeChannelEntry(env.mindName, channelSlug, {
       platformId: String(ctx.chat.id),
       platform: "telegram",
       name: chatTitle,
@@ -175,7 +175,7 @@ bot.on(message("photo"), async (ctx) => {
     console.error(`[telegram] failed to write channel entry for ${channelSlug}:`, err);
   }
 
-  const payload: AgentPayload = {
+  const payload: MindPayload = {
     content,
     channel: channelSlug,
     sender: senderName,
@@ -186,7 +186,7 @@ bot.on(message("photo"), async (ctx) => {
   };
 
   if (isFollowedChat) {
-    const result = await sendToAgent(env, payload);
+    const result = await sendToMind(env, payload);
     if (!result.ok)
       ctx.reply(result.error ?? "Failed to process message").catch((err) => {
         console.warn(`[telegram] failed to send error reply: ${err}`);
@@ -199,7 +199,7 @@ bot.on(message("photo"), async (ctx) => {
 
 async function handleTelegramMessage(
   ctx: { chat: { id: number }; reply: (text: string) => Promise<unknown> },
-  payload: AgentPayload,
+  payload: MindPayload,
 ) {
   const chatId = ctx.chat.id;
   const typingInterval = setInterval(() => {
@@ -208,7 +208,7 @@ async function handleTelegramMessage(
   bot.telegram.sendChatAction(chatId, "typing").catch(() => {});
 
   try {
-    const result = await sendToAgent(env, payload);
+    const result = await sendToMind(env, payload);
     if (!result.ok)
       ctx.reply(result.error ?? "Failed to process message").catch((err) => {
         console.warn(`[telegram] failed to send error reply: ${err}`);
@@ -222,7 +222,7 @@ bot
   .launch()
   .then(() => {
     console.log(`Connected to Telegram as @${bot.botInfo?.username}`);
-    console.log(`Bridging to agent: ${env.agentName} via ${env.baseUrl}/message`);
+    console.log(`Bridging to mind: ${env.mindName} via ${env.baseUrl}/message`);
     if (followedChatIds.length > 0) {
       console.log(`Following chats: ${followedChatIds.join(", ")}`);
     }

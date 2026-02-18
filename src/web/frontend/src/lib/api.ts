@@ -12,19 +12,19 @@ export type Channel = {
   connectedAt?: string;
 };
 
-export type Agent = {
+export type Mind = {
   name: string;
   port: number;
   created: string;
   status: "running" | "stopped" | "starting";
-  stage?: "seed" | "mind";
+  stage?: "seed" | "sprouted";
   channels: Channel[];
   hasPages?: boolean;
   lastActiveAt?: string | null;
 };
 
 export type RecentPage = {
-  agent: string;
+  mind: string;
   file: string;
   modified: string;
   url: string;
@@ -48,28 +48,28 @@ export type FileContent = {
   content: string;
 };
 
-export async function fetchAgents(): Promise<Agent[]> {
-  const res = await client.api.agents.$get();
-  if (!res.ok) throw new Error("Failed to fetch agents");
+export async function fetchMinds(): Promise<Mind[]> {
+  const res = await client.api.minds.$get();
+  if (!res.ok) throw new Error("Failed to fetch minds");
   return res.json();
 }
 
-export async function fetchAgent(name: string): Promise<Agent> {
-  const res = await client.api.agents[":name"].$get({ param: { name } });
-  if (!res.ok) throw new Error("Failed to fetch agent");
+export async function fetchMind(name: string): Promise<Mind> {
+  const res = await client.api.minds[":name"].$get({ param: { name } });
+  if (!res.ok) throw new Error("Failed to fetch mind");
   return res.json();
 }
 
-export async function startAgent(name: string): Promise<void> {
-  const res = await client.api.agents[":name"].start.$post({ param: { name } });
+export async function startMind(name: string): Promise<void> {
+  const res = await client.api.minds[":name"].start.$post({ param: { name } });
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
     throw new Error(data.error || "Failed to start");
   }
 }
 
-export async function stopAgent(name: string): Promise<void> {
-  const res = await client.api.agents[":name"].stop.$post({ param: { name } });
+export async function stopMind(name: string): Promise<void> {
+  const res = await client.api.minds[":name"].stop.$post({ param: { name } });
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
     throw new Error(data.error || "Failed to stop");
@@ -77,19 +77,19 @@ export async function stopAgent(name: string): Promise<void> {
 }
 
 export async function fetchVariants(name: string): Promise<Variant[]> {
-  const res = await client.api.agents[":name"].variants.$get({ param: { name } });
+  const res = await client.api.minds[":name"].variants.$get({ param: { name } });
   if (!res.ok) throw new Error("Failed to fetch variants");
   return res.json();
 }
 
 export async function fetchFiles(name: string): Promise<string[]> {
-  const res = await client.api.agents[":name"].files.$get({ param: { name } });
+  const res = await client.api.minds[":name"].files.$get({ param: { name } });
   if (!res.ok) throw new Error("Failed to fetch files");
   return res.json();
 }
 
 export async function fetchFile(name: string, filename: string): Promise<FileContent> {
-  const res = await client.api.agents[":name"].files[":filename"].$get({
+  const res = await client.api.minds[":name"].files[":filename"].$get({
     param: { name, filename },
   });
   if (!res.ok) throw new Error("Failed to fetch file");
@@ -105,7 +105,7 @@ export type Participant = {
 
 export type Conversation = {
   id: string;
-  agent_name: string;
+  mind_name: string;
   channel: string;
   user_id: number | null;
   title: string | null;
@@ -130,7 +130,7 @@ export type ConversationMessage = {
 };
 
 export async function fetchConversations(name: string): Promise<Conversation[]> {
-  const res = await client.api.agents[":name"].conversations.$get({ param: { name } });
+  const res = await client.api.minds[":name"].conversations.$get({ param: { name } });
   if (!res.ok) throw new Error("Failed to fetch conversations");
   return res.json();
 }
@@ -139,7 +139,7 @@ export async function fetchConversationMessages(
   name: string,
   conversationId: string,
 ): Promise<ConversationMessage[]> {
-  const res = await client.api.agents[":name"].conversations[":id"].messages.$get({
+  const res = await client.api.minds[":name"].conversations[":id"].messages.$get({
     param: { name, id: conversationId },
   });
   if (!res.ok) throw new Error("Failed to fetch messages");
@@ -148,7 +148,7 @@ export async function fetchConversationMessages(
 
 export type HistoryMessage = {
   id: number;
-  agent: string;
+  mind: string;
   channel: string;
   sender: string | null;
   content: string;
@@ -164,19 +164,19 @@ export async function fetchHistory(
   if (opts?.limit) params.set("limit", String(opts.limit));
   if (opts?.offset) params.set("offset", String(opts.offset));
   const qs = params.toString();
-  const res = await fetch(`/api/agents/${encodeURIComponent(name)}/history${qs ? `?${qs}` : ""}`);
+  const res = await fetch(`/api/minds/${encodeURIComponent(name)}/history${qs ? `?${qs}` : ""}`);
   if (!res.ok) throw new Error("Failed to fetch history");
   return res.json();
 }
 
 export async function fetchHistoryChannels(name: string): Promise<string[]> {
-  const res = await fetch(`/api/agents/${encodeURIComponent(name)}/history/channels`);
+  const res = await fetch(`/api/minds/${encodeURIComponent(name)}/history/channels`);
   if (!res.ok) throw new Error("Failed to fetch channels");
   return res.json();
 }
 
 export async function deleteConversation(name: string, conversationId: string): Promise<void> {
-  const res = await client.api.agents[":name"].conversations[":id"].$delete({
+  const res = await client.api.minds[":name"].conversations[":id"].$delete({
     param: { name, id: conversationId },
   });
   if (!res.ok) throw new Error("Failed to delete conversation");
@@ -187,7 +187,7 @@ export async function createGroupConversation(
   participantIds: number[],
   title?: string,
 ): Promise<Conversation> {
-  const res = await client.api.agents[":name"].conversations.$post({
+  const res = await client.api.minds[":name"].conversations.$post({
     param: { name },
     json: { participantIds, title },
   });
@@ -219,7 +219,7 @@ export type LastMessageSummary = {
   createdAt: string;
 };
 
-// User-scoped conversation endpoints (not agent-scoped)
+// User-scoped conversation endpoints (not mind-scoped)
 export async function fetchAllConversations(): Promise<
   (Conversation & { participants: Participant[]; lastMessage?: LastMessageSummary })[]
 > {
@@ -260,38 +260,38 @@ export async function createConversationWithParticipants(
 }
 
 export async function fetchRecentPages(): Promise<RecentPage[]> {
-  const res = await client.api.agents.pages.recent.$get();
+  const res = await client.api.minds.pages.recent.$get();
   if (!res.ok) throw new Error("Failed to fetch recent pages");
   return res.json();
 }
 
 export function reportTyping(
-  agentName: string,
+  mindName: string,
   channel: string,
   sender: string,
   active: boolean,
 ): void {
-  fetch(`/api/agents/${encodeURIComponent(agentName)}/typing`, {
+  fetch(`/api/minds/${encodeURIComponent(mindName)}/typing`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ channel, sender, active }),
   }).catch(() => {});
 }
 
-export async function fetchTyping(agentName: string, channel: string): Promise<string[]> {
+export async function fetchTyping(mindName: string, channel: string): Promise<string[]> {
   const res = await fetch(
-    `/api/agents/${encodeURIComponent(agentName)}/typing?channel=${encodeURIComponent(channel)}`,
+    `/api/minds/${encodeURIComponent(mindName)}/typing?channel=${encodeURIComponent(channel)}`,
   );
   if (!res.ok) throw new Error(`Failed to fetch typing (${res.status})`);
   const data = (await res.json()) as { typing: string[] };
   return data.typing;
 }
 
-export async function createSeedAgent(
+export async function createSeedMind(
   name: string,
   opts?: { description?: string; template?: string; model?: string },
 ): Promise<{ name: string; port: number }> {
-  const res = await client.api.agents.$post({
+  const res = await client.api.minds.$post({
     json: {
       name,
       stage: "seed" as const,
@@ -302,7 +302,7 @@ export async function createSeedAgent(
   });
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
-    throw new Error(data.error || "Failed to create agent");
+    throw new Error(data.error || "Failed to create mind");
   }
   return res.json() as Promise<{ name: string; port: number }>;
 }

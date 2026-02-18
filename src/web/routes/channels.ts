@@ -2,17 +2,17 @@ import { Hono } from "hono";
 import { writeChannelEntry } from "../../connectors/sdk.js";
 import { CHANNELS, getChannelDriver } from "../../lib/channels.js";
 import { loadMergedEnv } from "../../lib/env.js";
-import { agentDir, findAgent } from "../../lib/registry.js";
+import { findMind, mindDir } from "../../lib/registry.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 function buildEnv(name: string): Record<string, string> {
-  return { ...loadMergedEnv(name), VOLUTE_AGENT: name, VOLUTE_AGENT_DIR: agentDir(name) };
+  return { ...loadMergedEnv(name), VOLUTE_MIND: name, VOLUTE_MIND_DIR: mindDir(name) };
 }
 
 const app = new Hono<AuthEnv>()
   .post("/:name/channels/send", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
+    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
 
     const { platform, uri, message } = await c.req.json<{
       platform: string;
@@ -32,7 +32,7 @@ const app = new Hono<AuthEnv>()
   })
   .get("/:name/channels/read", async (c) => {
     const name = c.req.param("name");
-    if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
+    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
 
     const platform = c.req.query("platform");
     const uri = c.req.query("uri");
@@ -53,7 +53,7 @@ const app = new Hono<AuthEnv>()
   })
   .get("/:name/channels/list", async (c) => {
     const name = c.req.param("name");
-    if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
+    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
 
     const platform = c.req.query("platform");
     const platforms = platform ? [platform] : Object.keys(CHANNELS);
@@ -84,7 +84,7 @@ const app = new Hono<AuthEnv>()
   })
   .get("/:name/channels/users", async (c) => {
     const name = c.req.param("name");
-    if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
+    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
 
     const platform = c.req.query("platform");
     if (!platform) return c.json({ error: "platform required" }, 400);
@@ -103,7 +103,7 @@ const app = new Hono<AuthEnv>()
   })
   .post("/:name/channels/create", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
+    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
 
     const {
       platform,

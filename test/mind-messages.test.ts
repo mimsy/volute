@@ -2,62 +2,62 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../src/lib/db.js";
-import { agentMessages } from "../src/lib/schema.js";
+import { mindMessages } from "../src/lib/schema.js";
 
-describe("agent_messages", () => {
+describe("mind_messages", () => {
   async function cleanup() {
     const db = await getDb();
-    await db.delete(agentMessages);
+    await db.delete(mindMessages);
   }
 
   it("inserts and retrieves messages", async () => {
     await cleanup();
     try {
       const db = await getDb();
-      await db.insert(agentMessages).values({
-        agent: "test-agent",
+      await db.insert(mindMessages).values({
+        mind: "test-mind",
         channel: "volute:test-conv",
         sender: "alice",
-        content: "Hello agent",
+        content: "Hello mind",
       });
-      await db.insert(agentMessages).values({
-        agent: "test-agent",
+      await db.insert(mindMessages).values({
+        mind: "test-mind",
         channel: "volute:test-conv",
-        sender: "test-agent",
+        sender: "test-mind",
         content: "Hello alice!",
       });
 
       const rows = await db
         .select()
-        .from(agentMessages)
-        .where(eq(agentMessages.agent, "test-agent"))
-        .orderBy(agentMessages.id);
+        .from(mindMessages)
+        .where(eq(mindMessages.mind, "test-mind"))
+        .orderBy(mindMessages.id);
 
       assert.equal(rows.length, 2);
       assert.equal(rows[0].sender, "alice");
-      assert.equal(rows[0].content, "Hello agent");
-      assert.equal(rows[1].sender, "test-agent");
+      assert.equal(rows[0].content, "Hello mind");
+      assert.equal(rows[1].sender, "test-mind");
       assert.equal(rows[1].content, "Hello alice!");
     } finally {
       await cleanup();
     }
   });
 
-  it("queries by agent name", async () => {
+  it("queries by mind name", async () => {
     await cleanup();
     try {
       const db = await getDb();
-      await db.insert(agentMessages).values([
-        { agent: "agent-a", channel: "volute:test-conv", sender: "alice", content: "msg1" },
-        { agent: "agent-b", channel: "volute:test-conv", sender: "bob", content: "msg2" },
-        { agent: "agent-a", channel: "volute:test-conv", sender: "agent-a", content: "msg3" },
+      await db.insert(mindMessages).values([
+        { mind: "mind-a", channel: "volute:test-conv", sender: "alice", content: "msg1" },
+        { mind: "mind-b", channel: "volute:test-conv", sender: "bob", content: "msg2" },
+        { mind: "mind-a", channel: "volute:test-conv", sender: "mind-a", content: "msg3" },
       ]);
 
       const rows = await db
         .select()
-        .from(agentMessages)
-        .where(eq(agentMessages.agent, "agent-a"))
-        .orderBy(agentMessages.id);
+        .from(mindMessages)
+        .where(eq(mindMessages.mind, "mind-a"))
+        .orderBy(mindMessages.id);
 
       assert.equal(rows.length, 2);
       assert.equal(rows[0].content, "msg1");
@@ -71,21 +71,21 @@ describe("agent_messages", () => {
     await cleanup();
     try {
       const db = await getDb();
-      await db.insert(agentMessages).values([
-        { agent: "agent-a", channel: "volute:test-conv", sender: "alice", content: "web-msg" },
-        { agent: "agent-a", channel: "discord", sender: "bob", content: "discord-msg" },
+      await db.insert(mindMessages).values([
+        { mind: "mind-a", channel: "volute:test-conv", sender: "alice", content: "web-msg" },
+        { mind: "mind-a", channel: "discord", sender: "bob", content: "discord-msg" },
         {
-          agent: "agent-a",
+          mind: "mind-a",
           channel: "volute:test-conv",
-          sender: "agent-a",
+          sender: "mind-a",
           content: "web-reply",
         },
       ]);
 
       const rows = await db
         .select()
-        .from(agentMessages)
-        .where(and(eq(agentMessages.agent, "agent-a"), eq(agentMessages.channel, "discord")));
+        .from(mindMessages)
+        .where(and(eq(mindMessages.mind, "mind-a"), eq(mindMessages.channel, "discord")));
 
       assert.equal(rows.length, 1);
       assert.equal(rows[0].content, "discord-msg");
@@ -100,8 +100,8 @@ describe("agent_messages", () => {
       const db = await getDb();
       // Insert 5 messages
       for (let i = 1; i <= 5; i++) {
-        await db.insert(agentMessages).values({
-          agent: "agent-page",
+        await db.insert(mindMessages).values({
+          mind: "mind-page",
           channel: "volute:test-conv",
           sender: "alice",
           content: `msg-${i}`,
@@ -111,9 +111,9 @@ describe("agent_messages", () => {
       // Get first page (limit 2)
       const page1 = await db
         .select()
-        .from(agentMessages)
-        .where(eq(agentMessages.agent, "agent-page"))
-        .orderBy(desc(agentMessages.created_at))
+        .from(mindMessages)
+        .where(eq(mindMessages.mind, "mind-page"))
+        .orderBy(desc(mindMessages.created_at))
         .limit(2)
         .offset(0);
 
@@ -122,9 +122,9 @@ describe("agent_messages", () => {
       // Get second page (limit 2, offset 2)
       const page2 = await db
         .select()
-        .from(agentMessages)
-        .where(eq(agentMessages.agent, "agent-page"))
-        .orderBy(desc(agentMessages.created_at))
+        .from(mindMessages)
+        .where(eq(mindMessages.mind, "mind-page"))
+        .orderBy(desc(mindMessages.created_at))
         .limit(2)
         .offset(2);
 
@@ -133,9 +133,9 @@ describe("agent_messages", () => {
       // Get third page (limit 2, offset 4) — only 1 remaining
       const page3 = await db
         .select()
-        .from(agentMessages)
-        .where(eq(agentMessages.agent, "agent-page"))
-        .orderBy(desc(agentMessages.created_at))
+        .from(mindMessages)
+        .where(eq(mindMessages.mind, "mind-page"))
+        .orderBy(desc(mindMessages.created_at))
         .limit(2)
         .offset(4);
 

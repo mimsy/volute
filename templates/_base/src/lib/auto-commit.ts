@@ -14,7 +14,7 @@ function exec(cmd: string, args: string[], cwd: string): Promise<{ code: number;
 let pending = Promise.resolve();
 
 /**
- * Commit a file change in the agent's home directory.
+ * Commit a file change in the mind's home directory.
  * Called by the PostToolUse hook when Edit or Write completes.
  */
 export function commitFileChange(filePath: string, cwd: string): void {

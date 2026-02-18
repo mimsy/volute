@@ -11,10 +11,10 @@ import {
   resolveSessionConfig,
 } from "../templates/_base/src/lib/routing.js";
 
-/** Asserts route is agent-destined and returns the narrowed type. */
-function expectAgent(route: ResolvedRoute) {
-  assert.equal(route.destination, "agent");
-  return route as Extract<ResolvedRoute, { destination: "agent" }>;
+/** Asserts route is mind-destined and returns the narrowed type. */
+function expectMind(route: ResolvedRoute) {
+  assert.equal(route.destination, "mind");
+  return route as Extract<ResolvedRoute, { destination: "mind" }>;
 }
 
 describe("loadRoutingConfig", () => {
@@ -58,22 +58,22 @@ describe("loadRoutingConfig", () => {
 describe("resolveRoute", () => {
   // --- Basic routing ---
 
-  it("returns agent destination with default session when no config", () => {
-    const r = expectAgent(resolveRoute({}, { channel: "web" }));
+  it("returns mind destination with default session when no config", () => {
+    const r = expectMind(resolveRoute({}, { channel: "web" }));
     assert.equal(r.session, "main");
   });
 
   it("returns 'main' when config has no rules or default", () => {
-    const r = expectAgent(resolveRoute({}, { channel: "web" }));
+    const r = expectMind(resolveRoute({}, { channel: "web" }));
     assert.equal(r.session, "main");
   });
 
-  it("returns agent destination for rules without destination field", () => {
+  it("returns mind destination for rules without destination field", () => {
     const config: RoutingConfig = {
       rules: [{ channel: "discord:*", session: "discord" }],
       default: "main",
     };
-    const r = expectAgent(resolveRoute(config, { channel: "discord:123" }));
+    const r = expectMind(resolveRoute(config, { channel: "discord:123" }));
     assert.equal(r.session, "discord");
   });
 
@@ -92,7 +92,7 @@ describe("resolveRoute", () => {
       rules: [{ channel: "discord:*", session: "discord" }],
       default: "fallback",
     };
-    const r = expectAgent(resolveRoute(config, { channel: "web" }));
+    const r = expectMind(resolveRoute(config, { channel: "web" }));
     assert.equal(r.session, "fallback");
   });
 
@@ -103,7 +103,7 @@ describe("resolveRoute", () => {
       rules: [{ channel: "web", session: "web-session" }],
       default: "main",
     };
-    assert.equal(expectAgent(resolveRoute(config, { channel: "web" })).session, "web-session");
+    assert.equal(expectMind(resolveRoute(config, { channel: "web" })).session, "web-session");
   });
 
   it("matches exact sender", () => {
@@ -112,11 +112,11 @@ describe("resolveRoute", () => {
       default: "main",
     };
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "web", sender: "alice" })).session,
+      expectMind(resolveRoute(config, { channel: "web", sender: "alice" })).session,
       "alice",
     );
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "web", sender: "bob" })).session,
+      expectMind(resolveRoute(config, { channel: "web", sender: "bob" })).session,
       "main",
     );
   });
@@ -126,11 +126,8 @@ describe("resolveRoute", () => {
       rules: [{ channel: "discord:*", session: "discord" }],
       default: "main",
     };
-    assert.equal(
-      expectAgent(resolveRoute(config, { channel: "discord:12345" })).session,
-      "discord",
-    );
-    assert.equal(expectAgent(resolveRoute(config, { channel: "web" })).session, "main");
+    assert.equal(expectMind(resolveRoute(config, { channel: "discord:12345" })).session, "discord");
+    assert.equal(expectMind(resolveRoute(config, { channel: "web" })).session, "main");
   });
 
   it("matches multiple criteria (AND)", () => {
@@ -139,15 +136,15 @@ describe("resolveRoute", () => {
       default: "main",
     };
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "web", sender: "alice" })).session,
+      expectMind(resolveRoute(config, { channel: "web", sender: "alice" })).session,
       "alice-web",
     );
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "web", sender: "bob" })).session,
+      expectMind(resolveRoute(config, { channel: "web", sender: "bob" })).session,
       "main",
     );
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "cli", sender: "alice" })).session,
+      expectMind(resolveRoute(config, { channel: "cli", sender: "alice" })).session,
       "main",
     );
   });
@@ -161,11 +158,11 @@ describe("resolveRoute", () => {
       default: "main",
     };
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "web", sender: "alice" })).session,
+      expectMind(resolveRoute(config, { channel: "web", sender: "alice" })).session,
       "alice-special",
     );
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "web", sender: "bob" })).session,
+      expectMind(resolveRoute(config, { channel: "web", sender: "bob" })).session,
       "web-default",
     );
   });
@@ -176,10 +173,10 @@ describe("resolveRoute", () => {
       default: "main",
     };
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "web", sender: "alice" })).session,
+      expectMind(resolveRoute(config, { channel: "web", sender: "alice" })).session,
       "catch-all",
     );
-    assert.equal(expectAgent(resolveRoute(config, {})).session, "catch-all");
+    assert.equal(expectMind(resolveRoute(config, {})).session, "catch-all");
   });
 
   it("ignores unknown rule keys (no match)", () => {
@@ -188,7 +185,7 @@ describe("resolveRoute", () => {
       default: "main",
     } as unknown as RoutingConfig;
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "web", sender: "alice" })).session,
+      expectMind(resolveRoute(config, { channel: "web", sender: "alice" })).session,
       "main",
     );
   });
@@ -203,11 +200,11 @@ describe("resolveRoute", () => {
       default: "main",
     };
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "discord:123", sender: "alice" })).session,
+      expectMind(resolveRoute(config, { channel: "discord:123", sender: "alice" })).session,
       "discord-alice",
     );
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "discord:123", sender: "bob" })).session,
+      expectMind(resolveRoute(config, { channel: "discord:123", sender: "bob" })).session,
       "discord-bob",
     );
   });
@@ -220,7 +217,7 @@ describe("resolveRoute", () => {
       default: "main",
     };
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "discord:12345" })).session,
+      expectMind(resolveRoute(config, { channel: "discord:12345" })).session,
       "chan-discord:12345",
     );
   });
@@ -231,7 +228,7 @@ describe("resolveRoute", () => {
       rules: [{ channel: "web", session: "user-${sender}" }],
       default: "main",
     };
-    assert.equal(expectAgent(resolveRoute(config, { channel: "web" })).session, "user-unknown");
+    assert.equal(expectMind(resolveRoute(config, { channel: "web" })).session, "user-unknown");
   });
 
   it("returns $new literally (server handles generation)", () => {
@@ -240,7 +237,7 @@ describe("resolveRoute", () => {
       default: "main",
     };
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "system:scheduler", sender: "cleanup" })).session,
+      expectMind(resolveRoute(config, { channel: "system:scheduler", sender: "cleanup" })).session,
       "$new",
     );
   });
@@ -256,16 +253,16 @@ describe("resolveRoute", () => {
       default: "main",
     };
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "system:scheduler", sender: "daily-report" }))
+      expectMind(resolveRoute(config, { channel: "system:scheduler", sender: "daily-report" }))
         .session,
       "daily-report",
     );
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "system:scheduler", sender: "cleanup" })).session,
+      expectMind(resolveRoute(config, { channel: "system:scheduler", sender: "cleanup" })).session,
       "$new",
     );
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "system:scheduler", sender: "other" })).session,
+      expectMind(resolveRoute(config, { channel: "system:scheduler", sender: "other" })).session,
       "main",
     );
   });
@@ -289,7 +286,7 @@ describe("resolveRoute", () => {
     assert.equal(botRoute.destination, "file");
     assert.equal(botRoute.path, "home/inbox/bots.md");
 
-    const humanRoute = expectAgent(
+    const humanRoute = expectMind(
       resolveRoute(config, { channel: "discord:123", sender: "alice" }),
     );
     assert.equal(humanRoute.session, "discord");
@@ -303,7 +300,7 @@ describe("resolveRoute", () => {
       rules: [{ channel: "discord:*", session: "discord-${sender}" }],
       default: "main",
     };
-    const r = expectAgent(
+    const r = expectMind(
       resolveRoute(config, { channel: "discord:123", sender: "../../etc/passwd" }),
     );
     assert.ok(!r.session.includes("/"), `session name should not contain /: ${r.session}`);
@@ -316,7 +313,7 @@ describe("resolveRoute", () => {
       rules: [{ sender: "alice", session: "chan-${channel}" }],
       default: "main",
     };
-    const r = expectAgent(resolveRoute(config, { channel: "../../home/SOUL", sender: "alice" }));
+    const r = expectMind(resolveRoute(config, { channel: "../../home/SOUL", sender: "alice" }));
     assert.ok(!r.session.includes("/"), `session name should not contain /: ${r.session}`);
     assert.ok(!r.session.includes(".."), `session name should not contain ..: ${r.session}`);
   });
@@ -327,7 +324,7 @@ describe("resolveRoute", () => {
       rules: [{ channel: "*", session: "s-${sender}" }],
       default: "main",
     };
-    const r = expectAgent(resolveRoute(config, { channel: "web", sender: "..\\..\\etc\\passwd" }));
+    const r = expectMind(resolveRoute(config, { channel: "web", sender: "..\\..\\etc\\passwd" }));
     assert.ok(!r.session.includes("\\"), `session name should not contain \\: ${r.session}`);
     assert.ok(!r.session.includes(".."), `session name should not contain ..: ${r.session}`);
   });
@@ -340,14 +337,14 @@ describe("resolveRoute", () => {
       default: "main",
     };
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "volute:abc", isDM: true })).session,
+      expectMind(resolveRoute(config, { channel: "volute:abc", isDM: true })).session,
       "dm",
     );
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "volute:abc", isDM: false })).session,
+      expectMind(resolveRoute(config, { channel: "volute:abc", isDM: false })).session,
       "main",
     );
-    assert.equal(expectAgent(resolveRoute(config, { channel: "volute:abc" })).session, "main");
+    assert.equal(expectMind(resolveRoute(config, { channel: "volute:abc" })).session, "main");
   });
 
   it("matches isDM: false", () => {
@@ -356,13 +353,13 @@ describe("resolveRoute", () => {
       default: "main",
     };
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "volute:abc", isDM: false })).session,
+      expectMind(resolveRoute(config, { channel: "volute:abc", isDM: false })).session,
       "group",
     );
     // isDM undefined treated as false
-    assert.equal(expectAgent(resolveRoute(config, { channel: "volute:abc" })).session, "group");
+    assert.equal(expectMind(resolveRoute(config, { channel: "volute:abc" })).session, "group");
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "volute:abc", isDM: true })).session,
+      expectMind(resolveRoute(config, { channel: "volute:abc", isDM: true })).session,
       "main",
     );
   });
@@ -375,14 +372,14 @@ describe("resolveRoute", () => {
       default: "main",
     };
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "volute:abc", participantCount: 2 })).session,
+      expectMind(resolveRoute(config, { channel: "volute:abc", participantCount: 2 })).session,
       "one-on-one",
     );
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "volute:abc", participantCount: 5 })).session,
+      expectMind(resolveRoute(config, { channel: "volute:abc", participantCount: 5 })).session,
       "main",
     );
-    assert.equal(expectAgent(resolveRoute(config, { channel: "volute:abc" })).session, "main");
+    assert.equal(expectMind(resolveRoute(config, { channel: "volute:abc" })).session, "main");
   });
 
   it("combines isDM with channel for routing", () => {
@@ -394,11 +391,11 @@ describe("resolveRoute", () => {
       default: "main",
     };
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "volute:abc", isDM: true })).session,
+      expectMind(resolveRoute(config, { channel: "volute:abc", isDM: true })).session,
       "volute-dm",
     );
     assert.equal(
-      expectAgent(resolveRoute(config, { channel: "volute:abc", isDM: false })).session,
+      expectMind(resolveRoute(config, { channel: "volute:abc", isDM: false })).session,
       "volute-group",
     );
   });

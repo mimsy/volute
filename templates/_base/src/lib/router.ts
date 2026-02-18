@@ -151,7 +151,7 @@ function formatInviteNotification(
 
 export function createRouter(options: {
   configPath?: string;
-  agentHandler: HandlerResolver;
+  mindHandler: HandlerResolver;
   fileHandler?: HandlerResolver;
 }): Router {
   const batchBuffers = new Map<string, BatchBuffer>();
@@ -209,7 +209,7 @@ export function createRouter(options: {
     content = prependInstructions(content, sessionConfig.instructions);
 
     const messageId = generateMessageId();
-    const handler = options.agentHandler(buffer.sessionName);
+    const handler = options.mindHandler(buffer.sessionName);
 
     // Batch flushes are fire-and-forget — no HTTP response is waiting, so listener is a noop
     try {
@@ -292,7 +292,7 @@ export function createRouter(options: {
         pendingChannels.add(channelKey);
         const notification = formatInviteNotification(meta, filePath, text);
         const notifContent: VoluteContentPart[] = [{ type: "text", text: notification }];
-        const handler = options.agentHandler("main");
+        const handler = options.mindHandler("main");
         handler.handle(
           notifContent,
           {
@@ -327,7 +327,7 @@ export function createRouter(options: {
       return { messageId, unsubscribe: noop };
     }
 
-    // Agent destination
+    // Mind destination
     let sessionName = resolved.session;
     if (sessionName === "$new") {
       sessionName = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -374,11 +374,11 @@ export function createRouter(options: {
       return { messageId, unsubscribe: noop };
     }
 
-    // Direct dispatch to agent
+    // Direct dispatch to mind
     const formatted = applyPrefix(content, { ...meta, sessionName });
     const withTyping = appendTypingSuffix(formatted, meta.typing);
     const withInstructions = prependInstructions(withTyping, sessionConfig.instructions);
-    const handler = options.agentHandler(sessionName);
+    const handler = options.mindHandler(sessionName);
     const unsubscribe = handler.handle(
       withInstructions,
       {

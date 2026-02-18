@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createSeedAgent, startAgent } from "../lib/api";
+import { createSeedMind, startMind } from "../lib/api";
 
 const inputStyle = {
   background: "var(--bg-2)",
@@ -21,7 +21,7 @@ export function SeedModal({
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [template, setTemplate] = useState("agent-sdk");
+  const [template, setTemplate] = useState("claude");
   const [model, setModel] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -37,12 +37,12 @@ export function SeedModal({
     setLoading(true);
     setError("");
     try {
-      await createSeedAgent(trimmed, {
+      await createSeedMind(trimmed, {
         description: description.trim() || undefined,
         template,
         model: model.trim() || undefined,
       });
-      await startAgent(trimmed);
+      await startMind(trimmed);
       onCreated(trimmed);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to create");
@@ -95,7 +95,7 @@ export function SeedModal({
           <input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="A curious agent who loves poetry..."
+            placeholder="A curious mind who loves poetry..."
             onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
             style={inputStyle}
           />
@@ -108,7 +108,7 @@ export function SeedModal({
             onChange={(e) => setTemplate(e.target.value)}
             style={{ ...inputStyle, appearance: "auto" }}
           >
-            <option value="agent-sdk">agent-sdk</option>
+            <option value="claude">claude</option>
             <option value="pi">pi</option>
           </select>
         </label>

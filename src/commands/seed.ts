@@ -15,13 +15,13 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  const template = flags.template ?? "agent-sdk";
+  const template = flags.template ?? "claude";
   const { daemonFetch } = await import("../lib/daemon-client.js");
   const { getClient, urlOf } = await import("../lib/api-client.js");
   const client = getClient();
 
-  // Create agent as seed
-  const createRes = await daemonFetch(urlOf(client.api.agents.$url()), {
+  // Create mind as seed
+  const createRes = await daemonFetch(urlOf(client.api.minds.$url()), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -41,26 +41,26 @@ export async function run(args: string[]) {
   };
 
   if (!createRes.ok) {
-    console.error(createData.error ?? "Failed to create agent");
+    console.error(createData.error ?? "Failed to create mind");
     process.exit(1);
   }
 
-  // Start the agent
+  // Start the mind
   const startRes = await daemonFetch(
-    urlOf(client.api.agents[":name"].start.$url({ param: { name } })),
+    urlOf(client.api.minds[":name"].start.$url({ param: { name } })),
     { method: "POST" },
   );
 
   if (!startRes.ok) {
     const startData = (await startRes.json()) as { error?: string };
-    console.error(startData.error ?? "Failed to start agent");
+    console.error(startData.error ?? "Failed to start mind");
     process.exit(1);
   }
 
   // Send initial orientation message
   const initialMessage =
     "You've just been created. A human planted you as a seed. Start a conversation with them — introduce yourself, ask questions, and begin exploring who you want to be.";
-  await daemonFetch(urlOf(client.api.agents[":name"].message.$url({ param: { name } })), {
+  await daemonFetch(urlOf(client.api.minds[":name"].message.$url({ param: { name } })), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -70,7 +70,7 @@ export async function run(args: string[]) {
     }),
   });
 
-  console.log(`\nSeeded agent: ${name} (port ${createData.port})`);
-  console.log(`\nTalk to your new agent:`);
+  console.log(`\nSeeded mind: ${name} (port ${createData.port})`);
+  console.log(`\nTalk to your new mind:`);
   console.log(`  volute send @${name} "hello"`);
 }

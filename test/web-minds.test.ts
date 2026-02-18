@@ -16,7 +16,7 @@ async function cleanup() {
 }
 
 async function setupAuth(): Promise<string> {
-  const user = await createUser("testagent-admin", "pass");
+  const user = await createUser("testmind-admin", "pass");
   sessionId = await createSession(user.id);
   return sessionId;
 }
@@ -29,15 +29,15 @@ function postHeaders(cookie: string) {
   };
 }
 
-describe("web agents routes", () => {
+describe("web minds routes", () => {
   beforeEach(cleanup);
   afterEach(cleanup);
 
-  it("GET / — lists agents from registry", async () => {
+  it("GET / — lists minds from registry", async () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request("/api/agents", {
+    const res = await app.request("/api/minds", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
@@ -45,11 +45,11 @@ describe("web agents routes", () => {
     assert.ok(Array.isArray(body));
   });
 
-  it("GET /:name — 404 for missing agent", async () => {
+  it("GET /:name — 404 for missing mind", async () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request("/api/agents/nonexistent-agent-xyz", {
+    const res = await app.request("/api/minds/nonexistent-mind-xyz", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 404);
@@ -57,22 +57,22 @@ describe("web agents routes", () => {
     assert.ok(body.error);
   });
 
-  it("POST /:name/start — 404 for missing agent", async () => {
+  it("POST /:name/start — 404 for missing mind", async () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request("http://localhost/api/agents/nonexistent-agent-xyz/start", {
+    const res = await app.request("http://localhost/api/minds/nonexistent-mind-xyz/start", {
       method: "POST",
       headers: postHeaders(cookie),
     });
     assert.equal(res.status, 404);
   });
 
-  it("POST /:name/stop — 404 for missing agent", async () => {
+  it("POST /:name/stop — 404 for missing mind", async () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request("http://localhost/api/agents/nonexistent-agent-xyz/stop", {
+    const res = await app.request("http://localhost/api/minds/nonexistent-mind-xyz/stop", {
       method: "POST",
       headers: postHeaders(cookie),
     });
@@ -82,7 +82,7 @@ describe("web agents routes", () => {
   it("GET / — requires auth (401 without cookie)", async () => {
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request("/api/agents");
+    const res = await app.request("/api/minds");
     assert.equal(res.status, 401);
   });
 
@@ -92,7 +92,7 @@ describe("web agents routes", () => {
     process.env.VOLUTE_DAEMON_TOKEN = token;
     try {
       const { default: app } = await import("../src/web/app.js");
-      const res = await app.request("/api/agents", {
+      const res = await app.request("/api/minds", {
         headers: { Authorization: `Bearer ${token}` },
       });
       assert.equal(res.status, 200);
@@ -112,7 +112,7 @@ describe("web agents routes", () => {
     process.env.VOLUTE_DAEMON_TOKEN = "real-token";
     try {
       const { default: app } = await import("../src/web/app.js");
-      const res = await app.request("/api/agents", {
+      const res = await app.request("/api/minds", {
         headers: { Authorization: "Bearer wrong-token" },
       });
       assert.equal(res.status, 401);
@@ -128,7 +128,7 @@ describe("web agents routes", () => {
   it("POST /:name/start — blocked by CSRF without origin", async () => {
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request("/api/agents/test/start", {
+    const res = await app.request("/api/minds/test/start", {
       method: "POST",
     });
     // CSRF middleware rejects POSTs without matching origin
@@ -145,7 +145,7 @@ describe("web agents routes", () => {
 
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request("http://localhost/api/agents/nonexistent/start", {
+    const res = await app.request("http://localhost/api/minds/nonexistent/start", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie2}`,
@@ -159,7 +159,7 @@ describe("web agents routes", () => {
     await deleteSession(cookie2);
   });
 
-  it("GET / — non-admin user can still list agents", async () => {
+  it("GET / — non-admin user can still list minds", async () => {
     await setupAuth();
     const user2 = await createUser("regular-user2", "pass");
     await approveUser(user2.id);
@@ -167,7 +167,7 @@ describe("web agents routes", () => {
 
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request("/api/agents", {
+    const res = await app.request("/api/minds", {
       headers: { Cookie: `volute_session=${cookie2}` },
     });
     assert.equal(res.status, 200);

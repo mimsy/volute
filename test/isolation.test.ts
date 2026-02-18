@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { agentUserName, isIsolationEnabled, wrapForIsolation } from "../src/lib/isolation.js";
+import { isIsolationEnabled, mindUserName, wrapForIsolation } from "../src/lib/isolation.js";
 
 describe("isolation", () => {
   const originalEnv = process.env.VOLUTE_ISOLATION;
@@ -34,9 +34,9 @@ describe("isolation", () => {
     assert.equal(isIsolationEnabled(), true);
   });
 
-  it("agentUserName prefixes with agent-", () => {
-    assert.equal(agentUserName("alice"), "agent-alice");
-    assert.equal(agentUserName("my-agent_1"), "agent-my-agent_1");
+  it("mindUserName prefixes with mind-", () => {
+    assert.equal(mindUserName("alice"), "mind-alice");
+    assert.equal(mindUserName("my-mind_1"), "mind-my-mind_1");
   });
 
   it("wrapForIsolation returns original cmd when isolation disabled", () => {
@@ -56,7 +56,7 @@ describe("isolation", () => {
     assert.equal(cmd, "runuser");
     assert.deepEqual(args, [
       "-u",
-      "agent-alice",
+      "mind-alice",
       "--",
       "/usr/bin/tsx",
       "src/server.ts",
@@ -69,7 +69,7 @@ describe("isolation", () => {
     process.env.VOLUTE_ISOLATION = "user";
     const [cmd, args] = wrapForIsolation("node", ["index.js"], "alice@experiment");
     assert.equal(cmd, "runuser");
-    assert.deepEqual(args, ["-u", "agent-alice", "--", "node", "index.js"]);
+    assert.deepEqual(args, ["-u", "mind-alice", "--", "node", "index.js"]);
   });
 
   it("wrapForIsolation respects VOLUTE_USER_PREFIX", () => {

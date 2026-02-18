@@ -1,17 +1,17 @@
 import { execFileSync } from "node:child_process";
-import { validateAgentName } from "./registry.js";
+import { validateMindName } from "./registry.js";
 
-/** Returns true when per-agent Linux user isolation is enabled. */
+/** Returns true when per-mind Linux user isolation is enabled. */
 export function isIsolationEnabled(): boolean {
   return process.env.VOLUTE_ISOLATION === "user";
 }
 
-/** Linux username for an agent. Prefix configurable via VOLUTE_USER_PREFIX (default: "volute-"). */
-export function agentUserName(agentName: string): string {
-  const err = validateAgentName(agentName);
-  if (err) throw new Error(`Invalid agent name for isolation: ${err}`);
-  const prefix = process.env.VOLUTE_USER_PREFIX ?? "agent-";
-  return `${prefix}${agentName}`;
+/** Linux username for a mind. Prefix configurable via VOLUTE_USER_PREFIX (default: "mind-"). */
+export function mindUserName(mindName: string): string {
+  const err = validateMindName(mindName);
+  if (err) throw new Error(`Invalid mind name for isolation: ${err}`);
+  const prefix = process.env.VOLUTE_USER_PREFIX ?? "mind-";
+  return `${prefix}${mindName}`;
 }
 
 /** Create the shared `volute` group (idempotent). Pass `force: true` to skip the isolation env check. */
@@ -29,10 +29,10 @@ export function ensureVoluteGroup(opts?: { force?: boolean }): void {
   }
 }
 
-/** Create a system user for an agent. `homeDir` sets the passwd home directory. */
-export function createAgentUser(name: string, homeDir?: string): void {
+/** Create a system user for a mind. `homeDir` sets the passwd home directory. */
+export function createMindUser(name: string, homeDir?: string): void {
   if (!isIsolationEnabled()) return;
-  const user = agentUserName(name);
+  const user = mindUserName(name);
   try {
     // Check if user already exists
     execFileSync("id", [user], { stdio: "ignore" });
@@ -53,10 +53,10 @@ export function createAgentUser(name: string, homeDir?: string): void {
   }
 }
 
-/** Delete an agent's system user. */
-export function deleteAgentUser(name: string): void {
+/** Delete a mind's system user. */
+export function deleteMindUser(name: string): void {
   if (!isIsolationEnabled()) return;
-  const user = agentUserName(name);
+  const user = mindUserName(name);
   try {
     execFileSync("userdel", [user], { stdio: "ignore" });
   } catch {
@@ -67,24 +67,24 @@ export function deleteAgentUser(name: string): void {
 /**
  * Wrap a command with `runuser -u <user> --` if isolation is enabled.
  * Unlike Node's uid/gid spawn options, runuser calls initgroups() which sets
- * supplementary groups, allowing agents to access group-writable shared directories.
- * Resolves the base agent name from a potentially composite "name@variant" key.
+ * supplementary groups, allowing minds to access group-writable shared directories.
+ * Resolves the base mind name from a potentially composite "name@variant" key.
  */
 export function wrapForIsolation(
   cmd: string,
   args: string[],
-  agentName: string,
+  mindName: string,
 ): [string, string[]] {
   if (!isIsolationEnabled()) return [cmd, args];
-  const baseName = agentName.split("@", 2)[0];
-  const user = agentUserName(baseName);
+  const baseName = mindName.split("@", 2)[0];
+  const user = mindUserName(baseName);
   return ["runuser", ["-u", user, "--", cmd, ...args]];
 }
 
-/** Set ownership of an agent directory to its system user. */
-export function chownAgentDir(dir: string, name: string): void {
+/** Set ownership of a mind directory to its system user. */
+export function chownMindDir(dir: string, name: string): void {
   if (!isIsolationEnabled()) return;
-  const user = agentUserName(name);
+  const user = mindUserName(name);
   try {
     execFileSync("chown", ["-R", `${user}:${user}`, dir], { stdio: ["ignore", "ignore", "pipe"] });
   } catch (err) {

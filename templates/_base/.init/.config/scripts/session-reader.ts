@@ -4,7 +4,7 @@
  *
  * Usage: npx tsx .config/scripts/session-reader.ts <session-name> [--lines N]
  *
- * Runs from the agent's home/ directory.
+ * Runs from the mind's home/ directory.
  */
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";

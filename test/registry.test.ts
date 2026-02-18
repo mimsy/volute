@@ -1,24 +1,24 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import {
-  addAgent,
-  agentDir,
+  addMind,
   daemonLoopback,
+  mindDir,
   nextPort,
   readRegistry,
-  removeAgent,
+  removeMind,
   stateDir,
-  validateAgentName,
+  validateMindName,
   voluteHome,
 } from "../src/lib/registry.js";
 import { addVariant, removeAllVariants } from "../src/lib/variants.js";
 
-const testAgent = `registry-test-${Date.now()}`;
+const testMind = `registry-test-${Date.now()}`;
 
 describe("registry", () => {
   afterEach(() => {
-    removeAgent(testAgent);
-    removeAllVariants(testAgent);
+    removeMind(testMind);
+    removeAllVariants(testMind);
   });
 
   it("nextPort returns 4100 when registry is empty", () => {
@@ -32,8 +32,8 @@ describe("registry", () => {
   });
 
   it("nextPort skips variant ports", () => {
-    addAgent(testAgent, 4100);
-    addVariant(testAgent, {
+    addMind(testMind, 4100);
+    addVariant(testMind, {
       name: "v1",
       branch: "v1",
       path: "/fake/v1",
@@ -45,56 +45,56 @@ describe("registry", () => {
     assert.ok(port >= 4102, `Expected port >= 4102, got ${port}`);
   });
 
-  it("validateAgentName accepts valid names", () => {
-    assert.equal(validateAgentName("my-agent"), null);
-    assert.equal(validateAgentName("agent_1"), null);
-    assert.equal(validateAgentName("Agent.v2"), null);
-    assert.equal(validateAgentName("a"), null);
-    assert.equal(validateAgentName("123"), null);
+  it("validateMindName accepts valid names", () => {
+    assert.equal(validateMindName("my-mind"), null);
+    assert.equal(validateMindName("mind_1"), null);
+    assert.equal(validateMindName("Mind.v2"), null);
+    assert.equal(validateMindName("a"), null);
+    assert.equal(validateMindName("123"), null);
   });
 
-  it("validateAgentName rejects invalid names", () => {
-    assert.ok(validateAgentName("") !== null);
-    assert.ok(validateAgentName("-starts-with-dash") !== null);
-    assert.ok(validateAgentName(".starts-with-dot") !== null);
-    assert.ok(validateAgentName("has spaces") !== null);
-    assert.ok(validateAgentName("has/slash") !== null);
-    assert.ok(validateAgentName("a".repeat(65)) !== null);
+  it("validateMindName rejects invalid names", () => {
+    assert.ok(validateMindName("") !== null);
+    assert.ok(validateMindName("-starts-with-dash") !== null);
+    assert.ok(validateMindName(".starts-with-dot") !== null);
+    assert.ok(validateMindName("has spaces") !== null);
+    assert.ok(validateMindName("has/slash") !== null);
+    assert.ok(validateMindName("a".repeat(65)) !== null);
   });
 
-  it("addAgent throws on invalid name", () => {
-    assert.throws(() => addAgent("../evil", 4100), /Agent name must/);
+  it("addMind throws on invalid name", () => {
+    assert.throws(() => addMind("../evil", 4100), /Mind name must/);
   });
 
   it("stateDir returns path under VOLUTE_HOME/state", () => {
-    const dir = stateDir("my-agent");
+    const dir = stateDir("my-mind");
     assert.ok(dir.startsWith(voluteHome()));
-    assert.ok(dir.endsWith("/state/my-agent"));
+    assert.ok(dir.endsWith("/state/my-mind"));
   });
 
   it("stateDir handles name@variant format", () => {
-    const dir = stateDir("my-agent@v1");
-    assert.ok(dir.endsWith("/state/my-agent@v1"));
+    const dir = stateDir("my-mind@v1");
+    assert.ok(dir.endsWith("/state/my-mind@v1"));
   });
 });
 
-describe("agentDir", () => {
-  const originalAgentsDir = process.env.VOLUTE_AGENTS_DIR;
+describe("mindDir", () => {
+  const originalMindsDir = process.env.VOLUTE_MINDS_DIR;
   afterEach(() => {
-    if (originalAgentsDir === undefined) delete process.env.VOLUTE_AGENTS_DIR;
-    else process.env.VOLUTE_AGENTS_DIR = originalAgentsDir;
+    if (originalMindsDir === undefined) delete process.env.VOLUTE_MINDS_DIR;
+    else process.env.VOLUTE_MINDS_DIR = originalMindsDir;
   });
 
-  it("returns VOLUTE_AGENTS_DIR/<name> when env var is set", () => {
-    process.env.VOLUTE_AGENTS_DIR = "/agents";
-    assert.equal(agentDir("foo"), "/agents/foo");
+  it("returns VOLUTE_MINDS_DIR/<name> when env var is set", () => {
+    process.env.VOLUTE_MINDS_DIR = "/minds";
+    assert.equal(mindDir("foo"), "/minds/foo");
   });
 
-  it("falls back to VOLUTE_HOME/agents/<name> when env var is unset", () => {
-    delete process.env.VOLUTE_AGENTS_DIR;
-    const dir = agentDir("foo");
+  it("falls back to VOLUTE_HOME/minds/<name> when env var is unset", () => {
+    delete process.env.VOLUTE_MINDS_DIR;
+    const dir = mindDir("foo");
     assert.ok(dir.startsWith(voluteHome()));
-    assert.ok(dir.endsWith("/agents/foo"));
+    assert.ok(dir.endsWith("/minds/foo"));
   });
 });
 

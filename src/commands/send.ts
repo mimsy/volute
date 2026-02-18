@@ -5,23 +5,23 @@ import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { parseTarget } from "../lib/parse-target.js";
 import { readStdin } from "../lib/read-stdin.js";
-import { findAgent } from "../lib/registry.js";
-import { resolveAgentName } from "../lib/resolve-agent-name.js";
+import { findMind } from "../lib/registry.js";
+import { resolveMindName } from "../lib/resolve-mind-name.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
-    agent: { type: "string" },
+    mind: { type: "string" },
   });
 
   const target = positional[0];
   const message = positional[1] ?? (await readStdin());
 
   if (!target || !message) {
-    console.error('Usage: volute send <target> "<message>" [--agent <name>]');
-    console.error('       echo "message" | volute send <target> [--agent <name>]');
+    console.error('Usage: volute send <target> "<message>" [--mind <name>]');
+    console.error('       echo "message" | volute send <target> [--mind <name>]');
     console.error("");
     console.error("Examples:");
-    console.error('  volute send @other-agent "hello"');
+    console.error('  volute send @other-mind "hello"');
     console.error('  volute send animal-chat "hello everyone"');
     console.error('  volute send discord:server/channel "hello"');
     process.exit(1);
@@ -38,8 +38,8 @@ export async function run(args: string[]) {
 
   let parsed = parseTarget(target);
 
-  // If bare name matches a registered agent, treat as a DM (e.g. "sprout" → "@sprout")
-  if (!parsed.isDM && parsed.platform === "volute" && findAgent(parsed.identifier)) {
+  // If bare name matches a registered mind, treat as a DM (e.g. "sprout" → "@sprout")
+  if (!parsed.isDM && parsed.platform === "volute" && findMind(parsed.identifier)) {
     parsed = {
       platform: "volute",
       identifier: `@${parsed.identifier}`,
@@ -59,22 +59,22 @@ export async function run(args: string[]) {
   if (parsed.isDM && parsed.platform === "volute") {
     // For volute DMs (@target), create/find conversation via the volute driver
     const targetName = parsed.identifier.slice(1); // strip @
-    const agentSelf = process.env.VOLUTE_AGENT;
-    const sender = agentSelf || userInfo().username;
+    const mindSelf = process.env.VOLUTE_MIND;
+    const sender = mindSelf || userInfo().username;
 
     if (!driver.createConversation) {
       console.error("Volute driver does not support creating conversations");
       process.exit(1);
     }
 
-    // When an agent sends to a non-agent (human), use the sender agent's context
-    // so the conversation is created under the agent (humans aren't in the registry).
-    const targetIsAgent = !!findAgent(targetName);
-    const contextAgent = agentSelf && !targetIsAgent ? agentSelf : targetName;
-    const participants = agentSelf && !targetIsAgent ? [targetName] : [sender];
+    // When a mind sends to a non-mind (human), use the sender mind's context
+    // so the conversation is created under the mind (humans aren't in the registry).
+    const targetIsMind = !!findMind(targetName);
+    const contextMind = mindSelf && !targetIsMind ? mindSelf : targetName;
+    const participants = mindSelf && !targetIsMind ? [targetName] : [sender];
 
     const env: Record<string, string> = {
-      VOLUTE_AGENT: contextAgent,
+      VOLUTE_MIND: contextMind,
       VOLUTE_SENDER: sender,
     };
 
@@ -93,12 +93,12 @@ export async function run(args: string[]) {
       process.exit(1);
     }
 
-    // Persist outgoing to agent_messages if sender is a registered agent
-    if (agentSelf) {
+    // Persist outgoing to mind_messages if sender is a registered mind
+    if (mindSelf) {
       try {
         const client = getClient();
         await daemonFetch(
-          urlOf(client.api.agents[":name"].history.$url({ param: { name: agentSelf } })),
+          urlOf(client.api.minds[":name"].history.$url({ param: { name: mindSelf } })),
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -111,11 +111,11 @@ export async function run(args: string[]) {
     }
   } else {
     // For all other targets, send through the daemon channel API
-    const agentName = resolveAgentName(flags);
+    const mindName = resolveMindName(flags);
 
     const client = getClient();
     const res = await daemonFetch(
-      urlOf(client.api.agents[":name"].channels.send.$url({ param: { name: agentName } })),
+      urlOf(client.api.minds[":name"].channels.send.$url({ param: { name: mindName } })),
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -129,11 +129,11 @@ export async function run(args: string[]) {
     }
     console.log("Message sent.");
 
-    // Persist outgoing to agent_messages if sender is a registered agent
-    if (process.env.VOLUTE_AGENT) {
+    // Persist outgoing to mind_messages if sender is a registered mind
+    if (process.env.VOLUTE_MIND) {
       try {
         await daemonFetch(
-          urlOf(client.api.agents[":name"].history.$url({ param: { name: agentName } })),
+          urlOf(client.api.minds[":name"].history.$url({ param: { name: mindName } })),
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },

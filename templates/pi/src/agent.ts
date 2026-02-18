@@ -26,11 +26,11 @@ import type {
   VoluteEvent,
 } from "./lib/types.js";
 
-type AgentSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
+type PiAgentSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
 
 type PiSession = {
   name: string;
-  agentSession: AgentSession | null;
+  agentSession: PiAgentSession | null;
   ready: Promise<void>;
   listeners: Set<Listener>;
   unsubscribe?: () => void;
@@ -45,7 +45,7 @@ function defaultCompactionMessage(): string {
   return `Context is getting long — compaction is about to summarize this conversation. Before that happens, save anything important to files (MEMORY.md, memory/journal/${today}.md, etc.) since those survive compaction. Focus on: decisions made, open tasks, and anything you'd need to pick up where you left off.`;
 }
 
-export function createAgent(options: {
+export function createMind(options: {
   systemPrompt: string;
   cwd: string;
   model?: string;
@@ -82,7 +82,7 @@ export function createAgent(options: {
     session.ready = initSession(session).catch((err) => {
       session.autoReply.reset();
       session.messageChannels.clear();
-      log("agent", `session "${session.name}": init failed:`, err);
+      log("mind", `session "${session.name}": init failed:`, err);
     });
     return session;
   }
@@ -94,7 +94,7 @@ export function createAgent(options: {
       ? SessionManager.inMemory()
       : SessionManager.continueRecent(options.cwd, `.volute/pi-sessions/${session.name}`);
 
-    log("agent", `session "${session.name}": ${isEphemeral ? "ephemeral" : "persistent"}`);
+    log("mind", `session "${session.name}": ${isEphemeral ? "ephemeral" : "persistent"}`);
 
     let compactBlocked = false;
     const preCompactExtension: ExtensionFactory = (pi) => {
@@ -102,15 +102,15 @@ export function createAgent(options: {
         if (!compactBlocked) {
           compactBlocked = true;
           log(
-            "agent",
-            `session "${session.name}": blocking compaction — asking agent to update daily log`,
+            "mind",
+            `session "${session.name}": blocking compaction — asking mind to update daily log`,
           );
           session.messageIds.push(undefined);
           session.agentSession?.prompt(compactionMessage, { streamingBehavior: "followUp" });
           return { cancel: true };
         }
         compactBlocked = false;
-        log("agent", `session "${session.name}": allowing compaction`);
+        log("mind", `session "${session.name}": allowing compaction`);
       });
     };
 
@@ -151,7 +151,7 @@ export function createAgent(options: {
       }),
     );
 
-    log("agent", `session "${session.name}": ready`);
+    log("mind", `session "${session.name}": ready`);
   }
 
   // --- Event broadcasting ---
@@ -163,7 +163,7 @@ export function createAgent(options: {
       try {
         listener(tagged);
       } catch (err) {
-        log("agent", "listener threw during broadcast:", err);
+        log("mind", "listener threw during broadcast:", err);
       }
     }
   }
@@ -171,7 +171,7 @@ export function createAgent(options: {
   function interruptSession(name: string) {
     const session = sessions.get(name);
     if (session?.currentMessageId !== undefined) {
-      log("agent", `session "${name}": interrupting current turn`);
+      log("mind", `session "${name}": interrupting current turn`);
       broadcast(session, { type: "done" });
       session.currentMessageId = undefined;
     }
@@ -219,7 +219,7 @@ export function createAgent(options: {
             session.agentSession!.prompt(text, opts);
           }
         })().catch((err) => {
-          log("agent", `session "${sessionName}": prompt failed:`, err);
+          log("mind", `session "${sessionName}": prompt failed:`, err);
           broadcast(session, { type: "done" });
         });
 

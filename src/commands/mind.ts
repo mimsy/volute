@@ -22,16 +22,16 @@ export async function run(args: string[]) {
       break;
     case "status": {
       const rest = args.slice(1);
-      if (!rest[0] && process.env.VOLUTE_AGENT) {
-        rest.unshift(process.env.VOLUTE_AGENT);
+      if (!rest[0] && process.env.VOLUTE_MIND) {
+        rest.unshift(process.env.VOLUTE_MIND);
       }
       await import("./status.js").then((m) => m.run(rest));
       break;
     }
     case "logs": {
-      // Transform positional name to --agent flag for compatibility
+      // Transform positional name to --mind flag for compatibility
       const rest = args.slice(1);
-      const logsArgs = transformAgentFlag(rest);
+      const logsArgs = transformMindFlag(rest);
       await import("./logs.js").then((m) => m.run(logsArgs));
       break;
     }
@@ -52,26 +52,26 @@ export async function run(args: string[]) {
   }
 }
 
-/** If first arg is a positional name (not a flag), inject as --agent <name>. */
-function transformAgentFlag(args: string[]): string[] {
+/** If first arg is a positional name (not a flag), inject as --mind <name>. */
+function transformMindFlag(args: string[]): string[] {
   if (args.length > 0 && args[0] && !args[0].startsWith("-")) {
-    return ["--agent", args[0], ...args.slice(1)];
+    return ["--mind", args[0], ...args.slice(1)];
   }
   return args;
 }
 
 function printUsage() {
   console.log(`Usage:
-  volute agent create <name> [--template <name>]
-  volute agent start <name>
-  volute agent stop [name]
-  volute agent restart [name]
-  volute agent delete [name] [--force]
-  volute agent list
-  volute agent status [name]
-  volute agent logs [name] [--follow] [-n N]
-  volute agent upgrade [name] [--template <name>] [--continue]
-  volute agent import <path> [--name <name>] [--session <path>] [--template <name>]
+  volute mind create <name> [--template <name>]
+  volute mind start <name>
+  volute mind stop [name]
+  volute mind restart [name]
+  volute mind delete [name] [--force]
+  volute mind list
+  volute mind status [name]
+  volute mind logs [name] [--follow] [-n N]
+  volute mind upgrade [name] [--template <name>] [--continue]
+  volute mind import <path> [--name <name>] [--session <path>] [--template <name>]
 
-Agent name can be omitted (where shown as [name]) if VOLUTE_AGENT is set.`);
+Mind name can be omitted (where shown as [name]) if VOLUTE_MIND is set.`);
 }

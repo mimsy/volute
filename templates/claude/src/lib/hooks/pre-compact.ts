@@ -7,12 +7,12 @@ export function createPreCompactHook(onCompact: () => void) {
   const hook: HookCallback = async () => {
     if (!compactBlocked) {
       compactBlocked = true;
-      log("agent", "blocking compaction — asking agent to update daily log first");
+      log("mind", "blocking compaction — asking mind to update daily log first");
       onCompact();
       return { decision: "block" };
     }
     compactBlocked = false;
-    log("agent", "allowing compaction");
+    log("mind", "allowing compaction");
     return {};
   };
 

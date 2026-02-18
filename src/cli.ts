@@ -17,8 +17,8 @@ if (command === "--version" || command === "-v") {
 }
 
 switch (command) {
-  case "agent":
-    await import("./commands/agent.js").then((m) => m.run(args));
+  case "mind":
+    await import("./commands/mind.js").then((m) => m.run(args));
     break;
   case "send":
     await import("./commands/send.js").then((m) => m.run(args));
@@ -71,37 +71,37 @@ switch (command) {
   case "--help":
   case "-h":
   case undefined:
-    console.log(`volute — create and manage AI agents
+    console.log(`volute — create and manage AI minds
 
 Commands:
-  volute agent create <name>              Create a new agent
-  volute agent start <name>               Start an agent (daemonized)
-  volute agent stop <name>                Stop an agent
-  volute agent restart <name>             Restart an agent
-  volute agent delete <name> [--force]    Delete an agent (--force removes files)
-  volute agent list                       List all agents
-  volute agent status <name>              Check agent status
-  volute agent logs <name> [--follow]     Tail agent logs
-  volute agent upgrade <name>             Upgrade agent to latest template
-  volute agent import <path>              Import an OpenClaw workspace
+  volute mind create <name>              Create a new mind
+  volute mind start <name>               Start a mind (daemonized)
+  volute mind stop <name>                Stop a mind
+  volute mind restart <name>             Restart a mind
+  volute mind delete <name> [--force]    Delete a mind (--force removes files)
+  volute mind list                       List all minds
+  volute mind status <name>              Check mind status
+  volute mind logs <name> [--follow]     Tail mind logs
+  volute mind upgrade <name>             Upgrade mind to latest template
+  volute mind import <path>              Import an OpenClaw workspace
 
-  volute send <target> "<msg>"             Send a message (agent DM, channel, etc.)
-  volute history [--agent <name>]          View message history
+  volute send <target> "<msg>"             Send a message (mind DM, channel, etc.)
+  volute history [--mind <name>]          View message history
 
   volute variant create <name>            Create a variant (worktree + server)
-  volute variant list                     List variants for an agent
+  volute variant list                     List variants for a mind
   volute variant merge <name>             Merge a variant back
   volute variant delete <name>            Delete a variant
 
-  volute connector connect <type>         Enable a connector for an agent
-  volute connector disconnect <type>      Disable a connector for an agent
+  volute connector connect <type>         Enable a connector for a mind
+  volute connector disconnect <type>      Disable a connector for a mind
 
   volute channel read <uri>               Read recent messages from a channel
   volute channel list [<platform>]        List conversations on a platform
   volute channel users <platform>         List users on a platform
   volute channel create <platform> ...    Create a conversation on a platform
 
-  volute schedule list                    List schedules for an agent
+  volute schedule list                    List schedules for a mind
   volute schedule add ...                 Add a cron schedule
   volute schedule remove ...              Remove a schedule
 
@@ -117,18 +117,18 @@ Commands:
   volute setup [--port N] [--host H]      Install system service with user isolation
   volute setup uninstall [--force]        Remove system service + isolation
 
-  volute seed <name>                      Plant a seed agent (orientation mode)
-  volute sprout                           Complete orientation, become a full agent
+  volute seed <name>                      Plant a seed mind (orientation mode)
+  volute sprout                           Complete orientation, become a full mind
 
   volute update                           Update to latest version
-  volute status                           Show daemon status and agents
+  volute status                           Show daemon status and minds
 
 Options:
   --version, -v                           Show version number
   --help, -h                              Show this help message
 
-Agent-scoped commands (send, history, variant, connector, schedule, channel)
-use --agent <name> or VOLUTE_AGENT env var to identify the agent.`);
+Mind-scoped commands (send, history, variant, connector, schedule, channel)
+use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
   default:
     console.error(`Unknown command: ${command}\nRun 'volute --help' for usage.`);

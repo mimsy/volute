@@ -6,8 +6,8 @@ import { users } from "./schema.js";
 export type User = {
   id: number;
   username: string;
-  role: "admin" | "user" | "pending" | "agent";
-  user_type: "human" | "agent";
+  role: "admin" | "user" | "pending" | "mind";
+  user_type: "human" | "mind";
   created_at: string;
 };
 
@@ -40,7 +40,7 @@ export async function verifyUser(username: string, password: string): Promise<Us
   const db = await getDb();
   const row = await db.select().from(users).where(eq(users.username, username)).get();
   if (!row) return null;
-  if (row.user_type === "agent") return null; // agents can't log in
+  if (row.user_type === "mind") return null; // minds can't log in
   if (!compareSync(password, row.password_hash)) return null;
   const { password_hash: _, ...user } = row;
   return user as User;
@@ -109,7 +109,7 @@ export async function listPendingUsers(): Promise<User[]> {
     .all() as Promise<User[]>;
 }
 
-export async function listUsersByType(userType: "human" | "agent"): Promise<User[]> {
+export async function listUsersByType(userType: "human" | "mind"): Promise<User[]> {
   const db = await getDb();
   return db
     .select({
@@ -125,7 +125,7 @@ export async function listUsersByType(userType: "human" | "agent"): Promise<User
     .all() as Promise<User[]>;
 }
 
-export async function getOrCreateAgentUser(agentName: string): Promise<User> {
+export async function getOrCreateMindUser(mindName: string): Promise<User> {
   const db = await getDb();
   const existing = await db
     .select({
@@ -136,7 +136,7 @@ export async function getOrCreateAgentUser(agentName: string): Promise<User> {
       created_at: users.created_at,
     })
     .from(users)
-    .where(and(eq(users.username, agentName), eq(users.user_type, "agent")))
+    .where(and(eq(users.username, mindName), eq(users.user_type, "mind")))
     .get();
   if (existing) return existing as User;
 
@@ -144,10 +144,10 @@ export async function getOrCreateAgentUser(agentName: string): Promise<User> {
     const [result] = await db
       .insert(users)
       .values({
-        username: agentName,
-        password_hash: "!agent",
-        role: "agent",
-        user_type: "agent",
+        username: mindName,
+        password_hash: "!mind",
+        role: "mind",
+        user_type: "mind",
       })
       .returning({
         id: users.id,
@@ -169,7 +169,7 @@ export async function getOrCreateAgentUser(agentName: string): Promise<User> {
           created_at: users.created_at,
         })
         .from(users)
-        .where(and(eq(users.username, agentName), eq(users.user_type, "agent")))
+        .where(and(eq(users.username, mindName), eq(users.user_type, "mind")))
         .get();
       if (retried) return retried as User;
     }
@@ -177,9 +177,9 @@ export async function getOrCreateAgentUser(agentName: string): Promise<User> {
   }
 }
 
-export async function deleteAgentUser(agentName: string): Promise<void> {
+export async function deleteMindUser(mindName: string): Promise<void> {
   const db = await getDb();
-  await db.delete(users).where(and(eq(users.username, agentName), eq(users.user_type, "agent")));
+  await db.delete(users).where(and(eq(users.username, mindName), eq(users.user_type, "mind")));
 }
 
 export async function approveUser(id: number): Promise<void> {

@@ -13,7 +13,7 @@ import type {
   VoluteEvent,
 } from "../templates/_base/src/lib/types.js";
 
-function mockAgentHandler(): {
+function mockMindHandler(): {
   resolver: HandlerResolver;
   calls: { sessionName: string; content: VoluteContentPart[]; meta: HandlerMeta }[];
 } {
@@ -67,14 +67,14 @@ function batchText(calls: { content: VoluteContentPart[] }[]): string {
 }
 
 describe("router", () => {
-  it("routes to agent handler with default session", async () => {
-    const agent = mockAgentHandler();
-    const router = createRouter({ agentHandler: agent.resolver });
+  it("routes to mind handler with default session", async () => {
+    const mind = mockMindHandler();
+    const router = createRouter({ mindHandler: mind.resolver });
 
     await waitForDone(router, [{ type: "text", text: "hi" }], { channel: "web" });
 
-    assert.equal(agent.calls.length, 1);
-    assert.equal(agent.calls[0].sessionName, "main");
+    assert.equal(mind.calls.length, 1);
+    assert.equal(mind.calls[0].sessionName, "main");
   });
 
   it("routes to file handler when configured", async () => {
@@ -87,11 +87,11 @@ describe("router", () => {
       }),
     );
 
-    const agent = mockAgentHandler();
+    const mind = mockMindHandler();
     const file = mockFileHandler();
     const router = createRouter({
       configPath,
-      agentHandler: agent.resolver,
+      mindHandler: mind.resolver,
       fileHandler: file.resolver,
     });
 
@@ -99,7 +99,7 @@ describe("router", () => {
 
     assert.equal(file.calls.length, 1);
     assert.equal(file.calls[0].path, "inbox/log.md");
-    assert.equal(agent.calls.length, 0);
+    assert.equal(mind.calls.length, 0);
   });
 
   it("emits done and discards when file destination but no fileHandler", async () => {
@@ -112,8 +112,8 @@ describe("router", () => {
       }),
     );
 
-    const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
 
     const events = await waitForDone(router, [{ type: "text", text: "msg" }], {
       channel: "discord:123",
@@ -121,7 +121,7 @@ describe("router", () => {
 
     assert.equal(events.length, 1);
     assert.equal(events[0].type, "done");
-    assert.equal(agent.calls.length, 0);
+    assert.equal(mind.calls.length, 0);
   });
 
   it("expands $new session to unique name", async () => {
@@ -134,16 +134,16 @@ describe("router", () => {
       }),
     );
 
-    const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
 
     await waitForDone(router, [{ type: "text", text: "a" }], { channel: "system:scheduler" });
     await waitForDone(router, [{ type: "text", text: "b" }], { channel: "system:scheduler" });
 
-    assert.equal(agent.calls.length, 2);
-    assert.ok(agent.calls[0].sessionName.startsWith("new-"));
-    assert.ok(agent.calls[1].sessionName.startsWith("new-"));
-    assert.notEqual(agent.calls[0].sessionName, agent.calls[1].sessionName);
+    assert.equal(mind.calls.length, 2);
+    assert.ok(mind.calls[0].sessionName.startsWith("new-"));
+    assert.ok(mind.calls[1].sessionName.startsWith("new-"));
+    assert.notEqual(mind.calls[0].sessionName, mind.calls[1].sessionName);
   });
 
   it("batch (number) buffers messages and flushes on maxWait", async () => {
@@ -157,22 +157,22 @@ describe("router", () => {
       }),
     );
 
-    const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
 
     // Route two messages — they should be buffered, not sent immediately
     router.route([{ type: "text", text: "msg1" }], { channel: "discord:123", sender: "alice" });
     router.route([{ type: "text", text: "msg2" }], { channel: "discord:123", sender: "bob" });
 
-    assert.equal(agent.calls.length, 0, "messages should be buffered");
+    assert.equal(mind.calls.length, 0, "messages should be buffered");
 
     // Wait for timer to flush
     await new Promise((r) => setTimeout(r, 200));
 
-    assert.equal(agent.calls.length, 1, "batch should be flushed");
-    assert.equal(agent.calls[0].sessionName, "batch-test");
+    assert.equal(mind.calls.length, 1, "batch should be flushed");
+    assert.equal(mind.calls[0].sessionName, "batch-test");
 
-    const text = batchText(agent.calls);
+    const text = batchText(mind.calls);
     assert.ok(text.includes("[Batch:"), "should have batch header");
     assert.ok(text.includes("msg1"));
     assert.ok(text.includes("msg2"));
@@ -191,17 +191,17 @@ describe("router", () => {
       }),
     );
 
-    const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
 
     router.route([{ type: "text", text: "buffered msg" }], {
       channel: "discord:123",
       sender: "alice",
     });
-    assert.equal(agent.calls.length, 0);
+    assert.equal(mind.calls.length, 0);
 
     router.close();
-    assert.equal(agent.calls.length, 1, "close should flush pending batches");
+    assert.equal(mind.calls.length, 1, "close should flush pending batches");
   });
 
   // --- Debounce ---
@@ -217,22 +217,22 @@ describe("router", () => {
       }),
     );
 
-    const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
 
     router.route([{ type: "text", text: "msg1" }], { channel: "discord:123", sender: "alice" });
-    assert.equal(agent.calls.length, 0);
+    assert.equal(mind.calls.length, 0);
 
     // Send another message before debounce fires — should reset the timer
     await new Promise((r) => setTimeout(r, 40));
     router.route([{ type: "text", text: "msg2" }], { channel: "discord:123", sender: "bob" });
-    assert.equal(agent.calls.length, 0, "debounce should reset on new message");
+    assert.equal(mind.calls.length, 0, "debounce should reset on new message");
 
     // Wait for debounce to fire after msg2
     await new Promise((r) => setTimeout(r, 120));
-    assert.equal(agent.calls.length, 1, "debounce should flush after quiet period");
+    assert.equal(mind.calls.length, 1, "debounce should flush after quiet period");
 
-    const text = batchText(agent.calls);
+    const text = batchText(mind.calls);
     assert.ok(text.includes("msg1"));
     assert.ok(text.includes("msg2"));
 
@@ -252,8 +252,8 @@ describe("router", () => {
       }),
     );
 
-    const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
 
     // Send messages rapidly — debounce would keep resetting, but maxWait should force flush
     router.route([{ type: "text", text: "msg1" }], { channel: "discord:123", sender: "alice" });
@@ -264,8 +264,8 @@ describe("router", () => {
     // maxWait of 100ms should fire (debounce at 5s won't have fired)
     await new Promise((r) => setTimeout(r, 100));
 
-    assert.equal(agent.calls.length, 1, "maxWait should force flush");
-    const text = batchText(agent.calls);
+    assert.equal(mind.calls.length, 1, "maxWait should force flush");
+    const text = batchText(mind.calls);
     assert.ok(text.includes("msg1"));
     assert.ok(text.includes("msg2"));
 
@@ -289,24 +289,24 @@ describe("router", () => {
       }),
     );
 
-    const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
 
     // First message doesn't trigger
     router.route([{ type: "text", text: "hello everyone" }], {
       channel: "discord:123",
       sender: "alice",
     });
-    assert.equal(agent.calls.length, 0, "non-trigger message should be buffered");
+    assert.equal(mind.calls.length, 0, "non-trigger message should be buffered");
 
     // Second message contains trigger
     router.route([{ type: "text", text: "hey @agent what do you think?" }], {
       channel: "discord:123",
       sender: "bob",
     });
-    assert.equal(agent.calls.length, 1, "trigger should flush immediately");
+    assert.equal(mind.calls.length, 1, "trigger should flush immediately");
 
-    const text = batchText(agent.calls);
+    const text = batchText(mind.calls);
     assert.ok(text.includes("hello everyone"), "should include buffered message");
     assert.ok(text.includes("@agent"), "should include trigger message");
 
@@ -326,14 +326,14 @@ describe("router", () => {
       }),
     );
 
-    const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
 
     router.route([{ type: "text", text: "hey @AGENT help" }], {
       channel: "discord:123",
       sender: "alice",
     });
-    assert.equal(agent.calls.length, 1, "trigger should match case-insensitively");
+    assert.equal(mind.calls.length, 1, "trigger should match case-insensitively");
 
     router.close();
   });
@@ -351,8 +351,8 @@ describe("router", () => {
       }),
     );
 
-    const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
 
     // Non-trigger — no debounce or maxWait configured, so flushes immediately
     router.route([{ type: "text", text: "casual message" }], {
@@ -360,14 +360,14 @@ describe("router", () => {
       sender: "alice",
     });
     // With no debounce and no maxWait, the scheduleBatchTimers falls through to immediate flush
-    assert.equal(agent.calls.length, 1, "should flush immediately when no timers configured");
+    assert.equal(mind.calls.length, 1, "should flush immediately when no timers configured");
 
     // Trigger message also flushes immediately
     router.route([{ type: "text", text: "urgent issue!" }], {
       channel: "discord:123",
       sender: "bob",
     });
-    assert.equal(agent.calls.length, 2, "trigger should also flush immediately");
+    assert.equal(mind.calls.length, 2, "trigger should also flush immediately");
 
     router.close();
   });
@@ -385,8 +385,8 @@ describe("router", () => {
       }),
     );
 
-    const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
 
     // Send with channelName (human-readable) — URI should still appear
     router.route([{ type: "text", text: "hello" }], {
@@ -395,7 +395,7 @@ describe("router", () => {
       channelName: "general",
       serverName: "My Server",
     });
-    assert.equal(agent.calls.length, 0, "first message should be buffered (no trigger)");
+    assert.equal(mind.calls.length, 0, "first message should be buffered (no trigger)");
 
     // Second message triggers flush — both messages delivered together
     router.route([{ type: "text", text: "flush please" }], {
@@ -405,8 +405,8 @@ describe("router", () => {
       serverName: "My Server",
     });
 
-    assert.equal(agent.calls.length, 1, "trigger should flush both messages");
-    const text = batchText(agent.calls);
+    assert.equal(mind.calls.length, 1, "trigger should flush both messages");
+    const text = batchText(mind.calls);
     assert.ok(text.includes("discord:123"), "batch header should include channel URI");
     assert.ok(text.includes("#general"), "batch header should include channel display name");
     assert.ok(text.includes("hello"), "should include first message");
@@ -422,8 +422,8 @@ describe("router", () => {
     const configPath = join(dir, "routes.json");
     writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
 
-    const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
 
     await waitForDone(router, [{ type: "text", text: "hello" }], {
       channel: "web",
@@ -431,8 +431,8 @@ describe("router", () => {
       typing: ["bob"],
     });
 
-    assert.equal(agent.calls.length, 1);
-    const text = batchText(agent.calls);
+    assert.equal(mind.calls.length, 1);
+    const text = batchText(mind.calls);
     assert.ok(text.includes("[bob is typing]"), "should show single user typing");
   });
 
@@ -441,8 +441,8 @@ describe("router", () => {
     const configPath = join(dir, "routes.json");
     writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
 
-    const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
 
     await waitForDone(router, [{ type: "text", text: "hello" }], {
       channel: "web",
@@ -450,8 +450,8 @@ describe("router", () => {
       typing: ["bob", "charlie"],
     });
 
-    assert.equal(agent.calls.length, 1);
-    const text = batchText(agent.calls);
+    assert.equal(mind.calls.length, 1);
+    const text = batchText(mind.calls);
     assert.ok(text.includes("[bob, charlie are typing]"), "should show multiple users typing");
   });
 
@@ -460,8 +460,8 @@ describe("router", () => {
     const configPath = join(dir, "routes.json");
     writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
 
-    const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
 
     await waitForDone(router, [{ type: "text", text: "hello" }], {
       channel: "web",
@@ -469,8 +469,8 @@ describe("router", () => {
       typing: [],
     });
 
-    assert.equal(agent.calls.length, 1);
-    const text = batchText(agent.calls);
+    assert.equal(mind.calls.length, 1);
+    const text = batchText(mind.calls);
     assert.ok(!text.includes("typing"), "should not include typing indicator");
   });
 
@@ -485,14 +485,14 @@ describe("router", () => {
       }),
     );
 
-    const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
 
     await waitForDone(router, [{ type: "text", text: "hello" }], { channel: "discord:general" });
 
-    assert.equal(agent.calls.length, 1);
-    assert.equal(agent.calls[0].meta.autoReply, true);
-    assert.equal(agent.calls[0].sessionName, "discord");
+    assert.equal(mind.calls.length, 1);
+    assert.equal(mind.calls[0].meta.autoReply, true);
+    assert.equal(mind.calls[0].sessionName, "discord");
   });
 
   it("defaults autoReply to false when no session config", async () => {
@@ -505,13 +505,13 @@ describe("router", () => {
       }),
     );
 
-    const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
 
     await waitForDone(router, [{ type: "text", text: "hello" }], { channel: "web" });
 
-    assert.equal(agent.calls.length, 1);
-    assert.equal(agent.calls[0].meta.autoReply, false);
+    assert.equal(mind.calls.length, 1);
+    assert.equal(mind.calls[0].meta.autoReply, false);
   });
 
   it("autoReply from session config does not affect routing match behavior", async () => {
@@ -528,15 +528,15 @@ describe("router", () => {
       }),
     );
 
-    const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
 
     await waitForDone(router, [{ type: "text", text: "hi" }], { channel: "discord:general" });
     await waitForDone(router, [{ type: "text", text: "hi" }], { channel: "slack:random" });
 
-    assert.equal(agent.calls.length, 2);
-    assert.equal(agent.calls[0].meta.autoReply, true);
-    assert.equal(agent.calls[1].meta.autoReply, false);
+    assert.equal(mind.calls.length, 2);
+    assert.equal(mind.calls[0].meta.autoReply, true);
+    assert.equal(mind.calls[1].meta.autoReply, false);
   });
 
   it("batch mode includes typing from last message", async () => {
@@ -552,8 +552,8 @@ describe("router", () => {
       }),
     );
 
-    const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
 
     router.route([{ type: "text", text: "msg1" }], {
       channel: "discord:123",
@@ -566,8 +566,8 @@ describe("router", () => {
       typing: ["charlie"],
     });
 
-    assert.equal(agent.calls.length, 1);
-    const text = batchText(agent.calls);
+    assert.equal(mind.calls.length, 1);
+    const text = batchText(mind.calls);
     assert.ok(text.includes("[charlie is typing]"), "batch should use typing from last message");
     assert.ok(
       !text.includes("[bob is typing]"),
@@ -588,13 +588,13 @@ describe("router", () => {
       }),
     );
 
-    const agent = mockAgentHandler();
-    const router = createRouter({ configPath, agentHandler: agent.resolver });
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
 
     await waitForDone(router, [{ type: "text", text: "hello" }], { channel: "discord:general" });
 
-    assert.equal(agent.calls.length, 1);
-    const text = batchText(agent.calls);
+    assert.equal(mind.calls.length, 1);
+    const text = batchText(mind.calls);
     assert.ok(
       text.includes("[Session instructions: Brief responses only.]"),
       "should prepend session instructions",

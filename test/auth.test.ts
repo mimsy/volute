@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import {
   approveUser,
   createUser,
-  deleteAgentUser,
-  getOrCreateAgentUser,
+  deleteMindUser,
+  getOrCreateMindUser,
   getUser,
   getUserByUsername,
   listPendingUsers,
@@ -96,34 +96,34 @@ describe("auth", () => {
     assert.equal(approved.role, "user");
   });
 
-  it("getOrCreateAgentUser creates agent user", async () => {
-    const agent = await getOrCreateAgentUser("my-agent");
-    assert.equal(agent.username, "my-agent");
-    assert.equal(agent.user_type, "agent");
-    assert.equal(agent.role, "agent");
+  it("getOrCreateMindUser creates mind user", async () => {
+    const mind = await getOrCreateMindUser("my-mind");
+    assert.equal(mind.username, "my-mind");
+    assert.equal(mind.user_type, "mind");
+    assert.equal(mind.role, "mind");
 
     // Calling again returns the same user
-    const again = await getOrCreateAgentUser("my-agent");
-    assert.equal(again.id, agent.id);
+    const again = await getOrCreateMindUser("my-mind");
+    assert.equal(again.id, mind.id);
   });
 
-  it("verifyUser rejects agent users", async () => {
-    await getOrCreateAgentUser("agent-login");
-    const result = await verifyUser("agent-login", "anything");
+  it("verifyUser rejects mind users", async () => {
+    await getOrCreateMindUser("mind-login");
+    const result = await verifyUser("mind-login", "anything");
     assert.equal(result, null);
   });
 
-  it("deleteAgentUser removes agent user", async () => {
-    const agent = await getOrCreateAgentUser("delete-me");
-    assert.ok(agent.id);
-    await deleteAgentUser("delete-me");
+  it("deleteMindUser removes mind user", async () => {
+    const mind = await getOrCreateMindUser("delete-me");
+    assert.ok(mind.id);
+    await deleteMindUser("delete-me");
     const found = await getUserByUsername("delete-me");
     assert.equal(found, null);
   });
 
-  it("deleteAgentUser does not affect human users", async () => {
+  it("deleteMindUser does not affect human users", async () => {
     const human = await createUser("keep-me", "pass");
-    await deleteAgentUser("keep-me");
+    await deleteMindUser("keep-me");
     const found = await getUser(human.id);
     assert.ok(found);
     assert.equal(found.username, "keep-me");
@@ -131,14 +131,14 @@ describe("auth", () => {
 
   it("listUsersByType filters by type", async () => {
     await createUser("human1", "p1");
-    await getOrCreateAgentUser("agent1");
+    await getOrCreateMindUser("mind1");
 
     const humans = await listUsersByType("human");
     assert.ok(humans.every((u) => u.user_type === "human"));
     assert.ok(humans.some((u) => u.username === "human1"));
 
-    const agents = await listUsersByType("agent");
-    assert.ok(agents.every((u) => u.user_type === "agent"));
-    assert.ok(agents.some((u) => u.username === "agent1"));
+    const minds = await listUsersByType("mind");
+    assert.ok(minds.every((u) => u.user_type === "mind"));
+    assert.ok(minds.some((u) => u.username === "mind1"));
   });
 });

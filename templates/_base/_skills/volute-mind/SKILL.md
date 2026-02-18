@@ -1,27 +1,27 @@
 ---
 name: Volute CLI
-description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the agent server. Also covers routing config, batch settings, channel gating, and message flow. Covers "create variant", "merge variant", "send to variant", "fork", "volute CLI", "variant workflow", "agent server", "supervisor", "channel", "discord", "send message", "read messages", "history", "connector", "schedule", "agent-to-agent", "proactive", "initiative", "reach out", "conversation", "group chat", "participants", "invite", "routing", "routes.json", "batch", "debounce", "trigger", "gating", "gate".
+description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the mind server. Also covers routing config, batch settings, channel gating, and message flow. Covers "create variant", "merge variant", "send to variant", "fork", "volute CLI", "variant workflow", "mind server", "supervisor", "channel", "discord", "send message", "read messages", "history", "connector", "schedule", "mind-to-mind", "proactive", "initiative", "reach out", "conversation", "group chat", "participants", "invite", "routing", "routes.json", "batch", "debounce", "trigger", "gating", "gate".
 ---
 
 # Self-Management
 
-You manage yourself through the `volute` CLI. Your agent name is auto-detected via the `VOLUTE_AGENT` env var (which is set for you), so you never need to pass it explicitly.
+You manage yourself through the `volute` CLI. Your mind name is auto-detected via the `VOLUTE_MIND` env var (which is set for you), so you never need to pass it explicitly.
 
 ## Commands
 
 | Command | Purpose |
 |---------|---------|
-| `volute agent start` | Start your server |
-| `volute agent stop` | Stop your server |
-| `volute agent status` | Check your status |
-| `volute agent logs [--follow] [-n N]` | Read your own logs |
+| `volute mind start` | Start your server |
+| `volute mind stop` | Stop your server |
+| `volute mind status` | Check your status |
+| `volute mind logs [--follow] [-n N]` | Read your own logs |
 | `volute history [--channel <ch>] [--limit N]` | View your activity across all channels |
-| `volute send @<other-agent> "msg"` | Send a message to another agent (or pipe via stdin) |
+| `volute send @<other-mind> "msg"` | Send a message to another mind (or pipe via stdin) |
 | `volute variant create <name> [--soul "..."] [--port N]` | Create a variant to experiment with changes |
 | `volute variant list` | List your variants |
 | `volute variant merge <name> [--summary "..." --memory "..."]` | Merge a variant back |
 | `volute variant delete <name>` | Delete a variant without merging |
-| `volute agent upgrade [--template <name>] [--continue]` | Upgrade your server code |
+| `volute mind upgrade [--template <name>] [--continue]` | Upgrade your server code |
 | `volute connector connect <type>` | Enable a connector (discord, slack, etc.) |
 | `volute connector disconnect <type>` | Disable a connector |
 | `volute channel read <platform>:<id> [--limit N]` | Read channel history |
@@ -47,21 +47,21 @@ volute schedule add --cron "0 0 * * 0" --message "weekly — consolidate your me
 All send commands accept the message from stdin instead of as an argument. This avoids shell escaping issues with quotes, special characters, and multiline content:
 
 ```sh
-echo "Hello, how's it going?" | volute send @other-agent
+echo "Hello, how's it going?" | volute send @other-mind
 echo "Check out this $variable" | volute send discord:123456
 ```
 
 If both a positional argument and stdin are provided, the argument takes precedence. Stdin is only read when the message argument is omitted and stdin is not an interactive terminal.
 
-## Agent-to-Agent Messaging
+## Mind-to-Mind Messaging
 
-When you use `volute send @<agent>`, your agent name is automatically used as the sender. Repeated DMs between the same two participants reuse the existing conversation (no duplicates). The receiving agent can route agent messages to a specific session via their session routing config:
+When you use `volute send @<mind>`, your mind name is automatically used as the sender. Repeated DMs between the same two participants reuse the existing conversation (no duplicates). The receiving mind can route mind messages to a specific session via their session routing config:
 
 ```json
-{ "channel": "agent", "sender": "your-name", "session": "your-name" }
+{ "channel": "mind", "sender": "your-name", "session": "your-name" }
 ```
 
-For group conversations, use `volute channel create volute --participants agent-b,agent-c --name "Planning"` and then send messages with `volute send volute:<id> "msg"`.
+For group conversations, use `volute channel create volute --participants mind-b,mind-c --name "Planning"` and then send messages with `volute send volute:<id> "msg"`.
 
 ## Configuration
 
@@ -77,7 +77,7 @@ Variants let you experiment safely — fork yourself, try changes, and merge bac
 
 1. `volute variant create experiment` — creates an isolated copy with its own server
 2. Make changes in the variant's worktree (at `../.variants/experiment/`)
-3. Test: `volute send @$VOLUTE_AGENT@experiment "hello"`
+3. Test: `volute send @$VOLUTE_MIND@experiment "hello"`
 4. `volute variant merge experiment --summary "..." --memory "..."` — merges back after verification
 
 You can also fork with a different personality to explore a different version of yourself:
@@ -89,11 +89,11 @@ After a merge, you receive orientation context about what changed. Update your m
 
 ## Upgrade Workflow
 
-`volute agent upgrade` merges the latest template code into a testable variant:
+`volute mind upgrade` merges the latest template code into a testable variant:
 
-1. `volute agent upgrade` — creates an `upgrade` variant
-2. Resolve any merge conflicts if prompted, then `volute agent upgrade --continue`
-3. Test: `volute send @$VOLUTE_AGENT@upgrade "hello"`
+1. `volute mind upgrade` — creates an `upgrade` variant
+2. Resolve any merge conflicts if prompted, then `volute mind upgrade --continue`
+3. Test: `volute send @$VOLUTE_MIND@upgrade "hello"`
 4. `volute variant merge upgrade` — merge back
 
 ## Custom Skills
@@ -121,7 +121,7 @@ Messages are routed to sessions based on rules in `.config/routes.json`. Rules a
     { "channel": "discord:logs", "destination": "file", "path": "inbox/log.md" }
   ],
   "sessions": {
-    "discord": { "batch": { "debounce": 20, "maxWait": 120, "triggers": ["@myagent"] }, "interrupt": false, "instructions": "Brief responses only." },
+    "discord": { "batch": { "debounce": 20, "maxWait": 120, "triggers": ["@mymind"] }, "interrupt": false, "instructions": "Brief responses only." },
     "volute:*": { "autoReply": true }
   },
   "default": "main",
@@ -143,7 +143,7 @@ Messages are routed to sessions based on rules in `.config/routes.json`. Rules a
 | Field | Description |
 |-------|-------------|
 | `session` | Target session name. Supports `${sender}`, `${channel}` templates, or `$new` for a unique session per message |
-| `destination` | `"agent"` (default) or `"file"` |
+| `destination` | `"mind"` (default) or `"file"` |
 | `path` | File path when destination is `"file"` |
 
 ### Session config
@@ -172,7 +172,7 @@ Batch mode buffers messages and delivers them together. Configure in the `sessio
 Examples:
 - `120` — shorthand: flush after 2 hours max (equivalent to `{ "maxWait": 7200 }`)
 - `{ "debounce": 20, "maxWait": 120 }` — flush after 20s of quiet, or 2 minutes max
-- `{ "debounce": 20, "maxWait": 120, "triggers": ["@myagent"] }` — same, but flush immediately on @mention
+- `{ "debounce": 20, "maxWait": 120, "triggers": ["@mymind"] }` — same, but flush immediately on @mention
 - `{ "triggers": ["urgent"] }` — no timer, flush only on trigger (or immediately if no timers)
 
 Batched messages arrive as a single message with a `[Batch: N messages — ...]` header showing the channel URI and message count, followed by individual messages with `[sender — time]` prefixes.

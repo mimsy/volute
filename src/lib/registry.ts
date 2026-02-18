@@ -21,55 +21,58 @@ export function voluteHome(): string {
   return resolve(homedir(), ".volute");
 }
 
-export type AgentEntry = {
+export type MindEntry = {
   name: string;
   port: number;
   created: string;
   running: boolean;
-  stage?: "seed" | "mind";
+  stage?: "seed" | "sprouted";
 };
 
 export function ensureVoluteHome() {
-  const agentsBase = process.env.VOLUTE_AGENTS_DIR ?? resolve(voluteHome(), "agents");
-  mkdirSync(agentsBase, { recursive: true });
+  const mindsBase = process.env.VOLUTE_MINDS_DIR ?? resolve(voluteHome(), "minds");
+  mkdirSync(mindsBase, { recursive: true });
 }
 
-export function readRegistry(): AgentEntry[] {
-  const registryPath = resolve(voluteHome(), "agents.json");
+export function readRegistry(): MindEntry[] {
+  const registryPath = resolve(voluteHome(), "minds.json");
   if (!existsSync(registryPath)) return [];
   try {
     const entries = JSON.parse(readFileSync(registryPath, "utf-8")) as Array<
-      Omit<AgentEntry, "running"> & { running?: boolean }
+      Omit<MindEntry, "running"> & { running?: boolean }
     >;
-    return entries.map((e) => ({ ...e, running: e.running ?? false, stage: e.stage ?? "mind" }));
+    return entries.map((e) => ({
+      ...e,
+      running: e.running ?? false,
+      stage: e.stage ?? "sprouted",
+    }));
   } catch {
     return [];
   }
 }
 
-export function writeRegistry(entries: AgentEntry[]) {
+export function writeRegistry(entries: MindEntry[]) {
   ensureVoluteHome();
-  const registryPath = resolve(voluteHome(), "agents.json");
+  const registryPath = resolve(voluteHome(), "minds.json");
   const tmpPath = `${registryPath}.tmp`;
   writeFileSync(tmpPath, `${JSON.stringify(entries, null, 2)}\n`);
   renameSync(tmpPath, registryPath);
 }
 
-const AGENT_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
-const AGENT_NAME_MAX = 64;
+const MIND_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+const MIND_NAME_MAX = 64;
 
-export function validateAgentName(name: string): string | null {
-  if (!name) return "Agent name is required";
-  if (name.length > AGENT_NAME_MAX)
-    return `Agent name must be at most ${AGENT_NAME_MAX} characters`;
-  if (!AGENT_NAME_RE.test(name)) {
-    return "Agent name must start with alphanumeric and contain only alphanumeric, dots, dashes, or underscores";
+export function validateMindName(name: string): string | null {
+  if (!name) return "Mind name is required";
+  if (name.length > MIND_NAME_MAX) return `Mind name must be at most ${MIND_NAME_MAX} characters`;
+  if (!MIND_NAME_RE.test(name)) {
+    return "Mind name must start with alphanumeric and contain only alphanumeric, dots, dashes, or underscores";
   }
   return null;
 }
 
-export function addAgent(name: string, port: number, stage?: "seed" | "mind") {
-  const err = validateAgentName(name);
+export function addMind(name: string, port: number, stage?: "seed" | "sprouted") {
+  const err = validateMindName(name);
   if (err) throw new Error(err);
   const entries = readRegistry();
   const filtered = entries.filter((e) => e.name !== name);
@@ -77,12 +80,12 @@ export function addAgent(name: string, port: number, stage?: "seed" | "mind") {
   writeRegistry(filtered);
 }
 
-export function removeAgent(name: string) {
+export function removeMind(name: string) {
   const entries = readRegistry();
   writeRegistry(entries.filter((e) => e.name !== name));
 }
 
-export function setAgentRunning(name: string, running: boolean) {
+export function setMindRunning(name: string, running: boolean) {
   const entries = readRegistry();
   const entry = entries.find((e) => e.name === name);
   if (entry) {
@@ -91,7 +94,7 @@ export function setAgentRunning(name: string, running: boolean) {
   }
 }
 
-export function setAgentStage(name: string, stage: "seed" | "mind") {
+export function setMindStage(name: string, stage: "seed" | "sprouted") {
   const entries = readRegistry();
   const entry = entries.find((e) => e.name === name);
   if (entry) {
@@ -100,15 +103,15 @@ export function setAgentStage(name: string, stage: "seed" | "mind") {
   }
 }
 
-export function findAgent(name: string): AgentEntry | undefined {
+export function findMind(name: string): MindEntry | undefined {
   return readRegistry().find((e) => e.name === name);
 }
 
-export function agentDir(name: string): string {
-  if (process.env.VOLUTE_AGENTS_DIR) {
-    return resolve(process.env.VOLUTE_AGENTS_DIR, name);
+export function mindDir(name: string): string {
+  if (process.env.VOLUTE_MINDS_DIR) {
+    return resolve(process.env.VOLUTE_MINDS_DIR, name);
   }
-  return resolve(voluteHome(), "agents", name);
+  return resolve(voluteHome(), "minds", name);
 }
 
 export function stateDir(name: string): string {
@@ -139,23 +142,23 @@ export function daemonLoopback(): string {
   return host;
 }
 
-export function resolveAgent(name: string): { entry: AgentEntry; dir: string } {
+export function resolveMind(name: string): { entry: MindEntry; dir: string } {
   // Parse name@variant syntax
   const [baseName, variantName] = name.split("@", 2);
 
-  const entry = findAgent(baseName);
+  const entry = findMind(baseName);
   if (!entry) {
-    throw new Error(`Unknown agent: ${baseName}`);
+    throw new Error(`Unknown mind: ${baseName}`);
   }
-  const dir = agentDir(baseName);
+  const dir = mindDir(baseName);
   if (!existsSync(dir)) {
-    throw new Error(`Agent directory missing: ${dir}`);
+    throw new Error(`Mind directory missing: ${dir}`);
   }
 
   if (variantName) {
     const variant = findVariant(baseName, variantName);
     if (!variant) {
-      throw new Error(`Unknown variant: ${variantName} (agent: ${baseName})`);
+      throw new Error(`Unknown variant: ${variantName} (mind: ${baseName})`);
     }
     return { entry: { ...entry, port: variant.port }, dir: variant.path };
   }

@@ -1,7 +1,7 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
-import { getOrCreateAgentUser, getUserByUsername } from "../../../lib/auth.js";
+import { getOrCreateMindUser, getUserByUsername } from "../../../lib/auth.js";
 import {
   createConversation,
   deleteConversationForUser,
@@ -9,7 +9,7 @@ import {
   isParticipantOrOwner,
   listConversationsWithParticipants,
 } from "../../../lib/conversations.js";
-import { findAgent } from "../../../lib/registry.js";
+import { findMind } from "../../../lib/registry.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
 
 const createSchema = z.object({
@@ -37,32 +37,32 @@ const app = new Hono<AuthEnv>()
     const user = c.get("user");
     const body = c.req.valid("json");
 
-    // Resolve participant names → IDs, find the first agent for routing
+    // Resolve participant names → IDs, find the first mind for routing
     const participantIds = new Set<number>();
     if (user.id !== 0) participantIds.add(user.id);
-    let firstAgentName: string | undefined;
+    let firstMindName: string | undefined;
 
     for (const name of body.participantNames) {
       const existing = await getUserByUsername(name);
       if (existing) {
         participantIds.add(existing.id);
-        if (!firstAgentName && existing.user_type === "agent") firstAgentName = name;
+        if (!firstMindName && existing.user_type === "mind") firstMindName = name;
         continue;
       }
-      if (findAgent(name)) {
-        const au = await getOrCreateAgentUser(name);
+      if (findMind(name)) {
+        const au = await getOrCreateMindUser(name);
         participantIds.add(au.id);
-        if (!firstAgentName) firstAgentName = name;
+        if (!firstMindName) firstMindName = name;
         continue;
       }
       return c.json({ error: `User not found: ${name}` }, 400);
     }
 
-    if (!firstAgentName) {
-      return c.json({ error: "At least one agent participant is required" }, 400);
+    if (!firstMindName) {
+      return c.json({ error: "At least one mind participant is required" }, 400);
     }
 
-    const conv = await createConversation(firstAgentName, "volute", {
+    const conv = await createConversation(firstMindName, "volute", {
       userId: user.id !== 0 ? user.id : undefined,
       title: body.title,
       participantIds: [...participantIds],

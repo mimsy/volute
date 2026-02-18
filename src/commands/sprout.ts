@@ -1,29 +1,29 @@
 import { cpSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
-import { agentDir, findAgent, setAgentStage } from "../lib/registry.js";
+import { findMind, mindDir, setMindStage } from "../lib/registry.js";
 import { composeTemplate, findTemplatesRoot } from "../lib/template.js";
 
 const ORIENTATION_MARKER = "You don't have a soul yet";
 
 export async function run(_args: string[]) {
-  const agentName = process.env.VOLUTE_AGENT;
-  if (!agentName) {
-    console.error("volute sprout must be run by an agent (VOLUTE_AGENT not set)");
+  const mindName = process.env.VOLUTE_MIND;
+  if (!mindName) {
+    console.error("volute sprout must be run by a mind (VOLUTE_MIND not set)");
     process.exit(1);
   }
 
-  const entry = findAgent(agentName);
+  const entry = findMind(mindName);
   if (!entry) {
-    console.error(`Unknown agent: ${agentName}`);
+    console.error(`Unknown mind: ${mindName}`);
     process.exit(1);
   }
 
   if (entry.stage !== "seed") {
-    console.error(`${agentName} is not a seed — already at stage "${entry.stage}"`);
+    console.error(`${mindName} is not a seed — already at stage "${entry.stage}"`);
     process.exit(1);
   }
 
-  const dir = agentDir(agentName);
+  const dir = mindDir(mindName);
   const soulPath = resolve(dir, "home/SOUL.md");
   const memoryPath = resolve(dir, "home/MEMORY.md");
 
@@ -48,13 +48,13 @@ export async function run(_args: string[]) {
 
   // Install full skills: compose template, copy skills, remove orientation
   const templatesRoot = findTemplatesRoot();
-  const { composedDir, manifest } = composeTemplate(templatesRoot, "agent-sdk");
+  const { composedDir, manifest } = composeTemplate(templatesRoot, "claude");
   try {
     const skillsDir = resolve(dir, manifest.skillsDir);
     const composedSkillsDir = resolve(composedDir, manifest.skillsDir);
 
-    // Copy full skills from template (must match the skill list in agents.ts seed creation)
-    for (const skill of ["volute-agent", "memory", "sessions"]) {
+    // Copy full skills from template (must match the skill list in minds.ts seed creation)
+    for (const skill of ["volute-mind", "memory", "sessions"]) {
       const src = resolve(composedSkillsDir, skill);
       if (existsSync(src)) {
         cpSync(src, resolve(skillsDir, skill), { recursive: true });
@@ -71,7 +71,7 @@ export async function run(_args: string[]) {
   }
 
   // Flip stage only after skills are successfully installed
-  setAgentStage(agentName, "mind");
+  setMindStage(mindName, "sprouted");
 
   // Restart with sprouted context
   const { daemonFetch } = await import("../lib/daemon-client.js");
@@ -79,7 +79,7 @@ export async function run(_args: string[]) {
   const client = getClient();
 
   const res = await daemonFetch(
-    urlOf(client.api.agents[":name"].restart.$url({ param: { name: agentName } })),
+    urlOf(client.api.minds[":name"].restart.$url({ param: { name: mindName } })),
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -93,5 +93,5 @@ export async function run(_args: string[]) {
     process.exit(1);
   }
 
-  console.log("Sprouted! You now have full agent capabilities.");
+  console.log("Sprouted! You now have full mind capabilities.");
 }

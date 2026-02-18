@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
-import { agentEnvPath, readEnv, writeEnv } from "../lib/env.js";
+import { mindEnvPath, readEnv, writeEnv } from "../lib/env.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { readVoluteConfig, writeVoluteConfig } from "../lib/volute-config.js";
 
@@ -18,7 +18,7 @@ export async function run(args: string[]) {
   const { getClient, urlOf } = await import("../lib/api-client.js");
   const client = getClient();
 
-  const res = await daemonFetch(urlOf((client.api.agents as any).import.$url()), {
+  const res = await daemonFetch(urlOf((client.api.minds as any).import.$url()), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -38,12 +38,12 @@ export async function run(args: string[]) {
   };
 
   if (!res.ok) {
-    console.error(data.error ?? "Failed to import agent");
+    console.error(data.error ?? "Failed to import mind");
     process.exit(1);
   }
 
-  console.log(`\n${data.message ?? `Imported agent: ${data.name} (port ${data.port})`}`);
-  console.log(`\n  volute agent start ${data.name}`);
+  console.log(`\n${data.message ?? `Imported mind: ${data.name} (port ${data.port})`}`);
+  console.log(`\n  volute mind start ${data.name}`);
 }
 
 /** Auto-detect OpenClaw workspace: explicit path > cwd > ~/.openclaw/workspace */
@@ -75,7 +75,7 @@ function resolveWorkspace(explicitPath?: string): string {
   }
 
   console.error(
-    "Usage: volute agent import [<workspace-path>] [--name <name>] [--session <path>] [--template <name>]\n\n" +
+    "Usage: volute mind import [<workspace-path>] [--name <name>] [--session <path>] [--template <name>]\n\n" +
       "No OpenClaw workspace found. Provide a path, run from a workspace, or ensure ~/.openclaw/workspace exists.",
   );
   process.exit(1);
@@ -83,14 +83,14 @@ function resolveWorkspace(explicitPath?: string): string {
 
 /** Find the most recent OpenClaw session whose cwd matches the workspace being imported. */
 export function findOpenClawSession(workspaceDir: string): string | undefined {
-  const agentsDir = resolve(homedir(), ".openclaw/agents");
-  if (!existsSync(agentsDir)) return undefined;
+  const ocAgentsDir = resolve(homedir(), ".openclaw/agents");
+  if (!existsSync(ocAgentsDir)) return undefined;
 
-  // Scan all session JSONL files across all agents, match by workspace cwd
+  // Scan all session JSONL files across all OpenClaw agents, match by workspace cwd
   const matches: { path: string; mtime: number }[] = [];
   try {
-    for (const agent of readdirSync(agentsDir)) {
-      const sessionsDir = resolve(agentsDir, agent, "sessions");
+    for (const entry of readdirSync(ocAgentsDir)) {
+      const sessionsDir = resolve(ocAgentsDir, entry, "sessions");
       if (!existsSync(sessionsDir)) continue;
 
       for (const file of readdirSync(sessionsDir)) {
@@ -130,12 +130,12 @@ export function sessionMatchesWorkspace(sessionPath: string, workspaceDir: strin
  * OpenClaw sessions use the same JSONL format as pi-coding-agent,
  * so we copy directly and just update the cwd in the session header.
  */
-export function importPiSession(sessionFile: string, agentDirPath: string) {
-  const homeDir = resolve(agentDirPath, "home");
-  const piSessionDir = resolve(agentDirPath, ".volute/pi-sessions/main");
+export function importPiSession(sessionFile: string, mindDirPath: string) {
+  const homeDir = resolve(mindDirPath, "home");
+  const piSessionDir = resolve(mindDirPath, ".volute/pi-sessions/main");
   mkdirSync(piSessionDir, { recursive: true });
 
-  // Read session and update cwd in header to point to new agent's home dir
+  // Read session and update cwd in header to point to new mind's home dir
   const content = readFileSync(sessionFile, "utf-8");
   const lines = content.trim().split("\n");
 
@@ -161,8 +161,8 @@ type OpenClawDiscordConfig = {
   guilds?: Record<string, { channels?: Record<string, { allow?: boolean }> }>;
 };
 
-/** Import connector config from ~/.openclaw/openclaw.json into the new agent. */
-export function importOpenClawConnectors(agentName: string, agentDirPath: string) {
+/** Import connector config from ~/.openclaw/openclaw.json into the new mind. */
+export function importOpenClawConnectors(name: string, mindDirPath: string) {
   const configPath = resolve(homedir(), ".openclaw/openclaw.json");
   if (!existsSync(configPath)) return;
 
@@ -177,8 +177,8 @@ export function importOpenClawConnectors(agentName: string, agentDirPath: string
   const discord = config.channels?.discord;
   if (!discord?.enabled || !discord.token) return;
 
-  // Write DISCORD_TOKEN to agent env
-  const envPath = agentEnvPath(agentName);
+  // Write DISCORD_TOKEN to mind env
+  const envPath = mindEnvPath(name);
   const env = readEnv(envPath);
   env.DISCORD_TOKEN = discord.token;
   writeEnv(envPath, env);
@@ -195,14 +195,14 @@ export function importOpenClawConnectors(agentName: string, agentDirPath: string
   }
 
   // Enable discord connector in volute.json
-  const voluteConfig = readVoluteConfig(agentDirPath) ?? {};
+  const voluteConfig = readVoluteConfig(mindDirPath) ?? {};
   const connectors = new Set(voluteConfig.connectors ?? []);
   connectors.add("discord");
   voluteConfig.connectors = [...connectors];
   if (channelNames.size > 0) {
     voluteConfig.discord = { channels: [...channelNames] };
   }
-  writeVoluteConfig(agentDirPath, voluteConfig);
+  writeVoluteConfig(mindDirPath, voluteConfig);
 
   console.log("Imported Discord connector config");
   if (channelNames.size > 0) {

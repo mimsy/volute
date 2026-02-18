@@ -5,10 +5,10 @@ services:
       - "4200:4200"
     volumes:
       - volute-data:/data
-      - volute-agents:/agents
+      - volute-minds:/minds
       - ~/.claude:/data/.claude
     restart: unless-stopped
 
 volumes:
   volute-data:
-  volute-agents:
+  volute-minds:

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { resolve } from "node:path";
-import { createAgent } from "./agent.js";
+import { createMind } from "./agent.js";
 import { daemonRestart } from "./lib/daemon-client.js";
 import { createFileHandlerResolver } from "./lib/file-handler.js";
 import { log } from "./lib/logger.js";
@@ -32,7 +32,7 @@ if (existsSync(oldSessionPath) && !existsSync(resolve(sessionsDir, "main.json"))
 
 const pkg = loadPackageInfo();
 const abortController = new AbortController();
-const agent = createAgent({
+const mind = createMind({
   systemPrompt,
   cwd: resolve("home"),
   abortController,
@@ -42,14 +42,14 @@ const agent = createAgent({
   compactionMessage: config.compactionMessage,
   onIdentityReload: async () => {
     log("server", "identity file changed — restarting to reload");
-    await agent.waitForCommits();
+    await mind.waitForCommits();
     await daemonRestart({ type: "reload" });
   },
 });
 
 const router = createRouter({
   configPath: resolve("home/.config/routes.json"),
-  agentHandler: agent.resolve,
+  mindHandler: mind.resolve,
   fileHandler: createFileHandlerResolver(resolve("home")),
 });
 

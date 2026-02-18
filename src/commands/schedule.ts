@@ -1,7 +1,7 @@
 import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { resolveAgentName } from "../lib/resolve-agent-name.js";
+import { resolveMindName } from "../lib/resolve-mind-name.js";
 
 type Schedule = {
   id: string;
@@ -36,21 +36,21 @@ export async function run(args: string[]) {
 
 function printUsage() {
   console.log(`Usage:
-  volute schedule list [--agent <name>]
-  volute schedule add [--agent <name>] --cron "..." --message "..." [--id name]
-  volute schedule remove [--agent <name>] --id <id>`);
+  volute schedule list [--mind <name>]
+  volute schedule add [--mind <name>] --cron "..." --message "..." [--id name]
+  volute schedule remove [--mind <name>] --id <id>`);
 }
 
 async function listSchedules(args: string[]) {
   const { flags } = parseArgs(args, {
-    agent: { type: "string" },
+    mind: { type: "string" },
   });
 
-  const agent = resolveAgentName(flags);
+  const mind = resolveMindName(flags);
   const client = getClient();
 
   const res = await daemonFetch(
-    urlOf(client.api.agents[":name"].schedules.$url({ param: { name: agent } })),
+    urlOf(client.api.minds[":name"].schedules.$url({ param: { name: mind } })),
   );
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
@@ -77,13 +77,13 @@ async function listSchedules(args: string[]) {
 
 async function addSchedule(args: string[]) {
   const { flags } = parseArgs(args, {
-    agent: { type: "string" },
+    mind: { type: "string" },
     cron: { type: "string" },
     message: { type: "string" },
     id: { type: "string" },
   });
 
-  const agent = resolveAgentName(flags);
+  const mind = resolveMindName(flags);
 
   if (!flags.cron || !flags.message) {
     console.error("--cron and --message are required");
@@ -95,7 +95,7 @@ async function addSchedule(args: string[]) {
 
   const client = getClient();
   const res = await daemonFetch(
-    urlOf(client.api.agents[":name"].schedules.$url({ param: { name: agent } })),
+    urlOf(client.api.minds[":name"].schedules.$url({ param: { name: mind } })),
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -115,11 +115,11 @@ async function addSchedule(args: string[]) {
 
 async function removeSchedule(args: string[]) {
   const { flags } = parseArgs(args, {
-    agent: { type: "string" },
+    mind: { type: "string" },
     id: { type: "string" },
   });
 
-  const agent = resolveAgentName(flags);
+  const mind = resolveMindName(flags);
 
   if (!flags.id) {
     console.error("--id is required");
@@ -129,8 +129,8 @@ async function removeSchedule(args: string[]) {
   const client = getClient();
   const res = await daemonFetch(
     urlOf(
-      client.api.agents[":name"].schedules[":id"].$url({
-        param: { name: agent, id: flags.id },
+      client.api.minds[":name"].schedules[":id"].$url({
+        param: { name: mind, id: flags.id },
       }),
     ),
     { method: "DELETE" },

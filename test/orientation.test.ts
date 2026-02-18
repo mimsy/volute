@@ -5,11 +5,11 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
 import {
-  addAgent,
-  findAgent,
+  addMind,
+  findMind,
   readRegistry,
-  removeAgent,
-  setAgentStage,
+  removeMind,
+  setMindStage,
   voluteHome,
 } from "../src/lib/registry.js";
 import { sessions, users } from "../src/lib/schema.js";
@@ -26,26 +26,26 @@ describe("registry stage", () => {
   const name = `orient-test-${Date.now()}`;
 
   afterEach(() => {
-    removeAgent(name);
+    removeMind(name);
   });
 
-  it("addAgent with stage=seed persists correctly", () => {
-    addAgent(name, 4100, "seed");
-    const entry = findAgent(name);
+  it("addMind with stage=seed persists correctly", () => {
+    addMind(name, 4100, "seed");
+    const entry = findMind(name);
     assert.ok(entry);
     assert.equal(entry.stage, "seed");
   });
 
-  it("addAgent without stage defaults to mind on read", () => {
-    addAgent(name, 4100);
-    const entry = findAgent(name);
+  it("addMind without stage defaults to sprouted on read", () => {
+    addMind(name, 4100);
+    const entry = findMind(name);
     assert.ok(entry);
-    assert.equal(entry.stage, "mind");
+    assert.equal(entry.stage, "sprouted");
   });
 
-  it("readRegistry defaults missing stage to mind", () => {
+  it("readRegistry defaults missing stage to sprouted", () => {
     // Write a registry entry without stage field
-    const registryPath = resolve(voluteHome(), "agents.json");
+    const registryPath = resolve(voluteHome(), "minds.json");
     writeFileSync(
       registryPath,
       JSON.stringify([{ name, port: 4100, created: new Date().toISOString(), running: false }]),
@@ -53,18 +53,18 @@ describe("registry stage", () => {
     const entries = readRegistry();
     const entry = entries.find((e) => e.name === name);
     assert.ok(entry);
-    assert.equal(entry.stage, "mind");
+    assert.equal(entry.stage, "sprouted");
   });
 
-  it("setAgentStage flips seed to mind", () => {
-    addAgent(name, 4100, "seed");
-    assert.equal(findAgent(name)?.stage, "seed");
-    setAgentStage(name, "mind");
-    assert.equal(findAgent(name)?.stage, "mind");
+  it("setMindStage flips seed to sprouted", () => {
+    addMind(name, 4100, "seed");
+    assert.equal(findMind(name)?.stage, "seed");
+    setMindStage(name, "sprouted");
+    assert.equal(findMind(name)?.stage, "sprouted");
   });
 });
 
-describe("seed agent creation API", () => {
+describe("seed mind creation API", () => {
   let cookie: string;
 
   async function cleanup() {
@@ -79,30 +79,30 @@ describe("seed agent creation API", () => {
     cookie = await createSession(user.id);
   });
   afterEach(async () => {
-    // Clean up any agents we created
+    // Clean up any minds we created
     for (const entry of readRegistry()) {
       if (entry.name.startsWith("seed-test-")) {
-        removeAgent(entry.name);
+        removeMind(entry.name);
       }
     }
     await cleanup();
   });
 
-  it("POST /api/agents with stage=seed creates agent with correct stage", async () => {
-    const agentName = `seed-test-${Date.now()}`;
-    // Create the agent directory so the route doesn't fail on disk operations
-    const agentsDir = resolve(voluteHome(), "agents");
-    mkdirSync(agentsDir, { recursive: true });
+  it("POST /api/minds with stage=seed creates mind with correct stage", async () => {
+    const mindName = `seed-test-${Date.now()}`;
+    // Create the mind directory so the route doesn't fail on disk operations
+    const mindsDir = resolve(voluteHome(), "minds");
+    mkdirSync(mindsDir, { recursive: true });
 
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request("http://localhost/api/agents", {
+    const res = await app.request("http://localhost/api/minds", {
       method: "POST",
       headers: {
         ...postHeaders(cookie),
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ name: agentName, stage: "seed" }),
+      body: JSON.stringify({ name: mindName, stage: "seed" }),
     });
 
     // Will likely fail because template copy needs real templates dir,
@@ -110,42 +110,42 @@ describe("seed agent creation API", () => {
     if (res.status === 200) {
       const body = (await res.json()) as { stage?: string };
       assert.equal(body.stage, "seed");
-      const entry = findAgent(agentName);
+      const entry = findMind(mindName);
       assert.ok(entry);
       assert.equal(entry.stage, "seed");
     }
     // Clean up
-    removeAgent(agentName);
+    removeMind(mindName);
   });
 });
 
 describe("seed gating", () => {
   let cookie: string;
-  const agentName = `gated-seed-${Date.now()}`;
+  const mindName = `gated-seed-${Date.now()}`;
 
   async function cleanup() {
     const db = await getDb();
     await db.delete(sessions);
     await db.delete(users);
-    removeAgent(agentName);
+    removeMind(mindName);
   }
 
   beforeEach(async () => {
     await cleanup();
     const user = await createUser("gate-admin", "pass");
     cookie = await createSession(user.id);
-    addAgent(agentName, 4199, "seed");
-    // Create minimal agent directory
-    const dir = resolve(voluteHome(), "agents", agentName);
+    addMind(mindName, 4199, "seed");
+    // Create minimal mind directory
+    const dir = resolve(voluteHome(), "minds", mindName);
     mkdirSync(resolve(dir, "home/.config"), { recursive: true });
     writeFileSync(resolve(dir, "home/.config/volute.json"), "{}");
   });
   afterEach(cleanup);
 
-  it("POST connectors returns 403 for seed agents", async () => {
+  it("POST connectors returns 403 for seed minds", async () => {
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/agents/${agentName}/connectors/discord`, {
+    const res = await app.request(`http://localhost/api/minds/${mindName}/connectors/discord`, {
       method: "POST",
       headers: postHeaders(cookie),
     });
@@ -154,10 +154,10 @@ describe("seed gating", () => {
     assert.ok(body.error.includes("Seed"));
   });
 
-  it("POST schedules returns 403 for seed agents", async () => {
+  it("POST schedules returns 403 for seed minds", async () => {
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/agents/${agentName}/schedules`, {
+    const res = await app.request(`http://localhost/api/minds/${mindName}/schedules`, {
       method: "POST",
       headers: {
         ...postHeaders(cookie),
@@ -170,10 +170,10 @@ describe("seed gating", () => {
     assert.ok(body.error.includes("Seed"));
   });
 
-  it("POST variants returns 403 for seed agents", async () => {
+  it("POST variants returns 403 for seed minds", async () => {
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/agents/${agentName}/variants`, {
+    const res = await app.request(`http://localhost/api/minds/${mindName}/variants`, {
       method: "POST",
       headers: {
         ...postHeaders(cookie),

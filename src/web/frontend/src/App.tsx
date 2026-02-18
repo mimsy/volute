@@ -4,23 +4,23 @@ import { SystemLogs } from "./components/SystemLogs";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { UserManagement } from "./components/UserManagement";
 import { type AuthUser, fetchMe, logout } from "./lib/auth";
-import { AgentDetail } from "./pages/AgentDetail";
 import { Chats } from "./pages/Chats";
 import { Dashboard } from "./pages/Dashboard";
 import { Home } from "./pages/Home";
+import { MindDetail } from "./pages/MindDetail";
 
-function parseHash(): { page: string; name?: string; conversationId?: string; agentName?: string } {
+function parseHash(): { page: string; name?: string; conversationId?: string; mindName?: string } {
   const hash = window.location.hash.slice(1) || "/";
   if (hash === "/" || hash === "") return { page: "home" };
-  if (hash === "/agents") return { page: "agents" };
+  if (hash === "/minds") return { page: "minds" };
   if (hash === "/chats") return { page: "chats" };
   if (hash === "/logs") return { page: "logs" };
   const chatsMatch = hash.match(/^\/chats\/(.+)$/);
   if (chatsMatch) return { page: "chats", conversationId: chatsMatch[1] };
-  const chatsAgentMatch = hash.match(/^\/chats\?agent=(.+)$/);
-  if (chatsAgentMatch) return { page: "chats", agentName: decodeURIComponent(chatsAgentMatch[1]) };
-  const match = hash.match(/^\/agent\/(.+)$/);
-  if (match) return { page: "agent", name: match[1] };
+  const chatsMindMatch = hash.match(/^\/chats\?mind=(.+)$/);
+  if (chatsMindMatch) return { page: "chats", mindName: decodeURIComponent(chatsMindMatch[1]) };
+  const match = hash.match(/^\/mind\/(.+)$/);
+  if (match) return { page: "mind", name: match[1] };
   return { page: "home" };
 }
 
@@ -82,16 +82,16 @@ export function App() {
           <a href="#/" className="logo">
             <span className="logo-symbol">&gt;</span> volute
           </a>
-          {route.page === "agent" && route.name && (
+          {route.page === "mind" && route.name && (
             <nav className="breadcrumb">
               <span className="breadcrumb-sep">/</span>
               <span className="breadcrumb-name">{route.name}</span>
             </nav>
           )}
-          {route.page === "agents" && (
+          {route.page === "minds" && (
             <nav className="breadcrumb">
               <span className="breadcrumb-sep">/</span>
-              <span className="breadcrumb-name">agents</span>
+              <span className="breadcrumb-name">minds</span>
             </nav>
           )}
           {route.page === "chats" && (
@@ -110,8 +110,8 @@ export function App() {
             <NavLink href="#/chats" active={route.page === "chats"}>
               chat
             </NavLink>
-            <NavLink href="#/agents" active={route.page === "agents" || route.page === "agent"}>
-              agents
+            <NavLink href="#/minds" active={route.page === "minds" || route.page === "mind"}>
+              minds
             </NavLink>
             <UserMenu
               username={user.username}
@@ -133,15 +133,15 @@ export function App() {
           ) : (
             <>
               {route.page === "home" && <Home username={user.username} />}
-              {route.page === "agents" && <Dashboard />}
+              {route.page === "minds" && <Dashboard />}
               {route.page === "chats" && (
                 <Chats
                   conversationId={route.conversationId}
-                  agentName={route.agentName}
+                  mindName={route.mindName}
                   username={user.username}
                 />
               )}
-              {route.page === "agent" && route.name && <AgentDetail name={route.name} />}
+              {route.page === "mind" && route.name && <MindDetail name={route.name} />}
               {route.page === "logs" && <SystemLogs />}
             </>
           )}

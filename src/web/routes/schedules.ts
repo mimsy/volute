@@ -1,15 +1,15 @@
 import { Hono } from "hono";
-import { agentDir, findAgent } from "../../lib/registry.js";
+import { findMind, mindDir } from "../../lib/registry.js";
 import { getScheduler } from "../../lib/scheduler.js";
 import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 function readSchedules(name: string): Schedule[] {
-  return readVoluteConfig(agentDir(name))?.schedules ?? [];
+  return readVoluteConfig(mindDir(name))?.schedules ?? [];
 }
 
 function writeSchedules(name: string, schedules: Schedule[]): void {
-  const dir = agentDir(name);
+  const dir = mindDir(name);
   const config = readVoluteConfig(dir) ?? {};
   config.schedules = schedules.length > 0 ? schedules : undefined;
   writeVoluteConfig(dir, config);
@@ -20,16 +20,16 @@ const app = new Hono<AuthEnv>()
   // List schedules
   .get("/:name/schedules", (c) => {
     const name = c.req.param("name");
-    if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
+    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
     return c.json(readSchedules(name));
   })
   // Add schedule — admin only
   .post("/:name/schedules", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    const entry = findAgent(name);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    const entry = findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
     if (entry.stage === "seed")
-      return c.json({ error: "Seed agents cannot use schedules — sprout first" }, 403);
+      return c.json({ error: "Seed minds cannot use schedules — sprout first" }, 403);
 
     const body = (await c.req.json()) as Partial<Schedule>;
     if (!body.cron || !body.message) {
@@ -51,7 +51,7 @@ const app = new Hono<AuthEnv>()
   .put("/:name/schedules/:id", requireAdmin, async (c) => {
     const name = c.req.param("name");
     const id = c.req.param("id");
-    if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
+    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
 
     const schedules = readSchedules(name);
     const idx = schedules.findIndex((s) => s.id === id);
@@ -69,7 +69,7 @@ const app = new Hono<AuthEnv>()
   .delete("/:name/schedules/:id", requireAdmin, (c) => {
     const name = c.req.param("name");
     const id = c.req.param("id");
-    if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
+    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
 
     const schedules = readSchedules(name);
     const filtered = schedules.filter((s) => s.id !== id);
@@ -84,8 +84,8 @@ const app = new Hono<AuthEnv>()
   .post("/:name/webhook/:event", async (c) => {
     const name = c.req.param("name");
     const event = c.req.param("event");
-    const entry = findAgent(name);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    const entry = findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const body = await c.req.text();
     const message = `[webhook: ${event}] ${body}`;
@@ -102,11 +102,11 @@ const app = new Hono<AuthEnv>()
       });
 
       if (!res.ok) {
-        return c.json({ error: `Agent responded with ${res.status}` }, 502);
+        return c.json({ error: `Mind responded with ${res.status}` }, 502);
       }
       return c.json({ ok: true });
     } catch {
-      return c.json({ error: "Failed to reach agent" }, 502);
+      return c.json({ error: "Failed to reach mind" }, 502);
     }
   });
 

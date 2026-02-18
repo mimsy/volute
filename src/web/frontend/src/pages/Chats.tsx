@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { Chat } from "../components/Chat";
 import {
-  type Agent,
   type AvailableUser,
   type Conversation,
   createConversationWithParticipants,
   deleteConversationById,
-  fetchAgents,
   fetchAllConversations,
   fetchAvailableUsers,
+  fetchMinds,
+  type Mind,
   type Participant,
 } from "../lib/api";
 
@@ -16,30 +16,30 @@ type ConversationWithParticipants = Conversation & { participants: Participant[]
 
 export function Chats({
   conversationId: initialId,
-  agentName: initialAgent,
+  mindName: initialMind,
   username,
 }: {
   conversationId?: string;
-  agentName?: string;
+  mindName?: string;
   username: string;
 }) {
   const [conversations, setConversations] = useState<ConversationWithParticipants[]>([]);
   const [activeId, setActiveId] = useState<string | null>(initialId ?? null);
   const [showNewChat, setShowNewChat] = useState(false);
   const [showGroupModal, setShowGroupModal] = useState(false);
-  const [newChatAgent, setNewChatAgent] = useState<string | null>(initialAgent ?? null);
-  const [agents, setAgents] = useState<Agent[]>([]);
+  const [newChatMind, setNewChatMind] = useState<string | null>(initialMind ?? null);
+  const [minds, setMinds] = useState<Mind[]>([]);
 
   const activeConv = conversations.find((c) => c.id === activeId);
-  const agentName = activeConv?.agent_name ?? "";
+  const mindName = activeConv?.mind_name ?? "";
 
   const refresh = useCallback(() => {
     fetchAllConversations()
       .then(setConversations)
       .catch((e) => console.error("Failed to fetch conversations:", e));
-    fetchAgents()
-      .then(setAgents)
-      .catch((e) => console.error("Failed to fetch agents:", e));
+    fetchMinds()
+      .then(setMinds)
+      .catch((e) => console.error("Failed to fetch minds:", e));
   }, []);
 
   useEffect(() => {
@@ -95,15 +95,15 @@ export function Chats({
     refresh();
   };
 
-  const handleNewChatCreated = (agent: string) => {
+  const handleNewChatCreated = (mind: string) => {
     setShowNewChat(false);
     setActiveId(null);
-    setNewChatAgent(agent);
+    setNewChatMind(mind);
   };
 
-  // Clear newChatAgent only once the conversation list has caught up
+  // Clear newChatMind only once the conversation list has caught up
   useEffect(() => {
-    if (activeId && activeConv) setNewChatAgent(null);
+    if (activeId && activeConv) setNewChatMind(null);
   }, [activeId, activeConv]);
 
   const handleGroupCreated = (conv: Conversation) => {
@@ -112,9 +112,9 @@ export function Chats({
     setActiveId(conv.id);
   };
 
-  // The agent name to use for the Chat component: from active conversation or new chat pick
-  const chatAgentName = newChatAgent || agentName;
-  const chatAgent = agents.find((a) => a.name === chatAgentName);
+  // The mind name to use for the Chat component: from active conversation or new chat pick
+  const chatMindName = newChatMind || mindName;
+  const chatMind = minds.find((a) => a.name === chatMindName);
 
   function getConversationLabel(conv: ConversationWithParticipants): string {
     const participants = conv.participants ?? [];
@@ -124,13 +124,13 @@ export function Chats({
       if (other) return `@${other.username}`;
     }
     if (conv.title) return conv.title;
-    const agents = participants.filter((p) => p.userType === "agent");
-    if (agents.length > 0) return agents.map((a) => a.username).join(", ");
+    const mindParticipants = participants.filter((p) => p.userType === "mind");
+    if (mindParticipants.length > 0) return mindParticipants.map((a) => a.username).join(", ");
     return "Untitled";
   }
 
   function getParticipantBadges(conv: ConversationWithParticipants): Participant[] {
-    return conv.participants?.filter((p) => p.userType === "agent") ?? [];
+    return conv.participants?.filter((p) => p.userType === "mind") ?? [];
   }
 
   return (
@@ -232,7 +232,7 @@ export function Chats({
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
                       {getConversationLabel(conv)}
                     </span>
-                    {agents.find((a) => a.name === conv.agent_name)?.stage === "seed" && (
+                    {minds.find((a) => a.name === conv.mind_name)?.stage === "seed" && (
                       <span
                         style={{
                           fontSize: 9,
@@ -296,13 +296,13 @@ export function Chats({
 
       {/* Chat panel */}
       <div style={{ flex: 1, paddingLeft: 16, minWidth: 0 }}>
-        {chatAgentName ? (
+        {chatMindName ? (
           <Chat
-            name={chatAgentName}
+            name={chatMindName}
             username={username}
             conversationId={activeId}
             onConversationId={handleConversationId}
-            stage={chatAgent?.stage}
+            stage={chatMind?.stage}
           />
         ) : (
           <div
@@ -321,7 +321,7 @@ export function Chats({
       </div>
 
       {showNewChat && (
-        <AgentPickerModal onClose={() => setShowNewChat(false)} onPick={handleNewChatCreated} />
+        <MindPickerModal onClose={() => setShowNewChat(false)} onPick={handleNewChatCreated} />
       )}
       {showGroupModal && (
         <GroupModal onClose={() => setShowGroupModal(false)} onCreated={handleGroupCreated} />
@@ -330,27 +330,27 @@ export function Chats({
   );
 }
 
-function AgentPickerModal({
+function MindPickerModal({
   onClose,
   onPick,
 }: {
   onClose: () => void;
-  onPick: (agentName: string) => void;
+  onPick: (mindName: string) => void;
 }) {
-  const [agents, setAgents] = useState<Agent[]>([]);
+  const [minds, setMinds] = useState<Mind[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetchAgents()
+    fetchMinds()
       .then((a) => {
-        setAgents(a);
+        setMinds(a);
         setLoading(false);
       })
       .catch((e) => {
-        console.error("Failed to fetch agents:", e);
+        console.error("Failed to fetch minds:", e);
         setLoading(false);
-        setError("Failed to load agents");
+        setError("Failed to load minds");
       });
   }, []);
 
@@ -385,12 +385,12 @@ function AgentPickerModal({
           New chat with...
         </div>
         {loading ? (
-          <div style={{ color: "var(--text-2)", fontSize: 12 }}>Loading agents...</div>
+          <div style={{ color: "var(--text-2)", fontSize: 12 }}>Loading minds...</div>
         ) : error ? (
           <div style={{ color: "var(--red)", fontSize: 12, padding: 8 }}>{error}</div>
         ) : (
           <div style={{ flex: 1, overflow: "auto" }}>
-            {agents.map((a) => (
+            {minds.map((a) => (
               <button
                 key={a.name}
                 onClick={() => onPick(a.name)}
@@ -422,10 +422,8 @@ function AgentPickerModal({
                 {a.name}
               </button>
             ))}
-            {agents.length === 0 && (
-              <div style={{ color: "var(--text-2)", fontSize: 12, padding: 8 }}>
-                No agents found
-              </div>
+            {minds.length === 0 && (
+              <div style={{ color: "var(--text-2)", fontSize: 12, padding: 8 }}>No minds found</div>
             )}
           </div>
         )}
@@ -476,11 +474,11 @@ function GroupModal({
     });
   };
 
-  const hasAgent = users.some((u) => u.user_type === "agent" && selected.has(u.username));
+  const hasMind = users.some((u) => u.user_type === "mind" && selected.has(u.username));
 
   const handleCreate = async () => {
-    if (!hasAgent) {
-      setError("Select at least one agent");
+    if (!hasMind) {
+      setError("Select at least one mind");
       return;
     }
     setLoading(true);
@@ -542,7 +540,7 @@ function GroupModal({
         />
 
         <div style={{ color: "var(--text-2)", fontSize: 11 }}>
-          Select participants (at least one agent):
+          Select participants (at least one mind):
         </div>
         <div style={{ flex: 1, overflow: "auto", maxHeight: 250 }}>
           {users.map((u) => (
@@ -566,7 +564,7 @@ function GroupModal({
               <span>{u.username}</span>
               <span
                 style={{
-                  color: u.user_type === "agent" ? "var(--accent)" : "var(--text-2)",
+                  color: u.user_type === "mind" ? "var(--accent)" : "var(--text-2)",
                   fontSize: 10,
                   marginLeft: "auto",
                 }}
@@ -595,7 +593,7 @@ function GroupModal({
           </button>
           <button
             onClick={handleCreate}
-            disabled={loading || !hasAgent}
+            disabled={loading || !hasMind}
             style={{
               padding: "6px 14px",
               background: "var(--accent-dim)",
@@ -603,7 +601,7 @@ function GroupModal({
               borderRadius: "var(--radius)",
               fontSize: 12,
               fontWeight: 500,
-              opacity: loading || !hasAgent ? 0.5 : 1,
+              opacity: loading || !hasMind ? 0.5 : 1,
             }}
           >
             {loading ? "Creating..." : "Create"}

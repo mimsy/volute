@@ -1,12 +1,12 @@
 import { ChannelType, Client, Events, GatewayIntentBits, type Message, Partials } from "discord.js";
 import {
-  type AgentPayload,
   buildChannelSlug,
   type ContentPart,
   loadEnv,
   loadFollowedChannels,
+  type MindPayload,
   reportTyping,
-  sendToAgent,
+  sendToMind,
   slugify,
   writeChannelEntry,
 } from "./sdk.js";
@@ -46,7 +46,7 @@ process.on("SIGTERM", shutdown);
 
 client.once(Events.ClientReady, (c) => {
   console.log(`Connected to Discord as ${c.user.tag}`);
-  console.log(`Bridging to agent: ${env.agentName} via ${env.baseUrl}/message`);
+  console.log(`Bridging to mind: ${env.mindName} via ${env.baseUrl}/message`);
 
   if (followedChannelNames.length > 0) {
     for (const guild of c.guilds.cache.values()) {
@@ -111,7 +111,7 @@ client.on(Events.MessageCreate, async (message) => {
       });
 
   try {
-    writeChannelEntry(env.agentName, channelKey, {
+    writeChannelEntry(env.mindName, channelKey, {
       platformId: message.channelId,
       platform: "discord",
       name: channelName ? `#${channelName}` : undefined,
@@ -125,7 +125,7 @@ client.on(Events.MessageCreate, async (message) => {
   // Determine participant count: DMs are always 1:1 for bots, guild channels use memberCount
   const participantCount = isDM ? 2 : message.guild?.memberCount;
 
-  const payload: AgentPayload = {
+  const payload: MindPayload = {
     content,
     channel: channelKey,
     sender: senderName,
@@ -140,7 +140,7 @@ client.on(Events.MessageCreate, async (message) => {
   reportTyping(env, channelKey, senderName, false);
 
   if (isFollowedChannel && !isMentioned) {
-    const result = await sendToAgent(env, payload);
+    const result = await sendToMind(env, payload);
     if (!result.ok)
       message.reply(result.error ?? "Failed to process message").catch((err) => {
         console.warn(`[discord] failed to send error reply: ${err}`);
@@ -160,7 +160,7 @@ client.on(Events.TypingStart, (typing) => {
   reportTyping(env, typingChannel, sender, true);
 });
 
-async function handleDiscordMessage(message: Message, payload: AgentPayload) {
+async function handleDiscordMessage(message: Message, payload: MindPayload) {
   const channel = message.channel;
   if (!("sendTyping" in channel)) return;
   const typingInterval = setInterval(() => {
@@ -173,7 +173,7 @@ async function handleDiscordMessage(message: Message, payload: AgentPayload) {
   });
 
   try {
-    const result = await sendToAgent(env, payload);
+    const result = await sendToMind(env, payload);
     if (!result.ok)
       message.reply(result.error ?? "Failed to process message").catch((err) => {
         console.warn(`[discord] failed to send error reply: ${err}`);

@@ -38,31 +38,31 @@ export async function run(_args: string[]) {
     console.log(`Update available: ${update.current} → ${update.latest}`);
   }
 
-  // List agents
+  // List minds
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   headers.Origin = baseUrl;
 
   try {
-    const res = await fetch(`${baseUrl}/api/agents`, { headers });
+    const res = await fetch(`${baseUrl}/api/minds`, { headers });
     if (res.ok) {
-      const agents = (await res.json()) as Array<{
+      const minds = (await res.json()) as Array<{
         name: string;
         running: boolean;
         stage?: string;
       }>;
-      if (agents.length > 0) {
-        console.log(`\nAgents (${agents.length}):`);
-        for (const agent of agents) {
-          const status = agent.running ? "running" : "stopped";
-          const label = agent.stage === "seed" ? " (seed)" : "";
-          console.log(`  ${agent.name}: ${status}${label}`);
+      if (minds.length > 0) {
+        console.log(`\nMinds (${minds.length}):`);
+        for (const mind of minds) {
+          const status = mind.running ? "running" : "stopped";
+          const label = mind.stage === "seed" ? " (seed)" : "";
+          console.log(`  ${mind.name}: ${status}${label}`);
         }
       } else {
-        console.log("\nNo agents configured.");
+        console.log("\nNo minds configured.");
       }
     }
   } catch {
-    // Couldn't fetch agents — not critical
+    // Couldn't fetch minds — not critical
   }
 }

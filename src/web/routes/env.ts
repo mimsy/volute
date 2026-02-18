@@ -1,20 +1,20 @@
 import { Hono } from "hono";
-import { agentEnvPath, loadMergedEnv, readEnv, sharedEnvPath, writeEnv } from "../../lib/env.js";
-import { findAgent } from "../../lib/registry.js";
+import { loadMergedEnv, mindEnvPath, readEnv, sharedEnvPath, writeEnv } from "../../lib/env.js";
+import { findMind } from "../../lib/registry.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
-// Agent-scoped env routes (mounted at /api/agents)
+// Mind-scoped env routes (mounted at /api/minds)
 const app = new Hono<AuthEnv>()
   .get("/:name/env", (c) => {
     const name = c.req.param("name");
-    if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
+    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
     const shared = readEnv(sharedEnvPath());
-    const agent = readEnv(agentEnvPath(name));
-    return c.json({ shared, agent });
+    const mind = readEnv(mindEnvPath(name));
+    return c.json({ shared, mind });
   })
   .get("/:name/env/:key", (c) => {
     const name = c.req.param("name");
-    if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
+    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
     const key = c.req.param("key");
     const merged = loadMergedEnv(name);
     const value = merged[key];
@@ -23,7 +23,7 @@ const app = new Hono<AuthEnv>()
   })
   .put("/:name/env/:key", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
+    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
     const key = c.req.param("key");
     let body: { value?: string };
     try {
@@ -34,7 +34,7 @@ const app = new Hono<AuthEnv>()
     if (typeof body.value !== "string") {
       return c.json({ error: "Missing required field: value" }, 400);
     }
-    const path = agentEnvPath(name);
+    const path = mindEnvPath(name);
     const env = readEnv(path);
     env[key] = body.value;
     writeEnv(path, env);
@@ -42,9 +42,9 @@ const app = new Hono<AuthEnv>()
   })
   .delete("/:name/env/:key", requireAdmin, (c) => {
     const name = c.req.param("name");
-    if (!findAgent(name)) return c.json({ error: "Agent not found" }, 404);
+    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
     const key = c.req.param("key");
-    const path = agentEnvPath(name);
+    const path = mindEnvPath(name);
     const env = readEnv(path);
     if (!(key in env)) return c.json({ error: "Key not found" }, 404);
     delete env[key];

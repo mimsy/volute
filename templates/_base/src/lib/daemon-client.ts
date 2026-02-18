@@ -1,5 +1,5 @@
 const port = process.env.VOLUTE_DAEMON_PORT;
-const agent = process.env.VOLUTE_AGENT;
+const mind = process.env.VOLUTE_MIND;
 const token = process.env.VOLUTE_DAEMON_TOKEN;
 
 function headers(): Record<string, string> {
@@ -14,12 +14,12 @@ export async function daemonRestart(context?: {
   type: string;
   [k: string]: unknown;
 }): Promise<void> {
-  if (!port || !agent) {
-    console.error("[volute] daemonRestart: VOLUTE_DAEMON_PORT or VOLUTE_AGENT not set");
+  if (!port || !mind) {
+    console.error("[volute] daemonRestart: VOLUTE_DAEMON_PORT or VOLUTE_MIND not set");
     return;
   }
   try {
-    await fetch(`http://127.0.0.1:${port}/api/agents/${encodeURIComponent(agent)}/restart`, {
+    await fetch(`http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/restart`, {
       method: "POST",
       headers: headers(),
       body: JSON.stringify({ context }),
@@ -30,19 +30,19 @@ export async function daemonRestart(context?: {
 }
 
 export async function daemonSend(channel: string, text: string): Promise<void> {
-  if (!port || !agent) {
-    console.error("[volute] daemonSend: VOLUTE_DAEMON_PORT or VOLUTE_AGENT not set");
+  if (!port || !mind) {
+    console.error("[volute] daemonSend: VOLUTE_DAEMON_PORT or VOLUTE_MIND not set");
     return;
   }
   const res = await fetch(
-    `http://127.0.0.1:${port}/api/agents/${encodeURIComponent(agent)}/message`,
+    `http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/message`,
     {
       method: "POST",
       headers: headers(),
       body: JSON.stringify({
         content: text,
         channel,
-        sender: agent,
+        sender: mind,
       }),
     },
   );

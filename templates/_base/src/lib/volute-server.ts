@@ -57,7 +57,7 @@ export function createVoluteServer(options: {
               done = true;
               unsubscribe();
               res.writeHead(504, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ ok: false, error: "Agent processing timed out" }));
+              res.end(JSON.stringify({ ok: false, error: "Mind processing timed out" }));
             }
           },
           5 * 60 * 1000,
