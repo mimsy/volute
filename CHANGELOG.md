@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.14.0](https://github.com/mimsy/volute/compare/volute-v0.13.2...volute-v0.14.0) (2026-02-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* rename agents to minds ([#83](https://github.com/mimsy/volute/issues/83))
+
+### Features
+
+* redesign web dashboard with activity tracking and nav improvements ([#81](https://github.com/mimsy/volute/issues/81)) ([9c44b5f](https://github.com/mimsy/volute/commit/9c44b5f696970d85752c9fa4e081f3fe3c9e4a38))
+* rename agents to minds ([#83](https://github.com/mimsy/volute/issues/83)) ([468042f](https://github.com/mimsy/volute/commit/468042fb8c84ef12515611148170ef99981feaf5))
+* serve static pages from agent home/pages/ directory ([#82](https://github.com/mimsy/volute/issues/82)) ([ffd5d71](https://github.com/mimsy/volute/commit/ffd5d71562fab977893d57e506d4ab6ec1fedd29))
+
+
+### Bug Fixes
+
+* pi template fixes and routing improvements ([#79](https://github.com/mimsy/volute/issues/79)) ([2ff3f2c](https://github.com/mimsy/volute/commit/2ff3f2cf06907c88541edc103483de045f83842e))
+
 ## [0.13.2](https://github.com/mimsy/volute/compare/volute-v0.13.1...volute-v0.13.2) (2026-02-17)
 
 
