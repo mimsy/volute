@@ -61,10 +61,10 @@ export function Chats({
         window.history.replaceState(null, "", expected);
       }
     } else {
-      // When no active conversation, keep hash at root
+      // When no active conversation, keep hash at chats root
       const hash = window.location.hash.slice(1) || "/";
       if (hash.startsWith("/chats/")) {
-        window.history.replaceState(null, "", "#/");
+        window.history.replaceState(null, "", "#/chats");
       }
     }
   }, [activeId]);
@@ -75,7 +75,7 @@ export function Chats({
 
   const handleNew = () => {
     setActiveId(null);
-    window.history.replaceState(null, "", "#/");
+    window.history.replaceState(null, "", "#/chats");
   };
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
@@ -117,8 +117,14 @@ export function Chats({
   const chatAgent = agents.find((a) => a.name === chatAgentName);
 
   function getConversationLabel(conv: ConversationWithParticipants): string {
+    const participants = conv.participants ?? [];
+    // DMs: show @otherUsername
+    if (participants.length === 2) {
+      const other = participants.find((p) => p.username !== username);
+      if (other) return `@${other.username}`;
+    }
     if (conv.title) return conv.title;
-    const agents = conv.participants?.filter((p) => p.userType === "agent") ?? [];
+    const agents = participants.filter((p) => p.userType === "agent");
     if (agents.length > 0) return agents.map((a) => a.username).join(", ");
     return "Untitled";
   }

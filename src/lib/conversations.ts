@@ -43,24 +43,27 @@ export async function createConversation(
 ): Promise<Conversation> {
   const db = await getDb();
   const id = randomUUID();
-  await db.insert(conversations).values({
-    id,
-    agent_name: agentName,
-    channel,
-    user_id: opts?.userId ?? null,
-    title: opts?.title ?? null,
-  });
 
-  // Add participants if provided
-  if (opts?.participantIds && opts.participantIds.length > 0) {
-    await db.insert(conversationParticipants).values(
-      opts.participantIds.map((uid, i) => ({
-        conversation_id: id,
-        user_id: uid,
-        role: i === 0 ? "owner" : "member",
-      })),
-    );
-  }
+  await db.transaction(async (tx) => {
+    await tx.insert(conversations).values({
+      id,
+      agent_name: agentName,
+      channel,
+      user_id: opts?.userId ?? null,
+      title: opts?.title ?? null,
+    });
+
+    // Add participants if provided
+    if (opts?.participantIds && opts.participantIds.length > 0) {
+      await tx.insert(conversationParticipants).values(
+        opts.participantIds.map((uid, i) => ({
+          conversation_id: id,
+          user_id: uid,
+          role: i === 0 ? "owner" : "member",
+        })),
+      );
+    }
+  });
 
   return {
     id,
@@ -268,9 +271,16 @@ export async function getMessages(conversationId: string): Promise<Message[]> {
   });
 }
 
+export type LastMessageSummary = {
+  role: string;
+  senderName: string | null;
+  text: string;
+  createdAt: string;
+};
+
 export async function listConversationsWithParticipants(
   userId: number,
-): Promise<(Conversation & { participants: Participant[] })[]> {
+): Promise<(Conversation & { participants: Participant[]; lastMessage?: LastMessageSummary })[]> {
   const convs = await listConversationsForUser(userId);
   if (convs.length === 0) return [];
   const db = await getDb();
@@ -300,7 +310,52 @@ export async function listConversationsWithParticipants(
       role: r.role as "owner" | "member",
     });
   }
-  return convs.map((c) => ({ ...c, participants: byConv.get(c.id) ?? [] }));
+
+  // Fetch last message per conversation
+  const lastMsgIds = await db
+    .select({
+      conversationId: messages.conversation_id,
+      maxId: sql<number>`MAX(${messages.id})`,
+    })
+    .from(messages)
+    .where(inArray(messages.conversation_id, convIds))
+    .groupBy(messages.conversation_id);
+
+  const byLastMsg = new Map<string, LastMessageSummary>();
+  if (lastMsgIds.length > 0) {
+    const msgRows = await db
+      .select()
+      .from(messages)
+      .where(
+        inArray(
+          messages.id,
+          lastMsgIds.map((r) => r.maxId),
+        ),
+      );
+    for (const m of msgRows) {
+      let text = "";
+      try {
+        const parsed = JSON.parse(m.content);
+        const blocks: ContentBlock[] = Array.isArray(parsed) ? parsed : [];
+        const textBlock = blocks.find((b) => b.type === "text");
+        if (textBlock && "text" in textBlock) text = textBlock.text;
+      } catch {
+        text = m.content;
+      }
+      byLastMsg.set(m.conversation_id, {
+        role: m.role,
+        senderName: m.sender_name,
+        text,
+        createdAt: m.created_at,
+      });
+    }
+  }
+
+  return convs.map((c) => ({
+    ...c,
+    participants: byConv.get(c.id) ?? [],
+    lastMessage: byLastMsg.get(c.id),
+  }));
 }
 
 export async function findDMConversation(
