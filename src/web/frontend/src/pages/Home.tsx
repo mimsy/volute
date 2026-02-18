@@ -5,12 +5,16 @@ import {
   type Conversation,
   fetchAgents,
   fetchAllConversations,
+  type LastMessageSummary,
   type Participant,
 } from "../lib/api";
 
-type ConversationWithParticipants = Conversation & { participants: Participant[] };
+type ConversationWithDetails = Conversation & {
+  participants: Participant[];
+  lastMessage?: LastMessageSummary;
+};
 
-function getConversationLabel(conv: ConversationWithParticipants, username: string): string {
+function getConversationLabel(conv: ConversationWithDetails, username: string): string {
   const participants = conv.participants ?? [];
   if (participants.length === 2) {
     const other = participants.find((p) => p.username !== username);
@@ -24,7 +28,7 @@ function getConversationLabel(conv: ConversationWithParticipants, username: stri
 
 export function Home({ username }: { username: string }) {
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [conversations, setConversations] = useState<ConversationWithParticipants[]>([]);
+  const [conversations, setConversations] = useState<ConversationWithDetails[]>([]);
 
   useEffect(() => {
     fetchAgents()
@@ -35,20 +39,28 @@ export function Home({ username }: { username: string }) {
       .catch(() => {});
   }, []);
 
-  const running = agents.filter((a) => a.status === "running");
-  const stopped = agents.filter((a) => a.status !== "running");
+  // Sort agents: running first, then by most recent conversation activity
+  const convsByAgent = new Map<string, string>();
+  for (const conv of conversations) {
+    const existing = convsByAgent.get(conv.agent_name);
+    if (!existing || conv.updated_at > existing) {
+      convsByAgent.set(conv.agent_name, conv.updated_at);
+    }
+  }
+  const sortedAgents = [...agents].sort((a, b) => {
+    if (a.status === "running" && b.status !== "running") return -1;
+    if (a.status !== "running" && b.status === "running") return 1;
+    const aTime = convsByAgent.get(a.name) ?? "";
+    const bTime = convsByAgent.get(b.name) ?? "";
+    return bTime.localeCompare(aTime);
+  });
+
   const recentConversations = [...conversations]
     .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
     .slice(0, 5);
 
-  const connectedChannels = agents.flatMap((a) =>
-    a.channels
-      .filter((ch) => ch.name !== "web" && ch.status === "connected")
-      .map((ch) => ({ agent: a.name, channel: ch })),
-  );
-
   return (
-    <div style={{ maxWidth: 720, animation: "fadeIn 0.2s ease both" }}>
+    <div style={{ maxWidth: 800, animation: "fadeIn 0.2s ease both" }}>
       {/* Quick links */}
       <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
         <a
@@ -79,7 +91,7 @@ export function Home({ username }: { username: string }) {
         </a>
       </div>
 
-      {/* Agents overview */}
+      {/* Agents */}
       <Section title="agents">
         {agents.length === 0 ? (
           <div style={{ color: "var(--text-2)", fontSize: 12 }}>
@@ -88,12 +100,9 @@ export function Home({ username }: { username: string }) {
             started.
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {running.map((a) => (
-              <AgentRow key={a.name} agent={a} />
-            ))}
-            {stopped.map((a) => (
-              <AgentRow key={a.name} agent={a} />
+          <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 4 }}>
+            {sortedAgents.map((a) => (
+              <AgentCard key={a.name} agent={a} lastActive={convsByAgent.get(a.name)} />
             ))}
           </div>
         )}
@@ -102,67 +111,9 @@ export function Home({ username }: { username: string }) {
       {/* Recent conversations */}
       {recentConversations.length > 0 && (
         <Section title="recent conversations">
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {recentConversations.map((conv) => {
-              const isSeed = agents.find((a) => a.name === conv.agent_name)?.stage === "seed";
-              return (
-                <a
-                  key={conv.id}
-                  href={`#/chats/${conv.id}`}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "6px 8px",
-                    borderRadius: "var(--radius)",
-                    fontSize: 12,
-                    transition: "background 0.1s",
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-2)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                >
-                  <span
-                    style={{
-                      color: "var(--text-0)",
-                      flex: 1,
-                      minWidth: 0,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {getConversationLabel(conv, username)}
-                  </span>
-                  {isSeed && (
-                    <span style={{ fontSize: 9, color: "var(--yellow)", flexShrink: 0 }}>seed</span>
-                  )}
-                  <span style={{ color: "var(--text-2)", fontSize: 10, flexShrink: 0 }}>
-                    {formatRelativeTime(conv.updated_at)}
-                  </span>
-                </a>
-              );
-            })}
-          </div>
-        </Section>
-      )}
-
-      {/* Connected channels */}
-      {connectedChannels.length > 0 && (
-        <Section title="connected channels">
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {connectedChannels.map(({ agent, channel }) => (
-              <span
-                key={`${agent}-${channel.name}`}
-                style={{
-                  fontSize: 11,
-                  padding: "3px 8px",
-                  borderRadius: "var(--radius)",
-                  background: "var(--accent-dim)",
-                  color: "var(--accent)",
-                }}
-              >
-                {agent}/{channel.displayName || channel.name}
-              </span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {recentConversations.map((conv) => (
+              <ConversationCard key={conv.id} conv={conv} username={username} agents={agents} />
             ))}
           </div>
         </Section>
@@ -190,27 +141,117 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function AgentRow({ agent }: { agent: Agent }) {
+function AgentCard({ agent, lastActive }: { agent: Agent; lastActive?: string }) {
+  const channels = agent.channels.filter(
+    (ch) => ch.name !== "web" && ch.name !== "volute" && ch.status === "connected",
+  );
+
   return (
     <a
       href={`#/agent/${agent.name}`}
       style={{
         display: "flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "6px 8px",
-        borderRadius: "var(--radius)",
-        fontSize: 12,
-        transition: "background 0.1s",
+        flexDirection: "column",
+        gap: 6,
+        padding: "10px 14px",
+        borderRadius: "var(--radius-lg)",
+        background: "var(--bg-2)",
+        border: "1px solid var(--border)",
+        minWidth: 150,
+        transition: "border-color 0.15s",
+        flexShrink: 0,
       }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-2)")}
-      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+      onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--border-bright)")}
+      onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
     >
-      <span style={{ color: "var(--text-0)", fontWeight: 500 }}>{agent.name}</span>
-      <StatusBadge status={agent.status} />
-      {agent.stage === "seed" && <span style={{ fontSize: 9, color: "var(--yellow)" }}>seed</span>}
-      <span style={{ color: "var(--text-2)", fontSize: 11, marginLeft: "auto" }}>
-        :{agent.port}
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ color: "var(--text-0)", fontWeight: 500, fontSize: 13 }}>{agent.name}</span>
+        <StatusBadge status={agent.status} />
+        {agent.stage === "seed" && (
+          <span style={{ fontSize: 9, color: "var(--yellow)" }}>seed</span>
+        )}
+      </div>
+      {channels.length > 0 && (
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {channels.map((ch) => (
+            <span
+              key={ch.name}
+              style={{
+                fontSize: 10,
+                padding: "1px 5px",
+                borderRadius: 3,
+                background: "var(--accent-dim)",
+                color: "var(--accent)",
+              }}
+            >
+              {ch.displayName || ch.name}
+            </span>
+          ))}
+        </div>
+      )}
+      <div style={{ fontSize: 10, color: "var(--text-2)" }}>
+        {lastActive ? `active ${formatRelativeTime(lastActive)}` : "no activity"}
+      </div>
+    </a>
+  );
+}
+
+function ConversationCard({
+  conv,
+  username,
+  agents,
+}: {
+  conv: ConversationWithDetails;
+  username: string;
+  agents: Agent[];
+}) {
+  const label = getConversationLabel(conv, username);
+  const isSeed = agents.find((a) => a.name === conv.agent_name)?.stage === "seed";
+  const msg = conv.lastMessage;
+
+  let preview = "";
+  if (msg) {
+    const sender = msg.senderName ? `${msg.senderName}: ` : "";
+    preview = sender + msg.text;
+  }
+
+  return (
+    <a
+      href={`#/chats/${conv.id}`}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "10px 14px",
+        borderRadius: "var(--radius-lg)",
+        background: "var(--bg-2)",
+        border: "1px solid var(--border)",
+        transition: "border-color 0.15s",
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--border-bright)")}
+      onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+          <span style={{ color: "var(--text-0)", fontWeight: 500, fontSize: 12 }}>{label}</span>
+          {isSeed && <span style={{ fontSize: 9, color: "var(--yellow)" }}>seed</span>}
+        </div>
+        {preview && (
+          <div
+            style={{
+              fontSize: 11,
+              color: "var(--text-2)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {preview}
+          </div>
+        )}
+      </div>
+      <span style={{ color: "var(--text-2)", fontSize: 10, flexShrink: 0 }}>
+        {formatRelativeTime(conv.updated_at)}
       </span>
     </a>
   );
