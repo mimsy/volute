@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
 import { AgentCard } from "../components/AgentCard";
 import { SeedModal } from "../components/SeedModal";
-import { type Agent, fetchAgents, fetchRecentPages, type RecentPage } from "../lib/api";
+import { type Agent, fetchAgents } from "../lib/api";
 
 export function Dashboard() {
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [recentPages, setRecentPages] = useState<RecentPage[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [showSeedModal, setShowSeedModal] = useState(false);
@@ -14,10 +13,9 @@ export function Dashboard() {
     let active = true;
     const poll = async () => {
       try {
-        const [data, pages] = await Promise.all([fetchAgents(), fetchRecentPages()]);
+        const data = await fetchAgents();
         if (active) {
           setAgents(data);
-          setRecentPages(pages);
           setError("");
           setLoading(false);
         }
@@ -126,76 +124,9 @@ export function Dashboard() {
           </div>
         ))}
       </div>
-      {recentPages.length > 0 && (
-        <div style={{ marginTop: 32 }}>
-          <h3
-            style={{
-              fontSize: 13,
-              fontWeight: 600,
-              color: "var(--text-1)",
-              marginBottom: 12,
-              textTransform: "uppercase",
-              letterSpacing: "0.05em",
-            }}
-          >
-            Recent Pages
-          </h3>
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 4,
-              maxWidth: 600,
-            }}
-          >
-            {recentPages.map((page) => (
-              <a
-                key={`${page.agent}/${page.file}`}
-                href={page.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "8px 12px",
-                  background: "var(--bg-2)",
-                  border: "1px solid var(--border)",
-                  borderRadius: "var(--radius)",
-                  textDecoration: "none",
-                  color: "var(--text-0)",
-                  fontSize: 13,
-                }}
-              >
-                <span>
-                  <span style={{ color: "var(--text-2)" }}>{page.agent}/</span>
-                  {page.file}
-                </span>
-                <span style={{ color: "var(--text-2)", fontSize: 11 }}>
-                  {formatRelativeTime(page.modified)}
-                </span>
-              </a>
-            ))}
-          </div>
-        </div>
-      )}
       {showSeedModal && (
         <SeedModal onClose={() => setShowSeedModal(false)} onCreated={handleSeedCreated} />
       )}
     </>
   );
-}
-
-function formatRelativeTime(isoString: string): string {
-  const date = new Date(isoString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMins / 60);
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffMins < 1) return "just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  return `${diffDays}d ago`;
 }
