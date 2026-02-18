@@ -11,7 +11,7 @@ const app = new Hono<AuthEnv>()
   .get("/:name/connectors", (c) => {
     const name = c.req.param("name");
     const entry = findMind(name);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(name);
     const config = readVoluteConfig(dir) ?? {};
@@ -35,9 +35,9 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Invalid connector type" }, 400);
     }
     const entry = findMind(name);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
     if (entry.stage === "seed")
-      return c.json({ error: "Seed agents cannot use connectors — sprout first" }, 403);
+      return c.json({ error: "Seed minds cannot use connectors — sprout first" }, 403);
 
     const dir = mindDir(name);
 
@@ -81,7 +81,7 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Invalid connector type" }, 400);
     }
     const entry = findMind(name);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(name);
     const manager = getConnectorManager();

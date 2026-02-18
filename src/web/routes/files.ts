@@ -11,7 +11,7 @@ const app = new Hono()
   .get("/:name/files", async (c) => {
     const name = c.req.param("name");
     const entry = findMind(name);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(name);
     const homeDir = resolve(dir, "home");
@@ -32,7 +32,7 @@ const app = new Hono()
     }
 
     const entry = findMind(name);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(name);
     const filePath = resolve(dir, "home", filename);

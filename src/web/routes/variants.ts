@@ -21,7 +21,7 @@ const app = new Hono<AuthEnv>()
   .get("/:name/variants", async (c) => {
     const name = c.req.param("name");
     const entry = findMind(name);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const variants = readVariants(name);
     const results = await Promise.all(
@@ -38,9 +38,9 @@ const app = new Hono<AuthEnv>()
   .post("/:name/variants", requireAdmin, async (c) => {
     const mindName = c.req.param("name");
     const entry = findMind(mindName);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
     if (entry.stage === "seed")
-      return c.json({ error: "Seed agents cannot create variants — sprout first" }, 403);
+      return c.json({ error: "Seed minds cannot create variants — sprout first" }, 403);
 
     let body: { name: string; soul?: string; port?: number; noStart?: boolean };
     try {
@@ -97,10 +97,10 @@ const app = new Hono<AuthEnv>()
 
     addVariant(mindName, variant);
 
-    // Fix ownership — daemon runs as root but agent needs to own its files
+    // Fix ownership — daemon runs as root but mind needs to own its files
     chownMindDir(projectRoot, mindName);
 
-    // Start variant via agent manager unless noStart
+    // Start variant via mind manager unless noStart
     if (!body.noStart) {
       try {
         await getMindManager().startMind(`${mindName}@${variantName}`);
@@ -121,7 +121,7 @@ const app = new Hono<AuthEnv>()
     const variantName = c.req.param("variant");
 
     const entry = findMind(mindName);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const variant = findVariant(mindName, variantName);
     if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
@@ -230,13 +230,13 @@ const app = new Hono<AuthEnv>()
     try {
       await exec("npm", ["install"], { cwd: projectRoot });
     } catch {
-      // Best effort — agent restart will still be attempted
+      // Best effort — mind restart will still be attempted
     }
 
-    // Fix ownership — daemon runs as root but agent needs to own its files
+    // Fix ownership — daemon runs as root but mind needs to own its files
     chownMindDir(projectRoot, mindName);
 
-    // Restart agent via agent manager with merge context
+    // Restart mind via mind manager with merge context
     const manager = getMindManager();
     const context = {
       type: "merged",
@@ -254,7 +254,7 @@ const app = new Hono<AuthEnv>()
       manager.setPendingContext(mindName, context);
       await manager.startMind(mindName);
     } catch (e) {
-      restartWarning = `Merge succeeded but agent restart failed: ${e instanceof Error ? e.message : String(e)}`;
+      restartWarning = `Merge succeeded but mind restart failed: ${e instanceof Error ? e.message : String(e)}`;
       console.error(`[daemon] ${restartWarning}`);
     }
 
@@ -266,7 +266,7 @@ const app = new Hono<AuthEnv>()
     const variantName = c.req.param("variant");
 
     const entry = findMind(mindName);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const variant = findVariant(mindName, variantName);
     if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);

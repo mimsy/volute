@@ -26,7 +26,7 @@ const app = new Hono<AuthEnv>()
     const name = c.req.param("name");
     const user = c.get("user");
 
-    // Daemon token (id: 0) lists as the agent
+    // Daemon token (id: 0) lists as the mind
     let lookupId = user.id;
     if (user.id === 0) {
       const mindUser = await getOrCreateMindUser(name);
@@ -46,16 +46,16 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "participantIds or participantNames required" }, 400);
     }
 
-    // Ensure the named agent is a participant
+    // Ensure the named mind is a participant
     const mindUser = await getOrCreateMindUser(name);
 
-    // Build participant list: creator first (owner), then agent, then others
+    // Build participant list: creator first (owner), then mind, then others
     const participantSet = new Set<number>();
     if (user.id !== 0) participantSet.add(user.id);
     participantSet.add(mindUser.id);
     for (const id of body.participantIds ?? []) participantSet.add(id);
 
-    // Resolve participant names to IDs (auto-creating agent users for registered agents)
+    // Resolve participant names to IDs (auto-creating mind users for registered minds)
     if (body.participantNames) {
       for (const pname of body.participantNames) {
         const existing = await getUserByUsername(pname);
@@ -63,7 +63,7 @@ const app = new Hono<AuthEnv>()
           participantSet.add(existing.id);
           continue;
         }
-        // If name matches a registered agent, auto-create agent user
+        // If name matches a registered mind, auto-create mind user
         if (findMind(pname)) {
           const au = await getOrCreateMindUser(pname);
           participantSet.add(au.id);

@@ -61,7 +61,7 @@ const app = new Hono<AuthEnv>()
     const [baseName] = name.split("@", 2);
 
     const entry = findMind(baseName);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const body = c.req.valid("json");
     if (!body.message && (!body.images || body.images.length === 0)) {
@@ -82,16 +82,16 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: "Conversation not found" }, 404);
       }
     } else {
-      // If sender is a registered agent, include them as a participant
+      // If sender is a registered mind, include them as a participant
       const participantIds: number[] = [];
       if (user.id !== 0) {
         participantIds.push(user.id);
       } else if (body.sender) {
-        // Check if sender is an agent — if so, add their agent user as participant
+        // Check if sender is a mind — if so, add their mind user as participant
         const senderMind = findMind(body.sender);
         if (senderMind) {
-          const senderAgentUser = await getOrCreateMindUser(body.sender);
-          participantIds.push(senderAgentUser.id);
+          const senderMindUser = await getOrCreateMindUser(body.sender);
+          participantIds.push(senderMindUser.id);
         }
       }
       participantIds.push(mindUser.id);
@@ -135,25 +135,25 @@ const app = new Hono<AuthEnv>()
     // Save user message
     await addMessage(conversationId, "user", senderName, contentBlocks);
 
-    // Find all agent participants for fan-out
+    // Find all mind participants for fan-out
     const participants = await getParticipants(conversationId);
     const mindParticipants = participants.filter((p) => p.userType === "mind");
     const participantNames = participants.map((p) => p.username);
 
-    // Find running agent participants (excluding the sender)
+    // Find running mind participants (excluding the sender)
     const { getMindManager } = await import("../../../lib/mind-manager.js");
     const manager = getMindManager();
     const runningMinds = mindParticipants
       .map((ap) => {
-        // Use the full name (with variant) for the addressed agent, base name for others
-        const agentKey = ap.username === baseName ? name : ap.username;
-        return manager.isRunning(agentKey) ? ap.username : null;
+        // Use the full name (with variant) for the addressed mind, base name for others
+        const mindKey = ap.username === baseName ? name : ap.username;
+        return manager.isRunning(mindKey) ? ap.username : null;
       })
       .filter((n): n is string => n !== null && n !== senderName);
 
     // Build channel slug — @username for DMs (matching the volute channel driver)
     const isDM = participants.length === 2;
-    function channelForAgent(mindUsername: string): string {
+    function channelForMind(mindUsername: string): string {
       return buildVoluteSlug({
         participants,
         mindUsername,
@@ -162,7 +162,7 @@ const app = new Hono<AuthEnv>()
       });
     }
 
-    // Write slug → platformId mapping for all agent participants so they can resolve it
+    // Write slug → platformId mapping for all mind participants so they can resolve it
     const channelEntry = {
       platformId: conversationId!,
       platform: "volute",
@@ -171,16 +171,16 @@ const app = new Hono<AuthEnv>()
     };
     for (const ap of mindParticipants) {
       try {
-        writeChannelEntry(ap.username, channelForAgent(ap.username), channelEntry);
+        writeChannelEntry(ap.username, channelForMind(ap.username), channelEntry);
       } catch (err) {
         console.warn(`[chat] failed to write channel entry for ${ap.username}:`, err);
       }
     }
 
-    // Fire-and-forget: send to all running agents via daemon /message route
+    // Fire-and-forget: send to all running minds via daemon /message route
     for (const mindName of runningMinds) {
       const targetName = mindName === baseName ? name : mindName;
-      const channel = channelForAgent(mindName);
+      const channel = channelForMind(mindName);
       const typingMap = getTypingMap();
       const currentlyTyping = typingMap.get(channel);
       const payload = JSON.stringify({
@@ -197,11 +197,11 @@ const app = new Hono<AuthEnv>()
         .then(async (res) => {
           if (!res.ok) {
             const text = await res.text().catch(() => "");
-            console.error(`[chat] agent ${mindName} responded ${res.status}: ${text}`);
+            console.error(`[chat] mind ${mindName} responded ${res.status}: ${text}`);
           }
         })
         .catch((err) => {
-          console.error(`[chat] agent ${mindName} unreachable via daemon:`, err);
+          console.error(`[chat] mind ${mindName} unreachable via daemon:`, err);
         });
     }
 

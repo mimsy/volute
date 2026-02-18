@@ -21,7 +21,7 @@ export function SeedModal({
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [template, setTemplate] = useState("agent-sdk");
+  const [template, setTemplate] = useState("claude");
   const [model, setModel] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -108,7 +108,7 @@ export function SeedModal({
             onChange={(e) => setTemplate(e.target.value)}
             style={{ ...inputStyle, appearance: "auto" }}
           >
-            <option value="agent-sdk">agent-sdk</option>
+            <option value="claude">claude</option>
             <option value="pi">pi</option>
           </select>
         </label>

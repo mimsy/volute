@@ -72,8 +72,8 @@ import {
 import { readVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
-/** Start mind server and (for base agents) connectors, schedules, and token budget. */
-async function startAgentFull(
+/** Start mind server and (for base minds) connectors, schedules, and token budget. */
+async function startMindFull(
   name: string,
   baseName: string,
   variantName: string | undefined,
@@ -81,7 +81,7 @@ async function startAgentFull(
   await getMindManager().startMind(name);
   if (variantName) return;
 
-  // Seed agents only get the server — no connectors, schedules, or budget
+  // Seed minds only get the server — no connectors, schedules, or budget
   if (findMind(baseName)?.stage === "seed") return;
 
   const dir = mindDir(baseName);
@@ -128,7 +128,7 @@ type ChannelStatus = {
   showToolCalls: boolean;
 };
 
-async function getAgentStatus(name: string, port: number) {
+async function getMindStatus(name: string, port: number) {
   const manager = getMindManager();
   let status: "running" | "stopped" | "starting" = "stopped";
 
@@ -290,7 +290,7 @@ async function mergeTemplateBranch(worktreeDir: string): Promise<boolean> {
   }
 }
 
-const createAgentSchema = z.object({
+const createMindSchema = z.object({
   name: z.string(),
   template: z.string().optional(),
   stage: z.enum(["seed", "sprouted"]).optional(),
@@ -300,7 +300,7 @@ const createAgentSchema = z.object({
 
 // Create mind — admin only
 const app = new Hono<AuthEnv>()
-  .post("/", requireAdmin, zValidator("json", createAgentSchema), async (c) => {
+  .post("/", requireAdmin, zValidator("json", createMindSchema), async (c) => {
     const body = c.req.valid("json");
 
     const { name, template = "claude" } = body;
@@ -308,12 +308,12 @@ const app = new Hono<AuthEnv>()
     const nameErr = validateMindName(name);
     if (nameErr) return c.json({ error: nameErr }, 400);
 
-    if (findMind(name)) return c.json({ error: `Agent already exists: ${name}` }, 409);
+    if (findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
 
     ensureVoluteHome();
     const dest = mindDir(name);
 
-    if (existsSync(dest)) return c.json({ error: "Agent directory already exists" }, 409);
+    if (existsSync(dest)) return c.json({ error: "Mind directory already exists" }, 409);
 
     const templatesRoot = findTemplatesRoot();
     const { composedDir, manifest } = composeTemplate(templatesRoot, template);
@@ -427,7 +427,7 @@ const app = new Hono<AuthEnv>()
     const nameErr = validateMindName(name);
     if (nameErr) return c.json({ error: nameErr }, 400);
 
-    if (findMind(name)) return c.json({ error: `Agent already exists: ${name}` }, 409);
+    if (findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
 
     const mergedSoul = `${soul.trimEnd()}\n\n---\n\n${identity.trimEnd()}\n`;
     const mergedMemoryExtra = user ? `\n\n---\n\n${user.trimEnd()}\n` : "";
@@ -435,7 +435,7 @@ const app = new Hono<AuthEnv>()
     ensureVoluteHome();
     const dest = mindDir(name);
 
-    if (existsSync(dest)) return c.json({ error: "Agent directory already exists" }, 409);
+    if (existsSync(dest)) return c.json({ error: "Mind directory already exists" }, 409);
 
     const templatesRoot = findTemplatesRoot();
     const { composedDir, manifest } = composeTemplate(templatesRoot, template);
@@ -528,7 +528,7 @@ const app = new Hono<AuthEnv>()
       rmSync(composedDir, { recursive: true, force: true });
     }
   })
-  // List all agents
+  // List all minds
   .get("/", async (c) => {
     const entries = readRegistry();
     let lastActiveMap = new Map<string, string>();
@@ -546,9 +546,9 @@ const app = new Hono<AuthEnv>()
       // Non-essential: degrade gracefully without activity data
     }
 
-    const agents = await Promise.all(
+    const minds = await Promise.all(
       entries.map(async (entry) => {
-        const { status, channels } = await getAgentStatus(entry.name, entry.port);
+        const { status, channels } = await getMindStatus(entry.name, entry.port);
         const hasPages = existsSync(resolve(mindDir(entry.name), "home", "pages"));
         return {
           ...entry,
@@ -559,9 +559,9 @@ const app = new Hono<AuthEnv>()
         };
       }),
     );
-    return c.json(agents);
+    return c.json(minds);
   })
-  // Recent pages across all agents
+  // Recent pages across all minds
   .get("/pages/recent", async (c) => {
     const entries = readRegistry();
     const pages: { mind: string; file: string; modified: string; url: string }[] = [];
@@ -618,11 +618,11 @@ const app = new Hono<AuthEnv>()
   .get("/:name", async (c) => {
     const name = c.req.param("name");
     const entry = findMind(name);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    if (!existsSync(mindDir(name))) return c.json({ error: "Agent directory missing" }, 404);
+    if (!existsSync(mindDir(name))) return c.json({ error: "Mind directory missing" }, 404);
 
-    const { status, channels } = await getAgentStatus(name, entry.port);
+    const { status, channels } = await getMindStatus(name, entry.port);
 
     // Include variant info
     const variants = readVariants(name);
@@ -648,22 +648,22 @@ const app = new Hono<AuthEnv>()
     const [baseName, variantName] = name.split("@", 2);
 
     const entry = findMind(baseName);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     if (variantName) {
       const variant = findVariant(baseName, variantName);
       if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
     } else {
       const dir = mindDir(baseName);
-      if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
+      if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
     }
 
     if (getMindManager().isRunning(name)) {
-      return c.json({ error: "Agent already running" }, 409);
+      return c.json({ error: "Mind already running" }, 409);
     }
 
     try {
-      await startAgentFull(name, baseName, variantName);
+      await startMindFull(name, baseName, variantName);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to start mind" }, 500);
@@ -676,14 +676,14 @@ const app = new Hono<AuthEnv>()
     const [baseName, variantName] = name.split("@", 2);
 
     const entry = findMind(baseName);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     if (variantName) {
       const variant = findVariant(baseName, variantName);
       if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
     } else {
       const dir = mindDir(baseName);
-      if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
+      if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
     }
 
     // Parse optional context from request body
@@ -801,7 +801,7 @@ const app = new Hono<AuthEnv>()
         }
       }
 
-      await startAgentFull(name, baseName, variantName);
+      await startMindFull(name, baseName, variantName);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to restart mind" }, 500);
@@ -813,7 +813,7 @@ const app = new Hono<AuthEnv>()
     const [baseName, variantName] = name.split("@", 2);
 
     const entry = findMind(baseName);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     if (variantName) {
       const variant = findVariant(baseName, variantName);
@@ -822,7 +822,7 @@ const app = new Hono<AuthEnv>()
 
     const manager = getMindManager();
     if (!manager.isRunning(name)) {
-      return c.json({ error: "Agent is not running" }, 409);
+      return c.json({ error: "Mind is not running" }, 409);
     }
 
     try {
@@ -841,7 +841,7 @@ const app = new Hono<AuthEnv>()
   .delete("/:name", requireAdmin, async (c) => {
     const name = c.req.param("name");
     const entry = findMind(name);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(name);
     const force = c.req.query("force") === "true";
@@ -875,10 +875,10 @@ const app = new Hono<AuthEnv>()
   .post("/:name/upgrade", requireAdmin, async (c) => {
     const mindName = c.req.param("name");
     const entry = findMind(mindName);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(mindName);
-    if (!existsSync(dir)) return c.json({ error: "Agent directory missing" }, 404);
+    if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
 
     let body: { template?: string; continue?: boolean } = {};
     try {
@@ -1055,7 +1055,7 @@ const app = new Hono<AuthEnv>()
     const [baseName, variantName] = name.split("@", 2);
 
     const entry = findMind(baseName);
-    if (!entry) return c.json({ error: "Agent not found" }, 404);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     let port = entry.port;
     if (variantName) {
@@ -1065,7 +1065,7 @@ const app = new Hono<AuthEnv>()
     }
 
     if (!getMindManager().isRunning(name)) {
-      return c.json({ error: "Agent is not running" }, 409);
+      return c.json({ error: "Mind is not running" }, 409);
     }
 
     const body = await c.req.text();
@@ -1175,7 +1175,7 @@ const app = new Hono<AuthEnv>()
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         console.error(`[daemon] mind ${name} responded with ${res.status}: ${text}`);
-        return c.json({ error: `Agent responded with ${res.status}` }, res.status as 500);
+        return c.json({ error: `Mind responded with ${res.status}` }, res.status as 500);
       }
 
       let result: { ok: boolean; usage?: { input_tokens: number; output_tokens: number } };
@@ -1183,7 +1183,7 @@ const app = new Hono<AuthEnv>()
         result = (await res.json()) as typeof result;
       } catch (parseErr) {
         console.error(`[daemon] mind ${name} returned non-JSON response:`, parseErr);
-        return c.json({ error: "Agent returned invalid response" }, 502);
+        return c.json({ error: "Mind returned invalid response" }, 502);
       }
 
       // Record usage against budget
@@ -1194,7 +1194,7 @@ const app = new Hono<AuthEnv>()
       return c.json({ ok: true });
     } catch (err) {
       console.error(`[daemon] mind ${name} unreachable on port ${port}:`, err);
-      return c.json({ error: "Agent is not reachable" }, 502);
+      return c.json({ error: "Mind is not reachable" }, 502);
     } finally {
       typingMap.delete(channel, baseName);
       if (conversationId) typingMap.delete(`volute:${conversationId}`, baseName);
