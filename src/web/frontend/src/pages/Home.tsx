@@ -126,6 +126,13 @@ function Section({
   );
 }
 
+function getDisplayStatus(agent: Agent): string {
+  if (agent.status !== "running") return agent.status;
+  if (!agent.lastActiveAt) return "running";
+  const ago = Date.now() - new Date(`${agent.lastActiveAt}Z`).getTime();
+  return ago < 5 * 60_000 ? "active" : "running";
+}
+
 function AgentCard({ agent }: { agent: Agent }) {
   const channels = agent.channels.filter(
     (ch) => ch.name !== "web" && ch.name !== "volute" && ch.status === "connected",
@@ -151,7 +158,7 @@ function AgentCard({ agent }: { agent: Agent }) {
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <span style={{ color: "var(--text-0)", fontWeight: 500, fontSize: 13 }}>{agent.name}</span>
-        <StatusBadge status={agent.status} />
+        <StatusBadge status={getDisplayStatus(agent)} />
         {agent.stage === "seed" && (
           <span style={{ fontSize: 9, color: "var(--yellow)" }}>seed</span>
         )}
