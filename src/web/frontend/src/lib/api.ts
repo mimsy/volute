@@ -19,6 +19,7 @@ export type Agent = {
   status: "running" | "stopped" | "starting";
   stage?: "seed" | "mind";
   channels: Channel[];
+  lastActiveAt?: string | null;
 };
 
 export type VoluteEvent =
@@ -203,9 +204,16 @@ export async function fetchAvailableUsers(type?: string): Promise<AvailableUser[
   return res.json();
 }
 
+export type LastMessageSummary = {
+  role: string;
+  senderName: string | null;
+  text: string;
+  createdAt: string;
+};
+
 // User-scoped conversation endpoints (not agent-scoped)
 export async function fetchAllConversations(): Promise<
-  (Conversation & { participants: Participant[] })[]
+  (Conversation & { participants: Participant[]; lastMessage?: LastMessageSummary })[]
 > {
   const res = await client.api.conversations.$get();
   if (!res.ok) throw new Error("Failed to fetch conversations");
