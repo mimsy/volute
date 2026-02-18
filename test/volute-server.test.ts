@@ -35,7 +35,7 @@ describe("volute server HTTP contract", () => {
     server = createVoluteServer({
       router: mockRouter,
       port: 0,
-      name: "test-agent",
+      name: "test-mind",
       version: "1.2.3",
     });
     return new Promise<void>((resolve) => {
@@ -54,7 +54,7 @@ describe("volute server HTTP contract", () => {
     assert.equal(res.status, 200);
     assert.equal(res.headers.get("content-type"), "application/json");
     const body = await res.json();
-    assert.deepEqual(body, { status: "ok", name: "test-agent", version: "1.2.3" });
+    assert.deepEqual(body, { status: "ok", name: "test-mind", version: "1.2.3" });
   });
 
   it("POST /message returns JSON with ok and usage", async () => {
@@ -132,7 +132,7 @@ describe("volute server mid-turn interrupt", () => {
     const srv = createVoluteServer({
       router: interruptRouter,
       port: 0,
-      name: "interrupt-agent",
+      name: "interrupt-mind",
       version: "0.0.1",
     });
 
@@ -190,7 +190,7 @@ describe("volute server client disconnect", () => {
     const srv = createVoluteServer({
       router: slowRouter,
       port: 0,
-      name: "slow-agent",
+      name: "slow-mind",
       version: "0.0.1",
     });
 
@@ -250,7 +250,7 @@ describe("volute server response without usage", () => {
     server = createVoluteServer({
       router: noUsageRouter,
       port: 0,
-      name: "no-usage-agent",
+      name: "no-usage-mind",
       version: "1.0.0",
     });
     return new Promise<void>((resolve) => {

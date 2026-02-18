@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Docker end-to-end integration test for Volute
-# Validates: image build, daemon startup, agent creation with user isolation,
-# agent lifecycle, and real Claude message exchange.
+# Validates: image build, daemon startup, mind creation with user isolation,
+# mind lifecycle, and real Claude message exchange.
 #
 # Requirements: docker, ANTHROPIC_API_KEY
 #
@@ -104,10 +104,10 @@ poll_until() {
   return 1
 }
 
-agent_is_running() {
+mind_is_running() {
   local name=$1
   local status
-  status=$(api_raw GET "/agents/$name" | node -e "
+  status=$(api_raw GET "/minds/$name" | node -e "
     process.stdout.write(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).status || 'unknown');
   ")
   [[ "$status" == "running" ]]
@@ -150,31 +150,31 @@ assert_not_empty "$TOKEN" "Daemon token is non-empty"
 health_resp=$(api GET /health)
 assert_contains "$health_resp" '"ok":true' "Token authenticates successfully"
 
-# ─── Phase 3: Create two agents ──────────────────────────────────────────────
+# ─── Phase 3: Create two minds ───────────────────────────────────────────────
 
 echo ""
-echo "Phase 3: Create two agents"
+echo "Phase 3: Create two minds"
 
 docker exec -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" "$CONTAINER" \
-  node dist/cli.js agent create alice >/dev/null 2>&1
-pass "Agent alice created"
+  node dist/cli.js mind create alice >/dev/null 2>&1
+pass "Mind alice created"
 
 docker exec -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" "$CONTAINER" \
-  node dist/cli.js agent create bob >/dev/null 2>&1
-pass "Agent bob created"
+  node dist/cli.js mind create bob >/dev/null 2>&1
+pass "Mind bob created"
 
-agents_resp=$(api GET /agents)
-assert_contains "$agents_resp" '"name":"alice"' "alice in agent list"
-assert_contains "$agents_resp" '"name":"bob"' "bob in agent list"
+minds_resp=$(api GET /minds)
+assert_contains "$minds_resp" '"name":"alice"' "alice in mind list"
+assert_contains "$minds_resp" '"name":"bob"' "bob in mind list"
 
-alice_status=$(echo "$agents_resp" | node -e "
+alice_status=$(echo "$minds_resp" | node -e "
   const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
   const a = d.find(x => x.name === 'alice');
   process.stdout.write(a?.status || 'unknown');
 ")
 assert_eq "$alice_status" "stopped" "alice status is stopped"
 
-bob_status=$(echo "$agents_resp" | node -e "
+bob_status=$(echo "$minds_resp" | node -e "
   const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
   const a = d.find(x => x.name === 'bob');
   process.stdout.write(a?.status || 'unknown');
@@ -186,61 +186,61 @@ assert_eq "$bob_status" "stopped" "bob status is stopped"
 echo ""
 echo "Phase 4: Verify user isolation"
 
-if docker exec "$CONTAINER" id agent-alice >/dev/null 2>&1; then
-  pass "agent-alice user exists"
+if docker exec "$CONTAINER" id mind-alice >/dev/null 2>&1; then
+  pass "mind-alice user exists"
 else
-  fail "agent-alice user does not exist"
+  fail "mind-alice user does not exist"
 fi
 
-if docker exec "$CONTAINER" id agent-bob >/dev/null 2>&1; then
-  pass "agent-bob user exists"
+if docker exec "$CONTAINER" id mind-bob >/dev/null 2>&1; then
+  pass "mind-bob user exists"
 else
-  fail "agent-bob user does not exist"
+  fail "mind-bob user does not exist"
 fi
 
-alice_owner=$(docker exec "$CONTAINER" stat -c '%U' /agents/alice)
-assert_eq "$alice_owner" "agent-alice" "/agents/alice owned by agent-alice"
+alice_owner=$(docker exec "$CONTAINER" stat -c '%U' /minds/alice)
+assert_eq "$alice_owner" "mind-alice" "/minds/alice owned by mind-alice"
 
-bob_owner=$(docker exec "$CONTAINER" stat -c '%U' /agents/bob)
-assert_eq "$bob_owner" "agent-bob" "/agents/bob owned by agent-bob"
+bob_owner=$(docker exec "$CONTAINER" stat -c '%U' /minds/bob)
+assert_eq "$bob_owner" "mind-bob" "/minds/bob owned by mind-bob"
 
-# ─── Phase 5: Start agents ───────────────────────────────────────────────────
+# ─── Phase 5: Start minds ────────────────────────────────────────────────────
 
 echo ""
-echo "Phase 5: Start agents"
+echo "Phase 5: Start minds"
 
-api POST /agents/alice/start >/dev/null
+api POST /minds/alice/start >/dev/null
 pass "alice start requested"
 
-api POST /agents/bob/start >/dev/null
+api POST /minds/bob/start >/dev/null
 pass "bob start requested"
 
 # Poll until running (60s timeout — first start may be slow)
-if poll_until 60 agent_is_running alice; then
+if poll_until 60 mind_is_running alice; then
   pass "alice is running"
 else
   fail "alice did not reach running status within 60s"
 fi
 
-if poll_until 60 agent_is_running bob; then
+if poll_until 60 mind_is_running bob; then
   pass "bob is running"
 else
   fail "bob did not reach running status within 60s"
 fi
 
-# ─── Phase 6: Chat with agents ───────────────────────────────────────────────
+# ─── Phase 6: Chat with minds ────────────────────────────────────────────────
 
 echo ""
-echo "Phase 6: Chat with agents"
+echo "Phase 6: Chat with minds"
 
-alice_msg_resp=$(api_raw POST /agents/alice/message -d '{
+alice_msg_resp=$(api_raw POST /minds/alice/message -d '{
   "content": [{"type":"text","text":"Reply with only the word pong"}],
   "channel": "test",
   "sender": "docker-test"
 }')
 assert_contains "$alice_msg_resp" '"ok":true' "alice message accepted"
 
-bob_msg_resp=$(api_raw POST /agents/bob/message -d '{
+bob_msg_resp=$(api_raw POST /minds/bob/message -d '{
   "content": [{"type":"text","text":"Reply with only the word ping"}],
   "channel": "test",
   "sender": "docker-test"
@@ -248,7 +248,7 @@ bob_msg_resp=$(api_raw POST /agents/bob/message -d '{
 assert_contains "$bob_msg_resp" '"ok":true' "bob message accepted"
 
 # Check history
-alice_history=$(api GET "/agents/alice/history?channel=test")
+alice_history=$(api GET "/minds/alice/history?channel=test")
 alice_msg_count=$(echo "$alice_history" | node -e "
   const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
   process.stdout.write(String(d.length));
@@ -259,7 +259,7 @@ else
   fail "alice history is empty"
 fi
 
-bob_history=$(api GET "/agents/bob/history?channel=test")
+bob_history=$(api GET "/minds/bob/history?channel=test")
 bob_msg_count=$(echo "$bob_history" | node -e "
   const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
   process.stdout.write(String(d.length));
@@ -270,62 +270,62 @@ else
   fail "bob history is empty"
 fi
 
-# ─── Phase 7: Cross-agent independence ────────────────────────────────────────
+# ─── Phase 7: Cross-mind independence ─────────────────────────────────────────
 
 echo ""
-echo "Phase 7: Cross-agent independence"
+echo "Phase 7: Cross-mind independence"
 
 # alice and bob both have messages in their own histories
 # Verify they don't share message stores
-alice_agents_in_history=$(echo "$alice_history" | node -e "
+alice_minds_in_history=$(echo "$alice_history" | node -e "
   const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-  const agents = new Set(d.map(m => m.agent));
-  process.stdout.write([...agents].join(','));
+  const minds = new Set(d.map(m => m.mind));
+  process.stdout.write([...minds].join(','));
 ")
-assert_eq "$alice_agents_in_history" "alice" "alice history only contains alice messages"
+assert_eq "$alice_minds_in_history" "alice" "alice history only contains alice messages"
 
-bob_agents_in_history=$(echo "$bob_history" | node -e "
+bob_minds_in_history=$(echo "$bob_history" | node -e "
   const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-  const agents = new Set(d.map(m => m.agent));
-  process.stdout.write([...agents].join(','));
+  const minds = new Set(d.map(m => m.mind));
+  process.stdout.write([...minds].join(','));
 ")
-assert_eq "$bob_agents_in_history" "bob" "bob history only contains bob messages"
+assert_eq "$bob_minds_in_history" "bob" "bob history only contains bob messages"
 
-# ─── Phase 8: Stop agents & final checks ─────────────────────────────────────
+# ─── Phase 8: Stop minds & final checks ──────────────────────────────────────
 
 echo ""
-echo "Phase 8: Stop agents & final checks"
+echo "Phase 8: Stop minds & final checks"
 
-api POST /agents/alice/stop >/dev/null
+api POST /minds/alice/stop >/dev/null
 pass "alice stop requested"
 
-api POST /agents/bob/stop >/dev/null
+api POST /minds/bob/stop >/dev/null
 pass "bob stop requested"
 
 # Wait briefly for stop to complete
 sleep 2
 
-alice_final=$(api_raw GET /agents/alice | node -e "
+alice_final=$(api_raw GET /minds/alice | node -e "
   process.stdout.write(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).status);
 ")
 assert_eq "$alice_final" "stopped" "alice is stopped"
 
-bob_final=$(api_raw GET /agents/bob | node -e "
+bob_final=$(api_raw GET /minds/bob | node -e "
   process.stdout.write(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).status);
 ")
 assert_eq "$bob_final" "stopped" "bob is stopped"
 
 # Check logs exist
-if docker exec "$CONTAINER" test -f /data/state/alice/logs/agent.log; then
-  pass "alice agent log exists"
+if docker exec "$CONTAINER" test -f /data/state/alice/logs/mind.log; then
+  pass "alice mind log exists"
 else
-  fail "alice agent log missing"
+  fail "alice mind log missing"
 fi
 
-if docker exec "$CONTAINER" test -f /data/state/bob/logs/agent.log; then
-  pass "bob agent log exists"
+if docker exec "$CONTAINER" test -f /data/state/bob/logs/mind.log; then
+  pass "bob mind log exists"
 else
-  fail "bob agent log missing"
+  fail "bob mind log missing"
 fi
 
 # ─── Summary ──────────────────────────────────────────────────────────────────

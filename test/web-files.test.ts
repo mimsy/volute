@@ -74,7 +74,7 @@ describe("web files routes", () => {
     const dir = setupTestDir();
     const app = createApp(dir);
 
-    const res = await app.request("/api/minds/test-agent/files", {
+    const res = await app.request("/api/minds/test-mind/files", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
@@ -90,7 +90,7 @@ describe("web files routes", () => {
     const dir = setupTestDir();
     const app = createApp(dir);
 
-    const res = await app.request("/api/minds/test-agent/files/SOUL.md", {
+    const res = await app.request("/api/minds/test-mind/files/SOUL.md", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
@@ -104,7 +104,7 @@ describe("web files routes", () => {
     const dir = setupTestDir();
     const app = createApp(dir);
 
-    const res = await app.request("/api/minds/test-agent/files/secret.txt", {
+    const res = await app.request("/api/minds/test-mind/files/secret.txt", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 403);

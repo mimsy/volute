@@ -104,7 +104,7 @@ describe("typing routes", () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request("/api/minds/test-agent/typing?channel=discord:123", {
+    const res = await app.request("/api/minds/test-mind/typing?channel=discord:123", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
@@ -117,7 +117,7 @@ describe("typing routes", () => {
     const { default: app } = await import("../src/web/app.js");
 
     // POST active:true
-    const postRes = await app.request("http://localhost/api/minds/test-agent/typing", {
+    const postRes = await app.request("http://localhost/api/minds/test-mind/typing", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -131,7 +131,7 @@ describe("typing routes", () => {
     assert.deepEqual(postBody, { ok: true });
 
     // GET to verify sender appears
-    const getRes = await app.request("/api/minds/test-agent/typing?channel=discord:123", {
+    const getRes = await app.request("/api/minds/test-mind/typing?channel=discord:123", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(getRes.status, 200);
@@ -144,7 +144,7 @@ describe("typing routes", () => {
     const { default: app } = await import("../src/web/app.js");
 
     // Set typing
-    await app.request("http://localhost/api/minds/test-agent/typing", {
+    await app.request("http://localhost/api/minds/test-mind/typing", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -155,7 +155,7 @@ describe("typing routes", () => {
     });
 
     // Clear typing
-    const clearRes = await app.request("http://localhost/api/minds/test-agent/typing", {
+    const clearRes = await app.request("http://localhost/api/minds/test-mind/typing", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -167,7 +167,7 @@ describe("typing routes", () => {
     assert.equal(clearRes.status, 200);
 
     // Verify cleared
-    const getRes = await app.request("/api/minds/test-agent/typing?channel=discord:123", {
+    const getRes = await app.request("/api/minds/test-mind/typing?channel=discord:123", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(getRes.status, 200);
@@ -179,7 +179,7 @@ describe("typing routes", () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request("/api/minds/test-agent/typing", {
+    const res = await app.request("/api/minds/test-mind/typing", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 400);
@@ -191,7 +191,7 @@ describe("typing routes", () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../src/web/app.js");
 
-    const res = await app.request("http://localhost/api/minds/test-agent/typing", {
+    const res = await app.request("http://localhost/api/minds/test-mind/typing", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie}`,

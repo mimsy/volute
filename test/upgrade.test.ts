@@ -29,7 +29,7 @@ function setupGitRepo(dir: string) {
   git(["init", "-b", "main"], dir);
   git(["config", "user.email", "test@test.com"], dir);
   git(["config", "user.name", "Test"], dir);
-  writeFileSync(join(dir, "README.md"), "# Test Agent\n");
+  writeFileSync(join(dir, "README.md"), "# Test Mind\n");
   git(["add", "-A"], dir);
   git(["commit", "-m", "initial commit"], dir);
 }
@@ -54,7 +54,7 @@ describe("template helpers", () => {
     const templatesRoot = findTemplatesRoot();
     const { composedDir, manifest } = composeTemplate(templatesRoot, "claude");
     try {
-      copyTemplateToDir(composedDir, dest, "test-agent", manifest);
+      copyTemplateToDir(composedDir, dest, "test-mind", manifest);
     } finally {
       rmSync(composedDir, { recursive: true, force: true });
     }
@@ -65,7 +65,7 @@ describe("template helpers", () => {
 
     // Name substitution should have happened
     const pkg = readFileSync(join(dest, "package.json"), "utf-8");
-    assert.ok(pkg.includes("test-agent"));
+    assert.ok(pkg.includes("test-mind"));
     assert.ok(!pkg.includes("{{name}}"));
 
     rmSync(dest, { recursive: true });
@@ -104,14 +104,14 @@ describe("template helpers", () => {
     const templatesRoot = findTemplatesRoot();
     const { composedDir, manifest } = composeTemplate(templatesRoot, "claude");
     try {
-      copyTemplateToDir(composedDir, dest, "test-agent", manifest);
+      copyTemplateToDir(composedDir, dest, "test-mind", manifest);
     } finally {
       rmSync(composedDir, { recursive: true, force: true });
     }
 
     // .init/SOUL.md should have the name substituted
     const soul = readFileSync(join(dest, ".init", "SOUL.md"), "utf-8");
-    assert.ok(soul.includes("test-agent"));
+    assert.ok(soul.includes("test-mind"));
     assert.ok(!soul.includes("{{name}}"));
 
     // home/ should NOT have SOUL.md (it's in .init/)
@@ -287,7 +287,7 @@ describe("upgrade git operations", () => {
     git(["worktree", "remove", worktreeDir], repoDir);
   });
 
-  it("first upgrade is conflict-free when template branch created at agent creation", () => {
+  it("first upgrade is conflict-free when template branch created at mind creation", () => {
     // Simulate new creation flow: template branch created first, main branched from it
     const dir = join(tmpDir, "shared-history-repo");
     mkdirSync(dir, { recursive: true });
@@ -312,10 +312,10 @@ describe("upgrade git operations", () => {
     git(["add", "-A"], dir);
     git(["commit", "-m", "initial commit"], dir);
 
-    // Agent modifies identity files (normal agent activity)
+    // Mind modifies identity files (normal mind activity)
     writeFileSync(join(dir, "home", "MEMORY.md"), "updated memories");
     git(["add", "-A"], dir);
-    git(["commit", "-m", "agent changes"], dir);
+    git(["commit", "-m", "mind changes"], dir);
 
     // First upgrade: update template branch
     git(["checkout", "volute/template"], dir);
@@ -339,8 +339,8 @@ describe("upgrade git operations", () => {
     git(["worktree", "remove", worktreeDir], dir);
   });
 
-  it("first upgrade detects real conflicts when agent modified template files", () => {
-    // Same shared-history setup, but agent modifies a file that template also changes
+  it("first upgrade detects real conflicts when mind modified template files", () => {
+    // Same shared-history setup, but mind modifies a file that template also changes
     const dir = join(tmpDir, "real-conflict-repo");
     mkdirSync(dir, { recursive: true });
     git(["init"], dir);
@@ -358,10 +358,10 @@ describe("upgrade git operations", () => {
     git(["checkout", "-b", "main"], dir);
     git(["commit", "--allow-empty", "-m", "initial commit"], dir);
 
-    // Agent customizes a template file
-    writeFileSync(join(dir, "src", "server.ts"), "server v1 - agent customized");
+    // Mind customizes a template file
+    writeFileSync(join(dir, "src", "server.ts"), "server v1 - mind customized");
     git(["add", "-A"], dir);
-    git(["commit", "-m", "agent customization"], dir);
+    git(["commit", "-m", "mind customization"], dir);
 
     // Template update changes the same file
     git(["checkout", "volute/template"], dir);
@@ -387,19 +387,19 @@ describe("upgrade git operations", () => {
     git(["worktree", "remove", "--force", worktreeDir], dir);
   });
 
-  it("template merge preserves agent home/ files when .init/ approach is used", () => {
-    // Simulate an agent created with the .init/ approach:
+  it("template merge preserves mind home/ files when .init/ approach is used", () => {
+    // Simulate a mind created with the .init/ approach:
     // main branch has SOUL.md/MEMORY.md in home/ (from applyInitFiles at creation)
     // plus upgrade-safe files like VOLUTE.md
     mkdirSync(join(repoDir, "src"), { recursive: true });
     mkdirSync(join(repoDir, "home", "memory"), { recursive: true });
     writeFileSync(join(repoDir, "src", "server.ts"), "server v1");
-    writeFileSync(join(repoDir, "home", "SOUL.md"), "I am a unique agent");
+    writeFileSync(join(repoDir, "home", "SOUL.md"), "I am a unique mind");
     writeFileSync(join(repoDir, "home", "MEMORY.md"), "my memories");
     writeFileSync(join(repoDir, "home", "VOLUTE.md"), "volute info v1");
     writeFileSync(join(repoDir, "home", "memory", "2025-01-01.md"), "day log");
     git(["add", "-A"], repoDir);
-    git(["commit", "-m", "agent files"], repoDir);
+    git(["commit", "-m", "mind files"], repoDir);
 
     // Create orphan template branch with ONLY upgrade-safe files
     // (no .init/, no SOUL.md/MEMORY.md — just what the template home/ has)
@@ -430,11 +430,8 @@ describe("upgrade git operations", () => {
       git(["commit", "-m", "merge template"], worktreeDir);
     }
 
-    // Agent identity files should be preserved (they were never in the template branch)
-    assert.equal(
-      readFileSync(join(worktreeDir, "home", "SOUL.md"), "utf-8"),
-      "I am a unique agent",
-    );
+    // Mind identity files should be preserved (they were never in the template branch)
+    assert.equal(readFileSync(join(worktreeDir, "home", "SOUL.md"), "utf-8"), "I am a unique mind");
     assert.equal(readFileSync(join(worktreeDir, "home", "MEMORY.md"), "utf-8"), "my memories");
     assert.equal(
       readFileSync(join(worktreeDir, "home", "memory", "2025-01-01.md"), "utf-8"),

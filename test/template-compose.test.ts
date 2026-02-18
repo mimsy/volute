@@ -102,7 +102,7 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, "src/agent.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/session-context-extension.ts")));
 
-      // No agent-sdk-specific files
+      // No claude-template-specific files
       assert.ok(!existsSync(resolve(composedDir, "src/lib/message-channel.ts")));
       assert.ok(!existsSync(resolve(composedDir, "src/lib/hooks")));
       assert.ok(!existsSync(resolve(composedDir, "src/lib/agent-sessions.ts")));

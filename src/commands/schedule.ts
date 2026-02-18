@@ -46,11 +46,11 @@ async function listSchedules(args: string[]) {
     mind: { type: "string" },
   });
 
-  const agent = resolveMindName(flags);
+  const mind = resolveMindName(flags);
   const client = getClient();
 
   const res = await daemonFetch(
-    urlOf(client.api.minds[":name"].schedules.$url({ param: { name: agent } })),
+    urlOf(client.api.minds[":name"].schedules.$url({ param: { name: mind } })),
   );
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
@@ -83,7 +83,7 @@ async function addSchedule(args: string[]) {
     id: { type: "string" },
   });
 
-  const agent = resolveMindName(flags);
+  const mind = resolveMindName(flags);
 
   if (!flags.cron || !flags.message) {
     console.error("--cron and --message are required");
@@ -95,7 +95,7 @@ async function addSchedule(args: string[]) {
 
   const client = getClient();
   const res = await daemonFetch(
-    urlOf(client.api.minds[":name"].schedules.$url({ param: { name: agent } })),
+    urlOf(client.api.minds[":name"].schedules.$url({ param: { name: mind } })),
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -119,7 +119,7 @@ async function removeSchedule(args: string[]) {
     id: { type: "string" },
   });
 
-  const agent = resolveMindName(flags);
+  const mind = resolveMindName(flags);
 
   if (!flags.id) {
     console.error("--id is required");
@@ -130,7 +130,7 @@ async function removeSchedule(args: string[]) {
   const res = await daemonFetch(
     urlOf(
       client.api.minds[":name"].schedules[":id"].$url({
-        param: { name: agent, id: flags.id },
+        param: { name: mind, id: flags.id },
       }),
     ),
     { method: "DELETE" },

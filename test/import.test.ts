@@ -29,7 +29,7 @@ describe("import: parseNameFromIdentity", () => {
   });
 
   it("normalizes spaces to hyphens", () => {
-    assert.equal(parseNameFromIdentity("- **Name:** My Cool Agent"), "my-cool-agent");
+    assert.equal(parseNameFromIdentity("- **Name:** My Cool Mind"), "my-cool-mind");
   });
 
   it("returns undefined for empty name field", () => {
@@ -82,7 +82,7 @@ describe("import: importPiSession", () => {
     assert.equal(files[0], "source-session.jsonl");
   });
 
-  it("updates cwd in session header to agent home dir", () => {
+  it("updates cwd in session header to mind home dir", () => {
     const sessionPath = resolve(scratchDir, "session.jsonl");
     writeJsonl(sessionPath, [
       {
@@ -292,7 +292,7 @@ describe("import: importOpenClawConnectors", () => {
     const discord = config.channels?.discord;
     if (!discord?.enabled || !discord.token) return;
 
-    // Write DISCORD_TOKEN to agent env
+    // Write DISCORD_TOKEN to mind env
     const envPath = resolve(dirPath, ".volute", "env.json");
     let env: Record<string, string> = {};
     if (existsSync(envPath)) {

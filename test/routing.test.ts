@@ -58,7 +58,7 @@ describe("loadRoutingConfig", () => {
 describe("resolveRoute", () => {
   // --- Basic routing ---
 
-  it("returns agent destination with default session when no config", () => {
+  it("returns mind destination with default session when no config", () => {
     const r = expectMind(resolveRoute({}, { channel: "web" }));
     assert.equal(r.session, "main");
   });
@@ -68,7 +68,7 @@ describe("resolveRoute", () => {
     assert.equal(r.session, "main");
   });
 
-  it("returns agent destination for rules without destination field", () => {
+  it("returns mind destination for rules without destination field", () => {
     const config: RoutingConfig = {
       rules: [{ channel: "discord:*", session: "discord" }],
       default: "main",

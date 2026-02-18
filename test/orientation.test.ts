@@ -79,7 +79,7 @@ describe("seed mind creation API", () => {
     cookie = await createSession(user.id);
   });
   afterEach(async () => {
-    // Clean up any agents we created
+    // Clean up any minds we created
     for (const entry of readRegistry()) {
       if (entry.name.startsWith("seed-test-")) {
         removeMind(entry.name);
@@ -90,7 +90,7 @@ describe("seed mind creation API", () => {
 
   it("POST /api/minds with stage=seed creates mind with correct stage", async () => {
     const mindName = `seed-test-${Date.now()}`;
-    // Create the agent directory so the route doesn't fail on disk operations
+    // Create the mind directory so the route doesn't fail on disk operations
     const mindsDir = resolve(voluteHome(), "minds");
     mkdirSync(mindsDir, { recursive: true });
 
@@ -135,14 +135,14 @@ describe("seed gating", () => {
     const user = await createUser("gate-admin", "pass");
     cookie = await createSession(user.id);
     addMind(mindName, 4199, "seed");
-    // Create minimal agent directory
+    // Create minimal mind directory
     const dir = resolve(voluteHome(), "minds", mindName);
     mkdirSync(resolve(dir, "home/.config"), { recursive: true });
     writeFileSync(resolve(dir, "home/.config/volute.json"), "{}");
   });
   afterEach(cleanup);
 
-  it("POST connectors returns 403 for seed agents", async () => {
+  it("POST connectors returns 403 for seed minds", async () => {
     const { default: app } = await import("../src/web/app.js");
 
     const res = await app.request(`http://localhost/api/minds/${mindName}/connectors/discord`, {
@@ -154,7 +154,7 @@ describe("seed gating", () => {
     assert.ok(body.error.includes("Seed"));
   });
 
-  it("POST schedules returns 403 for seed agents", async () => {
+  it("POST schedules returns 403 for seed minds", async () => {
     const { default: app } = await import("../src/web/app.js");
 
     const res = await app.request(`http://localhost/api/minds/${mindName}/schedules`, {
@@ -170,7 +170,7 @@ describe("seed gating", () => {
     assert.ok(body.error.includes("Seed"));
   });
 
-  it("POST variants returns 403 for seed agents", async () => {
+  it("POST variants returns 403 for seed minds", async () => {
     const { default: app } = await import("../src/web/app.js");
 
     const res = await app.request(`http://localhost/api/minds/${mindName}/variants`, {

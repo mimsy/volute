@@ -10,7 +10,7 @@ describe("scheduler", () => {
     assert.ok(true);
   });
 
-  it("unloadSchedules removes agent schedules", () => {
+  it("unloadSchedules removes mind schedules", () => {
     const scheduler = new Scheduler();
     scheduler.unloadSchedules("nonexistent");
     assert.ok(true);

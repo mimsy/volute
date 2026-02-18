@@ -8,7 +8,7 @@ import { readVariants, removeAllVariants } from "../src/lib/variants.js";
 import { authMiddleware, createSession } from "../src/web/middleware/auth.js";
 
 let sessionId: string;
-const testAgent = `web-variants-test-${Date.now()}`;
+const testMind = `web-variants-test-${Date.now()}`;
 
 async function cleanup() {
   const db = await getDb();
@@ -16,7 +16,7 @@ async function cleanup() {
   await db.delete(messages);
   await db.delete(conversations);
   await db.delete(users);
-  removeAllVariants(testAgent);
+  removeAllVariants(testMind);
 }
 
 async function setupAuth() {
@@ -25,15 +25,15 @@ async function setupAuth() {
   return sessionId;
 }
 
-// Build a test app that mirrors the variants route but uses agent name lookup
-function createApp(agentExists: boolean) {
+// Build a test app that mirrors the variants route but uses mind name lookup
+function createApp(mindExists: boolean) {
   const app = new Hono();
   app.use("/api/minds/*", authMiddleware);
 
   app.get("/api/minds/:name/variants", async (c) => {
-    if (!agentExists) return c.json({ error: "Agent not found" }, 404);
+    if (!mindExists) return c.json({ error: "Mind not found" }, 404);
 
-    const variants = readVariants(testAgent);
+    const variants = readVariants(testMind);
     const results = variants.map((v) => ({
       ...v,
       status: v.port ? "no-server" : "no-server",
@@ -48,21 +48,21 @@ describe("web variants routes", () => {
   beforeEach(cleanup);
   afterEach(cleanup);
 
-  it("GET /:name/variants — 404 for missing agent", async () => {
+  it("GET /:name/variants — 404 for missing mind", async () => {
     const cookie = await setupAuth();
     const app = createApp(false);
 
-    const res = await app.request("/api/minds/nonexistent-agent/variants", {
+    const res = await app.request("/api/minds/nonexistent-mind/variants", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 404);
   });
 
-  it("GET /:name/variants — lists variants for existing agent (empty)", async () => {
+  it("GET /:name/variants — lists variants for existing mind (empty)", async () => {
     const cookie = await setupAuth();
     const app = createApp(true);
 
-    const res = await app.request("/api/minds/test-agent/variants", {
+    const res = await app.request("/api/minds/test-mind/variants", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
@@ -73,7 +73,7 @@ describe("web variants routes", () => {
 
   it("GET /:name/variants — requires auth", async () => {
     const app = createApp(false);
-    const res = await app.request("/api/minds/test-agent/variants");
+    const res = await app.request("/api/minds/test-mind/variants");
     assert.equal(res.status, 401);
   });
 });

@@ -12,14 +12,14 @@ type HandlerCall = {
 };
 
 function createTestHandlers() {
-  const agentCalls = new Map<string, HandlerCall[]>();
+  const mindCalls = new Map<string, HandlerCall[]>();
   const fileCalls = new Map<string, HandlerCall[]>();
 
   const mindHandler = (session: string) => ({
     handle(content: VoluteContentPart[], meta: HandlerMeta, listener: Listener) {
-      const calls = agentCalls.get(session) ?? [];
+      const calls = mindCalls.get(session) ?? [];
       calls.push({ content, meta });
-      agentCalls.set(session, calls);
+      mindCalls.set(session, calls);
       queueMicrotask(() => listener({ type: "done", messageId: meta.messageId }));
       return () => {};
     },
@@ -35,7 +35,7 @@ function createTestHandlers() {
     },
   });
 
-  return { mindHandler, fileHandler, agentCalls, fileCalls };
+  return { mindHandler, fileHandler, mindCalls, fileCalls };
 }
 
 function writeConfig(dir: string, config: object): string {
@@ -57,7 +57,7 @@ describe("router invite gating", () => {
       default: "main",
     });
 
-    const { mindHandler, fileHandler, agentCalls, fileCalls } = createTestHandlers();
+    const { mindHandler, fileHandler, mindCalls, fileCalls } = createTestHandlers();
     const router = createRouter({ configPath, mindHandler, fileHandler });
 
     const events: string[] = [];
@@ -70,7 +70,7 @@ describe("router invite gating", () => {
     await waitMicrotask();
 
     // Invite notification sent to main session
-    const mainCalls = agentCalls.get("main");
+    const mainCalls = mindCalls.get("main");
     assert.ok(mainCalls, "should send invite to main session");
     assert.equal(mainCalls.length, 1);
     const notifText = (mainCalls[0].content[0] as { text: string }).text;
@@ -100,7 +100,7 @@ describe("router invite gating", () => {
       default: "main",
     });
 
-    const { mindHandler, fileHandler, agentCalls, fileCalls } = createTestHandlers();
+    const { mindHandler, fileHandler, mindCalls, fileCalls } = createTestHandlers();
     const router = createRouter({ configPath, mindHandler, fileHandler });
 
     // First message — triggers invite
@@ -117,7 +117,7 @@ describe("router invite gating", () => {
     await waitMicrotask();
 
     // Only one invite notification
-    const mainCalls = agentCalls.get("main");
+    const mainCalls = mindCalls.get("main");
     assert.ok(mainCalls);
     assert.equal(mainCalls.length, 1, "should only send one invite notification");
 
@@ -139,14 +139,14 @@ describe("router invite gating", () => {
       default: "main",
     });
 
-    const { mindHandler, fileHandler, agentCalls, fileCalls } = createTestHandlers();
+    const { mindHandler, fileHandler, mindCalls, fileCalls } = createTestHandlers();
     const router = createRouter({ configPath, mindHandler, fileHandler });
 
     router.route([{ type: "text", text: "hello" }], { channel: "web", sender: "alice" });
     await waitMicrotask();
 
     // Should route to web-session, not gate
-    const webCalls = agentCalls.get("web-session");
+    const webCalls = mindCalls.get("web-session");
     assert.ok(webCalls, "should route to matched session");
     assert.equal(webCalls.length, 1);
 
@@ -162,14 +162,14 @@ describe("router invite gating", () => {
       default: "fallback",
     });
 
-    const { mindHandler, fileHandler, agentCalls, fileCalls } = createTestHandlers();
+    const { mindHandler, fileHandler, mindCalls, fileCalls } = createTestHandlers();
     const router = createRouter({ configPath, mindHandler, fileHandler });
 
     router.route([{ type: "text", text: "hello" }], { channel: "discord:789", sender: "charlie" });
     await waitMicrotask();
 
     // Should route to default session
-    const fallbackCalls = agentCalls.get("fallback");
+    const fallbackCalls = mindCalls.get("fallback");
     assert.ok(fallbackCalls, "should route to default session");
     assert.equal(fallbackCalls.length, 1);
 
@@ -184,7 +184,7 @@ describe("router invite gating", () => {
       rules: [],
     });
 
-    const { mindHandler, fileHandler, agentCalls, fileCalls } = createTestHandlers();
+    const { mindHandler, fileHandler, mindCalls, fileCalls } = createTestHandlers();
     const router = createRouter({ configPath, mindHandler, fileHandler });
 
     router.route([{ type: "text", text: "hey there" }], {
@@ -194,7 +194,7 @@ describe("router invite gating", () => {
     });
     await waitMicrotask();
 
-    const mainCalls = agentCalls.get("main");
+    const mainCalls = mindCalls.get("main");
     assert.ok(mainCalls);
     assert.equal(mainCalls.length, 1);
     const text = (mainCalls[0].content[0] as { text: string }).text;
@@ -211,7 +211,7 @@ describe("router invite gating", () => {
       rules: [],
     });
 
-    const { mindHandler, fileHandler, agentCalls } = createTestHandlers();
+    const { mindHandler, fileHandler, mindCalls } = createTestHandlers();
     const router = createRouter({ configPath, mindHandler, fileHandler });
 
     router.route([{ type: "text", text: "group message" }], {
@@ -225,7 +225,7 @@ describe("router invite gating", () => {
     });
     await waitMicrotask();
 
-    const mainCalls = agentCalls.get("main")!;
+    const mainCalls = mindCalls.get("main")!;
     const text = (mainCalls[0].content[0] as { text: string }).text;
     assert.ok(text.includes("Platform: discord"));
     assert.ok(text.includes("Server: My Server"));
@@ -244,7 +244,7 @@ describe("router invite gating", () => {
       rules: [],
     });
 
-    const { mindHandler, fileHandler, agentCalls } = createTestHandlers();
+    const { mindHandler, fileHandler, mindCalls } = createTestHandlers();
     const router = createRouter({ configPath, mindHandler, fileHandler });
 
     router.route([{ type: "text", text: "hey" }], {
@@ -254,7 +254,7 @@ describe("router invite gating", () => {
     });
     await waitMicrotask();
 
-    const mainCalls = agentCalls.get("main")!;
+    const mainCalls = mindCalls.get("main")!;
     const text = (mainCalls[0].content[0] as { text: string }).text;
     assert.ok(!text.includes("batch"), "should not suggest batch for DMs");
   });
@@ -266,7 +266,7 @@ describe("router invite gating", () => {
       rules: [],
     });
 
-    const { mindHandler, fileHandler, agentCalls } = createTestHandlers();
+    const { mindHandler, fileHandler, mindCalls } = createTestHandlers();
     const router = createRouter({ configPath, mindHandler, fileHandler });
 
     router.route([{ type: "text", text: "hello" }], {
@@ -275,7 +275,7 @@ describe("router invite gating", () => {
     });
     await waitMicrotask();
 
-    const mainCalls = agentCalls.get("main")!;
+    const mainCalls = mindCalls.get("main")!;
     const text = (mainCalls[0].content[0] as { text: string }).text;
     assert.ok(text.includes("volute send discord:general"), "should include channel send command");
   });
@@ -287,7 +287,7 @@ describe("router invite gating", () => {
       rules: [],
     });
 
-    const { mindHandler, fileHandler, agentCalls } = createTestHandlers();
+    const { mindHandler, fileHandler, mindCalls } = createTestHandlers();
     const router = createRouter({ configPath, mindHandler, fileHandler });
 
     router.route([{ type: "text", text: "hi" }], {
@@ -296,7 +296,7 @@ describe("router invite gating", () => {
     });
     await waitMicrotask();
 
-    const mainCalls = agentCalls.get("main")!;
+    const mainCalls = mindCalls.get("main")!;
     const text = (mainCalls[0].content[0] as { text: string }).text;
     assert.ok(
       text.includes("volute send volute:conv-xyz"),
@@ -311,7 +311,7 @@ describe("router invite gating", () => {
       rules: [],
     });
 
-    const { mindHandler, agentCalls } = createTestHandlers();
+    const { mindHandler, mindCalls } = createTestHandlers();
     // No fileHandler provided
     const router = createRouter({ configPath, mindHandler });
 
@@ -324,7 +324,7 @@ describe("router invite gating", () => {
     await waitMicrotask();
 
     // Should still send invite notification
-    const mainCalls = agentCalls.get("main");
+    const mainCalls = mindCalls.get("main");
     assert.ok(mainCalls, "should send invite even without fileHandler");
   });
 });

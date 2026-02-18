@@ -120,7 +120,7 @@ export class Scheduler {
           signal: controller.signal,
         });
       } else {
-        // Fallback to direct agent fetch
+        // Fallback to direct mind fetch
         res = await fetch(`http://127.0.0.1:${entry.port}/message`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },

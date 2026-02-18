@@ -83,14 +83,14 @@ function resolveWorkspace(explicitPath?: string): string {
 
 /** Find the most recent OpenClaw session whose cwd matches the workspace being imported. */
 export function findOpenClawSession(workspaceDir: string): string | undefined {
-  const agentsDir = resolve(homedir(), ".openclaw/agents");
-  if (!existsSync(agentsDir)) return undefined;
+  const ocAgentsDir = resolve(homedir(), ".openclaw/agents");
+  if (!existsSync(ocAgentsDir)) return undefined;
 
-  // Scan all session JSONL files across all agents, match by workspace cwd
+  // Scan all session JSONL files across all OpenClaw agents, match by workspace cwd
   const matches: { path: string; mtime: number }[] = [];
   try {
-    for (const agent of readdirSync(agentsDir)) {
-      const sessionsDir = resolve(agentsDir, agent, "sessions");
+    for (const entry of readdirSync(ocAgentsDir)) {
+      const sessionsDir = resolve(ocAgentsDir, entry, "sessions");
       if (!existsSync(sessionsDir)) continue;
 
       for (const file of readdirSync(sessionsDir)) {
@@ -162,7 +162,7 @@ type OpenClawDiscordConfig = {
 };
 
 /** Import connector config from ~/.openclaw/openclaw.json into the new mind. */
-export function importOpenClawConnectors(mindName: string, mindDirPath: string) {
+export function importOpenClawConnectors(name: string, mindDirPath: string) {
   const configPath = resolve(homedir(), ".openclaw/openclaw.json");
   if (!existsSync(configPath)) return;
 
@@ -178,7 +178,7 @@ export function importOpenClawConnectors(mindName: string, mindDirPath: string) 
   if (!discord?.enabled || !discord.token) return;
 
   // Write DISCORD_TOKEN to mind env
-  const envPath = mindEnvPath(mindName);
+  const envPath = mindEnvPath(name);
   const env = readEnv(envPath);
   env.DISCORD_TOKEN = discord.token;
   writeEnv(envPath, env);

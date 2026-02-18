@@ -12,8 +12,8 @@ import { resolveChannelId as resolveChannelIdEnv } from "../src/lib/channels.js"
 import { stateDir } from "../src/lib/registry.js";
 import { buildVoluteSlug, slugify } from "../src/lib/slugify.js";
 
-// Test agent name — stateDir will resolve to VOLUTE_HOME/state/test-channel-agent
-const TEST_AGENT = "test-channel-agent";
+// Test mind name — stateDir will resolve to VOLUTE_HOME/state/test-channel-mind
+const TEST_MIND = "test-channel-mind";
 
 describe("slugify", () => {
   it("converts spaces to hyphens", () => {
@@ -56,7 +56,7 @@ describe("buildVoluteSlug", () => {
     assert.equal(slug, "volute:@alice");
   });
 
-  it("each agent in a multi-agent DM gets a different slug", () => {
+  it("each mind in a multi-mind DM gets a different slug", () => {
     const participants = [{ username: "agent1" }, { username: "agent2" }];
     const slug1 = buildVoluteSlug({
       participants,
@@ -182,30 +182,30 @@ describe("buildChannelSlug", () => {
 
 describe("readChannelMap", () => {
   beforeEach(() => {
-    // Ensure state dir exists for our test agent
-    mkdirSync(stateDir(TEST_AGENT), { recursive: true });
+    // Ensure state dir exists for our test mind
+    mkdirSync(stateDir(TEST_MIND), { recursive: true });
   });
 
   it("returns empty object for missing file", () => {
-    const map = readChannelMap("nonexistent-agent");
+    const map = readChannelMap("nonexistent-mind");
     assert.deepEqual(map, {});
   });
 
   it("returns parsed map for valid file", () => {
-    const dir = stateDir(TEST_AGENT);
+    const dir = stateDir(TEST_MIND);
     const entry = { platformId: "123", platform: "discord", name: "general" };
     writeFileSync(
       join(dir, "channels.json"),
       JSON.stringify({ "discord:my-server/general": entry }),
     );
-    const map = readChannelMap(TEST_AGENT);
+    const map = readChannelMap(TEST_MIND);
     assert.deepEqual(map, { "discord:my-server/general": entry });
   });
 
   it("returns empty object for corrupt file", () => {
-    const dir = stateDir(TEST_AGENT);
+    const dir = stateDir(TEST_MIND);
     writeFileSync(join(dir, "channels.json"), "not json");
-    const map = readChannelMap(TEST_AGENT);
+    const map = readChannelMap(TEST_MIND);
     assert.deepEqual(map, {});
   });
 });
@@ -219,17 +219,17 @@ describe("writeChannelEntry", () => {
       server: "My Server",
       type: "channel" as const,
     };
-    writeChannelEntry(TEST_AGENT, "discord:my-server/general", entry);
-    const data = JSON.parse(readFileSync(join(stateDir(TEST_AGENT), "channels.json"), "utf-8"));
+    writeChannelEntry(TEST_MIND, "discord:my-server/general", entry);
+    const data = JSON.parse(readFileSync(join(stateDir(TEST_MIND), "channels.json"), "utf-8"));
     assert.deepEqual(data["discord:my-server/general"], entry);
   });
 
   it("merges with existing entries", () => {
     const entry1 = { platformId: "123", platform: "discord", name: "general" };
     const entry2 = { platformId: "456", platform: "discord", name: "random" };
-    writeChannelEntry(TEST_AGENT, "discord:my-server/general", entry1);
-    writeChannelEntry(TEST_AGENT, "discord:my-server/random", entry2);
-    const data = JSON.parse(readFileSync(join(stateDir(TEST_AGENT), "channels.json"), "utf-8"));
+    writeChannelEntry(TEST_MIND, "discord:my-server/general", entry1);
+    writeChannelEntry(TEST_MIND, "discord:my-server/random", entry2);
+    const data = JSON.parse(readFileSync(join(stateDir(TEST_MIND), "channels.json"), "utf-8"));
     assert.deepEqual(data["discord:my-server/general"], entry1);
     assert.deepEqual(data["discord:my-server/random"], entry2);
   });
@@ -238,21 +238,21 @@ describe("writeChannelEntry", () => {
 describe("resolveChannelId (sdk)", () => {
   it("returns platformId for known slug", () => {
     const entry = { platformId: "123456", platform: "discord" };
-    writeChannelEntry(TEST_AGENT, "discord:my-server/general", entry);
-    const id = resolveChannelIdSdk(TEST_AGENT, "discord:my-server/general");
+    writeChannelEntry(TEST_MIND, "discord:my-server/general", entry);
+    const id = resolveChannelIdSdk(TEST_MIND, "discord:my-server/general");
     assert.equal(id, "123456");
   });
 
   it("returns slug suffix for unknown slug", () => {
-    const dir = stateDir(TEST_AGENT);
+    const dir = stateDir(TEST_MIND);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "channels.json"), JSON.stringify({}));
-    const id = resolveChannelIdSdk(TEST_AGENT, "discord:my-server/general");
+    const id = resolveChannelIdSdk(TEST_MIND, "discord:my-server/general");
     assert.equal(id, "my-server/general");
   });
 
   it("returns slug suffix when file is missing", () => {
-    const id = resolveChannelIdSdk("missing-agent", "discord:some-channel");
+    const id = resolveChannelIdSdk("missing-mind", "discord:some-channel");
     assert.equal(id, "some-channel");
   });
 });
@@ -260,8 +260,8 @@ describe("resolveChannelId (sdk)", () => {
 describe("resolveChannelId (env-based)", () => {
   it("returns platformId for known slug when VOLUTE_MIND is set", () => {
     const entry = { platformId: "123456", platform: "discord" };
-    writeChannelEntry(TEST_AGENT, "discord:my-server/general", entry);
-    const id = resolveChannelIdEnv({ VOLUTE_MIND: TEST_AGENT }, "discord:my-server/general");
+    writeChannelEntry(TEST_MIND, "discord:my-server/general", entry);
+    const id = resolveChannelIdEnv({ VOLUTE_MIND: TEST_MIND }, "discord:my-server/general");
     assert.equal(id, "123456");
   });
 
@@ -271,15 +271,15 @@ describe("resolveChannelId (env-based)", () => {
   });
 
   it("returns slug suffix when channels.json missing", () => {
-    const id = resolveChannelIdEnv({ VOLUTE_MIND: "missing-agent" }, "discord:some-channel");
+    const id = resolveChannelIdEnv({ VOLUTE_MIND: "missing-mind" }, "discord:some-channel");
     assert.equal(id, "some-channel");
   });
 
   it("returns slug suffix when slug not in map", () => {
-    const dir = stateDir(TEST_AGENT);
+    const dir = stateDir(TEST_MIND);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "channels.json"), JSON.stringify({}));
-    const id = resolveChannelIdEnv({ VOLUTE_MIND: TEST_AGENT }, "discord:unknown-channel");
+    const id = resolveChannelIdEnv({ VOLUTE_MIND: TEST_MIND }, "discord:unknown-channel");
     assert.equal(id, "unknown-channel");
   });
 
