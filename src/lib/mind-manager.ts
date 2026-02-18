@@ -129,6 +129,8 @@ export class MindManager {
       VOLUTE_STATE_DIR: stateDir(name),
       VOLUTE_MIND_DIR: dir,
       VOLUTE_MIND_PORT: String(port),
+      // Strip CLAUDECODE so the Agent SDK can spawn Claude Code subprocesses
+      CLAUDECODE: undefined,
     };
 
     if (isIsolationEnabled()) {
