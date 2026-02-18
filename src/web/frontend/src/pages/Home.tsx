@@ -5,8 +5,10 @@ import {
   type Conversation,
   fetchAgents,
   fetchAllConversations,
+  fetchRecentPages,
   type LastMessageSummary,
   type Participant,
+  type RecentPage,
 } from "../lib/api";
 
 type ConversationWithDetails = Conversation & {
@@ -29,6 +31,7 @@ function getConversationLabel(conv: ConversationWithDetails, username: string): 
 export function Home({ username }: { username: string }) {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [conversations, setConversations] = useState<ConversationWithDetails[]>([]);
+  const [recentPages, setRecentPages] = useState<RecentPage[]>([]);
 
   useEffect(() => {
     fetchAgents()
@@ -36,6 +39,9 @@ export function Home({ username }: { username: string }) {
       .catch(() => {});
     fetchAllConversations()
       .then(setConversations)
+      .catch(() => {});
+    fetchRecentPages()
+      .then(setRecentPages)
       .catch(() => {});
   }, []);
 
@@ -82,6 +88,45 @@ export function Home({ username }: { username: string }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {recentConversations.map((conv) => (
               <ConversationCard key={conv.id} conv={conv} username={username} agents={agents} />
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Recent pages */}
+      {recentPages.length > 0 && (
+        <Section title="recent pages">
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {recentPages.map((page) => (
+              <a
+                key={`${page.agent}/${page.file}`}
+                href={page.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "8px 12px",
+                  borderRadius: "var(--radius)",
+                  background: "var(--bg-2)",
+                  border: "1px solid var(--border)",
+                  textDecoration: "none",
+                  color: "var(--text-0)",
+                  fontSize: 12,
+                  transition: "border-color 0.15s",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--border-bright)")}
+                onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+              >
+                <span>
+                  <span style={{ color: "var(--text-2)" }}>{page.agent}/</span>
+                  {page.file}
+                </span>
+                <span style={{ color: "var(--text-2)", fontSize: 10 }}>
+                  {formatRelativeTime(page.modified)}
+                </span>
+              </a>
             ))}
           </div>
         </Section>

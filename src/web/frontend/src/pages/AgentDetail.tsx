@@ -88,7 +88,26 @@ export function AgentDetail({ name }: { name: string }) {
               <StatusBadge key={ch.name} status="connected" />
             ))}
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {agent.hasPages && (
+            <a
+              href={`/pages/${agent.name}/`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                padding: "6px 16px",
+                background: "var(--bg-2)",
+                color: "var(--text-1)",
+                borderRadius: "var(--radius)",
+                fontSize: 12,
+                fontWeight: 500,
+                textDecoration: "none",
+                border: "1px solid var(--border)",
+              }}
+            >
+              Pages
+            </a>
+          )}
           {agent.status === "stopped" ? (
             <button
               onClick={handleStart}

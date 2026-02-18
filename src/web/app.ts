@@ -12,6 +12,7 @@ import connectors from "./routes/connectors.js";
 import envRoutes, { sharedEnvApp } from "./routes/env.js";
 import files from "./routes/files.js";
 import logs from "./routes/logs.js";
+import pages from "./routes/pages.js";
 import schedules from "./routes/schedules.js";
 import system from "./routes/system.js";
 import typing from "./routes/typing.js";
@@ -81,6 +82,9 @@ app.use("/api/agents/*", authMiddleware);
 app.use("/api/conversations/*", authMiddleware);
 app.use("/api/system/*", authMiddleware);
 app.use("/api/env/*", authMiddleware);
+
+// Agent pages (public, no auth)
+app.route("/pages", pages);
 
 // Chain route registrations to capture types
 const routes = app

@@ -5,9 +5,10 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
@@ -34,6 +35,7 @@ import {
   ensureVoluteGroup,
   isIsolationEnabled,
 } from "../../lib/isolation.js";
+import log from "../../lib/logger.js";
 import {
   addAgent,
   agentDir,
@@ -547,10 +549,70 @@ const app = new Hono<AuthEnv>()
     const agents = await Promise.all(
       entries.map(async (entry) => {
         const { status, channels } = await getAgentStatus(entry.name, entry.port);
-        return { ...entry, status, channels, lastActiveAt: lastActiveMap.get(entry.name) ?? null };
+        const hasPages = existsSync(resolve(agentDir(entry.name), "home", "pages"));
+        return {
+          ...entry,
+          status,
+          channels,
+          hasPages,
+          lastActiveAt: lastActiveMap.get(entry.name) ?? null,
+        };
       }),
     );
     return c.json(agents);
+  })
+  // Recent pages across all agents
+  .get("/pages/recent", async (c) => {
+    const entries = readRegistry();
+    const pages: { agent: string; file: string; modified: string; url: string }[] = [];
+
+    for (const entry of entries) {
+      const pagesDir = resolve(agentDir(entry.name), "home", "pages");
+      if (!existsSync(pagesDir)) continue;
+
+      let items: string[];
+      try {
+        items = readdirSync(pagesDir);
+      } catch (err) {
+        log.warn("Failed to read pages dir", { agent: entry.name, error: (err as Error).message });
+        continue;
+      }
+
+      for (const item of items) {
+        const fullPath = resolve(pagesDir, item);
+        try {
+          const s = statSync(fullPath);
+          if (s.isFile()) {
+            pages.push({
+              agent: entry.name,
+              file: item,
+              modified: s.mtime.toISOString(),
+              url: `/pages/${entry.name}/${item}`,
+            });
+          } else if (s.isDirectory()) {
+            const indexPath = resolve(fullPath, "index.html");
+            if (existsSync(indexPath)) {
+              const indexStat = statSync(indexPath);
+              pages.push({
+                agent: entry.name,
+                file: join(item, "index.html"),
+                modified: indexStat.mtime.toISOString(),
+                url: `/pages/${entry.name}/${item}/`,
+              });
+            }
+          }
+        } catch (err) {
+          log.warn("Failed to stat page item", {
+            agent: entry.name,
+            item,
+            error: (err as Error).message,
+          });
+        }
+      }
+    }
+
+    pages.sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime());
+    return c.json(pages.slice(0, 10));
   })
   // Get single agent
   .get("/:name", async (c) => {
@@ -577,7 +639,8 @@ const app = new Hono<AuthEnv>()
       }),
     );
 
-    return c.json({ ...entry, status, channels, variants: variantStatuses });
+    const hasPages = existsSync(resolve(agentDir(name), "home", "pages"));
+    return c.json({ ...entry, status, channels, variants: variantStatuses, hasPages });
   })
   // Start agent (supports name@variant) — admin only
   .post("/:name/start", requireAdmin, async (c) => {
