@@ -11,7 +11,8 @@ const SERVICE_NAME = "volute.service";
 const PROFILE_PATH = "/etc/profile.d/volute.sh";
 const WRAPPER_PATH = "/usr/local/bin/volute";
 const DATA_DIR = "/var/lib/volute";
-const AGENTS_DIR = "/agents";
+const MINDS_DIR = "/minds";
+const LEGACY_AGENTS_DIR = "/agents";
 const HOST_RE = /^[a-zA-Z0-9.:_-]+$/;
 
 function validateHost(host: string): void {
@@ -48,7 +49,7 @@ function generateUnit(voluteBin: string, port?: number, host?: string): string {
 
   const lines = [
     "[Unit]",
-    "Description=Volute Agent Manager",
+    "Description=Volute Mind Manager",
     "After=network.target",
     "",
     "[Service]",
@@ -56,12 +57,12 @@ function generateUnit(voluteBin: string, port?: number, host?: string): string {
     `ExecStart=${voluteBin} ${args.join(" ")}`,
     `Environment=PATH=${buildServicePath(voluteBin)}`,
     `Environment=VOLUTE_HOME=${DATA_DIR}`,
-    `Environment=VOLUTE_AGENTS_DIR=${AGENTS_DIR}`,
+    `Environment=VOLUTE_MINDS_DIR=${MINDS_DIR}`,
     "Environment=VOLUTE_ISOLATION=user",
     "Restart=on-failure",
     "RestartSec=5",
     "ProtectSystem=true",
-    `ReadWritePaths=${DATA_DIR} ${AGENTS_DIR}`,
+    `ReadWritePaths=${DATA_DIR} ${MINDS_DIR}`,
     "PrivateTmp=yes",
   ];
 
@@ -95,23 +96,23 @@ function install(port?: number, host?: string): void {
   mkdirSync(DATA_DIR, { recursive: true });
   console.log(`Created ${DATA_DIR}`);
 
-  // Create agents directory
-  mkdirSync(AGENTS_DIR, { recursive: true });
-  console.log(`Created ${AGENTS_DIR}`);
+  // Create minds directory
+  mkdirSync(MINDS_DIR, { recursive: true });
+  console.log(`Created ${MINDS_DIR}`);
 
   // Create volute group (idempotent)
   ensureVoluteGroup({ force: true });
   console.log("Ensured volute group exists");
 
-  // Set permissions on data and agents directories
+  // Set permissions on data and minds directories
   execFileSync("chmod", ["755", DATA_DIR]);
-  execFileSync("chmod", ["755", AGENTS_DIR]);
+  execFileSync("chmod", ["755", MINDS_DIR]);
   console.log("Set permissions on directories");
 
   // Write environment for CLI users so they can find the daemon
   writeFileSync(
     PROFILE_PATH,
-    `export VOLUTE_HOME=${DATA_DIR}\nexport VOLUTE_AGENTS_DIR=${AGENTS_DIR}\n`,
+    `export VOLUTE_HOME=${DATA_DIR}\nexport VOLUTE_MINDS_DIR=${MINDS_DIR}\n`,
   );
   console.log(`Wrote ${PROFILE_PATH}`);
 
@@ -119,7 +120,7 @@ function install(port?: number, host?: string): void {
   // so `sudo volute` works (sudo resets PATH and won't find nvm binaries)
   const binDir = dirname(voluteBin);
   if (voluteBin !== WRAPPER_PATH && !voluteBin.startsWith("/usr/bin")) {
-    const wrapper = `#!/bin/sh\nexport PATH="${binDir}:$PATH"\nexport VOLUTE_HOME="${DATA_DIR}"\nexport VOLUTE_AGENTS_DIR="${AGENTS_DIR}"\nexec "${voluteBin}" "$@"\n`;
+    const wrapper = `#!/bin/sh\nexport PATH="${binDir}:$PATH"\nexport VOLUTE_HOME="${DATA_DIR}"\nexport VOLUTE_MINDS_DIR="${MINDS_DIR}"\nexec "${voluteBin}" "$@"\n`;
     writeFileSync(WRAPPER_PATH, wrapper, { mode: 0o755 });
     console.log(`Wrote ${WRAPPER_PATH} (wrapper for ${voluteBin})`);
   }
@@ -183,7 +184,7 @@ function uninstall(force: boolean): void {
   console.log("Service stopped and removed.");
 
   if (force) {
-    // Remove agent users
+    // Remove mind users
     try {
       const output = execFileSync("getent", ["group", "volute"], { encoding: "utf-8" });
       const members = output.split(":")[3]?.trim();
@@ -206,14 +207,18 @@ function uninstall(force: boolean): void {
       // Group may not exist — ignore
     }
 
-    // Remove data and agents directories
+    // Remove data and minds directories (also clean up legacy /agents)
     if (existsSync(DATA_DIR)) {
       rmSync(DATA_DIR, { recursive: true, force: true });
       console.log(`Deleted ${DATA_DIR}`);
     }
-    if (existsSync(AGENTS_DIR)) {
-      rmSync(AGENTS_DIR, { recursive: true, force: true });
-      console.log(`Deleted ${AGENTS_DIR}`);
+    if (existsSync(MINDS_DIR)) {
+      rmSync(MINDS_DIR, { recursive: true, force: true });
+      console.log(`Deleted ${MINDS_DIR}`);
+    }
+    if (existsSync(LEGACY_AGENTS_DIR)) {
+      rmSync(LEGACY_AGENTS_DIR, { recursive: true, force: true });
+      console.log(`Deleted ${LEGACY_AGENTS_DIR} (legacy)`);
     }
 
     // Remove group
