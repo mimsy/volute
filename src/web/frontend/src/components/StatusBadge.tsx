@@ -1,6 +1,6 @@
 const statusConfig: Record<string, { color: string; bg: string; glow?: boolean; label: string }> = {
   active: { color: "var(--accent)", bg: "var(--accent-bg)", glow: true, label: "active" },
-  running: { color: "var(--accent)", bg: "var(--accent-bg)", label: "awake" },
+  running: { color: "var(--accent)", bg: "var(--accent-bg)", glow: true, label: "awake" },
   starting: { color: "var(--yellow)", bg: "rgba(251, 191, 36, 0.08)", label: "waking" },
   stopped: { color: "var(--text-2)", bg: "rgba(106, 117, 136, 0.08)", label: "asleep" },
   connected: { color: "var(--blue)", bg: "rgba(96, 165, 250, 0.08)", label: "connected" },

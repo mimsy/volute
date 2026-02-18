@@ -49,7 +49,12 @@ export function Home({ username }: { username: string }) {
   });
 
   const recentConversations = [...conversations]
-    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+    .sort((a, b) => {
+      const normalize = (d: string) => (d.endsWith("Z") ? d : `${d}Z`);
+      return (
+        new Date(normalize(b.updated_at)).getTime() - new Date(normalize(a.updated_at)).getTime()
+      );
+    })
     .slice(0, 5);
 
   return (

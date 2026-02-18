@@ -529,15 +529,20 @@ const app = new Hono<AuthEnv>()
   // List all agents
   .get("/", async (c) => {
     const entries = readRegistry();
-    const db = await getDb();
-    const lastActiveRows = await db
-      .select({
-        agent: agentMessages.agent,
-        lastActiveAt: sql<string>`MAX(${agentMessages.created_at})`,
-      })
-      .from(agentMessages)
-      .groupBy(agentMessages.agent);
-    const lastActiveMap = new Map(lastActiveRows.map((r) => [r.agent, r.lastActiveAt]));
+    let lastActiveMap = new Map<string, string>();
+    try {
+      const db = await getDb();
+      const lastActiveRows = await db
+        .select({
+          agent: agentMessages.agent,
+          lastActiveAt: sql<string>`MAX(${agentMessages.created_at})`,
+        })
+        .from(agentMessages)
+        .groupBy(agentMessages.agent);
+      lastActiveMap = new Map(lastActiveRows.map((r) => [r.agent, r.lastActiveAt]));
+    } catch {
+      // Non-essential: degrade gracefully without activity data
+    }
 
     const agents = await Promise.all(
       entries.map(async (entry) => {
