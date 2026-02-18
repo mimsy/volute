@@ -39,19 +39,12 @@ export function Home({ username }: { username: string }) {
       .catch(() => {});
   }, []);
 
-  // Sort agents: running first, then by most recent conversation activity
-  const convsByAgent = new Map<string, string>();
-  for (const conv of conversations) {
-    const existing = convsByAgent.get(conv.agent_name);
-    if (!existing || conv.updated_at > existing) {
-      convsByAgent.set(conv.agent_name, conv.updated_at);
-    }
-  }
+  // Sort agents: running first, then by most recent activity
   const sortedAgents = [...agents].sort((a, b) => {
     if (a.status === "running" && b.status !== "running") return -1;
     if (a.status !== "running" && b.status === "running") return 1;
-    const aTime = convsByAgent.get(a.name) ?? "";
-    const bTime = convsByAgent.get(b.name) ?? "";
+    const aTime = a.lastActiveAt ?? "";
+    const bTime = b.lastActiveAt ?? "";
     return bTime.localeCompare(aTime);
   });
 
@@ -72,7 +65,7 @@ export function Home({ username }: { username: string }) {
         ) : (
           <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 4 }}>
             {sortedAgents.map((a) => (
-              <AgentCard key={a.name} agent={a} lastActive={convsByAgent.get(a.name)} />
+              <AgentCard key={a.name} agent={a} />
             ))}
           </div>
         )}
@@ -133,7 +126,7 @@ function Section({
   );
 }
 
-function AgentCard({ agent, lastActive }: { agent: Agent; lastActive?: string }) {
+function AgentCard({ agent }: { agent: Agent }) {
   const channels = agent.channels.filter(
     (ch) => ch.name !== "web" && ch.name !== "volute" && ch.status === "connected",
   );
@@ -182,7 +175,7 @@ function AgentCard({ agent, lastActive }: { agent: Agent; lastActive?: string })
         </div>
       )}
       <div style={{ fontSize: 10, color: "var(--text-2)" }}>
-        {lastActive ? `active ${formatRelativeTime(lastActive)}` : "no activity"}
+        {agent.lastActiveAt ? `active ${formatRelativeTime(agent.lastActiveAt)}` : "no activity"}
       </div>
     </a>
   );
@@ -251,7 +244,9 @@ function ConversationCard({
 
 function formatRelativeTime(dateStr: string): string {
   const now = Date.now();
-  const then = new Date(dateStr).getTime();
+  // SQLite datetime('now') stores UTC without Z suffix; ensure UTC parsing
+  const normalized = dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`;
+  const then = new Date(normalized).getTime();
   const diff = now - then;
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "just now";

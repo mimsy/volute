@@ -19,6 +19,7 @@ export type Agent = {
   status: "running" | "stopped" | "starting";
   stage?: "seed" | "mind";
   channels: Channel[];
+  lastActiveAt?: string | null;
 };
 
 export type VoluteEvent =
