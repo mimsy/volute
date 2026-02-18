@@ -562,7 +562,7 @@ const app = new Hono<AuthEnv>()
     return c.json(agents);
   })
   // Recent pages across all agents
-  .get("/sites/recent", async (c) => {
+  .get("/pages/recent", async (c) => {
     const entries = readRegistry();
     const pages: { agent: string; file: string; modified: string; url: string }[] = [];
 

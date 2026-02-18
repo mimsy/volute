@@ -260,7 +260,7 @@ export async function createConversationWithParticipants(
 }
 
 export async function fetchRecentPages(): Promise<RecentPage[]> {
-  const res = await client.api.agents.sites.recent.$get();
+  const res = await client.api.agents.pages.recent.$get();
   if (!res.ok) throw new Error("Failed to fetch recent pages");
   return res.json();
 }
