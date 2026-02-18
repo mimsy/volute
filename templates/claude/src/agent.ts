@@ -34,7 +34,7 @@ type Session = {
   autoReply: AutoReplyTracker;
 };
 
-export function createAgent(options: {
+export function createMind(options: {
   systemPrompt: string;
   cwd: string;
   abortController: AbortController;

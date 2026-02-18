@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { createAgent } from "./agent.js";
+import { createMind } from "./agent.js";
 import { createFileHandlerResolver } from "./lib/file-handler.js";
 import { log } from "./lib/logger.js";
 import { createRouter } from "./lib/router.js";
@@ -21,7 +21,7 @@ if (config.thinkingLevel) log("server", `thinking level: ${config.thinkingLevel}
 const systemPrompt = loadSystemPrompt();
 const pkg = loadPackageInfo();
 
-const agent = createAgent({
+const mind = createMind({
   systemPrompt,
   cwd: resolve("home"),
   model: config.model,
@@ -31,7 +31,7 @@ const agent = createAgent({
 
 const router = createRouter({
   configPath: resolve("home/.config/routes.json"),
-  mindHandler: agent.resolve,
+  mindHandler: mind.resolve,
   fileHandler: createFileHandlerResolver(resolve("home")),
 });
 

@@ -26,11 +26,11 @@ import type {
   VoluteEvent,
 } from "./lib/types.js";
 
-type AgentSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
+type PiAgentSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
 
 type PiSession = {
   name: string;
-  agentSession: AgentSession | null;
+  agentSession: PiAgentSession | null;
   ready: Promise<void>;
   listeners: Set<Listener>;
   unsubscribe?: () => void;
@@ -45,7 +45,7 @@ function defaultCompactionMessage(): string {
   return `Context is getting long — compaction is about to summarize this conversation. Before that happens, save anything important to files (MEMORY.md, memory/journal/${today}.md, etc.) since those survive compaction. Focus on: decisions made, open tasks, and anything you'd need to pick up where you left off.`;
 }
 
-export function createAgent(options: {
+export function createMind(options: {
   systemPrompt: string;
   cwd: string;
   model?: string;
