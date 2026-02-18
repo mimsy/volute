@@ -381,7 +381,7 @@ const app = new Hono<AuthEnv>()
         ok: true,
         name,
         port,
-        stage: body.stage ?? "mind",
+        stage: body.stage ?? "sprouted",
         message: `Created mind: ${name} (port ${port})`,
         ...(gitWarning && { warning: gitWarning }),
       });
