@@ -19,6 +19,14 @@ export type Agent = {
   status: "running" | "stopped" | "starting";
   stage?: "seed" | "mind";
   channels: Channel[];
+  hasPages?: boolean;
+};
+
+export type RecentPage = {
+  agent: string;
+  file: string;
+  modified: string;
+  url: string;
 };
 
 export type VoluteEvent =
@@ -240,6 +248,12 @@ export async function createConversationWithParticipants(
     const data = (await res.json()) as { error?: string };
     throw new Error(data.error || "Failed to create conversation");
   }
+  return res.json();
+}
+
+export async function fetchRecentPages(): Promise<RecentPage[]> {
+  const res = await client.api.agents.sites.recent.$get();
+  if (!res.ok) throw new Error("Failed to fetch recent pages");
   return res.json();
 }
 
