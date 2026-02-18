@@ -107,99 +107,19 @@ export function App() {
             </nav>
           )}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
-            <a
-              href="#/chats"
-              style={{
-                color: route.page === "chats" ? "var(--accent)" : "var(--text-2)",
-                fontSize: 12,
-                fontFamily: "var(--mono)",
-                transition: "color 0.15s",
-              }}
-              onMouseEnter={(e) => {
-                if (route.page !== "chats") e.currentTarget.style.color = "var(--text-0)";
-              }}
-              onMouseLeave={(e) => {
-                if (route.page !== "chats") e.currentTarget.style.color = "var(--text-2)";
-              }}
-            >
+            <NavLink href="#/chats" active={route.page === "chats"}>
               chat
-            </a>
-            <a
-              href="#/agents"
-              style={{
-                color:
-                  route.page === "agents" || route.page === "agent"
-                    ? "var(--accent)"
-                    : "var(--text-2)",
-                fontSize: 12,
-                fontFamily: "var(--mono)",
-                transition: "color 0.15s",
-              }}
-              onMouseEnter={(e) => {
-                if (route.page !== "agents" && route.page !== "agent")
-                  e.currentTarget.style.color = "var(--text-0)";
-              }}
-              onMouseLeave={(e) => {
-                if (route.page !== "agents" && route.page !== "agent")
-                  e.currentTarget.style.color = "var(--text-2)";
-              }}
-            >
+            </NavLink>
+            <NavLink href="#/agents" active={route.page === "agents" || route.page === "agent"}>
               agents
-            </a>
-            {user.role === "admin" && (
-              <a
-                href="#/logs"
-                style={{
-                  color: route.page === "logs" ? "var(--accent)" : "var(--text-2)",
-                  fontSize: 12,
-                  fontFamily: "var(--mono)",
-                  transition: "color 0.15s",
-                }}
-                onMouseEnter={(e) => {
-                  if (route.page !== "logs") e.currentTarget.style.color = "var(--text-0)";
-                }}
-                onMouseLeave={(e) => {
-                  if (route.page !== "logs") e.currentTarget.style.color = "var(--text-2)";
-                }}
-              >
-                logs
-              </a>
-            )}
-            {user.role === "admin" && (
-              <button
-                onClick={() => setShowUsers(!showUsers)}
-                style={{
-                  background: "transparent",
-                  color: "var(--text-2)",
-                  fontSize: 12,
-                  fontFamily: "var(--mono)",
-                  border: "none",
-                  cursor: "pointer",
-                  transition: "color 0.15s",
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-0)")}
-                onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}
-              >
-                users
-              </button>
-            )}
-            <span style={{ color: "var(--text-2)", fontSize: 12 }}>{user.username}</span>
-            <button
-              onClick={handleLogout}
-              style={{
-                background: "transparent",
-                color: "var(--text-2)",
-                fontSize: 12,
-                fontFamily: "var(--mono)",
-                border: "none",
-                cursor: "pointer",
-                transition: "color 0.15s",
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-0)")}
-              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-2)")}
-            >
-              logout
-            </button>
+            </NavLink>
+            <UserMenu
+              username={user.username}
+              isAdmin={user.role === "admin"}
+              onLogout={handleLogout}
+              onUsers={() => setShowUsers(!showUsers)}
+              currentPage={route.page}
+            />
           </div>
         </header>
         <main
@@ -228,6 +148,174 @@ export function App() {
         </main>
       </div>
     </>
+  );
+}
+
+function NavLink({
+  href,
+  active,
+  children,
+}: {
+  href: string;
+  active: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <a
+      href={href}
+      style={{
+        color: active ? "var(--accent)" : "var(--text-2)",
+        fontSize: 12,
+        fontFamily: "var(--mono)",
+        transition: "color 0.15s",
+      }}
+      onMouseEnter={(e) => {
+        if (!active) e.currentTarget.style.color = "var(--text-0)";
+      }}
+      onMouseLeave={(e) => {
+        if (!active) e.currentTarget.style.color = "var(--text-2)";
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
+function UserMenu({
+  username,
+  isAdmin,
+  onLogout,
+  onUsers,
+  currentPage,
+}: {
+  username: string;
+  isAdmin: boolean;
+  onLogout: () => void;
+  onUsers: () => void;
+  currentPage: string;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen(!open)}
+        style={{
+          background: "transparent",
+          color: "var(--text-2)",
+          fontSize: 12,
+          fontFamily: "var(--mono)",
+          border: "none",
+          cursor: "pointer",
+          transition: "color 0.15s",
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-0)")}
+        onMouseLeave={(e) => {
+          if (!open) e.currentTarget.style.color = "var(--text-2)";
+        }}
+      >
+        {username}
+        <span style={{ fontSize: 8 }}>{open ? "\u25B2" : "\u25BC"}</span>
+      </button>
+      {open && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={() => setOpen(false)} />
+          <div
+            style={{
+              position: "absolute",
+              right: 0,
+              top: "100%",
+              marginTop: 6,
+              background: "var(--bg-2)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius)",
+              padding: "4px 0",
+              minWidth: 120,
+              zIndex: 100,
+            }}
+          >
+            {isAdmin && (
+              <button
+                onClick={() => {
+                  window.location.hash = "#/logs";
+                  setOpen(false);
+                }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  padding: "6px 12px",
+                  fontSize: 12,
+                  color: currentPage === "logs" ? "var(--accent)" : "var(--text-1)",
+                  background: "transparent",
+                  textAlign: "left",
+                  fontFamily: "var(--mono)",
+                  transition: "background 0.1s",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-3)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              >
+                system logs
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                onClick={() => {
+                  onUsers();
+                  setOpen(false);
+                }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  padding: "6px 12px",
+                  fontSize: 12,
+                  color: "var(--text-1)",
+                  background: "transparent",
+                  textAlign: "left",
+                  fontFamily: "var(--mono)",
+                  transition: "background 0.1s",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-3)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              >
+                manage users
+              </button>
+            )}
+            {isAdmin && (
+              <div
+                style={{
+                  borderTop: "1px solid var(--border)",
+                  margin: "4px 0",
+                }}
+              />
+            )}
+            <button
+              onClick={() => {
+                onLogout();
+                setOpen(false);
+              }}
+              style={{
+                display: "block",
+                width: "100%",
+                padding: "6px 12px",
+                fontSize: 12,
+                color: "var(--text-2)",
+                background: "transparent",
+                textAlign: "left",
+                fontFamily: "var(--mono)",
+                transition: "background 0.1s",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-3)")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            >
+              logout
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
