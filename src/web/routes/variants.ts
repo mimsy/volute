@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import { exec, gitExec } from "../../lib/exec.js";
-import { chownMindDir } from "../../lib/isolation.js";
+import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../../lib/isolation.js";
 import { getMindManager } from "../../lib/mind-manager.js";
 import { findMind, mindDir, nextPort } from "../../lib/registry.js";
 import { spawnServer } from "../../lib/spawn-server.js";
@@ -72,9 +72,20 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: `Failed to create worktree: ${msg}` }, 500);
     }
 
+    // Fix ownership before npm install so it runs as the mind user
+    chownMindDir(projectRoot, mindName);
+
     // Install dependencies
     try {
-      await exec("npm", ["install"], { cwd: variantDir });
+      if (isIsolationEnabled()) {
+        const [cmd, args] = wrapForIsolation("npm", ["install"], mindName);
+        await exec(cmd, args, {
+          cwd: variantDir,
+          env: { ...process.env, HOME: resolve(variantDir, "home") },
+        });
+      } else {
+        await exec("npm", ["install"], { cwd: variantDir });
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       return c.json({ error: `npm install failed: ${msg}` }, 500);
@@ -96,9 +107,6 @@ const app = new Hono<AuthEnv>()
     };
 
     addVariant(mindName, variant);
-
-    // Fix ownership — daemon runs as root but mind needs to own its files
-    chownMindDir(projectRoot, mindName);
 
     // Start variant via mind manager unless noStart
     if (!body.noStart) {
@@ -226,15 +234,23 @@ const app = new Hono<AuthEnv>()
     // Remove from variants.json
     removeVariant(mindName, variantName);
 
+    // Fix ownership before npm install so it runs as the mind user
+    chownMindDir(projectRoot, mindName);
+
     // Reinstall dependencies
     try {
-      await exec("npm", ["install"], { cwd: projectRoot });
+      if (isIsolationEnabled()) {
+        const [cmd, args] = wrapForIsolation("npm", ["install"], mindName);
+        await exec(cmd, args, {
+          cwd: projectRoot,
+          env: { ...process.env, HOME: resolve(projectRoot, "home") },
+        });
+      } else {
+        await exec("npm", ["install"], { cwd: projectRoot });
+      }
     } catch {
       // Best effort — mind restart will still be attempted
     }
-
-    // Fix ownership — daemon runs as root but mind needs to own its files
-    chownMindDir(projectRoot, mindName);
 
     // Restart mind via mind manager with merge context
     const manager = getMindManager();
