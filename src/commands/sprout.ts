@@ -1,6 +1,6 @@
 import { cpSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
-import { findMind, mindDir, setMindStage } from "../lib/registry.js";
+import { findMind, mindDir } from "../lib/registry.js";
 import { composeTemplate, findTemplatesRoot } from "../lib/template.js";
 
 const ORIENTATION_MARKER = "You don't have a soul yet";
@@ -70,14 +70,22 @@ export async function run(_args: string[]) {
     rmSync(composedDir, { recursive: true, force: true });
   }
 
-  // Flip stage only after skills are successfully installed
-  setMindStage(mindName, "sprouted");
-
-  // Restart with sprouted context
+  // Flip stage via daemon API (mind user can't write to shared minds.json directly)
   const { daemonFetch } = await import("../lib/daemon-client.js");
   const { getClient, urlOf } = await import("../lib/api-client.js");
   const client = getClient();
 
+  const sproutRes = await daemonFetch(
+    urlOf(client.api.minds[":name"].sprout.$url({ param: { name: mindName } })),
+    { method: "POST" },
+  );
+  if (!sproutRes.ok) {
+    const data = (await sproutRes.json()) as { error?: string };
+    console.error(data.error ?? "Failed to update stage");
+    process.exit(1);
+  }
+
+  // Restart with sprouted context
   const res = await daemonFetch(
     urlOf(client.api.minds[":name"].restart.$url({ param: { name: mindName } })),
     {

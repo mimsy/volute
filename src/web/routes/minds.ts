@@ -45,6 +45,7 @@ import {
   nextPort,
   readRegistry,
   removeMind,
+  setMindStage,
   stateDir,
   validateMindName,
   voluteHome,
@@ -854,6 +855,17 @@ const app = new Hono<AuthEnv>()
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to stop mind" }, 500);
     }
+  })
+  // Sprout a seed mind — admin only
+  .post("/:name/sprout", requireAdmin, async (c) => {
+    const name = c.req.param("name");
+    const entry = findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+    if (entry.stage !== "seed") {
+      return c.json({ error: `Mind is not a seed (stage: ${entry.stage})` }, 409);
+    }
+    setMindStage(name, "sprouted");
+    return c.json({ ok: true });
   })
   // Delete mind — admin only
   .delete("/:name", requireAdmin, async (c) => {
