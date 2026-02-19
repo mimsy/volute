@@ -33,6 +33,7 @@ import {
   deleteMindUser as deleteIsolationUser,
   ensureVoluteGroup,
   isIsolationEnabled,
+  wrapForIsolation,
 } from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
 import { getMindManager } from "../../lib/mind-manager.js";
@@ -290,6 +291,19 @@ async function mergeTemplateBranch(worktreeDir: string): Promise<boolean> {
   }
 }
 
+/**
+ * Run npm install in a directory, using the mind user's identity when isolation is enabled.
+ * This avoids creating root-owned node_modules that the mind can't modify later.
+ */
+async function npmInstallAsMind(cwd: string, mindName: string): Promise<void> {
+  if (isIsolationEnabled()) {
+    const [cmd, args] = wrapForIsolation("npm", ["install"], mindName);
+    await exec(cmd, args, { cwd, env: { ...process.env, HOME: resolve(cwd, "home") } });
+  } else {
+    await exec("npm", ["install"], { cwd });
+  }
+}
+
 const createMindSchema = z.object({
   name: z.string(),
   template: z.string().optional(),
@@ -340,24 +354,25 @@ const app = new Hono<AuthEnv>()
       createMindUser(name, homeDir);
       chownMindDir(dest, name);
 
-      const mindName = isIsolationEnabled() ? name : undefined;
-      const env = mindName ? { ...process.env, HOME: homeDir } : undefined;
-
-      // Install dependencies
-      await exec("npm", ["install"], { cwd: dest, mindName, env });
+      // Install dependencies as mind user (chown already ran above)
+      await npmInstallAsMind(dest, name);
 
       // git init + template branch + initial commit (before seed modifications
       // so that initTemplateBranch can git-add all template files)
       let gitWarning: string | undefined;
       try {
-        await gitExec(["init"], { cwd: dest, mindName, env });
-        await initTemplateBranch(dest, composedDir, manifest, mindName, env);
+        const env = isIsolationEnabled() ? { ...process.env, HOME: homeDir } : undefined;
+        await gitExec(["init"], { cwd: dest, mindName: name, env });
+        await initTemplateBranch(dest, composedDir, manifest, name, env);
       } catch (err) {
         console.error(`[daemon] git setup failed for ${name}:`, err);
         rmSync(resolve(dest, ".git"), { recursive: true, force: true });
         gitWarning =
           "Git setup failed — variants and upgrades won't be available until git is initialized.";
       }
+
+      // Fix ownership after root git/file operations
+      chownMindDir(dest, name);
 
       if (body.stage === "seed") {
         // Write orientation SOUL.md
@@ -483,11 +498,8 @@ const app = new Hono<AuthEnv>()
       createMindUser(name, homeDir);
       chownMindDir(dest, name);
 
-      const mindName = isIsolationEnabled() ? name : undefined;
-      const env = mindName ? { ...process.env, HOME: homeDir } : undefined;
-
-      // Install dependencies
-      await exec("npm", ["install"], { cwd: dest, mindName, env });
+      // Install dependencies as mind user (chown already ran above)
+      await npmInstallAsMind(dest, name);
 
       // Consolidate memory if no MEMORY.md but daily logs exist
       if (!hasMemory && dailyLogCount > 0) {
@@ -495,9 +507,12 @@ const app = new Hono<AuthEnv>()
       }
 
       // git init + initial commit
-      await gitExec(["init"], { cwd: dest, mindName, env });
-      await gitExec(["add", "-A"], { cwd: dest, mindName, env });
-      await gitExec(["commit", "-m", "import from OpenClaw"], { cwd: dest, mindName, env });
+      const env = isIsolationEnabled()
+        ? { ...process.env, HOME: resolve(dest, "home") }
+        : undefined;
+      await gitExec(["init"], { cwd: dest, mindName: name, env });
+      await gitExec(["add", "-A"], { cwd: dest, mindName: name, env });
+      await gitExec(["commit", "-m", "import from OpenClaw"], { cwd: dest, mindName: name, env });
 
       // Import session
       const sessionFile = body.sessionPath ? resolve(body.sessionPath) : findOpenClawSession(wsDir);
@@ -514,6 +529,9 @@ const app = new Hono<AuthEnv>()
 
       // Import connectors
       importOpenClawConnectors(name, dest);
+
+      // Fix ownership after root git/file operations
+      chownMindDir(dest, name);
 
       return c.json({ ok: true, name, port, message: `Imported mind: ${name} (port ${port})` });
     } catch (err) {
@@ -768,12 +786,12 @@ const app = new Hono<AuthEnv>()
             await gitExec(["branch", "-D", variant.branch], { cwd: projectRoot });
           } catch {}
           removeVariant(baseName, mergeVariantName);
+          chownMindDir(projectRoot, baseName);
           try {
-            await exec("npm", ["install"], { cwd: projectRoot });
+            await npmInstallAsMind(projectRoot, baseName);
           } catch (e) {
             console.error(`[daemon] npm install failed after merge for ${baseName}:`, e);
           }
-          chownMindDir(projectRoot, baseName);
         }
       }
 
@@ -913,8 +931,11 @@ const app = new Hono<AuthEnv>()
         if (!msg.includes("nothing to commit")) throw e;
       }
 
+      // Fix ownership after root git operations so npm install can run as mind user
+      chownMindDir(dir, mindName);
+
       try {
-        await exec("npm", ["install"], { cwd: worktreeDir });
+        await npmInstallAsMind(worktreeDir, mindName);
 
         const variantPort = nextPort();
         addVariant(mindName, {
@@ -925,7 +946,6 @@ const app = new Hono<AuthEnv>()
           created: new Date().toISOString(),
         });
 
-        chownMindDir(dir, mindName);
         await getMindManager().startMind(`${mindName}@${UPGRADE_VARIANT}`);
 
         return c.json({
@@ -1005,7 +1025,7 @@ const app = new Hono<AuthEnv>()
 
     // Install, register, start
     try {
-      await exec("npm", ["install"], { cwd: worktreeDir });
+      await npmInstallAsMind(worktreeDir, mindName);
 
       const variantPort = nextPort();
       addVariant(mindName, {
@@ -1016,7 +1036,6 @@ const app = new Hono<AuthEnv>()
         created: new Date().toISOString(),
       });
 
-      chownMindDir(dir, mindName);
       await getMindManager().startMind(`${mindName}@${UPGRADE_VARIANT}`);
 
       return c.json({
