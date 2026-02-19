@@ -30,7 +30,7 @@ export async function run(args: string[]) {
 
 function printUsage() {
   console.log(`Usage:
-  volute pages register [--name <name>]  Register a system on pages.volute.dev
+  volute pages register [--name <name>]  Register a system on volute.systems
   volute pages login [--key <key>]       Log in with an existing API key
   volute pages publish [--mind <name>]   Publish mind's pages/ directory
   volute pages status [--mind <name>]    Show publish status

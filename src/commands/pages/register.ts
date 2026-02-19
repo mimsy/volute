@@ -1,7 +1,7 @@
 import { readPagesConfig, writePagesConfig } from "../../lib/pages-config.js";
 import { parseArgs } from "../../lib/parse-args.js";
 
-const DEFAULT_API_URL = "https://pages.volute.dev";
+const DEFAULT_API_URL = "https://volute.systems";
 
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {

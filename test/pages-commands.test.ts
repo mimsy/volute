@@ -31,13 +31,13 @@ describe("pages-config", () => {
     writePagesConfig({
       apiKey: "vp_test123",
       system: "my-system",
-      apiUrl: "https://pages.volute.dev",
+      apiUrl: "https://volute.systems",
     });
     const config = readPagesConfig();
     assert.deepEqual(config, {
       apiKey: "vp_test123",
       system: "my-system",
-      apiUrl: "https://pages.volute.dev",
+      apiUrl: "https://volute.systems",
     });
   });
 
@@ -45,7 +45,7 @@ describe("pages-config", () => {
     writePagesConfig({
       apiKey: "vp_secret",
       system: "test",
-      apiUrl: "https://pages.volute.dev",
+      apiUrl: "https://volute.systems",
     });
     const mode = statSync(configPath()).mode & 0o777;
     assert.equal(mode, 0o600);
@@ -73,7 +73,7 @@ describe("pages-config", () => {
     mkdirSync(voluteHome(), { recursive: true });
     writeFileSync(configPath(), JSON.stringify({ apiKey: "vp_key", system: "test" }));
     const config = readPagesConfig();
-    assert.equal(config?.apiUrl, "https://pages.volute.dev");
+    assert.equal(config?.apiUrl, "https://volute.systems");
   });
 
   it("readPagesConfig preserves custom apiUrl", () => {
@@ -90,7 +90,7 @@ describe("pages-config", () => {
     writePagesConfig({
       apiKey: "vp_key",
       system: "test",
-      apiUrl: "https://pages.volute.dev",
+      apiUrl: "https://volute.systems",
     });
     assert.ok(existsSync(configPath()));
     const result = deletePagesConfig();
@@ -227,7 +227,7 @@ describe("pages CLI commands", () => {
         assert.equal(req.url, "/api/register");
         const body = JSON.parse(await readBody(req));
         assert.equal(body.name, "my-system");
-        res.writeHead(200, { "Content-Type": "application/json" });
+        res.writeHead(201, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ apiKey: "vp_newkey", system: "my-system" }));
       };
 
@@ -354,13 +354,13 @@ describe("pages CLI commands", () => {
       let receivedBody: { files: Record<string, string> } | undefined;
       handler = async (req, res) => {
         assert.equal(req.method, "PUT");
-        assert.equal(req.url, `/api/publish/${MIND_NAME}`);
+        assert.equal(req.url, `/api/pages/publish/${MIND_NAME}`);
         assert.equal(req.headers.authorization, "Bearer vp_pub");
         receivedBody = JSON.parse(await readBody(req));
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({
-            url: `https://my-system.pages.volute.dev/~${MIND_NAME}/`,
+            url: `https://my-system.volute.systems/~${MIND_NAME}/`,
             fileCount: 1,
           }),
         );
@@ -475,12 +475,12 @@ describe("pages CLI commands", () => {
 
       handler = (req, res) => {
         assert.equal(req.method, "GET");
-        assert.equal(req.url, `/api/status/${MIND_NAME}`);
+        assert.equal(req.url, `/api/pages/status/${MIND_NAME}`);
         assert.equal(req.headers.authorization, "Bearer vp_stat");
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({
-            url: `https://my-system.pages.volute.dev/~${MIND_NAME}/`,
+            url: `https://my-system.volute.systems/~${MIND_NAME}/`,
             fileCount: 5,
             deployedAt: "2026-01-15T12:00:00Z",
           }),
@@ -494,7 +494,7 @@ describe("pages CLI commands", () => {
       await run(["--mind", MIND_NAME]);
 
       logMock.mock.restore();
-      assert.ok(logged.some((l) => l.includes("my-system.pages.volute.dev")));
+      assert.ok(logged.some((l) => l.includes("my-system.volute.systems")));
       assert.ok(logged.some((l) => l.includes("5")));
       assert.ok(logged.some((l) => l.includes("2026-01-15")));
     });

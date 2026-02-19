@@ -8,7 +8,7 @@ export type PagesConfig = {
   apiUrl: string;
 };
 
-const DEFAULT_API_URL = "https://pages.volute.dev";
+const DEFAULT_API_URL = "https://volute.systems";
 
 function configPath(): string {
   return resolve(voluteHome(), "pages.json");

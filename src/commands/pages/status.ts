@@ -15,7 +15,7 @@ export async function run(args: string[]) {
 
   const mindName = resolveMindName(flags);
 
-  const res = await fetch(`${config.apiUrl}/api/status/${mindName}`, {
+  const res = await fetch(`${config.apiUrl}/api/pages/status/${mindName}`, {
     headers: { Authorization: `Bearer ${config.apiKey}` },
   });
 

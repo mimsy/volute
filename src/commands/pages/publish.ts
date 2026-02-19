@@ -32,7 +32,7 @@ export async function run(args: string[]) {
 
   console.log(`Publishing ${Object.keys(files).length} file(s) for ${mindName}...`);
 
-  const res = await fetch(`${config.apiUrl}/api/publish/${mindName}`, {
+  const res = await fetch(`${config.apiUrl}/api/pages/publish/${mindName}`, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",

@@ -135,7 +135,7 @@ The daemon serves a Hono web server (default port 4200) with a React frontend.
 | `volute schedule list [--mind]` | List schedules for a mind |
 | `volute schedule add [--mind] --cron "..." --message "..." [--id name]` | Add a cron schedule |
 | `volute schedule remove [--mind] --id <id>` | Remove a schedule |
-| `volute pages register [--name <name>]` | Register a system on pages.volute.dev |
+| `volute pages register [--name <name>]` | Register a system on volute.systems |
 | `volute pages login [--key <key>]` | Log in with an existing API key |
 | `volute pages publish [--mind <name>]` | Publish mind's pages/ directory |
 | `volute pages status [--mind <name>]` | Show publish status |

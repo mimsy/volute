@@ -120,7 +120,7 @@ Commands:
   volute setup [--port N] [--host H]      Install system service with user isolation
   volute setup uninstall [--force]        Remove system service + isolation
 
-  volute pages register [--name <name>]   Register a system on pages.volute.dev
+  volute pages register [--name <name>]   Register a system on volute.systems
   volute pages login [--key <key>]        Log in with an existing API key
   volute pages publish [--mind <name>]    Publish mind's pages/ directory
   volute pages status [--mind <name>]     Show publish status
