@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/mimsy/volute/compare/volute-v0.14.0...volute-v0.14.1) (2026-02-19)
+
+
+### Bug Fixes
+
+* system install permission fixes for upgrade, npm install, and sprout ([#84](https://github.com/mimsy/volute/issues/84)) ([d275f37](https://github.com/mimsy/volute/commit/d275f37a582ffc68216a3c601aea233f30452166))
+
 ## [0.14.0](https://github.com/mimsy/volute/compare/volute-v0.13.2...volute-v0.14.0) (2026-02-18)
 
 
