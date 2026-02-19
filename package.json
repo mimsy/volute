@@ -1,6 +1,6 @@
 {
   "name": "volute",
-  "version": "0.14.1",
+  "version": "0.15.0",
   "description": "CLI for creating and managing self-modifying AI minds powered by the Claude Agent SDK",
   "type": "module",
   "license": "MIT",

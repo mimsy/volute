@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/mimsy/volute/compare/volute-v0.14.1...volute-v0.15.0) (2026-02-19)
+
+
+### Features
+
+* inject reply instructions on first message of each session ([#86](https://github.com/mimsy/volute/issues/86)) ([3bbbffb](https://github.com/mimsy/volute/commit/3bbbffb3ab8ee362d9fbbad456ce90d72d2b4752))
+
 ## [0.14.1](https://github.com/mimsy/volute/compare/volute-v0.14.0...volute-v0.14.1) (2026-02-19)
 
 
