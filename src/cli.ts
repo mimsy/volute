@@ -68,6 +68,9 @@ switch (command) {
   case "sprout":
     await import("./commands/sprout.js").then((m) => m.run(args));
     break;
+  case "pages":
+    await import("./commands/pages.js").then((m) => m.run(args));
+    break;
   case "--help":
   case "-h":
   case undefined:
@@ -116,6 +119,12 @@ Commands:
   volute service status                   Check service status
   volute setup [--port N] [--host H]      Install system service with user isolation
   volute setup uninstall [--force]        Remove system service + isolation
+
+  volute pages register [--name <name>]   Register a system on pages.volute.dev
+  volute pages login [--key <key>]        Log in with an existing API key
+  volute pages publish [--mind <name>]    Publish mind's pages/ directory
+  volute pages status [--mind <name>]     Show publish status
+  volute pages logout                     Remove stored credentials
 
   volute seed <name>                      Plant a seed mind (orientation mode)
   volute sprout                           Complete orientation, become a full mind
