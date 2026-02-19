@@ -53,7 +53,7 @@ export async function run(args: string[]) {
   console.log(`Published ${fileCount} file(s) to ${url}`);
 }
 
-function collectFiles(dir: string): Record<string, string> {
+export function collectFiles(dir: string): Record<string, string> {
   const files: Record<string, string> = {};
 
   function walk(current: string) {
