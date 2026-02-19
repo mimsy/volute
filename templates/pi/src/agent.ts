@@ -15,6 +15,7 @@ import {
 import { extractImages, extractText } from "./lib/content.js";
 import { createEventHandler } from "./lib/event-handler.js";
 import { log } from "./lib/logger.js";
+import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
 import { createSessionContextExtension } from "./lib/session-context-extension.js";
 import type {
@@ -123,11 +124,17 @@ export function createMind(options: {
       cwd: options.cwd,
     });
 
+    const replyInstructionsExtension = createReplyInstructionsExtension(session.messageChannels);
+
     const resourceLoader = new DefaultResourceLoader({
       cwd: options.cwd,
       settingsManager,
       systemPrompt: options.systemPrompt,
-      extensionFactories: [preCompactExtension, sessionContextExtension],
+      extensionFactories: [
+        preCompactExtension,
+        sessionContextExtension,
+        replyInstructionsExtension,
+      ],
     });
     await resourceLoader.reload();
 

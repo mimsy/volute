@@ -9,6 +9,7 @@ import { toSDKContent } from "./lib/content.js";
 import { createAutoCommitHook } from "./lib/hooks/auto-commit.js";
 import { createIdentityReloadHook } from "./lib/hooks/identity-reload.js";
 import { createPreCompactHook } from "./lib/hooks/pre-compact.js";
+import { createReplyInstructionsHook } from "./lib/hooks/reply-instructions.js";
 import { createSessionContextHook } from "./lib/hooks/session-context.js";
 import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
@@ -93,6 +94,8 @@ export function createMind(options: {
       cwd: options.cwd,
     });
 
+    const replyInstructions = createReplyInstructionsHook(session.messageChannels);
+
     return query({
       prompt: session.channel.iterable,
       options: {
@@ -108,7 +111,7 @@ export function createMind(options: {
         hooks: {
           PostToolUse: postToolUseHooks,
           PreCompact: [{ hooks: [preCompact.hook] }],
-          UserPromptSubmit: [{ hooks: [sessionContext.hook] }],
+          UserPromptSubmit: [{ hooks: [sessionContext.hook, replyInstructions.hook] }],
         },
       },
     });
