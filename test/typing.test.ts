@@ -72,6 +72,32 @@ describe("TypingMap", () => {
     assert.deepEqual(map.get("discord:123"), ["alice"]);
   });
 
+  it("deleteSender removes sender from all channels", () => {
+    map = new TypingMap();
+    map.set("discord:123", "alice", { persistent: true });
+    map.set("discord:456", "alice", { persistent: true });
+    map.set("discord:123", "bob", { persistent: true });
+    map.deleteSender("alice");
+    assert.deepEqual(map.get("discord:123"), ["bob"]);
+    assert.deepEqual(map.get("discord:456"), []);
+  });
+
+  it("deleteSender is a no-op for unknown senders", () => {
+    map = new TypingMap();
+    map.set("discord:123", "alice");
+    map.deleteSender("unknown");
+    assert.deepEqual(map.get("discord:123"), ["alice"]);
+  });
+
+  it("after deleteSender, get no longer includes that sender", () => {
+    map = new TypingMap();
+    map.set("discord:123", "alice", { persistent: true });
+    map.set("discord:123", "bob", { persistent: true });
+    assert.equal(map.get("discord:123").length, 2);
+    map.deleteSender("alice");
+    assert.deepEqual(map.get("discord:123"), ["bob"]);
+  });
+
   it("singleton re-creates after dispose", () => {
     const map1 = getTypingMap();
     map1.dispose();

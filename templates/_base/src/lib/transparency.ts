@@ -1,10 +1,15 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { DaemonEvent } from "./daemon-client.js";
+import type { DaemonEvent, EventType } from "./daemon-client.js";
 
 export type TransparencyPreset = "transparent" | "standard" | "private" | "silent";
 
-const PRESET_RULES: Record<TransparencyPreset, Record<string, "yes" | "name_only" | "no">> = {
+type FilterableEventType = Exclude<EventType, "inbound" | "outbound">;
+
+const PRESET_RULES: Record<
+  TransparencyPreset,
+  Record<FilterableEventType, "yes" | "name_only" | "no">
+> = {
   transparent: {
     thinking: "yes",
     text: "yes",
@@ -47,8 +52,8 @@ const PRESET_RULES: Record<TransparencyPreset, Record<string, "yes" | "name_only
   },
 };
 
-// Communication records are always persisted
-const ALWAYS_ALLOWED = new Set(["inbound", "outbound"]);
+// Communication records are always emitted (bypass transparency filtering)
+const ALWAYS_ALLOWED: ReadonlySet<string> = new Set(["inbound", "outbound"]);
 
 export function loadTransparencyPreset(): TransparencyPreset {
   for (const file of ["home/.config/config.json", "home/.config/volute.json"]) {
@@ -68,9 +73,13 @@ export function filterEvent(preset: TransparencyPreset, event: DaemonEvent): Dae
   if (ALWAYS_ALLOWED.has(event.type)) return event;
 
   const rules = PRESET_RULES[preset];
-  const rule = rules[event.type];
+  const rule = rules[event.type as FilterableEventType];
 
-  if (!rule || rule === "no") return null;
+  if (!rule) {
+    // Unknown event types: pass through in transparent mode, drop otherwise
+    return preset === "transparent" ? event : null;
+  }
+  if (rule === "no") return null;
 
   if (rule === "name_only" && event.type === "tool_use") {
     return { ...event, content: undefined };

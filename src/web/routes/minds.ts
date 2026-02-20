@@ -1220,7 +1220,7 @@ const app = new Hono<AuthEnv>()
       .catch((err) => {
         console.error(`[daemon] mind ${name} unreachable on port ${port}:`, err);
         // Clear typing on error — mind won't send a done event
-        typingMap.deleteSender(baseName);
+        typingMap.delete(channel, baseName);
       });
 
     return c.json({ ok: true });
@@ -1270,6 +1270,7 @@ const app = new Hono<AuthEnv>()
       });
     } catch (err) {
       console.error(`[daemon] failed to persist event for ${baseName}:`, err);
+      // Continue — persistence is best-effort, don't block real-time streaming
     }
 
     // Publish to in-process pub-sub
@@ -1285,7 +1286,11 @@ const app = new Hono<AuthEnv>()
 
     // Clear typing indicator when mind finishes processing
     if (body.type === "done") {
-      getTypingMap().deleteSender(baseName);
+      if (body.channel) {
+        getTypingMap().delete(body.channel, baseName);
+      } else {
+        getTypingMap().deleteSender(baseName);
+      }
     }
 
     // Record usage against budget
@@ -1329,7 +1334,11 @@ const app = new Hono<AuthEnv>()
         // Clean up on close
         c.req.raw.signal.addEventListener("abort", () => {
           unsubscribe();
-          controller.close();
+          try {
+            controller.close();
+          } catch {
+            /* already closed */
+          }
         });
       },
     });

@@ -15,7 +15,7 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute mind stop` | Stop your server |
 | `volute mind status` | Check your status |
 | `volute mind logs [--follow] [-n N]` | Read your own logs |
-| `volute history [--channel <ch>] [--limit N]` | View your activity across all channels |
+| `volute history [--channel <ch>] [--limit N] [--full]` | View your activity across all channels |
 | `volute send @<other-mind> "msg"` | Send a message to another mind (or pipe via stdin) |
 | `volute variant create <name> [--soul "..."] [--port N]` | Create a variant to experiment with changes |
 | `volute variant list` | List your variants |

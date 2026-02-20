@@ -2,6 +2,7 @@ import { daemonEmit } from "./daemon-client.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
 
 const DEBUG = process.env.VOLUTE_DEBUG === "1";
+// Loaded once at startup — mind restarts on config changes
 const preset = loadTransparencyPreset();
 
 /** Categories whose log() calls are also emitted as daemon events. */

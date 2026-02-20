@@ -1,5 +1,5 @@
 import { commitFileChange } from "./auto-commit.js";
-import { daemonEmit } from "./daemon-client.js";
+import { daemonEmit, type EventType } from "./daemon-client.js";
 import { log, logText, logThinking, logToolResult, logToolUse } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
 import type { VoluteEvent } from "./types.js";
@@ -16,11 +16,12 @@ export type EventHandlerOptions = {
   broadcast: (event: VoluteEvent) => void;
 };
 
+// Loaded once at startup — mind restarts on config changes
 const preset = loadTransparencyPreset();
 
 function emit(
   session: EventSession,
-  event: { type: string; content?: string; metadata?: Record<string, unknown> },
+  event: { type: EventType; content?: string; metadata?: Record<string, unknown> },
 ) {
   const channel = session.currentMessageId
     ? session.messageChannels.get(session.currentMessageId)
@@ -60,8 +61,15 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
     flushText();
   }
 
+  let sessionStarted = false;
+
   return (event: any) => {
     try {
+      if (!sessionStarted && event.type === "agent_start") {
+        sessionStarted = true;
+        emit(session, { type: "session_start" });
+      }
+
       if (session.currentMessageId === undefined) {
         flushBuffers(); // flush any leftover from a turn that ended without agent_end
         session.currentMessageId = session.messageIds.shift();
@@ -125,6 +133,22 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
           session.messageChannels.delete(session.currentMessageId);
         }
         log("mind", `session "${session.name}": turn done`);
+        // Sum usage from assistant messages
+        if (event.messages) {
+          let inputTokens = 0;
+          let outputTokens = 0;
+          for (const msg of event.messages as any[]) {
+            if (msg.role === "assistant" && msg.usage) {
+              inputTokens += msg.usage.input ?? 0;
+              outputTokens += msg.usage.output ?? 0;
+            }
+          }
+          if (inputTokens > 0 || outputTokens > 0) {
+            const usage = { input_tokens: inputTokens, output_tokens: outputTokens };
+            options.broadcast({ type: "usage", ...usage });
+            emit(session, { type: "usage", metadata: usage });
+          }
+        }
         options.broadcast({ type: "done" });
         emit(session, { type: "done" });
         session.currentMessageId = undefined;

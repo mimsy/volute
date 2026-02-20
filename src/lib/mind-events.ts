@@ -1,4 +1,10 @@
-/** In-process pub-sub for mind activity events. SSE endpoint subscribes per-mind; daemon publishes when events arrive. */
+/**
+ * In-process pub-sub for mind activity events. SSE endpoint subscribes per-mind;
+ * daemon publishes when events arrive.
+ *
+ * MindEvent mirrors DaemonEvent (templates/_base/src/lib/daemon-client.ts) + { mind, createdAt }.
+ * Keep these in sync when adding new event fields.
+ */
 export type MindEvent = {
   mind: string;
   type: string;

@@ -1,5 +1,5 @@
 import type { query } from "@anthropic-ai/claude-agent-sdk";
-import { daemonEmit } from "./daemon-client.js";
+import { daemonEmit, type EventType } from "./daemon-client.js";
 import { log, logText, logThinking, logToolUse } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
 import type { VoluteEvent } from "./types.js";
@@ -17,11 +17,12 @@ export type StreamCallbacks = {
   onTurnEnd?: () => void;
 };
 
+// Loaded once at startup — mind restarts on config changes
 const preset = loadTransparencyPreset();
 
 function emit(
   session: StreamSession,
-  event: { type: string; content?: string; metadata?: Record<string, unknown> },
+  event: { type: EventType; content?: string; metadata?: Record<string, unknown> },
 ) {
   const channel = session.currentMessageId
     ? session.messageChannels.get(session.currentMessageId)
@@ -40,6 +41,7 @@ export async function consumeStream(
   session: StreamSession,
   callbacks: StreamCallbacks,
 ) {
+  emit(session, { type: "session_start" });
   for await (const msg of stream) {
     if (session.currentMessageId === undefined) {
       session.currentMessageId = session.messageIds.shift();

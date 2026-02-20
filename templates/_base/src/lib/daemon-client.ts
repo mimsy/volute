@@ -29,8 +29,20 @@ export async function daemonRestart(context?: {
   }
 }
 
+export type EventType =
+  | "thinking"
+  | "text"
+  | "tool_use"
+  | "tool_result"
+  | "log"
+  | "usage"
+  | "session_start"
+  | "done"
+  | "inbound"
+  | "outbound";
+
 export type DaemonEvent = {
-  type: string;
+  type: EventType;
   session?: string;
   channel?: string;
   messageId?: string;
@@ -39,13 +51,24 @@ export type DaemonEvent = {
 };
 
 export async function daemonEmit(event: DaemonEvent): Promise<void> {
-  if (!port || !mind) return;
+  if (!port || !mind) {
+    if (process.env.VOLUTE_DEBUG === "1") {
+      console.error("[volute] daemonEmit: missing VOLUTE_DAEMON_PORT or VOLUTE_MIND");
+    }
+    return;
+  }
   try {
-    await fetch(`http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/events`, {
-      method: "POST",
-      headers: headers(),
-      body: JSON.stringify(event),
-    });
+    const res = await fetch(
+      `http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/events`,
+      {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify(event),
+      },
+    );
+    if (!res.ok) {
+      console.error(`[volute] event emit failed: ${res.status}`);
+    }
   } catch {
     // Best-effort — don't let event emission failures break the mind
   }
