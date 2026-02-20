@@ -11,9 +11,11 @@ let channels = $state<string[]>([]);
 let channel = $state("");
 let hasMore = $state(true);
 let loading = $state(false);
+let error = $state("");
 
 async function load(filterChannel: string, offset: number) {
   loading = true;
+  error = "";
   try {
     const rows = await fetchHistory(name, {
       channel: filterChannel || undefined,
@@ -26,8 +28,8 @@ async function load(filterChannel: string, offset: number) {
       messages = [...messages, ...rows];
     }
     hasMore = rows.length === PAGE_SIZE;
-  } catch {
-    // ignore
+  } catch (e) {
+    error = e instanceof Error ? e.message : "Failed to load history";
   }
   loading = false;
 }
@@ -37,7 +39,9 @@ $effect(() => {
     .then((ch) => {
       channels = ch;
     })
-    .catch(() => {});
+    .catch(() => {
+      // Channel list is non-critical — filter will just be empty
+    });
 });
 
 $effect(() => {
@@ -68,7 +72,9 @@ function formatTime(dateStr: string): string {
 
   <!-- Messages -->
   <div class="messages">
-    {#if messages.length === 0 && !loading}
+    {#if error}
+      <div class="error">{error}</div>
+    {:else if messages.length === 0 && !loading}
       <div class="empty">No messages found.</div>
     {/if}
     {#each messages as msg (msg.id)}
@@ -139,6 +145,13 @@ function formatTime(dateStr: string): string {
     flex: 1;
     overflow: auto;
     padding-top: 12px;
+  }
+
+  .error {
+    color: var(--red);
+    text-align: center;
+    padding: 40px;
+    font-size: 13px;
   }
 
   .empty {

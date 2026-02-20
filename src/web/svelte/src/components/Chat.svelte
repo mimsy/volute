@@ -38,6 +38,7 @@ function normalizeContent(content: ContentBlock[] | string): ContentBlock[] {
 }
 
 let entries = $state<ChatEntry[]>([]);
+let loadError = $state("");
 let input = $state("");
 let sending = $state(false);
 let pendingImages = $state<Array<{ media_type: string; data: string; preview: string }>>([]);
@@ -95,6 +96,7 @@ function loadMessages(convId: string, forceScroll?: boolean) {
       if (!forceScroll && fingerprint === lastPollFingerprint) return;
       lastPollFingerprint = fingerprint;
 
+      loadError = "";
       entries = msgs.map((m) => ({
         role: m.role as "user" | "assistant",
         blocks: normalizeContent(m.content),
@@ -102,7 +104,9 @@ function loadMessages(convId: string, forceScroll?: boolean) {
       }));
       if (forceScroll) scrollToBottom(true);
     })
-    .catch((e) => console.error("Failed to load messages:", e));
+    .catch((e) => {
+      loadError = e instanceof Error ? e.message : "Failed to load messages";
+    });
 }
 
 // Load messages when conversationId changes
@@ -137,6 +141,9 @@ $effect(() => {
   };
   eventSource.onopen = () => {
     loadMessages(conversationId, false);
+  };
+  eventSource.onerror = () => {
+    console.warn("[chat] SSE connection error, browser will attempt reconnect");
   };
   return () => eventSource.close();
 });
@@ -352,7 +359,9 @@ function toggleTool(idx: number) {
 
   <!-- Messages -->
   <div class="messages" bind:this={scrollEl}>
-    {#if entries.length === 0}
+    {#if loadError}
+      <div class="empty error">{loadError}</div>
+    {:else if entries.length === 0}
       <div class="empty">Send a message to start chatting.</div>
     {/if}
     {#each entries as entry, i (i)}
@@ -524,6 +533,10 @@ function toggleTool(idx: number) {
     text-align: center;
     padding: 40px;
     font-size: 13px;
+  }
+
+  .error {
+    color: var(--red);
   }
 
   .entry {

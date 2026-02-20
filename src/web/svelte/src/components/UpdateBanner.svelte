@@ -23,7 +23,9 @@ $effect(() => {
       } else if (mounted) {
         update = null;
       }
-    } catch {}
+    } catch (e) {
+      console.debug("[update] poll failed:", e);
+    }
   }
 
   poll();
@@ -61,7 +63,9 @@ async function handleUpdate() {
             return;
           }
         }
-      } catch {}
+      } catch (e) {
+        console.debug("[update] health check failed:", e);
+      }
       await new Promise((r) => setTimeout(r, 2000));
     }
     window.location.reload();

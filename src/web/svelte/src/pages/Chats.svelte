@@ -30,20 +30,28 @@ let showNewChat = $state(false);
 let showGroupModal = $state(false);
 let newChatMind = $state<string | null>(initialMind ?? null);
 let minds = $state<Mind[]>([]);
+let error = $state("");
 
 let activeConv = $derived(conversations.find((c) => c.id === activeId));
+
+$effect(() => {
+  if (initialMind) newChatMind = initialMind;
+});
 
 function refresh() {
   fetchAllConversations()
     .then((c) => {
       conversations = c;
+      error = "";
     })
-    .catch((e) => console.error("Failed to fetch conversations:", e));
+    .catch(() => {
+      error = "Failed to load conversations";
+    });
   fetchMinds()
     .then((m) => {
       minds = m;
     })
-    .catch((e) => console.error("Failed to fetch minds:", e));
+    .catch(() => {});
 }
 
 $effect(() => {
@@ -164,7 +172,9 @@ let chatMind = $derived(minds.find((m) => m.name === chatMindName));
           {/if}
         </div>
       {/each}
-      {#if conversations.length === 0}
+      {#if error}
+        <div class="empty error">{error}</div>
+      {:else if conversations.length === 0}
         <div class="empty">No conversations yet</div>
       {/if}
     </div>
@@ -326,6 +336,10 @@ let chatMind = $derived(minds.find((m) => m.name === chatMindName));
     font-size: 12px;
     padding: 16px 12px;
     text-align: center;
+  }
+
+  .error {
+    color: var(--red);
   }
 
   .chat-panel {

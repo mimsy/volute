@@ -43,14 +43,18 @@ let systemName = $state<string | null>(null);
 let userMenuOpen = $state(false);
 
 $effect(() => {
-  fetchMe().then(async (u) => {
-    user = u;
-    authChecked = true;
-    if (u) {
-      const info = await fetchSystemInfo();
-      systemName = info.system;
-    }
-  });
+  fetchMe()
+    .then(async (u) => {
+      user = u;
+      authChecked = true;
+      if (u) {
+        const info = await fetchSystemInfo();
+        systemName = info.system;
+      }
+    })
+    .catch(() => {
+      authChecked = true;
+    });
 });
 
 $effect(() => {
@@ -78,7 +82,11 @@ $effect(() => {
 });
 
 async function handleLogout() {
-  await logout();
+  try {
+    await logout();
+  } catch {
+    // Best effort — clear local state regardless
+  }
   user = null;
 }
 

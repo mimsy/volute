@@ -1,4 +1,8 @@
-function createSSEStream(url: string, onLine: (line: string) => void) {
+function createSSEStream(
+  url: string,
+  onLine: (line: string) => void,
+  onError?: (msg: string) => void,
+) {
   let controller: AbortController | null = null;
 
   function start() {
@@ -8,7 +12,14 @@ function createSSEStream(url: string, onLine: (line: string) => void) {
 
     fetch(url, { signal })
       .then(async (res) => {
-        if (!res.ok || !res.body) return;
+        if (!res.ok) {
+          onError?.(`Stream connection failed (${res.status})`);
+          return;
+        }
+        if (!res.body) {
+          onError?.("Stream has no body");
+          return;
+        }
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -30,7 +41,7 @@ function createSSEStream(url: string, onLine: (line: string) => void) {
       })
       .catch((err) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
-        console.warn("[stream] error:", err);
+        onError?.(err.message || "Stream error");
       });
   }
 
@@ -41,12 +52,19 @@ function createSSEStream(url: string, onLine: (line: string) => void) {
   return { start, stop };
 }
 
-export function createLogStream(name: string, onLine: (line: string) => void) {
-  return createSSEStream(`/api/minds/${name}/logs`, onLine);
+export function createLogStream(
+  name: string,
+  onLine: (line: string) => void,
+  onError?: (msg: string) => void,
+) {
+  return createSSEStream(`/api/minds/${name}/logs`, onLine, onError);
 }
 
-export function createSystemLogStream(onLine: (line: string) => void) {
-  return createSSEStream("/api/system/logs", onLine);
+export function createSystemLogStream(
+  onLine: (line: string) => void,
+  onError?: (msg: string) => void,
+) {
+  return createSSEStream("/api/system/logs", onLine, onError);
 }
 
 export async function sendChat(

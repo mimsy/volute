@@ -4,13 +4,17 @@ import { type AuthUser, approveUser, fetchUsers } from "../lib/auth";
 let { onClose }: { onClose: () => void } = $props();
 
 let users = $state<AuthUser[]>([]);
+let error = $state("");
 
 function refresh() {
   fetchUsers()
     .then((u) => {
       users = u;
+      error = "";
     })
-    .catch(() => {});
+    .catch(() => {
+      error = "Failed to load users";
+    });
 }
 
 $effect(() => {
@@ -18,8 +22,12 @@ $effect(() => {
 });
 
 async function handleApprove(id: number) {
-  await approveUser(id);
-  refresh();
+  try {
+    await approveUser(id);
+    refresh();
+  } catch {
+    error = "Failed to approve user";
+  }
 }
 </script>
 
@@ -28,6 +36,10 @@ async function handleApprove(id: number) {
     <h2 class="title">Users</h2>
     <button class="back-btn" onclick={onClose}>back</button>
   </div>
+
+  {#if error}
+    <div class="error">{error}</div>
+  {/if}
 
   <div class="user-list">
     {#each users as u}
@@ -114,6 +126,12 @@ async function handleApprove(id: number) {
     border-radius: var(--radius);
     font-size: 11px;
     font-weight: 500;
+  }
+
+  .error {
+    color: var(--red);
+    font-size: 12px;
+    margin-bottom: 12px;
   }
 
   .empty {

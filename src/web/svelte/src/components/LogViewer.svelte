@@ -5,6 +5,7 @@ let { name }: { name: string } = $props();
 
 let lines = $state<string[]>([]);
 let autoScroll = $state(true);
+let error = $state("");
 let scrollEl: HTMLDivElement;
 
 function onLine(line: string) {
@@ -15,7 +16,10 @@ function onLine(line: string) {
 }
 
 $effect(() => {
-  const { start, stop } = createLogStream(name, onLine);
+  error = "";
+  const { start, stop } = createLogStream(name, onLine, (msg) => {
+    error = msg;
+  });
   start();
   return stop;
 });
@@ -49,7 +53,9 @@ function resumeScroll() {
     </div>
   {/if}
   <div class="log-output" bind:this={scrollEl} onscroll={handleScroll}>
-    {#if lines.length === 0}
+    {#if error}
+      <span class="error">{error}</span>
+    {:else if lines.length === 0}
       <span class="waiting">Waiting for logs...</span>
     {/if}
     {#each lines as line, i (i)}
@@ -99,6 +105,10 @@ function resumeScroll() {
 
   .waiting {
     color: var(--text-2);
+  }
+
+  .error {
+    color: var(--red);
   }
 
   .log-line {

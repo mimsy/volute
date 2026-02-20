@@ -22,23 +22,30 @@ type ConversationWithDetails = Conversation & {
 let minds = $state<Mind[]>([]);
 let conversations = $state<ConversationWithDetails[]>([]);
 let recentPages = $state<RecentPage[]>([]);
+let error = $state("");
 
 $effect(() => {
   fetchMinds()
     .then((m) => {
       minds = m;
     })
-    .catch(() => {});
+    .catch(() => {
+      error = "Failed to load data";
+    });
   fetchAllConversations()
     .then((c) => {
       conversations = c;
     })
-    .catch(() => {});
+    .catch(() => {
+      error = "Failed to load data";
+    });
   fetchRecentPages()
     .then((p) => {
       recentPages = p;
     })
-    .catch(() => {});
+    .catch(() => {
+      error = "Failed to load data";
+    });
 });
 
 let sortedMinds = $derived(
@@ -71,6 +78,9 @@ function getDisplayStatus(mind: Mind): string {
 </script>
 
 <div class="home">
+  {#if error}
+    <div class="error">{error}</div>
+  {/if}
   <!-- Minds -->
   <div class="section">
     <div class="section-header">
@@ -163,6 +173,12 @@ function getDisplayStatus(mind: Mind): string {
 </div>
 
 <style>
+  .error {
+    color: var(--red);
+    font-size: 12px;
+    margin-bottom: 16px;
+  }
+
   .home {
     max-width: 800px;
     animation: fadeIn 0.2s ease both;

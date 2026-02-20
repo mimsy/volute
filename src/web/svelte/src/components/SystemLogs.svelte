@@ -16,6 +16,7 @@ const LEVEL_COLORS: Record<string, string> = {
 
 let entries = $state<LogEntry[]>([]);
 let autoScroll = $state(true);
+let error = $state("");
 let scrollEl: HTMLDivElement;
 
 function onLine(line: string) {
@@ -26,12 +27,15 @@ function onLine(line: string) {
       entries = entries.slice(-2000);
     }
   } catch {
-    // skip invalid
+    // skip invalid JSON lines
   }
 }
 
 $effect(() => {
-  const { start, stop } = createSystemLogStream(onLine);
+  error = "";
+  const { start, stop } = createSystemLogStream(onLine, (msg) => {
+    error = msg;
+  });
   start();
   return stop;
 });
@@ -83,7 +87,9 @@ function formatData(data: Record<string, unknown>): string {
     </div>
   {/if}
   <div class="log-output" bind:this={scrollEl} onscroll={handleScroll}>
-    {#if entries.length === 0}
+    {#if error}
+      <span class="error">{error}</span>
+    {:else if entries.length === 0}
       <span class="waiting">Waiting for logs...</span>
     {/if}
     {#each entries as entry, i (i)}
@@ -164,6 +170,10 @@ function formatData(data: Record<string, unknown>): string {
 
   .waiting {
     color: var(--text-2);
+  }
+
+  .error {
+    color: var(--red);
   }
 
   .log-line {
