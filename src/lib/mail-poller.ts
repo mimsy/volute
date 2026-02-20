@@ -11,6 +11,17 @@ export type Email = {
   receivedAt: string;
 };
 
+type EmailNotification = {
+  type: "email";
+  mind: string;
+  email: {
+    id: string;
+    from: { address: string; name: string | null };
+    subject: string | null;
+    receivedAt: string;
+  };
+};
+
 export function formatEmailContent(email: Pick<Email, "subject" | "body" | "html">): string {
   if (email.body) {
     return email.subject ? `Subject: ${email.subject}\n\n${email.body}` : email.body;
@@ -23,12 +34,18 @@ export function formatEmailContent(email: Pick<Email, "subject" | "body" | "html
   return email.subject ? `Subject: ${email.subject}` : "[Empty email]";
 }
 
+const PING_INTERVAL_MS = 30_000;
+const INITIAL_RECONNECT_MS = 1_000;
+const MAX_RECONNECT_MS = 60_000;
+
 export class MailPoller {
-  private interval: ReturnType<typeof setInterval> | null = null;
+  private ws: WebSocket | null = null;
   private daemonPort: number | null = null;
   private daemonToken: string | null = null;
-  private lastPoll: string | null = null;
   private running = false;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectDelay = INITIAL_RECONNECT_MS;
 
   start(daemonPort?: number, daemonToken?: string): void {
     if (this.running) {
@@ -38,70 +55,137 @@ export class MailPoller {
 
     const config = readSystemsConfig();
     if (!config) {
-      console.error("[mail] no systems config — mail polling disabled");
+      console.error("[mail] no systems config — mail disabled");
       return;
     }
 
     this.daemonPort = daemonPort ?? null;
     this.daemonToken = daemonToken ?? null;
-    this.lastPoll = new Date().toISOString();
     this.running = true;
 
-    // Poll every 30 seconds
-    this.interval = setInterval(() => this.poll(), 30_000);
-    console.error("[mail] polling started");
+    this.connect();
   }
 
   stop(): void {
-    if (this.interval) clearInterval(this.interval);
-    this.interval = null;
     this.running = false;
+    if (this.pingTimer) clearInterval(this.pingTimer);
+    this.pingTimer = null;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
   }
 
   isRunning(): boolean {
     return this.running;
   }
 
-  private async poll(): Promise<void> {
+  private connect(): void {
+    if (!this.running) return;
+
     const config = readSystemsConfig();
     if (!config) {
-      console.error("[mail] systems config removed — stopping mail polling");
+      console.error("[mail] systems config removed — stopping");
       this.stop();
       return;
     }
 
-    const since = this.lastPoll ?? new Date().toISOString();
-    const url = `${config.apiUrl}/api/mail/system/poll?since=${encodeURIComponent(since)}`;
+    const wsUrl = `${config.apiUrl.replace(/^http/, "ws")}/api/ws`;
 
     try {
-      const res = await fetch(url, {
+      this.ws = new WebSocket(wsUrl, {
         headers: { Authorization: `Bearer ${config.apiKey}` },
-      });
-
-      if (!res.ok) {
-        console.error(`[mail] poll failed: HTTP ${res.status}`);
-        return;
-      }
-
-      const data = (await res.json()) as { emails?: Email[] };
-      if (!Array.isArray(data.emails)) {
-        console.error("[mail] poll response missing emails array");
-        return;
-      }
-
-      for (const email of data.emails) {
-        await this.deliver(email.mind, email);
-      }
-
-      // Update lastPoll to the latest receivedAt, or now if no emails
-      if (data.emails.length > 0) {
-        this.lastPoll = data.emails[data.emails.length - 1].receivedAt;
-      } else {
-        this.lastPoll = new Date().toISOString();
-      }
+      } as any);
     } catch (err) {
-      console.error("[mail] poll error:", err);
+      console.error("[mail] failed to create WebSocket:", err);
+      this.scheduleReconnect();
+      return;
     }
+
+    this.ws.onopen = () => {
+      console.error("[mail] connected");
+      this.reconnectDelay = INITIAL_RECONNECT_MS;
+
+      // Periodic keepalive
+      if (this.pingTimer) clearInterval(this.pingTimer);
+      this.pingTimer = setInterval(() => {
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send("ping");
+        }
+      }, PING_INTERVAL_MS);
+    };
+
+    this.ws.onmessage = (event) => {
+      this.handleMessage(String(event.data));
+    };
+
+    this.ws.onclose = () => {
+      console.error("[mail] disconnected");
+      this.cleanup();
+      this.scheduleReconnect();
+    };
+
+    this.ws.onerror = (err) => {
+      console.error("[mail] WebSocket error:", err);
+      // onclose will fire after this
+    };
+  }
+
+  private cleanup(): void {
+    if (this.pingTimer) clearInterval(this.pingTimer);
+    this.pingTimer = null;
+    this.ws = null;
+  }
+
+  private scheduleReconnect(): void {
+    if (!this.running) return;
+
+    console.error(`[mail] reconnecting in ${this.reconnectDelay}ms`);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, this.reconnectDelay);
+
+    this.reconnectDelay = Math.min(this.reconnectDelay * 2, MAX_RECONNECT_MS);
+  }
+
+  private handleMessage(data: string): void {
+    let msg: EmailNotification;
+    try {
+      msg = JSON.parse(data);
+    } catch {
+      return; // ignore non-JSON (e.g. "pong")
+    }
+
+    if (msg.type !== "email") return;
+
+    this.fetchAndDeliver(msg.mind, msg.email).catch((err) => {
+      console.error(`[mail] failed to process email for ${msg.mind}:`, err);
+    });
+  }
+
+  private async fetchAndDeliver(
+    mind: string,
+    notification: EmailNotification["email"],
+  ): Promise<void> {
+    const config = readSystemsConfig();
+    if (!config) return;
+
+    // Fetch full email content
+    const url = `${config.apiUrl}/api/mail/emails/${encodeURIComponent(mind)}/${encodeURIComponent(notification.id)}`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${config.apiKey}` },
+    });
+
+    if (!res.ok) {
+      console.error(`[mail] failed to fetch email ${notification.id}: HTTP ${res.status}`);
+      return;
+    }
+
+    const email = (await res.json()) as Omit<Email, "mind">;
+    await this.deliver(mind, { ...email, mind });
   }
 
   private async deliver(mind: string, email: Email): Promise<void> {
