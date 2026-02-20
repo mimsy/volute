@@ -5,11 +5,23 @@ export type Email = {
   mind: string;
   id: string;
   from: { address: string; name: string };
-  subject: string;
+  subject: string | null;
   body: string | null;
   html: string | null;
   receivedAt: string;
 };
+
+export function formatEmailContent(email: Pick<Email, "subject" | "body" | "html">): string {
+  if (email.body) {
+    return email.subject ? `Subject: ${email.subject}\n\n${email.body}` : email.body;
+  }
+  if (email.html) {
+    return email.subject
+      ? `Subject: ${email.subject}\n\n[HTML email — plain text not available]`
+      : "[HTML email — plain text not available]";
+  }
+  return email.subject ? `Subject: ${email.subject}` : "[Empty email]";
+}
 
 export class MailPoller {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -19,6 +31,11 @@ export class MailPoller {
   private running = false;
 
   start(daemonPort?: number, daemonToken?: string): void {
+    if (this.running) {
+      console.error("[mail] already running — ignoring duplicate start");
+      return;
+    }
+
     const config = readSystemsConfig();
     if (!config) {
       console.error("[mail] no systems config — mail polling disabled");
@@ -47,7 +64,11 @@ export class MailPoller {
 
   private async poll(): Promise<void> {
     const config = readSystemsConfig();
-    if (!config) return;
+    if (!config) {
+      console.error("[mail] systems config removed — stopping mail polling");
+      this.stop();
+      return;
+    }
 
     const since = this.lastPoll ?? new Date().toISOString();
     const url = `${config.apiUrl}/api/mail/system/poll?since=${encodeURIComponent(since)}`;
@@ -62,7 +83,11 @@ export class MailPoller {
         return;
       }
 
-      const data = (await res.json()) as { emails: Email[] };
+      const data = (await res.json()) as { emails?: Email[] };
+      if (!Array.isArray(data.emails)) {
+        console.error("[mail] poll response missing emails array");
+        return;
+      }
 
       for (const email of data.emails) {
         await this.deliver(email.mind, email);
@@ -81,21 +106,15 @@ export class MailPoller {
 
   private async deliver(mind: string, email: Email): Promise<void> {
     const entry = findMind(mind);
-    if (!entry || !entry.running) return;
+    if (!entry || !entry.running) {
+      console.error(`[mail] skipping delivery to ${mind}: ${!entry ? "not found" : "not running"}`);
+      return;
+    }
 
     const channel = `mail:${email.from.address}`;
     const sender = email.from.name || email.from.address;
 
-    let text: string;
-    if (email.body) {
-      text = email.subject ? `Subject: ${email.subject}\n\n${email.body}` : email.body;
-    } else if (email.html) {
-      text = email.subject
-        ? `Subject: ${email.subject}\n\n[HTML email — plain text not available]`
-        : "[HTML email — plain text not available]";
-    } else {
-      text = email.subject ? `Subject: ${email.subject}` : "[Empty email]";
-    }
+    const text = formatEmailContent(email);
 
     const body = JSON.stringify({
       content: [{ type: "text", text }],
@@ -105,7 +124,10 @@ export class MailPoller {
       isDM: true,
     });
 
-    if (!this.daemonPort || !this.daemonToken) return;
+    if (!this.daemonPort || !this.daemonToken) {
+      console.error(`[mail] cannot deliver to ${mind}: daemon port/token not set`);
+      return;
+    }
 
     const daemonUrl = `http://${daemonLoopback()}:${this.daemonPort}`;
     const controller = new AbortController();

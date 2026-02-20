@@ -108,7 +108,9 @@ export async function startDaemon(opts: {
       const dir = mindDir(entry.name);
       await connectors.startConnectors(entry.name, dir, entry.port, port);
       scheduler.loadSchedules(entry.name);
-      ensureMailAddress(entry.name).catch(() => {});
+      ensureMailAddress(entry.name).catch((err: unknown) =>
+        console.error(`[mail] failed to ensure address for ${entry.name}:`, err),
+      );
       const config = readVoluteConfig(dir);
       if (config?.tokenBudget) {
         tokenBudget.setBudget(

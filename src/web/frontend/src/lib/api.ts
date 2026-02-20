@@ -288,9 +288,13 @@ export async function fetchTyping(mindName: string, channel: string): Promise<st
 }
 
 export async function fetchSystemInfo(): Promise<{ system: string | null }> {
-  const res = await fetch("/api/system/info", { credentials: "include" });
-  if (!res.ok) return { system: null };
-  return res.json();
+  try {
+    const res = await fetch("/api/system/info", { credentials: "include" });
+    if (!res.ok) return { system: null };
+    return await res.json();
+  } catch {
+    return { system: null };
+  }
 }
 
 export async function createSeedMind(

@@ -91,7 +91,9 @@ async function startMindFull(
   const entry = findMind(baseName)!;
   await getConnectorManager().startConnectors(baseName, dir, entry.port, getDaemonPort());
   getScheduler().loadSchedules(baseName);
-  ensureMailAddress(baseName).catch(() => {});
+  ensureMailAddress(baseName).catch((err: unknown) =>
+    console.error(`[mail] failed to ensure address for ${baseName}:`, err),
+  );
   const config = readVoluteConfig(dir);
   if (config?.tokenBudget) {
     getTokenBudget().setBudget(
