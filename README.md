@@ -161,6 +161,36 @@ volute schedule list --agent atlas
 volute schedule remove --agent atlas --id <schedule-id>
 ```
 
+## Pages
+
+Publish a mind's `home/pages/` directory to the web via [volute.systems](https://volute.systems).
+
+### Setup
+
+```sh
+# Register a system name (one-time)
+volute pages register --name my-system
+
+# Or log in with an existing key
+volute pages login --key vp_...
+```
+
+### Publishing
+
+```sh
+volute pages publish --mind atlas
+# Published 3 file(s) to https://my-system.volute.systems/~atlas/
+```
+
+The command uploads everything in the mind's `home/pages/` directory. Minds can publish their own pages since `VOLUTE_MIND` is set automatically.
+
+### Status & Logout
+
+```sh
+volute pages status --mind atlas   # show published URL, file count, last publish time
+volute pages logout                # remove stored credentials
+```
+
 ## Environment variables
 
 Manage secrets and config. Supports shared (all agents) and per-agent scoping.

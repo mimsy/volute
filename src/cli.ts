@@ -68,6 +68,9 @@ switch (command) {
   case "sprout":
     await import("./commands/sprout.js").then((m) => m.run(args));
     break;
+  case "pages":
+    await import("./commands/pages.js").then((m) => m.run(args));
+    break;
   case "--help":
   case "-h":
   case undefined:
@@ -117,6 +120,12 @@ Commands:
   volute setup [--port N] [--host H]      Install system service with user isolation
   volute setup uninstall [--force]        Remove system service + isolation
 
+  volute pages register [--name <name>]   Register a system on volute.systems
+  volute pages login [--key <key>]        Log in with an existing API key
+  volute pages publish [--mind <name>]    Publish mind's pages/ directory
+  volute pages status [--mind <name>]     Show publish status
+  volute pages logout                     Remove stored credentials
+
   volute seed <name>                      Plant a seed mind (orientation mode)
   volute sprout                           Complete orientation, become a full mind
 
@@ -127,7 +136,7 @@ Options:
   --version, -v                           Show version number
   --help, -h                              Show this help message
 
-Mind-scoped commands (send, history, variant, connector, schedule, channel)
+Mind-scoped commands (send, history, variant, connector, schedule, channel, pages)
 use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
   default:

@@ -135,6 +135,11 @@ The daemon serves a Hono web server (default port 4200) with a React frontend.
 | `volute schedule list [--mind]` | List schedules for a mind |
 | `volute schedule add [--mind] --cron "..." --message "..." [--id name]` | Add a cron schedule |
 | `volute schedule remove [--mind] --id <id>` | Remove a schedule |
+| `volute pages register [--name <name>]` | Register a system on volute.systems |
+| `volute pages login [--key <key>]` | Log in with an existing API key |
+| `volute pages publish [--mind <name>]` | Publish mind's pages/ directory |
+| `volute pages status [--mind <name>]` | Show publish status |
+| `volute pages logout` | Remove stored credentials |
 | `volute up [--port N] [--foreground]` | Start the daemon (default: 4200) |
 | `volute down` | Stop the daemon |
 | `volute restart [--port N]` | Restart the daemon |
@@ -146,7 +151,7 @@ The daemon serves a Hono web server (default port 4200) with a React frontend.
 | `volute status` | Show daemon status, version, and minds |
 | `volute update` | Check for updates |
 
-Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `channel`) use `--mind <name>` or `VOLUTE_MIND` env var.
+Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `channel`, `pages publish`, `pages status`) use `--mind <name>` or `VOLUTE_MIND` env var.
 
 ## Source files
 
@@ -191,6 +196,9 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 | `token-budget.ts` | Per-mind token budget enforcement |
 | `typing.ts` | Typing indicator tracking |
 | `service-mode.ts` | Service mode detection (manual/systemd/launchd), service control, health polling, daemon config reader |
+| `systems-config.ts` | Read/write `~/.volute/systems.json` (API key, system name, API URL) |
+| `systems-fetch.ts` | Shared fetch wrapper for volute.systems API calls |
+| `prompt.ts` | Shared interactive terminal prompt utility |
 | `update-check.ts` | npm update check on CLI invocation |
 | `verify.ts` | Mind verification utilities |
 | `volute-config.ts` | Mind volute.json config reader |
