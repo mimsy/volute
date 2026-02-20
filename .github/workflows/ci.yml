@@ -27,7 +27,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx tsc --noEmit
-      - run: npx tsc --noEmit -p src/web/frontend/tsconfig.json
+      - run: npx svelte-check --workspace src/web/svelte --fail-on-warnings false
       - run: npx tsc --noEmit -p templates/_base/tsconfig.json
 
   test:
