@@ -56,17 +56,16 @@ $effect(() => {
   activeId = initialId ?? null;
 });
 
-// Sync active conversation → hash
+// Sync active conversation → URL
 $effect(() => {
   if (activeId) {
-    const expected = `#/chats/${activeId}`;
-    if (window.location.hash !== expected) {
+    const expected = `/chats/${activeId}`;
+    if (window.location.pathname !== expected) {
       window.history.replaceState(null, "", expected);
     }
   } else {
-    const hash = window.location.hash.slice(1) || "/";
-    if (hash.startsWith("/chats/")) {
-      window.history.replaceState(null, "", "#/chats");
+    if (window.location.pathname.startsWith("/chats/")) {
+      window.history.replaceState(null, "", "/chats");
     }
   }
 });
@@ -82,7 +81,7 @@ function handleSelect(conv: ConversationWithParticipants) {
 
 function handleNew() {
   activeId = null;
-  window.history.replaceState(null, "", "#/chats");
+  window.history.replaceState(null, "", "/chats");
 }
 
 async function handleDelete(e: Event, id: string) {

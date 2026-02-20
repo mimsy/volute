@@ -5,7 +5,7 @@ import StatusBadge from "./StatusBadge.svelte";
 let { mind }: { mind: Mind } = $props();
 </script>
 
-<a href={`#/mind/${mind.name}`} class="card">
+<a href={`/mind/${mind.name}`} class="card">
   <div class="header">
     <span class="name">{mind.name}</span>
     {#if mind.stage === "seed"}

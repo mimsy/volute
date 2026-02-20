@@ -5,6 +5,7 @@ import UpdateBanner from "./components/UpdateBanner.svelte";
 import UserManagement from "./components/UserManagement.svelte";
 import { fetchSystemInfo } from "./lib/api";
 import { type AuthUser, fetchMe, logout } from "./lib/auth";
+import { navigate } from "./lib/navigate";
 import Chats from "./pages/Chats.svelte";
 import Dashboard from "./pages/Dashboard.svelte";
 import Home from "./pages/Home.svelte";
@@ -17,22 +18,24 @@ type Route = {
   mindName?: string;
 };
 
-function parseHash(): Route {
-  const hash = window.location.hash.slice(1) || "/";
-  if (hash === "/" || hash === "") return { page: "home" };
-  if (hash === "/minds") return { page: "minds" };
-  if (hash === "/chats") return { page: "chats" };
-  if (hash === "/logs") return { page: "logs" };
-  const chatsMatch = hash.match(/^\/chats\/(.+)$/);
+function parseRoute(): Route {
+  const path = window.location.pathname;
+  const search = new URLSearchParams(window.location.search);
+  if (path === "/" || path === "") return { page: "home" };
+  if (path === "/minds") return { page: "minds" };
+  if (path === "/chats") {
+    const mind = search.get("mind");
+    return mind ? { page: "chats", mindName: mind } : { page: "chats" };
+  }
+  if (path === "/logs") return { page: "logs" };
+  const chatsMatch = path.match(/^\/chats\/(.+)$/);
   if (chatsMatch) return { page: "chats", conversationId: chatsMatch[1] };
-  const chatsMindMatch = hash.match(/^\/chats\?mind=(.+)$/);
-  if (chatsMindMatch) return { page: "chats", mindName: decodeURIComponent(chatsMindMatch[1]) };
-  const match = hash.match(/^\/mind\/(.+)$/);
+  const match = path.match(/^\/mind\/(.+)$/);
   if (match) return { page: "mind", name: match[1] };
   return { page: "home" };
 }
 
-let route = $state<Route>(parseHash());
+let route = $state<Route>(parseRoute());
 let user = $state<AuthUser | null>(null);
 let authChecked = $state(false);
 let showUsers = $state(false);
@@ -53,11 +56,26 @@ $effect(() => {
 
 $effect(() => {
   const handler = () => {
-    route = parseHash();
+    route = parseRoute();
     showUsers = false;
   };
-  window.addEventListener("hashchange", handler);
-  return () => window.removeEventListener("hashchange", handler);
+  window.addEventListener("popstate", handler);
+  // Intercept internal link clicks for SPA navigation
+  const handleClick = (e: MouseEvent) => {
+    const link = (e.target as Element).closest("a");
+    if (!link) return;
+    const href = link.getAttribute("href");
+    if (!href || href.startsWith("http") || href.startsWith("//") || link.target === "_blank")
+      return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+    e.preventDefault();
+    navigate(href);
+  };
+  document.addEventListener("click", handleClick);
+  return () => {
+    window.removeEventListener("popstate", handler);
+    document.removeEventListener("click", handleClick);
+  };
 });
 
 async function handleLogout() {
@@ -94,7 +112,7 @@ const breadcrumbLabel: Record<string, string> = {
       <UpdateBanner />
     {/if}
     <header class="app-header">
-      <a href="#/" class="logo">
+      <a href="/" class="logo">
         <span class="logo-symbol">&gt;</span> volute
         {#if systemName}
           <span class="system-name"> &middot; {systemName}</span>
@@ -112,8 +130,8 @@ const breadcrumbLabel: Record<string, string> = {
         </nav>
       {/if}
       <div class="header-right">
-        <a href="#/chats" class="nav-link" class:active={route.page === "chats"}>chat</a>
-        <a href="#/minds" class="nav-link" class:active={route.page === "minds" || route.page === "mind"}>minds</a>
+        <a href="/chats" class="nav-link" class:active={route.page === "chats"}>chat</a>
+        <a href="/minds" class="nav-link" class:active={route.page === "minds" || route.page === "mind"}>minds</a>
         <div class="user-menu">
           <button class="user-menu-button" class:open={userMenuOpen} onclick={() => userMenuOpen = !userMenuOpen}>
             {user.username}
@@ -124,7 +142,7 @@ const breadcrumbLabel: Record<string, string> = {
             <div class="overlay" onclick={() => userMenuOpen = false} onkeydown={() => {}}></div>
             <div class="dropdown">
               {#if user.role === "admin"}
-                <button class="dropdown-item" class:active={route.page === "logs"} onclick={() => { window.location.hash = "#/logs"; userMenuOpen = false; }}>
+                <button class="dropdown-item" class:active={route.page === "logs"} onclick={() => { navigate("/logs"); userMenuOpen = false; }}>
                   system logs
                 </button>
                 <button class="dropdown-item" onclick={() => { showUsers = !showUsers; userMenuOpen = false; }}>

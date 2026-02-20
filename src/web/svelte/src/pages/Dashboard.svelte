@@ -2,6 +2,7 @@
 import MindCard from "../components/MindCard.svelte";
 import SeedModal from "../components/SeedModal.svelte";
 import { fetchMinds, type Mind } from "../lib/api";
+import { navigate } from "../lib/navigate";
 
 let minds = $state<Mind[]>([]);
 let error = $state("");
@@ -36,7 +37,7 @@ $effect(() => {
 
 function handleSeedCreated(mindName: string) {
   showSeedModal = false;
-  window.location.hash = `#/chats?mind=${mindName}`;
+  navigate(`/chats?mind=${mindName}`);
 }
 </script>
 

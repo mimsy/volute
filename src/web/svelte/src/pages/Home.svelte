@@ -87,7 +87,7 @@ function getDisplayStatus(mind: Mind): string {
   <div class="section">
     <div class="section-header">
       <span class="section-title">minds</span>
-      <a href="#/minds" class="section-link">all minds &rarr;</a>
+      <a href="/minds" class="section-link">all minds &rarr;</a>
     </div>
     {#if minds.length === 0}
       <div class="empty-hint">
@@ -96,7 +96,7 @@ function getDisplayStatus(mind: Mind): string {
     {:else}
       <div class="mind-row">
         {#each sortedMinds as mind}
-          <a href={`#/mind/${mind.name}`} class="home-mind-card">
+          <a href={`/mind/${mind.name}`} class="home-mind-card">
             <div class="mind-card-header">
               <span class="mind-name">{mind.name}</span>
               <StatusBadge status={getDisplayStatus(mind)} />
@@ -125,14 +125,14 @@ function getDisplayStatus(mind: Mind): string {
     <div class="section">
       <div class="section-header">
         <span class="section-title">recent conversations</span>
-        <a href="#/chats" class="section-link">open chat &rarr;</a>
+        <a href="/chats" class="section-link">open chat &rarr;</a>
       </div>
       <div class="conv-list">
         {#each recentConversations as conv}
           {@const label = getConversationLabel(conv)}
           {@const isSeed = minds.find(a => a.name === conv.mind_name)?.stage === "seed"}
           {@const msg = conv.lastMessage}
-          <a href={`#/chats/${conv.id}`} class="conv-card">
+          <a href={`/chats/${conv.id}`} class="conv-card">
             <div class="conv-content">
               <div class="conv-header">
                 <span class="conv-label">{label}</span>
