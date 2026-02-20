@@ -25,6 +25,7 @@ A single daemon process (`volute up`) manages all minds, connectors, and schedul
 - **MindManager** (`src/lib/mind-manager.ts`) — Spawns/stops mind server processes, crash recovery
 - **ConnectorManager** (`src/lib/connector-manager.ts`) — Manages connector processes (Discord, etc.) per mind
 - **Scheduler** (`src/lib/scheduler.ts`) — Cron-based scheduled messages to minds
+- **MailPoller** (`src/lib/mail-poller.ts`) — System-wide email polling via volute.systems API (auto-activates when a systems account exists)
 - **DaemonClient** (`src/lib/daemon-client.ts`) — CLI commands talk to the daemon via HTTP API
 
 CLI commands like `mind start`, `mind stop`, `message send`, `connector`, `variant` all proxy through the daemon API.
@@ -135,11 +136,11 @@ The daemon serves a Hono web server (default port 4200) with a React frontend.
 | `volute schedule list [--mind]` | List schedules for a mind |
 | `volute schedule add [--mind] --cron "..." --message "..." [--id name]` | Add a cron schedule |
 | `volute schedule remove [--mind] --id <id>` | Remove a schedule |
-| `volute pages register [--name <name>]` | Register a system on volute.systems |
-| `volute pages login [--key <key>]` | Log in with an existing API key |
+| `volute register [--name <name>]` | Register a system on volute.systems |
+| `volute login [--key <key>]` | Log in with an existing API key |
+| `volute logout` | Remove stored credentials |
 | `volute pages publish [--mind <name>]` | Publish mind's pages/ directory |
 | `volute pages status [--mind <name>]` | Show publish status |
-| `volute pages logout` | Remove stored credentials |
 | `volute up [--port N] [--foreground]` | Start the daemon (default: 4200) |
 | `volute down` | Stop the daemon |
 | `volute restart [--port N]` | Restart the daemon |
@@ -189,6 +190,7 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 | `json-state.ts` | JSON file state management utilities |
 | `log-buffer.ts` | Log buffering utilities |
 | `logger.ts` | Logging utilities |
+| `mail-poller.ts` | Daemon-integrated mail polling (system-wide, uses volute.systems API) |
 | `migrate-state.ts` | Mind state migration from mind dirs to centralized state dir |
 | `rotating-log.ts` | Size-limited rotating log files |
 | `read-stdin.ts` | Reads piped stdin for send commands (returns undefined if TTY) |

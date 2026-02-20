@@ -3,6 +3,7 @@ import { LoginPage } from "./components/LoginPage";
 import { SystemLogs } from "./components/SystemLogs";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { UserManagement } from "./components/UserManagement";
+import { fetchSystemInfo } from "./lib/api";
 import { type AuthUser, fetchMe, logout } from "./lib/auth";
 import { Chats } from "./pages/Chats";
 import { Dashboard } from "./pages/Dashboard";
@@ -29,11 +30,15 @@ export function App() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [showUsers, setShowUsers] = useState(false);
+  const [systemName, setSystemName] = useState<string | null>(null);
 
   useEffect(() => {
     fetchMe().then((u) => {
       setUser(u);
       setAuthChecked(true);
+      if (u) {
+        fetchSystemInfo().then((info) => setSystemName(info.system));
+      }
     });
   }, []);
 
@@ -81,6 +86,12 @@ export function App() {
         <header className="app-header">
           <a href="#/" className="logo">
             <span className="logo-symbol">&gt;</span> volute
+            {systemName && (
+              <span style={{ color: "var(--text-2)", fontWeight: 400 }}>
+                {" "}
+                &middot; {systemName}
+              </span>
+            )}
           </a>
           {route.page === "mind" && route.name && (
             <nav className="breadcrumb">

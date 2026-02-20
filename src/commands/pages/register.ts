@@ -12,7 +12,7 @@ export async function run(args: string[]) {
 
   const existing = readSystemsConfig();
   if (existing) {
-    console.error(`Already registered as "${existing.system}". Run "volute pages logout" first.`);
+    console.error(`Already registered as "${existing.system}". Run "volute logout" first.`);
     process.exit(1);
   }
 

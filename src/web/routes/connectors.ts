@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { getConnectorManager } from "../../lib/connector-manager.js";
+import { getMailPoller } from "../../lib/mail-poller.js";
 import { findMind, mindDir } from "../../lib/registry.js";
+import { readSystemsConfig } from "../../lib/systems-config.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
@@ -20,10 +22,18 @@ const app = new Hono<AuthEnv>()
     const manager = getConnectorManager();
     const runningStatus = manager.getConnectorStatus(name);
 
-    const connectors = configured.map((type) => {
-      const status = runningStatus.find((s) => s.type === type);
-      return { type, running: status?.running ?? false };
-    });
+    const connectors: { type: string; running: boolean; auto?: boolean }[] = configured.map(
+      (type) => {
+        const status = runningStatus.find((s) => s.type === type);
+        return { type, running: status?.running ?? false };
+      },
+    );
+
+    // Include mail status if system account is configured
+    const systemsConfig = readSystemsConfig();
+    if (systemsConfig && getMailPoller().isRunning()) {
+      connectors.push({ type: "mail", running: true, auto: true });
+    }
 
     return c.json(connectors);
   })

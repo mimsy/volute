@@ -64,6 +64,7 @@ export const CHANNELS: Record<string, ChannelProvider> = {
     showToolCalls: false,
     driver: telegram,
   },
+  mail: { name: "mail", displayName: "Email", showToolCalls: false },
   system: { name: "system", displayName: "System", showToolCalls: false },
 };
 
