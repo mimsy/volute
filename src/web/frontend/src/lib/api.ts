@@ -287,6 +287,12 @@ export async function fetchTyping(mindName: string, channel: string): Promise<st
   return data.typing;
 }
 
+export async function fetchSystemInfo(): Promise<{ system: string | null }> {
+  const res = await fetch("/api/system/info", { credentials: "include" });
+  if (!res.ok) return { system: null };
+  return res.json();
+}
+
 export async function createSeedMind(
   name: string,
   opts?: { description?: string; template?: string; model?: string },

@@ -36,6 +36,7 @@ import {
   wrapForIsolation,
 } from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
+import { ensureMailAddress } from "../../lib/mail-poller.js";
 import { getMindManager } from "../../lib/mind-manager.js";
 import {
   addMind,
@@ -90,6 +91,7 @@ async function startMindFull(
   const entry = findMind(baseName)!;
   await getConnectorManager().startConnectors(baseName, dir, entry.port, getDaemonPort());
   getScheduler().loadSchedules(baseName);
+  ensureMailAddress(baseName).catch(() => {});
   const config = readVoluteConfig(dir);
   if (config?.tokenBudget) {
     getTokenBudget().setBudget(

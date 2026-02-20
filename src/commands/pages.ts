@@ -2,20 +2,11 @@ export async function run(args: string[]) {
   const subcommand = args[0];
 
   switch (subcommand) {
-    case "register":
-      await import("./pages/register.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "login":
-      await import("./pages/login.js").then((m) => m.run(args.slice(1)));
-      break;
     case "publish":
       await import("./pages/publish.js").then((m) => m.run(args.slice(1)));
       break;
     case "status":
       await import("./pages/status.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "logout":
-      await import("./pages/logout.js").then((m) => m.run());
       break;
     case "--help":
     case "-h":
@@ -30,9 +21,11 @@ export async function run(args: string[]) {
 
 function printUsage() {
   console.log(`Usage:
-  volute pages register [--name <name>]  Register a system on volute.systems
-  volute pages login [--key <key>]       Log in with an existing API key
   volute pages publish [--mind <name>]   Publish mind's pages/ directory
   volute pages status [--mind <name>]    Show publish status
-  volute pages logout                    Remove stored credentials`);
+
+Account commands (register, login, logout) are now top-level:
+  volute register [--name <name>]
+  volute login [--key <key>]
+  volute logout`);
 }

@@ -22,9 +22,7 @@ export function readSystemsConfig(): SystemsConfig | null {
   try {
     data = JSON.parse(raw);
   } catch {
-    console.error(
-      `Warning: ${path} contains invalid JSON. Run "volute pages logout" and re-login.`,
-    );
+    console.error(`Warning: ${path} contains invalid JSON. Run "volute logout" and re-login.`);
     return null;
   }
   if (!data.apiKey || !data.system) return null;

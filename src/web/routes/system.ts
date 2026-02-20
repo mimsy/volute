@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { logBuffer } from "../../lib/log-buffer.js";
+import { readSystemsConfig } from "../../lib/systems-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 const app = new Hono<AuthEnv>()
@@ -37,6 +38,10 @@ const app = new Hono<AuthEnv>()
         });
       });
     });
+  })
+  .get("/info", (c) => {
+    const config = readSystemsConfig();
+    return c.json({ system: config?.system ?? null });
   });
 
 export default app;

@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { format } from "node:util";
 import { initConnectorManager } from "./lib/connector-manager.js";
+import { ensureMailAddress, getMailPoller } from "./lib/mail-poller.js";
 import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
 import { migrateMindState } from "./lib/migrate-state.js";
 import { initMindManager } from "./lib/mind-manager.js";
@@ -82,6 +83,8 @@ export async function startDaemon(opts: {
   const connectors = initConnectorManager();
   const scheduler = getScheduler();
   scheduler.start(port, token);
+  const mailPoller = getMailPoller();
+  mailPoller.start(port, token);
   const tokenBudget = getTokenBudget();
   tokenBudget.start(port, token);
 
@@ -105,6 +108,7 @@ export async function startDaemon(opts: {
       const dir = mindDir(entry.name);
       await connectors.startConnectors(entry.name, dir, entry.port, port);
       scheduler.loadSchedules(entry.name);
+      ensureMailAddress(entry.name).catch(() => {});
       const config = readVoluteConfig(dir);
       if (config?.tokenBudget) {
         tokenBudget.setBudget(
@@ -163,6 +167,7 @@ export async function startDaemon(opts: {
     console.error("[daemon] shutting down...");
     scheduler.stop();
     scheduler.saveState();
+    mailPoller.stop();
     tokenBudget.stop();
     await connectors.stopAll();
     await manager.stopAll();

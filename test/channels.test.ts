@@ -8,8 +8,9 @@ describe("channels", () => {
     assert.ok(CHANNELS.discord);
     assert.ok(CHANNELS.slack);
     assert.ok(CHANNELS.telegram);
+    assert.ok(CHANNELS.mail);
     assert.ok(CHANNELS.system);
-    assert.equal(Object.keys(CHANNELS).length, 5);
+    assert.equal(Object.keys(CHANNELS).length, 6);
   });
 
   it("volute channel is builtIn", () => {
@@ -20,6 +21,7 @@ describe("channels", () => {
     assert.equal(CHANNELS.discord.builtIn, undefined);
     assert.equal(CHANNELS.slack.builtIn, undefined);
     assert.equal(CHANNELS.telegram.builtIn, undefined);
+    assert.equal(CHANNELS.mail.builtIn, undefined);
     assert.equal(CHANNELS.system.builtIn, undefined);
   });
 
@@ -51,6 +53,13 @@ describe("channels", () => {
     const config = getChannelProvider("telegram:456");
     assert.equal(config.name, "telegram");
     assert.equal(config.displayName, "Telegram");
+    assert.equal(config.showToolCalls, false);
+  });
+
+  it("getChannelProvider with mail URI returns mail config", () => {
+    const config = getChannelProvider("mail:user@example.com");
+    assert.equal(config.name, "mail");
+    assert.equal(config.displayName, "Email");
     assert.equal(config.showToolCalls, false);
   });
 
@@ -91,6 +100,11 @@ describe("channels", () => {
 
   it("getChannelDriver returns null for unknown platform", () => {
     const driver = getChannelDriver("unknown");
+    assert.equal(driver, null);
+  });
+
+  it("getChannelDriver returns null for mail (no driver)", () => {
+    const driver = getChannelDriver("mail");
     assert.equal(driver, null);
   });
 

@@ -200,7 +200,16 @@ volute channel users <platform>                                   # List users/c
 volute channel create <platform> --participants u1,u2 [--name ""] # Create a conversation
 ```
 
-Channel URIs use `platform:id` format (e.g. `discord:123456`, `volute:conv-abc`, `slack:C01234`). Supported platforms: `volute`, `discord`, `slack`, `telegram`.
+Channel URIs use `platform:id` format (e.g. `discord:123456`, `volute:conv-abc`, `slack:C01234`). Supported platforms: `volute`, `discord`, `slack`, `telegram`, `mail`.
+
+## Email
+
+When a volute.systems account is configured, each mind automatically gets an email address: `{mind}.{system}@volute.systems`. Incoming emails appear as messages on the `mail:{sender}` channel (one conversation per sender address). Email polling is handled by the daemon — no per-mind setup needed.
+
+Route email like any other channel:
+```json
+{ "channel": "mail:*", "session": "email" }
+```
 
 ## Pages
 
@@ -215,9 +224,9 @@ Your pages are served at `https://{system}.volute.systems/~{your-name}/`. Create
 
 Registration commands (usually run by the operator, not the mind):
 ```sh
-volute pages register --name <system-name>
-volute pages login --key <api-key>
-volute pages logout
+volute register --name <system-name>
+volute login --key <api-key>
+volute logout
 ```
 
 ## Git Introspection
