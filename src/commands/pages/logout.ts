@@ -1,7 +1,7 @@
-import { deletePagesConfig } from "../../lib/pages-config.js";
+import { deleteSystemsConfig } from "../../lib/systems-config.js";
 
 export async function run() {
-  if (deletePagesConfig()) {
+  if (deleteSystemsConfig()) {
     console.log("Logged out. Credentials removed.");
   } else {
     console.log("Not logged in.");

@@ -5,35 +5,39 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { after, afterEach, before, beforeEach, describe, it, mock } from "node:test";
 import { collectFiles } from "../src/commands/pages/publish.js";
-import { deletePagesConfig, readPagesConfig, writePagesConfig } from "../src/lib/pages-config.js";
 import { addMind, mindDir, removeMind, voluteHome } from "../src/lib/registry.js";
+import {
+  deleteSystemsConfig,
+  readSystemsConfig,
+  writeSystemsConfig,
+} from "../src/lib/systems-config.js";
 
 function configPath() {
-  return resolve(voluteHome(), "pages.json");
+  return resolve(voluteHome(), "systems.json");
 }
 
 // ---------------------------------------------------------------------------
-// pages-config unit tests
+// systems-config unit tests
 // ---------------------------------------------------------------------------
 
-describe("pages-config", () => {
+describe("systems-config", () => {
   afterEach(() => {
     try {
       unlinkSync(configPath());
     } catch {}
   });
 
-  it("readPagesConfig returns null when no config exists", () => {
-    assert.equal(readPagesConfig(), null);
+  it("readSystemsConfig returns null when no config exists", () => {
+    assert.equal(readSystemsConfig(), null);
   });
 
-  it("writePagesConfig + readPagesConfig roundtrips", () => {
-    writePagesConfig({
+  it("writeSystemsConfig + readSystemsConfig roundtrips", () => {
+    writeSystemsConfig({
       apiKey: "vp_test123",
       system: "my-system",
       apiUrl: "https://volute.systems",
     });
-    const config = readPagesConfig();
+    const config = readSystemsConfig();
     assert.deepEqual(config, {
       apiKey: "vp_test123",
       system: "my-system",
@@ -41,8 +45,8 @@ describe("pages-config", () => {
     });
   });
 
-  it("writePagesConfig sets file permissions to 0600", () => {
-    writePagesConfig({
+  it("writeSystemsConfig sets file permissions to 0600", () => {
+    writeSystemsConfig({
       apiKey: "vp_secret",
       system: "test",
       apiUrl: "https://volute.systems",
@@ -51,55 +55,55 @@ describe("pages-config", () => {
     assert.equal(mode, 0o600);
   });
 
-  it("readPagesConfig returns null for invalid JSON", () => {
+  it("readSystemsConfig returns null for invalid JSON", () => {
     mkdirSync(voluteHome(), { recursive: true });
     writeFileSync(configPath(), "not json");
-    assert.equal(readPagesConfig(), null);
+    assert.equal(readSystemsConfig(), null);
   });
 
-  it("readPagesConfig returns null if apiKey is missing", () => {
+  it("readSystemsConfig returns null if apiKey is missing", () => {
     mkdirSync(voluteHome(), { recursive: true });
     writeFileSync(configPath(), JSON.stringify({ system: "test" }));
-    assert.equal(readPagesConfig(), null);
+    assert.equal(readSystemsConfig(), null);
   });
 
-  it("readPagesConfig returns null if system is missing", () => {
+  it("readSystemsConfig returns null if system is missing", () => {
     mkdirSync(voluteHome(), { recursive: true });
     writeFileSync(configPath(), JSON.stringify({ apiKey: "vp_key" }));
-    assert.equal(readPagesConfig(), null);
+    assert.equal(readSystemsConfig(), null);
   });
 
-  it("readPagesConfig defaults apiUrl when missing", () => {
+  it("readSystemsConfig defaults apiUrl when missing", () => {
     mkdirSync(voluteHome(), { recursive: true });
     writeFileSync(configPath(), JSON.stringify({ apiKey: "vp_key", system: "test" }));
-    const config = readPagesConfig();
+    const config = readSystemsConfig();
     assert.equal(config?.apiUrl, "https://volute.systems");
   });
 
-  it("readPagesConfig preserves custom apiUrl", () => {
-    writePagesConfig({
+  it("readSystemsConfig preserves custom apiUrl", () => {
+    writeSystemsConfig({
       apiKey: "vp_key",
       system: "test",
       apiUrl: "http://localhost:9999",
     });
-    const config = readPagesConfig();
+    const config = readSystemsConfig();
     assert.equal(config?.apiUrl, "http://localhost:9999");
   });
 
-  it("deletePagesConfig removes the file", () => {
-    writePagesConfig({
+  it("deleteSystemsConfig removes the file", () => {
+    writeSystemsConfig({
       apiKey: "vp_key",
       system: "test",
       apiUrl: "https://volute.systems",
     });
     assert.ok(existsSync(configPath()));
-    const result = deletePagesConfig();
+    const result = deleteSystemsConfig();
     assert.equal(result, true);
     assert.ok(!existsSync(configPath()));
   });
 
-  it("deletePagesConfig returns false when no file exists", () => {
-    assert.equal(deletePagesConfig(), false);
+  it("deleteSystemsConfig returns false when no file exists", () => {
+    assert.equal(deleteSystemsConfig(), false);
   });
 });
 
@@ -177,7 +181,7 @@ describe("pages CLI commands", () => {
   let baseUrl: string;
   let handler: (req: IncomingMessage, res: ServerResponse) => void;
   const MIND_NAME = "pages-test-mind";
-  const originalPagesUrl = process.env.VOLUTE_PAGES_URL;
+  const originalPagesUrl = process.env.VOLUTE_SYSTEMS_URL;
   const originalMind = process.env.VOLUTE_MIND;
 
   before(async () => {
@@ -187,7 +191,7 @@ describe("pages CLI commands", () => {
     const addr = server.address();
     if (!addr || typeof addr === "string") throw new Error("bad address");
     baseUrl = `http://127.0.0.1:${addr.port}`;
-    process.env.VOLUTE_PAGES_URL = baseUrl;
+    process.env.VOLUTE_SYSTEMS_URL = baseUrl;
 
     // Register a test mind so mindDir() works
     addMind(MIND_NAME, 14900);
@@ -195,8 +199,8 @@ describe("pages CLI commands", () => {
 
   after(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    if (originalPagesUrl === undefined) delete process.env.VOLUTE_PAGES_URL;
-    else process.env.VOLUTE_PAGES_URL = originalPagesUrl;
+    if (originalPagesUrl === undefined) delete process.env.VOLUTE_SYSTEMS_URL;
+    else process.env.VOLUTE_SYSTEMS_URL = originalPagesUrl;
     if (originalMind === undefined) delete process.env.VOLUTE_MIND;
     else process.env.VOLUTE_MIND = originalMind;
     removeMind(MIND_NAME);
@@ -234,14 +238,14 @@ describe("pages CLI commands", () => {
       const { run } = await import("../src/commands/pages/register.js");
       await run(["--name", "my-system"]);
 
-      const config = readPagesConfig();
+      const config = readSystemsConfig();
       assert.equal(config?.apiKey, "vp_newkey");
       assert.equal(config?.system, "my-system");
       assert.equal(config?.apiUrl, baseUrl);
     });
 
     it("exits if already registered", async () => {
-      writePagesConfig({ apiKey: "vp_existing", system: "existing", apiUrl: baseUrl });
+      writeSystemsConfig({ apiKey: "vp_existing", system: "existing", apiUrl: baseUrl });
 
       const exitMock = mock.method(process, "exit", (code: number) => {
         throw new ExitError(code);
@@ -295,13 +299,13 @@ describe("pages CLI commands", () => {
       const { run } = await import("../src/commands/pages/login.js");
       await run(["--key", "vp_mykey"]);
 
-      const config = readPagesConfig();
+      const config = readSystemsConfig();
       assert.equal(config?.apiKey, "vp_mykey");
       assert.equal(config?.system, "test-system");
     });
 
     it("exits if already logged in", async () => {
-      writePagesConfig({ apiKey: "vp_existing", system: "existing", apiUrl: baseUrl });
+      writeSystemsConfig({ apiKey: "vp_existing", system: "existing", apiUrl: baseUrl });
 
       const exitMock = mock.method(process, "exit", (code: number) => {
         throw new ExitError(code);
@@ -343,7 +347,7 @@ describe("pages CLI commands", () => {
   // -----------------------------------------------------------------------
   describe("publish", () => {
     it("publishes files from pages/ directory", async () => {
-      writePagesConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
+      writeSystemsConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
       process.env.VOLUTE_MIND = MIND_NAME;
 
       // Create pages/ directory in the mind's home
@@ -389,7 +393,7 @@ describe("pages CLI commands", () => {
     });
 
     it("exits if pages/ directory does not exist", async () => {
-      writePagesConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
+      writeSystemsConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
 
       const exitMock = mock.method(process, "exit", (code: number) => {
         throw new ExitError(code);
@@ -401,7 +405,7 @@ describe("pages CLI commands", () => {
     });
 
     it("exits if pages/ directory is empty", async () => {
-      writePagesConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
+      writeSystemsConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
 
       const pagesDir = resolve(mindDir(MIND_NAME), "home", "pages");
       mkdirSync(pagesDir, { recursive: true });
@@ -417,7 +421,7 @@ describe("pages CLI commands", () => {
     });
 
     it("exits on API error", async () => {
-      writePagesConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
+      writeSystemsConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
 
       const pagesDir = resolve(mindDir(MIND_NAME), "home", "pages");
       mkdirSync(pagesDir, { recursive: true });
@@ -438,7 +442,7 @@ describe("pages CLI commands", () => {
     });
 
     it("publishes multiple files including nested paths", async () => {
-      writePagesConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
+      writeSystemsConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
 
       const pagesDir = resolve(mindDir(MIND_NAME), "home", "pages");
       mkdirSync(resolve(pagesDir, "css"), { recursive: true });
@@ -470,7 +474,7 @@ describe("pages CLI commands", () => {
   // -----------------------------------------------------------------------
   describe("status", () => {
     it("displays status from API", async () => {
-      writePagesConfig({ apiKey: "vp_stat", system: "my-system", apiUrl: baseUrl });
+      writeSystemsConfig({ apiKey: "vp_stat", system: "my-system", apiUrl: baseUrl });
       process.env.VOLUTE_MIND = MIND_NAME;
 
       handler = (req, res) => {
@@ -500,7 +504,7 @@ describe("pages CLI commands", () => {
     });
 
     it("handles 404 (not published yet)", async () => {
-      writePagesConfig({ apiKey: "vp_stat", system: "my-system", apiUrl: baseUrl });
+      writeSystemsConfig({ apiKey: "vp_stat", system: "my-system", apiUrl: baseUrl });
 
       handler = (_req, res) => {
         res.writeHead(404, { "Content-Type": "application/json" });
@@ -528,7 +532,7 @@ describe("pages CLI commands", () => {
     });
 
     it("exits on API error", async () => {
-      writePagesConfig({ apiKey: "vp_stat", system: "my-system", apiUrl: baseUrl });
+      writeSystemsConfig({ apiKey: "vp_stat", system: "my-system", apiUrl: baseUrl });
 
       handler = (_req, res) => {
         res.writeHead(500, { "Content-Type": "application/json" });
@@ -550,7 +554,7 @@ describe("pages CLI commands", () => {
   // -----------------------------------------------------------------------
   describe("logout", () => {
     it("removes credentials when logged in", async () => {
-      writePagesConfig({ apiKey: "vp_key", system: "test", apiUrl: baseUrl });
+      writeSystemsConfig({ apiKey: "vp_key", system: "test", apiUrl: baseUrl });
       assert.ok(existsSync(configPath()));
 
       const logged: string[] = [];

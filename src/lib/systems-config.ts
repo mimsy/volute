@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { resolve } from "node:path";
 import { voluteHome } from "./registry.js";
 
-export type PagesConfig = {
+export type SystemsConfig = {
   apiKey: string;
   system: string;
   apiUrl: string;
@@ -11,10 +11,10 @@ export type PagesConfig = {
 const DEFAULT_API_URL = "https://volute.systems";
 
 function configPath(): string {
-  return resolve(voluteHome(), "pages.json");
+  return resolve(voluteHome(), "systems.json");
 }
 
-export function readPagesConfig(): PagesConfig | null {
+export function readSystemsConfig(): SystemsConfig | null {
   const path = configPath();
   if (!existsSync(path)) return null;
   try {
@@ -30,12 +30,12 @@ export function readPagesConfig(): PagesConfig | null {
   }
 }
 
-export function writePagesConfig(config: PagesConfig): void {
+export function writeSystemsConfig(config: SystemsConfig): void {
   mkdirSync(voluteHome(), { recursive: true });
   writeFileSync(configPath(), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 }
 
-export function deletePagesConfig(): boolean {
+export function deleteSystemsConfig(): boolean {
   const path = configPath();
   if (!existsSync(path)) return false;
   unlinkSync(path);

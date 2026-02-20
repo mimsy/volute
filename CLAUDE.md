@@ -196,7 +196,7 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 | `token-budget.ts` | Per-mind token budget enforcement |
 | `typing.ts` | Typing indicator tracking |
 | `service-mode.ts` | Service mode detection (manual/systemd/launchd), service control, health polling, daemon config reader |
-| `pages-config.ts` | Read/write `~/.volute/pages.json` (API key, system name, API URL) |
+| `systems-config.ts` | Read/write `~/.volute/systems.json` (API key, system name, API URL) |
 | `update-check.ts` | npm update check on CLI invocation |
 | `verify.ts` | Mind verification utilities |
 | `volute-config.ts` | Mind volute.json config reader |

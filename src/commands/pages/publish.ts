@@ -1,16 +1,16 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
-import { readPagesConfig } from "../../lib/pages-config.js";
 import { parseArgs } from "../../lib/parse-args.js";
 import { mindDir } from "../../lib/registry.js";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";
+import { readSystemsConfig } from "../../lib/systems-config.js";
 
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
     mind: { type: "string" },
   });
 
-  const config = readPagesConfig();
+  const config = readSystemsConfig();
   if (!config) {
     console.error('Not logged in. Run "volute pages register" or "volute pages login" first.');
     process.exit(1);

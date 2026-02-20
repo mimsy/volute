@@ -1,5 +1,5 @@
-import { readPagesConfig, writePagesConfig } from "../../lib/pages-config.js";
 import { parseArgs } from "../../lib/parse-args.js";
+import { readSystemsConfig, writeSystemsConfig } from "../../lib/systems-config.js";
 
 const DEFAULT_API_URL = "https://volute.systems";
 
@@ -8,7 +8,7 @@ export async function run(args: string[]) {
     key: { type: "string" },
   });
 
-  const existing = readPagesConfig();
+  const existing = readSystemsConfig();
   if (existing) {
     console.error(`Already logged in as "${existing.system}". Run "volute pages logout" first.`);
     process.exit(1);
@@ -27,7 +27,7 @@ export async function run(args: string[]) {
     }
   }
 
-  const apiUrl = process.env.VOLUTE_PAGES_URL || DEFAULT_API_URL;
+  const apiUrl = process.env.VOLUTE_SYSTEMS_URL || DEFAULT_API_URL;
 
   const res = await fetch(`${apiUrl}/api/whoami`, {
     headers: { Authorization: `Bearer ${key}` },
@@ -42,7 +42,7 @@ export async function run(args: string[]) {
   }
 
   const { system } = (await res.json()) as { system: string };
-  writePagesConfig({ apiKey: key, system, apiUrl });
+  writeSystemsConfig({ apiKey: key, system, apiUrl });
   console.log(`Logged in as "${system}". Credentials saved.`);
 }
 
