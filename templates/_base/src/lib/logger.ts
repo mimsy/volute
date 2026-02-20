@@ -1,4 +1,11 @@
+import { daemonEmit } from "./daemon-client.js";
+import { filterEvent, loadTransparencyPreset } from "./transparency.js";
+
 const DEBUG = process.env.VOLUTE_DEBUG === "1";
+const preset = loadTransparencyPreset();
+
+/** Categories whose log() calls are also emitted as daemon events. */
+const EMIT_CATEGORIES = new Set(["mind", "server", "auto-commit"]);
 
 function truncate(str: string, maxLen = 200): string {
   return str.length > maxLen ? `${str.slice(0, maxLen)}...` : str;
@@ -10,6 +17,17 @@ export function log(category: string, ...args: unknown[]) {
     console.error(`[${ts}] [${category}]`, ...args);
   } catch {
     // EPIPE — parent closed pipes (detached mode). Ignore.
+  }
+  if (EMIT_CATEGORIES.has(category)) {
+    const message = args
+      .map((a) => (a instanceof Error ? a.message : typeof a === "string" ? a : JSON.stringify(a)))
+      .join(" ");
+    const filtered = filterEvent(preset, {
+      type: "log",
+      content: message,
+      metadata: { category },
+    });
+    if (filtered) daemonEmit(filtered);
   }
 }
 

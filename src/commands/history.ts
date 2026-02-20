@@ -50,6 +50,16 @@ function formatRow(row: HistoryRow): string {
     }
     case "done":
       return `[${time}] [done]`;
+    case "log": {
+      let category = "";
+      if (row.metadata) {
+        try {
+          const meta = JSON.parse(row.metadata);
+          category = meta.category ? `${meta.category}: ` : "";
+        } catch {}
+      }
+      return `[${time}] [log] ${category}${row.content ?? ""}`;
+    }
     case "session_start":
       return `[${time}] [session_start] ${row.session ?? ""}`;
     default:
