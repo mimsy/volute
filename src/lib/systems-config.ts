@@ -17,17 +17,22 @@ function configPath(): string {
 export function readSystemsConfig(): SystemsConfig | null {
   const path = configPath();
   if (!existsSync(path)) return null;
+  const raw = readFileSync(path, "utf-8");
+  let data: Record<string, unknown>;
   try {
-    const data = JSON.parse(readFileSync(path, "utf-8"));
-    if (!data.apiKey || !data.system) return null;
-    return {
-      apiKey: data.apiKey,
-      system: data.system,
-      apiUrl: data.apiUrl || DEFAULT_API_URL,
-    };
+    data = JSON.parse(raw);
   } catch {
+    console.error(
+      `Warning: ${path} contains invalid JSON. Run "volute pages logout" and re-login.`,
+    );
     return null;
   }
+  if (!data.apiKey || !data.system) return null;
+  return {
+    apiKey: data.apiKey as string,
+    system: data.system as string,
+    apiUrl: (data.apiUrl as string) || DEFAULT_API_URL,
+  };
 }
 
 export function writeSystemsConfig(config: SystemsConfig): void {
@@ -36,8 +41,11 @@ export function writeSystemsConfig(config: SystemsConfig): void {
 }
 
 export function deleteSystemsConfig(): boolean {
-  const path = configPath();
-  if (!existsSync(path)) return false;
-  unlinkSync(path);
-  return true;
+  try {
+    unlinkSync(configPath());
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
 }

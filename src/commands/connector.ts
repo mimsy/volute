@@ -1,6 +1,7 @@
 import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
+import { promptLine } from "../lib/prompt.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
 
 export async function run(args: string[]) {
@@ -28,38 +29,6 @@ function printUsage() {
   console.log(`Usage:
   volute connector connect <type> [--mind <name>]
   volute connector disconnect <type> [--mind <name>]`);
-}
-
-async function promptValue(key: string, description: string): Promise<string> {
-  process.stderr.write(`${description}\nEnter value for ${key}: `);
-  if (process.stdin.isTTY) process.stdin.setRawMode(true);
-
-  return new Promise((resolve) => {
-    let value = "";
-    const onData = (buf: Buffer) => {
-      for (const byte of buf) {
-        if (byte === 3) {
-          process.stderr.write("\n");
-          process.exit(1);
-        }
-        if (byte === 13 || byte === 10) {
-          process.stderr.write("\n");
-          if (process.stdin.isTTY) process.stdin.setRawMode(false);
-          process.stdin.removeListener("data", onData);
-          process.stdin.pause();
-          resolve(value);
-          return;
-        }
-        if (byte === 127 || byte === 8) {
-          value = value.slice(0, -1);
-        } else {
-          value += String.fromCharCode(byte);
-        }
-      }
-    };
-    process.stdin.resume();
-    process.stdin.on("data", onData);
-  });
 }
 
 type MissingEnvResponse = {
@@ -110,7 +79,7 @@ async function connectConnector(args: string[]) {
       console.error(`${connectorName} connector requires some environment variables.\n`);
 
       for (const v of missing) {
-        const value = await promptValue(v.name, v.description);
+        const value = await promptLine(`${v.description}\nEnter value for ${v.name}: `);
         if (!value) {
           console.error(`No value provided for ${v.name}. Aborting.`);
           process.exit(1);

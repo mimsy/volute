@@ -1,6 +1,7 @@
 import { parseArgs } from "../../lib/parse-args.js";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";
 import { readSystemsConfig } from "../../lib/systems-config.js";
+import { systemsFetch } from "../../lib/systems-fetch.js";
 
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
@@ -15,7 +16,7 @@ export async function run(args: string[]) {
 
   const mindName = resolveMindName(flags);
 
-  const res = await fetch(`${config.apiUrl}/api/pages/status/${mindName}`, {
+  const res = await systemsFetch(`${config.apiUrl}/api/pages/status/${mindName}`, {
     headers: { Authorization: `Bearer ${config.apiKey}` },
   });
 

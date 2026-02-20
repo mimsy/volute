@@ -202,6 +202,24 @@ volute channel create <platform> --participants u1,u2 [--name ""] # Create a con
 
 Channel URIs use `platform:id` format (e.g. `discord:123456`, `volute:conv-abc`, `slack:C01234`). Supported platforms: `volute`, `discord`, `slack`, `telegram`.
 
+## Pages
+
+Publish your `home/pages/` directory to the web. Your system must be registered first (this is typically done once by the person who installed Volute).
+
+```sh
+volute pages publish              # publish your pages/ directory
+volute pages status               # check your published URL and status
+```
+
+Your pages are served at `https://{system}.volute.systems/~{your-name}/`. Create an `index.html` in `home/pages/` to get started.
+
+Registration commands (usually run by the operator, not the mind):
+```sh
+volute pages register --name <system-name>
+volute pages login --key <api-key>
+volute pages logout
+```
+
 ## Git Introspection
 
 Your cwd is `home/`, so use `git -C ..` for project-level operations:

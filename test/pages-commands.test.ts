@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -149,6 +158,17 @@ describe("collectFiles", () => {
 
     const files = collectFiles(tmp);
     assert.deepEqual(Buffer.from(files["image.png"], "base64"), binary);
+  });
+
+  it("skips symlinks", () => {
+    const tmp = mkdtempSync(resolve(tmpdir(), "volute-pages-symlink-"));
+    writeFileSync(resolve(tmp, "real.txt"), "real content");
+    symlinkSync(resolve(tmp, "real.txt"), resolve(tmp, "link.txt"));
+
+    const files = collectFiles(tmp);
+    assert.equal(Object.keys(files).length, 1);
+    assert.ok("real.txt" in files);
+    assert.ok(!("link.txt" in files));
   });
 });
 
@@ -408,8 +428,8 @@ describe("pages CLI commands", () => {
       writeSystemsConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
 
       const pagesDir = resolve(mindDir(MIND_NAME), "home", "pages");
+      rmSync(pagesDir, { recursive: true, force: true });
       mkdirSync(pagesDir, { recursive: true });
-      // no files — just an empty directory
 
       const exitMock = mock.method(process, "exit", (code: number) => {
         throw new ExitError(code);
@@ -577,6 +597,64 @@ describe("pages CLI commands", () => {
 
       logMock.mock.restore();
       assert.ok(logged.some((l) => l.includes("Not logged in")));
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // network errors
+  // -----------------------------------------------------------------------
+  describe("network errors", () => {
+    it("shows friendly error on connection refused", async () => {
+      // Point at a port that nothing is listening on
+      writeSystemsConfig({
+        apiKey: "vp_key",
+        system: "test",
+        apiUrl: "http://127.0.0.1:1",
+      });
+
+      const exitMock = mock.method(process, "exit", (code: number) => {
+        throw new ExitError(code);
+      });
+      const errors: string[] = [];
+      const errMock = mock.method(console, "error", (msg: string) => errors.push(msg));
+
+      const { run } = await import("../src/commands/pages/status.js");
+      await assert.rejects(() => run(["--mind", MIND_NAME]), ExitError);
+
+      errMock.mock.restore();
+      assert.equal(exitMock.mock.calls[0]?.arguments[0], 1);
+      assert.ok(errors.some((e) => e.includes("127.0.0.1:1")));
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // non-JSON error response
+  // -----------------------------------------------------------------------
+  describe("non-JSON error responses", () => {
+    it("handles plain text error response gracefully", async () => {
+      writeSystemsConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
+
+      const pagesDir = resolve(mindDir(MIND_NAME), "home", "pages");
+      mkdirSync(pagesDir, { recursive: true });
+      writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hi</h1>");
+
+      handler = (_req, res) => {
+        res.writeHead(502, { "Content-Type": "text/plain" });
+        res.end("Bad Gateway");
+      };
+
+      const exitMock = mock.method(process, "exit", (code: number) => {
+        throw new ExitError(code);
+      });
+      const errors: string[] = [];
+      const errMock = mock.method(console, "error", (msg: string) => errors.push(msg));
+
+      const { run } = await import("../src/commands/pages/publish.js");
+      await assert.rejects(() => run(["--mind", MIND_NAME]), ExitError);
+
+      errMock.mock.restore();
+      assert.equal(exitMock.mock.calls[0]?.arguments[0], 1);
+      assert.ok(errors.some((e) => e.includes("Publish failed")));
     });
   });
 });

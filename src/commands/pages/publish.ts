@@ -1,9 +1,10 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { parseArgs } from "../../lib/parse-args.js";
 import { mindDir } from "../../lib/registry.js";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";
 import { readSystemsConfig } from "../../lib/systems-config.js";
+import { systemsFetch } from "../../lib/systems-fetch.js";
 
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
@@ -32,7 +33,7 @@ export async function run(args: string[]) {
 
   console.log(`Publishing ${Object.keys(files).length} file(s) for ${mindName}...`);
 
-  const res = await fetch(`${config.apiUrl}/api/pages/publish/${mindName}`, {
+  const res = await systemsFetch(`${config.apiUrl}/api/pages/publish/${mindName}`, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
@@ -59,7 +60,8 @@ export function collectFiles(dir: string): Record<string, string> {
   function walk(current: string) {
     for (const entry of readdirSync(current)) {
       const full = resolve(current, entry);
-      const stat = statSync(full);
+      const stat = lstatSync(full);
+      if (stat.isSymbolicLink()) continue;
       if (stat.isDirectory()) {
         walk(full);
       } else if (stat.isFile()) {

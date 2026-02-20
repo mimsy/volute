@@ -197,6 +197,8 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 | `typing.ts` | Typing indicator tracking |
 | `service-mode.ts` | Service mode detection (manual/systemd/launchd), service control, health polling, daemon config reader |
 | `systems-config.ts` | Read/write `~/.volute/systems.json` (API key, system name, API URL) |
+| `systems-fetch.ts` | Shared fetch wrapper for volute.systems API calls |
+| `prompt.ts` | Shared interactive terminal prompt utility |
 | `update-check.ts` | npm update check on CLI invocation |
 | `verify.ts` | Mind verification utilities |
 | `volute-config.ts` | Mind volute.json config reader |

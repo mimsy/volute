@@ -136,7 +136,7 @@ Options:
   --version, -v                           Show version number
   --help, -h                              Show this help message
 
-Mind-scoped commands (send, history, variant, connector, schedule, channel)
+Mind-scoped commands (send, history, variant, connector, schedule, channel, pages)
 use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
   default:
