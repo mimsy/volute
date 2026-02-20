@@ -37,7 +37,7 @@ let user = $state<AuthUser | null>(null);
 let authChecked = $state(false);
 let showUsers = $state(false);
 let systemName = $state<string | null>(null);
-const userMenuOpen = $state(false);
+let userMenuOpen = $state(false);
 
 $effect(() => {
   fetchMe().then((u) => {
