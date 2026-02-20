@@ -37,6 +37,10 @@ import {
 } from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
 import { ensureMailAddress } from "../../lib/mail-poller.js";
+import {
+  publish as publishMindEvent,
+  subscribe as subscribeMindEvent,
+} from "../../lib/mind-events.js";
 import { getMindManager } from "../../lib/mind-manager.js";
 import {
   addMind,
@@ -52,7 +56,7 @@ import {
   voluteHome,
 } from "../../lib/registry.js";
 import { getScheduler } from "../../lib/scheduler.js";
-import { conversations, mindMessages } from "../../lib/schema.js";
+import { conversations, mindHistory } from "../../lib/schema.js";
 import {
   applyInitFiles,
   composeTemplate,
@@ -559,11 +563,11 @@ const app = new Hono<AuthEnv>()
       const db = await getDb();
       const lastActiveRows = await db
         .select({
-          mind: mindMessages.mind,
-          lastActiveAt: sql<string>`MAX(${mindMessages.created_at})`,
+          mind: mindHistory.mind,
+          lastActiveAt: sql<string>`MAX(${mindHistory.created_at})`,
         })
-        .from(mindMessages)
-        .groupBy(mindMessages.mind);
+        .from(mindHistory)
+        .groupBy(mindHistory.mind);
       lastActiveMap = new Map(lastActiveRows.map((r) => [r.mind, r.lastActiveAt]));
     } catch {
       // Non-essential: degrade gracefully without activity data
@@ -1119,8 +1123,9 @@ const app = new Hono<AuthEnv>()
       try {
         const sender = (parsed.sender as string) ?? null;
         const content = extractTextContent(parsed.content);
-        await db.insert(mindMessages).values({
+        await db.insert(mindHistory).values({
           mind: baseName,
+          type: "inbound",
           channel,
           sender,
           content,
@@ -1178,8 +1183,8 @@ const app = new Hono<AuthEnv>()
       try {
         const countResult = await db
           .select({ count: sql<number>`count(*)` })
-          .from(mindMessages)
-          .where(eq(mindMessages.mind, baseName));
+          .from(mindHistory)
+          .where(eq(mindHistory.mind, baseName));
         const msgCount = countResult[0]?.count ?? 0;
         if (msgCount >= 10 && msgCount % 10 === 0) {
           const nudge =
@@ -1200,40 +1205,25 @@ const app = new Hono<AuthEnv>()
     const conversationId = (parsed?.conversationId as string) ?? null;
     if (conversationId) typingMap.set(`volute:${conversationId}`, baseName, { persistent: true });
 
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/message`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: forwardBody,
+    // Fire-and-forget: POST to mind server, don't await response
+    fetch(`http://127.0.0.1:${port}/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: forwardBody,
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          console.error(`[daemon] mind ${name} responded with ${res.status}: ${text}`);
+        }
+      })
+      .catch((err) => {
+        console.error(`[daemon] mind ${name} unreachable on port ${port}:`, err);
+        // Clear typing on error — mind won't send a done event
+        typingMap.delete(channel, baseName);
       });
 
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        console.error(`[daemon] mind ${name} responded with ${res.status}: ${text}`);
-        return c.json({ error: `Mind responded with ${res.status}` }, res.status as 500);
-      }
-
-      let result: { ok: boolean; usage?: { input_tokens: number; output_tokens: number } };
-      try {
-        result = (await res.json()) as typeof result;
-      } catch (parseErr) {
-        console.error(`[daemon] mind ${name} returned non-JSON response:`, parseErr);
-        return c.json({ error: "Mind returned invalid response" }, 502);
-      }
-
-      // Record usage against budget
-      if (result.usage) {
-        budget.recordUsage(baseName, result.usage.input_tokens, result.usage.output_tokens);
-      }
-
-      return c.json({ ok: true });
-    } catch (err) {
-      console.error(`[daemon] mind ${name} unreachable on port ${port}:`, err);
-      return c.json({ error: "Mind is not reachable" }, 502);
-    } finally {
-      typingMap.delete(channel, baseName);
-      if (conversationId) typingMap.delete(`volute:${conversationId}`, baseName);
-    }
+    return c.json({ ok: true });
   })
   // Budget status
   .get("/:name/budget", async (c) => {
@@ -1243,7 +1233,125 @@ const app = new Hono<AuthEnv>()
     if (!usage) return c.json({ error: "No budget configured" }, 404);
     return c.json(usage);
   })
-  // Persist external channel send to mind_messages
+  // Receive events from mind, persist to mind_history, publish to pub-sub
+  .post("/:name/events", async (c) => {
+    const name = c.req.param("name");
+    const [baseName] = name.split("@", 2);
+
+    let body: {
+      type: string;
+      session?: string;
+      channel?: string;
+      messageId?: string;
+      content?: string;
+      metadata?: Record<string, unknown>;
+    };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+
+    if (!body.type) {
+      return c.json({ error: "type required" }, 400);
+    }
+
+    // Persist to mind_history
+    const db = await getDb();
+    try {
+      await db.insert(mindHistory).values({
+        mind: baseName,
+        type: body.type,
+        session: body.session ?? null,
+        channel: body.channel ?? null,
+        message_id: body.messageId ?? null,
+        content: body.content ?? null,
+        metadata: body.metadata ? JSON.stringify(body.metadata) : null,
+      });
+    } catch (err) {
+      console.error(`[daemon] failed to persist event for ${baseName}:`, err);
+      // Continue — persistence is best-effort, don't block real-time streaming
+    }
+
+    // Publish to in-process pub-sub
+    publishMindEvent(baseName, {
+      mind: baseName,
+      type: body.type,
+      session: body.session,
+      channel: body.channel,
+      messageId: body.messageId,
+      content: body.content,
+      metadata: body.metadata,
+    });
+
+    // Clear typing indicator when mind finishes processing
+    if (body.type === "done") {
+      if (body.channel) {
+        getTypingMap().delete(body.channel, baseName);
+      } else {
+        getTypingMap().deleteSender(baseName);
+      }
+    }
+
+    // Record usage against budget
+    if (body.type === "usage" && body.metadata) {
+      const inputTokens = (body.metadata.input_tokens as number) ?? 0;
+      const outputTokens = (body.metadata.output_tokens as number) ?? 0;
+      getTokenBudget().recordUsage(baseName, inputTokens, outputTokens);
+    }
+
+    return c.json({ ok: true });
+  })
+  // SSE endpoint for mind events
+  .get("/:name/events", async (c) => {
+    const name = c.req.param("name");
+    const [baseName] = name.split("@", 2);
+
+    const entry = findMind(baseName);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+
+    // Parse optional filters from query params
+    const typeFilter = c.req.query("type")?.split(",").filter(Boolean);
+    const sessionFilter = c.req.query("session");
+    const channelFilter = c.req.query("channel");
+
+    const stream = new ReadableStream({
+      start(controller) {
+        const encoder = new TextEncoder();
+        const send = (data: string) => {
+          controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+        };
+
+        const unsubscribe = subscribeMindEvent(baseName, (event) => {
+          // Apply filters
+          if (typeFilter && !typeFilter.includes(event.type)) return;
+          if (sessionFilter && event.session !== sessionFilter) return;
+          if (channelFilter && event.channel !== channelFilter) return;
+
+          send(JSON.stringify(event));
+        });
+
+        // Clean up on close
+        c.req.raw.signal.addEventListener("abort", () => {
+          unsubscribe();
+          try {
+            controller.close();
+          } catch {
+            /* already closed */
+          }
+        });
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  })
+  // Persist external channel send to mind_history
   .post("/:name/history", async (c) => {
     const name = c.req.param("name");
     const [baseName] = name.split("@", 2);
@@ -1261,8 +1369,9 @@ const app = new Hono<AuthEnv>()
 
     const db = await getDb();
     try {
-      await db.insert(mindMessages).values({
+      await db.insert(mindHistory).values({
         mind: baseName,
+        type: "outbound",
         channel: body.channel,
         sender: body.sender ?? baseName,
         content: body.content,
@@ -1279,28 +1388,33 @@ const app = new Hono<AuthEnv>()
     const name = c.req.param("name");
     const db = await getDb();
     const rows = await db
-      .selectDistinct({ channel: mindMessages.channel })
-      .from(mindMessages)
-      .where(eq(mindMessages.mind, name));
+      .selectDistinct({ channel: mindHistory.channel })
+      .from(mindHistory)
+      .where(eq(mindHistory.mind, name));
     return c.json(rows.map((r) => r.channel));
   })
   .get("/:name/history", async (c) => {
     const name = c.req.param("name");
     const channel = c.req.query("channel");
+    const full = c.req.query("full") === "true";
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
     const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
 
     const db = await getDb();
-    const conditions = [eq(mindMessages.mind, name)];
+    const conditions = [eq(mindHistory.mind, name)];
     if (channel) {
-      conditions.push(eq(mindMessages.channel, channel));
+      conditions.push(eq(mindHistory.channel, channel));
+    }
+    // Default to conversation view (inbound/outbound only)
+    if (!full) {
+      conditions.push(sql`${mindHistory.type} IN ('inbound', 'outbound')`);
     }
 
     const rows = await db
       .select()
-      .from(mindMessages)
+      .from(mindHistory)
       .where(and(...conditions))
-      .orderBy(desc(mindMessages.created_at))
+      .orderBy(desc(mindHistory.created_at))
       .limit(limit)
       .offset(offset);
 

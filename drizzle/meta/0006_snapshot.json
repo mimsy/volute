@@ -1,0 +1,7 @@
+{
+  "id": "0006_mind_history",
+  "prevId": "0005_rename_agents_to_minds",
+  "version": "6",
+  "dialect": "sqlite",
+  "tables": {}
+}

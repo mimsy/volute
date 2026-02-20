@@ -438,7 +438,6 @@ describe("resolveRoute", () => {
 describe("resolveSessionConfig", () => {
   it("returns defaults when no sessions configured", () => {
     const r = resolveSessionConfig({}, "main");
-    assert.equal(r.autoReply, false);
     assert.equal(r.interrupt, true);
     assert.equal(r.batch, undefined);
     assert.equal(r.instructions, undefined);
@@ -446,31 +445,29 @@ describe("resolveSessionConfig", () => {
 
   it("matches exact session name", () => {
     const config: RoutingConfig = {
-      sessions: { discord: { interrupt: false, autoReply: true } },
+      sessions: { discord: { interrupt: false } },
     };
     const r = resolveSessionConfig(config, "discord");
     assert.equal(r.interrupt, false);
-    assert.equal(r.autoReply, true);
   });
 
   it("matches glob pattern", () => {
     const config: RoutingConfig = {
-      sessions: { "volute:*": { autoReply: true } },
+      sessions: { "volute:*": { interrupt: false } },
     };
     const r = resolveSessionConfig(config, "volute:conv-abc");
-    assert.equal(r.autoReply, true);
+    assert.equal(r.interrupt, false);
   });
 
   it("first match wins", () => {
     const config: RoutingConfig = {
       sessions: {
         "discord:*": { interrupt: false },
-        "*": { interrupt: true, autoReply: true },
+        "*": { interrupt: true },
       },
     };
     const r = resolveSessionConfig(config, "discord:general");
     assert.equal(r.interrupt, false);
-    assert.equal(r.autoReply, false); // default, not from second pattern
   });
 
   it("normalizes batch number (minutes) to BatchConfig", () => {
@@ -491,15 +488,6 @@ describe("resolveSessionConfig", () => {
     assert.deepEqual(r.batch, { debounce: 20, maxWait: 120, triggers: ["@bot"] });
   });
 
-  it("autoReply is forced to false when batch is also configured", () => {
-    const config: RoutingConfig = {
-      sessions: { discord: { autoReply: true, batch: 5 } },
-    };
-    const r = resolveSessionConfig(config, "discord");
-    assert.equal(r.autoReply, false);
-    assert.ok(r.batch != null, "batch should still be set");
-  });
-
   it("returns instructions when configured", () => {
     const config: RoutingConfig = {
       sessions: { discord: { instructions: "Brief responses only." } },
@@ -510,10 +498,9 @@ describe("resolveSessionConfig", () => {
 
   it("returns defaults for unmatched session", () => {
     const config: RoutingConfig = {
-      sessions: { discord: { autoReply: true } },
+      sessions: { discord: { interrupt: false } },
     };
     const r = resolveSessionConfig(config, "slack");
-    assert.equal(r.autoReply, false);
     assert.equal(r.interrupt, true);
     assert.equal(r.batch, undefined);
   });

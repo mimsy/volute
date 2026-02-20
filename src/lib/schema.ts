@@ -28,19 +28,24 @@ export const conversations = sqliteTable(
   ],
 );
 
-export const mindMessages = sqliteTable(
-  "mind_messages",
+export const mindHistory = sqliteTable(
+  "mind_history",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     mind: text("mind").notNull(),
-    channel: text("channel").notNull(),
+    channel: text("channel"),
+    session: text("session"),
     sender: text("sender"),
-    content: text("content").notNull(),
+    message_id: text("message_id"),
+    type: text("type").notNull(),
+    content: text("content"),
+    metadata: text("metadata"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
   },
   (table) => [
-    index("idx_mind_messages_mind").on(table.mind),
-    index("idx_mind_messages_channel").on(table.mind, table.channel),
+    index("idx_mind_history_mind").on(table.mind),
+    index("idx_mind_history_mind_channel").on(table.mind, table.channel),
+    index("idx_mind_history_mind_type").on(table.mind, table.type),
   ],
 );
 

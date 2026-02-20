@@ -18,14 +18,12 @@ export type RoutingRule = {
 };
 
 export type SessionConfig = {
-  autoReply?: boolean;
   batch?: number | BatchConfig;
   interrupt?: boolean;
   instructions?: string;
 };
 
 export type ResolvedSessionConfig = {
-  autoReply: boolean;
   batch?: BatchConfig;
   interrupt: boolean;
   instructions?: string;
@@ -152,18 +150,14 @@ export function resolveSessionConfig(
   config: RoutingConfig,
   sessionName: string,
 ): ResolvedSessionConfig {
-  const defaults: ResolvedSessionConfig = { autoReply: false, interrupt: true };
+  const defaults: ResolvedSessionConfig = { interrupt: true };
 
   if (!config.sessions) return defaults;
 
   for (const [pattern, sessionConfig] of Object.entries(config.sessions)) {
     if (globMatch(pattern, sessionName)) {
       const batch = sessionConfig.batch != null ? normalizeBatch(sessionConfig.batch) : undefined;
-      if (sessionConfig.autoReply && batch != null) {
-        log("routing", `autoReply is not supported with batch mode — autoReply will be ignored`);
-      }
       return {
-        autoReply: batch != null ? false : (sessionConfig.autoReply ?? false),
         batch,
         interrupt: sessionConfig.interrupt ?? true,
         instructions: sessionConfig.instructions,
