@@ -3,7 +3,7 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-"strict": true,
+    "strict": true,
     "esModuleInterop": true,
     "outDir": "dist",
     "rootDir": ".",
@@ -11,5 +11,5 @@
     "lib": ["ES2022"]
   },
   "include": ["src"],
-  "exclude": ["src/web/frontend"]
+  "exclude": ["src/web/frontend", "src/web/svelte"]
 }
