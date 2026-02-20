@@ -20,6 +20,23 @@
   },
   "overrides": [
     {
+      "includes": ["**/*.svelte"],
+      "linter": {
+        "rules": {
+          "style": { "useConst": "off", "useImportType": "off" },
+          "correctness": { "noUnusedVariables": "off", "noUnusedImports": "off" }
+        }
+      }
+    },
+    {
+      "includes": ["src/web/svelte/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": { "useConst": "off" }
+        }
+      }
+    },
+    {
       "includes": ["src/web/frontend/**"],
       "linter": {
         "rules": {

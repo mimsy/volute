@@ -1,0 +1,1 @@
+<div>Dashboard stub</div>
