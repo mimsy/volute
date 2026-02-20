@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.0](https://github.com/mimsy/volute/compare/volute-v0.15.0...volute-v0.16.0) (2026-02-20)
+
+
+### Features
+
+* add volute pages CLI for publishing to volute.systems ([#88](https://github.com/mimsy/volute/issues/88)) ([3e4fef6](https://github.com/mimsy/volute/commit/3e4fef66653bb47101f1c1c9ddf54ef127d17ef4))
+* generalize systems account + add mail integration ([#90](https://github.com/mimsy/volute/issues/90)) ([3167aed](https://github.com/mimsy/volute/commit/3167aed649bcf11357f3499da98d37985d9641da))
+
 ## [0.15.0](https://github.com/mimsy/volute/compare/volute-v0.14.1...volute-v0.15.0) (2026-02-19)
 
 
