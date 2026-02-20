@@ -1219,10 +1219,8 @@ const app = new Hono<AuthEnv>()
       })
       .catch((err) => {
         console.error(`[daemon] mind ${name} unreachable on port ${port}:`, err);
-      })
-      .finally(() => {
-        typingMap.delete(channel, baseName);
-        if (conversationId) typingMap.delete(`volute:${conversationId}`, baseName);
+        // Clear typing on error — mind won't send a done event
+        typingMap.deleteSender(baseName);
       });
 
     return c.json({ ok: true });
@@ -1284,6 +1282,11 @@ const app = new Hono<AuthEnv>()
       content: body.content,
       metadata: body.metadata,
     });
+
+    // Clear typing indicator when mind finishes processing
+    if (body.type === "done") {
+      getTypingMap().deleteSender(baseName);
+    }
 
     // Record usage against budget
     if (body.type === "usage" && body.metadata) {

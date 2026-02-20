@@ -33,6 +33,16 @@ export class TypingMap {
     }
   }
 
+  /** Remove a sender from all channels (e.g. when a mind finishes processing). */
+  deleteSender(sender: string): void {
+    for (const [channel, senders] of this.channels) {
+      senders.delete(sender);
+      if (senders.size === 0) {
+        this.channels.delete(channel);
+      }
+    }
+  }
+
   get(channel: string): string[] {
     const senders = this.channels.get(channel);
     if (!senders) return [];
