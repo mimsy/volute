@@ -7,11 +7,6 @@ import {
   SessionManager,
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
-import {
-  type AutoReplyTracker,
-  createAutoReplyTracker,
-  type MessageChannelInfo,
-} from "./lib/auto-reply.js";
 import { extractImages, extractText } from "./lib/content.js";
 import { createEventHandler } from "./lib/event-handler.js";
 import { log } from "./lib/logger.js";
@@ -37,8 +32,7 @@ type PiSession = {
   unsubscribe?: () => void;
   messageIds: (string | undefined)[];
   currentMessageId?: string;
-  messageChannels: Map<string, MessageChannelInfo>;
-  autoReply: AutoReplyTracker;
+  messageChannels: Map<string, string>;
 };
 
 function defaultCompactionMessage(): string {
@@ -68,20 +62,17 @@ export function createMind(options: {
     const existing = sessions.get(name);
     if (existing) return existing;
 
-    const messageChannels = new Map<string, MessageChannelInfo>();
     const session: PiSession = {
       name,
       agentSession: null,
       ready: Promise.resolve(),
       listeners: new Set(),
       messageIds: [],
-      messageChannels,
-      autoReply: createAutoReplyTracker(messageChannels),
+      messageChannels: new Map(),
     };
     sessions.set(name, session);
 
     session.ready = initSession(session).catch((err) => {
-      session.autoReply.reset();
       session.messageChannels.clear();
       log("mind", `session "${session.name}": init failed:`, err);
     });
@@ -197,12 +188,9 @@ export function createMind(options: {
         };
         session.listeners.add(filteredListener);
 
-        // Track channel for auto-reply
+        // Track channel for reply instructions
         if (meta.channel) {
-          session.messageChannels.set(meta.messageId, {
-            channel: meta.channel,
-            autoReply: meta.autoReply,
-          });
+          session.messageChannels.set(meta.messageId, meta.channel);
         }
 
         // Track messageId (must be pushed before prompt)

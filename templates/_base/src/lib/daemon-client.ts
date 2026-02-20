@@ -29,6 +29,28 @@ export async function daemonRestart(context?: {
   }
 }
 
+export type DaemonEvent = {
+  type: string;
+  session?: string;
+  channel?: string;
+  messageId?: string;
+  content?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export async function daemonEmit(event: DaemonEvent): Promise<void> {
+  if (!port || !mind) return;
+  try {
+    await fetch(`http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/events`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify(event),
+    });
+  } catch {
+    // Best-effort — don't let event emission failures break the mind
+  }
+}
+
 export async function daemonSend(channel: string, text: string): Promise<void> {
   if (!port || !mind) {
     console.error("[volute] daemonSend: VOLUTE_DAEMON_PORT or VOLUTE_MIND not set");

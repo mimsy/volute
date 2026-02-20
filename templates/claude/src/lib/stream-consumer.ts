@@ -1,14 +1,14 @@
 import type { query } from "@anthropic-ai/claude-agent-sdk";
-import type { AutoReplyTracker, MessageChannelInfo } from "./auto-reply.js";
+import { daemonEmit } from "./daemon-client.js";
 import { log, logText, logThinking, logToolUse } from "./logger.js";
+import { filterEvent, loadTransparencyPreset } from "./transparency.js";
 import type { VoluteEvent } from "./types.js";
 
 export type StreamSession = {
   name: string;
   messageIds: (string | undefined)[];
   currentMessageId?: string;
-  messageChannels: Map<string, MessageChannelInfo>;
-  autoReply: AutoReplyTracker;
+  messageChannels: Map<string, string>;
 };
 
 export type StreamCallbacks = {
@@ -16,6 +16,24 @@ export type StreamCallbacks = {
   broadcast: (event: VoluteEvent) => void;
   onTurnEnd?: () => void;
 };
+
+const preset = loadTransparencyPreset();
+
+function emit(
+  session: StreamSession,
+  event: { type: string; content?: string; metadata?: Record<string, unknown> },
+) {
+  const channel = session.currentMessageId
+    ? session.messageChannels.get(session.currentMessageId)
+    : undefined;
+  const filtered = filterEvent(preset, {
+    ...event,
+    session: session.name,
+    channel,
+    messageId: session.currentMessageId,
+  });
+  if (filtered) daemonEmit(filtered);
+}
 
 export async function consumeStream(
   stream: ReturnType<typeof query>,
@@ -25,7 +43,6 @@ export async function consumeStream(
   for await (const msg of stream) {
     if (session.currentMessageId === undefined) {
       session.currentMessageId = session.messageIds.shift();
-      session.autoReply.reset();
     }
     if ("session_id" in msg && msg.session_id) {
       callbacks.onSessionId?.(msg.session_id as string);
@@ -33,32 +50,40 @@ export async function consumeStream(
     if (msg.type === "assistant") {
       for (const b of msg.message.content) {
         if (b.type === "thinking" && "thinking" in b && b.thinking) {
-          logThinking(b.thinking as string);
+          const text = b.thinking as string;
+          logThinking(text);
+          emit(session, { type: "thinking", content: text });
         } else if (b.type === "text") {
-          logText((b as { text: string }).text);
-          session.autoReply.accumulate((b as { text: string }).text);
+          const text = (b as { text: string }).text;
+          logText(text);
+          emit(session, { type: "text", content: text });
         } else if (b.type === "tool_use") {
-          session.autoReply.flush(session.currentMessageId);
           const tb = b as { name: string; input: unknown };
           logToolUse(tb.name, tb.input);
+          emit(session, {
+            type: "tool_use",
+            content: JSON.stringify(tb.input),
+            metadata: { name: tb.name },
+          });
         }
       }
     }
     if (msg.type === "result") {
-      session.autoReply.flush(session.currentMessageId);
       if (session.currentMessageId) {
         session.messageChannels.delete(session.currentMessageId);
       }
       log("mind", `session "${session.name}": turn done`);
       const result = msg as { usage?: { input_tokens?: number; output_tokens?: number } };
       if (result.usage) {
-        callbacks.broadcast({
-          type: "usage",
+        const usage = {
           input_tokens: result.usage.input_tokens ?? 0,
           output_tokens: result.usage.output_tokens ?? 0,
-        });
+        };
+        callbacks.broadcast({ type: "usage", ...usage });
+        emit(session, { type: "usage", metadata: usage });
       }
       callbacks.broadcast({ type: "done" });
+      emit(session, { type: "done" });
       session.currentMessageId = undefined;
       callbacks.onTurnEnd?.();
     }

@@ -32,41 +32,9 @@ export function createVoluteServer(options: {
     if (req.method === "POST" && url.pathname === "/message") {
       try {
         const body = JSON.parse(await readBody(req)) as VoluteRequest;
-
-        let usage: { input_tokens: number; output_tokens: number } | undefined;
-        let done = false;
-
-        const { unsubscribe } = router.route(body.content, body, (event) => {
-          if (event.type === "usage") {
-            usage = { input_tokens: event.input_tokens, output_tokens: event.output_tokens };
-          }
-          if (event.type === "done") {
-            done = true;
-            clearTimeout(timeout);
-            const response: { ok: true; usage?: { input_tokens: number; output_tokens: number } } =
-              { ok: true };
-            if (usage) response.usage = usage;
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(response));
-          }
-        });
-
-        const timeout = setTimeout(
-          () => {
-            if (!done) {
-              done = true;
-              unsubscribe();
-              res.writeHead(504, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ ok: false, error: "Mind processing timed out" }));
-            }
-          },
-          5 * 60 * 1000,
-        );
-
-        res.on("close", () => {
-          clearTimeout(timeout);
-          if (!done) unsubscribe();
-        });
+        router.route(body.content, body);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
       } catch (err) {
         if (err instanceof SyntaxError) {
           res.writeHead(400);

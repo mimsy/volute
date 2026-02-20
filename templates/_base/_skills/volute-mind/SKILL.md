@@ -122,7 +122,6 @@ Messages are routed to sessions based on rules in `.config/routes.json`. Rules a
   ],
   "sessions": {
     "discord": { "batch": { "debounce": 20, "maxWait": 120, "triggers": ["@mymind"] }, "interrupt": false, "instructions": "Brief responses only." },
-    "volute:*": { "autoReply": true }
   },
   "default": "main",
   "gateUnmatched": true
@@ -152,9 +151,8 @@ The `sessions` section configures behavior per session. Keys are glob patterns m
 
 | Field | Description |
 |-------|-------------|
-| `batch` | Batch config (see below) — incompatible with `autoReply` |
+| `batch` | Batch config (see below) |
 | `interrupt` | Whether to interrupt an in-progress turn (default: `true`) |
-| `autoReply` | When `true`, your text output is automatically sent back to the originating channel. No need to use `volute send` for these conversations. Not supported with batch mode. |
 | `instructions` | Instructions prepended to messages for this session (e.g. `"Brief responses only."`) |
 
 ### Batch config

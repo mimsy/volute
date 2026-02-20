@@ -19,7 +19,6 @@ export type ChannelMeta = {
 export type HandlerMeta = ChannelMeta & {
   messageId: string;
   interrupt?: boolean;
-  autoReply: boolean;
 };
 
 export type VoluteRequest = {

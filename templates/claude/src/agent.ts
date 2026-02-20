@@ -1,10 +1,5 @@
 import type { HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import {
-  type AutoReplyTracker,
-  createAutoReplyTracker,
-  type MessageChannelInfo,
-} from "./lib/auto-reply.js";
 import { toSDKContent } from "./lib/content.js";
 import { createAutoCommitHook } from "./lib/hooks/auto-commit.js";
 import { createIdentityReloadHook } from "./lib/hooks/identity-reload.js";
@@ -31,8 +26,7 @@ type Session = {
   messageIds: (string | undefined)[];
   currentMessageId?: string;
   currentQuery?: ReturnType<typeof query>;
-  messageChannels: Map<string, MessageChannelInfo>;
-  autoReply: AutoReplyTracker;
+  messageChannels: Map<string, string>;
 };
 
 export function createMind(options: {
@@ -133,15 +127,13 @@ export function createMind(options: {
         const q = createStream(session, savedSessionId);
         session.currentQuery = q;
         await consumeStream(q, session, callbacks);
-        // Stream ended — flush any pending auto-reply and broadcast done if no result was emitted
-        session.autoReply.flush(session.currentMessageId);
+        // Stream ended — broadcast done if no result was emitted
         if (session.currentMessageId !== undefined) {
           session.messageChannels.delete(session.currentMessageId);
           broadcastToSession(session, { type: "done" });
           session.currentMessageId = undefined;
         }
       } catch (err) {
-        session.autoReply.reset();
         session.messageChannels.clear();
         if (savedSessionId) {
           log("mind", `session "${session.name}": resume failed, starting fresh:`, err);
@@ -150,7 +142,6 @@ export function createMind(options: {
             const q = createStream(session);
             session.currentQuery = q;
             await consumeStream(q, session, callbacks);
-            session.autoReply.flush(session.currentMessageId);
             if (session.currentMessageId !== undefined) {
               session.messageChannels.delete(session.currentMessageId);
               broadcastToSession(session, { type: "done" });
@@ -175,14 +166,12 @@ export function createMind(options: {
     const existing = sessions.get(name);
     if (existing) return existing;
 
-    const messageChannels = new Map<string, MessageChannelInfo>();
     const session: Session = {
       name,
       channel: createMessageChannel(),
       listeners: new Set(),
       messageIds: [],
-      messageChannels,
-      autoReply: createAutoReplyTracker(messageChannels),
+      messageChannels: new Map(),
     };
     sessions.set(name, session);
 
@@ -211,12 +200,9 @@ export function createMind(options: {
         };
         session.listeners.add(filteredListener);
 
-        // Track channel for auto-reply
+        // Track channel for reply instructions
         if (meta.channel) {
-          session.messageChannels.set(meta.messageId, {
-            channel: meta.channel,
-            autoReply: meta.autoReply,
-          });
+          session.messageChannels.set(meta.messageId, meta.channel);
         }
 
         // Interrupt if requested and session is mid-turn

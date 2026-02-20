@@ -43,6 +43,13 @@
       "when": 1771200000000,
       "tag": "0005_rename_agents_to_minds",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1771400000000,
+      "tag": "0006_mind_history",
+      "breakpoints": true
     }
   ]
 }
