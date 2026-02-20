@@ -12,11 +12,11 @@ let channel = $state("");
 let hasMore = $state(true);
 let loading = $state(false);
 
-async function load(offset: number) {
+async function load(filterChannel: string, offset: number) {
   loading = true;
   try {
     const rows = await fetchHistory(name, {
-      channel: channel || undefined,
+      channel: filterChannel || undefined,
       limit: PAGE_SIZE,
       offset,
     });
@@ -41,9 +41,7 @@ $effect(() => {
 });
 
 $effect(() => {
-  // Re-load when channel changes (tracked by reading `channel`)
-  void channel;
-  load(0);
+  load(channel, 0);
 });
 
 function formatTime(dateStr: string): string {
@@ -99,7 +97,7 @@ function formatTime(dateStr: string): string {
     {#if hasMore}
       <div class="load-more">
         <button
-          onclick={() => load(messages.length)}
+          onclick={() => load(channel, messages.length)}
           disabled={loading}
           class="load-more-btn"
           style:opacity={loading ? 0.5 : 1}

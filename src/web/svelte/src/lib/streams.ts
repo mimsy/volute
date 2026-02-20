@@ -54,10 +54,8 @@ export async function sendChat(
   message: string,
   conversationId?: string,
   images?: Array<{ media_type: string; data: string }>,
-  mindName?: string,
 ): Promise<{ conversationId: string }> {
-  const targetName = mindName || name;
-  const res = await fetch(`/api/minds/${targetName}/chat`, {
+  const res = await fetch(`/api/minds/${name}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

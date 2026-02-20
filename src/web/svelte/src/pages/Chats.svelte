@@ -10,6 +10,7 @@ import {
   type Mind,
   type Participant,
 } from "../lib/api";
+import { getConversationLabel } from "../lib/format";
 
 let {
   conversationId: initialId,
@@ -113,18 +114,6 @@ function handleGroupCreated(conv: Conversation) {
   activeId = conv.id;
 }
 
-function getConversationLabel(conv: ConversationWithParticipants): string {
-  const participants = conv.participants ?? [];
-  if (participants.length === 2) {
-    const other = participants.find((p) => p.username !== username);
-    if (other) return `@${other.username}`;
-  }
-  if (conv.title) return conv.title;
-  const mindParticipants = participants.filter((p) => p.userType === "mind");
-  if (mindParticipants.length > 0) return mindParticipants.map((a) => a.username).join(", ");
-  return "Untitled";
-}
-
 function getParticipantBadges(conv: ConversationWithParticipants): Participant[] {
   return conv.participants?.filter((p) => p.userType === "mind") ?? [];
 }
@@ -153,7 +142,7 @@ let chatMind = $derived(minds.find((m) => m.name === chatMindName));
         >
           <div class="conv-item-header">
             <div class="conv-item-label" class:active={conv.id === activeId}>
-              <span class="conv-label-text">{getConversationLabel(conv)}</span>
+              <span class="conv-label-text">{getConversationLabel(conv.participants ?? [], conv.title, username)}</span>
               {#if isSeed}
                 <span class="seed-tag">seed</span>
               {/if}

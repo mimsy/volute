@@ -43,13 +43,12 @@ let systemName = $state<string | null>(null);
 let userMenuOpen = $state(false);
 
 $effect(() => {
-  fetchMe().then((u) => {
+  fetchMe().then(async (u) => {
     user = u;
     authChecked = true;
     if (u) {
-      fetchSystemInfo().then((info) => {
-        systemName = info.system;
-      });
+      const info = await fetchSystemInfo();
+      systemName = info.system;
     }
   });
 });
@@ -83,19 +82,19 @@ async function handleLogout() {
   user = null;
 }
 
-function handleAuth(u: AuthUser) {
+async function handleAuth(u: AuthUser) {
   user = u;
-  fetchSystemInfo().then((info) => {
-    systemName = info.system;
-  });
+  const info = await fetchSystemInfo();
+  systemName = info.system;
 }
 
 const breadcrumbLabel: Record<string, string> = {
-  mind: "",
   minds: "minds",
   chats: "chat",
   logs: "system logs",
 };
+
+let breadcrumb = $derived(route.page === "mind" ? route.name : breadcrumbLabel[route.page]);
 </script>
 
 {#if !authChecked}
@@ -118,15 +117,10 @@ const breadcrumbLabel: Record<string, string> = {
           <span class="system-name"> &middot; {systemName}</span>
         {/if}
       </a>
-      {#if route.page === "mind" && route.name}
+      {#if breadcrumb}
         <nav class="breadcrumb">
           <span class="breadcrumb-sep">/</span>
-          <span class="breadcrumb-name">{route.name}</span>
-        </nav>
-      {:else if breadcrumbLabel[route.page]}
-        <nav class="breadcrumb">
-          <span class="breadcrumb-sep">/</span>
-          <span class="breadcrumb-name">{breadcrumbLabel[route.page]}</span>
+          <span class="breadcrumb-name">{breadcrumb}</span>
         </nav>
       {/if}
       <div class="header-right">

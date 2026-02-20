@@ -53,9 +53,6 @@ function handleSeedCreated(mindName: string) {
       <span class="or">or</span>
       <button class="seed-btn" onclick={() => showSeedModal = true}>plant a seed</button>
     </div>
-    {#if showSeedModal}
-      <SeedModal onClose={() => showSeedModal = false} onCreated={handleSeedCreated} />
-    {/if}
   </div>
 {:else}
   <div class="toolbar">
@@ -68,9 +65,10 @@ function handleSeedCreated(mindName: string) {
       </div>
     {/each}
   </div>
-  {#if showSeedModal}
-    <SeedModal onClose={() => showSeedModal = false} onCreated={handleSeedCreated} />
-  {/if}
+{/if}
+
+{#if showSeedModal}
+  <SeedModal onClose={() => showSeedModal = false} onCreated={handleSeedCreated} />
 {/if}
 
 <style>

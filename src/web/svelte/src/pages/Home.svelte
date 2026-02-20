@@ -10,7 +10,7 @@ import {
   type Participant,
   type RecentPage,
 } from "../lib/api";
-import { formatRelativeTime } from "../lib/format";
+import { formatRelativeTime, getConversationLabel } from "../lib/format";
 
 let { username }: { username: string } = $props();
 
@@ -62,18 +62,6 @@ let recentConversations = $derived(
     .slice(0, 5),
 );
 
-function getConversationLabel(conv: ConversationWithDetails): string {
-  const participants = conv.participants ?? [];
-  if (participants.length === 2) {
-    const other = participants.find((p) => p.username !== username);
-    if (other) return `@${other.username}`;
-  }
-  if (conv.title) return conv.title;
-  const mindParticipants = participants.filter((p) => p.userType === "mind");
-  if (mindParticipants.length > 0) return mindParticipants.map((a) => a.username).join(", ");
-  return "Untitled";
-}
-
 function getDisplayStatus(mind: Mind): string {
   if (mind.status !== "running") return mind.status;
   if (!mind.lastActiveAt) return "running";
@@ -96,6 +84,7 @@ function getDisplayStatus(mind: Mind): string {
     {:else}
       <div class="mind-row">
         {#each sortedMinds as mind}
+          {@const connectedChannels = mind.channels.filter(ch => ch.name !== "web" && ch.name !== "volute" && ch.status === "connected")}
           <a href={`/mind/${mind.name}`} class="home-mind-card">
             <div class="mind-card-header">
               <span class="mind-name">{mind.name}</span>
@@ -104,9 +93,9 @@ function getDisplayStatus(mind: Mind): string {
                 <span class="seed-tag">seed</span>
               {/if}
             </div>
-            {#if mind.channels.filter(ch => ch.name !== "web" && ch.name !== "volute" && ch.status === "connected").length > 0}
+            {#if connectedChannels.length > 0}
               <div class="channel-row">
-                {#each mind.channels.filter(ch => ch.name !== "web" && ch.name !== "volute" && ch.status === "connected") as ch}
+                {#each connectedChannels as ch}
                   <span class="channel-chip">{ch.displayName || ch.name}</span>
                 {/each}
               </div>
@@ -129,7 +118,7 @@ function getDisplayStatus(mind: Mind): string {
       </div>
       <div class="conv-list">
         {#each recentConversations as conv}
-          {@const label = getConversationLabel(conv)}
+          {@const label = getConversationLabel(conv.participants ?? [], conv.title, username)}
           {@const isSeed = minds.find(a => a.name === conv.mind_name)?.stage === "seed"}
           {@const msg = conv.lastMessage}
           <a href={`/chats/${conv.id}`} class="conv-card">
