@@ -1,25 +1,20 @@
 <script lang="ts">
 import {
   fetchMindSkills,
-  fetchSharedSkills,
-  installMindSkill,
   type MindSkillInfo,
   publishMindSkill,
-  type SharedSkill,
   uninstallMindSkill,
   updateMindSkill,
-  uploadSkillZip,
 } from "../lib/api";
+import AddSkillModal from "./AddSkillModal.svelte";
 
 let { name }: { name: string } = $props();
 
 let mindSkills = $state<MindSkillInfo[]>([]);
-let sharedSkills = $state<SharedSkill[]>([]);
 let error = $state("");
 let loading = $state(true);
-let showShared = $state(false);
 let actionLoading = $state<string | null>(null);
-let sharedLoading = $state(false);
+let showAddModal = $state(false);
 
 function refresh() {
   fetchMindSkills(name)
@@ -38,34 +33,7 @@ $effect(() => {
   refresh();
 });
 
-async function loadShared() {
-  sharedLoading = true;
-  try {
-    sharedSkills = await fetchSharedSkills();
-    showShared = true;
-  } catch {
-    error = "Failed to load shared skills";
-  }
-  sharedLoading = false;
-}
-
 let installedIds = $derived(new Set(mindSkills.map((s) => s.id)));
-
-async function handleInstall(skillId: string) {
-  actionLoading = skillId;
-  error = "";
-  try {
-    await installMindSkill(name, skillId);
-    refresh();
-    // Refresh shared list separately — don't fail the install on this
-    try {
-      sharedSkills = await fetchSharedSkills();
-    } catch {}
-  } catch (e) {
-    error = e instanceof Error ? e.message : "Failed to install";
-  }
-  actionLoading = null;
-}
 
 async function handleUpdate(skillId: string) {
   actionLoading = skillId;
@@ -105,23 +73,6 @@ async function handleUninstall(skillId: string) {
   }
   actionLoading = null;
 }
-
-let fileInput = $state<HTMLInputElement>(undefined!);
-
-async function handleUpload() {
-  const file = fileInput?.files?.[0];
-  if (!file) return;
-  actionLoading = "upload";
-  error = "";
-  try {
-    await uploadSkillZip(file);
-    sharedSkills = await fetchSharedSkills();
-    fileInput.value = "";
-  } catch (e) {
-    error = e instanceof Error ? e.message : "Failed to upload";
-  }
-  actionLoading = null;
-}
 </script>
 
 {#if loading}
@@ -131,15 +82,10 @@ async function handleUpload() {
     <div class="error">{error}</div>
   {/if}
 
-  <!-- Installed Skills -->
   <div class="section-header">
     <span class="section-title">Installed</span>
-    <button
-      class="browse-btn"
-      onclick={loadShared}
-      disabled={sharedLoading}
-    >
-      {sharedLoading ? "Loading..." : showShared ? "Refresh" : "Browse shared"}
+    <button class="add-btn" onclick={() => (showAddModal = true)}>
+      Add skill
     </button>
   </div>
 
@@ -197,62 +143,15 @@ async function handleUpload() {
       {/each}
     </div>
   {/if}
+{/if}
 
-  <!-- Shared Skills Browser -->
-  {#if showShared}
-    <div class="section-header shared-header">
-      <span class="section-title">Shared Skills</span>
-      <div class="upload-area">
-        <input
-          type="file"
-          accept=".zip"
-          bind:this={fileInput}
-          onchange={handleUpload}
-          class="file-input"
-        />
-        <button
-          class="upload-btn"
-          onclick={() => fileInput.click()}
-          disabled={actionLoading !== null}
-        >
-          {actionLoading === "upload" ? "Uploading..." : "Upload .zip"}
-        </button>
-      </div>
-    </div>
-
-    {#if sharedSkills.length === 0}
-      <div class="empty">No shared skills available.</div>
-    {:else}
-      <div class="skill-list">
-        {#each sharedSkills as skill (skill.id)}
-          <div class="skill-row">
-            <div class="skill-info">
-              <div class="skill-name">{skill.name}</div>
-              {#if skill.description}
-                <div class="skill-desc">{skill.description}</div>
-              {/if}
-              <div class="skill-meta">
-                {skill.id} &middot; v{skill.version} &middot; by {skill.author}
-              </div>
-            </div>
-            <div class="skill-actions">
-              {#if installedIds.has(skill.id)}
-                <span class="installed-tag">installed</span>
-              {:else}
-                <button
-                  class="action-btn install-btn"
-                  onclick={() => handleInstall(skill.id)}
-                  disabled={actionLoading !== null}
-                >
-                  {actionLoading === skill.id ? "..." : "Install"}
-                </button>
-              {/if}
-            </div>
-          </div>
-        {/each}
-      </div>
-    {/if}
-  {/if}
+{#if showAddModal}
+  <AddSkillModal
+    {name}
+    {installedIds}
+    onClose={() => (showAddModal = false)}
+    onInstalled={refresh}
+  />
 {/if}
 
 <style>
@@ -276,12 +175,6 @@ async function handleUpload() {
     padding: 8px 12px;
   }
 
-  .shared-header {
-    margin-top: 16px;
-    border-top: 1px solid var(--border);
-    padding-top: 16px;
-  }
-
   .section-title {
     font-size: 11px;
     font-weight: 600;
@@ -290,17 +183,13 @@ async function handleUpload() {
     color: var(--text-2);
   }
 
-  .browse-btn {
+  .add-btn {
     padding: 4px 12px;
     font-size: 11px;
     border-radius: var(--radius);
     background: var(--accent-dim);
     color: var(--accent);
     font-weight: 500;
-  }
-
-  .browse-btn:disabled {
-    opacity: 0.5;
   }
 
   .skill-list {
@@ -372,12 +261,6 @@ async function handleUpload() {
     color: var(--text-2);
   }
 
-  .installed-tag {
-    font-size: 11px;
-    color: var(--text-2);
-    font-style: italic;
-  }
-
   .skill-actions {
     display: flex;
     gap: 4px;
@@ -395,7 +278,6 @@ async function handleUpload() {
     opacity: 0.5;
   }
 
-  .install-btn,
   .update-btn {
     background: var(--accent-dim);
     color: var(--accent);
@@ -413,28 +295,5 @@ async function handleUpload() {
 
   .remove-btn:hover {
     color: var(--red);
-  }
-
-  .upload-area {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .file-input {
-    display: none;
-  }
-
-  .upload-btn {
-    padding: 4px 12px;
-    font-size: 11px;
-    border-radius: var(--radius);
-    background: var(--bg-3);
-    color: var(--text-1);
-    font-weight: 500;
-  }
-
-  .upload-btn:disabled {
-    opacity: 0.5;
   }
 </style>
