@@ -140,7 +140,7 @@ function formatArgs(args: unknown): string {
     position: absolute;
     left: -2px;
     top: 12px;
-    bottom: 0;
+    bottom: -12px;
     width: 2px;
     background: var(--type-color);
     opacity: 0;
