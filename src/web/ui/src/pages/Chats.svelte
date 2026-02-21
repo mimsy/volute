@@ -1,4 +1,5 @@
 <script lang="ts">
+import ChannelBrowserModal from "../components/ChannelBrowserModal.svelte";
 import Chat from "../components/Chat.svelte";
 import GroupModal from "../components/GroupModal.svelte";
 import MindPickerModal from "../components/MindPickerModal.svelte";
@@ -28,11 +29,14 @@ let conversations = $state<ConversationWithParticipants[]>([]);
 let activeId = $state<string | null>(initialId ?? null);
 let showNewChat = $state(false);
 let showGroupModal = $state(false);
+let showChannelBrowser = $state(false);
 let newChatMind = $state<string | null>(initialMind ?? null);
 let minds = $state<Mind[]>([]);
 let error = $state("");
 
 let activeConv = $derived(conversations.find((c) => c.id === activeId));
+let channels = $derived(conversations.filter((c) => c.type === "channel"));
+let directMessages = $derived(conversations.filter((c) => c.type !== "channel"));
 
 $effect(() => {
   if (initialMind) newChatMind = initialMind;
@@ -122,12 +126,21 @@ function handleGroupCreated(conv: Conversation) {
   activeId = conv.id;
 }
 
+function handleChannelJoined(conv: Conversation) {
+  showChannelBrowser = false;
+  refresh();
+  activeId = conv.id;
+}
+
 function getParticipantBadges(conv: ConversationWithParticipants): Participant[] {
   return conv.participants?.filter((p) => p.userType === "mind") ?? [];
 }
 
-let chatMindName = $derived(newChatMind || activeConv?.mind_name || "");
-let chatMind = $derived(minds.find((m) => m.name === chatMindName));
+let chatMindName = $derived(
+  newChatMind || activeConv?.mind_name || (activeConv?.type === "channel" ? "" : ""),
+);
+let chatMind = $derived(chatMindName ? minds.find((m) => m.name === chatMindName) : undefined);
+let chatConvType = $derived(activeConv?.type ?? "dm");
 </script>
 
 <div class="chats">
@@ -138,7 +151,44 @@ let chatMind = $derived(minds.find((m) => m.name === chatMindName));
       <button class="group-btn" onclick={() => (showGroupModal = true)} title="New group">++</button>
     </div>
     <div class="conv-list">
-      {#each conversations as conv (conv.id)}
+      {#if channels.length > 0}
+        <div class="section-header">
+          <span>CHANNELS</span>
+          <button class="browse-btn" onclick={() => (showChannelBrowser = true)}>browse</button>
+        </div>
+        {#each channels as conv (conv.id)}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="conv-item"
+            class:active={conv.id === activeId}
+            onclick={() => handleSelect(conv)}
+            onkeydown={() => {}}
+          >
+            <div class="conv-item-header">
+              <div class="conv-item-label" class:active={conv.id === activeId}>
+                <span class="conv-label-text">{getConversationLabel(conv.participants ?? [], conv.title, username, conv)}</span>
+              </div>
+              <button
+                class="delete-btn"
+                class:visible={conv.id === activeId}
+                onclick={(e) => handleDelete(e, conv.id)}
+              >
+                x
+              </button>
+            </div>
+          </div>
+        {/each}
+      {:else}
+        <div class="section-header">
+          <span>CHANNELS</span>
+          <button class="browse-btn" onclick={() => (showChannelBrowser = true)}>browse</button>
+        </div>
+      {/if}
+
+      <div class="section-header">
+        <span>DIRECT MESSAGES</span>
+      </div>
+      {#each directMessages as conv (conv.id)}
         {@const badges = getParticipantBadges(conv)}
         {@const isSeed = minds.find((m) => m.name === conv.mind_name)?.stage === "seed"}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -150,7 +200,7 @@ let chatMind = $derived(minds.find((m) => m.name === chatMindName));
         >
           <div class="conv-item-header">
             <div class="conv-item-label" class:active={conv.id === activeId}>
-              <span class="conv-label-text">{getConversationLabel(conv.participants ?? [], conv.title, username)}</span>
+              <span class="conv-label-text">{getConversationLabel(conv.participants ?? [], conv.title, username, conv)}</span>
               {#if isSeed}
                 <span class="seed-tag">seed</span>
               {/if}
@@ -165,7 +215,7 @@ let chatMind = $derived(minds.find((m) => m.name === chatMindName));
           </div>
           {#if badges.length > 0}
             <div class="badge-row">
-              {#each badges as p}
+              {#each badges as p (p.username)}
                 <span class="mind-badge">{p.username}</span>
               {/each}
             </div>
@@ -174,7 +224,7 @@ let chatMind = $derived(minds.find((m) => m.name === chatMindName));
       {/each}
       {#if error}
         <div class="empty error">{error}</div>
-      {:else if conversations.length === 0}
+      {:else if directMessages.length === 0}
         <div class="empty">No conversations yet</div>
       {/if}
     </div>
@@ -182,13 +232,14 @@ let chatMind = $derived(minds.find((m) => m.name === chatMindName));
 
   <!-- Chat panel -->
   <div class="chat-panel">
-    {#if chatMindName}
+    {#if activeConv?.type === "channel" || chatMindName}
       <Chat
         name={chatMindName}
         {username}
         conversationId={activeId}
         onConversationId={handleConversationId}
         stage={chatMind?.stage}
+        convType={chatConvType}
       />
     {:else}
       <div class="no-chat">Select a conversation or start a new chat</div>
@@ -200,6 +251,12 @@ let chatMind = $derived(minds.find((m) => m.name === chatMindName));
   {/if}
   {#if showGroupModal}
     <GroupModal onClose={() => (showGroupModal = false)} onCreated={handleGroupCreated} />
+  {/if}
+  {#if showChannelBrowser}
+    <ChannelBrowserModal
+      onClose={() => (showChannelBrowser = false)}
+      onJoined={handleChannelJoined}
+    />
   {/if}
 </div>
 
@@ -242,6 +299,28 @@ let chatMind = $derived(minds.find((m) => m.name === chatMindName));
     border-radius: var(--radius);
     font-size: 12px;
     border: 1px solid var(--border);
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px 4px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-2);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .browse-btn {
+    font-size: 10px;
+    color: var(--accent);
+    background: none;
+    padding: 0;
+    text-transform: lowercase;
+    letter-spacing: 0;
+    font-weight: 500;
   }
 
   .conv-list {

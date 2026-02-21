@@ -15,6 +15,7 @@ export type RoutingRule = {
   sender?: string;
   isDM?: boolean; // match on isDM metadata
   participants?: number; // match on participant count (e.g. 2 = DM)
+  mode?: "all" | "mention"; // "mention" = only process if mind name appears in message
 };
 
 export type SessionConfig = {
@@ -41,6 +42,7 @@ export type ResolvedRoute =
       destination: "mind";
       session: string;
       matched: boolean;
+      mode?: "all" | "mention";
     }
   | { destination: "file"; path: string; matched: boolean };
 
@@ -75,7 +77,7 @@ function globMatch(pattern: string, value: string): boolean {
 }
 
 const GLOB_MATCH_KEYS = new Set(["channel", "sender"]);
-const NON_MATCH_KEYS = new Set(["session", "destination", "path"]);
+const NON_MATCH_KEYS = new Set(["session", "destination", "path", "mode"]);
 
 type MatchMeta = { channel?: string; sender?: string; isDM?: boolean; participantCount?: number };
 
@@ -135,6 +137,7 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
         destination: "mind",
         session: sanitizeSessionName(expandTemplate(rule.session ?? fallback, meta)),
         matched: true,
+        mode: rule.mode,
       };
     }
   }

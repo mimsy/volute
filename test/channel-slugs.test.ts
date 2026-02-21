@@ -123,6 +123,44 @@ describe("buildVoluteSlug", () => {
     });
     assert.equal(slug, "volute:conv-empty");
   });
+
+  it("uses #channel-name slug for channel conversations", () => {
+    const slug = buildVoluteSlug({
+      participants: [{ username: "bot" }, { username: "alice" }],
+      mindUsername: "bot",
+      convTitle: "general",
+      conversationId: "conv-ch1",
+      convType: "channel",
+      convName: "general",
+    });
+    assert.equal(slug, "volute:#general");
+  });
+
+  it("falls through to DM/group logic when channel has no name", () => {
+    const slug = buildVoluteSlug({
+      participants: [{ username: "bot" }, { username: "alice" }],
+      mindUsername: "bot",
+      convTitle: null,
+      conversationId: "conv-ch2",
+      convType: "channel",
+      convName: undefined,
+    });
+    // No convName → falls through, 2 participants → DM slug
+    assert.equal(slug, "volute:@alice");
+  });
+
+  it("does NOT use channel path for DM even when convName is set", () => {
+    const slug = buildVoluteSlug({
+      participants: [{ username: "bot" }, { username: "alice" }],
+      mindUsername: "bot",
+      convTitle: null,
+      conversationId: "conv-ch3",
+      convType: "dm",
+      convName: "general",
+    });
+    // convType is "dm", not "channel" → should use DM slug
+    assert.equal(slug, "volute:@alice");
+  });
 });
 
 describe("buildChannelSlug", () => {

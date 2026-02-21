@@ -18,7 +18,8 @@ import system from "./api/system.js";
 import typing from "./api/typing.js";
 import update from "./api/update.js";
 import variants from "./api/variants.js";
-import chat from "./api/volute/chat.js";
+import voluteChannels from "./api/volute/channels.js";
+import chat, { unifiedChatApp } from "./api/volute/chat.js";
 import conversations from "./api/volute/conversations.js";
 import userConversations from "./api/volute/user-conversations.js";
 import { authMiddleware } from "./middleware/auth.js";
@@ -83,6 +84,7 @@ app.use("/api/*", csrf());
 // Protected API routes
 app.use("/api/minds/*", authMiddleware);
 app.use("/api/conversations/*", authMiddleware);
+app.use("/api/volute/*", authMiddleware);
 app.use("/api/system/*", authMiddleware);
 app.use("/api/env/*", authMiddleware);
 app.use("/api/prompts/*", authMiddleware);
@@ -108,7 +110,9 @@ const routes = app
   .route("/api/minds", conversations)
   .route("/api/env", sharedEnvApp)
   .route("/api/prompts", prompts)
-  .route("/api/conversations", userConversations);
+  .route("/api/conversations", userConversations)
+  .route("/api/volute/channels", voluteChannels)
+  .route("/api/volute", unifiedChatApp);
 
 export default app;
 export type AppType = typeof routes;

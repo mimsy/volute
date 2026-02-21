@@ -6,12 +6,17 @@ import {
   addMessage,
   addParticipant,
   type ContentBlock,
+  createChannel,
   createConversation,
   deleteConversation,
   findDMConversation,
+  getChannelByName,
   getMessages,
   getParticipants,
   isParticipant,
+  joinChannel,
+  leaveChannel,
+  listChannels,
   listConversationsForUser,
   removeParticipant,
 } from "../src/lib/conversations.js";
@@ -267,6 +272,140 @@ describe("conversation participants", () => {
     } finally {
       await db.delete(users).where(eq(users.id, user1.id));
       await db.delete(users).where(eq(users.id, user2.id));
+      await db.delete(users).where(eq(users.id, mindUser.id));
+    }
+  });
+});
+
+describe("channels", () => {
+  it("creates a channel with type and name", async () => {
+    const db = await getDb();
+    const [user] = await db
+      .insert(users)
+      .values({ username: "ch-creator", password_hash: "!test", role: "user" })
+      .returning({ id: users.id });
+
+    try {
+      const ch = await createChannel("general", user.id);
+      assert.equal(ch.type, "channel");
+      assert.equal(ch.name, "general");
+      assert.equal(ch.mind_name, null);
+      assert.equal(ch.channel, "volute");
+
+      // Creator is a participant
+      const parts = await getParticipants(ch.id);
+      assert.equal(parts.length, 1);
+      assert.equal(parts[0].username, "ch-creator");
+      assert.equal(parts[0].role, "owner");
+
+      await deleteConversation(ch.id);
+    } finally {
+      await db.delete(users).where(eq(users.id, user.id));
+    }
+  });
+
+  it("getChannelByName finds channel", async () => {
+    const ch = await createChannel("dev");
+    try {
+      const found = await getChannelByName("dev");
+      assert.ok(found);
+      assert.equal(found!.id, ch.id);
+      assert.equal(found!.type, "channel");
+    } finally {
+      await deleteConversation(ch.id);
+    }
+  });
+
+  it("getChannelByName returns null for nonexistent", async () => {
+    const found = await getChannelByName("nonexistent-ch");
+    assert.equal(found, null);
+  });
+
+  it("listChannels returns only channels", async () => {
+    const ch1 = await createChannel("alpha");
+    const ch2 = await createChannel("beta");
+    const dm = await createConversation("test-mind", "volute");
+    try {
+      const channels = await listChannels();
+      const names = channels.map((c) => c.name);
+      assert.ok(names.includes("alpha"));
+      assert.ok(names.includes("beta"));
+      // DM should not appear
+      assert.ok(!channels.some((c) => c.id === dm.id));
+    } finally {
+      await deleteConversation(ch1.id);
+      await deleteConversation(ch2.id);
+      await deleteConversation(dm.id);
+    }
+  });
+
+  it("joinChannel is idempotent", async () => {
+    const db = await getDb();
+    const [user] = await db
+      .insert(users)
+      .values({ username: "ch-joiner", password_hash: "!test", role: "user" })
+      .returning({ id: users.id });
+
+    try {
+      const ch = await createChannel("join-test");
+      await joinChannel(ch.id, user.id);
+      await joinChannel(ch.id, user.id); // second call should not throw
+      const parts = await getParticipants(ch.id);
+      assert.equal(parts.filter((p) => p.userId === user.id).length, 1);
+      await deleteConversation(ch.id);
+    } finally {
+      await db.delete(users).where(eq(users.id, user.id));
+    }
+  });
+
+  it("leaveChannel removes participant", async () => {
+    const db = await getDb();
+    const [user] = await db
+      .insert(users)
+      .values({ username: "ch-leaver", password_hash: "!test", role: "user" })
+      .returning({ id: users.id });
+
+    try {
+      const ch = await createChannel("leave-test", user.id);
+      assert.equal(await isParticipant(ch.id, user.id), true);
+      await leaveChannel(ch.id, user.id);
+      assert.equal(await isParticipant(ch.id, user.id), false);
+      await deleteConversation(ch.id);
+    } finally {
+      await db.delete(users).where(eq(users.id, user.id));
+    }
+  });
+
+  it("channel name must be unique", async () => {
+    const ch = await createChannel("unique-ch");
+    try {
+      await assert.rejects(() => createChannel("unique-ch"));
+    } finally {
+      await deleteConversation(ch.id);
+    }
+  });
+
+  it("findDMConversation does not match channels", async () => {
+    const db = await getDb();
+    const mindUser = await getOrCreateMindUser("ch-dm-mind");
+    const [human] = await db
+      .insert(users)
+      .values({ username: "ch-dm-human", password_hash: "!test", role: "user" })
+      .returning({ id: users.id });
+
+    try {
+      // Create a channel with both as participants
+      const ch = await createChannel("dm-test-ch");
+      await joinChannel(ch.id, mindUser.id);
+      await joinChannel(ch.id, human.id);
+
+      // findDMConversation should not find it
+      const found = await findDMConversation("ch-dm-mind", [human.id, mindUser.id]);
+      assert.equal(found, null);
+
+      await deleteConversation(ch.id);
+    } finally {
+      await db.delete(users).where(eq(users.id, human.id));
       await db.delete(users).where(eq(users.id, mindUser.id));
     }
   });

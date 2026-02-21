@@ -306,6 +306,21 @@ export function createRouter(options: {
       return { messageId, unsubscribe: noop };
     }
 
+    // Mention-mode filtering: skip messages that don't mention this mind
+    if (resolved.destination === "mind" && resolved.mode === "mention") {
+      const mindName = process.env.VOLUTE_MIND;
+      if (mindName) {
+        const escaped = mindName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const pattern = new RegExp(`\\b${escaped}\\b`, "i");
+        if (!pattern.test(text)) {
+          queueMicrotask(() => safeListener({ type: "done", messageId }));
+          return { messageId, unsubscribe: noop };
+        }
+      } else {
+        log("router", "VOLUTE_MIND not set — mention filtering disabled");
+      }
+    }
+
     // File destination
     if (resolved.destination === "file") {
       if (options.fileHandler) {

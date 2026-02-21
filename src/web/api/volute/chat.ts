@@ -241,4 +241,111 @@ const app = new Hono<AuthEnv>()
     });
   });
 
+const unifiedChatSchema = z.object({
+  message: z.string().optional(),
+  conversationId: z.string(),
+  images: z.array(z.object({ media_type: z.string(), data: z.string() })).optional(),
+});
+
+export const unifiedChatApp = new Hono<AuthEnv>().post(
+  "/chat",
+  zValidator("json", unifiedChatSchema),
+  async (c) => {
+    const user = c.get("user");
+    const body = c.req.valid("json");
+    if (!body.message && (!body.images || body.images.length === 0)) {
+      return c.json({ error: "message or images required" }, 400);
+    }
+
+    const conv = await getConversation(body.conversationId);
+    if (!conv) return c.json({ error: "Conversation not found" }, 404);
+
+    if (user.id !== 0 && !(await isParticipantOrOwner(body.conversationId, user.id))) {
+      return c.json({ error: "Conversation not found" }, 404);
+    }
+
+    const senderName = user.username;
+
+    // Build content blocks
+    const contentBlocks: ContentBlock[] = [];
+    if (body.message) contentBlocks.push({ type: "text", text: body.message });
+    if (body.images) {
+      for (const img of body.images) {
+        contentBlocks.push({ type: "image", media_type: img.media_type, data: img.data });
+      }
+    }
+
+    await addMessage(body.conversationId, "user", senderName, contentBlocks);
+
+    // Fan out to running mind participants
+    const participants = await getParticipants(body.conversationId);
+    const mindParticipants = participants.filter((p) => p.userType === "mind");
+    const participantNames = participants.map((p) => p.username);
+
+    const { getMindManager } = await import("../../../lib/mind-manager.js");
+    const manager = getMindManager();
+    const runningMinds = mindParticipants
+      .map((ap) => (manager.isRunning(ap.username) ? ap.username : null))
+      .filter((n): n is string => n !== null && n !== senderName);
+
+    const isDM = conv.type === "dm" && participants.length === 2;
+    const channelEntry = {
+      platformId: body.conversationId,
+      platform: "volute",
+      name: conv.title ?? undefined,
+      type: (conv.type === "channel" ? "group" : isDM ? "dm" : "group") as "dm" | "group",
+    };
+    for (const ap of mindParticipants) {
+      const slug = buildVoluteSlug({
+        participants,
+        mindUsername: ap.username,
+        convTitle: conv.title,
+        conversationId: conv.id,
+        convType: conv.type,
+        convName: conv.name,
+      });
+      try {
+        writeChannelEntry(ap.username, slug, channelEntry);
+      } catch (err) {
+        console.warn(`[chat] failed to write channel entry for ${ap.username}:`, err);
+      }
+    }
+
+    for (const mindName of runningMinds) {
+      const channel = buildVoluteSlug({
+        participants,
+        mindUsername: mindName,
+        convTitle: conv.title,
+        conversationId: body.conversationId,
+        convType: conv.type,
+        convName: conv.name,
+      });
+      const typingMap = getTypingMap();
+      const currentlyTyping = typingMap.get(channel);
+      const payload = JSON.stringify({
+        content: contentBlocks,
+        channel,
+        conversationId: body.conversationId,
+        sender: senderName,
+        participants: participantNames,
+        participantCount: participants.length,
+        isDM,
+        ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
+      });
+      daemonFetchInternal(`/api/minds/${encodeURIComponent(mindName)}/message`, payload)
+        .then(async (res) => {
+          if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            console.error(`[chat] mind ${mindName} responded ${res.status}: ${text}`);
+          }
+        })
+        .catch((err) => {
+          console.error(`[chat] mind ${mindName} unreachable via daemon:`, err);
+        });
+    }
+
+    return c.json({ ok: true, conversationId: body.conversationId });
+  },
+);
+
 export default app;

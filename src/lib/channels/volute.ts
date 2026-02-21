@@ -120,6 +120,8 @@ export async function listConversations(
   const convs = (await res.json()) as {
     id: string;
     title: string | null;
+    type?: string;
+    name?: string | null;
     participants?: { userId: number }[];
   }[];
 
@@ -140,18 +142,21 @@ export async function listConversations(
     } catch (err) {
       console.error(`[volute] failed to fetch participants for ${conv.id}:`, err);
     }
-    const isDM = participants.length === 2;
     const slug = buildVoluteSlug({
       participants,
       mindUsername: mindName,
       convTitle: conv.title,
       conversationId: conv.id,
+      convType: conv.type as "dm" | "group" | "channel" | undefined,
+      convName: conv.name,
     });
+    const convType =
+      conv.type === "channel" ? "channel" : participants.length === 2 ? "dm" : "group";
     results.push({
       id: slug,
       platformId: conv.id,
-      name: conv.title ?? "(untitled)",
-      type: isDM ? "dm" : "group",
+      name: conv.type === "channel" ? `#${conv.name}` : (conv.title ?? "(untitled)"),
+      type: convType,
       participantCount: participants.length,
     });
   }

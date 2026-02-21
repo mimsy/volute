@@ -1,7 +1,9 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { getOrCreateMindUser, getUserByUsername } from "../../../lib/auth.js";
+import { subscribe } from "../../../lib/conversation-events.js";
 import {
   createConversation,
   deleteConversationForUser,
@@ -69,6 +71,35 @@ const app = new Hono<AuthEnv>()
     });
 
     return c.json(conv, 201);
+  })
+  .get("/:id/events", async (c) => {
+    const conversationId = c.req.param("id");
+    const user = c.get("user");
+    if (user.id !== 0 && !(await isParticipantOrOwner(conversationId, user.id))) {
+      return c.json({ error: "Conversation not found" }, 404);
+    }
+
+    return streamSSE(c, async (stream) => {
+      const unsubscribe = subscribe(conversationId, (event) => {
+        stream.writeSSE({ data: JSON.stringify(event) }).catch((err) => {
+          if (!stream.aborted) console.error("[chat] SSE write error:", err);
+        });
+      });
+
+      const keepAlive = setInterval(() => {
+        stream.writeSSE({ data: "" }).catch((err) => {
+          if (!stream.aborted) console.error("[chat] SSE ping error:", err);
+        });
+      }, 15000);
+
+      await new Promise<void>((resolve) => {
+        stream.onAbort(() => {
+          unsubscribe();
+          clearInterval(keepAlive);
+          resolve();
+        });
+      });
+    });
   })
   .delete("/:id", async (c) => {
     const id = c.req.param("id");

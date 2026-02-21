@@ -14,8 +14,10 @@ export const conversations = sqliteTable(
   "conversations",
   {
     id: text("id").primaryKey(),
-    mind_name: text("mind_name").notNull(),
+    mind_name: text("mind_name"),
     channel: text("channel").notNull(),
+    type: text("type").notNull().default("dm"),
+    name: text("name"),
     user_id: integer("user_id").references(() => users.id),
     title: text("title"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
@@ -25,6 +27,7 @@ export const conversations = sqliteTable(
     index("idx_conversations_mind_name").on(table.mind_name),
     index("idx_conversations_user_id").on(table.user_id),
     index("idx_conversations_updated_at").on(table.updated_at),
+    uniqueIndex("idx_conversations_name").on(table.name),
   ],
 );
 
