@@ -359,7 +359,7 @@ function handleResizeEnd() {
   </div>
 
   {#if showNewChat}
-    <MindPickerModal onClose={() => (showNewChat = false)} onPick={handleNewChatCreated} onGroupCreated={handleNewGroupCreated} />
+    <MindPickerModal {minds} onClose={() => (showNewChat = false)} onPick={handleNewChatCreated} onGroupCreated={handleNewGroupCreated} />
   {/if}
   {#if showChannelBrowser}
     <ChannelBrowserModal

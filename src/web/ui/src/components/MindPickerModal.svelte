@@ -4,24 +4,31 @@ import {
   type Conversation,
   createConversationWithParticipants,
   fetchAvailableUsers,
+  type Mind,
 } from "../lib/api";
+import { getDisplayStatus } from "../lib/format";
 
 let {
+  minds,
   onClose,
   onPick,
   onGroupCreated,
 }: {
+  minds: Mind[];
   onClose: () => void;
   onPick: (name: string) => void;
   onGroupCreated: (conv: Conversation) => void;
 } = $props();
 
 let users = $state<AvailableUser[]>([]);
-let selected = $state<Set<string>>(new Set());
+let selected = $state<string[]>([]);
+let query = $state("");
 let title = $state("");
 let loading = $state(true);
 let creating = $state(false);
 let error = $state("");
+let inputEl = $state<HTMLInputElement | null>(null);
+let dropdownOpen = $state(false);
 
 $effect(() => {
   fetchAvailableUsers()
@@ -35,22 +42,61 @@ $effect(() => {
     });
 });
 
-function toggle(username: string) {
-  const next = new Set(selected);
-  if (next.has(username)) next.delete(username);
-  else next.add(username);
-  selected = next;
+let filtered = $derived(
+  users.filter(
+    (u) => !selected.includes(u.username) && u.username.toLowerCase().includes(query.toLowerCase()),
+  ),
+);
+
+function addUser(username: string) {
+  if (!selected.includes(username)) {
+    selected = [...selected, username];
+  }
+  query = "";
+  inputEl?.focus();
 }
 
-let hasMind = $derived(users.some((u) => u.user_type === "mind" && selected.has(u.username)));
+function removeUser(username: string) {
+  selected = selected.filter((s) => s !== username);
+  inputEl?.focus();
+}
+
+function handleKeydown(e: KeyboardEvent) {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    if (filtered.length > 0) {
+      addUser(filtered[0].username);
+    }
+  } else if (e.key === "Escape") {
+    if (query) {
+      query = "";
+    } else {
+      onClose();
+    }
+  } else if (e.key === "Backspace" && !query && selected.length > 0) {
+    selected = selected.slice(0, -1);
+  }
+}
+
+function mindForUser(username: string): Mind | undefined {
+  return minds.find((m) => m.name === username);
+}
+
+function dotColor(mind: Mind): string {
+  const s = getDisplayStatus(mind);
+  if (s === "running" || s === "active") return "var(--accent)";
+  if (s === "starting") return "var(--yellow)";
+  return "var(--text-2)";
+}
+
+let hasMind = $derived(users.some((u) => u.user_type === "mind" && selected.includes(u.username)));
 
 async function handleCreate() {
-  if (selected.size === 0) return;
-  if (selected.size === 1) {
-    onPick([...selected][0]);
+  if (selected.length === 0) return;
+  if (selected.length === 1) {
+    onPick(selected[0]);
     return;
   }
-  // Group: need at least one mind
   if (!hasMind) {
     error = "Select at least one mind";
     return;
@@ -58,7 +104,7 @@ async function handleCreate() {
   creating = true;
   error = "";
   try {
-    const conv = await createConversationWithParticipants([...selected], title || undefined);
+    const conv = await createConversationWithParticipants(selected, title || undefined);
     onGroupCreated(conv);
   } catch (e) {
     error = e instanceof Error ? e.message : "Failed to create";
@@ -67,15 +113,17 @@ async function handleCreate() {
 }
 
 let buttonLabel = $derived(
-  selected.size === 0
+  selected.length === 0
     ? "Select a user"
-    : selected.size === 1
+    : selected.length === 1
       ? "Chat"
       : creating
         ? "Creating..."
         : "Create group",
 );
-let buttonDisabled = $derived(selected.size === 0 || creating || (selected.size > 1 && !hasMind));
+let buttonDisabled = $derived(
+  selected.length === 0 || creating || (selected.length > 1 && !hasMind),
+);
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -84,7 +132,7 @@ let buttonDisabled = $derived(selected.size === 0 || creating || (selected.size 
   <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
     <div class="modal-title">New conversation</div>
 
-    {#if selected.size > 1}
+    {#if selected.length > 1}
       <input
         bind:value={title}
         placeholder="Title (optional)"
@@ -97,22 +145,67 @@ let buttonDisabled = $derived(selected.size === 0 || creating || (selected.size 
     {:else if error && users.length === 0}
       <div class="error">{error}</div>
     {:else}
-      <div class="user-list">
-        {#each users as u}
-          <label class="user-row">
-            <input
-              type="checkbox"
-              checked={selected.has(u.username)}
-              onchange={() => toggle(u.username)}
-            />
-            <span class="user-name">{u.username}</span>
-            {#if u.user_type === "mind"}
-              <span class="user-type mind">mind</span>
-            {/if}
-          </label>
-        {/each}
-        {#if users.length === 0}
-          <div class="hint">No users found</div>
+      <div class="tag-input-wrapper">
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="tag-input"
+          onclick={() => inputEl?.focus()}
+          onkeydown={() => {}}
+        >
+          {#each selected as username}
+            {@const mind = mindForUser(username)}
+            <span class="tag">
+              {#if mind}
+                <span
+                  class="dot"
+                  style:background={dotColor(mind)}
+                  style:box-shadow={dotColor(mind) !== "var(--text-2)" ? `0 0 4px ${dotColor(mind)}` : "none"}
+                ></span>
+              {/if}
+              <span class="tag-name">{username}</span>
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <span
+                class="tag-remove"
+                onclick={(e) => { e.stopPropagation(); removeUser(username); }}
+                onkeydown={() => {}}
+              >&times;</span>
+            </span>
+          {/each}
+          <input
+            bind:this={inputEl}
+            bind:value={query}
+            placeholder={selected.length === 0 ? "Search users..." : ""}
+            class="tag-text-input"
+            onkeydown={handleKeydown}
+            onfocus={() => (dropdownOpen = true)}
+            onblur={() => setTimeout(() => (dropdownOpen = false), 150)}
+          />
+        </div>
+
+        {#if dropdownOpen && !loading && filtered.length > 0}
+          <div class="dropdown">
+            {#each filtered as u}
+              {@const mind = mindForUser(u.username)}
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                class="dropdown-item"
+                onmousedown={() => addUser(u.username)}
+                onkeydown={() => {}}
+              >
+                {#if mind}
+                  <span
+                    class="dot"
+                    style:background={dotColor(mind)}
+                    style:box-shadow={dotColor(mind) !== "var(--text-2)" ? `0 0 4px ${dotColor(mind)}` : "none"}
+                  ></span>
+                {/if}
+                <span class="item-name">{u.username}</span>
+                {#if u.user_type === "mind"}
+                  <span class="item-badge">mind</span>
+                {/if}
+              </div>
+            {/each}
+          </div>
         {/if}
       </div>
     {/if}
@@ -186,35 +279,116 @@ let buttonDisabled = $derived(selected.size === 0 || creating || (selected.size 
     font-size: 11px;
   }
 
-  .user-list {
-    flex: 1;
-    overflow: auto;
-    max-height: 300px;
+  .tag-input-wrapper {
+    position: relative;
   }
 
-  .user-row {
+  .tag-input {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px 8px;
+    min-height: 32px;
+    cursor: text;
+  }
+
+  .tag-input:focus-within {
+    border-color: var(--accent);
+  }
+
+  .tag {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--bg-3);
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-size: 11px;
+    color: var(--text-0);
+    white-space: nowrap;
+  }
+
+  .tag-name {
+    line-height: 1;
+  }
+
+  .tag-remove {
+    cursor: pointer;
+    color: var(--text-2);
+    font-size: 13px;
+    line-height: 1;
+    margin-left: 2px;
+  }
+
+  .tag-remove:hover {
+    color: var(--text-0);
+  }
+
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .tag-text-input {
+    flex: 1;
+    min-width: 60px;
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--text-0);
+    font-size: 12px;
+    padding: 2px 0;
+    font-family: var(--mono);
+  }
+
+  .tag-text-input::placeholder {
+    color: var(--text-2);
+  }
+
+  .dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 4px;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    max-height: 200px;
+    overflow: auto;
+    z-index: 10;
+  }
+
+  .dropdown-item {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 4px;
+    padding: 6px 10px;
     cursor: pointer;
     font-size: 12px;
     color: var(--text-0);
   }
 
-  .user-name {
+  .dropdown-item:hover {
+    background: var(--bg-2);
+  }
+
+  .item-name {
+    flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  .user-type {
-    color: var(--text-2);
-    font-size: 10px;
-    margin-left: auto;
-  }
-
-  .user-type.mind {
+  .item-badge {
     color: var(--accent);
+    font-size: 10px;
+    flex-shrink: 0;
   }
 
   .actions {
