@@ -22,6 +22,8 @@ import conversations from "./api/volute/conversations.js";
 import userConversations from "./api/volute/user-conversations.js";
 import { authMiddleware } from "./middleware/auth.js";
 
+const httpLog = log.child("http");
+
 const app = new Hono();
 
 // Global error handler
@@ -29,10 +31,10 @@ app.onError((err, c) => {
   if (err instanceof HTTPException) {
     return err.getResponse();
   }
-  log.error("Unhandled error", {
+  log.error("unhandled error", {
     path: c.req.path,
     method: c.req.method,
-    error: err.message,
+    error: err.stack ?? err.message,
   });
   return c.json({ error: "Internal server error" }, 500);
 });
@@ -46,12 +48,12 @@ app.use("*", async (c, next) => {
   const start = Date.now();
   await next();
   const duration = Date.now() - start;
-  log.info("request", {
-    method: c.req.method,
-    path: c.req.path,
-    status: c.res.status,
-    duration,
-  });
+  const data = { method: c.req.method, path: c.req.path, status: c.res.status, duration };
+  if (c.res.status >= 400) {
+    httpLog.warn("request error", data);
+  } else {
+    httpLog.debug("request", data);
+  }
 });
 
 // Daemon health (unauthenticated)
@@ -62,7 +64,7 @@ app.get("/api/health", (c) => {
     version = getCurrentVersion();
     cached = checkForUpdateCached();
   } catch (err) {
-    log.error("Health check error", { error: (err as Error).message });
+    log.warn("health check error", { error: (err as Error).message });
   }
   return c.json({
     ok: true,

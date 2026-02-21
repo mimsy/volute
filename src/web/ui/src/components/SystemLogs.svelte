@@ -1,10 +1,12 @@
 <script lang="ts">
+import { SvelteSet } from "svelte/reactivity";
 import { createSystemLogStream } from "../lib/streams";
 
 type LogEntry = {
   level: string;
   msg: string;
   ts: string;
+  cat?: string;
   data?: Record<string, unknown>;
 };
 
@@ -12,12 +14,38 @@ const LEVEL_COLORS: Record<string, string> = {
   info: "var(--text-2)",
   warn: "var(--yellow)",
   error: "var(--red)",
+  debug: "var(--text-2)",
 };
 
 let entries = $state<LogEntry[]>([]);
 let autoScroll = $state(true);
 let error = $state("");
 let scrollEl: HTMLDivElement;
+
+let disabledLevels = new SvelteSet<string>();
+let disabledCategories = new SvelteSet<string>();
+let hasDebug = $derived(entries.some((e) => e.level === "debug"));
+let allCategories = $derived(
+  [...new Set(entries.map((e) => e.cat).filter((c): c is string => !!c))].sort(),
+);
+let filtersActive = $derived(disabledLevels.size > 0 || disabledCategories.size > 0);
+let filteredEntries = $derived(
+  filtersActive
+    ? entries.filter(
+        (e) => !disabledLevels.has(e.level) && (!e.cat || !disabledCategories.has(e.cat)),
+      )
+    : entries,
+);
+
+function toggle(set: SvelteSet<string>, value: string) {
+  if (set.has(value)) set.delete(value);
+  else set.add(value);
+}
+
+function clearFilters() {
+  disabledLevels.clear();
+  disabledCategories.clear();
+}
 
 function onLine(line: string) {
   try {
@@ -42,7 +70,7 @@ $effect(() => {
 
 $effect(() => {
   if (autoScroll && scrollEl) {
-    void entries.length;
+    void filteredEntries.length;
     scrollEl.scrollTop = scrollEl.scrollHeight;
   }
 });
@@ -78,7 +106,54 @@ function formatData(data: Record<string, unknown>): string {
 <div class="system-logs">
   <div class="header">
     <span class="title">System Logs</span>
-    <span class="count">{entries.length} entries</span>
+    <span class="count">
+      {#if filtersActive}
+        {filteredEntries.length} / {entries.length} entries
+      {:else}
+        {entries.length} entries
+      {/if}
+    </span>
+  </div>
+  <div class="filter-bar">
+    <div class="filter-group">
+      <button
+        class="pill pill-info"
+        class:inactive={disabledLevels.has("info")}
+        onclick={() => toggle(disabledLevels, "info")}
+      >info</button>
+      <button
+        class="pill pill-warn"
+        class:inactive={disabledLevels.has("warn")}
+        onclick={() => toggle(disabledLevels, "warn")}
+      >warn</button>
+      <button
+        class="pill pill-error"
+        class:inactive={disabledLevels.has("error")}
+        onclick={() => toggle(disabledLevels, "error")}
+      >error</button>
+      {#if hasDebug}
+        <button
+          class="pill pill-debug"
+          class:inactive={disabledLevels.has("debug")}
+          onclick={() => toggle(disabledLevels, "debug")}
+        >debug</button>
+      {/if}
+    </div>
+    {#if allCategories.length > 0}
+      <div class="filter-sep"></div>
+      <div class="filter-group">
+        {#each allCategories as cat (cat)}
+          <button
+            class="pill pill-cat"
+            class:inactive={disabledCategories.has(cat)}
+            onclick={() => toggle(disabledCategories, cat)}
+          >{cat}</button>
+        {/each}
+      </div>
+    {/if}
+    {#if filtersActive}
+      <button class="pill pill-clear" onclick={clearFilters}>clear</button>
+    {/if}
   </div>
   {#if !autoScroll}
     <div class="pause-bar">
@@ -92,18 +167,12 @@ function formatData(data: Record<string, unknown>): string {
     {:else if entries.length === 0}
       <span class="waiting">Waiting for logs...</span>
     {/if}
-    {#each entries as entry, i (i)}
+    {#each filteredEntries as entry, i (i)}
       <div class="log-line">
         <span class="ts">{formatTime(entry.ts)}</span>
-        {" "}
-        <span class="level" style:color={LEVEL_COLORS[entry.level] || "var(--text-2)"}>
-          {entry.level.padEnd(5)}
-        </span>
-        {" "}
-        <span class="msg">{entry.msg}</span>
-        {#if entry.data}
-          <span class="data"> {formatData(entry.data)}</span>
-        {/if}
+        <span class="level" style:color={LEVEL_COLORS[entry.level] || "var(--text-2)"}>{entry.level}</span>
+        {#if entry.cat}<span class="cat">{entry.cat}</span>{/if}
+        <span class="msg">{entry.msg}{#if entry.data} <span class="data">{formatData(entry.data)}</span>{/if}</span>
       </div>
     {/each}
   </div>
@@ -120,7 +189,7 @@ function formatData(data: Record<string, unknown>): string {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
     flex-shrink: 0;
   }
 
@@ -133,6 +202,75 @@ function formatData(data: Record<string, unknown>): string {
   .count {
     color: var(--text-2);
     font-size: 11px;
+  }
+
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+
+  .filter-group {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+
+  .filter-sep {
+    width: 1px;
+    height: 16px;
+    background: var(--border);
+    margin: 0 4px;
+  }
+
+  .pill {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-family: var(--mono);
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: opacity 0.1s;
+  }
+
+  .pill-info,
+  .pill-debug {
+    background: color-mix(in srgb, var(--text-2) 15%, transparent);
+    color: var(--text-2);
+  }
+
+  .pill-warn {
+    background: color-mix(in srgb, var(--yellow) 15%, transparent);
+    color: var(--yellow);
+  }
+
+  .pill-error {
+    background: color-mix(in srgb, var(--red) 15%, transparent);
+    color: var(--red);
+  }
+
+  .pill-cat {
+    background: var(--bg-3);
+    color: var(--text-2);
+  }
+
+  .pill-clear {
+    background: none;
+    color: var(--text-2);
+    border: 1px dashed var(--border);
+    margin-left: 4px;
+  }
+
+  .pill-clear:hover {
+    color: var(--text-1);
+    border-color: var(--text-2);
+  }
+
+  .pill.inactive {
+    opacity: 0.3;
   }
 
   .pause-bar {
@@ -178,18 +316,39 @@ function formatData(data: Record<string, unknown>): string {
 
   .log-line {
     animation: fadeIn 0.1s ease both;
-    white-space: pre-wrap;
+    display: flex;
+    gap: 1ch;
   }
 
   .ts {
     color: var(--text-2);
+    flex-shrink: 0;
+  }
+
+  .level {
+    flex-shrink: 0;
+    width: 5ch;
+  }
+
+  .cat {
+    color: var(--text-2);
+    opacity: 0.6;
+    flex-shrink: 0;
+    width: 12ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .msg {
     color: var(--text-0);
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-width: 0;
   }
 
   .data {
     color: var(--text-2);
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 </style>
