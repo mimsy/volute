@@ -18,8 +18,8 @@ import {
   sessions,
   users,
 } from "../src/lib/schema.js";
+import conversationsRoute from "../src/web/api/volute/conversations.js";
 import { authMiddleware, createSession, deleteSession } from "../src/web/middleware/auth.js";
-import conversationsRoute from "../src/web/routes/volute/conversations.js";
 
 let sessionId: string;
 let userId: number;

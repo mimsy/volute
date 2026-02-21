@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { Hono } from "hono";
 import { getDb } from "../src/lib/db.js";
 import { conversations, messages, sessions, users } from "../src/lib/schema.js";
+import auth from "../src/web/api/auth.js";
 import { deleteSession } from "../src/web/middleware/auth.js";
-import auth from "../src/web/routes/auth.js";
 
 function createApp() {
   const app = new Hono();

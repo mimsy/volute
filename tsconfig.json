@@ -11,5 +11,5 @@
     "lib": ["ES2022"]
   },
   "include": ["src"],
-  "exclude": ["src/web/frontend", "src/web/svelte"]
+  "exclude": ["src/web/ui"]
 }

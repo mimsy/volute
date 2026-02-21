@@ -29,7 +29,7 @@
       }
     },
     {
-      "includes": ["src/web/svelte/**/*.ts"],
+      "includes": ["src/web/ui/**/*.ts"],
       "linter": {
         "rules": {
           "style": { "useConst": "off" }

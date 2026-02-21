@@ -4,8 +4,8 @@ import { Hono } from "hono";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
 import { conversations, messages, sessions, users } from "../src/lib/schema.js";
+import auth from "../src/web/api/auth.js";
 import { createSession, deleteSession, getSessionUserId } from "../src/web/middleware/auth.js";
-import auth from "../src/web/routes/auth.js";
 
 function createApp() {
   const app = new Hono();
