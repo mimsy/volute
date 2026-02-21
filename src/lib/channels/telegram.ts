@@ -31,6 +31,7 @@ export async function send(
   const chatId = resolveChannelId(env, channelSlug);
 
   if (images?.length) {
+    const CAPTION_MAX = 1024;
     for (let i = 0; i < images.length; i++) {
       const img = images[i];
       const ext = img.media_type.split("/")[1] || "png";
@@ -41,9 +42,8 @@ export async function send(
         new Blob([Buffer.from(img.data, "base64")], { type: img.media_type }),
         `image.${ext}`,
       );
-      // Attach caption to the first image only (Telegram max 1024 chars)
       if (i === 0 && message) {
-        form.append("caption", message.slice(0, 1024));
+        form.append("caption", message.slice(0, CAPTION_MAX));
       }
 
       const res = await fetch(`${API_BASE}/bot${token}/sendPhoto`, {
@@ -52,7 +52,25 @@ export async function send(
       });
       if (!res.ok) {
         const body = await res.text().catch(() => "");
-        throw new Error(`Telegram API error: ${res.status} ${body}`);
+        const partial = i > 0 ? ` (${i}/${images.length} images were already sent)` : "";
+        throw new Error(`Telegram API error: ${res.status} ${body}${partial}`);
+      }
+    }
+
+    // Send overflow text as a separate message if caption was truncated
+    if (message && message.length > CAPTION_MAX) {
+      const remaining = message.slice(CAPTION_MAX);
+      const chunks = splitMessage(remaining, TELEGRAM_MAX_LENGTH);
+      for (const chunk of chunks) {
+        const res = await fetch(`${API_BASE}/bot${token}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: chatId, text: chunk }),
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          throw new Error(`Telegram API error: ${res.status} ${body}`);
+        }
       }
     }
     return;

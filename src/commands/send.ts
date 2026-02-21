@@ -42,7 +42,9 @@ export async function run(args: string[]) {
   const target = positional[0];
   const message = positional[1] ?? (await readStdin());
 
-  if (!target || !message) {
+  const images = flags.image ? [loadImage(flags.image)] : undefined;
+
+  if (!target || (!message && !images)) {
     console.error('Usage: volute send <target> "<message>" [--mind <name>] [--image <path>]');
     console.error('       echo "message" | volute send <target> [--mind <name>]');
     console.error("");
@@ -51,10 +53,9 @@ export async function run(args: string[]) {
     console.error('  volute send animal-chat "hello everyone"');
     console.error('  volute send discord:server/channel "hello"');
     console.error('  volute send @mind "check this out" --image photo.png');
+    console.error("  volute send @mind --image photo.png");
     process.exit(1);
   }
-
-  const images = flags.image ? [loadImage(flags.image)] : undefined;
 
   // Catch attempts to reply to system messages (with or without @)
   if (target === "system" || target === "@system") {
@@ -115,7 +116,7 @@ export async function run(args: string[]) {
     }
 
     try {
-      await driver.send(env, channelUri, message, images);
+      await driver.send(env, channelUri, message ?? "", images);
       console.log("Message sent.");
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
@@ -131,7 +132,7 @@ export async function run(args: string[]) {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ channel: parsed.uri, content: message }),
+            body: JSON.stringify({ channel: parsed.uri, content: message ?? "" }),
           },
         );
       } catch (err) {
@@ -148,7 +149,12 @@ export async function run(args: string[]) {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform: parsed.platform, uri: channelUri, message, images }),
+        body: JSON.stringify({
+          platform: parsed.platform,
+          uri: channelUri,
+          message: message ?? "",
+          images,
+        }),
       },
     );
     if (!res.ok) {
@@ -166,7 +172,7 @@ export async function run(args: string[]) {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ channel: channelUri, content: message }),
+            body: JSON.stringify({ channel: channelUri, content: message ?? "" }),
           },
         );
       } catch (err) {

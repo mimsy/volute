@@ -60,12 +60,12 @@ export async function send(
   const channelId = resolveChannelId(env, channelSlug);
 
   if (images?.length) {
-    // Send first image with message text, then remaining images without text
     for (let i = 0; i < images.length; i++) {
       const img = images[i];
       const ext = img.media_type.split("/")[1] || "png";
       const form = new FormData();
-      form.append("payload_json", JSON.stringify({ content: i === 0 ? message : "" }));
+      const content = i === 0 ? message.slice(0, DISCORD_MAX_LENGTH) : "";
+      form.append("payload_json", JSON.stringify({ content }));
       form.append(
         "files[0]",
         new Blob([Buffer.from(img.data, "base64")], { type: img.media_type }),
@@ -78,7 +78,9 @@ export async function send(
         body: form,
       });
       if (!res.ok) {
-        throw new Error(`Discord API error: ${res.status} ${res.statusText}`);
+        const body = await res.text().catch(() => "");
+        const partial = i > 0 ? ` (${i}/${images.length} images were already sent)` : "";
+        throw new Error(`Discord API error: ${res.status} ${body || res.statusText}${partial}`);
       }
     }
     return;

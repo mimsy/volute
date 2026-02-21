@@ -98,10 +98,13 @@ export async function send(
 
     // Send text message separately if non-empty
     if (message) {
-      await slackApi(token, "chat.postMessage", {
-        channel: channelId,
-        text: message,
-      });
+      const chunks = splitMessage(message, SLACK_MAX_LENGTH);
+      for (const chunk of chunks) {
+        await slackApi(token, "chat.postMessage", {
+          channel: channelId,
+          text: chunk,
+        });
+      }
     }
     return;
   }
