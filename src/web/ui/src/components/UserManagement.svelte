@@ -1,8 +1,6 @@
 <script lang="ts">
 import { type AuthUser, approveUser, fetchUsers } from "../lib/auth";
 
-let { onClose }: { onClose: () => void } = $props();
-
 let users = $state<AuthUser[]>([]);
 let error = $state("");
 
@@ -34,7 +32,6 @@ async function handleApprove(id: number) {
 <div class="container">
   <div class="header">
     <h2 class="title">Users</h2>
-    <button class="back-btn" onclick={onClose}>back</button>
   </div>
 
   {#if error}
@@ -77,12 +74,6 @@ async function handleApprove(id: number) {
   .title {
     font-size: 15px;
     font-weight: 600;
-  }
-
-  .back-btn {
-    background: transparent;
-    color: var(--text-2);
-    font-size: 12px;
   }
 
   .user-list {
