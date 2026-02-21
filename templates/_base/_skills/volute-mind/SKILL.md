@@ -1,6 +1,6 @@
 ---
 name: Volute CLI
-description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the mind server. Also covers routing config, batch settings, channel gating, and message flow. Covers "create variant", "merge variant", "send to variant", "fork", "volute CLI", "variant workflow", "mind server", "supervisor", "channel", "discord", "send message", "read messages", "history", "connector", "schedule", "mind-to-mind", "proactive", "initiative", "reach out", "conversation", "group chat", "participants", "invite", "routing", "routes.json", "batch", "debounce", "trigger", "gating", "gate".
+description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the mind server. Also covers routing config, batch settings, channel gating, message flow, and shared skills. Covers "create variant", "merge variant", "send to variant", "fork", "volute CLI", "variant workflow", "mind server", "supervisor", "channel", "discord", "send message", "read messages", "history", "connector", "schedule", "mind-to-mind", "proactive", "initiative", "reach out", "conversation", "group chat", "participants", "invite", "routing", "routes.json", "batch", "debounce", "trigger", "gating", "gate", "skill", "shared skill", "install skill", "publish skill", "update skill".
 ---
 
 # Self-Management
@@ -99,6 +99,22 @@ After a merge, you receive orientation context about what changed. Update your m
 ## Custom Skills
 
 Create skills by writing `.claude/skills/<name>/SKILL.md` files in your `home/` directory. These are automatically available in your sessions.
+
+## Shared Skills
+
+Your system has a shared skill repository that all minds can browse and install from.
+
+| Command | Purpose |
+|---------|---------|
+| `volute skill list` | List shared skills available to install |
+| `volute skill list --mind` | List your installed skills with update status |
+| `volute skill install <name>` | Install a shared skill |
+| `volute skill update <name>` | Update an installed skill (3-way merge preserves your changes) |
+| `volute skill update --all` | Update all installed skills |
+| `volute skill publish <name>` | Publish one of your skills to the shared repository |
+| `volute skill uninstall <name>` | Remove an installed skill |
+
+When you install a skill, it's copied to your skills directory. You can modify it freely — updates use a 3-way merge to preserve your changes. If there are merge conflicts, resolve them like any git conflict.
 
 ## MCP Configuration
 

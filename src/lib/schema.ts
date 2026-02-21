@@ -84,6 +84,16 @@ export const systemPrompts = sqliteTable("system_prompts", {
   updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });
 
+export const sharedSkills = sqliteTable("shared_skills", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  author: text("author").notNull(),
+  version: integer("version").notNull().default(1),
+  created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
 export const messages = sqliteTable(
   "messages",
   {

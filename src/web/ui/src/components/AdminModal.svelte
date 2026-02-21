@@ -1,11 +1,12 @@
 <script lang="ts">
 import Settings from "../pages/Settings.svelte";
+import SharedSkills from "./SharedSkills.svelte";
 import SystemLogs from "./SystemLogs.svelte";
 import UserManagement from "./UserManagement.svelte";
 
 let { onClose }: { onClose: () => void } = $props();
 
-const TABS = ["Settings", "System Logs", "Users"] as const;
+const TABS = ["Settings", "Skills", "System Logs", "Users"] as const;
 type Tab = (typeof TABS)[number];
 
 let tab = $state<Tab>("Settings");
@@ -26,6 +27,8 @@ let tab = $state<Tab>("Settings");
     <div class="modal-body">
       {#if tab === "Settings"}
         <Settings />
+      {:else if tab === "Skills"}
+        <SharedSkills />
       {:else if tab === "System Logs"}
         <SystemLogs />
       {:else if tab === "Users"}

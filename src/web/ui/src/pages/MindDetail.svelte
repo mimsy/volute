@@ -2,6 +2,7 @@
 import FileEditor from "../components/FileEditor.svelte";
 import History from "../components/History.svelte";
 import LogViewer from "../components/LogViewer.svelte";
+import MindSkills from "../components/MindSkills.svelte";
 import StatusBadge from "../components/StatusBadge.svelte";
 import VariantList from "../components/VariantList.svelte";
 import { fetchMind, type Mind, startMind, stopMind } from "../lib/api";
@@ -9,7 +10,7 @@ import { formatRelativeTime } from "../lib/format";
 
 let { name }: { name: string } = $props();
 
-const TABS = ["History", "Logs", "Files", "Variants", "Connections"] as const;
+const TABS = ["History", "Logs", "Files", "Skills", "Variants", "Connections"] as const;
 type Tab = (typeof TABS)[number];
 
 let mind = $state<Mind | null>(null);
@@ -126,6 +127,8 @@ async function handleStop() {
         <LogViewer {name} />
       {:else if tab === "Files"}
         <FileEditor {name} />
+      {:else if tab === "Skills"}
+        <MindSkills {name} />
       {:else if tab === "Variants"}
         <VariantList {name} />
       {:else if tab === "Connections"}
