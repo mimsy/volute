@@ -451,10 +451,10 @@ export type MindSkillInfo = {
   updateAvailable: boolean;
 };
 
-export type UpdateResult = {
-  status: "updated" | "conflict" | "up-to-date";
-  conflictFiles?: string[];
-};
+export type UpdateResult =
+  | { status: "updated" }
+  | { status: "up-to-date" }
+  | { status: "conflict"; conflictFiles: string[] };
 
 export async function fetchSharedSkills(): Promise<SharedSkill[]> {
   const res = await fetch("/api/skills", { credentials: "include" });

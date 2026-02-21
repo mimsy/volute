@@ -34,6 +34,7 @@ export async function run(args: string[]) {
       printUsage();
       break;
     default:
+      console.error(`Unknown subcommand: ${subcommand}`);
       printUsage();
       process.exit(1);
   }
@@ -217,9 +218,12 @@ async function updateSkill(args: string[]) {
       return;
     }
 
+    let failures = 0;
     for (const s of updatable) {
-      await doUpdate(mindName, s.id);
+      const ok = await doUpdate(mindName, s.id);
+      if (!ok) failures++;
     }
+    if (failures > 0) process.exit(1);
     return;
   }
 
@@ -229,10 +233,12 @@ async function updateSkill(args: string[]) {
     process.exit(1);
   }
 
-  await doUpdate(mindName, skillId);
+  const ok = await doUpdate(mindName, skillId);
+  if (!ok) process.exit(1);
 }
 
-async function doUpdate(mindName: string, skillId: string) {
+/** Returns true on success, false on failure (for --all loop) */
+async function doUpdate(mindName: string, skillId: string): Promise<boolean> {
   const client = getClient();
   const url = urlOf(client.api.minds[":name"].skills.update.$url({ param: { name: mindName } }));
   const res = await daemonFetch(url, {
@@ -246,7 +252,7 @@ async function doUpdate(mindName: string, skillId: string) {
       error: string;
     };
     console.error(`Error updating ${skillId}: ${body.error}`);
-    process.exit(1);
+    return false;
   }
 
   const result = (await res.json()) as {
@@ -269,6 +275,7 @@ async function doUpdate(mindName: string, skillId: string) {
       console.log("Resolve conflicts and commit manually.");
       break;
   }
+  return true;
 }
 
 async function publishSkill(args: string[]) {

@@ -280,6 +280,36 @@ describe("web skills API — mind skills", () => {
     assert.ok(!existsSync(skillDir));
   });
 
+  it("POST /minds/:name/skills/update updates a skill", async () => {
+    const source = createSharedSkillDir("updatable");
+    await importSkillFromDir(source, "author");
+
+    const app = createApp();
+
+    // Install first
+    await app.request(`/minds/${testMindName}/skills/install`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: adminCookie },
+      body: JSON.stringify({ skillId: "updatable" }),
+    });
+
+    // Bump shared version
+    writeFileSync(
+      join(source, "SKILL.md"),
+      "---\nname: updatable\ndescription: Updated\n---\n\n# V2\n",
+    );
+    await importSkillFromDir(source, "author");
+
+    const res = await app.request(`/minds/${testMindName}/skills/update`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: adminCookie },
+      body: JSON.stringify({ skillId: "updatable" }),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { status: string };
+    assert.equal(body.status, "updated");
+  });
+
   it("non-admin POST returns 403", async () => {
     const db = await getDb();
     const [viewer] = await db

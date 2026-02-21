@@ -330,4 +330,75 @@ describe("mind skill operations", () => {
   it("throws when uninstalling non-installed skill", async () => {
     await assert.rejects(() => uninstallSkill(mindName, mindDir, "nonexistent"), /not installed/i);
   });
+
+  it("rejects invalid skill IDs", async () => {
+    await assert.rejects(() => installSkill(mindName, mindDir, "../escape"), /Invalid skill ID/);
+    await assert.rejects(() => installSkill(mindName, mindDir, "foo/bar"), /Invalid skill ID/);
+    await assert.rejects(() => installSkill(mindName, mindDir, ""), /Invalid skill ID/);
+  });
+
+  it("updates a skill — new file added upstream", async () => {
+    const source = createSkillSource("shared-skill", "V1");
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "shared-skill");
+
+    // Add a new file to the shared skill
+    writeFileSync(join(source, "extra.md"), "# Extra file\n");
+    await importSkillFromDir(source, "author");
+
+    const result = await updateSkill(mindName, mindDir, "shared-skill");
+    assert.equal(result.status, "updated");
+
+    // Verify new file was copied
+    const extraPath = join(mindDir, "home", ".claude", "skills", "shared-skill", "extra.md");
+    assert.ok(existsSync(extraPath));
+    assert.ok(readFileSync(extraPath, "utf-8").includes("Extra file"));
+  });
+
+  it("updates a skill — file deleted upstream (unmodified locally)", async () => {
+    const source = createSkillSource("shared-skill", "V1");
+    writeFileSync(join(source, "removeme.md"), "# Will be removed\n");
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "shared-skill");
+
+    // Verify file was installed
+    const removePath = join(mindDir, "home", ".claude", "skills", "shared-skill", "removeme.md");
+    assert.ok(existsSync(removePath));
+
+    // Remove file from shared and re-publish
+    rmSync(join(source, "removeme.md"));
+    await importSkillFromDir(source, "author");
+
+    const result = await updateSkill(mindName, mindDir, "shared-skill");
+    assert.equal(result.status, "updated");
+
+    // File should be removed since it wasn't modified locally
+    assert.ok(!existsSync(removePath));
+  });
+
+  it("updates a skill — preserves local changes when upstream unchanged", async () => {
+    const source = createSkillSource("shared-skill", "V1");
+    writeFileSync(join(source, "extra.md"), "# Original\n");
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "shared-skill");
+
+    // Modify extra.md locally
+    const localExtra = join(mindDir, "home", ".claude", "skills", "shared-skill", "extra.md");
+    writeFileSync(localExtra, "# My local changes\n");
+    await exec("git", ["add", "-A"], { cwd: mindDir });
+    await exec("git", ["commit", "-m", "local edit"], { cwd: mindDir });
+
+    // Re-publish shared with same extra.md but updated SKILL.md
+    writeFileSync(
+      join(source, "SKILL.md"),
+      "---\nname: shared-skill\ndescription: V2\n---\n\n# V2 content\n",
+    );
+    await importSkillFromDir(source, "author");
+
+    const result = await updateSkill(mindName, mindDir, "shared-skill");
+    assert.equal(result.status, "updated");
+
+    // Local changes to extra.md should be preserved
+    assert.ok(readFileSync(localExtra, "utf-8").includes("My local changes"));
+  });
 });

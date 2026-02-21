@@ -57,7 +57,10 @@ async function handleInstall(skillId: string) {
   try {
     await installMindSkill(name, skillId);
     refresh();
-    sharedSkills = await fetchSharedSkills();
+    // Refresh shared list separately — don't fail the install on this
+    try {
+      sharedSkills = await fetchSharedSkills();
+    } catch {}
   } catch (e) {
     error = e instanceof Error ? e.message : "Failed to install";
   }
@@ -170,7 +173,7 @@ async function handleUpload() {
               <button
                 class="action-btn update-btn"
                 onclick={() => handleUpdate(skill.id)}
-                disabled={actionLoading === skill.id}
+                disabled={actionLoading !== null}
               >
                 {actionLoading === skill.id ? "..." : "Update"}
               </button>
@@ -178,14 +181,14 @@ async function handleUpload() {
             <button
               class="action-btn publish-btn"
               onclick={() => handlePublish(skill.id)}
-              disabled={actionLoading === skill.id}
+              disabled={actionLoading !== null}
             >
               {actionLoading === skill.id ? "..." : "Publish"}
             </button>
             <button
               class="action-btn remove-btn"
               onclick={() => handleUninstall(skill.id)}
-              disabled={actionLoading === skill.id}
+              disabled={actionLoading !== null}
             >
               {actionLoading === skill.id ? "..." : "Uninstall"}
             </button>
@@ -210,7 +213,7 @@ async function handleUpload() {
         <button
           class="upload-btn"
           onclick={() => fileInput.click()}
-          disabled={actionLoading === "upload"}
+          disabled={actionLoading !== null}
         >
           {actionLoading === "upload" ? "Uploading..." : "Upload .zip"}
         </button>
@@ -239,7 +242,7 @@ async function handleUpload() {
                 <button
                   class="action-btn install-btn"
                   onclick={() => handleInstall(skill.id)}
-                  disabled={actionLoading === skill.id}
+                  disabled={actionLoading !== null}
                 >
                   {actionLoading === skill.id ? "..." : "Install"}
                 </button>

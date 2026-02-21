@@ -1,30 +1,17 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import AdmZip from "adm-zip";
 import { Hono } from "hono";
 import {
   getSharedSkill,
   importSkillFromDir,
+  listFilesRecursive,
   listSharedSkills,
   removeSharedSkill,
   sharedSkillsDir,
 } from "../../lib/skills.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
-
-function listFilesRecursive(dir: string, prefix = ""): string[] {
-  const results: string[] = [];
-  if (!existsSync(dir)) return results;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) {
-      results.push(...listFilesRecursive(join(dir, entry.name), rel));
-    } else {
-      results.push(rel);
-    }
-  }
-  return results;
-}
 
 const app = new Hono<AuthEnv>()
   .get("/", async (c) => {
@@ -56,6 +43,15 @@ const app = new Hono<AuthEnv>()
 
     try {
       const zip = new AdmZip(buffer);
+
+      // Validate zip entries don't escape the target directory (zip slip)
+      for (const entry of zip.getEntries()) {
+        const target = resolve(tmpDir, entry.entryName);
+        if (!target.startsWith(tmpDir)) {
+          return c.json({ error: "Invalid zip: paths must not escape archive" }, 400);
+        }
+      }
+
       zip.extractAllTo(tmpDir, true);
 
       // Find the directory containing SKILL.md (root-level or one-directory-deep)
@@ -78,6 +74,11 @@ const app = new Hono<AuthEnv>()
 
       const skill = await importSkillFromDir(skillDir, "upload");
       return c.json(skill);
+    } catch (e) {
+      if (e instanceof Error && e.message.includes("Invalid skill ID")) {
+        return c.json({ error: e.message }, 400);
+      }
+      throw e;
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }

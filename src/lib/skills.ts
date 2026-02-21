@@ -15,6 +15,14 @@ import { exec, gitExec } from "./exec.js";
 import { voluteHome } from "./registry.js";
 import { sharedSkills } from "./schema.js";
 
+const VALID_SKILL_ID = /^[a-zA-Z0-9_-]+$/;
+
+function validateSkillId(id: string): void {
+  if (!id || !VALID_SKILL_ID.test(id)) {
+    throw new Error(`Invalid skill ID: ${id}`);
+  }
+}
+
 // --- Shared skill operations ---
 
 export function sharedSkillsDir(): string {
@@ -67,9 +75,13 @@ export async function importSkillFromDir(sourceDir: string, author: string): Pro
   if (!id || id === "." || id === "..") {
     throw new Error("Invalid skill directory name");
   }
+  validateSkillId(id);
 
   const destDir = join(sharedSkillsDir(), id);
+  // Clean destination before copying to remove files deleted from source
+  if (existsSync(destDir)) rmSync(destDir, { recursive: true });
   mkdirSync(destDir, { recursive: true });
+
   cpSync(sourceDir, destDir, { recursive: true });
 
   // Remove .upstream.json if present (it's a mind-side tracking file)
@@ -95,7 +107,8 @@ export async function importSkillFromDir(sourceDir: string, author: string): Pro
     });
 
   const row = await db.select().from(sharedSkills).where(eq(sharedSkills.id, id)).get();
-  return row!;
+  if (!row) throw new Error(`Failed to upsert shared skill: ${id}`);
+  return row;
 }
 
 export async function removeSharedSkill(id: string): Promise<void> {
@@ -124,13 +137,22 @@ export function readUpstream(skillDir: string): UpstreamInfo | null {
   const upstreamPath = join(skillDir, ".upstream.json");
   if (!existsSync(upstreamPath)) return null;
   try {
-    return JSON.parse(readFileSync(upstreamPath, "utf-8")) as UpstreamInfo;
+    const data = JSON.parse(readFileSync(upstreamPath, "utf-8"));
+    if (
+      typeof data?.source !== "string" ||
+      typeof data?.version !== "number" ||
+      typeof data?.baseCommit !== "string"
+    ) {
+      return null;
+    }
+    return data as UpstreamInfo;
   } catch {
     return null;
   }
 }
 
 export async function installSkill(_mindName: string, dir: string, skillId: string): Promise<void> {
+  validateSkillId(skillId);
   const shared = await getSharedSkill(skillId);
   if (!shared) throw new Error(`Shared skill not found: ${skillId}`);
 
@@ -154,7 +176,7 @@ export async function installSkill(_mindName: string, dir: string, skillId: stri
     version: shared.version,
     baseCommit: commitHash,
   };
-  writeFileSync(join(destDir, ".upstream.json"), JSON.stringify(upstream, null, 2) + "\n");
+  writeFileSync(join(destDir, ".upstream.json"), `${JSON.stringify(upstream, null, 2)}\n`);
   await gitExec(["add", join("home", ".claude", "skills", skillId, ".upstream.json")], {
     cwd: dir,
   });
@@ -166,6 +188,7 @@ export async function uninstallSkill(
   dir: string,
   skillId: string,
 ): Promise<void> {
+  validateSkillId(skillId);
   const skillDir = join(mindSkillsDir(dir), skillId);
   if (!existsSync(skillDir)) throw new Error(`Skill not installed: ${skillId}`);
 
@@ -174,16 +197,17 @@ export async function uninstallSkill(
   await gitExec(["commit", "-m", `Uninstall skill: ${skillId}`], { cwd: dir });
 }
 
-export type UpdateResult = {
-  status: "updated" | "conflict" | "up-to-date";
-  conflictFiles?: string[];
-};
+export type UpdateResult =
+  | { status: "updated" }
+  | { status: "up-to-date" }
+  | { status: "conflict"; conflictFiles: string[] };
 
 export async function updateSkill(
   _mindName: string,
   dir: string,
   skillId: string,
 ): Promise<UpdateResult> {
+  validateSkillId(skillId);
   const skillDir = join(mindSkillsDir(dir), skillId);
   if (!existsSync(skillDir)) throw new Error(`Skill not installed: ${skillId}`);
 
@@ -285,10 +309,17 @@ export async function updateSkill(
         await exec("git", ["merge-file", currentTmp, baseTmp, newTmp]);
         // Clean merge — write result
         writeFileSync(currentPath, readFileSync(currentTmp, "utf-8"));
-      } catch {
-        // Conflict — write result with markers
-        writeFileSync(currentPath, readFileSync(currentTmp, "utf-8"));
-        conflictFiles.push(file);
+      } catch (e: unknown) {
+        // git merge-file exits with 1 for conflicts, >1 for errors
+        const exitCode =
+          e && typeof e === "object" && "code" in e ? (e as { code: number }).code : null;
+        if (exitCode === 1) {
+          // Conflict — write result with markers
+          writeFileSync(currentPath, readFileSync(currentTmp, "utf-8"));
+          conflictFiles.push(file);
+        } else {
+          throw e;
+        }
       }
     }
   } finally {
@@ -306,7 +337,7 @@ export async function updateSkill(
     version: shared.version,
     baseCommit: upstream.baseCommit, // will update after commit
   };
-  writeFileSync(join(skillDir, ".upstream.json"), JSON.stringify(upstreamInfo, null, 2) + "\n");
+  writeFileSync(join(skillDir, ".upstream.json"), `${JSON.stringify(upstreamInfo, null, 2)}\n`);
 
   await gitExec(["add", relSkillPath], { cwd: dir });
   await gitExec(["commit", "-m", `Update skill: ${skillId} (v${shared.version})`], { cwd: dir });
@@ -314,7 +345,7 @@ export async function updateSkill(
 
   // Update baseCommit to the new commit
   upstreamInfo.baseCommit = commitHash;
-  writeFileSync(join(skillDir, ".upstream.json"), JSON.stringify(upstreamInfo, null, 2) + "\n");
+  writeFileSync(join(skillDir, ".upstream.json"), `${JSON.stringify(upstreamInfo, null, 2)}\n`);
   await gitExec(["add", join(relSkillPath, ".upstream.json")], { cwd: dir });
   await gitExec(["commit", "--amend", "--no-edit"], { cwd: dir });
 
@@ -383,7 +414,7 @@ export async function publishSkill(
 
 // --- Helpers ---
 
-function listFilesRecursive(dir: string, prefix = ""): string[] {
+export function listFilesRecursive(dir: string, prefix = ""): string[] {
   const results: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
