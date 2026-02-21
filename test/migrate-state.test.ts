@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { migrateMindState } from "../src/lib/migrate-state.js";
+import { migrateDotVoluteDir, migrateMindState } from "../src/lib/migrate-state.js";
 import { addMind, mindDir, removeMind, stateDir } from "../src/lib/registry.js";
 
 const TEST_MIND = `migrate-test-${Date.now()}`;
@@ -77,5 +77,59 @@ describe("migrateMindState", () => {
     const destLog = resolve(stateDir(TEST_MIND), "logs", "mind.log");
     assert.ok(existsSync(destLog));
     assert.equal(readFileSync(destLog, "utf-8"), "log content");
+  });
+});
+
+const RENAME_MIND = `rename-test-${Date.now()}`;
+
+describe("migrateDotVoluteDir", () => {
+  beforeEach(() => {
+    addMind(RENAME_MIND, 4998);
+  });
+
+  afterEach(() => {
+    const dir = mindDir(RENAME_MIND);
+    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+    removeMind(RENAME_MIND);
+  });
+
+  it("renames .volute/ to .mind/ when only .volute exists", () => {
+    const dir = mindDir(RENAME_MIND);
+    const oldDir = resolve(dir, ".volute");
+    mkdirSync(oldDir, { recursive: true });
+    writeFileSync(resolve(oldDir, "session.json"), '{"id":"test"}');
+
+    migrateDotVoluteDir(RENAME_MIND);
+
+    assert.ok(!existsSync(oldDir));
+    assert.ok(existsSync(resolve(dir, ".mind")));
+    assert.equal(readFileSync(resolve(dir, ".mind", "session.json"), "utf-8"), '{"id":"test"}');
+  });
+
+  it("no-ops when .mind/ already exists", () => {
+    const dir = mindDir(RENAME_MIND);
+    const oldDir = resolve(dir, ".volute");
+    const newDir = resolve(dir, ".mind");
+    mkdirSync(oldDir, { recursive: true });
+    mkdirSync(newDir, { recursive: true });
+    writeFileSync(resolve(oldDir, "old.json"), "old");
+    writeFileSync(resolve(newDir, "new.json"), "new");
+
+    migrateDotVoluteDir(RENAME_MIND);
+
+    // Both dirs still exist — .volute was not renamed over .mind
+    assert.ok(existsSync(oldDir));
+    assert.ok(existsSync(newDir));
+    assert.equal(readFileSync(resolve(newDir, "new.json"), "utf-8"), "new");
+  });
+
+  it("no-ops when neither directory exists", () => {
+    const dir = mindDir(RENAME_MIND);
+    mkdirSync(dir, { recursive: true });
+
+    migrateDotVoluteDir(RENAME_MIND);
+
+    assert.ok(!existsSync(resolve(dir, ".volute")));
+    assert.ok(!existsSync(resolve(dir, ".mind")));
   });
 });
