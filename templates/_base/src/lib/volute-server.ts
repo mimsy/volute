@@ -50,7 +50,8 @@ async function fetchPublicKey(fingerprint: string): Promise<string | null> {
     if (!res.ok) return null;
     const data = (await res.json()) as { publicKey?: string };
     return data.publicKey ?? null;
-  } catch {
+  } catch (err) {
+    log("identity", "failed to fetch public key:", err);
     return null;
   }
 }
@@ -90,6 +91,9 @@ export function createVoluteServer(options: {
     if (req.method === "POST" && url.pathname === "/message") {
       try {
         const body = JSON.parse(await readBody(req)) as VoluteRequest;
+
+        // Strip any sender-provided verified field to prevent spoofing
+        delete body.verified;
 
         // Best-effort signature verification (non-blocking)
         const verified = await verifyRequest(body);

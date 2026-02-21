@@ -17,7 +17,7 @@ export type VoluteConfig = {
   channels?: Record<string, { showToolCalls?: boolean }>;
   tokenBudget?: number;
   tokenBudgetPeriodMinutes?: number;
-  identity?: { privateKey?: string; publicKey?: string };
+  identity?: { privateKey: string; publicKey: string };
   [key: string]: unknown;
 };
 

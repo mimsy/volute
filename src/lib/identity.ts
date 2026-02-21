@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import log from "./logger.js";
 import { readSystemsConfig } from "./systems-config.js";
-import { systemsFetch } from "./systems-fetch.js";
 import { readVoluteConfig, writeVoluteConfig } from "./volute-config.js";
 
 /** Generate an Ed25519 keypair and write to .mind/identity/ */
@@ -86,7 +85,7 @@ export async function publishPublicKey(mindName: string, publicKeyPem: string): 
   if (!systems) return false;
 
   try {
-    const res = await systemsFetch(`${systems.apiUrl}/api/keys/${encodeURIComponent(mindName)}`, {
+    const res = await fetch(`${systems.apiUrl}/api/keys/${encodeURIComponent(mindName)}`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",

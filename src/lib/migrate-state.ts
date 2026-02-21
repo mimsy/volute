@@ -9,6 +9,8 @@ export function migrateDotVoluteDir(name: string): void {
   const newDir = resolve(dir, ".mind");
   if (existsSync(oldDir) && !existsSync(newDir)) {
     renameSync(oldDir, newDir);
+  } else if (existsSync(oldDir) && existsSync(newDir)) {
+    console.warn(`[migrate] both .volute/ and .mind/ exist for ${name}, skipping rename`);
   }
 }
 
