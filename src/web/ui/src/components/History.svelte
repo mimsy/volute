@@ -42,7 +42,7 @@ let filters = $state<FilterState>({
 
 let scrollContainer: HTMLDivElement | undefined = $state();
 let userScrolledUp = $state(false);
-let eventSource: EventSource | null = $state(null);
+let eventSource: EventSource | null = null;
 let nextSseId = -1;
 
 // Filtered messages (type filter is client-side)
