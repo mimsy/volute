@@ -1,9 +1,12 @@
 <script lang="ts">
+import { onMount } from "svelte";
 import { fetchMind, type Mind, startMind, stopMind } from "../lib/api";
 import { formatRelativeTime, getDisplayStatus } from "../lib/format";
 import History from "./History.svelte";
 import MindSkills from "./MindSkills.svelte";
+import Modal from "./Modal.svelte";
 import StatusBadge from "./StatusBadge.svelte";
+import TabBar from "./TabBar.svelte";
 import VariantList from "./VariantList.svelte";
 
 let { mind: initialMind, onClose }: { mind: Mind; onClose: () => void } = $props();
@@ -27,7 +30,7 @@ function refresh() {
     .catch(() => {});
 }
 
-$effect(() => {
+onMount(() => {
   refresh();
   const interval = setInterval(refresh, 5000);
   return () => clearInterval(interval);
@@ -60,110 +63,79 @@ const connectedChannels = $derived(
 );
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="modal-overlay" onclick={onClose} onkeydown={() => {}}>
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
-    <div class="modal-header">
-      <div class="header-left">
-        <span class="mind-name">{mind.name}</span>
-        <StatusBadge status={getDisplayStatus(mind)} />
-        {#if mind.status === "stopped"}
-          <button
-            onclick={handleStart}
-            disabled={actionLoading}
-            class="action-btn start-btn"
-            style:opacity={actionLoading ? 0.5 : 1}
-          >
-            {actionLoading ? "Starting..." : "Start"}
-          </button>
-        {:else}
-          <button
-            onclick={handleStop}
-            disabled={actionLoading}
-            class="action-btn stop-btn"
-            style:opacity={actionLoading ? 0.5 : 1}
-          >
-            {actionLoading ? "Stopping..." : "Stop"}
-          </button>
-        {/if}
-      </div>
-      <div class="header-right">
-        <div class="tab-bar">
-          {#each TABS as t}
-            <button class="tab" class:active={t === tab} onclick={() => (tab = t)}>{t}</button>
-          {/each}
-        </div>
-        <button class="close-btn" onclick={onClose}>&#x2715;</button>
-      </div>
+<Modal size="full" {onClose}>
+  <div class="modal-header">
+    <div class="header-left">
+      <span class="mind-name">{mind.name}</span>
+      <StatusBadge status={getDisplayStatus(mind)} />
+      {#if mind.status === "stopped"}
+        <button
+          onclick={handleStart}
+          disabled={actionLoading}
+          class="action-btn start-btn"
+          style:opacity={actionLoading ? 0.5 : 1}
+        >
+          {actionLoading ? "Starting..." : "Start"}
+        </button>
+      {:else}
+        <button
+          onclick={handleStop}
+          disabled={actionLoading}
+          class="action-btn stop-btn"
+          style:opacity={actionLoading ? 0.5 : 1}
+        >
+          {actionLoading ? "Stopping..." : "Stop"}
+        </button>
+      {/if}
     </div>
-    <div class="modal-body">
-      {#if error}
-        <div class="error-msg">{error}</div>
-      {/if}
-      {#if tab === "History"}
-        <History name={mind.name} />
-      {:else if tab === "Skills"}
-        <MindSkills name={mind.name} />
-      {:else if tab === "Variants"}
-        <VariantList name={mind.name} />
-      {:else if tab === "Connections"}
-        {#if connectedChannels.length === 0}
-          <div class="connections-empty">No active connections.</div>
-        {:else}
-          <div class="connections-list">
-            {#each connectedChannels as channel}
-              <div class="connection-card">
-                <div class="connection-icon">&#10687;</div>
-                <div class="connection-info">
-                  <div class="connection-header">
-                    <span class="connection-name">{channel.displayName}</span>
-                    <StatusBadge status="connected" />
-                  </div>
-                  {#if channel.username}
-                    <div class="connection-bot">
-                      Bot: <span class="bot-name">{channel.username}</span>
-                    </div>
-                  {/if}
-                  {#if channel.connectedAt}
-                    <div class="connection-time">
-                      Connected {formatRelativeTime(channel.connectedAt)}
-                    </div>
-                  {/if}
-                </div>
-              </div>
-            {/each}
-          </div>
-        {/if}
-      {/if}
+    <div class="header-right">
+      <TabBar tabs={[...TABS]} active={tab} onchange={(t) => (tab = t as Tab)} />
+      <button class="close-btn" onclick={onClose}>&#x2715;</button>
     </div>
   </div>
-</div>
+  <div class="modal-body">
+    {#if error}
+      <div class="error-msg">{error}</div>
+    {/if}
+    {#if tab === "History"}
+      <History name={mind.name} />
+    {:else if tab === "Skills"}
+      <MindSkills name={mind.name} />
+    {:else if tab === "Variants"}
+      <VariantList name={mind.name} />
+    {:else if tab === "Connections"}
+      {#if connectedChannels.length === 0}
+        <div class="connections-empty">No active connections.</div>
+      {:else}
+        <div class="connections-list">
+          {#each connectedChannels as channel}
+            <div class="connection-card">
+              <div class="connection-icon">&#10687;</div>
+              <div class="connection-info">
+                <div class="connection-header">
+                  <span class="connection-name">{channel.displayName}</span>
+                  <StatusBadge status="connected" />
+                </div>
+                {#if channel.username}
+                  <div class="connection-bot">
+                    Bot: <span class="bot-name">{channel.username}</span>
+                  </div>
+                {/if}
+                {#if channel.connectedAt}
+                  <div class="connection-time">
+                    Connected {formatRelativeTime(channel.connectedAt)}
+                  </div>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    {/if}
+  </div>
+</Modal>
 
 <style>
-  .modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 200;
-    animation: fadeIn 0.15s ease;
-  }
-
-  .modal {
-    width: 80vw;
-    height: 70vh;
-    max-width: 960px;
-    background: var(--bg-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
   .modal-header {
     display: flex;
     align-items: center;
@@ -189,26 +161,6 @@ const connectedChannels = $derived(
     display: flex;
     align-items: center;
     gap: 0;
-  }
-
-  .tab-bar {
-    display: flex;
-  }
-
-  .tab {
-    padding: 10px 16px;
-    background: transparent;
-    color: var(--text-2);
-    font-size: 12px;
-    font-weight: 500;
-    border-bottom: 2px solid transparent;
-    transition: all 0.15s;
-    margin-bottom: -1px;
-  }
-
-  .tab.active {
-    color: var(--accent);
-    border-bottom-color: var(--accent);
   }
 
   .close-btn {

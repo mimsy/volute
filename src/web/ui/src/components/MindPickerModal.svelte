@@ -1,4 +1,5 @@
 <script lang="ts">
+import { onMount } from "svelte";
 import {
   type AvailableUser,
   type Conversation,
@@ -6,7 +7,8 @@ import {
   fetchAvailableUsers,
   type Mind,
 } from "../lib/api";
-import { getDisplayStatus } from "../lib/format";
+import { mindDotColor } from "../lib/format";
+import Modal from "./Modal.svelte";
 
 let {
   minds,
@@ -30,7 +32,7 @@ let error = $state("");
 let inputEl = $state<HTMLInputElement | null>(null);
 let dropdownOpen = $state(false);
 
-$effect(() => {
+onMount(() => {
   fetchAvailableUsers()
     .then((u) => {
       users = u;
@@ -82,13 +84,6 @@ function mindForUser(username: string): Mind | undefined {
   return minds.find((m) => m.name === username);
 }
 
-function dotColor(mind: Mind): string {
-  const s = getDisplayStatus(mind);
-  if (s === "running" || s === "active") return "var(--accent)";
-  if (s === "starting") return "var(--yellow)";
-  return "var(--text-2)";
-}
-
 let hasMind = $derived(users.some((u) => u.user_type === "mind" && selected.includes(u.username)));
 
 async function handleCreate() {
@@ -126,10 +121,8 @@ let buttonDisabled = $derived(
 );
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="overlay" onclick={onClose} onkeydown={() => {}}>
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
+<Modal size="300px" {onClose}>
+  <div class="modal-content">
     <div class="modal-title">New conversation</div>
 
     {#if selected.length > 1}
@@ -158,8 +151,8 @@ let buttonDisabled = $derived(
               {#if mind}
                 <span
                   class="dot"
-                  style:background={dotColor(mind)}
-                  style:box-shadow={dotColor(mind) !== "var(--text-2)" ? `0 0 4px ${dotColor(mind)}` : "none"}
+                  style:background={mindDotColor(mind)}
+                  style:box-shadow={mindDotColor(mind) !== "var(--text-2)" ? `0 0 4px ${mindDotColor(mind)}` : "none"}
                 ></span>
               {/if}
               <span class="tag-name">{username}</span>
@@ -195,8 +188,8 @@ let buttonDisabled = $derived(
                 {#if mind}
                   <span
                     class="dot"
-                    style:background={dotColor(mind)}
-                    style:box-shadow={dotColor(mind) !== "var(--text-2)" ? `0 0 4px ${dotColor(mind)}` : "none"}
+                    style:background={mindDotColor(mind)}
+                    style:box-shadow={mindDotColor(mind) !== "var(--text-2)" ? `0 0 4px ${mindDotColor(mind)}` : "none"}
                   ></span>
                 {/if}
                 <span class="item-name">{u.username}</span>
@@ -226,29 +219,16 @@ let buttonDisabled = $derived(
       </button>
     </div>
   </div>
-</div>
+</Modal>
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
-  }
-
-  .modal {
-    background: var(--bg-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+  .modal-content {
     padding: 20px;
-    width: 300px;
-    max-height: 60vh;
     display: flex;
     flex-direction: column;
     gap: 12px;
+    max-height: 60vh;
+    overflow: auto;
   }
 
   .modal-title {

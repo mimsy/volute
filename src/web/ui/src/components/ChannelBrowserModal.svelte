@@ -1,4 +1,5 @@
 <script lang="ts">
+import { onMount } from "svelte";
 import {
   type ChannelInfo,
   type Conversation,
@@ -7,6 +8,7 @@ import {
   joinVoluteChannel,
   leaveVoluteChannel,
 } from "../lib/api";
+import Modal from "./Modal.svelte";
 
 let {
   onClose,
@@ -37,7 +39,7 @@ function loadChannels() {
     });
 }
 
-$effect(() => {
+onMount(() => {
   loadChannels();
 });
 
@@ -89,102 +91,49 @@ function handleKeyDown(e: KeyboardEvent) {
 }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="overlay" onclick={onClose} onkeydown={handleKeyDown}>
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="modal" onclick={(e) => e.stopPropagation()}>
-    <div class="modal-header">
-      <h3>Browse channels</h3>
-      <button class="close-btn" onclick={onClose}>x</button>
-    </div>
+<Modal size="380px" title="Browse channels" {onClose}>
+  {#if error}
+    <div class="error">{error}</div>
+  {/if}
 
-    {#if error}
-      <div class="error">{error}</div>
-    {/if}
-
-    <div class="channel-list">
-      {#if loading}
-        <div class="empty">Loading...</div>
-      {:else if channels.length === 0}
-        <div class="empty">No channels yet. Create one below.</div>
-      {:else}
-        {#each channels as ch (ch.id)}
-          <div class="channel-row">
-            <div class="channel-info">
-              <span class="channel-name">#{ch.name}</span>
-              <span class="channel-meta">{ch.participantCount} member{ch.participantCount === 1 ? "" : "s"}</span>
-            </div>
-            <button
-              class="action-btn"
-              class:leave={ch.isMember}
-              onclick={() => ch.isMember ? handleLeave(ch) : handleJoin(ch)}
-              disabled={joining === ch.name}
-            >
-              {joining === ch.name ? "..." : ch.isMember ? "leave" : "join"}
-            </button>
+  <div class="channel-list">
+    {#if loading}
+      <div class="empty">Loading...</div>
+    {:else if channels.length === 0}
+      <div class="empty">No channels yet. Create one below.</div>
+    {:else}
+      {#each channels as ch (ch.id)}
+        <div class="channel-row">
+          <div class="channel-info">
+            <span class="channel-name">#{ch.name}</span>
+            <span class="channel-meta">{ch.participantCount} member{ch.participantCount === 1 ? "" : "s"}</span>
           </div>
-        {/each}
-      {/if}
-    </div>
-
-    <div class="create-section">
-      <input
-        type="text"
-        bind:value={newName}
-        placeholder="new-channel-name"
-        class="name-input"
-        onkeydown={handleKeyDown}
-      />
-      <button class="create-btn" onclick={handleCreate} disabled={!newName.trim()}>Create</button>
-    </div>
+          <button
+            class="action-btn"
+            class:leave={ch.isMember}
+            onclick={() => ch.isMember ? handleLeave(ch) : handleJoin(ch)}
+            disabled={joining === ch.name}
+          >
+            {joining === ch.name ? "..." : ch.isMember ? "leave" : "join"}
+          </button>
+        </div>
+      {/each}
+    {/if}
   </div>
-</div>
+
+  <div class="create-section">
+    <input
+      type="text"
+      bind:value={newName}
+      placeholder="new-channel-name"
+      class="name-input"
+      onkeydown={handleKeyDown}
+    />
+    <button class="create-btn" onclick={handleCreate} disabled={!newName.trim()}>Create</button>
+  </div>
+</Modal>
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
-    animation: fadeIn 0.15s ease both;
-  }
-
-  .modal {
-    background: var(--bg-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    width: 380px;
-    max-height: 500px;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .modal-header h3 {
-    margin: 0;
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-0);
-  }
-
-  .close-btn {
-    background: none;
-    color: var(--text-2);
-    font-size: 14px;
-    padding: 0 4px;
-    cursor: pointer;
-  }
-
   .error {
     padding: 8px 16px;
     font-size: 12px;

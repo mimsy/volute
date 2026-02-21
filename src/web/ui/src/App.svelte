@@ -1,4 +1,5 @@
 <script lang="ts">
+import { onMount } from "svelte";
 import AdminModal from "./components/AdminModal.svelte";
 import ChannelBrowserModal from "./components/ChannelBrowserModal.svelte";
 import LoginPage from "./components/LoginPage.svelte";
@@ -10,132 +11,51 @@ import Sidebar from "./components/Sidebar.svelte";
 import StatusBar from "./components/StatusBar.svelte";
 import UpdateBanner from "./components/UpdateBanner.svelte";
 import UserSettingsModal from "./components/UserSettingsModal.svelte";
-import {
-  type Conversation,
-  type ConversationWithParticipants,
-  deleteConversationById,
-  fetchAllConversations,
-  fetchMinds,
-  fetchRecentPages,
-  fetchSystemInfo,
-  type Mind,
-  type RecentPage,
-  restartDaemon,
-} from "./lib/api";
-import { type AuthUser, fetchMe, logout } from "./lib/auth";
+import { type Conversation, deleteConversationById, type Mind, restartDaemon } from "./lib/api";
+import { type AuthUser } from "./lib/auth";
 import { navigate, parseSelection, type Selection, selectionToPath } from "./lib/navigate";
-
-// Auth state
-let user = $state<AuthUser | null>(null);
-let authChecked = $state(false);
-let systemName = $state<string | null>(null);
+import {
+  auth,
+  checkAuth,
+  data,
+  handleAuth,
+  handleLogout,
+  hiddenConversationIds,
+  hideConversation,
+  refreshConversations,
+  saveSidebarWidth,
+  sidebar,
+  startPolling,
+  stopPolling,
+  unhideConversation,
+} from "./lib/stores.svelte";
 
 // Selection state
 let selection = $state<Selection>(parseSelection());
 
-// Data
-let minds = $state<Mind[]>([]);
-let conversations = $state<ConversationWithParticipants[]>([]);
-let recentPages = $state<RecentPage[]>([]);
-let connectionOk = $state(true);
-
 // Modals
-let showNewChat = $state(false);
-let showChannelBrowser = $state(false);
-let showSeedModal = $state(false);
-let showAdminModal = $state(false);
-let showUserSettings = $state(false);
-let showMindModal = $state(false);
+type ModalType = "newChat" | "channelBrowser" | "seed" | "admin" | "userSettings" | "mind" | null;
+let activeModal = $state<ModalType>(null);
 let selectedModalMind = $state<Mind | null>(null);
 
-// Hidden chats (persisted to localStorage)
-function loadHiddenChats(): Set<string> {
-  try {
-    const stored = localStorage.getItem("volute:hidden-chats");
-    return stored ? new Set(JSON.parse(stored)) : new Set();
-  } catch {
-    return new Set();
-  }
-}
-let hiddenConversationIds = $state(loadHiddenChats());
-
-function handleHideConversation(id: string) {
-  hiddenConversationIds.add(id);
-  hiddenConversationIds = new Set(hiddenConversationIds);
-  localStorage.setItem("volute:hidden-chats", JSON.stringify([...hiddenConversationIds]));
-  if (activeConversationId === id) {
-    selection = { kind: "home" };
-  }
-}
-
 // Resize state
-let sidebarWidth = $state(loadSidebarWidth());
 let resizing = $state(false);
-
-function loadSidebarWidth(): number {
-  try {
-    const stored = localStorage.getItem("volute:sidebar-width");
-    return stored ? Math.max(180, Math.min(400, Number(stored))) : 240;
-  } catch {
-    return 240;
-  }
-}
 
 // Derived
 let activeConversationId = $derived(
   selection.kind === "conversation" ? (selection.conversationId ?? null) : null,
 );
 
-// Auth
-$effect(() => {
-  fetchMe()
-    .then(async (u) => {
-      user = u;
-      authChecked = true;
-      if (u) {
-        const info = await fetchSystemInfo();
-        systemName = info.system;
-      }
-    })
-    .catch(() => {
-      authChecked = true;
-    });
+// Auth — one-time fetch on mount
+onMount(() => {
+  checkAuth();
 });
-
-// Data helpers
-function refreshConversations() {
-  fetchAllConversations()
-    .then((c) => {
-      conversations = c;
-      connectionOk = true;
-    })
-    .catch(() => {
-      connectionOk = false;
-    });
-}
 
 // Data polling
 $effect(() => {
-  if (!user) return;
-  function refresh() {
-    fetchMinds()
-      .then((m) => {
-        minds = m;
-        connectionOk = true;
-      })
-      .catch(() => {
-        connectionOk = false;
-      });
-    refreshConversations();
-  }
-  refresh();
-  fetchRecentPages()
-    .then((p) => {
-      recentPages = p;
-    })
-    .catch(() => {});
-  const interval = setInterval(refresh, 5000);
-  return () => clearInterval(interval);
+  if (!auth.user) return;
+  startPolling();
+  return () => stopPolling();
 });
 
 // Track whether selection change came from popstate (to avoid pushing duplicate history)
@@ -183,7 +103,7 @@ $effect(() => {
 // Actions
 function handleOpenMindModal(mind: Mind) {
   selectedModalMind = mind;
-  showMindModal = true;
+  activeModal = "mind";
 }
 
 function handleSelectConversation(id: string) {
@@ -209,9 +129,9 @@ function handleConversationId(id: string) {
 }
 
 function handleNewChatCreated(name: string) {
-  showNewChat = false;
+  activeModal = null;
   // Check for existing 2-person DM with this user
-  const existing = conversations.find((c) => {
+  const existing = data.conversations.find((c) => {
     if (c.type === "channel") return false;
     const parts = c.participants ?? [];
     if (parts.length !== 2) return false;
@@ -220,9 +140,7 @@ function handleNewChatCreated(name: string) {
   if (existing) {
     // Unhide if it was hidden
     if (hiddenConversationIds.has(existing.id)) {
-      hiddenConversationIds.delete(existing.id);
-      hiddenConversationIds = new Set(hiddenConversationIds);
-      localStorage.setItem("volute:hidden-chats", JSON.stringify([...hiddenConversationIds]));
+      unhideConversation(existing.id);
     }
     selection = { kind: "conversation", conversationId: existing.id };
   } else {
@@ -231,19 +149,19 @@ function handleNewChatCreated(name: string) {
 }
 
 function handleNewGroupCreated(conv: Conversation) {
-  showNewChat = false;
+  activeModal = null;
   refreshConversations();
   selection = { kind: "conversation", conversationId: conv.id };
 }
 
 function handleChannelJoined(conv: Conversation) {
-  showChannelBrowser = false;
+  activeModal = null;
   refreshConversations();
   selection = { kind: "conversation", conversationId: conv.id };
 }
 
 function handleSeedCreated(mindName: string) {
-  showSeedModal = false;
+  activeModal = null;
   selection = { kind: "conversation", mindName };
 }
 
@@ -251,19 +169,15 @@ function handleSelectPage(mind: string, path: string) {
   selection = { kind: "page", mind, path };
 }
 
-async function handleLogout() {
-  try {
-    await logout();
-  } catch {
-    // Best effort
-  }
-  user = null;
+function onAuth(u: AuthUser) {
+  handleAuth(u);
 }
 
-async function handleAuth(u: AuthUser) {
-  user = u;
-  const info = await fetchSystemInfo();
-  systemName = info.system;
+function handleHideConversation(id: string) {
+  hideConversation(id);
+  if (activeConversationId === id) {
+    selection = { kind: "home" };
+  }
 }
 
 // Resize
@@ -280,7 +194,7 @@ function handleResizeMove(e: PointerEvent) {
   const shellBody = (e.currentTarget as HTMLElement).parentElement;
   if (!shellBody) return;
   const rect = shellBody.getBoundingClientRect();
-  sidebarWidth = Math.max(180, Math.min(400, e.clientX - rect.left));
+  sidebar.width = Math.max(180, Math.min(400, e.clientX - rect.left));
 }
 
 function handleResizeEnd() {
@@ -288,35 +202,35 @@ function handleResizeEnd() {
   resizing = false;
   document.body.style.userSelect = "";
   document.body.style.cursor = "";
-  localStorage.setItem("volute:sidebar-width", String(sidebarWidth));
+  saveSidebarWidth();
 }
 </script>
 
-{#if !authChecked}
+{#if !auth.checked}
   <div class="app">
     <div class="loading">Loading...</div>
   </div>
-{:else if !user}
+{:else if !auth.user}
   <div class="app full-height">
-    <LoginPage onAuth={handleAuth} />
+    <LoginPage {onAuth} />
   </div>
 {:else}
   <div class="shell">
-    {#if user.role === "admin"}
+    {#if auth.user.role === "admin"}
       <UpdateBanner />
     {/if}
     <div class="shell-body">
-      <div class="sidebar" style:width="{sidebarWidth}px">
+      <div class="sidebar" style:width="{sidebar.width}px">
         <Sidebar
-          {minds}
-          conversations={conversations.filter((c) => !hiddenConversationIds.has(c.id))}
-          pages={recentPages}
+          minds={data.minds}
+          conversations={data.conversations.filter((c) => !hiddenConversationIds.has(c.id))}
+          pages={data.recentPages}
           {activeConversationId}
-          username={user.username}
+          username={auth.user.username}
           onSelectConversation={handleSelectConversation}
           onDeleteConversation={handleDeleteConversation}
-          onNewChat={() => (showNewChat = true)}
-          onBrowseChannels={() => (showChannelBrowser = true)}
+          onNewChat={() => (activeModal = "newChat")}
+          onBrowseChannels={() => (activeModal = "channelBrowser")}
           onOpenMind={handleOpenMindModal}
           onSelectPage={handleSelectPage}
           onHideConversation={handleHideConversation}
@@ -333,10 +247,10 @@ function handleResizeEnd() {
       <div class="main-frame">
         <MainFrame
           {selection}
-          {minds}
-          {conversations}
-          {recentPages}
-          username={user.username}
+          minds={data.minds}
+          conversations={data.conversations}
+          recentPages={data.recentPages}
+          username={auth.user.username}
           onConversationId={handleConversationId}
           onOpenMind={handleOpenMindModal}
           onSelectPage={handleSelectPage}
@@ -344,43 +258,43 @@ function handleResizeEnd() {
       </div>
     </div>
     <StatusBar
-      {minds}
-      username={user.username}
-      {systemName}
-      {connectionOk}
-      isAdmin={user.role === "admin"}
-      onAdminClick={() => (showAdminModal = true)}
+      minds={data.minds}
+      username={auth.user.username}
+      systemName={auth.systemName}
+      connectionOk={data.connectionOk}
+      isAdmin={auth.user.role === "admin"}
+      onAdminClick={() => (activeModal = "admin")}
       onRestart={() => restartDaemon()}
       onLogout={handleLogout}
-      onUserSettings={() => (showUserSettings = true)}
+      onUserSettings={() => (activeModal = "userSettings")}
       onOpenMind={handleOpenMindModal}
-      onSeed={() => (showSeedModal = true)}
+      onSeed={() => (activeModal = "seed")}
     />
   </div>
 
-  {#if showNewChat}
-    <MindPickerModal {minds} onClose={() => (showNewChat = false)} onPick={handleNewChatCreated} onGroupCreated={handleNewGroupCreated} />
+  {#if activeModal === "newChat"}
+    <MindPickerModal minds={data.minds} onClose={() => (activeModal = null)} onPick={handleNewChatCreated} onGroupCreated={handleNewGroupCreated} />
   {/if}
-  {#if showChannelBrowser}
+  {#if activeModal === "channelBrowser"}
     <ChannelBrowserModal
-      onClose={() => (showChannelBrowser = false)}
+      onClose={() => (activeModal = null)}
       onJoined={handleChannelJoined}
     />
   {/if}
-  {#if showSeedModal}
-    <SeedModal onClose={() => (showSeedModal = false)} onCreated={handleSeedCreated} />
+  {#if activeModal === "seed"}
+    <SeedModal onClose={() => (activeModal = null)} onCreated={handleSeedCreated} />
   {/if}
-  {#if showAdminModal}
-    <AdminModal onClose={() => (showAdminModal = false)} />
+  {#if activeModal === "admin"}
+    <AdminModal onClose={() => (activeModal = null)} />
   {/if}
-  {#if showUserSettings}
-    <UserSettingsModal onClose={() => (showUserSettings = false)} />
+  {#if activeModal === "userSettings"}
+    <UserSettingsModal onClose={() => (activeModal = null)} />
   {/if}
-  {#if showMindModal && selectedModalMind}
+  {#if activeModal === "mind" && selectedModalMind}
     <MindModal
       mind={selectedModalMind}
       onClose={() => {
-        showMindModal = false;
+        activeModal = null;
         selectedModalMind = null;
       }}
     />

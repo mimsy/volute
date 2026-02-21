@@ -1,4 +1,5 @@
 <script lang="ts">
+import { onMount } from "svelte";
 import {
   fetchMindSkills,
   type MindSkillInfo,
@@ -29,7 +30,7 @@ function refresh() {
     });
 }
 
-$effect(() => {
+onMount(() => {
   refresh();
 });
 

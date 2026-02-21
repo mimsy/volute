@@ -69,8 +69,7 @@ let recentConversations = $derived(
       <div class="mind-row">
         {#each sortedMinds as mind}
           {@const connectedChannels = mind.channels.filter(ch => ch.name !== "web" && ch.name !== "volute" && ch.status === "connected")}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="home-mind-card" onclick={() => onOpenMind(mind)} onkeydown={() => {}}>
+          <button class="home-mind-card" onclick={() => onOpenMind(mind)}>
             <div class="mind-card-header">
               <span class="mind-name">{mind.name}</span>
               <StatusBadge status={getDisplayStatus(mind)} />
@@ -88,7 +87,7 @@ let recentConversations = $derived(
             <div class="mind-activity">
               {mind.lastActiveAt ? `active ${formatRelativeTime(mind.lastActiveAt)}` : "no activity"}
             </div>
-          </div>
+          </button>
         {/each}
       </div>
     {/if}
@@ -134,13 +133,12 @@ let recentConversations = $derived(
       </div>
       <div class="pages-list">
         {#each recentPages as page}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="page-row" onclick={() => onSelectPage(page.mind, page.file)} onkeydown={() => {}}>
+          <button class="page-row" onclick={() => onSelectPage(page.mind, page.file)}>
             <span>
               <span class="page-mind">{page.mind}/</span>{page.file}
             </span>
             <span class="page-time">{formatRelativeTime(page.modified)}</span>
-          </div>
+          </button>
         {/each}
       </div>
     </div>
@@ -199,6 +197,9 @@ let recentConversations = $derived(
     transition: border-color 0.15s;
     flex-shrink: 0;
     cursor: pointer;
+    text-align: left;
+    color: inherit;
+    font-size: inherit;
   }
 
   .home-mind-card:hover {
@@ -304,6 +305,7 @@ let recentConversations = $derived(
     display: flex;
     justify-content: space-between;
     align-items: center;
+    width: 100%;
     padding: 8px 12px;
     border-radius: var(--radius);
     background: var(--bg-2);
@@ -312,6 +314,7 @@ let recentConversations = $derived(
     font-size: 12px;
     transition: border-color 0.15s;
     cursor: pointer;
+    text-align: left;
   }
 
   .page-row:hover {
