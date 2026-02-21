@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { writeChannelEntry } from "../../connectors/sdk.js";
-import { CHANNELS, getChannelDriver } from "../../lib/channels.js";
+import { CHANNELS, getChannelDriver, type ImageAttachment } from "../../lib/channels.js";
 import { loadMergedEnv } from "../../lib/env.js";
 import { findMind, mindDir } from "../../lib/registry.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
@@ -14,17 +14,18 @@ const app = new Hono<AuthEnv>()
     const name = c.req.param("name");
     if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
 
-    const { platform, uri, message } = await c.req.json<{
+    const { platform, uri, message, images } = await c.req.json<{
       platform: string;
       uri: string;
       message: string;
+      images?: ImageAttachment[];
     }>();
     const driver = getChannelDriver(platform);
     if (!driver) return c.json({ error: `No driver for platform: ${platform}` }, 400);
 
     const env = buildEnv(name);
     try {
-      await driver.send(env, uri, message);
+      await driver.send(env, uri, message, images);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);

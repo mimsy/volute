@@ -18,9 +18,19 @@ export type ChannelUser = {
   type?: string;
 };
 
+export type ImageAttachment = {
+  media_type: string;
+  data: string; // base64
+};
+
 export type ChannelDriver = {
   read(env: Record<string, string>, channelId: string, limit: number): Promise<string>;
-  send(env: Record<string, string>, channelId: string, message: string): Promise<void>;
+  send(
+    env: Record<string, string>,
+    channelId: string,
+    message: string,
+    images?: ImageAttachment[],
+  ): Promise<void>;
   listConversations?(env: Record<string, string>): Promise<ChannelConversation[]>;
   listUsers?(env: Record<string, string>): Promise<ChannelUser[]>;
   createConversation?(

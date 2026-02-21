@@ -1,6 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { type ChannelConversation, type ChannelUser, resolveChannelId } from "../channels.js";
+import {
+  type ChannelConversation,
+  type ChannelUser,
+  type ImageAttachment,
+  resolveChannelId,
+} from "../channels.js";
 import { voluteHome } from "../registry.js";
 import { buildVoluteSlug } from "../slugify.js";
 
@@ -67,6 +72,7 @@ export async function send(
   env: Record<string, string>,
   channelSlug: string,
   message: string,
+  images?: ImageAttachment[],
 ): Promise<void> {
   const mindName = env.VOLUTE_MIND;
   if (!mindName) throw new Error("VOLUTE_MIND not set");
@@ -82,7 +88,12 @@ export async function send(
   const res = await fetch(`${url}/api/minds/${encodeURIComponent(mindName)}/chat`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ message, conversationId, sender: env.VOLUTE_SENDER ?? mindName }),
+    body: JSON.stringify({
+      message,
+      conversationId,
+      sender: env.VOLUTE_SENDER ?? mindName,
+      images,
+    }),
   });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };

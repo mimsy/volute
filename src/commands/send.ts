@@ -1,6 +1,8 @@
+import { existsSync, readFileSync } from "node:fs";
 import { userInfo } from "node:os";
+import { extname } from "node:path";
 import { getClient, urlOf } from "../lib/api-client.js";
-import { getChannelDriver } from "../lib/channels.js";
+import { getChannelDriver, type ImageAttachment } from "../lib/channels.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { parseTarget } from "../lib/parse-target.js";
@@ -8,22 +10,50 @@ import { readStdin } from "../lib/read-stdin.js";
 import { findMind } from "../lib/registry.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
 
+const IMAGE_MEDIA_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
+
+function loadImage(imagePath: string): ImageAttachment {
+  if (!existsSync(imagePath)) {
+    console.error(`Image file not found: ${imagePath}`);
+    process.exit(1);
+  }
+  const ext = extname(imagePath).toLowerCase();
+  const mediaType = IMAGE_MEDIA_TYPES[ext];
+  if (!mediaType) {
+    console.error(`Unsupported image format: ${ext} (supported: png, jpg, jpeg, gif, webp)`);
+    process.exit(1);
+  }
+  const data = readFileSync(imagePath).toString("base64");
+  return { media_type: mediaType, data };
+}
+
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
     mind: { type: "string" },
+    image: { type: "string" },
   });
 
   const target = positional[0];
   const message = positional[1] ?? (await readStdin());
 
-  if (!target || !message) {
-    console.error('Usage: volute send <target> "<message>" [--mind <name>]');
+  const images = flags.image ? [loadImage(flags.image)] : undefined;
+
+  if (!target || (!message && !images)) {
+    console.error('Usage: volute send <target> "<message>" [--mind <name>] [--image <path>]');
     console.error('       echo "message" | volute send <target> [--mind <name>]');
     console.error("");
     console.error("Examples:");
     console.error('  volute send @other-mind "hello"');
     console.error('  volute send animal-chat "hello everyone"');
     console.error('  volute send discord:server/channel "hello"');
+    console.error('  volute send @mind "check this out" --image photo.png');
+    console.error("  volute send @mind --image photo.png");
     process.exit(1);
   }
 
@@ -86,7 +116,7 @@ export async function run(args: string[]) {
     }
 
     try {
-      await driver.send(env, channelUri, message);
+      await driver.send(env, channelUri, message ?? "", images);
       console.log("Message sent.");
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
@@ -102,7 +132,7 @@ export async function run(args: string[]) {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ channel: parsed.uri, content: message }),
+            body: JSON.stringify({ channel: parsed.uri, content: message ?? "" }),
           },
         );
       } catch (err) {
@@ -119,7 +149,12 @@ export async function run(args: string[]) {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform: parsed.platform, uri: channelUri, message }),
+        body: JSON.stringify({
+          platform: parsed.platform,
+          uri: channelUri,
+          message: message ?? "",
+          images,
+        }),
       },
     );
     if (!res.ok) {
@@ -137,7 +172,7 @@ export async function run(args: string[]) {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ channel: channelUri, content: message }),
+            body: JSON.stringify({ channel: channelUri, content: message ?? "" }),
           },
         );
       } catch (err) {
