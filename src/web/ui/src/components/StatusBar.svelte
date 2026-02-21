@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { Mind } from "../lib/api";
-import { getDisplayStatus } from "../lib/format";
+import { getDisplayStatus, mindDotColor } from "../lib/format";
 
 let {
   minds,
@@ -65,13 +65,6 @@ function handleClickOutside(e: MouseEvent) {
     showUserMenu = false;
     showMindsMenu = false;
   }
-}
-
-function mindDotColor(mind: Mind): string {
-  const s = getDisplayStatus(mind);
-  if (s === "running" || s === "active") return "var(--accent)";
-  if (s === "starting") return "var(--yellow)";
-  return "var(--text-2)";
 }
 </script>
 

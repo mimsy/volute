@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "../lib/api";
-import { getConversationLabel, getDisplayStatus } from "../lib/format";
+import { getConversationLabel, getDisplayStatus, mindDotColor } from "../lib/format";
 
 let {
   conversations,
@@ -47,13 +47,6 @@ function getDmInfo(conv: ConversationWithParticipants): {
   const matchingMind = minds.find((m) => m.name === other.username);
   if (matchingMind) return { isMindDm: true, mind: matchingMind, otherName: other.username };
   return { isMindDm: false, otherName: other.username };
-}
-
-function mindDotColor(mind: Mind): string {
-  const s = getDisplayStatus(mind);
-  if (s === "running" || s === "active") return "var(--accent)";
-  if (s === "starting") return "var(--yellow)";
-  return "var(--text-2)";
 }
 
 function openMenu(e: MouseEvent, convId: string) {

@@ -1,5 +1,12 @@
 import type { Mind } from "./api";
 
+export function mindDotColor(mind: Mind): string {
+  const s = getDisplayStatus(mind);
+  if (s === "running" || s === "active") return "var(--accent)";
+  if (s === "starting") return "var(--yellow)";
+  return "var(--text-2)";
+}
+
 /** Ensure a DB timestamp (UTC without Z) is parsed correctly. */
 export function normalizeTimestamp(dateStr: string): string {
   return dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`;
