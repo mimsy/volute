@@ -304,6 +304,18 @@ export function createRouter(options: {
       return { messageId, unsubscribe: noop };
     }
 
+    // Mention-mode filtering: skip messages that don't mention this mind
+    if (resolved.destination === "mind" && resolved.mode === "mention") {
+      const mindName = process.env.VOLUTE_MIND;
+      if (mindName) {
+        const lowerText = text.toLowerCase();
+        if (!lowerText.includes(mindName.toLowerCase())) {
+          queueMicrotask(() => safeListener({ type: "done", messageId }));
+          return { messageId, unsubscribe: noop };
+        }
+      }
+    }
+
     // File destination
     if (resolved.destination === "file") {
       if (options.fileHandler) {

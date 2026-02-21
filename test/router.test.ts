@@ -536,4 +536,63 @@ describe("router", () => {
     );
     assert.ok(text.includes("hello"), "should still include original message");
   });
+
+  it("mention mode: skips messages not mentioning the mind", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const configPath = join(dir, "routes.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        rules: [{ channel: "volute:#*", session: "channel", mode: "mention" }],
+      }),
+    );
+
+    const oldEnv = process.env.VOLUTE_MIND;
+    process.env.VOLUTE_MIND = "test-mind";
+    try {
+      const mind = mockMindHandler();
+      const router = createRouter({ configPath, mindHandler: mind.resolver });
+
+      // Message without mention — should be skipped
+      await waitForDone(router, [{ type: "text", text: "hello everyone" }], {
+        channel: "volute:#general",
+      });
+      assert.equal(mind.calls.length, 0, "should not dispatch when mind not mentioned");
+
+      // Message with mention — should be dispatched
+      await waitForDone(router, [{ type: "text", text: "hey test-mind what do you think?" }], {
+        channel: "volute:#general",
+      });
+      assert.equal(mind.calls.length, 1, "should dispatch when mind is mentioned");
+    } finally {
+      if (oldEnv === undefined) delete process.env.VOLUTE_MIND;
+      else process.env.VOLUTE_MIND = oldEnv;
+    }
+  });
+
+  it("mention mode: case-insensitive matching", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const configPath = join(dir, "routes.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        rules: [{ channel: "volute:#*", session: "channel", mode: "mention" }],
+      }),
+    );
+
+    const oldEnv = process.env.VOLUTE_MIND;
+    process.env.VOLUTE_MIND = "TestMind";
+    try {
+      const mind = mockMindHandler();
+      const router = createRouter({ configPath, mindHandler: mind.resolver });
+
+      await waitForDone(router, [{ type: "text", text: "hey TESTMIND check this" }], {
+        channel: "volute:#dev",
+      });
+      assert.equal(mind.calls.length, 1, "should match case-insensitively");
+    } finally {
+      if (oldEnv === undefined) delete process.env.VOLUTE_MIND;
+      else process.env.VOLUTE_MIND = oldEnv;
+    }
+  });
 });

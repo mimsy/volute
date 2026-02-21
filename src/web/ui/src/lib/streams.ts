@@ -91,3 +91,27 @@ export async function sendChat(
   const data = (await res.json()) as { ok: boolean; conversationId: string };
   return { conversationId: data.conversationId };
 }
+
+export async function sendChatUnified(
+  conversationId: string,
+  message: string,
+  images?: Array<{ media_type: string; data: string }>,
+): Promise<{ conversationId: string }> {
+  const res = await fetch("/api/volute/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message: message || undefined,
+      conversationId,
+      images: images && images.length > 0 ? images : undefined,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(err.error ?? `Chat request failed: ${res.status}`);
+  }
+
+  const data = (await res.json()) as { ok: boolean; conversationId: string };
+  return { conversationId: data.conversationId };
+}

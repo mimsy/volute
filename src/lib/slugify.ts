@@ -15,7 +15,12 @@ export function buildVoluteSlug(opts: {
   mindUsername: string;
   convTitle: string | null | undefined;
   conversationId: string;
+  convType?: string;
+  convName?: string | null;
 }): string {
+  if (opts.convType === "channel" && opts.convName) {
+    return `volute:#${opts.convName}`;
+  }
   const isDM = opts.participants.length === 2;
   if (isDM) {
     const other = opts.participants.find((p) => p.username !== opts.mindUsername);

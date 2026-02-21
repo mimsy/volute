@@ -105,8 +105,10 @@ export type Participant = {
 
 export type Conversation = {
   id: string;
-  mind_name: string;
+  mind_name: string | null;
   channel: string;
+  type: "dm" | "group" | "channel";
+  name: string | null;
   user_id: number | null;
   title: string | null;
   created_at: string;
@@ -334,4 +336,53 @@ export async function createSeedMind(
     throw new Error(data.error || "Failed to create mind");
   }
   return res.json() as Promise<{ name: string; port: number }>;
+}
+
+// --- Volute Channels ---
+
+export type ChannelInfo = Conversation & { participantCount: number };
+
+export async function fetchChannels(): Promise<ChannelInfo[]> {
+  const res = await fetch("/api/volute/channels", { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch channels");
+  return res.json();
+}
+
+export async function createVoluteChannel(name: string): Promise<Conversation> {
+  const res = await fetch("/api/volute/channels", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to create channel");
+  }
+  return res.json();
+}
+
+export async function joinVoluteChannel(name: string): Promise<{ conversationId: string }> {
+  const res = await fetch(`/api/volute/channels/${encodeURIComponent(name)}/join`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to join channel");
+  }
+  return res.json();
+}
+
+export async function leaveVoluteChannel(name: string): Promise<void> {
+  const res = await fetch(`/api/volute/channels/${encodeURIComponent(name)}/leave`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to leave channel");
+  }
 }

@@ -12,8 +12,10 @@ export type ContentBlock =
 
 export type Conversation = {
   id: string;
-  mind_name: string;
+  mind_name: string | null;
   channel: string;
+  type: "dm" | "group" | "channel";
+  name: string | null;
   user_id: number | null;
   title: string | null;
   created_at: string;
@@ -37,18 +39,28 @@ export type Message = {
 };
 
 export async function createConversation(
-  mindName: string,
+  mindName: string | null,
   channel: string,
-  opts?: { userId?: number; title?: string; participantIds?: number[] },
+  opts?: {
+    userId?: number;
+    title?: string;
+    participantIds?: number[];
+    type?: "dm" | "group" | "channel";
+    name?: string;
+  },
 ): Promise<Conversation> {
   const db = await getDb();
   const id = randomUUID();
+  const type = opts?.type ?? "dm";
+  const name = opts?.name ?? null;
 
   await db.transaction(async (tx) => {
     await tx.insert(conversations).values({
       id,
       mind_name: mindName,
       channel,
+      type,
+      name,
       user_id: opts?.userId ?? null,
       title: opts?.title ?? null,
     });
@@ -69,6 +81,8 @@ export async function createConversation(
     id,
     mind_name: mindName,
     channel,
+    type,
+    name,
     user_id: opts?.userId ?? null,
     title: opts?.title ?? null,
     created_at: new Date().toISOString(),
@@ -85,7 +99,13 @@ export async function getOrCreateConversation(
   const existing = await db
     .select()
     .from(conversations)
-    .where(and(eq(conversations.mind_name, mindName), eq(conversations.channel, channel)))
+    .where(
+      and(
+        eq(conversations.mind_name, mindName),
+        eq(conversations.channel, channel),
+        eq(conversations.type, "dm"),
+      ),
+    )
     .orderBy(desc(conversations.updated_at))
     .limit(1)
     .get();
@@ -363,11 +383,11 @@ export async function findDMConversation(
   participantIds: [number, number],
 ): Promise<string | null> {
   const db = await getDb();
-  // Find conversations for this mind with exactly these two participants
+  // Find DM conversations for this mind with exactly these two participants
   const mindConvs = await db
     .select({ id: conversations.id })
     .from(conversations)
-    .where(eq(conversations.mind_name, mindName))
+    .where(and(eq(conversations.mind_name, mindName), eq(conversations.type, "dm")))
     .all();
 
   for (const conv of mindConvs) {
@@ -389,4 +409,45 @@ export async function findDMConversation(
 export async function deleteConversation(id: string): Promise<void> {
   const db = await getDb();
   await db.delete(conversations).where(eq(conversations.id, id));
+}
+
+// --- Channel CRUD ---
+
+export async function createChannel(name: string, creatorId?: number): Promise<Conversation> {
+  const participantIds = creatorId ? [creatorId] : [];
+  return createConversation(null, "volute", {
+    type: "channel",
+    name,
+    title: name,
+    participantIds,
+  });
+}
+
+export async function getChannelByName(name: string): Promise<Conversation | null> {
+  const db = await getDb();
+  const row = await db
+    .select()
+    .from(conversations)
+    .where(and(eq(conversations.name, name), eq(conversations.type, "channel")))
+    .get();
+  return (row as Conversation) ?? null;
+}
+
+export async function listChannels(): Promise<Conversation[]> {
+  const db = await getDb();
+  return db
+    .select()
+    .from(conversations)
+    .where(eq(conversations.type, "channel"))
+    .orderBy(conversations.name)
+    .all() as Promise<Conversation[]>;
+}
+
+export async function joinChannel(conversationId: string, userId: number): Promise<void> {
+  if (await isParticipant(conversationId, userId)) return;
+  await addParticipant(conversationId, userId);
+}
+
+export async function leaveChannel(conversationId: string, userId: number): Promise<void> {
+  await removeParticipant(conversationId, userId);
 }

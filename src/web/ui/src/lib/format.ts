@@ -16,7 +16,9 @@ export function getConversationLabel(
   participants: Array<{ username: string; userType: string }>,
   title: string | null,
   currentUsername: string,
+  conv?: { type?: string; name?: string | null },
 ): string {
+  if (conv?.type === "channel" && conv.name) return `#${conv.name}`;
   if (participants.length === 2) {
     const other = participants.find((p) => p.username !== currentUsername);
     if (other) return `@${other.username}`;

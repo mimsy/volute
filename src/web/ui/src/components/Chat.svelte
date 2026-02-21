@@ -7,7 +7,7 @@ import {
   reportTyping,
 } from "../lib/api";
 import { renderMarkdown } from "../lib/markdown";
-import { sendChat } from "../lib/streams";
+import { sendChat, sendChatUnified } from "../lib/streams";
 
 let {
   name,
@@ -15,12 +15,14 @@ let {
   conversationId,
   onConversationId,
   stage,
+  convType = "dm",
 }: {
   name: string;
   username?: string;
   conversationId: string | null;
   onConversationId: (id: string) => void;
   stage?: "seed" | "sprouted";
+  convType?: string;
 } = $props();
 
 type ChatEntry = { role: "user" | "assistant"; blocks: ContentBlock[]; senderName?: string };
@@ -123,10 +125,13 @@ $effect(() => {
 
 // SSE subscription for real-time updates
 $effect(() => {
-  if (!conversationId || !name) return;
-  const eventSource = new EventSource(
-    `/api/minds/${encodeURIComponent(name)}/conversations/${encodeURIComponent(conversationId)}/events`,
-  );
+  if (!conversationId) return;
+  if (convType !== "channel" && !name) return;
+  const sseUrl =
+    convType === "channel"
+      ? `/api/conversations/${encodeURIComponent(conversationId)}/events`
+      : `/api/minds/${encodeURIComponent(name)}/conversations/${encodeURIComponent(conversationId)}/events`;
+  const eventSource = new EventSource(sseUrl);
   eventSource.onmessage = (ev) => {
     if (!ev.data) return;
     try {
@@ -150,7 +155,7 @@ $effect(() => {
 
 // Poll typing indicators
 $effect(() => {
-  if (!conversationId || !name) return;
+  if (!conversationId || !name || convType === "channel") return;
   let cancelled = false;
   const poll = () => {
     fetchTyping(name, `volute:${conversationId}`)
@@ -208,14 +213,25 @@ async function handleSend() {
   scrollToBottom(true);
 
   try {
-    const result = await sendChat(
-      name,
-      message,
-      currentConvId ?? undefined,
-      images.length > 0 ? images : undefined,
-    );
-    currentConvId = result.conversationId;
-    onConversationId(result.conversationId);
+    let resultConvId: string;
+    if (convType === "channel" && currentConvId) {
+      const result = await sendChatUnified(
+        currentConvId,
+        message,
+        images.length > 0 ? images : undefined,
+      );
+      resultConvId = result.conversationId;
+    } else {
+      const result = await sendChat(
+        name,
+        message,
+        currentConvId ?? undefined,
+        images.length > 0 ? images : undefined,
+      );
+      resultConvId = result.conversationId;
+    }
+    currentConvId = resultConvId;
+    onConversationId(resultConvId);
     sending = false;
   } catch (err) {
     console.error("Failed to send message:", err);

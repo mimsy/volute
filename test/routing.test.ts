@@ -433,6 +433,35 @@ describe("resolveRoute", () => {
     assert.equal(r.matched, true);
     assert.equal(r.destination, "file");
   });
+
+  // --- mode field ---
+
+  it("passes mode through to resolved route", () => {
+    const config: RoutingConfig = {
+      rules: [{ channel: "volute:#*", session: "channel", mode: "mention" }],
+    };
+    const r = expectMind(resolveRoute(config, { channel: "volute:#general" }));
+    assert.equal(r.session, "channel");
+    assert.equal(r.mode, "mention");
+  });
+
+  it("mode defaults to undefined (all)", () => {
+    const config: RoutingConfig = {
+      rules: [{ channel: "volute:#general", session: "general" }],
+    };
+    const r = expectMind(resolveRoute(config, { channel: "volute:#general" }));
+    assert.equal(r.mode, undefined);
+  });
+
+  it("mode is not treated as a match criterion", () => {
+    const config: RoutingConfig = {
+      rules: [{ mode: "mention", session: "catch-all" }],
+    };
+    // Rule with only mode (and session) should match everything — mode is not a match key
+    const r = expectMind(resolveRoute(config, { channel: "anything" }));
+    assert.equal(r.session, "catch-all");
+    assert.equal(r.mode, "mention");
+  });
 });
 
 describe("resolveSessionConfig", () => {
