@@ -91,58 +91,6 @@ a:focus-visible {
   flex-direction: column;
 }
 
-.app-header {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  padding: 0 24px;
-  height: 48px;
-  background: var(--bg-1);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.logo {
-  font-family: var(--mono);
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  color: var(--text-0);
-  display: flex;
-  align-items: center;
-  gap: 0;
-}
-
-.logo-symbol {
-  color: var(--accent);
-  margin-right: 6px;
-}
-
-.logo:hover .logo-symbol {
-  text-shadow: 0 0 8px var(--accent);
-}
-
-.breadcrumb {
-  display: flex;
-  align-items: center;
-  font-size: 13px;
-}
-
-.breadcrumb-sep {
-  color: var(--text-2);
-  margin: 0 8px;
-}
-
-.breadcrumb-name {
-  color: var(--text-1);
-}
-
-.app-main {
-  flex: 1;
-  overflow: auto;
-  padding: 24px;
-}
-
 @keyframes fadeIn {
   from {
     opacity: 0;

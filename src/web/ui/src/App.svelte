@@ -1,49 +1,69 @@
 <script lang="ts">
+import AdminModal from "./components/AdminModal.svelte";
+import ChannelBrowserModal from "./components/ChannelBrowserModal.svelte";
+import GroupModal from "./components/GroupModal.svelte";
 import LoginPage from "./components/LoginPage.svelte";
-import SystemLogs from "./components/SystemLogs.svelte";
+import MainFrame from "./components/MainFrame.svelte";
+import MindPickerModal from "./components/MindPickerModal.svelte";
+import SeedModal from "./components/SeedModal.svelte";
+import Sidebar from "./components/Sidebar.svelte";
+import StatusBar from "./components/StatusBar.svelte";
 import UpdateBanner from "./components/UpdateBanner.svelte";
-import UserManagement from "./components/UserManagement.svelte";
-import { fetchSystemInfo } from "./lib/api";
+import {
+  type Conversation,
+  type ConversationWithParticipants,
+  deleteConversationById,
+  fetchAllConversations,
+  fetchMinds,
+  fetchRecentPages,
+  fetchSystemInfo,
+  type Mind,
+  type RecentPage,
+} from "./lib/api";
 import { type AuthUser, fetchMe, logout } from "./lib/auth";
-import { navigate } from "./lib/navigate";
-import Chats from "./pages/Chats.svelte";
-import Dashboard from "./pages/Dashboard.svelte";
-import Home from "./pages/Home.svelte";
-import MindDetail from "./pages/MindDetail.svelte";
-import Settings from "./pages/Settings.svelte";
+import { navigate, parseSelection, type Selection, selectionToPath } from "./lib/navigate";
 
-type Route = {
-  page: string;
-  name?: string;
-  conversationId?: string;
-  mindName?: string;
-};
-
-function parseRoute(): Route {
-  const path = window.location.pathname;
-  const search = new URLSearchParams(window.location.search);
-  if (path === "/" || path === "") return { page: "home" };
-  if (path === "/minds") return { page: "minds" };
-  if (path === "/chats") {
-    const mind = search.get("mind");
-    return mind ? { page: "chats", mindName: mind } : { page: "chats" };
-  }
-  if (path === "/logs") return { page: "logs" };
-  if (path === "/settings") return { page: "settings" };
-  const chatsMatch = path.match(/^\/chats\/(.+)$/);
-  if (chatsMatch) return { page: "chats", conversationId: chatsMatch[1] };
-  const match = path.match(/^\/mind\/(.+)$/);
-  if (match) return { page: "mind", name: match[1] };
-  return { page: "home" };
-}
-
-let route = $state<Route>(parseRoute());
+// Auth state
 let user = $state<AuthUser | null>(null);
 let authChecked = $state(false);
-let showUsers = $state(false);
 let systemName = $state<string | null>(null);
-let userMenuOpen = $state(false);
 
+// Selection state
+let selection = $state<Selection>(parseSelection());
+
+// Data
+let minds = $state<Mind[]>([]);
+let conversations = $state<ConversationWithParticipants[]>([]);
+let recentPages = $state<RecentPage[]>([]);
+let connectionOk = $state(true);
+
+// Modals
+let showNewChat = $state(false);
+let showGroupModal = $state(false);
+let showChannelBrowser = $state(false);
+let showSeedModal = $state(false);
+let showAdminModal = $state(false);
+
+// Resize state
+let sidebarWidth = $state(loadSidebarWidth());
+let resizing = $state(false);
+
+function loadSidebarWidth(): number {
+  try {
+    const stored = localStorage.getItem("volute:sidebar-width");
+    return stored ? Math.max(180, Math.min(400, Number(stored))) : 240;
+  } catch {
+    return 240;
+  }
+}
+
+// Derived
+let selectedMind = $derived(selection.kind === "mind" ? selection.name : null);
+let activeConversationId = $derived(
+  selection.kind === "conversation" ? (selection.conversationId ?? null) : null,
+);
+
+// Auth
 $effect(() => {
   fetchMe()
     .then(async (u) => {
@@ -59,10 +79,50 @@ $effect(() => {
     });
 });
 
+// Data helpers
+function refreshConversations() {
+  fetchAllConversations()
+    .then((c) => {
+      conversations = c;
+      connectionOk = true;
+    })
+    .catch(() => {
+      connectionOk = false;
+    });
+}
+
+// Data polling
+$effect(() => {
+  if (!user) return;
+  function refresh() {
+    fetchMinds()
+      .then((m) => {
+        minds = m;
+        connectionOk = true;
+      })
+      .catch(() => {
+        connectionOk = false;
+      });
+    refreshConversations();
+  }
+  refresh();
+  fetchRecentPages()
+    .then((p) => {
+      recentPages = p;
+    })
+    .catch(() => {});
+  const interval = setInterval(refresh, 5000);
+  return () => clearInterval(interval);
+});
+
+// Track whether selection change came from popstate (to avoid pushing duplicate history)
+let fromPopstate = $state(false);
+
+// URL sync: popstate → selection
 $effect(() => {
   const handler = () => {
-    route = parseRoute();
-    showUsers = false;
+    fromPopstate = true;
+    selection = parseSelection();
   };
   window.addEventListener("popstate", handler);
   // Intercept internal link clicks for SPA navigation
@@ -83,11 +143,74 @@ $effect(() => {
   };
 });
 
+// Selection → URL sync
+$effect(() => {
+  const expected = selectionToPath(selection);
+  const current = window.location.pathname + window.location.search;
+  if (current !== expected) {
+    if (fromPopstate) {
+      window.history.replaceState(null, "", expected);
+    } else {
+      window.history.pushState(null, "", expected);
+    }
+  }
+  fromPopstate = false;
+});
+
+// Actions
+function handleSelectMind(name: string) {
+  selection = { kind: "mind", name };
+}
+
+function handleSelectConversation(id: string) {
+  selection = { kind: "conversation", conversationId: id };
+}
+
+async function handleDeleteConversation(id: string) {
+  try {
+    await deleteConversationById(id);
+  } catch (err) {
+    console.error("Failed to delete conversation:", err);
+    return;
+  }
+  refreshConversations();
+  if (activeConversationId === id) {
+    selection = { kind: "home" };
+  }
+}
+
+function handleConversationId(id: string) {
+  selection = { kind: "conversation", conversationId: id };
+  refreshConversations();
+}
+
+function handleNewChatCreated(mind: string) {
+  showNewChat = false;
+  selection = { kind: "conversation", mindName: mind };
+}
+
+function handleGroupCreated(conv: Conversation) {
+  showGroupModal = false;
+  refreshConversations();
+  selection = { kind: "conversation", conversationId: conv.id };
+}
+
+function handleChannelJoined(conv: Conversation) {
+  showChannelBrowser = false;
+  refreshConversations();
+  selection = { kind: "conversation", conversationId: conv.id };
+}
+
+function handleSeedCreated(mindName: string) {
+  showSeedModal = false;
+  selection = { kind: "conversation", mindName };
+}
+
 async function handleLogout() {
   try {
     await logout();
   } catch {
-    // Best effort — clear local state regardless
+    // Best effort
   }
   user = null;
 }
@@ -98,14 +221,30 @@ async function handleAuth(u: AuthUser) {
   systemName = info.system;
 }
 
-const breadcrumbLabel: Record<string, string> = {
-  minds: "minds",
-  chats: "chat",
-  logs: "system logs",
-  settings: "settings",
-};
+// Resize
+function handleResizeStart(e: PointerEvent) {
+  resizing = true;
+  const target = e.currentTarget as HTMLElement;
+  target.setPointerCapture(e.pointerId);
+  document.body.style.userSelect = "none";
+  document.body.style.cursor = "col-resize";
+}
 
-let breadcrumb = $derived(route.page === "mind" ? route.name : breadcrumbLabel[route.page]);
+function handleResizeMove(e: PointerEvent) {
+  if (!resizing) return;
+  const shellBody = (e.currentTarget as HTMLElement).parentElement;
+  if (!shellBody) return;
+  const rect = shellBody.getBoundingClientRect();
+  sidebarWidth = Math.max(180, Math.min(400, e.clientX - rect.left));
+}
+
+function handleResizeEnd() {
+  if (!resizing) return;
+  resizing = false;
+  document.body.style.userSelect = "";
+  document.body.style.cursor = "";
+  localStorage.setItem("volute:sidebar-width", String(sidebarWidth));
+}
 </script>
 
 {#if !authChecked}
@@ -117,77 +256,76 @@ let breadcrumb = $derived(route.page === "mind" ? route.name : breadcrumbLabel[r
     <LoginPage onAuth={handleAuth} />
   </div>
 {:else}
-  <div class="app">
+  <div class="shell">
     {#if user.role === "admin"}
       <UpdateBanner />
     {/if}
-    <header class="app-header">
-      <a href="/" class="logo">
-        <span class="logo-symbol">&gt;</span> volute
-        {#if systemName}
-          <span class="system-name"> &middot; {systemName}</span>
-        {/if}
-      </a>
-      {#if breadcrumb}
-        <nav class="breadcrumb">
-          <span class="breadcrumb-sep">/</span>
-          <span class="breadcrumb-name">{breadcrumb}</span>
-        </nav>
-      {/if}
-      <div class="header-right">
-        <a href="/chats" class="nav-link" class:active={route.page === "chats"}>chat</a>
-        <a href="/minds" class="nav-link" class:active={route.page === "minds" || route.page === "mind"}>minds</a>
-        <div class="user-menu">
-          <button class="user-menu-button" class:open={userMenuOpen} onclick={() => userMenuOpen = !userMenuOpen}>
-            {user.username}
-            <span class="caret">{userMenuOpen ? "\u25B2" : "\u25BC"}</span>
-          </button>
-          {#if userMenuOpen}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="overlay" onclick={() => userMenuOpen = false} onkeydown={() => {}}></div>
-            <div class="dropdown">
-              {#if user.role === "admin"}
-                <button class="dropdown-item" class:active={route.page === "settings"} onclick={() => { navigate("/settings"); userMenuOpen = false; }}>
-                  settings
-                </button>
-                <button class="dropdown-item" class:active={route.page === "logs"} onclick={() => { navigate("/logs"); userMenuOpen = false; }}>
-                  system logs
-                </button>
-                <button class="dropdown-item" onclick={() => { showUsers = !showUsers; userMenuOpen = false; }}>
-                  manage users
-                </button>
-                <div class="dropdown-divider"></div>
-              {/if}
-              <button class="dropdown-item muted" onclick={() => { handleLogout(); userMenuOpen = false; }}>
-                logout
-              </button>
-            </div>
-          {/if}
-        </div>
-      </div>
-    </header>
-    <main class="app-main" class:no-padding={route.page === "chats" && !showUsers}>
-      {#if showUsers}
-        <UserManagement onClose={() => showUsers = false} />
-      {:else if route.page === "home"}
-        <Home username={user.username} />
-      {:else if route.page === "minds"}
-        <Dashboard />
-      {:else if route.page === "chats"}
-        <Chats
-          conversationId={route.conversationId}
-          mindName={route.mindName}
+    <div class="shell-body">
+      <div class="sidebar" style:width="{sidebarWidth}px">
+        <Sidebar
+          {minds}
+          {conversations}
+          pages={recentPages}
+          {selectedMind}
+          {activeConversationId}
           username={user.username}
+          onSelectMind={handleSelectMind}
+          onSelectConversation={handleSelectConversation}
+          onDeleteConversation={handleDeleteConversation}
+          onNewChat={() => (showNewChat = true)}
+          onNewGroup={() => (showGroupModal = true)}
+          onBrowseChannels={() => (showChannelBrowser = true)}
+          onSeed={() => (showSeedModal = true)}
         />
-      {:else if route.page === "mind" && route.name}
-        <MindDetail name={route.name} />
-      {:else if route.page === "logs"}
-        <SystemLogs />
-      {:else if route.page === "settings"}
-        <Settings />
-      {/if}
-    </main>
+      </div>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="resize-handle"
+        onpointerdown={handleResizeStart}
+        onpointermove={handleResizeMove}
+        onpointerup={handleResizeEnd}
+        onpointercancel={handleResizeEnd}
+      ></div>
+      <div class="main-frame">
+        <MainFrame
+          {selection}
+          {minds}
+          {conversations}
+          {recentPages}
+          username={user.username}
+          onConversationId={handleConversationId}
+        />
+      </div>
+    </div>
+    <StatusBar
+      {minds}
+      username={user.username}
+      {systemName}
+      {connectionOk}
+      isAdmin={user.role === "admin"}
+      onAdminClick={() => (showAdminModal = true)}
+      onLogout={handleLogout}
+    />
   </div>
+
+  {#if showNewChat}
+    <MindPickerModal onClose={() => (showNewChat = false)} onPick={handleNewChatCreated} />
+  {/if}
+  {#if showGroupModal}
+    <GroupModal onClose={() => (showGroupModal = false)} onCreated={handleGroupCreated} />
+  {/if}
+  {#if showChannelBrowser}
+    <ChannelBrowserModal
+      onClose={() => (showChannelBrowser = false)}
+      onJoined={handleChannelJoined}
+    />
+  {/if}
+  {#if showSeedModal}
+    <SeedModal onClose={() => (showSeedModal = false)} onCreated={handleSeedCreated} />
+  {/if}
+  {#if showAdminModal}
+    <AdminModal onClose={() => (showAdminModal = false)} />
+  {/if}
 {/if}
 
 <style>
@@ -201,109 +339,42 @@ let breadcrumb = $derived(route.page === "mind" ? route.name : breadcrumbLabel[r
     height: 100%;
   }
 
-  .system-name {
-    color: var(--text-2);
-    font-weight: 400;
-  }
-
-  .header-right {
-    margin-left: auto;
+  .shell {
+    height: 100%;
     display: flex;
-    align-items: center;
-    gap: 12px;
+    flex-direction: column;
   }
 
-  .nav-link {
-    color: var(--text-2);
-    font-size: 12px;
-    font-family: var(--mono);
-    transition: color 0.15s;
-  }
-
-  .nav-link:hover {
-    color: var(--text-0);
-  }
-
-  .nav-link.active {
-    color: var(--accent);
-  }
-
-  .user-menu {
-    position: relative;
-  }
-
-  .user-menu-button {
-    background: transparent;
-    color: var(--text-2);
-    font-size: 12px;
-    font-family: var(--mono);
-    border: none;
-    cursor: pointer;
-    transition: color 0.15s;
+  .shell-body {
+    flex: 1;
     display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .user-menu-button:hover,
-  .user-menu-button.open {
-    color: var(--text-0);
-  }
-
-  .caret {
-    font-size: 8px;
-  }
-
-  .overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 99;
-  }
-
-  .dropdown {
-    position: absolute;
-    right: 0;
-    top: 100%;
-    margin-top: 6px;
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 4px 0;
-    min-width: 120px;
-    z-index: 100;
-  }
-
-  .dropdown-item {
-    display: block;
-    width: 100%;
-    padding: 6px 12px;
-    font-size: 12px;
-    color: var(--text-1);
-    background: transparent;
-    text-align: left;
-    font-family: var(--mono);
-    transition: background 0.1s;
-  }
-
-  .dropdown-item:hover {
-    background: var(--bg-3);
-  }
-
-  .dropdown-item.active {
-    color: var(--accent);
-  }
-
-  .dropdown-item.muted {
-    color: var(--text-2);
-  }
-
-  .dropdown-divider {
-    border-top: 1px solid var(--border);
-    margin: 4px 0;
-  }
-
-  .no-padding {
-    padding: 0;
     overflow: hidden;
+  }
+
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    background: var(--bg-1);
+    overflow: hidden;
+  }
+
+  .resize-handle {
+    width: 4px;
+    cursor: col-resize;
+    flex-shrink: 0;
+    background: transparent;
+    transition: background 0.15s;
+  }
+
+  .resize-handle:hover {
+    background: var(--border);
+  }
+
+  .main-frame {
+    flex: 1;
+    overflow: hidden;
+    min-width: 0;
   }
 </style>
