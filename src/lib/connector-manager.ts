@@ -9,7 +9,7 @@ import { daemonLoopback, stateDir, voluteHome } from "./registry.js";
 import { RotatingLog } from "./rotating-log.js";
 import { readVoluteConfig } from "./volute-config.js";
 
-const dlog = log.child("daemon");
+const clog = log.child("connectors");
 
 function searchUpwards(...segments: string[]): string | null {
   let searchDir = dirname(new URL(import.meta.url).pathname);
@@ -49,7 +49,7 @@ export class ConnectorManager {
       try {
         await this.startConnector(mindName, mindDir, mindPort, type, daemonPort);
       } catch (err) {
-        dlog.warn(`failed to start connector ${type} for ${mindName}`, { error: String(err) });
+        clog.warn(`failed to start connector ${type} for ${mindName}`, { error: String(err) });
       }
     }
   }
@@ -211,27 +211,27 @@ export class ConnectorManager {
       // If explicitly stopped, don't restart
       if (this.stopping.has(stopKey)) return;
 
-      dlog.error(`connector ${type} for ${mindName} exited with code ${code}`);
-      if (lastStderr) dlog.debug(`connector ${type} last output: ${lastStderr}`);
+      clog.error(`connector ${type} for ${mindName} exited with code ${code}`);
+      if (lastStderr) clog.debug(`connector ${type} last output: ${lastStderr}`);
       const attempts = this.restartAttempts.get(stopKey) ?? 0;
       if (attempts >= MAX_RESTART_ATTEMPTS) {
-        dlog.error(`connector ${type} for ${mindName} crashed ${attempts} times — giving up`);
+        clog.error(`connector ${type} for ${mindName} crashed ${attempts} times — giving up`);
         return;
       }
       const delay = Math.min(BASE_RESTART_DELAY * 2 ** attempts, MAX_RESTART_DELAY);
       this.restartAttempts.set(stopKey, attempts + 1);
-      dlog.info(
+      clog.info(
         `restarting connector ${type} for ${mindName} — attempt ${attempts + 1}/${MAX_RESTART_ATTEMPTS}, in ${delay}ms`,
       );
       setTimeout(() => {
         if (this.shuttingDown || this.stopping.has(stopKey)) return;
         this.startConnector(mindName, mindDir, mindPort, type, daemonPort).catch((err) => {
-          dlog.error(`failed to restart connector ${type} for ${mindName}`, { error: String(err) });
+          clog.error(`failed to restart connector ${type} for ${mindName}`, { error: String(err) });
         });
       }, delay);
     });
 
-    dlog.info(`started connector ${type} for ${mindName}`);
+    clog.info(`started connector ${type} for ${mindName}`);
   }
 
   async stopConnector(mindName: string, type: string): Promise<void> {
@@ -265,9 +265,9 @@ export class ConnectorManager {
     try {
       this.removeConnectorPid(mindName, type);
     } catch (err) {
-      dlog.warn(`failed to remove PID file for ${type}/${mindName}`, { error: String(err) });
+      clog.warn(`failed to remove PID file for ${type}/${mindName}`, { error: String(err) });
     }
-    dlog.info(`stopped connector ${type} for ${mindName}`);
+    clog.info(`stopped connector ${type} for ${mindName}`);
   }
 
   async stopConnectors(mindName: string): Promise<void> {
@@ -319,7 +319,7 @@ export class ConnectorManager {
       const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
       if (pid > 0) {
         process.kill(pid, "SIGTERM");
-        dlog.warn(`killed orphan connector ${type} (pid ${pid})`);
+        clog.warn(`killed orphan connector ${type} (pid ${pid})`);
       }
     } catch {
       // Process may not exist — ignore

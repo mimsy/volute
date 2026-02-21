@@ -22,22 +22,13 @@ let autoScroll = $state(true);
 let error = $state("");
 let scrollEl: HTMLDivElement;
 
-// Filter state: sets of disabled levels/categories (empty = all shown)
 let disabledLevels = new SvelteSet<string>();
 let disabledCategories = new SvelteSet<string>();
-
-// Derived: has debug entries
 let hasDebug = $derived(entries.some((e) => e.level === "debug"));
-
-// Derived: all categories seen
 let allCategories = $derived(
   [...new Set(entries.map((e) => e.cat).filter((c): c is string => !!c))].sort(),
 );
-
-// Derived: whether any filter is active
 let filtersActive = $derived(disabledLevels.size > 0 || disabledCategories.size > 0);
-
-// Derived: filtered entries
 let filteredEntries = $derived(
   filtersActive
     ? entries.filter(
@@ -46,20 +37,9 @@ let filteredEntries = $derived(
     : entries,
 );
 
-function toggleLevel(level: string) {
-  if (disabledLevels.has(level)) {
-    disabledLevels.delete(level);
-  } else {
-    disabledLevels.add(level);
-  }
-}
-
-function toggleCategory(cat: string) {
-  if (disabledCategories.has(cat)) {
-    disabledCategories.delete(cat);
-  } else {
-    disabledCategories.add(cat);
-  }
+function toggle(set: SvelteSet<string>, value: string) {
+  if (set.has(value)) set.delete(value);
+  else set.add(value);
 }
 
 function clearFilters() {
@@ -139,23 +119,23 @@ function formatData(data: Record<string, unknown>): string {
       <button
         class="pill pill-info"
         class:inactive={disabledLevels.has("info")}
-        onclick={() => toggleLevel("info")}
+        onclick={() => toggle(disabledLevels, "info")}
       >info</button>
       <button
         class="pill pill-warn"
         class:inactive={disabledLevels.has("warn")}
-        onclick={() => toggleLevel("warn")}
+        onclick={() => toggle(disabledLevels, "warn")}
       >warn</button>
       <button
         class="pill pill-error"
         class:inactive={disabledLevels.has("error")}
-        onclick={() => toggleLevel("error")}
+        onclick={() => toggle(disabledLevels, "error")}
       >error</button>
       {#if hasDebug}
         <button
           class="pill pill-debug"
           class:inactive={disabledLevels.has("debug")}
-          onclick={() => toggleLevel("debug")}
+          onclick={() => toggle(disabledLevels, "debug")}
         >debug</button>
       {/if}
     </div>
@@ -166,7 +146,7 @@ function formatData(data: Record<string, unknown>): string {
           <button
             class="pill pill-cat"
             class:inactive={disabledCategories.has(cat)}
-            onclick={() => toggleCategory(cat)}
+            onclick={() => toggle(disabledCategories, cat)}
           >{cat}</button>
         {/each}
       </div>
@@ -256,7 +236,8 @@ function formatData(data: Record<string, unknown>): string {
     transition: opacity 0.1s;
   }
 
-  .pill-info {
+  .pill-info,
+  .pill-debug {
     background: color-mix(in srgb, var(--text-2) 15%, transparent);
     color: var(--text-2);
   }
@@ -269,11 +250,6 @@ function formatData(data: Record<string, unknown>): string {
   .pill-error {
     background: color-mix(in srgb, var(--red) 15%, transparent);
     color: var(--red);
-  }
-
-  .pill-debug {
-    background: color-mix(in srgb, var(--text-2) 15%, transparent);
-    color: var(--text-2);
   }
 
   .pill-cat {

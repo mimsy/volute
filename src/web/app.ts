@@ -3,9 +3,6 @@ import { bodyLimit } from "hono/body-limit";
 import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
 import log from "../lib/logger.js";
-
-const httpLog = log.child("http");
-
 import { checkForUpdateCached, getCurrentVersion } from "../lib/update-check.js";
 import auth from "./api/auth.js";
 import channels from "./api/channels.js";
@@ -24,6 +21,8 @@ import chat from "./api/volute/chat.js";
 import conversations from "./api/volute/conversations.js";
 import userConversations from "./api/volute/user-conversations.js";
 import { authMiddleware } from "./middleware/auth.js";
+
+const httpLog = log.child("http");
 
 const app = new Hono();
 

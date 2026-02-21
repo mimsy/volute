@@ -10,7 +10,7 @@ import { findMind, mindDir, setMindRunning, stateDir, voluteHome } from "./regis
 import { RotatingLog } from "./rotating-log.js";
 import { findVariant, setVariantRunning } from "./variants.js";
 
-const dlog = log.child("daemon");
+const mlog = log.child("minds");
 
 const execFileAsync = promisify(execFile);
 
@@ -77,28 +77,28 @@ export class MindManager {
             // Verify this is actually a mind process before killing the group
             const { stdout } = await execFileAsync("ps", ["-p", String(stalePid), "-o", "args="]);
             if (stdout.includes("server.ts")) {
-              dlog.warn(`killing stale mind process ${stalePid} for ${name}`);
+              mlog.warn(`killing stale mind process ${stalePid} for ${name}`);
               process.kill(-stalePid, "SIGTERM");
               await new Promise((r) => setTimeout(r, 500));
             } else {
-              dlog.debug(`stale PID ${stalePid} for ${name} is not a mind process, skipping`);
+              mlog.debug(`stale PID ${stalePid} for ${name} is not a mind process, skipping`);
             }
           } catch (err: unknown) {
             if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
-              dlog.warn(`failed to check/kill stale process for ${name}`, { error: String(err) });
+              mlog.warn(`failed to check/kill stale process for ${name}`, { error: String(err) });
             }
           }
         }
         rmSync(pidFile, { force: true });
       }
     } catch (err) {
-      dlog.warn(`failed to read PID file for ${name}`, { error: String(err) });
+      mlog.warn(`failed to read PID file for ${name}`, { error: String(err) });
     }
 
     try {
       const res = await fetch(`http://127.0.0.1:${port}/health`);
       if (res.ok) {
-        dlog.warn(`killing orphan process on port ${port}`);
+        mlog.warn(`killing orphan process on port ${port}`);
         await killProcessOnPort(port);
         await new Promise((r) => setTimeout(r, 500));
       }
@@ -197,7 +197,7 @@ export class MindManager {
       try {
         writeFileSync(pidFile, String(child.pid));
       } catch (err) {
-        dlog.warn(`failed to write PID file for ${name}`, { error: String(err) });
+        mlog.warn(`failed to write PID file for ${name}`, { error: String(err) });
       }
     }
 
@@ -210,7 +210,7 @@ export class MindManager {
       setMindRunning(name, true);
     }
 
-    dlog.info(`started mind ${name} on port ${port}`);
+    mlog.info(`started mind ${name} on port ${port}`);
 
     // Deliver any pending context (e.g. merge info) to the mind via HTTP
     await this.deliverPendingContext(name);
@@ -253,7 +253,7 @@ export class MindManager {
         }),
       });
     } catch (err) {
-      dlog.warn(`failed to deliver pending context to ${name}`, { error: String(err) });
+      mlog.warn(`failed to deliver pending context to ${name}`, { error: String(err) });
     }
   }
 
@@ -262,11 +262,11 @@ export class MindManager {
       this.minds.delete(name);
       if (this.shuttingDown || this.stopping.has(name)) return;
 
-      dlog.error(`mind ${name} exited with code ${code}`);
+      mlog.error(`mind ${name} exited with code ${code}`);
 
       const attempts = this.restartAttempts.get(name) ?? 0;
       if (attempts >= MAX_RESTART_ATTEMPTS) {
-        dlog.error(`${name} crashed ${attempts} times — giving up on restart`);
+        mlog.error(`${name} crashed ${attempts} times — giving up on restart`);
         const [base, variant] = name.split("@", 2);
         if (variant) {
           setVariantRunning(base, variant, false);
@@ -278,13 +278,13 @@ export class MindManager {
       const delay = Math.min(BASE_RESTART_DELAY * 2 ** attempts, MAX_RESTART_DELAY);
       this.restartAttempts.set(name, attempts + 1);
       this.saveCrashAttempts();
-      dlog.info(
+      mlog.info(
         `crash recovery for ${name} — attempt ${attempts + 1}/${MAX_RESTART_ATTEMPTS}, restarting in ${delay}ms`,
       );
       setTimeout(() => {
         if (this.shuttingDown) return;
         this.startMind(name).catch((err) => {
-          dlog.error(`failed to restart ${name}`, { error: String(err) });
+          mlog.error(`failed to restart ${name}`, { error: String(err) });
         });
       }, delay);
     });
@@ -328,7 +328,7 @@ export class MindManager {
       }
     }
 
-    dlog.info(`stopped mind ${name}`);
+    mlog.info(`stopped mind ${name}`);
   }
 
   async restartMind(name: string): Promise<void> {
