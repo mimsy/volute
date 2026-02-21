@@ -9,6 +9,7 @@ import { createSessionContextHook } from "./lib/hooks/session-context.js";
 import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
 import { createSessionStore } from "./lib/session-store.js";
+import { loadPrompts } from "./lib/startup.js";
 import { consumeStream } from "./lib/stream-consumer.js";
 import type {
   HandlerMeta,
@@ -47,10 +48,10 @@ export function createMind(options: {
   ];
 
   const sessions = new Map<string, Session>();
+  const prompts = loadPrompts();
   const today = new Date().toISOString().slice(0, 10);
   const compactionMessage =
-    options.compactionMessage ??
-    `Context is getting long — compaction is about to summarize this conversation. Before that happens, save anything important to files (MEMORY.md, memory/journal/${today}.md, etc.) since those survive compaction. Focus on: decisions made, open tasks, and anything you'd need to pick up where you left off.`;
+    options.compactionMessage ?? prompts.compaction_warning.replace("${date}", today);
 
   // --- Event broadcasting ---
 

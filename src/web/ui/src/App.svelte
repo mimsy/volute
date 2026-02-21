@@ -10,6 +10,7 @@ import Chats from "./pages/Chats.svelte";
 import Dashboard from "./pages/Dashboard.svelte";
 import Home from "./pages/Home.svelte";
 import MindDetail from "./pages/MindDetail.svelte";
+import Settings from "./pages/Settings.svelte";
 
 type Route = {
   page: string;
@@ -28,6 +29,7 @@ function parseRoute(): Route {
     return mind ? { page: "chats", mindName: mind } : { page: "chats" };
   }
   if (path === "/logs") return { page: "logs" };
+  if (path === "/settings") return { page: "settings" };
   const chatsMatch = path.match(/^\/chats\/(.+)$/);
   if (chatsMatch) return { page: "chats", conversationId: chatsMatch[1] };
   const match = path.match(/^\/mind\/(.+)$/);
@@ -100,6 +102,7 @@ const breadcrumbLabel: Record<string, string> = {
   minds: "minds",
   chats: "chat",
   logs: "system logs",
+  settings: "settings",
 };
 
 let breadcrumb = $derived(route.page === "mind" ? route.name : breadcrumbLabel[route.page]);
@@ -144,6 +147,9 @@ let breadcrumb = $derived(route.page === "mind" ? route.name : breadcrumbLabel[r
             <div class="overlay" onclick={() => userMenuOpen = false} onkeydown={() => {}}></div>
             <div class="dropdown">
               {#if user.role === "admin"}
+                <button class="dropdown-item" class:active={route.page === "settings"} onclick={() => { navigate("/settings"); userMenuOpen = false; }}>
+                  settings
+                </button>
                 <button class="dropdown-item" class:active={route.page === "logs"} onclick={() => { navigate("/logs"); userMenuOpen = false; }}>
                   system logs
                 </button>
@@ -177,6 +183,8 @@ let breadcrumb = $derived(route.page === "mind" ? route.name : breadcrumbLabel[r
         <MindDetail name={route.name} />
       {:else if route.page === "logs"}
         <SystemLogs />
+      {:else if route.page === "settings"}
+        <Settings />
       {/if}
     </main>
   </div>

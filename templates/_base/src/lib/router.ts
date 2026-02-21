@@ -6,6 +6,7 @@ import {
   resolveRoute,
   resolveSessionConfig,
 } from "./routing.js";
+import { loadPrompts } from "./startup.js";
 import type { ChannelMeta, HandlerResolver, Listener, VoluteContentPart } from "./types.js";
 
 export type Router = {
@@ -115,38 +116,39 @@ function formatInviteNotification(
   messageText: string,
 ): string {
   const time = new Date().toLocaleString();
-  const lines = ["[Channel Invite]"];
-  if (meta.channel) lines.push(`Channel: ${meta.channel}`);
-  if (meta.sender) lines.push(`Sender: ${meta.sender}`);
-  if (meta.platform) lines.push(`Platform: ${meta.platform}`);
-  if (meta.serverName) lines.push(`Server: ${meta.serverName}`);
-  if (meta.channelName) lines.push(`Channel name: ${meta.channelName}`);
+  const prompts = loadPrompts();
+
+  const headerLines: string[] = [];
+  if (meta.channel) headerLines.push(`Channel: ${meta.channel}`);
+  if (meta.sender) headerLines.push(`Sender: ${meta.sender}`);
+  if (meta.platform) headerLines.push(`Platform: ${meta.platform}`);
+  if (meta.serverName) headerLines.push(`Server: ${meta.serverName}`);
+  if (meta.channelName) headerLines.push(`Channel name: ${meta.channelName}`);
   if (meta.participants && meta.participants.length > 0)
-    lines.push(`Participants: ${meta.participants.join(", ")}`);
-  lines.push("");
+    headerLines.push(`Participants: ${meta.participants.join(", ")}`);
+
   const preview = messageText.length > 200 ? `${messageText.slice(0, 200)}...` : messageText;
-  lines.push(`[${meta.sender ?? "unknown"} — ${time}]`);
-  lines.push(preview);
-  lines.push("");
-  lines.push(`Further messages will be saved to ${filePath}`);
-  lines.push("");
-  lines.push("To accept, add to .config/routes.json:");
   const suggestedSession = sanitizeChannelPath(meta.channel ?? "unknown");
+  const channel = meta.channel ?? "unknown";
   const otherCount = (meta.participantCount ?? 1) - 1;
-  if (otherCount > 1) {
-    lines.push(`  Rule: { "channel": "${meta.channel}", "session": "${suggestedSession}" }`);
-    lines.push(
-      `  Session config: "${suggestedSession}": { "batch": { "debounce": 20, "maxWait": 120 } }`,
-    );
-    lines.push(
-      `(batch recommended — ${otherCount} other participants may generate frequent messages)`,
-    );
-  } else {
-    lines.push(`  Rule: { "channel": "${meta.channel}", "session": "${suggestedSession}" }`);
-  }
-  lines.push(`To respond, use: volute send ${meta.channel ?? "unknown"} "your message"`);
-  lines.push(`To reject, delete ${filePath}`);
-  return lines.join("\n");
+  const batchRecommendation =
+    otherCount > 1
+      ? `  Session config: "${suggestedSession}": { "batch": { "debounce": 20, "maxWait": 120 } }\n(batch recommended — ${otherCount} other participants may generate frequent messages)\n`
+      : "";
+
+  const vars: Record<string, string> = {
+    headers: headerLines.join("\n"),
+    sender: meta.sender ?? "unknown",
+    time,
+    preview,
+    filePath,
+    channel,
+    suggestedSession,
+    batchRecommendation,
+  };
+  return prompts.channel_invite.replace(/\$\{(\w+)\}/g, (match, name) =>
+    name in vars ? vars[name] : match,
+  );
 }
 
 export function createRouter(options: {
