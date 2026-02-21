@@ -36,59 +36,85 @@ let {
   onchange: (filters: FilterState) => void;
 } = $props();
 
-function setChannel(e: Event) {
-  const value = (e.target as HTMLSelectElement).value;
+let channelOpen = $state(false);
+let sessionOpen = $state(false);
+
+function selectChannel(value: string) {
+  channelOpen = false;
   onchange({ ...filters, channel: value });
 }
 
-function setSession(e: Event) {
-  const value = (e.target as HTMLSelectElement).value;
+function selectSession(value: string) {
+  sessionOpen = false;
   onchange({ ...filters, session: value });
 }
 
 function toggleType(typeName: string) {
   const next = new Set(filters.types);
-  const allActive = next.size === ALL_TYPES.size;
-  const onlyOne = next.size === 1 && next.has(typeName);
-
-  if (allActive) {
-    // Solo mode: deactivate all others
-    onchange({ ...filters, types: new Set([typeName]) });
-  } else if (onlyOne) {
-    // Reactivate all
-    onchange({ ...filters, types: new Set(ALL_TYPES) });
+  if (next.has(typeName)) {
+    if (next.size > 1) next.delete(typeName);
   } else {
-    // Toggle individually
-    if (next.has(typeName)) {
-      next.delete(typeName);
-    } else {
-      next.add(typeName);
-    }
-    onchange({ ...filters, types: next });
+    next.add(typeName);
   }
+  onchange({ ...filters, types: next });
+}
+
+function selectAll() {
+  onchange({ ...filters, types: new Set(ALL_TYPES) });
+}
+
+function selectNone() {
+  // Keep at least one — pick the first
+  onchange({ ...filters, types: new Set([EVENT_TYPES[0].name]) });
 }
 
 function toggleLive() {
   onchange({ ...filters, live: !filters.live });
 }
+
+function handleClickOutside(e: MouseEvent) {
+  const target = e.target as HTMLElement;
+  if (!target.closest(".custom-select")) {
+    channelOpen = false;
+    sessionOpen = false;
+  }
+}
 </script>
 
-<div class="filters">
-  <select class="dropdown" value={filters.channel} onchange={setChannel}>
-    <option value="">all channels</option>
-    {#each channels as ch}
-      <option value={ch}>{ch}</option>
-    {/each}
-  </select>
+<svelte:document onclick={handleClickOutside} />
 
-  <select class="dropdown" value={filters.session} onchange={setSession}>
-    <option value="">all sessions</option>
-    {#each sessions as s}
-      <option value={s.session}>
-        {s.session} — {formatRelativeTime(s.started_at)}
-      </option>
-    {/each}
-  </select>
+<div class="filters">
+  <div class="custom-select" class:open={channelOpen}>
+    <button class="select-trigger" onclick={() => { channelOpen = !channelOpen; sessionOpen = false; }}>
+      <span class="select-value">{filters.channel || "all channels"}</span>
+      <span class="select-arrow">▾</span>
+    </button>
+    {#if channelOpen}
+      <div class="select-menu">
+        <button class="select-option" class:selected={!filters.channel} onclick={() => selectChannel("")}>all channels</button>
+        {#each channels as ch}
+          <button class="select-option" class:selected={filters.channel === ch} onclick={() => selectChannel(ch)}>{ch}</button>
+        {/each}
+      </div>
+    {/if}
+  </div>
+
+  <div class="custom-select" class:open={sessionOpen}>
+    <button class="select-trigger" onclick={() => { sessionOpen = !sessionOpen; channelOpen = false; }}>
+      <span class="select-value">{filters.session ? `${filters.session}` : "all sessions"}</span>
+      <span class="select-arrow">▾</span>
+    </button>
+    {#if sessionOpen}
+      <div class="select-menu">
+        <button class="select-option" class:selected={!filters.session} onclick={() => selectSession("")}>all sessions</button>
+        {#each sessions as s}
+          <button class="select-option" class:selected={filters.session === s.session} onclick={() => selectSession(s.session)}>
+            {s.session} <span class="option-meta">{formatRelativeTime(s.started_at)}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </div>
 
   <div class="sep"></div>
 
@@ -101,10 +127,12 @@ function toggleLive() {
         style:--pill-color={t.color}
         onclick={() => toggleType(t.name)}
       >
-        <span class="pill-dot" style:background={t.color}></span>
+        <span class="pill-dot" style:background={active ? t.color : "var(--text-2)"}></span>
         {t.name}
       </button>
     {/each}
+    <button class="pill meta-pill" onclick={selectAll}>all</button>
+    <button class="pill meta-pill" onclick={selectNone}>none</button>
   </div>
 
   <div class="sep"></div>
@@ -125,14 +153,87 @@ function toggleLive() {
     border-bottom: 1px solid var(--border);
   }
 
-  .dropdown {
+  .custom-select {
+    position: relative;
+  }
+
+  .select-trigger {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     background: var(--bg-2);
-    color: var(--text-0);
+    color: var(--text-1);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 4px 8px;
+    padding: 4px 8px 4px 10px;
     font-size: 12px;
     font-family: var(--mono);
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+    min-width: 120px;
+    text-align: left;
+  }
+  .select-trigger:hover {
+    border-color: var(--border-bright);
+    color: var(--text-0);
+  }
+  .custom-select.open .select-trigger {
+    border-color: var(--border-bright);
+    color: var(--text-0);
+  }
+
+  .select-value {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .select-arrow {
+    font-size: 10px;
+    color: var(--text-2);
+    flex-shrink: 0;
+  }
+
+  .select-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 100%;
+    max-height: 240px;
+    overflow-y: auto;
+    background: var(--bg-2);
+    border: 1px solid var(--border-bright);
+    border-radius: var(--radius);
+    z-index: 10;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  }
+
+  .select-option {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-family: var(--mono);
+    color: var(--text-1);
+    background: none;
+    border: none;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.1s, color 0.1s;
+  }
+  .select-option:hover {
+    background: var(--bg-3);
+    color: var(--text-0);
+  }
+  .select-option.selected {
+    color: var(--accent);
+  }
+
+  .option-meta {
+    color: var(--text-2);
+    margin-left: 6px;
   }
 
   .sep {
@@ -158,9 +259,13 @@ function toggleLive() {
     cursor: pointer;
     border: 1px solid var(--border);
     background: var(--bg-3);
-    color: var(--text-1);
+    color: var(--text-2);
     font-family: var(--mono);
     transition: all 0.15s;
+  }
+  .pill:hover {
+    border-color: var(--border-bright);
+    color: var(--text-1);
   }
   .pill.active {
     border-color: color-mix(in srgb, var(--pill-color, var(--text-2)) 25%, transparent);
@@ -173,6 +278,19 @@ function toggleLive() {
     height: 6px;
     border-radius: 50%;
     flex-shrink: 0;
+    transition: background 0.15s;
+  }
+
+  .meta-pill {
+    color: var(--text-2);
+    border-color: transparent;
+    background: none;
+    padding: 2px 6px;
+    font-size: 10px;
+  }
+  .meta-pill:hover {
+    color: var(--text-1);
+    border-color: transparent;
   }
 
   .live-pill {
