@@ -1,4 +1,7 @@
 {
+  "enabledPlugins": {
+    "svelte@svelte": true
+  },
   "hooks": {
     "PostToolUse": [
       {
