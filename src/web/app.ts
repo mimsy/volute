@@ -10,10 +10,12 @@ import connectors from "./api/connectors.js";
 import envRoutes, { sharedEnvApp } from "./api/env.js";
 import files from "./api/files.js";
 import logs from "./api/logs.js";
+import mindSkills from "./api/mind-skills.js";
 import minds from "./api/minds.js";
 import pages from "./api/pages.js";
 import prompts from "./api/prompts.js";
 import schedules from "./api/schedules.js";
+import skills from "./api/skills.js";
 import system from "./api/system.js";
 import typing from "./api/typing.js";
 import update from "./api/update.js";
@@ -88,6 +90,7 @@ app.use("/api/volute/*", authMiddleware);
 app.use("/api/system/*", authMiddleware);
 app.use("/api/env/*", authMiddleware);
 app.use("/api/prompts/*", authMiddleware);
+app.use("/api/skills/*", authMiddleware);
 
 // Mind pages (public, no auth)
 app.route("/pages", pages);
@@ -107,9 +110,11 @@ const routes = app
   .route("/api/minds", files)
   .route("/api/minds", channels)
   .route("/api/minds", envRoutes)
+  .route("/api/minds", mindSkills)
   .route("/api/minds", conversations)
   .route("/api/env", sharedEnvApp)
   .route("/api/prompts", prompts)
+  .route("/api/skills", skills)
   .route("/api/conversations", userConversations)
   .route("/api/volute/channels", voluteChannels)
   .route("/api/volute", unifiedChatApp);
