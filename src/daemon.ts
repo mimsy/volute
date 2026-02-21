@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { format } from "node:util";
 import { initConnectorManager } from "./lib/connector-manager.js";
+import log from "./lib/logger.js";
 import { ensureMailAddress, getMailPoller } from "./lib/mail-poller.js";
 import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
 import { migrateMindState } from "./lib/migrate-state.js";
@@ -31,10 +32,12 @@ export async function startDaemon(opts: {
 
   const home = voluteHome();
 
-  // In background mode, redirect console to a rotating log file
+  // In background mode, redirect structured logs and console to a rotating log file
   if (!opts.foreground) {
-    const log = new RotatingLog(resolve(home, "daemon.log"));
-    const write = (...args: any[]) => log.write(`${format(...args)}\n`);
+    const rotatingLog = new RotatingLog(resolve(home, "daemon.log"));
+    log.setOutput((line) => rotatingLog.write(`${line}\n`));
+    // Keep console redirect as safety net for uncaught/third-party output
+    const write = (...args: any[]) => rotatingLog.write(`${format(...args)}\n`);
     console.log = write;
     console.error = write;
     console.warn = write;
@@ -65,7 +68,7 @@ export async function startDaemon(opts: {
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
     if (e.code === "EADDRINUSE") {
-      console.error(`[daemon] port ${port} is already in use`);
+      log.error(`port ${port} is already in use`);
       process.exit(1);
     }
     throw err;
@@ -94,7 +97,7 @@ export async function startDaemon(opts: {
     try {
       migrateMindState(entry.name);
     } catch (err) {
-      console.error(`[daemon] failed to migrate state for ${entry.name}:`, err);
+      log.warn(`failed to migrate state for ${entry.name}`, { error: String(err) });
     }
   }
 
@@ -108,9 +111,7 @@ export async function startDaemon(opts: {
       const dir = mindDir(entry.name);
       await connectors.startConnectors(entry.name, dir, entry.port, port);
       scheduler.loadSchedules(entry.name);
-      ensureMailAddress(entry.name).catch((err: unknown) =>
-        console.error(`[mail] failed to ensure address for ${entry.name}:`, err),
-      );
+      ensureMailAddress(entry.name).catch(() => {});
       const config = readVoluteConfig(dir);
       if (config?.tokenBudget) {
         tokenBudget.setBudget(
@@ -120,7 +121,7 @@ export async function startDaemon(opts: {
         );
       }
     } catch (err) {
-      console.error(`[daemon] failed to start mind ${entry.name}:`, err);
+      log.error(`failed to start mind ${entry.name}`, { error: String(err) });
       setMindRunning(entry.name, false);
     }
   }
@@ -132,7 +133,7 @@ export async function startDaemon(opts: {
     try {
       await manager.startMind(compositeKey);
     } catch (err) {
-      console.error(`[daemon] failed to start variant ${compositeKey}:`, err);
+      log.error(`failed to start variant ${compositeKey}`, { error: String(err) });
       setVariantRunning(mindName, variant.name, false);
     }
   }
@@ -140,7 +141,7 @@ export async function startDaemon(opts: {
   // Clean up expired sessions (non-blocking)
   cleanExpiredSessions().catch(() => {});
 
-  console.error(`[daemon] running on ${hostname}:${port}, pid ${myPid}`);
+  log.info(`running on ${hostname}:${port}, pid ${myPid}`);
 
   // Only delete PID/config files if they still belong to this process
   function cleanup() {
@@ -166,7 +167,7 @@ export async function startDaemon(opts: {
   async function shutdown() {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.error("[daemon] shutting down...");
+    log.info("shutting down...");
     scheduler.stop();
     scheduler.saveState();
     mailPoller.stop();

@@ -1,8 +1,11 @@
 import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "./json-state.js";
+import log from "./logger.js";
 import { daemonLoopback, findMind, mindDir, voluteHome } from "./registry.js";
 import { readVoluteConfig, type Schedule } from "./volute-config.js";
+
+const slog = log.child("scheduler");
 
 export class Scheduler {
   private schedules = new Map<string, Schedule[]>();
@@ -86,7 +89,9 @@ export class Scheduler {
       }
       return false;
     } catch (err) {
-      console.error(`[scheduler] invalid cron "${schedule.cron}" for ${mind}:${schedule.id}:`, err);
+      slog.warn(`invalid cron "${schedule.cron}" for ${mind}:${schedule.id}`, {
+        error: String(err),
+      });
       return false;
     }
   }
@@ -129,14 +134,14 @@ export class Scheduler {
         });
       }
       if (!res.ok) {
-        console.error(`[scheduler] "${schedule.id}" for ${mindName} got HTTP ${res.status}`);
+        slog.warn(`"${schedule.id}" for ${mindName} got HTTP ${res.status}`);
       } else {
-        console.error(`[scheduler] fired "${schedule.id}" for ${mindName}`);
+        slog.info(`fired "${schedule.id}" for ${mindName}`);
       }
       // Consume response body
       await res.text().catch(() => {});
     } catch (err) {
-      console.error(`[scheduler] failed to fire "${schedule.id}" for ${mindName}:`, err);
+      slog.warn(`failed to fire "${schedule.id}" for ${mindName}`, { error: String(err) });
     } finally {
       clearTimeout(timeout);
     }

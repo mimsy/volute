@@ -1,5 +1,8 @@
+import log from "./logger.js";
 import { daemonLoopback, findMind } from "./registry.js";
 import { readSystemsConfig } from "./systems-config.js";
+
+const mlog = log.child("mail");
 
 export type Email = {
   mind: string;
@@ -32,13 +35,13 @@ export class MailPoller {
 
   start(daemonPort?: number, daemonToken?: string): void {
     if (this.running) {
-      console.error("[mail] already running — ignoring duplicate start");
+      mlog.warn("already running — ignoring duplicate start");
       return;
     }
 
     const config = readSystemsConfig();
     if (!config) {
-      console.error("[mail] no systems config — mail polling disabled");
+      mlog.info("no systems config — mail polling disabled");
       return;
     }
 
@@ -49,7 +52,7 @@ export class MailPoller {
 
     // Poll every 30 seconds
     this.interval = setInterval(() => this.poll(), 30_000);
-    console.error("[mail] polling started");
+    mlog.info("polling started");
   }
 
   stop(): void {
@@ -65,7 +68,7 @@ export class MailPoller {
   private async poll(): Promise<void> {
     const config = readSystemsConfig();
     if (!config) {
-      console.error("[mail] systems config removed — stopping mail polling");
+      mlog.info("systems config removed — stopping mail polling");
       this.stop();
       return;
     }
@@ -79,13 +82,13 @@ export class MailPoller {
       });
 
       if (!res.ok) {
-        console.error(`[mail] poll failed: HTTP ${res.status}`);
+        mlog.warn(`poll failed: HTTP ${res.status}`);
         return;
       }
 
       const data = (await res.json()) as { emails?: Email[] };
       if (!Array.isArray(data.emails)) {
-        console.error("[mail] poll response missing emails array");
+        mlog.warn("poll response missing emails array");
         return;
       }
 
@@ -100,14 +103,14 @@ export class MailPoller {
         this.lastPoll = new Date().toISOString();
       }
     } catch (err) {
-      console.error("[mail] poll error:", err);
+      mlog.warn("poll error", { error: String(err) });
     }
   }
 
   private async deliver(mind: string, email: Email): Promise<void> {
     const entry = findMind(mind);
     if (!entry || !entry.running) {
-      console.error(`[mail] skipping delivery to ${mind}: ${!entry ? "not found" : "not running"}`);
+      mlog.warn(`skipping delivery to ${mind}: ${!entry ? "not found" : "not running"}`);
       return;
     }
 
@@ -125,7 +128,7 @@ export class MailPoller {
     });
 
     if (!this.daemonPort || !this.daemonToken) {
-      console.error(`[mail] cannot deliver to ${mind}: daemon port/token not set`);
+      mlog.warn(`cannot deliver to ${mind}: daemon port/token not set`);
       return;
     }
 
@@ -145,13 +148,13 @@ export class MailPoller {
         signal: controller.signal,
       });
       if (!res.ok) {
-        console.error(`[mail] deliver to ${mind} got HTTP ${res.status}`);
+        mlog.warn(`deliver to ${mind} got HTTP ${res.status}`);
       } else {
-        console.error(`[mail] delivered email from ${email.from.address} to ${mind}`);
+        mlog.info(`delivered email from ${email.from.address} to ${mind}`);
       }
       await res.text().catch(() => {});
     } catch (err) {
-      console.error(`[mail] failed to deliver to ${mind}:`, err);
+      mlog.warn(`failed to deliver to ${mind}`, { error: String(err) });
     } finally {
       clearTimeout(timeout);
     }
@@ -179,10 +182,10 @@ export async function ensureMailAddress(mindName: string): Promise<void> {
       },
     });
     if (!res.ok) {
-      console.error(`[mail] failed to ensure address for ${mindName}: HTTP ${res.status}`);
+      mlog.warn(`failed to ensure address for ${mindName}: HTTP ${res.status}`);
     }
     await res.text().catch(() => {});
   } catch (err) {
-    console.error(`[mail] failed to ensure address for ${mindName}:`, err);
+    mlog.warn(`failed to ensure address for ${mindName}`, { error: String(err) });
   }
 }

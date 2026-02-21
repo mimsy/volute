@@ -1,4 +1,7 @@
+import log from "./logger.js";
 import { daemonLoopback } from "./registry.js";
+
+const tlog = log.child("token-budget");
 
 export const DEFAULT_BUDGET_PERIOD_MINUTES = 60;
 const MAX_QUEUE_SIZE = 100;
@@ -129,7 +132,7 @@ export class TokenBudget {
         const queued = this.drain(mind);
         if (queued.length > 0) {
           this.replay(mind, queued).catch((err) => {
-            console.error(`[token-budget] replay error for ${mind}:`, err);
+            tlog.warn(`replay error for ${mind}`, { error: String(err) });
           });
         }
       }
@@ -138,8 +141,8 @@ export class TokenBudget {
 
   private async replay(mindName: string, messages: QueuedMessage[]): Promise<void> {
     if (!this.daemonPort || !this.daemonToken) {
-      console.error(
-        `[token-budget] cannot replay ${messages.length} message(s) for ${mindName}: daemon not configured`,
+      tlog.warn(
+        `cannot replay ${messages.length} message(s) for ${mindName}: daemon not configured`,
       );
       // Re-enqueue so messages aren't lost
       const state = this.budgets.get(mindName);
@@ -182,16 +185,14 @@ export class TokenBudget {
         signal: controller.signal,
       });
       if (!res.ok) {
-        console.error(`[token-budget] replay for ${mindName} got HTTP ${res.status}`);
+        tlog.warn(`replay for ${mindName} got HTTP ${res.status}`);
       } else {
-        console.error(
-          `[token-budget] replayed ${messages.length} queued message(s) for ${mindName}`,
-        );
+        tlog.info(`replayed ${messages.length} queued message(s) for ${mindName}`);
       }
       // Consume response body
       await res.text().catch(() => {});
     } catch (err) {
-      console.error(`[token-budget] failed to replay for ${mindName}:`, err);
+      tlog.warn(`failed to replay for ${mindName}`, { error: String(err) });
       // Re-enqueue so messages aren't lost
       const state = this.budgets.get(mindName);
       if (state) state.queue.push(...messages);

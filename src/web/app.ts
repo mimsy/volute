@@ -3,6 +3,9 @@ import { bodyLimit } from "hono/body-limit";
 import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
 import log from "../lib/logger.js";
+
+const httpLog = log.child("http");
+
 import { checkForUpdateCached, getCurrentVersion } from "../lib/update-check.js";
 import auth from "./api/auth.js";
 import channels from "./api/channels.js";
@@ -29,7 +32,7 @@ app.onError((err, c) => {
   if (err instanceof HTTPException) {
     return err.getResponse();
   }
-  log.error("Unhandled error", {
+  log.error("unhandled error", {
     path: c.req.path,
     method: c.req.method,
     error: err.message,
@@ -46,7 +49,7 @@ app.use("*", async (c, next) => {
   const start = Date.now();
   await next();
   const duration = Date.now() - start;
-  log.info("request", {
+  httpLog.debug("request", {
     method: c.req.method,
     path: c.req.path,
     status: c.res.status,
@@ -62,7 +65,7 @@ app.get("/api/health", (c) => {
     version = getCurrentVersion();
     cached = checkForUpdateCached();
   } catch (err) {
-    log.error("Health check error", { error: (err as Error).message });
+    log.warn("health check error", { error: (err as Error).message });
   }
   return c.json({
     ok: true,
