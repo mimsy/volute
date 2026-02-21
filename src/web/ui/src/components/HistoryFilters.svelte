@@ -38,6 +38,21 @@ let {
 
 let channelOpen = $state(false);
 let sessionOpen = $state(false);
+let typesOpen = $state(false);
+
+let typeSummary = $derived(
+  filters.types.size === ALL_TYPES.size
+    ? "all types"
+    : filters.types.size === 1
+      ? [...filters.types][0]
+      : `${filters.types.size} of ${ALL_TYPES.size} types`,
+);
+
+function closeAll() {
+  channelOpen = false;
+  sessionOpen = false;
+  typesOpen = false;
+}
 
 function selectChannel(value: string) {
   channelOpen = false;
@@ -75,8 +90,7 @@ function toggleLive() {
 function handleClickOutside(e: MouseEvent) {
   const target = e.target as HTMLElement;
   if (!target.closest(".custom-select")) {
-    channelOpen = false;
-    sessionOpen = false;
+    closeAll();
   }
 }
 </script>
@@ -85,7 +99,7 @@ function handleClickOutside(e: MouseEvent) {
 
 <div class="filters">
   <div class="custom-select" class:open={channelOpen}>
-    <button class="select-trigger" onclick={() => { channelOpen = !channelOpen; sessionOpen = false; }}>
+    <button class="select-trigger" onclick={() => { const v = !channelOpen; closeAll(); channelOpen = v; }}>
       <span class="select-value">{filters.channel || "all channels"}</span>
       <span class="select-arrow">▾</span>
     </button>
@@ -100,7 +114,7 @@ function handleClickOutside(e: MouseEvent) {
   </div>
 
   <div class="custom-select" class:open={sessionOpen}>
-    <button class="select-trigger" onclick={() => { sessionOpen = !sessionOpen; channelOpen = false; }}>
+    <button class="select-trigger" onclick={() => { const v = !sessionOpen; closeAll(); sessionOpen = v; }}>
       <span class="select-value">{filters.session ? `${filters.session}` : "all sessions"}</span>
       <span class="select-arrow">▾</span>
     </button>
@@ -116,26 +130,27 @@ function handleClickOutside(e: MouseEvent) {
     {/if}
   </div>
 
-  <div class="sep"></div>
-
-  <div class="type-pills">
-    {#each EVENT_TYPES as t}
-      {@const active = filters.types.has(t.name)}
-      <button
-        class="pill"
-        class:active
-        style:--pill-color={t.color}
-        onclick={() => toggleType(t.name)}
-      >
-        <span class="pill-dot" style:background={active ? t.color : "var(--text-2)"}></span>
-        {t.name}
-      </button>
-    {/each}
-    <button class="pill meta-pill" onclick={selectAll}>all</button>
-    <button class="pill meta-pill" onclick={selectNone}>none</button>
+  <div class="custom-select" class:open={typesOpen}>
+    <button class="select-trigger" onclick={() => { const v = !typesOpen; closeAll(); typesOpen = v; }}>
+      <span class="select-value">{typeSummary}</span>
+      <span class="select-arrow">▾</span>
+    </button>
+    {#if typesOpen}
+      <div class="select-menu types-menu">
+        <div class="types-actions">
+          <button class="types-action" onclick={selectAll}>all</button>
+          <button class="types-action" onclick={selectNone}>none</button>
+        </div>
+        {#each EVENT_TYPES as t}
+          {@const active = filters.types.has(t.name)}
+          <button class="select-option type-option" class:selected={active} onclick={() => toggleType(t.name)}>
+            <span class="type-dot" style:background={active ? t.color : "var(--text-2)"}></span>
+            {t.name}
+          </button>
+        {/each}
+      </div>
+    {/if}
   </div>
-
-  <div class="sep"></div>
 
   <button class="pill live-pill" class:active={filters.live} onclick={toggleLive}>
     <span class="live-dot" class:active={filters.live}></span>
@@ -236,20 +251,47 @@ function handleClickOutside(e: MouseEvent) {
     margin-left: 6px;
   }
 
-  .sep {
-    width: 1px;
-    height: 16px;
-    background: var(--border);
-    flex-shrink: 0;
+  .types-menu {
+    min-width: 140px;
   }
 
-  .type-pills {
+  .types-actions {
     display: flex;
     gap: 4px;
-    flex-wrap: wrap;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
   }
 
-  .pill {
+  .types-action {
+    font-size: 10px;
+    font-family: var(--mono);
+    color: var(--text-2);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: var(--radius);
+  }
+  .types-action:hover {
+    color: var(--text-1);
+    background: var(--bg-3);
+  }
+
+  .type-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .type-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+
+  .live-pill {
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -263,38 +305,9 @@ function handleClickOutside(e: MouseEvent) {
     font-family: var(--mono);
     transition: all 0.15s;
   }
-  .pill:hover {
+  .live-pill:hover {
     border-color: var(--border-bright);
     color: var(--text-1);
-  }
-  .pill.active {
-    border-color: color-mix(in srgb, var(--pill-color, var(--text-2)) 25%, transparent);
-    background: color-mix(in srgb, var(--pill-color, var(--text-2)) 8%, transparent);
-    color: var(--text-0);
-  }
-
-  .pill-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    transition: background 0.15s;
-  }
-
-  .meta-pill {
-    color: var(--text-2);
-    border-color: transparent;
-    background: none;
-    padding: 2px 6px;
-    font-size: 10px;
-  }
-  .meta-pill:hover {
-    color: var(--text-1);
-    border-color: transparent;
-  }
-
-  .live-pill {
-    --pill-color: var(--accent);
   }
   .live-pill.active {
     border-color: color-mix(in srgb, var(--accent) 25%, transparent);
