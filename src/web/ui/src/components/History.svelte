@@ -40,6 +40,7 @@ let filters = $state<FilterState>({
 let scrollContainer: HTMLDivElement | undefined = $state();
 let userScrolledUp = $state(false);
 let eventSource: EventSource | null = $state(null);
+let nextSseId = -1;
 
 // Filtered messages (type filter is client-side)
 let filtered = $derived(messages.filter((m) => filters.types.has(m.type)));
@@ -52,12 +53,13 @@ type TimelineItem =
 let timeline = $derived.by(() => {
   const items: TimelineItem[] = [];
   let lastSession: string | null = null;
+  let divIdx = 0;
 
   for (const ev of filtered) {
     if (ev.session && ev.session !== lastSession) {
       const sess = sessionMap.get(ev.session);
       if (sess) {
-        items.push({ kind: "divider", session: sess, key: `div-${ev.session}` });
+        items.push({ kind: "divider", session: sess, key: `div-${divIdx++}` });
       }
       lastSession = ev.session;
     }
@@ -146,7 +148,7 @@ function connectSSE() {
     try {
       const data = JSON.parse(e.data);
       const event: HistoryMessage = {
-        id: Date.now(),
+        id: nextSseId--,
         mind: name,
         channel: data.channel ?? "",
         session: data.session ?? null,
