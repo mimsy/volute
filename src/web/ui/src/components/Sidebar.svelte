@@ -66,7 +66,6 @@ function toggleSection(section: Section) {
         <button class="section-toggle" onclick={() => toggleSection("dms")}>
           <span class="toggle-icon">{collapsed.has("dms") ? "\u25B8" : "\u25BE"}</span>
           <span>DMs</span>
-          <span class="section-count">{dmConversations.length}</span>
         </button>
         <button class="section-add" onclick={onNewChat} title="New chat">+</button>
       </div>
@@ -91,7 +90,6 @@ function toggleSection(section: Section) {
         <button class="section-toggle" onclick={() => toggleSection("channels")}>
           <span class="toggle-icon">{collapsed.has("channels") ? "\u25B8" : "\u25BE"}</span>
           <span>Channels</span>
-          <span class="section-count">{channelConversations.length}</span>
         </button>
         <button class="section-add" onclick={onBrowseChannels} title="Browse channels">+</button>
       </div>
@@ -116,7 +114,6 @@ function toggleSection(section: Section) {
           <button class="section-toggle" onclick={() => toggleSection("pages")}>
             <span class="toggle-icon">{collapsed.has("pages") ? "\u25B8" : "\u25BE"}</span>
             <span>Pages</span>
-            <span class="section-count">{pages.length}</span>
           </button>
         </div>
         {#if !collapsed.has("pages")}
@@ -174,13 +171,6 @@ function toggleSection(section: Section) {
   .toggle-icon {
     font-size: 9px;
     width: 10px;
-  }
-
-  .section-count {
-    margin-left: auto;
-    font-weight: 400;
-    font-size: 10px;
-    color: var(--text-2);
   }
 
   .section-add {
