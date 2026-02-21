@@ -76,6 +76,7 @@ function mindDotColor(mind: Mind): string {
 </script>
 
 <svelte:document onclick={handleClickOutside} />
+<svelte:window onblur={() => { showSystemMenu = false; showUserMenu = false; showMindsMenu = false; }} />
 
 <div class="status-bar">
   <div class="status-left">

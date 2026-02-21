@@ -97,6 +97,7 @@ function handleClickOutside(e: MouseEvent) {
 </script>
 
 <svelte:document onclick={handleClickOutside} />
+<svelte:window onblur={closeAll} />
 
 <div class="filters">
   <div class="custom-select" class:open={channelOpen}>

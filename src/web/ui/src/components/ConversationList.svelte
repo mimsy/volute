@@ -87,6 +87,8 @@ $effect(() => {
 });
 </script>
 
+<svelte:window onblur={closeMenu} />
+
 <div class="conv-list">
   {#if mode !== "dms"}
     {#if !mode}
