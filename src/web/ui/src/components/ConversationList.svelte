@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "../lib/api";
-import { getConversationLabel, getDisplayStatus, mindDotColor } from "../lib/format";
+import { getConversationLabel, mindDotColor } from "../lib/format";
 
 let {
   conversations,
@@ -60,12 +60,6 @@ function openMenu(e: MouseEvent, convId: string) {
 
 function closeMenu() {
   menuConvId = null;
-}
-
-function handleClickOutside(e: MouseEvent) {
-  if (menuConvId) {
-    closeMenu();
-  }
 }
 
 $effect(() => {

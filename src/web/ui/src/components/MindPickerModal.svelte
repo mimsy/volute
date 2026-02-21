@@ -71,6 +71,7 @@ function handleKeydown(e: KeyboardEvent) {
     }
   } else if (e.key === "Escape") {
     if (query) {
+      e.preventDefault();
       query = "";
     } else {
       onClose();
