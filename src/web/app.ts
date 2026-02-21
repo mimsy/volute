@@ -48,12 +48,12 @@ app.use("*", async (c, next) => {
   const start = Date.now();
   await next();
   const duration = Date.now() - start;
-  httpLog.debug("request", {
-    method: c.req.method,
-    path: c.req.path,
-    status: c.res.status,
-    duration,
-  });
+  const data = { method: c.req.method, path: c.req.path, status: c.res.status, duration };
+  if (c.res.status >= 400) {
+    httpLog.warn("request error", data);
+  } else {
+    httpLog.debug("request", data);
+  }
 });
 
 // Daemon health (unauthenticated)
