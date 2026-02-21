@@ -430,3 +430,122 @@ export async function leaveVoluteChannel(name: string): Promise<void> {
     throw new Error(data.error || "Failed to leave channel");
   }
 }
+
+// --- Shared Skills API ---
+
+export type SharedSkill = {
+  id: string;
+  name: string;
+  description: string;
+  author: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MindSkillInfo = {
+  id: string;
+  name: string;
+  description: string;
+  upstream: { source: string; version: number; baseCommit: string } | null;
+  updateAvailable: boolean;
+};
+
+export type UpdateResult = {
+  status: "updated" | "conflict" | "up-to-date";
+  conflictFiles?: string[];
+};
+
+export async function fetchSharedSkills(): Promise<SharedSkill[]> {
+  const res = await fetch("/api/skills", { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch shared skills");
+  return res.json();
+}
+
+export async function fetchMindSkills(mindName: string): Promise<MindSkillInfo[]> {
+  const res = await fetch(`/api/minds/${encodeURIComponent(mindName)}/skills`, {
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error("Failed to fetch mind skills");
+  return res.json();
+}
+
+export async function installMindSkill(mindName: string, skillId: string): Promise<void> {
+  const res = await fetch(`/api/minds/${encodeURIComponent(mindName)}/skills/install`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ skillId }),
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to install skill");
+  }
+}
+
+export async function updateMindSkill(mindName: string, skillId: string): Promise<UpdateResult> {
+  const res = await fetch(`/api/minds/${encodeURIComponent(mindName)}/skills/update`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ skillId }),
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to update skill");
+  }
+  return res.json();
+}
+
+export async function publishMindSkill(mindName: string, skillId: string): Promise<void> {
+  const res = await fetch(`/api/minds/${encodeURIComponent(mindName)}/skills/publish`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ skillId }),
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to publish skill");
+  }
+}
+
+export async function uninstallMindSkill(mindName: string, skillId: string): Promise<void> {
+  const res = await fetch(
+    `/api/minds/${encodeURIComponent(mindName)}/skills/${encodeURIComponent(skillId)}`,
+    {
+      method: "DELETE",
+      credentials: "include",
+    },
+  );
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to uninstall skill");
+  }
+}
+
+export async function removeSharedSkill(id: string): Promise<void> {
+  const res = await fetch(`/api/skills/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to remove skill");
+  }
+}
+
+export async function uploadSkillZip(file: File): Promise<SharedSkill> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch("/api/skills/upload", {
+    method: "POST",
+    credentials: "include",
+    body: form,
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to upload skill");
+  }
+  return res.json();
+}
