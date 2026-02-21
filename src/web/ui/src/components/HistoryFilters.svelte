@@ -43,9 +43,11 @@ let typesOpen = $state(false);
 let typeSummary = $derived(
   filters.types.size === ALL_TYPES.size
     ? "all types"
-    : filters.types.size === 1
-      ? [...filters.types][0]
-      : `${filters.types.size} of ${ALL_TYPES.size} types`,
+    : filters.types.size === 0
+      ? "no types"
+      : filters.types.size === 1
+        ? [...filters.types][0]
+        : `${filters.types.size} of ${ALL_TYPES.size} types`,
 );
 
 function closeAll() {
@@ -67,7 +69,7 @@ function selectSession(value: string) {
 function toggleType(typeName: string) {
   const next = new Set(filters.types);
   if (next.has(typeName)) {
-    if (next.size > 1) next.delete(typeName);
+    next.delete(typeName);
   } else {
     next.add(typeName);
   }
@@ -79,8 +81,7 @@ function selectAll() {
 }
 
 function selectNone() {
-  // Keep at least one — pick the first
-  onchange({ ...filters, types: new Set([EVENT_TYPES[0].name]) });
+  onchange({ ...filters, types: new Set() });
 }
 
 function toggleLive() {
