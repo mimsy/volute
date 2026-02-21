@@ -9,11 +9,11 @@ export function createSessionContextExtension(options: {
   return (pi) => {
     pi.on("before_agent_start", () => {
       try {
-        const sessionsDir = resolve(options.cwd, ".volute/pi-sessions");
+        const sessionsDir = resolve(options.cwd, ".mind/pi-sessions");
         const summary = getSessionUpdates({
           currentSession: options.currentSession,
           sessionsDir,
-          cursorFile: resolve(options.cwd, ".volute/session-cursors.json"),
+          cursorFile: resolve(options.cwd, ".mind/session-cursors.json"),
           jsonlResolver: (name) => resolvePiJsonl(sessionsDir, name),
           format: "pi",
         });

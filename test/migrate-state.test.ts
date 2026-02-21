@@ -11,7 +11,7 @@ describe("migrateMindState", () => {
   beforeEach(() => {
     addMind(TEST_MIND, 4999);
     const dir = mindDir(TEST_MIND);
-    mkdirSync(resolve(dir, ".volute"), { recursive: true });
+    mkdirSync(resolve(dir, ".mind"), { recursive: true });
   });
 
   afterEach(() => {
@@ -23,8 +23,8 @@ describe("migrateMindState", () => {
     }
   });
 
-  it("copies env.json from mind .volute to state dir", () => {
-    const src = resolve(mindDir(TEST_MIND), ".volute", "env.json");
+  it("copies env.json from mind .mind to state dir", () => {
+    const src = resolve(mindDir(TEST_MIND), ".mind", "env.json");
     writeFileSync(src, JSON.stringify({ FOO: "bar" }));
 
     migrateMindState(TEST_MIND);
@@ -34,8 +34,8 @@ describe("migrateMindState", () => {
     assert.deepEqual(JSON.parse(readFileSync(dest, "utf-8")), { FOO: "bar" });
   });
 
-  it("copies channels.json from mind .volute to state dir", () => {
-    const src = resolve(mindDir(TEST_MIND), ".volute", "channels.json");
+  it("copies channels.json from mind .mind to state dir", () => {
+    const src = resolve(mindDir(TEST_MIND), ".mind", "channels.json");
     writeFileSync(src, JSON.stringify({ "discord:general": { platformId: "123" } }));
 
     migrateMindState(TEST_MIND);
@@ -45,7 +45,7 @@ describe("migrateMindState", () => {
   });
 
   it("does not overwrite existing files in state dir", () => {
-    const src = resolve(mindDir(TEST_MIND), ".volute", "env.json");
+    const src = resolve(mindDir(TEST_MIND), ".mind", "env.json");
     writeFileSync(src, JSON.stringify({ OLD: "value" }));
 
     const destDir = stateDir(TEST_MIND);
@@ -58,9 +58,9 @@ describe("migrateMindState", () => {
     assert.deepEqual(JSON.parse(readFileSync(dest, "utf-8")), { NEW: "value" });
   });
 
-  it("no-ops when mind has no .volute directory", () => {
-    // Remove the .volute dir we created in beforeEach
-    rmSync(resolve(mindDir(TEST_MIND), ".volute"), { recursive: true, force: true });
+  it("no-ops when mind has no .mind directory", () => {
+    // Remove the .mind dir we created in beforeEach
+    rmSync(resolve(mindDir(TEST_MIND), ".mind"), { recursive: true, force: true });
 
     migrateMindState(TEST_MIND);
 
@@ -68,7 +68,7 @@ describe("migrateMindState", () => {
   });
 
   it("migrates logs directory", () => {
-    const srcLogs = resolve(mindDir(TEST_MIND), ".volute", "logs");
+    const srcLogs = resolve(mindDir(TEST_MIND), ".mind", "logs");
     mkdirSync(srcLogs, { recursive: true });
     writeFileSync(resolve(srcLogs, "mind.log"), "log content");
 

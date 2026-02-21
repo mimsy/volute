@@ -7,7 +7,7 @@ import { initConnectorManager } from "./lib/connector-manager.js";
 import log from "./lib/logger.js";
 import { ensureMailAddress, getMailPoller } from "./lib/mail-poller.js";
 import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
-import { migrateMindState } from "./lib/migrate-state.js";
+import { migrateDotVoluteDir, migrateMindState } from "./lib/migrate-state.js";
 import { initMindManager } from "./lib/mind-manager.js";
 import { mindDir, readRegistry, setMindRunning, voluteHome } from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
@@ -91,10 +91,11 @@ export async function startDaemon(opts: {
   const tokenBudget = getTokenBudget();
   tokenBudget.start(port, token);
 
-  // Migrate system state for all registered minds
+  // Migrate .volute/ → .mind/ and system state for all registered minds
   const registry = readRegistry();
   for (const entry of registry) {
     try {
+      migrateDotVoluteDir(entry.name);
       migrateMindState(entry.name);
     } catch (err) {
       log.warn(`failed to migrate state for ${entry.name}`, log.errorData(err));

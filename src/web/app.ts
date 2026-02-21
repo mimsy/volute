@@ -9,6 +9,7 @@ import channels from "./api/channels.js";
 import connectors from "./api/connectors.js";
 import envRoutes, { sharedEnvApp } from "./api/env.js";
 import files from "./api/files.js";
+import keys from "./api/keys.js";
 import logs from "./api/logs.js";
 import mindSkills from "./api/mind-skills.js";
 import minds from "./api/minds.js";
@@ -97,6 +98,7 @@ app.route("/pages", pages);
 
 // Chain route registrations to capture types
 const routes = app
+  .route("/api/keys", keys)
   .route("/api/auth", auth)
   .route("/api/system", system)
   .route("/api/system", update)

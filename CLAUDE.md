@@ -32,7 +32,7 @@ CLI commands like `mind start`, `mind stop`, `message send`, `connector`, `varia
 
 ### Centralized state directory
 
-Volute system state (logs, env, channel mappings, connector PIDs) lives in `~/.volute/state/<name>/`, separate from mind directories. This keeps mind projects portable — they contain only mind-owned state (sessions, cursors, connector configs). The `stateDir(name)` helper in `src/lib/registry.ts` resolves state paths. On daemon startup, `migrateMindState()` copies any legacy `.volute/env.json`, `.volute/channels.json`, and `.volute/logs/` from mind directories to the centralized state dir.
+Volute system state (logs, env, channel mappings, connector PIDs) lives in `~/.volute/state/<name>/`, separate from mind directories. This keeps mind projects portable — they contain only mind-owned state (sessions, cursors, connector configs). The `stateDir(name)` helper in `src/lib/registry.ts` resolves state paths. On daemon startup, `migrateDotVoluteDir()` renames any legacy `<mindDir>/.volute/` to `<mindDir>/.mind/`, then `migrateMindState()` copies `env.json`, `channels.json`, and `logs/` from the mind's `.mind/` to the centralized state dir.
 
 Minds receive `VOLUTE_MIND`, `VOLUTE_STATE_DIR`, `VOLUTE_MIND_DIR`, `VOLUTE_MIND_PORT`, `VOLUTE_DAEMON_PORT`, and `VOLUTE_DAEMON_TOKEN` env vars from the daemon (via `process.env` inheritance). Instead of file-based IPC (restart.json, merged.json), minds call the daemon's REST API via `daemonRestart()` and `daemonSend()` from `templates/_base/src/lib/daemon-client.ts`. The daemon delivers post-restart context (merge info) to minds via HTTP POST to the mind's `/message` endpoint.
 
@@ -77,9 +77,10 @@ Each mind project (created from the template) has:
 │   │   └── routes.json        # Message routing config (optional)
 │   ├── memory/journal/        # Daily journal entries (YYYY-MM-DD.md)
 │   └── .claude/skills/        # Skills (volute CLI reference, memory system)
-└── .volute/                   # Mind-internal runtime state
+└── .mind/                     # Mind-internal runtime state
     ├── sessions/              # Per-session SDK state (e.g. sessions/main.json)
     ├── session-cursors.json   # Session polling cursors
+    ├── identity/              # Ed25519 keypair (private.pem, public.pem)
     ├── connectors/            # Connector configs (e.g. connectors/discord/config.json)
     ├── schedules.json         # Cron schedules for this mind
     └── variants.json          # Variant metadata
@@ -166,7 +167,7 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 | `connector-defs.ts` | Connector type definitions and metadata |
 | `scheduler.ts` | Cron-based scheduled messages, per-mind schedule loading |
 | `daemon-client.ts` | HTTP client for CLI → daemon communication, reads `~/.volute/daemon.json` for port |
-| `variants.ts` | Variant metadata (`.volute/variants.json`), health checks, git worktree ops |
+| `variants.ts` | Variant metadata (`~/.volute/variants.json`), health checks, git worktree ops |
 | `template.ts` | Template discovery, copying, `{{name}}` substitution, `.init/` → `home/` migration |
 | `spawn-server.ts` | Spawns `tsx src/server.ts`, waits for port listening (used for variants only) |
 | `parse-args.ts` | Type-safe argument parser with positional args and typed flags |
@@ -256,7 +257,7 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 - Message routing via `routes.json` rules with glob matching, `isDM`/`participants` matching, template expansion (`${sender}`, `${channel}`), and file/mind destinations
 - Channel gating (`gateUnmatched`) holds unrecognized channels in `inbox/` until the mind adds a routing rule
 - Multi-participant conversations with fan-out to all mind participants; mind users tracked in the `users` table with `user_type: "mind"`
-- Variants use git worktrees with detached server processes; metadata in `<mindDir>/.volute/variants.json`
+- Variants use git worktrees with detached server processes; metadata in `~/.volute/variants.json`
 - All child process execution must be async (never `execFileSync`) to avoid blocking the event loop
 - Arg parsing via `src/lib/parse-args.ts` — type-safe with positional args and typed flags
 - Mind system prompt built from: SOUL.md + VOLUTE.md + MEMORY.md

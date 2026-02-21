@@ -132,7 +132,7 @@ export function sessionMatchesWorkspace(sessionPath: string, workspaceDir: strin
  */
 export function importPiSession(sessionFile: string, mindDirPath: string) {
   const homeDir = resolve(mindDirPath, "home");
-  const piSessionDir = resolve(mindDirPath, ".volute/pi-sessions/main");
+  const piSessionDir = resolve(mindDirPath, ".mind/pi-sessions/main");
   mkdirSync(piSessionDir, { recursive: true });
 
   // Read session and update cwd in header to point to new mind's home dir

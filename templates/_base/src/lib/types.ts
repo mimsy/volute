@@ -13,6 +13,10 @@ export type ChannelMeta = {
   participants?: string[];
   participantCount?: number;
   typing?: string[];
+  signature?: string;
+  signatureTimestamp?: string;
+  signerFingerprint?: string;
+  verified?: boolean;
 };
 
 /** ChannelMeta enriched by the router with dispatch info. */
