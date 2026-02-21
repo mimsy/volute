@@ -34,7 +34,7 @@ app.onError((err, c) => {
   log.error("unhandled error", {
     path: c.req.path,
     method: c.req.method,
-    error: err.message,
+    error: err.stack ?? err.message,
   });
   return c.json({ error: "Internal server error" }, 500);
 });

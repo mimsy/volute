@@ -89,9 +89,7 @@ export class Scheduler {
       }
       return false;
     } catch (err) {
-      slog.warn(`invalid cron "${schedule.cron}" for ${mind}:${schedule.id}`, {
-        error: String(err),
-      });
+      slog.warn(`invalid cron "${schedule.cron}" for ${mind}:${schedule.id}`, log.errorData(err));
       return false;
     }
   }
@@ -141,7 +139,7 @@ export class Scheduler {
       // Consume response body
       await res.text().catch(() => {});
     } catch (err) {
-      slog.warn(`failed to fire "${schedule.id}" for ${mindName}`, { error: String(err) });
+      slog.warn(`failed to fire "${schedule.id}" for ${mindName}`, log.errorData(err));
     } finally {
       clearTimeout(timeout);
     }

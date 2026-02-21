@@ -103,7 +103,7 @@ export class MailPoller {
         this.lastPoll = new Date().toISOString();
       }
     } catch (err) {
-      mlog.warn("poll error", { error: String(err) });
+      mlog.warn("poll error", log.errorData(err));
     }
   }
 
@@ -154,7 +154,7 @@ export class MailPoller {
       }
       await res.text().catch(() => {});
     } catch (err) {
-      mlog.warn(`failed to deliver to ${mind}`, { error: String(err) });
+      mlog.warn(`failed to deliver to ${mind}`, log.errorData(err));
     } finally {
       clearTimeout(timeout);
     }
@@ -186,6 +186,6 @@ export async function ensureMailAddress(mindName: string): Promise<void> {
     }
     await res.text().catch(() => {});
   } catch (err) {
-    mlog.warn(`failed to ensure address for ${mindName}`, { error: String(err) });
+    mlog.warn(`failed to ensure address for ${mindName}`, log.errorData(err));
   }
 }

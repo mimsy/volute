@@ -85,14 +85,14 @@ export class MindManager {
             }
           } catch (err: unknown) {
             if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
-              mlog.warn(`failed to check/kill stale process for ${name}`, { error: String(err) });
+              mlog.warn(`failed to check/kill stale process for ${name}`, log.errorData(err));
             }
           }
         }
         rmSync(pidFile, { force: true });
       }
     } catch (err) {
-      mlog.warn(`failed to read PID file for ${name}`, { error: String(err) });
+      mlog.warn(`failed to read PID file for ${name}`, log.errorData(err));
     }
 
     try {
@@ -197,7 +197,7 @@ export class MindManager {
       try {
         writeFileSync(pidFile, String(child.pid));
       } catch (err) {
-        mlog.warn(`failed to write PID file for ${name}`, { error: String(err) });
+        mlog.warn(`failed to write PID file for ${name}`, log.errorData(err));
       }
     }
 
@@ -253,7 +253,7 @@ export class MindManager {
         }),
       });
     } catch (err) {
-      mlog.warn(`failed to deliver pending context to ${name}`, { error: String(err) });
+      mlog.warn(`failed to deliver pending context to ${name}`, log.errorData(err));
     }
   }
 
@@ -284,7 +284,7 @@ export class MindManager {
       setTimeout(() => {
         if (this.shuttingDown) return;
         this.startMind(name).catch((err) => {
-          mlog.error(`failed to restart ${name}`, { error: String(err) });
+          mlog.error(`failed to restart ${name}`, log.errorData(err));
         });
       }, delay);
     });

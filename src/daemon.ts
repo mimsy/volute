@@ -97,7 +97,7 @@ export async function startDaemon(opts: {
     try {
       migrateMindState(entry.name);
     } catch (err) {
-      log.warn(`failed to migrate state for ${entry.name}`, { error: String(err) });
+      log.warn(`failed to migrate state for ${entry.name}`, log.errorData(err));
     }
   }
 
@@ -111,7 +111,7 @@ export async function startDaemon(opts: {
       const dir = mindDir(entry.name);
       await connectors.startConnectors(entry.name, dir, entry.port, port);
       scheduler.loadSchedules(entry.name);
-      ensureMailAddress(entry.name).catch(() => {});
+      ensureMailAddress(entry.name).catch(() => {}); // logs internally
       const config = readVoluteConfig(dir);
       if (config?.tokenBudget) {
         tokenBudget.setBudget(
@@ -121,7 +121,7 @@ export async function startDaemon(opts: {
         );
       }
     } catch (err) {
-      log.error(`failed to start mind ${entry.name}`, { error: String(err) });
+      log.error(`failed to start mind ${entry.name}`, log.errorData(err));
       setMindRunning(entry.name, false);
     }
   }
@@ -133,7 +133,7 @@ export async function startDaemon(opts: {
     try {
       await manager.startMind(compositeKey);
     } catch (err) {
-      log.error(`failed to start variant ${compositeKey}`, { error: String(err) });
+      log.error(`failed to start variant ${compositeKey}`, log.errorData(err));
       setVariantRunning(mindName, variant.name, false);
     }
   }

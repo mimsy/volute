@@ -49,7 +49,7 @@ export class ConnectorManager {
       try {
         await this.startConnector(mindName, mindDir, mindPort, type, daemonPort);
       } catch (err) {
-        clog.warn(`failed to start connector ${type} for ${mindName}`, { error: String(err) });
+        clog.warn(`failed to start connector ${type} for ${mindName}`, log.errorData(err));
       }
     }
   }
@@ -212,7 +212,7 @@ export class ConnectorManager {
       if (this.stopping.has(stopKey)) return;
 
       clog.error(`connector ${type} for ${mindName} exited with code ${code}`);
-      if (lastStderr) clog.debug(`connector ${type} last output: ${lastStderr}`);
+      if (lastStderr) clog.warn(`connector ${type} last output: ${lastStderr}`);
       const attempts = this.restartAttempts.get(stopKey) ?? 0;
       if (attempts >= MAX_RESTART_ATTEMPTS) {
         clog.error(`connector ${type} for ${mindName} crashed ${attempts} times — giving up`);
@@ -226,7 +226,7 @@ export class ConnectorManager {
       setTimeout(() => {
         if (this.shuttingDown || this.stopping.has(stopKey)) return;
         this.startConnector(mindName, mindDir, mindPort, type, daemonPort).catch((err) => {
-          clog.error(`failed to restart connector ${type} for ${mindName}`, { error: String(err) });
+          clog.error(`failed to restart connector ${type} for ${mindName}`, log.errorData(err));
         });
       }, delay);
     });
@@ -265,7 +265,7 @@ export class ConnectorManager {
     try {
       this.removeConnectorPid(mindName, type);
     } catch (err) {
-      clog.warn(`failed to remove PID file for ${type}/${mindName}`, { error: String(err) });
+      clog.warn(`failed to remove PID file for ${type}/${mindName}`, log.errorData(err));
     }
     clog.info(`stopped connector ${type} for ${mindName}`);
   }

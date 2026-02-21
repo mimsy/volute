@@ -132,7 +132,7 @@ export class TokenBudget {
         const queued = this.drain(mind);
         if (queued.length > 0) {
           this.replay(mind, queued).catch((err) => {
-            tlog.warn(`replay error for ${mind}`, { error: String(err) });
+            tlog.warn(`replay error for ${mind}`, log.errorData(err));
           });
         }
       }
@@ -192,7 +192,7 @@ export class TokenBudget {
       // Consume response body
       await res.text().catch(() => {});
     } catch (err) {
-      tlog.warn(`failed to replay for ${mindName}`, { error: String(err) });
+      tlog.warn(`failed to replay for ${mindName}`, log.errorData(err));
       // Re-enqueue so messages aren't lost
       const state = this.budgets.get(mindName);
       if (state) state.queue.push(...messages);

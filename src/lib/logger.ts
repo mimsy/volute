@@ -30,9 +30,16 @@ function child(cat: string): ChildLogger {
   };
 }
 
+/** Extract error info preserving stack traces for structured logging. */
+function errorData(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) return { error: err.stack ?? err.message };
+  return { error: String(err) };
+}
+
 const log = {
   ...child("system"),
   child,
+  errorData,
   setLevel(level: LogLevel) {
     minLevel = LEVELS[level];
   },
