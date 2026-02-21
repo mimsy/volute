@@ -290,8 +290,16 @@ function handleFilterChange(next: FilterState) {
   .timeline-rail {
     position: relative;
     padding-left: 4px;
-    border-left: 1px solid var(--border);
     margin-left: 3px;
+  }
+  .timeline-rail::before {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: #333;
   }
 
   .error {

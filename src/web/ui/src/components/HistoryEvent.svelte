@@ -133,12 +133,21 @@ function formatArgs(args: unknown): string {
   .event {
     position: relative;
     padding: 6px 8px 6px 20px;
-    border-left: 2px solid transparent;
     animation: fadeIn 0.2s ease both;
-    transition: border-color 0.15s;
   }
-  .event:hover {
-    border-left-color: var(--type-color);
+  .event::after {
+    content: "";
+    position: absolute;
+    left: -2px;
+    top: 12px;
+    bottom: 0;
+    width: 2px;
+    background: var(--type-color);
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .event:hover::after {
+    opacity: 1;
   }
   .event.collapsible {
     cursor: pointer;
@@ -151,6 +160,7 @@ function formatArgs(args: unknown): string {
     width: 8px;
     height: 8px;
     border-radius: 50%;
+    z-index: 1;
   }
 
   .event-header {
