@@ -178,7 +178,7 @@ async function handleStop() {
   .mind-detail {
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 48px - 48px);
+    height: 100%;
     animation: fadeIn 0.2s ease both;
   }
 

@@ -85,7 +85,6 @@ function getDisplayStatus(mind: Mind): string {
   <div class="section">
     <div class="section-header">
       <span class="section-title">minds</span>
-      <a href="/minds" class="section-link">all minds &rarr;</a>
     </div>
     {#if minds.length === 0}
       <div class="empty-hint">
@@ -124,7 +123,6 @@ function getDisplayStatus(mind: Mind): string {
     <div class="section">
       <div class="section-header">
         <span class="section-title">recent conversations</span>
-        <a href="/chats" class="section-link">open chat &rarr;</a>
       </div>
       <div class="conv-list">
         {#each recentConversations as conv}
@@ -200,16 +198,6 @@ function getDisplayStatus(mind: Mind): string {
 
   .section-title {
     color: var(--text-2);
-  }
-
-  .section-link {
-    color: var(--text-2);
-    font-size: 10px;
-    text-transform: none;
-  }
-
-  .section-link:hover {
-    color: var(--text-1);
   }
 
   .empty-hint {

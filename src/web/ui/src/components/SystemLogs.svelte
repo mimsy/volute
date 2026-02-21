@@ -182,7 +182,7 @@ function formatData(data: Record<string, unknown>): string {
   .system-logs {
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 48px - 48px);
+    height: 100%;
   }
 
   .header {
