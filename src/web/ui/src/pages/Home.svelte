@@ -72,7 +72,7 @@ let recentConversations = $derived(
 function getDisplayStatus(mind: Mind): string {
   if (mind.status !== "running") return mind.status;
   if (!mind.lastActiveAt) return "running";
-  const ago = Date.now() - new Date(`${mind.lastActiveAt}Z`).getTime();
+  const ago = Date.now() - new Date(normalizeTimestamp(mind.lastActiveAt)).getTime();
   return ago < 5 * 60_000 ? "active" : "running";
 }
 </script>
