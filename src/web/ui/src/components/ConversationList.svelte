@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { ConversationWithParticipants, Mind, Participant } from "../lib/api";
+import type { ConversationWithParticipants, Mind } from "../lib/api";
 import { getConversationLabel, getDisplayStatus } from "../lib/format";
 
 let {
@@ -26,10 +26,6 @@ let {
 
 let channels = $derived(conversations.filter((c) => c.type === "channel"));
 let directMessages = $derived(conversations.filter((c) => c.type !== "channel"));
-
-function getParticipantBadges(conv: ConversationWithParticipants): Participant[] {
-  return conv.participants?.filter((p) => p.userType === "mind") ?? [];
-}
 
 function getDmInfo(conv: ConversationWithParticipants): {
   isMindDm: boolean;
@@ -91,9 +87,9 @@ function mindDotColor(mind: Mind): string {
       </div>
     {/if}
     {#each directMessages as conv (conv.id)}
-      {@const badges = getParticipantBadges(conv)}
       {@const isSeed = minds.find((m) => m.name === conv.mind_name)?.stage === "seed"}
       {@const dmInfo = getDmInfo(conv)}
+      {@const isGroup = (conv.participants?.length ?? 0) > 2}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="conv-item"
@@ -104,7 +100,6 @@ function mindDotColor(mind: Mind): string {
         <div class="conv-item-header">
           <div class="conv-item-label" class:active={conv.id === activeId}>
             {#if dmInfo.isMindDm && dmInfo.mind}
-              <span class="conv-label-text">{dmInfo.otherName}</span>
               <button
                 class="status-dot"
                 title="Open {dmInfo.otherName}"
@@ -112,6 +107,7 @@ function mindDotColor(mind: Mind): string {
                 style:box-shadow={getDisplayStatus(dmInfo.mind) === "running" || getDisplayStatus(dmInfo.mind) === "active" ? `0 0 6px ${mindDotColor(dmInfo.mind)}` : "none"}
                 onclick={(e) => { e.stopPropagation(); onOpenMind(dmInfo.mind!); }}
               ></button>
+              <span class="conv-label-text">{dmInfo.otherName}</span>
             {:else if dmInfo.otherName}
               <span class="conv-label-text">@{dmInfo.otherName}</span>
             {:else}
@@ -125,12 +121,8 @@ function mindDotColor(mind: Mind): string {
             <button class="delete-btn" onclick={(e) => { e.stopPropagation(); onDelete(conv.id); }}>x</button>
           {/if}
         </div>
-        {#if badges.length > 0}
-          <div class="badge-row">
-            {#each badges as p (p.username)}
-              <span class="mind-badge">{p.username}</span>
-            {/each}
-          </div>
+        {#if isGroup}
+          <div class="member-count">{conv.participants?.length} members</div>
         {/if}
       </div>
     {/each}
@@ -230,18 +222,10 @@ function mindDotColor(mind: Mind): string {
     flex-shrink: 0;
   }
 
-  .badge-row {
-    display: flex;
-    gap: 4px;
-    flex-wrap: wrap;
-  }
-
-  .mind-badge {
+  .member-count {
     font-size: 10px;
-    color: var(--accent);
-    background: var(--accent-bg);
-    padding: 1px 5px;
-    border-radius: 3px;
+    color: var(--text-2);
+    padding-left: 1px;
   }
 
   .status-dot {
