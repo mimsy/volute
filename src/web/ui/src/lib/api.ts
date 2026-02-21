@@ -219,7 +219,6 @@ export type LastMessageSummary = {
   createdAt: string;
 };
 
-// User-scoped conversation endpoints (not mind-scoped)
 export async function fetchAllConversations(): Promise<
   (Conversation & { participants: Participant[]; lastMessage?: LastMessageSummary })[]
 > {
