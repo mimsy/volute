@@ -311,7 +311,8 @@ export async function fetchTyping(mindName: string, channel: string): Promise<st
 }
 
 export async function restartDaemon(): Promise<void> {
-  await client.api.system.restart.$post();
+  const res = await client.api.system.restart.$post();
+  if (!res.ok) throw new Error("Failed to restart daemon");
 }
 
 export async function fetchSystemInfo(): Promise<{ system: string | null }> {

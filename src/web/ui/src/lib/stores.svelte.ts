@@ -43,8 +43,12 @@ export async function handleLogout() {
 
 export async function handleAuth(u: AuthUser) {
   auth.user = u;
-  const info = await fetchSystemInfo();
-  auth.systemName = info.system;
+  try {
+    const info = await fetchSystemInfo();
+    auth.systemName = info.system;
+  } catch {
+    // systemName remains null — non-critical
+  }
 }
 
 // --- Data ---
@@ -70,6 +74,7 @@ export function refreshConversations() {
 let pollInterval: ReturnType<typeof setInterval> | null = null;
 
 export function startPolling() {
+  stopPolling();
   function refresh() {
     fetchMinds()
       .then((m) => {
@@ -86,7 +91,9 @@ export function startPolling() {
     .then((p) => {
       data.recentPages = p;
     })
-    .catch(() => {});
+    .catch(() => {
+      data.connectionOk = false;
+    });
   pollInterval = setInterval(refresh, 5000);
 }
 

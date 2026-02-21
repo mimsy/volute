@@ -27,7 +27,9 @@ function refresh() {
       mind = m;
       error = "";
     })
-    .catch(() => {});
+    .catch(() => {
+      error = "Unable to reach server";
+    });
 }
 
 onMount(() => {
