@@ -92,6 +92,11 @@ async function load(offset: number) {
       messages = [...chronological, ...messages];
     }
     hasMore = rows.length === PAGE_SIZE;
+    if (offset === 0) {
+      requestAnimationFrame(() => {
+        scrollContainer?.scrollTo({ top: scrollContainer.scrollHeight });
+      });
+    }
   } catch (e) {
     error = e instanceof Error ? e.message : "Failed to load history";
   }
