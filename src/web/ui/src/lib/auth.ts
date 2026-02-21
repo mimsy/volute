@@ -49,6 +49,16 @@ export async function fetchPendingUsers(): Promise<AuthUser[]> {
   return res.json();
 }
 
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  const res = await client.api.auth["change-password"].$post({
+    json: { currentPassword, newPassword },
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to change password");
+  }
+}
+
 export async function approveUser(id: number): Promise<void> {
   const res = await client.api.auth.users[":id"].approve.$post({
     param: { id: id.toString() },

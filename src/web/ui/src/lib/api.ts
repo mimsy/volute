@@ -310,6 +310,10 @@ export async function fetchTyping(mindName: string, channel: string): Promise<st
   return data.typing;
 }
 
+export async function restartDaemon(): Promise<void> {
+  await client.api.system.restart.$post();
+}
+
 export async function fetchSystemInfo(): Promise<{ system: string | null }> {
   try {
     const res = await fetch("/api/system/info", { credentials: "include" });

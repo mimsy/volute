@@ -9,6 +9,7 @@ import SeedModal from "./components/SeedModal.svelte";
 import Sidebar from "./components/Sidebar.svelte";
 import StatusBar from "./components/StatusBar.svelte";
 import UpdateBanner from "./components/UpdateBanner.svelte";
+import UserSettingsModal from "./components/UserSettingsModal.svelte";
 import {
   type Conversation,
   type ConversationWithParticipants,
@@ -19,6 +20,7 @@ import {
   fetchSystemInfo,
   type Mind,
   type RecentPage,
+  restartDaemon,
 } from "./lib/api";
 import { type AuthUser, fetchMe, logout } from "./lib/auth";
 import { navigate, parseSelection, type Selection, selectionToPath } from "./lib/navigate";
@@ -43,6 +45,7 @@ let showGroupModal = $state(false);
 let showChannelBrowser = $state(false);
 let showSeedModal = $state(false);
 let showAdminModal = $state(false);
+let showUserSettings = $state(false);
 
 // Resize state
 let sidebarWidth = $state(loadSidebarWidth());
@@ -304,7 +307,9 @@ function handleResizeEnd() {
       {connectionOk}
       isAdmin={user.role === "admin"}
       onAdminClick={() => (showAdminModal = true)}
+      onRestart={() => restartDaemon()}
       onLogout={handleLogout}
+      onUserSettings={() => (showUserSettings = true)}
     />
   </div>
 
@@ -325,6 +330,9 @@ function handleResizeEnd() {
   {/if}
   {#if showAdminModal}
     <AdminModal onClose={() => (showAdminModal = false)} />
+  {/if}
+  {#if showUserSettings}
+    <UserSettingsModal onClose={() => (showUserSettings = false)} />
   {/if}
 {/if}
 
