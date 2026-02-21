@@ -1,7 +1,6 @@
 <script lang="ts">
 import AdminModal from "./components/AdminModal.svelte";
 import ChannelBrowserModal from "./components/ChannelBrowserModal.svelte";
-import GroupModal from "./components/GroupModal.svelte";
 import LoginPage from "./components/LoginPage.svelte";
 import MainFrame from "./components/MainFrame.svelte";
 import MindModal from "./components/MindModal.svelte";
@@ -42,13 +41,32 @@ let connectionOk = $state(true);
 
 // Modals
 let showNewChat = $state(false);
-let showGroupModal = $state(false);
 let showChannelBrowser = $state(false);
 let showSeedModal = $state(false);
 let showAdminModal = $state(false);
 let showUserSettings = $state(false);
 let showMindModal = $state(false);
 let selectedModalMind = $state<Mind | null>(null);
+
+// Hidden chats (persisted to localStorage)
+function loadHiddenChats(): Set<string> {
+  try {
+    const stored = localStorage.getItem("volute:hidden-chats");
+    return stored ? new Set(JSON.parse(stored)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+let hiddenConversationIds = $state(loadHiddenChats());
+
+function handleHideConversation(id: string) {
+  hiddenConversationIds.add(id);
+  hiddenConversationIds = new Set(hiddenConversationIds);
+  localStorage.setItem("volute:hidden-chats", JSON.stringify([...hiddenConversationIds]));
+  if (activeConversationId === id) {
+    selection = { kind: "home" };
+  }
+}
 
 // Resize state
 let sidebarWidth = $state(loadSidebarWidth());
@@ -190,13 +208,30 @@ function handleConversationId(id: string) {
   refreshConversations();
 }
 
-function handleNewChatCreated(mind: string) {
+function handleNewChatCreated(name: string) {
   showNewChat = false;
-  selection = { kind: "conversation", mindName: mind };
+  // Check for existing 2-person DM with this user
+  const existing = conversations.find((c) => {
+    if (c.type === "channel") return false;
+    const parts = c.participants ?? [];
+    if (parts.length !== 2) return false;
+    return parts.some((p) => p.username === name);
+  });
+  if (existing) {
+    // Unhide if it was hidden
+    if (hiddenConversationIds.has(existing.id)) {
+      hiddenConversationIds.delete(existing.id);
+      hiddenConversationIds = new Set(hiddenConversationIds);
+      localStorage.setItem("volute:hidden-chats", JSON.stringify([...hiddenConversationIds]));
+    }
+    selection = { kind: "conversation", conversationId: existing.id };
+  } else {
+    selection = { kind: "conversation", mindName: name };
+  }
 }
 
-function handleGroupCreated(conv: Conversation) {
-  showGroupModal = false;
+function handleNewGroupCreated(conv: Conversation) {
+  showNewChat = false;
   refreshConversations();
   selection = { kind: "conversation", conversationId: conv.id };
 }
@@ -274,7 +309,7 @@ function handleResizeEnd() {
       <div class="sidebar" style:width="{sidebarWidth}px">
         <Sidebar
           {minds}
-          {conversations}
+          conversations={conversations.filter((c) => !hiddenConversationIds.has(c.id))}
           pages={recentPages}
           {activeConversationId}
           username={user.username}
@@ -284,6 +319,7 @@ function handleResizeEnd() {
           onBrowseChannels={() => (showChannelBrowser = true)}
           onOpenMind={handleOpenMindModal}
           onSelectPage={handleSelectPage}
+          onHideConversation={handleHideConversation}
         />
       </div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -323,10 +359,7 @@ function handleResizeEnd() {
   </div>
 
   {#if showNewChat}
-    <MindPickerModal onClose={() => (showNewChat = false)} onPick={handleNewChatCreated} />
-  {/if}
-  {#if showGroupModal}
-    <GroupModal onClose={() => (showGroupModal = false)} onCreated={handleGroupCreated} />
+    <MindPickerModal onClose={() => (showNewChat = false)} onPick={handleNewChatCreated} onGroupCreated={handleNewGroupCreated} />
   {/if}
   {#if showChannelBrowser}
     <ChannelBrowserModal

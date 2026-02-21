@@ -15,6 +15,7 @@ let {
   onBrowseChannels,
   onOpenMind,
   onSelectPage,
+  onHideConversation,
 }: {
   minds: Mind[];
   conversations: ConversationWithParticipants[];
@@ -27,6 +28,7 @@ let {
   onBrowseChannels: () => void;
   onOpenMind: (mind: Mind) => void;
   onSelectPage: (mind: string, path: string) => void;
+  onHideConversation?: (id: string) => void;
 } = $props();
 
 type Section = "dms" | "channels" | "pages";
@@ -78,6 +80,7 @@ function toggleSection(section: Section) {
           onSelect={onSelectConversation}
           onDelete={onDeleteConversation}
           {onOpenMind}
+          onHide={onHideConversation}
         />
       {/if}
     </div>

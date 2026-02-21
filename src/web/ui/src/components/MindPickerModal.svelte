@@ -1,48 +1,137 @@
 <script lang="ts">
-import { fetchMinds, type Mind } from "../lib/api";
+import {
+  type AvailableUser,
+  type Conversation,
+  createConversationWithParticipants,
+  fetchAvailableUsers,
+} from "../lib/api";
 
-let { onClose, onPick }: { onClose: () => void; onPick: (mindName: string) => void } = $props();
+let {
+  onClose,
+  onPick,
+  onGroupCreated,
+}: {
+  onClose: () => void;
+  onPick: (name: string) => void;
+  onGroupCreated: (conv: Conversation) => void;
+} = $props();
 
-let minds = $state<Mind[]>([]);
+let users = $state<AvailableUser[]>([]);
+let selected = $state<Set<string>>(new Set());
+let title = $state("");
 let loading = $state(true);
+let creating = $state(false);
 let error = $state("");
 
 $effect(() => {
-  fetchMinds()
-    .then((m) => {
-      minds = m;
+  fetchAvailableUsers()
+    .then((u) => {
+      users = u;
       loading = false;
     })
     .catch(() => {
       loading = false;
-      error = "Failed to load minds";
+      error = "Failed to load users";
     });
 });
+
+function toggle(username: string) {
+  const next = new Set(selected);
+  if (next.has(username)) next.delete(username);
+  else next.add(username);
+  selected = next;
+}
+
+let hasMind = $derived(users.some((u) => u.user_type === "mind" && selected.has(u.username)));
+
+async function handleCreate() {
+  if (selected.size === 0) return;
+  if (selected.size === 1) {
+    onPick([...selected][0]);
+    return;
+  }
+  // Group: need at least one mind
+  if (!hasMind) {
+    error = "Select at least one mind";
+    return;
+  }
+  creating = true;
+  error = "";
+  try {
+    const conv = await createConversationWithParticipants([...selected], title || undefined);
+    onGroupCreated(conv);
+  } catch (e) {
+    error = e instanceof Error ? e.message : "Failed to create";
+    creating = false;
+  }
+}
+
+let buttonLabel = $derived(
+  selected.size === 0
+    ? "Select a user"
+    : selected.size === 1
+      ? "Chat"
+      : creating
+        ? "Creating..."
+        : "Create group",
+);
+let buttonDisabled = $derived(selected.size === 0 || creating || (selected.size > 1 && !hasMind));
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="overlay" onclick={onClose} onkeydown={() => {}}>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
-    <div class="modal-title">New chat with...</div>
+    <div class="modal-title">New conversation</div>
+
+    {#if selected.size > 1}
+      <input
+        bind:value={title}
+        placeholder="Title (optional)"
+        class="title-input"
+      />
+    {/if}
+
     {#if loading}
-      <div class="loading">Loading minds...</div>
-    {:else if error}
+      <div class="hint">Loading users...</div>
+    {:else if error && users.length === 0}
       <div class="error">{error}</div>
     {:else}
-      <div class="mind-list">
-        {#each minds as mind}
-          <button class="mind-option" onclick={() => onPick(mind.name)}>
-            <span class="status-dot" class:running={mind.status === "running"}></span>
-            {mind.name}
-          </button>
+      <div class="user-list">
+        {#each users as u}
+          <label class="user-row">
+            <input
+              type="checkbox"
+              checked={selected.has(u.username)}
+              onchange={() => toggle(u.username)}
+            />
+            <span class="user-name">{u.username}</span>
+            {#if u.user_type === "mind"}
+              <span class="user-type mind">mind</span>
+            {/if}
+          </label>
         {/each}
-        {#if minds.length === 0}
-          <div class="loading">No minds found</div>
+        {#if users.length === 0}
+          <div class="hint">No users found</div>
         {/if}
       </div>
     {/if}
-    <button class="cancel-btn" onclick={onClose}>Cancel</button>
+
+    {#if error && users.length > 0}
+      <div class="error">{error}</div>
+    {/if}
+
+    <div class="actions">
+      <button class="cancel-btn" onclick={onClose}>Cancel</button>
+      <button
+        class="create-btn"
+        onclick={handleCreate}
+        disabled={buttonDisabled}
+        style:opacity={buttonDisabled ? 0.5 : 1}
+      >
+        {buttonLabel}
+      </button>
+    </div>
   </div>
 </div>
 
@@ -62,8 +151,8 @@ $effect(() => {
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     padding: 20px;
-    width: 280px;
-    max-height: 50vh;
+    width: 300px;
+    max-height: 60vh;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -75,51 +164,63 @@ $effect(() => {
     font-size: 14px;
   }
 
-  .loading {
-    color: var(--text-2);
+  .title-input {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 10px;
+    color: var(--text-0);
     font-size: 12px;
+    outline: none;
+    font-family: var(--mono);
+  }
+
+  .hint {
+    color: var(--text-2);
+    font-size: 11px;
     padding: 8px;
   }
 
   .error {
     color: var(--red);
-    font-size: 12px;
-    padding: 8px;
+    font-size: 11px;
   }
 
-  .mind-list {
+  .user-list {
     flex: 1;
     overflow: auto;
+    max-height: 300px;
   }
 
-  .mind-option {
+  .user-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    width: 100%;
-    padding: 8px 10px;
-    background: transparent;
+    padding: 6px 4px;
+    cursor: pointer;
+    font-size: 12px;
     color: var(--text-0);
-    font-size: 13px;
-    border-radius: var(--radius);
-    text-align: left;
-    transition: background 0.1s;
   }
 
-  .mind-option:hover {
-    background: var(--bg-2);
+  .user-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--text-2);
-    flex-shrink: 0;
+  .user-type {
+    color: var(--text-2);
+    font-size: 10px;
+    margin-left: auto;
   }
 
-  .status-dot.running {
-    background: var(--accent);
+  .user-type.mind {
+    color: var(--accent);
+  }
+
+  .actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
   }
 
   .cancel-btn {
@@ -129,6 +230,14 @@ $effect(() => {
     border-radius: var(--radius);
     font-size: 12px;
     border: 1px solid var(--border);
-    align-self: flex-end;
+  }
+
+  .create-btn {
+    padding: 6px 14px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    border-radius: var(--radius);
+    font-size: 12px;
+    font-weight: 500;
   }
 </style>
