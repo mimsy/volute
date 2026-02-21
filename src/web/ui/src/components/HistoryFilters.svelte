@@ -12,10 +12,13 @@ export type FilterState = {
 const EVENT_TYPES = [
   { name: "inbound", color: "var(--blue)" },
   { name: "outbound", color: "var(--accent)" },
+  { name: "text", color: "var(--accent)" },
   { name: "tool_use", color: "var(--yellow)" },
   { name: "tool_result", color: "var(--yellow)" },
   { name: "thinking", color: "var(--text-2)" },
   { name: "usage", color: "var(--purple)" },
+  { name: "session_start", color: "var(--accent)" },
+  { name: "done", color: "var(--text-2)" },
   { name: "log", color: "var(--text-2)" },
 ] as const;
 

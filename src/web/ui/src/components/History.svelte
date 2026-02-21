@@ -16,10 +16,13 @@ const PAGE_SIZE = 100;
 const ALL_TYPES = new Set([
   "inbound",
   "outbound",
+  "text",
   "tool_use",
   "tool_result",
   "thinking",
   "usage",
+  "session_start",
+  "done",
   "log",
 ]);
 

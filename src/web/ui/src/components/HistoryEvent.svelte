@@ -9,6 +9,7 @@ let expanded = $state(false);
 const typeColors: Record<string, string> = {
   inbound: "var(--blue)",
   outbound: "var(--accent)",
+  text: "var(--accent)",
   tool_use: "var(--yellow)",
   tool_result: "var(--yellow)",
   thinking: "var(--text-2)",
@@ -81,6 +82,10 @@ function formatArgs(args: unknown): string {
       <div class="user-text">{event.content}</div>
     {:else if event.type === "outbound"}
       <span class="sender outbound">mind</span>
+      <div class="markdown-body">
+        {@html renderMarkdown(event.content)}
+      </div>
+    {:else if event.type === "text"}
       <div class="markdown-body">
         {@html renderMarkdown(event.content)}
       </div>
