@@ -5,7 +5,7 @@ type LogLevel = "debug" | "info" | "warn" | "error";
 const LEVELS: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
 let minLevel = LEVELS[(process.env.VOLUTE_LOG_LEVEL as LogLevel) || "info"] ?? LEVELS.info;
 let output = (line: string) => {
-  process.stderr.write(line + "\n");
+  process.stderr.write(`${line}\n`);
 };
 
 type LogFn = (msg: string, data?: Record<string, unknown>) => void;
