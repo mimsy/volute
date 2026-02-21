@@ -150,22 +150,42 @@ export type HistoryMessage = {
   id: number;
   mind: string;
   channel: string;
+  session: string | null;
   sender: string | null;
+  message_id: string | null;
+  type: string;
   content: string;
+  metadata: string | null;
   created_at: string;
+};
+
+export type HistorySession = {
+  session: string;
+  started_at: string;
+  event_count: number;
+  message_count: number;
+  tool_count: number;
 };
 
 export async function fetchHistory(
   name: string,
-  opts?: { channel?: string; limit?: number; offset?: number },
+  opts?: { channel?: string; session?: string; full?: boolean; limit?: number; offset?: number },
 ): Promise<HistoryMessage[]> {
   const params = new URLSearchParams();
   if (opts?.channel) params.set("channel", opts.channel);
+  if (opts?.session) params.set("session", opts.session);
+  if (opts?.full) params.set("full", "true");
   if (opts?.limit) params.set("limit", String(opts.limit));
   if (opts?.offset) params.set("offset", String(opts.offset));
   const qs = params.toString();
   const res = await fetch(`/api/minds/${encodeURIComponent(name)}/history${qs ? `?${qs}` : ""}`);
   if (!res.ok) throw new Error("Failed to fetch history");
+  return res.json();
+}
+
+export async function fetchHistorySessions(name: string): Promise<HistorySession[]> {
+  const res = await fetch(`/api/minds/${encodeURIComponent(name)}/history/sessions`);
+  if (!res.ok) throw new Error("Failed to fetch sessions");
   return res.json();
 }
 

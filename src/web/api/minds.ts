@@ -1383,6 +1383,24 @@ const app = new Hono<AuthEnv>()
 
     return c.json({ ok: true });
   })
+  // Get sessions summary
+  .get("/:name/history/sessions", async (c) => {
+    const name = c.req.param("name");
+    const db = await getDb();
+    const rows = await db
+      .select({
+        session: mindHistory.session,
+        started_at: sql<string>`MIN(${mindHistory.created_at})`,
+        event_count: sql<number>`COUNT(*)`,
+        message_count: sql<number>`SUM(CASE WHEN ${mindHistory.type} IN ('inbound','outbound') THEN 1 ELSE 0 END)`,
+        tool_count: sql<number>`SUM(CASE WHEN ${mindHistory.type}='tool_use' THEN 1 ELSE 0 END)`,
+      })
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, name), sql`${mindHistory.session} IS NOT NULL`))
+      .groupBy(mindHistory.session)
+      .orderBy(sql`MIN(${mindHistory.created_at}) DESC`);
+    return c.json(rows);
+  })
   // Get message history
   .get("/:name/history/channels", async (c) => {
     const name = c.req.param("name");
@@ -1396,6 +1414,7 @@ const app = new Hono<AuthEnv>()
   .get("/:name/history", async (c) => {
     const name = c.req.param("name");
     const channel = c.req.query("channel");
+    const session = c.req.query("session");
     const full = c.req.query("full") === "true";
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
     const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
@@ -1404,6 +1423,9 @@ const app = new Hono<AuthEnv>()
     const conditions = [eq(mindHistory.mind, name)];
     if (channel) {
       conditions.push(eq(mindHistory.channel, channel));
+    }
+    if (session) {
+      conditions.push(eq(mindHistory.session, session));
     }
     // Default to conversation view (inbound/outbound only)
     if (!full) {
