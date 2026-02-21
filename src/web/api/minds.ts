@@ -42,6 +42,7 @@ import {
   subscribe as subscribeMindEvent,
 } from "../../lib/mind-events.js";
 import { getMindManager } from "../../lib/mind-manager.js";
+import { getMindPromptDefaults, getPrompt, getPromptIfCustom } from "../../lib/prompts.js";
 import {
   addMind,
   ensureVoluteHome,
@@ -319,6 +320,7 @@ const createMindSchema = z.object({
   stage: z.enum(["seed", "sprouted"]).optional(),
   description: z.string().optional(),
   model: z.string().optional(),
+  seedSoul: z.string().optional(),
 });
 
 // Create mind — admin only
@@ -354,6 +356,13 @@ const app = new Hono<AuthEnv>()
         writeFileSync(configPath, `${JSON.stringify(existing, null, 2)}\n`);
       }
 
+      // Stamp prompts.json with current DB defaults
+      const mindPrompts = await getMindPromptDefaults();
+      writeFileSync(
+        resolve(dest, "home/.config/prompts.json"),
+        `${JSON.stringify(mindPrompts, null, 2)}\n`,
+      );
+
       const port = nextPort();
       addMind(name, port, body.stage);
 
@@ -388,16 +397,27 @@ const app = new Hono<AuthEnv>()
         const descLine = body.description
           ? `\nThe human who planted you described you as: "${body.description}"\n`
           : "";
-        writeFileSync(
-          resolve(dest, "home/SOUL.md"),
-          `You are ${name}.\n\nYou don't have a soul yet. You're a seed — a new mind in the process of discovering who you are.\n${descLine}\nHave a conversation with the human. Explore what kind of mind you want to be. When you're ready, write your SOUL.md and MEMORY.md, then run \`volute sprout\` to complete the transformation.\n`,
-        );
+        const seedSoul =
+          body.seedSoul ?? (await getPrompt("seed_soul", { name, description: descLine }));
+        writeFileSync(resolve(dest, "home/SOUL.md"), seedSoul);
 
         // Remove full skills, keep only orientation
         const skillsDir = resolve(dest, manifest.skillsDir);
         for (const skill of ["volute-mind", "memory", "sessions"]) {
           const skillPath = resolve(skillsDir, skill);
           if (existsSync(skillPath)) rmSync(skillPath, { recursive: true, force: true });
+        }
+      }
+
+      // Overwrite SOUL.md / MEMORY.md if custom defaults are set in DB
+      if (body.stage !== "seed") {
+        const customSoul = await getPromptIfCustom("default_soul");
+        if (customSoul) {
+          writeFileSync(resolve(dest, "home/SOUL.md"), customSoul.replace(/\{\{name\}\}/g, name));
+        }
+        const customMemory = await getPromptIfCustom("default_memory");
+        if (customMemory) {
+          writeFileSync(resolve(dest, "home/MEMORY.md"), customMemory);
         }
       }
 

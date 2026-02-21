@@ -1,8 +1,10 @@
 import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import { loadPrompts } from "./startup.js";
 
 export function createReplyInstructionsExtension(
   messageChannels: Map<string, string>,
 ): ExtensionFactory {
+  const prompts = loadPrompts();
   return (pi) => {
     let fired = false;
     pi.on("before_agent_start", () => {
@@ -16,7 +18,7 @@ export function createReplyInstructionsExtension(
       return {
         message: {
           customType: "reply-instructions",
-          content: `To reply to this message, use: volute send ${channel} "your message"`,
+          content: prompts.reply_instructions.replace("${channel}", channel),
           display: true,
         },
       };
