@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.17.0](https://github.com/mimsy/volute/compare/volute-v0.16.0...volute-v0.17.0) (2026-02-21)
+
+
+### Features
+
+* add --image flag to volute send ([#97](https://github.com/mimsy/volute/issues/97)) ([d5f02e9](https://github.com/mimsy/volute/commit/d5f02e9b47bb846e4f97a2396af811ec95722fef))
+* event-push architecture with transparency presets ([#91](https://github.com/mimsy/volute/issues/91)) ([229807c](https://github.com/mimsy/volute/commit/229807cdd58cc578cb08183e8cfcab59d88eebbd))
+* migrate web frontend from React to Svelte 5 ([#93](https://github.com/mimsy/volute/issues/93))2 ([d3e2157](https://github.com/mimsy/volute/commit/d3e215727653dc3fe37e113ee31a07701776131a))
+* redesign History tab with full activity timeline ([#96](https://github.com/mimsy/volute/issues/96)) ([d8b3d43](https://github.com/mimsy/volute/commit/d8b3d439ad96a3774556ff63c40f06b6d52791ec))
+* replace mail polling with WebSocket notifications ([#94](https://github.com/mimsy/volute/issues/94)) ([b8e5f6c](https://github.com/mimsy/volute/commit/b8e5f6cb9c977cba9820e415a443b725e185d3a2))
+* structured daemon logging with categories, levels, and filtered UI ([#95](https://github.com/mimsy/volute/issues/95)) ([9f79c04](https://github.com/mimsy/volute/commit/9f79c04001b67ea10d43b7ad7d62dc34067fe451))
+
 ## [0.16.0](https://github.com/mimsy/volute/compare/volute-v0.15.0...volute-v0.16.0) (2026-02-20)
 
 
