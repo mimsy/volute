@@ -9,7 +9,7 @@ import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 const app = new Hono<AuthEnv>()
   .get("/", async (c) => {
-    let rows;
+    let rows: { key: string; content: string }[];
     try {
       const db = await getDb();
       rows = await db.select().from(systemPrompts).all();
