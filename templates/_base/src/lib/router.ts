@@ -136,15 +136,19 @@ function formatInviteNotification(
       ? `  Session config: "${suggestedSession}": { "batch": { "debounce": 20, "maxWait": 120 } }\n(batch recommended — ${otherCount} other participants may generate frequent messages)\n`
       : "";
 
-  return prompts.channel_invite
-    .replace("${headers}", headerLines.join("\n"))
-    .replace("${sender}", meta.sender ?? "unknown")
-    .replace("${time}", time)
-    .replace("${preview}", preview)
-    .replace(/\$\{filePath\}/g, filePath)
-    .replace(/\$\{channel\}/g, channel)
-    .replace("${suggestedSession}", suggestedSession)
-    .replace("${batchRecommendation}", batchRecommendation);
+  const vars: Record<string, string> = {
+    headers: headerLines.join("\n"),
+    sender: meta.sender ?? "unknown",
+    time,
+    preview,
+    filePath,
+    channel,
+    suggestedSession,
+    batchRecommendation,
+  };
+  return prompts.channel_invite.replace(/\$\{(\w+)\}/g, (match, name) =>
+    name in vars ? vars[name] : match,
+  );
 }
 
 export function createRouter(options: {

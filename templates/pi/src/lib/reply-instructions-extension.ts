@@ -18,7 +18,7 @@ export function createReplyInstructionsExtension(
       return {
         message: {
           customType: "reply-instructions",
-          content: prompts.reply_instructions.replace("${channel}", channel),
+          content: prompts.reply_instructions.replace(/\$\{channel\}/g, channel),
           display: true,
         },
       };

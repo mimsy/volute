@@ -42,7 +42,12 @@ import {
   subscribe as subscribeMindEvent,
 } from "../../lib/mind-events.js";
 import { getMindManager } from "../../lib/mind-manager.js";
-import { getMindPromptDefaults, getPrompt, getPromptIfCustom } from "../../lib/prompts.js";
+import {
+  getMindPromptDefaults,
+  getPrompt,
+  getPromptIfCustom,
+  substitute,
+} from "../../lib/prompts.js";
 import {
   addMind,
   ensureVoluteHome,
@@ -397,8 +402,12 @@ const app = new Hono<AuthEnv>()
         const descLine = body.description
           ? `\nThe human who planted you described you as: "${body.description}"\n`
           : "";
-        const seedSoul =
+        const seedSoulRaw =
           body.seedSoul ?? (await getPrompt("seed_soul", { name, description: descLine }));
+        // getPrompt already substituted; custom seedSoul needs substitution too
+        const seedSoul = body.seedSoul
+          ? substitute(seedSoulRaw, { name, description: descLine })
+          : seedSoulRaw;
         writeFileSync(resolve(dest, "home/SOUL.md"), seedSoul);
 
         // Remove full skills, keep only orientation

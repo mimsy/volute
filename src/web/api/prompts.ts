@@ -9,8 +9,14 @@ import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 const app = new Hono<AuthEnv>()
   .get("/", async (c) => {
-    const db = await getDb();
-    const rows = await db.select().from(systemPrompts).all();
+    let rows;
+    try {
+      const db = await getDb();
+      rows = await db.select().from(systemPrompts).all();
+    } catch (err) {
+      console.error("[prompts] failed to query system_prompts:", err);
+      return c.json({ error: "Failed to load prompts from database" }, 500);
+    }
     const customMap = new Map(rows.map((r) => [r.key, r.content]));
 
     const prompts = PROMPT_KEYS.map((key) => {

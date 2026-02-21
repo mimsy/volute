@@ -34,8 +34,9 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
   },
   default_soul: {
     content: `You are {{name}}.\n`,
-    description: "SOUL.md for sprouted minds (uses template syntax {{name}})",
-    variables: [],
+    description:
+      "SOUL.md for sprouted minds. Uses {{name}} placeholder (replaced at creation, not by ${var} system)",
+    variables: ["name"],
     category: "creation",
   },
   default_memory: {
@@ -96,7 +97,7 @@ function isValidKey(key: string): key is PromptKey {
   return PROMPT_KEYS.includes(key as PromptKey);
 }
 
-function substitute(template: string, vars: Record<string, string>): string {
+export function substitute(template: string, vars: Record<string, string>): string {
   return template.replace(/\$\{(\w+)\}/g, (match, name) => {
     return name in vars ? vars[name] : match;
   });
@@ -118,8 +119,8 @@ export async function getPrompt(key: PromptKey, vars?: Record<string, string>): 
       .where(eq(systemPrompts.key, key))
       .get();
     if (row) content = row.content;
-  } catch {
-    // DB unavailable — use default
+  } catch (err) {
+    console.error(`[prompts] failed to read DB override for "${key}":`, err);
   }
 
   return vars ? substitute(content, vars) : content;
@@ -139,21 +140,17 @@ export async function getPromptIfCustom(key: PromptKey): Promise<string | null> 
       .where(eq(systemPrompts.key, key))
       .get();
     return row?.content ?? null;
-  } catch {
+  } catch (err) {
+    console.error(`[prompts] failed to check DB customization for "${key}":`, err);
     return null;
   }
 }
 
-/** Mind-side prompt keys that get stamped into prompts.json at creation time. */
-const MIND_PROMPT_KEYS: PromptKey[] = [
-  "compaction_warning",
-  "reply_instructions",
-  "channel_invite",
-];
+/** Mind-side prompt keys stamped into prompts.json at creation time. Once stamped, these become mind-owned. */
+const MIND_PROMPT_KEYS = PROMPT_KEYS.filter((k) => PROMPT_DEFAULTS[k].category === "mind");
 
 /**
- * Returns the 3 mind-side prompt defaults, with DB overrides applied.
- * Used to stamp prompts.json at mind creation.
+ * Returns mind-side prompt defaults (those stamped into prompts.json), with DB overrides applied.
  */
 export async function getMindPromptDefaults(): Promise<Record<string, string>> {
   const result: Record<string, string> = {};
@@ -170,8 +167,8 @@ export async function getMindPromptDefaults(): Promise<Record<string, string>> {
         result[row.key] = row.content;
       }
     }
-  } catch {
-    // DB unavailable — use defaults
+  } catch (err) {
+    console.error("[prompts] failed to read DB overrides for mind prompt defaults:", err);
   }
 
   return result;

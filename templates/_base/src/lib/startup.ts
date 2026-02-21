@@ -130,8 +130,17 @@ export function loadPrompts(): MindPrompts {
   try {
     const raw = readFileSync(resolve("home/.config/prompts.json"), "utf-8");
     const parsed = JSON.parse(raw);
-    return { ...DEFAULT_PROMPTS, ...parsed };
-  } catch {
+    const result = { ...DEFAULT_PROMPTS };
+    for (const key of Object.keys(DEFAULT_PROMPTS) as (keyof MindPrompts)[]) {
+      if (typeof parsed[key] === "string") {
+        result[key] = parsed[key];
+      }
+    }
+    return result;
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") {
+      log("startup", "failed to load prompts.json, using defaults:", err);
+    }
     return DEFAULT_PROMPTS;
   }
 }

@@ -27,7 +27,9 @@ $effect(() => {
         seedSoul = p.content;
       }
     })
-    .catch(() => {});
+    .catch((e) => {
+      console.error("Failed to load prompt templates:", e);
+    });
 });
 
 async function handleSubmit() {

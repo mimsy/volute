@@ -16,7 +16,7 @@ export function createReplyInstructionsHook(messageChannels: Map<string, string>
     return {
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit" as const,
-        additionalContext: prompts.reply_instructions.replace("${channel}", channel),
+        additionalContext: prompts.reply_instructions.replace(/\$\{channel\}/g, channel),
       },
     };
   };
