@@ -1,5 +1,8 @@
+import log from "./logger.js";
 import { daemonLoopback, findMind } from "./registry.js";
 import { readSystemsConfig } from "./systems-config.js";
+
+const mlog = log.child("mail");
 
 export type Email = {
   mind: string;
@@ -48,13 +51,13 @@ export class MailPoller {
 
   start(daemonPort?: number, daemonToken?: string): void {
     if (this.running) {
-      console.error("[mail] already running — ignoring duplicate start");
+      mlog.warn("already running — ignoring duplicate start");
       return;
     }
 
     const config = readSystemsConfig();
     if (!config) {
-      console.error("[mail] no systems config — mail disabled");
+      mlog.info("no systems config — mail disabled");
       return;
     }
 
@@ -86,7 +89,7 @@ export class MailPoller {
 
     const config = readSystemsConfig();
     if (!config) {
-      console.error("[mail] systems config removed — stopping");
+      mlog.info("systems config removed — stopping");
       this.stop();
       return;
     }
@@ -99,16 +102,16 @@ export class MailPoller {
         headers: { Authorization: `Bearer ${config.apiKey}` },
       } as any);
     } catch (err) {
-      console.error("[mail] failed to create WebSocket:", err);
+      mlog.warn("failed to create WebSocket", log.errorData(err));
       this.scheduleReconnect();
       return;
     }
 
     this.ws.onopen = () => {
       if (this.reconnectAttempts > 0) {
-        console.error(`[mail] reconnected after ${this.reconnectAttempts} attempts`);
+        mlog.info(`reconnected after ${this.reconnectAttempts} attempts`);
       }
-      console.error("[mail] connected");
+      mlog.info("connected");
       this.reconnectAttempts = 0;
       this.reconnectDelay = INITIAL_RECONNECT_MS;
 
@@ -126,7 +129,7 @@ export class MailPoller {
             this.ws.send("ping");
           }
         } catch (err) {
-          console.error("[mail] ping failed:", err);
+          mlog.warn("ping failed", log.errorData(err));
         }
       }, PING_INTERVAL_MS);
     };
@@ -136,7 +139,7 @@ export class MailPoller {
     };
 
     this.ws.onclose = () => {
-      console.error("[mail] disconnected");
+      mlog.warn("disconnected");
       if (!this.disconnectedAt) {
         this.disconnectedAt = new Date().toISOString();
       }
@@ -145,7 +148,7 @@ export class MailPoller {
     };
 
     this.ws.onerror = (err) => {
-      console.error("[mail] WebSocket error:", err);
+      mlog.warn("WebSocket error", log.errorData(err));
       // onclose will fire after this
     };
   }
@@ -161,14 +164,12 @@ export class MailPoller {
 
     this.reconnectAttempts++;
     if (this.reconnectAttempts % 10 === 0) {
-      console.error(
-        `[mail] failed to connect ${this.reconnectAttempts} times — check systems config and network`,
+      mlog.warn(
+        `failed to connect ${this.reconnectAttempts} times — check systems config and network`,
       );
     }
 
-    console.error(
-      `[mail] reconnecting in ${this.reconnectDelay}ms (attempt ${this.reconnectAttempts})`,
-    );
+    mlog.info(`reconnecting in ${this.reconnectDelay}ms (attempt ${this.reconnectAttempts})`);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
@@ -189,19 +190,19 @@ export class MailPoller {
     })
       .then(async (res) => {
         if (!res.ok) {
-          console.error(`[mail] catch-up poll failed: HTTP ${res.status}`);
+          mlog.warn(`catch-up poll failed: HTTP ${res.status}`);
           return;
         }
         const data = (await res.json()) as { emails?: Email[] };
         if (!Array.isArray(data.emails) || data.emails.length === 0) return;
 
-        console.error(`[mail] catching up on ${data.emails.length} missed emails`);
+        mlog.info(`catching up on ${data.emails.length} missed emails`);
         for (const email of data.emails) {
           await this.deliver(email.mind, email);
         }
       })
       .catch((err) => {
-        console.error("[mail] catch-up error:", err);
+        mlog.warn("catch-up error", log.errorData(err));
       });
   }
 
@@ -212,19 +213,19 @@ export class MailPoller {
     try {
       msg = JSON.parse(data);
     } catch {
-      console.error(`[mail] received unparseable message: ${data.slice(0, 200)}`);
+      mlog.warn(`received unparseable message: ${data.slice(0, 200)}`);
       return;
     }
 
     if (msg.type !== "email") return;
 
     if (!msg.mind || !msg.email?.id) {
-      console.error(`[mail] received malformed email notification: ${data.slice(0, 500)}`);
+      mlog.warn(`received malformed email notification: ${data.slice(0, 500)}`);
       return;
     }
 
     this.fetchAndDeliver(msg.mind, msg.email).catch((err) => {
-      console.error(`[mail] failed to process email for ${msg.mind}:`, err);
+      mlog.warn(`failed to process email for ${msg.mind}`, log.errorData(err));
     });
   }
 
@@ -234,9 +235,7 @@ export class MailPoller {
   ): Promise<void> {
     const config = readSystemsConfig();
     if (!config) {
-      console.error(
-        `[mail] systems config missing — cannot fetch email ${notification.id} for ${mind}`,
-      );
+      mlog.warn(`systems config missing — cannot fetch email ${notification.id} for ${mind}`);
       return;
     }
 
@@ -247,7 +246,7 @@ export class MailPoller {
     });
 
     if (!res.ok) {
-      console.error(`[mail] failed to fetch email ${notification.id}: HTTP ${res.status}`);
+      mlog.warn(`failed to fetch email ${notification.id}: HTTP ${res.status}`);
       return;
     }
 
@@ -258,7 +257,7 @@ export class MailPoller {
   private async deliver(mind: string, email: Email): Promise<void> {
     const entry = findMind(mind);
     if (!entry || !entry.running) {
-      console.error(`[mail] skipping delivery to ${mind}: ${!entry ? "not found" : "not running"}`);
+      mlog.warn(`skipping delivery to ${mind}: ${!entry ? "not found" : "not running"}`);
       return;
     }
 
@@ -276,7 +275,7 @@ export class MailPoller {
     });
 
     if (!this.daemonPort || !this.daemonToken) {
-      console.error(`[mail] cannot deliver to ${mind}: daemon port/token not set`);
+      mlog.warn(`cannot deliver to ${mind}: daemon port/token not set`);
       return;
     }
 
@@ -296,13 +295,13 @@ export class MailPoller {
         signal: controller.signal,
       });
       if (!res.ok) {
-        console.error(`[mail] deliver to ${mind} got HTTP ${res.status}`);
+        mlog.warn(`deliver to ${mind} got HTTP ${res.status}`);
       } else {
-        console.error(`[mail] delivered email from ${email.from.address} to ${mind}`);
+        mlog.info(`delivered email from ${email.from.address} to ${mind}`);
       }
       await res.text().catch(() => {});
     } catch (err) {
-      console.error(`[mail] failed to deliver to ${mind}:`, err);
+      mlog.warn(`failed to deliver to ${mind}`, log.errorData(err));
     } finally {
       clearTimeout(timeout);
     }
@@ -330,10 +329,10 @@ export async function ensureMailAddress(mindName: string): Promise<void> {
       },
     });
     if (!res.ok) {
-      console.error(`[mail] failed to ensure address for ${mindName}: HTTP ${res.status}`);
+      mlog.warn(`failed to ensure address for ${mindName}: HTTP ${res.status}`);
     }
     await res.text().catch(() => {});
   } catch (err) {
-    console.error(`[mail] failed to ensure address for ${mindName}:`, err);
+    mlog.warn(`failed to ensure address for ${mindName}`, log.errorData(err));
   }
 }
