@@ -116,7 +116,7 @@ function formatArgs(args: unknown): string {
     {:else if event.type === "session_start"}
       <span class="dim">session started</span>
       {#if event.session}
-        <span class="session-id">{event.session.slice(0, 8)}</span>
+        <span class="session-id">{event.session}</span>
       {/if}
     {:else if event.type === "done"}
       <span class="dim">processing complete</span>

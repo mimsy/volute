@@ -85,7 +85,7 @@ function toggleLive() {
     <option value="">all sessions</option>
     {#each sessions as s}
       <option value={s.session}>
-        {s.session.slice(0, 8)} — {formatRelativeTime(s.started_at)}
+        {s.session} — {formatRelativeTime(s.started_at)}
       </option>
     {/each}
   </select>

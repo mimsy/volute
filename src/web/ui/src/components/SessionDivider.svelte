@@ -19,7 +19,7 @@ let {
 <div class="divider">
   <div class="line"></div>
   <div class="label">
-    <span class="session-id">{session.slice(0, 8)}</span>
+    <span class="session-id">{session}</span>
     <span class="sep">&middot;</span>
     <span>{formatRelativeTime(startedAt)}</span>
     <span class="sep">&middot;</span>
