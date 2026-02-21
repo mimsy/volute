@@ -10,7 +10,7 @@ import {
   type Participant,
   type RecentPage,
 } from "../lib/api";
-import { formatRelativeTime, getConversationLabel } from "../lib/format";
+import { formatRelativeTime, getConversationLabel, normalizeTimestamp } from "../lib/format";
 
 let { username }: { username: string } = $props();
 
@@ -61,9 +61,9 @@ let sortedMinds = $derived(
 let recentConversations = $derived(
   [...conversations]
     .sort((a, b) => {
-      const normalize = (d: string) => (d.endsWith("Z") ? d : `${d}Z`);
       return (
-        new Date(normalize(b.updated_at)).getTime() - new Date(normalize(a.updated_at)).getTime()
+        new Date(normalizeTimestamp(b.updated_at)).getTime() -
+        new Date(normalizeTimestamp(a.updated_at)).getTime()
       );
     })
     .slice(0, 5),

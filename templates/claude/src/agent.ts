@@ -49,7 +49,7 @@ export function createMind(options: {
 
   const sessions = new Map<string, Session>();
   const prompts = loadPrompts();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = new Date().toLocaleDateString("en-CA");
   const compactionMessage =
     options.compactionMessage ?? prompts.compaction_warning.replace("${date}", today);
 

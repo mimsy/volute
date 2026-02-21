@@ -14,7 +14,9 @@ type HistoryRow = {
 };
 
 function formatRow(row: HistoryRow): string {
-  const time = new Date(row.created_at).toLocaleString();
+  const time = new Date(
+    row.created_at.endsWith("Z") ? row.created_at : `${row.created_at}Z`,
+  ).toLocaleString();
   const channel = row.channel ?? "";
 
   switch (row.type) {

@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { HistoryMessage } from "../lib/api";
+import { normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
 
 let { event, mindName }: { event: HistoryMessage; mindName: string } = $props();
@@ -29,7 +30,7 @@ let collapsible = $derived(
 );
 
 function formatTime(dateStr: string): string {
-  const date = new Date(dateStr);
+  const date = new Date(normalizeTimestamp(dateStr));
   return date.toLocaleString(undefined, {
     month: "short",
     day: "numeric",
