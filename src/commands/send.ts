@@ -102,7 +102,7 @@ export async function run(args: string[]) {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ channel: channelUri, content: message }),
+            body: JSON.stringify({ channel: parsed.uri, content: message }),
           },
         );
       } catch (err) {
