@@ -10,7 +10,6 @@ import { subscribe } from "../../../lib/conversation-events.js";
 import {
   addMessage,
   type ContentBlock,
-  type Conversation,
   createConversation,
   findDMConversation,
   getConversation,
@@ -248,20 +247,6 @@ const unifiedChatSchema = z.object({
   images: z.array(z.object({ media_type: z.string(), data: z.string() })).optional(),
 });
 
-function channelSlugForConv(
-  conv: Conversation,
-  participants: { username: string }[],
-  mindUsername: string,
-): string {
-  if (conv.type === "channel" && conv.name) return `volute:#${conv.name}`;
-  return buildVoluteSlug({
-    participants,
-    mindUsername,
-    convTitle: conv.title,
-    conversationId: conv.id,
-  });
-}
-
 export const unifiedChatApp = new Hono<AuthEnv>().post(
   "/chat",
   zValidator("json", unifiedChatSchema),
@@ -311,7 +296,14 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       type: (conv.type === "channel" ? "group" : isDM ? "dm" : "group") as "dm" | "group",
     };
     for (const ap of mindParticipants) {
-      const slug = channelSlugForConv(conv, participants, ap.username);
+      const slug = buildVoluteSlug({
+        participants,
+        mindUsername: ap.username,
+        convTitle: conv.title,
+        conversationId: conv.id,
+        convType: conv.type,
+        convName: conv.name,
+      });
       try {
         writeChannelEntry(ap.username, slug, channelEntry);
       } catch (err) {
@@ -320,7 +312,14 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     }
 
     for (const mindName of runningMinds) {
-      const channel = channelSlugForConv(conv, participants, mindName);
+      const channel = buildVoluteSlug({
+        participants,
+        mindUsername: mindName,
+        convTitle: conv.title,
+        conversationId: body.conversationId,
+        convType: conv.type,
+        convName: conv.name,
+      });
       const typingMap = getTypingMap();
       const currentlyTyping = typingMap.get(channel);
       const payload = JSON.stringify({

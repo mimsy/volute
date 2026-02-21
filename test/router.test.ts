@@ -570,6 +570,39 @@ describe("router", () => {
     }
   });
 
+  it("mention mode: does not match substring (word boundary)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const configPath = join(dir, "routes.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        rules: [{ channel: "volute:#*", session: "channel", mode: "mention" }],
+      }),
+    );
+
+    const oldEnv = process.env.VOLUTE_MIND;
+    process.env.VOLUTE_MIND = "art";
+    try {
+      const mind = mockMindHandler();
+      const router = createRouter({ configPath, mindHandler: mind.resolver });
+
+      // "start" contains "art" as substring — should NOT match
+      await waitForDone(router, [{ type: "text", text: "start here" }], {
+        channel: "volute:#general",
+      });
+      assert.equal(mind.calls.length, 0, "should not match 'art' inside 'start'");
+
+      // Exact word "art" should match
+      await waitForDone(router, [{ type: "text", text: "hey art check this" }], {
+        channel: "volute:#general",
+      });
+      assert.equal(mind.calls.length, 1, "should match 'art' as a whole word");
+    } finally {
+      if (oldEnv === undefined) delete process.env.VOLUTE_MIND;
+      else process.env.VOLUTE_MIND = oldEnv;
+    }
+  });
+
   it("mention mode: case-insensitive matching", async () => {
     const dir = mkdtempSync(join(tmpdir(), "router-test-"));
     const configPath = join(dir, "routes.json");

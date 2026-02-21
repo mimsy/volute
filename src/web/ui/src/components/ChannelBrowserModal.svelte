@@ -29,8 +29,8 @@ function loadChannels() {
       channels = c;
       error = "";
     })
-    .catch(() => {
-      error = "Failed to load channels";
+    .catch((err) => {
+      error = err instanceof Error ? err.message : "Failed to load channels";
     })
     .finally(() => {
       loading = false;
@@ -116,11 +116,11 @@ function handleKeyDown(e: KeyboardEvent) {
             </div>
             <button
               class="action-btn"
-              class:leave={ch.participants && ch.participants.length > 0}
-              onclick={() => ch.participants && ch.participants.length > 0 ? handleLeave(ch) : handleJoin(ch)}
+              class:leave={ch.isMember}
+              onclick={() => ch.isMember ? handleLeave(ch) : handleJoin(ch)}
               disabled={joining === ch.name}
             >
-              {joining === ch.name ? "..." : "join"}
+              {joining === ch.name ? "..." : ch.isMember ? "leave" : "join"}
             </button>
           </div>
         {/each}

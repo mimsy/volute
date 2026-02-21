@@ -21,11 +21,13 @@ const createSchema = z.object({
 
 const app = new Hono<AuthEnv>()
   .get("/", async (c) => {
+    const user = c.get("user");
     const channels = await listChannels();
     const results = await Promise.all(
       channels.map(async (ch) => {
         const participants = await getParticipants(ch.id);
-        return { ...ch, participantCount: participants.length };
+        const isMember = participants.some((p) => p.userId === user.id);
+        return { ...ch, participantCount: participants.length, isMember };
       }),
     );
     return c.json(results);
@@ -34,11 +36,19 @@ const app = new Hono<AuthEnv>()
     const user = c.get("user");
     const body = c.req.valid("json");
 
-    const existing = await getChannelByName(body.name);
-    if (existing) return c.json({ error: "Channel already exists" }, 409);
-
-    const ch = await createChannel(body.name, user.id);
-    return c.json(ch, 201);
+    try {
+      const ch = await createChannel(body.name, user.id);
+      return c.json(ch, 201);
+    } catch (err: unknown) {
+      const cause =
+        err instanceof Error
+          ? (err as { cause?: { code?: string; extendedCode?: string; message?: string } }).cause
+          : null;
+      if (cause && /UNIQUE/i.test(cause.extendedCode ?? cause.message ?? "")) {
+        return c.json({ error: "Channel already exists" }, 409);
+      }
+      throw err;
+    }
   })
   .post("/:name/join", async (c) => {
     const name = c.req.param("name");

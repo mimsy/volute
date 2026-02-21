@@ -340,7 +340,7 @@ export async function createSeedMind(
 
 // --- Volute Channels ---
 
-export type ChannelInfo = Conversation & { participantCount: number };
+export type ChannelInfo = Conversation & { participantCount: number; isMember: boolean };
 
 export async function fetchChannels(): Promise<ChannelInfo[]> {
   const res = await fetch("/api/volute/channels", { credentials: "include" });

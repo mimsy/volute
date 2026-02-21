@@ -308,11 +308,14 @@ export function createRouter(options: {
     if (resolved.destination === "mind" && resolved.mode === "mention") {
       const mindName = process.env.VOLUTE_MIND;
       if (mindName) {
-        const lowerText = text.toLowerCase();
-        if (!lowerText.includes(mindName.toLowerCase())) {
+        const escaped = mindName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const pattern = new RegExp(`\\b${escaped}\\b`, "i");
+        if (!pattern.test(text)) {
           queueMicrotask(() => safeListener({ type: "done", messageId }));
           return { messageId, unsubscribe: noop };
         }
+      } else {
+        log("router", "VOLUTE_MIND not set — mention filtering disabled");
       }
     }
 

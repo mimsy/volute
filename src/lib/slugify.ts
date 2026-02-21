@@ -15,7 +15,7 @@ export function buildVoluteSlug(opts: {
   mindUsername: string;
   convTitle: string | null | undefined;
   conversationId: string;
-  convType?: string;
+  convType?: "dm" | "group" | "channel";
   convName?: string | null;
 }): string {
   if (opts.convType === "channel" && opts.convName) {

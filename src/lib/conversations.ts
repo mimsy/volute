@@ -188,12 +188,12 @@ export async function listConversationsForUser(userId: number): Promise<Conversa
   if (participantRows.length === 0) return [];
 
   const convIds = participantRows.map((r) => r.conversation_id);
-  return db
+  return (await db
     .select()
     .from(conversations)
     .where(inArray(conversations.id, convIds))
     .orderBy(desc(conversations.updated_at))
-    .all() as Promise<Conversation[]>;
+    .all()) as Conversation[];
 }
 
 export async function isParticipantOrOwner(
@@ -435,12 +435,12 @@ export async function getChannelByName(name: string): Promise<Conversation | nul
 
 export async function listChannels(): Promise<Conversation[]> {
   const db = await getDb();
-  return db
+  return (await db
     .select()
     .from(conversations)
     .where(eq(conversations.type, "channel"))
     .orderBy(conversations.name)
-    .all() as Promise<Conversation[]>;
+    .all()) as Conversation[];
 }
 
 export async function joinChannel(conversationId: string, userId: number): Promise<void> {

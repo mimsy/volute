@@ -147,7 +147,7 @@ export async function listConversations(
       mindUsername: mindName,
       convTitle: conv.title,
       conversationId: conv.id,
-      convType: conv.type,
+      convType: conv.type as "dm" | "group" | "channel" | undefined,
       convName: conv.name,
     });
     const convType =
@@ -156,7 +156,7 @@ export async function listConversations(
       id: slug,
       platformId: conv.id,
       name: conv.type === "channel" ? `#${conv.name}` : (conv.title ?? "(untitled)"),
-      type: convType as "dm" | "group",
+      type: convType,
       participantCount: participants.length,
     });
   }
