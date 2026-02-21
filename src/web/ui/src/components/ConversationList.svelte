@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { ConversationWithParticipants, Mind } from "../lib/api";
+import type { ConversationWithParticipants, Mind, Participant } from "../lib/api";
 import { getConversationLabel } from "../lib/format";
 
 let {
