@@ -1,52 +1,33 @@
 <script lang="ts">
 import StatusBadge from "../components/StatusBadge.svelte";
-import {
-  type Conversation,
-  fetchAllConversations,
-  fetchMinds,
-  fetchRecentPages,
-  type LastMessageSummary,
-  type Mind,
-  type Participant,
-  type RecentPage,
+import type {
+  ConversationWithParticipants,
+  LastMessageSummary,
+  Mind,
+  RecentPage,
 } from "../lib/api";
-import { formatRelativeTime, getConversationLabel, normalizeTimestamp } from "../lib/format";
+import {
+  formatRelativeTime,
+  getConversationLabel,
+  getDisplayStatus,
+  normalizeTimestamp,
+} from "../lib/format";
 
-let { username }: { username: string } = $props();
-
-type ConversationWithDetails = Conversation & {
-  participants: Participant[];
+type ConversationWithDetails = ConversationWithParticipants & {
   lastMessage?: LastMessageSummary;
 };
 
-let minds = $state<Mind[]>([]);
-let conversations = $state<ConversationWithDetails[]>([]);
-let recentPages = $state<RecentPage[]>([]);
-let error = $state("");
-
-$effect(() => {
-  fetchMinds()
-    .then((m) => {
-      minds = m;
-    })
-    .catch(() => {
-      error = "Failed to load data";
-    });
-  fetchAllConversations()
-    .then((c) => {
-      conversations = c;
-    })
-    .catch(() => {
-      error = "Failed to load data";
-    });
-  fetchRecentPages()
-    .then((p) => {
-      recentPages = p;
-    })
-    .catch(() => {
-      error = "Failed to load data";
-    });
-});
+let {
+  username,
+  minds,
+  conversations,
+  recentPages,
+}: {
+  username: string;
+  minds: Mind[];
+  conversations: ConversationWithDetails[];
+  recentPages: RecentPage[];
+} = $props();
 
 let sortedMinds = $derived(
   [...minds].sort((a, b) => {
@@ -68,19 +49,9 @@ let recentConversations = $derived(
     })
     .slice(0, 5),
 );
-
-function getDisplayStatus(mind: Mind): string {
-  if (mind.status !== "running") return mind.status;
-  if (!mind.lastActiveAt) return "running";
-  const ago = Date.now() - new Date(normalizeTimestamp(mind.lastActiveAt)).getTime();
-  return ago < 5 * 60_000 ? "active" : "running";
-}
 </script>
 
 <div class="home">
-  {#if error}
-    <div class="error">{error}</div>
-  {/if}
   <!-- Minds -->
   <div class="section">
     <div class="section-header">
@@ -171,12 +142,6 @@ function getDisplayStatus(mind: Mind): string {
 </div>
 
 <style>
-  .error {
-    color: var(--red);
-    font-size: 12px;
-    margin-bottom: 16px;
-  }
-
   .home {
     max-width: 800px;
     animation: fadeIn 0.2s ease both;

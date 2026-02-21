@@ -1,22 +1,22 @@
 <script lang="ts">
-import type { Conversation, Mind, Participant } from "../lib/api";
+import type { ConversationWithParticipants, Mind, RecentPage } from "../lib/api";
 import type { Selection } from "../lib/navigate";
 import Home from "../pages/Home.svelte";
 import MindDetail from "../pages/MindDetail.svelte";
 import Chat from "./Chat.svelte";
 
-type ConversationWithParticipants = Conversation & { participants: Participant[] };
-
 let {
   selection,
   minds,
   conversations,
+  recentPages,
   username,
   onConversationId,
 }: {
   selection: Selection;
   minds: Mind[];
   conversations: ConversationWithParticipants[];
+  recentPages: RecentPage[];
   username: string;
   onConversationId: (id: string) => void;
 } = $props();
@@ -62,7 +62,7 @@ let conversationId = $derived(
     </div>
   {:else}
     <div class="frame-content padded">
-      <Home {username} />
+      <Home {username} {minds} {conversations} {recentPages} />
     </div>
   {/if}
 </div>

@@ -11,19 +11,17 @@ import StatusBar from "./components/StatusBar.svelte";
 import UpdateBanner from "./components/UpdateBanner.svelte";
 import {
   type Conversation,
+  type ConversationWithParticipants,
   deleteConversationById,
   fetchAllConversations,
   fetchMinds,
   fetchRecentPages,
   fetchSystemInfo,
   type Mind,
-  type Participant,
   type RecentPage,
 } from "./lib/api";
 import { type AuthUser, fetchMe, logout } from "./lib/auth";
 import { navigate, parseSelection, type Selection, selectionToPath } from "./lib/navigate";
-
-type ConversationWithParticipants = Conversation & { participants: Participant[] };
 
 // Auth state
 let user = $state<AuthUser | null>(null);
@@ -37,6 +35,7 @@ let selection = $state<Selection>(parseSelection());
 let minds = $state<Mind[]>([]);
 let conversations = $state<ConversationWithParticipants[]>([]);
 let recentPages = $state<RecentPage[]>([]);
+let connectionOk = $state(true);
 
 // Modals
 let showNewChat = $state(false);
@@ -80,6 +79,18 @@ $effect(() => {
     });
 });
 
+// Data helpers
+function refreshConversations() {
+  fetchAllConversations()
+    .then((c) => {
+      conversations = c;
+      connectionOk = true;
+    })
+    .catch(() => {
+      connectionOk = false;
+    });
+}
+
 // Data polling
 $effect(() => {
   if (!user) return;
@@ -87,13 +98,12 @@ $effect(() => {
     fetchMinds()
       .then((m) => {
         minds = m;
+        connectionOk = true;
       })
-      .catch(() => {});
-    fetchAllConversations()
-      .then((c) => {
-        conversations = c;
-      })
-      .catch(() => {});
+      .catch(() => {
+        connectionOk = false;
+      });
+    refreshConversations();
   }
   refresh();
   fetchRecentPages()
@@ -106,7 +116,7 @@ $effect(() => {
 });
 
 // Track whether selection change came from popstate (to avoid pushing duplicate history)
-let fromPopstate = false;
+let fromPopstate = $state(false);
 
 // URL sync: popstate → selection
 $effect(() => {
@@ -148,16 +158,12 @@ $effect(() => {
 });
 
 // Actions
-function setSelection(sel: Selection) {
-  selection = sel;
-}
-
 function handleSelectMind(name: string) {
-  setSelection({ kind: "mind", name });
+  selection = { kind: "mind", name };
 }
 
 function handleSelectConversation(id: string) {
-  setSelection({ kind: "conversation", conversationId: id });
+  selection = { kind: "conversation", conversationId: id };
 }
 
 async function handleDeleteConversation(id: string) {
@@ -167,53 +173,37 @@ async function handleDeleteConversation(id: string) {
     console.error("Failed to delete conversation:", err);
     return;
   }
-  fetchAllConversations()
-    .then((c) => {
-      conversations = c;
-    })
-    .catch(() => {});
+  refreshConversations();
   if (activeConversationId === id) {
-    setSelection({ kind: "home" });
+    selection = { kind: "home" };
   }
 }
 
 function handleConversationId(id: string) {
-  setSelection({ kind: "conversation", conversationId: id });
-  fetchAllConversations()
-    .then((c) => {
-      conversations = c;
-    })
-    .catch(() => {});
+  selection = { kind: "conversation", conversationId: id };
+  refreshConversations();
 }
 
 function handleNewChatCreated(mind: string) {
   showNewChat = false;
-  setSelection({ kind: "conversation", mindName: mind });
+  selection = { kind: "conversation", mindName: mind };
 }
 
 function handleGroupCreated(conv: Conversation) {
   showGroupModal = false;
-  fetchAllConversations()
-    .then((c) => {
-      conversations = c;
-    })
-    .catch(() => {});
-  setSelection({ kind: "conversation", conversationId: conv.id });
+  refreshConversations();
+  selection = { kind: "conversation", conversationId: conv.id };
 }
 
 function handleChannelJoined(conv: Conversation) {
   showChannelBrowser = false;
-  fetchAllConversations()
-    .then((c) => {
-      conversations = c;
-    })
-    .catch(() => {});
-  setSelection({ kind: "conversation", conversationId: conv.id });
+  refreshConversations();
+  selection = { kind: "conversation", conversationId: conv.id };
 }
 
 function handleSeedCreated(mindName: string) {
   showSeedModal = false;
-  setSelection({ kind: "conversation", mindName });
+  selection = { kind: "conversation", mindName };
 }
 
 async function handleLogout() {
@@ -301,6 +291,7 @@ function handleResizeEnd() {
           {selection}
           {minds}
           {conversations}
+          {recentPages}
           username={user.username}
           onConversationId={handleConversationId}
         />
@@ -310,6 +301,7 @@ function handleResizeEnd() {
       {minds}
       username={user.username}
       {systemName}
+      {connectionOk}
       isAdmin={user.role === "admin"}
       onAdminClick={() => (showAdminModal = true)}
       onLogout={handleLogout}

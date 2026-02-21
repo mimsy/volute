@@ -1,6 +1,15 @@
+import type { Mind } from "./api";
+
 /** Ensure a DB timestamp (UTC without Z) is parsed correctly. */
 export function normalizeTimestamp(dateStr: string): string {
   return dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`;
+}
+
+export function getDisplayStatus(mind: Mind): string {
+  if (mind.status !== "running") return mind.status;
+  if (!mind.lastActiveAt) return "running";
+  const ago = Date.now() - new Date(normalizeTimestamp(mind.lastActiveAt)).getTime();
+  return ago < 5 * 60_000 ? "active" : "running";
 }
 
 export function formatRelativeTime(dateStr: string): string {

@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { Mind } from "../lib/api";
-import { normalizeTimestamp } from "../lib/format";
+import { getDisplayStatus } from "../lib/format";
 import StatusBadge from "./StatusBadge.svelte";
 
 let {
@@ -14,13 +14,6 @@ let {
   onSelect: (name: string) => void;
   onSeed: () => void;
 } = $props();
-
-function getDisplayStatus(mind: Mind): string {
-  if (mind.status !== "running") return mind.status;
-  if (!mind.lastActiveAt) return "running";
-  const ago = Date.now() - new Date(normalizeTimestamp(mind.lastActiveAt)).getTime();
-  return ago < 5 * 60_000 ? "active" : "running";
-}
 </script>
 
 <div class="mind-list">

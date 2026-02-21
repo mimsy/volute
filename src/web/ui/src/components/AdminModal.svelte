@@ -70,7 +70,6 @@ let tab = $state<Tab>("Settings");
 
   .tab-bar {
     display: flex;
-    gap: 0;
   }
 
   .tab {

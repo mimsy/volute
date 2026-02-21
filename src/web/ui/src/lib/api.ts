@@ -116,6 +116,8 @@ export type Conversation = {
   participants?: Participant[];
 };
 
+export type ConversationWithParticipants = Conversation & { participants: Participant[] };
+
 export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "tool_use"; name: string; input: unknown }

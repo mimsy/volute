@@ -1,10 +1,8 @@
 <script lang="ts">
-import type { Conversation, Mind, Participant, RecentPage } from "../lib/api";
+import type { ConversationWithParticipants, Mind, RecentPage } from "../lib/api";
 import ConversationList from "./ConversationList.svelte";
 import MindList from "./MindList.svelte";
 import PagesList from "./PagesList.svelte";
-
-type ConversationWithParticipants = Conversation & { participants: Participant[] };
 
 let {
   minds,

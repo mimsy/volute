@@ -5,6 +5,7 @@ let {
   minds,
   username,
   systemName,
+  connectionOk = true,
   isAdmin,
   onAdminClick,
   onLogout,
@@ -12,6 +13,7 @@ let {
   minds: Mind[];
   username: string;
   systemName: string | null;
+  connectionOk?: boolean;
   isAdmin: boolean;
   onAdminClick: () => void;
   onLogout: () => void;
@@ -23,7 +25,7 @@ let runningCount = $derived(minds.filter((m) => m.status === "running").length);
 <div class="status-bar">
   <div class="status-left">
     <span class="daemon-status">
-      <span class="dot"></span>
+      <span class="dot" class:disconnected={!connectionOk}></span>
       {#if systemName}
         {systemName}
       {:else}
@@ -74,6 +76,10 @@ let runningCount = $derived(minds.filter((m) => m.status === "running").length);
     height: 6px;
     border-radius: 50%;
     background: var(--accent);
+  }
+
+  .dot.disconnected {
+    background: var(--red);
   }
 
   .sep {

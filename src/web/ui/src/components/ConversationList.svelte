@@ -1,8 +1,6 @@
 <script lang="ts">
-import type { Conversation, Mind, Participant } from "../lib/api";
+import type { ConversationWithParticipants, Mind } from "../lib/api";
 import { getConversationLabel } from "../lib/format";
-
-type ConversationWithParticipants = Conversation & { participants: Participant[] };
 
 let {
   conversations,
