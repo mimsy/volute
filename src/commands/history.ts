@@ -13,8 +13,13 @@ type HistoryRow = {
   created_at: string;
 };
 
+/** Ensure a DB timestamp (UTC without Z) is parsed correctly. */
+function normalizeTimestamp(dateStr: string): string {
+  return dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`;
+}
+
 function formatRow(row: HistoryRow): string {
-  const time = new Date(row.created_at).toLocaleString();
+  const time = new Date(normalizeTimestamp(row.created_at)).toLocaleString();
   const channel = row.channel ?? "";
 
   switch (row.type) {

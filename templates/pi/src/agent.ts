@@ -45,7 +45,7 @@ export function createMind(options: {
 }): { resolve: HandlerResolver } {
   const sessions = new Map<string, PiSession>();
   const prompts = loadPrompts();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = new Date().toLocaleDateString("en-CA");
   const compactionMessage =
     options.compactionMessage ?? prompts.compaction_warning.replace("${date}", today);
 

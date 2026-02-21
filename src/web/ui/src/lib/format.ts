@@ -1,7 +1,11 @@
+/** Ensure a DB timestamp (UTC without Z) is parsed correctly. */
+export function normalizeTimestamp(dateStr: string): string {
+  return dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`;
+}
+
 export function formatRelativeTime(dateStr: string): string {
   const now = Date.now();
-  const normalized = dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`;
-  const then = new Date(normalized).getTime();
+  const then = new Date(normalizeTimestamp(dateStr)).getTime();
   const diff = now - then;
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "just now";
