@@ -68,7 +68,7 @@ function formatArgs(args: unknown): string {
   <div class="event-header">
     <span class="time">{formatTime(event.created_at)}</span>
     <span class="type-badge" style:background="{color}15" style:color={color}>{event.type}</span>
-    {#if event.channel}
+    {#if event.channel && (event.type === "inbound" || event.type === "outbound")}
       <span class="channel-tag">{event.channel}</span>
     {/if}
     {#if collapsible}
