@@ -1,5 +1,10 @@
 import { splitMessage, writeChannelEntry } from "../../connectors/sdk.js";
-import { type ChannelConversation, type ChannelUser, resolveChannelId } from "../channels.js";
+import {
+  type ChannelConversation,
+  type ChannelUser,
+  type ImageAttachment,
+  resolveChannelId,
+} from "../channels.js";
 import { slugify } from "../slugify.js";
 
 const SLACK_MAX_LENGTH = 4000;
@@ -58,9 +63,49 @@ export async function send(
   env: Record<string, string>,
   channelSlug: string,
   message: string,
+  images?: ImageAttachment[],
 ): Promise<void> {
   const token = requireToken(env);
   const channelId = resolveChannelId(env, channelSlug);
+
+  if (images?.length) {
+    for (const img of images) {
+      const ext = img.media_type.split("/")[1] || "png";
+      const filename = `image.${ext}`;
+      const binary = Buffer.from(img.data, "base64");
+
+      // Step 1: Get upload URL
+      const uploadData = (await slackApi(token, "files.getUploadURLExternal", {
+        filename,
+        length: binary.length,
+      })) as { upload_url: string; file_id: string };
+
+      // Step 2: Upload binary to presigned URL
+      const uploadRes = await fetch(uploadData.upload_url, {
+        method: "POST",
+        body: binary,
+      });
+      if (!uploadRes.ok) {
+        throw new Error(`Slack file upload failed: ${uploadRes.status} ${uploadRes.statusText}`);
+      }
+
+      // Step 3: Complete upload and share to channel
+      await slackApi(token, "files.completeUploadExternal", {
+        files: [{ id: uploadData.file_id }],
+        channel_id: channelId,
+      });
+    }
+
+    // Send text message separately if non-empty
+    if (message) {
+      await slackApi(token, "chat.postMessage", {
+        channel: channelId,
+        text: message,
+      });
+    }
+    return;
+  }
+
   const chunks = splitMessage(message, SLACK_MAX_LENGTH);
   for (let i = 0; i < chunks.length; i++) {
     try {

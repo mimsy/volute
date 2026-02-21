@@ -1,5 +1,10 @@
 import { splitMessage, writeChannelEntry } from "../../connectors/sdk.js";
-import { type ChannelConversation, type ChannelUser, resolveChannelId } from "../channels.js";
+import {
+  type ChannelConversation,
+  type ChannelUser,
+  type ImageAttachment,
+  resolveChannelId,
+} from "../channels.js";
 import { slugify } from "../slugify.js";
 
 const DISCORD_MAX_LENGTH = 2000;
@@ -49,9 +54,36 @@ export async function send(
   env: Record<string, string>,
   channelSlug: string,
   message: string,
+  images?: ImageAttachment[],
 ): Promise<void> {
   const token = requireToken(env);
   const channelId = resolveChannelId(env, channelSlug);
+
+  if (images?.length) {
+    // Send first image with message text, then remaining images without text
+    for (let i = 0; i < images.length; i++) {
+      const img = images[i];
+      const ext = img.media_type.split("/")[1] || "png";
+      const form = new FormData();
+      form.append("payload_json", JSON.stringify({ content: i === 0 ? message : "" }));
+      form.append(
+        "files[0]",
+        new Blob([Buffer.from(img.data, "base64")], { type: img.media_type }),
+        `image.${ext}`,
+      );
+
+      const res = await fetch(`${API_BASE}/channels/${channelId}/messages`, {
+        method: "POST",
+        headers: { Authorization: `Bot ${token}` },
+        body: form,
+      });
+      if (!res.ok) {
+        throw new Error(`Discord API error: ${res.status} ${res.statusText}`);
+      }
+    }
+    return;
+  }
+
   const chunks = splitMessage(message, DISCORD_MAX_LENGTH);
   for (let i = 0; i < chunks.length; i++) {
     const res = await fetch(`${API_BASE}/channels/${channelId}/messages`, {

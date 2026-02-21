@@ -1,5 +1,5 @@
 import { splitMessage } from "../../connectors/sdk.js";
-import { resolveChannelId } from "../channels.js";
+import { type ImageAttachment, resolveChannelId } from "../channels.js";
 
 const TELEGRAM_MAX_LENGTH = 4096;
 
@@ -25,9 +25,39 @@ export async function send(
   env: Record<string, string>,
   channelSlug: string,
   message: string,
+  images?: ImageAttachment[],
 ): Promise<void> {
   const token = requireToken(env);
   const chatId = resolveChannelId(env, channelSlug);
+
+  if (images?.length) {
+    for (let i = 0; i < images.length; i++) {
+      const img = images[i];
+      const ext = img.media_type.split("/")[1] || "png";
+      const form = new FormData();
+      form.append("chat_id", chatId);
+      form.append(
+        "photo",
+        new Blob([Buffer.from(img.data, "base64")], { type: img.media_type }),
+        `image.${ext}`,
+      );
+      // Attach caption to the first image only (Telegram max 1024 chars)
+      if (i === 0 && message) {
+        form.append("caption", message.slice(0, 1024));
+      }
+
+      const res = await fetch(`${API_BASE}/bot${token}/sendPhoto`, {
+        method: "POST",
+        body: form,
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`Telegram API error: ${res.status} ${body}`);
+      }
+    }
+    return;
+  }
+
   const chunks = splitMessage(message, TELEGRAM_MAX_LENGTH);
   for (let i = 0; i < chunks.length; i++) {
     const res = await fetch(`${API_BASE}/bot${token}/sendMessage`, {
