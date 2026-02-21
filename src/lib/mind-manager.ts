@@ -6,6 +6,7 @@ import { loadMergedEnv } from "./env.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "./isolation.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "./json-state.js";
 import log from "./logger.js";
+import { getPrompt } from "./prompts.js";
 import { findMind, mindDir, setMindRunning, stateDir, voluteHome } from "./registry.js";
 import { RotatingLog } from "./rotating-log.js";
 import { findVariant, setVariantRunning } from "./variants.js";
@@ -231,13 +232,11 @@ export class MindManager {
 
     const parts: string[] = [];
     if (context.type === "merge" || context.type === "merged") {
-      parts.push(`[system] Variant "${context.name}" has been merged and you have been restarted.`);
+      parts.push(await getPrompt("merge_message", { name: String(context.name ?? "") }));
     } else if (context.type === "sprouted") {
-      parts.push(
-        "[system] You've sprouted. You now have full capabilities — connectors, schedules, variants, and the complete volute CLI. Check your new skills for details.",
-      );
+      parts.push(await getPrompt("sprout_message"));
     } else {
-      parts.push("[system] You have been restarted.");
+      parts.push(await getPrompt("restart_message"));
     }
     if (context.summary) parts.push(`Changes: ${context.summary}`);
     if (context.justification) parts.push(`Why: ${context.justification}`);

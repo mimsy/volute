@@ -1,5 +1,5 @@
 <script lang="ts">
-import { createSeedMind, startMind } from "../lib/api";
+import { createSeedMind, fetchPrompts, startMind } from "../lib/api";
 
 let { onClose, onCreated }: { onClose: () => void; onCreated: (name: string) => void } = $props();
 
@@ -10,9 +10,26 @@ let model = $state("");
 let loading = $state(false);
 let error = $state("");
 let nameInput: HTMLInputElement;
+let showAdvanced = $state(false);
+let seedSoul = $state("");
+let defaultSeedSoul = $state("");
 
 $effect(() => {
   nameInput?.focus();
+});
+
+$effect(() => {
+  fetchPrompts()
+    .then((prompts) => {
+      const p = prompts.find((p) => p.key === "seed_soul");
+      if (p) {
+        defaultSeedSoul = p.content;
+        seedSoul = p.content;
+      }
+    })
+    .catch((e) => {
+      console.error("Failed to load prompt templates:", e);
+    });
 });
 
 async function handleSubmit() {
@@ -21,10 +38,12 @@ async function handleSubmit() {
   loading = true;
   error = "";
   try {
+    const customSoul = showAdvanced && seedSoul !== defaultSeedSoul ? seedSoul : undefined;
     await createSeedMind(trimmed, {
       description: description.trim() || undefined,
       template,
       model: model.trim() || undefined,
+      seedSoul: customSoul,
     });
     await startMind(trimmed);
     onCreated(trimmed);
@@ -79,6 +98,23 @@ async function handleSubmit() {
         class="input"
       />
     </label>
+
+    <button class="advanced-toggle" onclick={() => showAdvanced = !showAdvanced}>
+      <span class="caret">{showAdvanced ? "\u25BC" : "\u25B6"}</span> Advanced
+    </button>
+
+    {#if showAdvanced}
+      <label class="field">
+        <span class="label">Seed SOUL template</span>
+        <textarea
+          bind:value={seedSoul}
+          class="input textarea"
+          rows="6"
+          placeholder="SOUL.md template for this seed..."
+        ></textarea>
+        <span class="hint">Variables: {"${name}"}, {"${description}"}</span>
+      </label>
+    {/if}
 
     {#if error}
       <div class="error">{error}</div>
@@ -179,5 +215,40 @@ async function handleSubmit() {
     border-radius: var(--radius);
     font-size: 12px;
     font-weight: 600;
+  }
+
+  .advanced-toggle {
+    background: transparent;
+    color: var(--text-2);
+    font-size: 11px;
+    font-family: var(--mono);
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: color 0.15s;
+  }
+
+  .advanced-toggle:hover {
+    color: var(--text-1);
+  }
+
+  .caret {
+    font-size: 8px;
+  }
+
+  .textarea {
+    resize: vertical;
+    min-height: 80px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .hint {
+    color: var(--text-2);
+    font-size: 10px;
+    font-family: var(--mono);
   }
 </style>

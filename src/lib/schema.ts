@@ -78,6 +78,12 @@ export const sessions = sqliteTable("sessions", {
   createdAt: integer("created_at").notNull(),
 });
 
+export const systemPrompts = sqliteTable("system_prompts", {
+  key: text("key").primaryKey(),
+  content: text("content").notNull(),
+  updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
 export const messages = sqliteTable(
   "messages",
   {

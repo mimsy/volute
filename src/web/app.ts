@@ -12,6 +12,7 @@ import files from "./api/files.js";
 import logs from "./api/logs.js";
 import minds from "./api/minds.js";
 import pages from "./api/pages.js";
+import prompts from "./api/prompts.js";
 import schedules from "./api/schedules.js";
 import system from "./api/system.js";
 import typing from "./api/typing.js";
@@ -86,6 +87,7 @@ app.use("/api/conversations/*", authMiddleware);
 app.use("/api/volute/*", authMiddleware);
 app.use("/api/system/*", authMiddleware);
 app.use("/api/env/*", authMiddleware);
+app.use("/api/prompts/*", authMiddleware);
 
 // Mind pages (public, no auth)
 app.route("/pages", pages);
@@ -107,6 +109,7 @@ const routes = app
   .route("/api/minds", envRoutes)
   .route("/api/minds", conversations)
   .route("/api/env", sharedEnvApp)
+  .route("/api/prompts", prompts)
   .route("/api/conversations", userConversations)
   .route("/api/volute/channels", voluteChannels)
   .route("/api/volute", unifiedChatApp);

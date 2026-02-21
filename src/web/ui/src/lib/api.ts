@@ -320,7 +320,7 @@ export async function fetchSystemInfo(): Promise<{ system: string | null }> {
 
 export async function createSeedMind(
   name: string,
-  opts?: { description?: string; template?: string; model?: string },
+  opts?: { description?: string; template?: string; model?: string; seedSoul?: string },
 ): Promise<{ name: string; port: number }> {
   const res = await client.api.minds.$post({
     json: {
@@ -329,6 +329,7 @@ export async function createSeedMind(
       description: opts?.description,
       template: opts?.template,
       model: opts?.model,
+      seedSoul: opts?.seedSoul,
     },
   });
   if (!res.ok) {
@@ -336,6 +337,47 @@ export async function createSeedMind(
     throw new Error(data.error || "Failed to create mind");
   }
   return res.json() as Promise<{ name: string; port: number }>;
+}
+
+// --- Prompts API ---
+
+export type Prompt = {
+  key: string;
+  content: string;
+  description: string;
+  variables: string[];
+  isCustom: boolean;
+  category: "creation" | "system" | "mind";
+};
+
+export async function fetchPrompts(): Promise<Prompt[]> {
+  const res = await fetch("/api/prompts", { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch prompts");
+  return res.json();
+}
+
+export async function updatePrompt(key: string, content: string): Promise<void> {
+  const res = await fetch(`/api/prompts/${encodeURIComponent(key)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to update prompt");
+  }
+}
+
+export async function resetPrompt(key: string): Promise<void> {
+  const res = await fetch(`/api/prompts/${encodeURIComponent(key)}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to reset prompt");
+  }
 }
 
 // --- Volute Channels ---

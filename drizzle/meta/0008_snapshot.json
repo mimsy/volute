@@ -1,0 +1,7 @@
+{
+  "id": "0008_volute_channels",
+  "prevId": "0007_system_prompts",
+  "version": "6",
+  "dialect": "sqlite",
+  "tables": {}
+}

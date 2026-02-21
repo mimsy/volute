@@ -102,6 +102,49 @@ export async function handleStartupContext(sendMessage: (content: string) => voi
   }
 }
 
+export type MindPrompts = {
+  compaction_warning: string;
+  reply_instructions: string;
+  channel_invite: string;
+};
+
+const DEFAULT_PROMPTS: MindPrompts = {
+  compaction_warning:
+    "Context is getting long — compaction is about to summarize this conversation. Before that happens, save anything important to files (MEMORY.md, memory/journal/${date}.md, etc.) since those survive compaction. Focus on: decisions made, open tasks, and anything you'd need to pick up where you left off.",
+  reply_instructions: 'To reply to this message, use: volute send ${channel} "your message"',
+  channel_invite: `[Channel Invite]
+\${headers}
+
+[\${sender} — \${time}]
+\${preview}
+
+Further messages will be saved to \${filePath}
+
+To accept, add to .config/routes.json:
+  Rule: { "channel": "\${channel}", "session": "\${suggestedSession}" }
+\${batchRecommendation}To respond, use: volute send \${channel} "your message"
+To reject, delete \${filePath}`,
+};
+
+export function loadPrompts(): MindPrompts {
+  try {
+    const raw = readFileSync(resolve("home/.config/prompts.json"), "utf-8");
+    const parsed = JSON.parse(raw);
+    const result = { ...DEFAULT_PROMPTS };
+    for (const key of Object.keys(DEFAULT_PROMPTS) as (keyof MindPrompts)[]) {
+      if (typeof parsed[key] === "string") {
+        result[key] = parsed[key];
+      }
+    }
+    return result;
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") {
+      log("startup", "failed to load prompts.json, using defaults:", err);
+    }
+    return DEFAULT_PROMPTS;
+  }
+}
+
 export function setupShutdown(): void {
   function shutdown() {
     log("server", "shutdown signal received");

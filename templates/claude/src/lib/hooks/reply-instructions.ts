@@ -1,7 +1,9 @@
 import type { HookCallback } from "@anthropic-ai/claude-agent-sdk";
+import { loadPrompts } from "../startup.js";
 
 export function createReplyInstructionsHook(messageChannels: Map<string, string>) {
   let fired = false;
+  const prompts = loadPrompts();
 
   const hook: HookCallback = async () => {
     if (fired) return {};
@@ -14,7 +16,7 @@ export function createReplyInstructionsHook(messageChannels: Map<string, string>
     return {
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit" as const,
-        additionalContext: `To reply to this message, use: volute send ${channel} "your message"`,
+        additionalContext: prompts.reply_instructions.replace(/\$\{channel\}/g, channel),
       },
     };
   };

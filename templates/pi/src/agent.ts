@@ -13,6 +13,7 @@ import { log } from "./lib/logger.js";
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
 import { createSessionContextExtension } from "./lib/session-context-extension.js";
+import { loadPrompts } from "./lib/startup.js";
 import type {
   HandlerMeta,
   HandlerResolver,
@@ -35,11 +36,6 @@ type PiSession = {
   messageChannels: Map<string, string>;
 };
 
-function defaultCompactionMessage(): string {
-  const today = new Date().toISOString().slice(0, 10);
-  return `Context is getting long — compaction is about to summarize this conversation. Before that happens, save anything important to files (MEMORY.md, memory/journal/${today}.md, etc.) since those survive compaction. Focus on: decisions made, open tasks, and anything you'd need to pick up where you left off.`;
-}
-
 export function createMind(options: {
   systemPrompt: string;
   cwd: string;
@@ -48,7 +44,10 @@ export function createMind(options: {
   compactionMessage?: string;
 }): { resolve: HandlerResolver } {
   const sessions = new Map<string, PiSession>();
-  const compactionMessage = options.compactionMessage ?? defaultCompactionMessage();
+  const prompts = loadPrompts();
+  const today = new Date().toISOString().slice(0, 10);
+  const compactionMessage =
+    options.compactionMessage ?? prompts.compaction_warning.replace("${date}", today);
 
   // Shared setup (created once)
   const modelStr = options.model || process.env.PI_MODEL || "anthropic:claude-sonnet-4-20250514";
