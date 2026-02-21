@@ -2,15 +2,21 @@
 import type { RecentPage } from "../lib/api";
 import { formatRelativeTime } from "../lib/format";
 
-let { pages }: { pages: RecentPage[] } = $props();
+let {
+  pages,
+  onSelectPage,
+}: {
+  pages: RecentPage[];
+  onSelectPage: (mind: string, path: string) => void;
+} = $props();
 </script>
 
 <div class="pages-list">
   {#each pages as page (page.url)}
-    <a href={page.url} target="_blank" rel="noopener noreferrer" class="page-item">
+    <button class="page-item" onclick={() => onSelectPage(page.mind, page.file)}>
       <span class="page-label"><span class="page-mind">{page.mind}/</span>{page.file}</span>
       <span class="page-time">{formatRelativeTime(page.modified)}</span>
-    </a>
+    </button>
   {/each}
   {#if pages.length === 0}
     <div class="empty">No published pages</div>
@@ -33,7 +39,9 @@ let { pages }: { pages: RecentPage[] } = $props();
     color: var(--text-1);
     border-radius: var(--radius);
     transition: background 0.1s;
-    text-decoration: none;
+    cursor: pointer;
+    background: none;
+    text-align: left;
   }
 
   .page-item:hover {

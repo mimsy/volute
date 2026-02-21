@@ -4,6 +4,7 @@ import ChannelBrowserModal from "./components/ChannelBrowserModal.svelte";
 import GroupModal from "./components/GroupModal.svelte";
 import LoginPage from "./components/LoginPage.svelte";
 import MainFrame from "./components/MainFrame.svelte";
+import MindModal from "./components/MindModal.svelte";
 import MindPickerModal from "./components/MindPickerModal.svelte";
 import SeedModal from "./components/SeedModal.svelte";
 import Sidebar from "./components/Sidebar.svelte";
@@ -46,6 +47,8 @@ let showChannelBrowser = $state(false);
 let showSeedModal = $state(false);
 let showAdminModal = $state(false);
 let showUserSettings = $state(false);
+let showMindModal = $state(false);
+let selectedModalMind = $state<Mind | null>(null);
 
 // Resize state
 let sidebarWidth = $state(loadSidebarWidth());
@@ -61,7 +64,6 @@ function loadSidebarWidth(): number {
 }
 
 // Derived
-let selectedMind = $derived(selection.kind === "mind" ? selection.name : null);
 let activeConversationId = $derived(
   selection.kind === "conversation" ? (selection.conversationId ?? null) : null,
 );
@@ -161,8 +163,9 @@ $effect(() => {
 });
 
 // Actions
-function handleSelectMind(name: string) {
-  selection = { kind: "mind", name };
+function handleOpenMindModal(mind: Mind) {
+  selectedModalMind = mind;
+  showMindModal = true;
 }
 
 function handleSelectConversation(id: string) {
@@ -207,6 +210,10 @@ function handleChannelJoined(conv: Conversation) {
 function handleSeedCreated(mindName: string) {
   showSeedModal = false;
   selection = { kind: "conversation", mindName };
+}
+
+function handleSelectPage(mind: string, path: string) {
+  selection = { kind: "page", mind, path };
 }
 
 async function handleLogout() {
@@ -269,16 +276,14 @@ function handleResizeEnd() {
           {minds}
           {conversations}
           pages={recentPages}
-          {selectedMind}
           {activeConversationId}
           username={user.username}
-          onSelectMind={handleSelectMind}
           onSelectConversation={handleSelectConversation}
           onDeleteConversation={handleDeleteConversation}
           onNewChat={() => (showNewChat = true)}
-          onNewGroup={() => (showGroupModal = true)}
           onBrowseChannels={() => (showChannelBrowser = true)}
-          onSeed={() => (showSeedModal = true)}
+          onOpenMind={handleOpenMindModal}
+          onSelectPage={handleSelectPage}
         />
       </div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -297,6 +302,8 @@ function handleResizeEnd() {
           {recentPages}
           username={user.username}
           onConversationId={handleConversationId}
+          onOpenMind={handleOpenMindModal}
+          onSelectPage={handleSelectPage}
         />
       </div>
     </div>
@@ -310,6 +317,8 @@ function handleResizeEnd() {
       onRestart={() => restartDaemon()}
       onLogout={handleLogout}
       onUserSettings={() => (showUserSettings = true)}
+      onOpenMind={handleOpenMindModal}
+      onSeed={() => (showSeedModal = true)}
     />
   </div>
 
@@ -333,6 +342,15 @@ function handleResizeEnd() {
   {/if}
   {#if showUserSettings}
     <UserSettingsModal onClose={() => (showUserSettings = false)} />
+  {/if}
+  {#if showMindModal && selectedModalMind}
+    <MindModal
+      mind={selectedModalMind}
+      onClose={() => {
+        showMindModal = false;
+        selectedModalMind = null;
+      }}
+    />
   {/if}
 {/if}
 

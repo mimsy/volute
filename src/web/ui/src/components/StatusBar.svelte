@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { Mind } from "../lib/api";
+import { getDisplayStatus } from "../lib/format";
 
 let {
   minds,
@@ -11,6 +12,8 @@ let {
   onRestart,
   onLogout,
   onUserSettings,
+  onOpenMind,
+  onSeed,
 }: {
   minds: Mind[];
   username: string;
@@ -21,21 +24,38 @@ let {
   onRestart: () => void;
   onLogout: () => void;
   onUserSettings: () => void;
+  onOpenMind: (mind: Mind) => void;
+  onSeed: () => void;
 } = $props();
 
-let runningCount = $derived(minds.filter((m) => m.status === "running").length);
+let awakeCount = $derived(
+  minds.filter((m) => {
+    const s = getDisplayStatus(m);
+    return s === "running" || s === "active";
+  }).length,
+);
+let activeCount = $derived(minds.filter((m) => getDisplayStatus(m) === "active").length);
 
 let showSystemMenu = $state(false);
 let showUserMenu = $state(false);
+let showMindsMenu = $state(false);
 
 function toggleSystemMenu() {
   showSystemMenu = !showSystemMenu;
   showUserMenu = false;
+  showMindsMenu = false;
 }
 
 function toggleUserMenu() {
   showUserMenu = !showUserMenu;
   showSystemMenu = false;
+  showMindsMenu = false;
+}
+
+function toggleMindsMenu() {
+  showMindsMenu = !showMindsMenu;
+  showSystemMenu = false;
+  showUserMenu = false;
 }
 
 function handleClickOutside(e: MouseEvent) {
@@ -43,7 +63,15 @@ function handleClickOutside(e: MouseEvent) {
   if (!target.closest(".menu-anchor")) {
     showSystemMenu = false;
     showUserMenu = false;
+    showMindsMenu = false;
   }
+}
+
+function mindDotColor(mind: Mind): string {
+  const s = getDisplayStatus(mind);
+  if (s === "running" || s === "active") return "var(--accent)";
+  if (s === "starting") return "var(--yellow)";
+  return "var(--text-2)";
 }
 </script>
 
@@ -86,7 +114,41 @@ function handleClickOutside(e: MouseEvent) {
       {/if}
     </div>
     <span class="sep">|</span>
-    <span class="mind-count">{runningCount}/{minds.length} minds</span>
+    <div class="menu-anchor">
+      <button class="status-btn" onclick={toggleMindsMenu}>
+        {minds.length} minds, {awakeCount} awake, {activeCount} active
+      </button>
+      {#if showMindsMenu}
+        <div class="dropdown minds-dropdown">
+          {#each minds as mind (mind.name)}
+            <button
+              class="dropdown-item mind-item"
+              onclick={() => {
+                showMindsMenu = false;
+                onOpenMind(mind);
+              }}
+            >
+              <span
+                class="mind-dot"
+                style:background={mindDotColor(mind)}
+                style:box-shadow={getDisplayStatus(mind) === "running" || getDisplayStatus(mind) === "active" ? `0 0 6px ${mindDotColor(mind)}` : "none"}
+              ></span>
+              {mind.name}
+            </button>
+          {/each}
+          <div class="dropdown-divider"></div>
+          <button
+            class="dropdown-item seed-item"
+            onclick={() => {
+              showMindsMenu = false;
+              onSeed();
+            }}
+          >
+            Plant a Seed
+          </button>
+        </div>
+      {/if}
+    </div>
   </div>
   <div class="status-right">
     <div class="menu-anchor">
@@ -213,5 +275,32 @@ function handleClickOutside(e: MouseEvent) {
   .dropdown-item:hover {
     background: var(--bg-3);
     color: var(--text-0);
+  }
+
+  .minds-dropdown {
+    min-width: 160px;
+  }
+
+  .mind-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .mind-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .dropdown-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 0;
+  }
+
+  .seed-item {
+    color: var(--accent);
   }
 </style>

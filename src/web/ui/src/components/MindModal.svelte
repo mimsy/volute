@@ -1,32 +1,30 @@
 <script lang="ts">
-import FileEditor from "../components/FileEditor.svelte";
-import History from "../components/History.svelte";
-import LogViewer from "../components/LogViewer.svelte";
-import MindSkills from "../components/MindSkills.svelte";
-import StatusBadge from "../components/StatusBadge.svelte";
-import VariantList from "../components/VariantList.svelte";
 import { fetchMind, type Mind, startMind, stopMind } from "../lib/api";
-import { formatRelativeTime } from "../lib/format";
+import { formatRelativeTime, getDisplayStatus } from "../lib/format";
+import History from "./History.svelte";
+import MindSkills from "./MindSkills.svelte";
+import StatusBadge from "./StatusBadge.svelte";
+import VariantList from "./VariantList.svelte";
 
-let { name }: { name: string } = $props();
+let { mind: initialMind, onClose }: { mind: Mind; onClose: () => void } = $props();
 
-const TABS = ["History", "Logs", "Files", "Skills", "Variants", "Connections"] as const;
+const TABS = ["History", "Skills", "Variants", "Connections"] as const;
 type Tab = (typeof TABS)[number];
 
-let mind = $state<Mind | null>(null);
+const mindName = initialMind.name;
+// eslint-disable-next-line svelte/valid-compile -- initialMind is intentionally captured once; refresh() updates mind via API
+let mind = $state<Mind>(initialMind);
 let tab = $state<Tab>("History");
 let error = $state("");
 let actionLoading = $state(false);
 
 function refresh() {
-  fetchMind(name)
+  fetchMind(mindName)
     .then((m) => {
       mind = m;
       error = "";
     })
-    .catch(() => {
-      error = "Mind not found";
-    });
+    .catch(() => {});
 }
 
 $effect(() => {
@@ -38,7 +36,7 @@ $effect(() => {
 async function handleStart() {
   actionLoading = true;
   try {
-    await startMind(name);
+    await startMind(mind.name);
     refresh();
   } catch (e) {
     error = e instanceof Error ? e.message : "Failed to start";
@@ -49,41 +47,27 @@ async function handleStart() {
 async function handleStop() {
   actionLoading = true;
   try {
-    await stopMind(name);
+    await stopMind(mind.name);
     refresh();
   } catch (e) {
     error = e instanceof Error ? e.message : "Failed to stop";
   }
   actionLoading = false;
 }
+
+const connectedChannels = $derived(
+  mind.channels.filter((ch) => ch.name !== "web" && ch.status === "connected"),
+);
 </script>
 
-{#if error && !mind}
-  <div class="error-msg">{error}</div>
-{:else if !mind}
-  <div class="loading">Loading...</div>
-{:else}
-  <div class="mind-detail">
-    <!-- Mind header -->
-    <div class="mind-header">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="modal-overlay" onclick={onClose} onkeydown={() => {}}>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
+    <div class="modal-header">
       <div class="header-left">
-        <StatusBadge status={mind.status} />
-        <span class="port">:{mind.port}</span>
-        {#each mind.channels.filter((ch) => ch.name !== "web" && ch.status === "connected") as ch}
-          <StatusBadge status="connected" />
-        {/each}
-      </div>
-      <div class="header-right">
-        {#if mind.hasPages}
-          <a
-            href={`/pages/${mind.name}/`}
-            target="_blank"
-            rel="noopener noreferrer"
-            class="pages-link"
-          >
-            Pages
-          </a>
-        {/if}
+        <span class="mind-name">{mind.name}</span>
+        <StatusBadge status={getDisplayStatus(mind)} />
         {#if mind.status === "stopped"}
           <button
             onclick={handleStart}
@@ -104,37 +88,26 @@ async function handleStop() {
           </button>
         {/if}
       </div>
+      <div class="header-right">
+        <div class="tab-bar">
+          {#each TABS as t}
+            <button class="tab" class:active={t === tab} onclick={() => (tab = t)}>{t}</button>
+          {/each}
+        </div>
+        <button class="close-btn" onclick={onClose}>&#x2715;</button>
+      </div>
     </div>
-
-    <!-- Tabs -->
-    <div class="tab-bar">
-      {#each TABS as t}
-        <button
-          class="tab"
-          class:active={t === tab}
-          onclick={() => (tab = t)}
-        >
-          {t}
-        </button>
-      {/each}
-    </div>
-
-    <!-- Tab content -->
-    <div class="tab-content">
+    <div class="modal-body">
+      {#if error}
+        <div class="error-msg">{error}</div>
+      {/if}
       {#if tab === "History"}
-        <History {name} />
-      {:else if tab === "Logs"}
-        <LogViewer {name} />
-      {:else if tab === "Files"}
-        <FileEditor {name} />
+        <History name={mind.name} />
       {:else if tab === "Skills"}
-        <MindSkills {name} />
+        <MindSkills name={mind.name} />
       {:else if tab === "Variants"}
-        <VariantList {name} />
+        <VariantList name={mind.name} />
       {:else if tab === "Connections"}
-        {@const connectedChannels = mind.channels.filter(
-          (ch) => ch.name !== "web" && ch.status === "connected",
-        )}
         {#if connectedChannels.length === 0}
           <div class="connections-empty">No active connections.</div>
         {:else}
@@ -165,90 +138,65 @@ async function handleStop() {
       {/if}
     </div>
   </div>
-{/if}
+</div>
 
 <style>
-  .error-msg {
-    color: var(--red);
-    padding: 24px;
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    animation: fadeIn 0.15s ease;
   }
 
-  .loading {
-    color: var(--text-2);
-    padding: 24px;
-  }
-
-  .mind-detail {
+  .modal {
+    width: 80vw;
+    height: 70vh;
+    max-width: 960px;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     display: flex;
     flex-direction: column;
-    height: 100%;
-    animation: fadeIn 0.2s ease both;
+    overflow: hidden;
   }
 
-  .mind-header {
+  .modal-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    padding: 0 16px;
     flex-shrink: 0;
   }
 
   .header-left {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
   }
 
-  .port {
-    color: var(--text-2);
-    font-size: 12px;
+  .mind-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-0);
   }
 
   .header-right {
     display: flex;
-    gap: 8px;
     align-items: center;
-  }
-
-  .pages-link {
-    padding: 6px 16px;
-    background: var(--bg-2);
-    color: var(--text-1);
-    border-radius: var(--radius);
-    font-size: 12px;
-    font-weight: 500;
-    text-decoration: none;
-    border: 1px solid var(--border);
-  }
-
-  .action-btn {
-    padding: 6px 16px;
-    border-radius: var(--radius);
-    font-size: 12px;
-    font-weight: 500;
-    transition: opacity 0.15s;
-  }
-
-  .start-btn {
-    background: var(--accent-dim);
-    color: var(--accent);
-  }
-
-  .stop-btn {
-    background: var(--red-dim);
-    color: var(--red);
+    gap: 0;
   }
 
   .tab-bar {
     display: flex;
-    gap: 0;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 0;
-    flex-shrink: 0;
   }
 
   .tab {
-    padding: 8px 16px;
+    padding: 10px 16px;
     background: transparent;
     color: var(--text-2);
     font-size: 12px;
@@ -263,10 +211,46 @@ async function handleStop() {
     border-bottom-color: var(--accent);
   }
 
-  .tab-content {
+  .close-btn {
+    background: none;
+    color: var(--text-2);
+    font-size: 14px;
+    padding: 4px 8px;
+    margin-left: 8px;
+  }
+
+  .close-btn:hover {
+    color: var(--text-0);
+  }
+
+  .modal-body {
     flex: 1;
-    overflow: hidden;
-    padding-top: 12px;
+    overflow: auto;
+    padding: 16px;
+  }
+
+  .error-msg {
+    color: var(--red);
+    margin-bottom: 12px;
+    font-size: 13px;
+  }
+
+  .action-btn {
+    padding: 4px 12px;
+    border-radius: var(--radius);
+    font-size: 11px;
+    font-weight: 500;
+    transition: opacity 0.15s;
+  }
+
+  .start-btn {
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
+
+  .stop-btn {
+    background: var(--red-dim);
+    color: var(--red);
   }
 
   .connections-empty {

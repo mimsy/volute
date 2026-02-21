@@ -2,7 +2,6 @@
 import type { ConversationWithParticipants, Mind, RecentPage } from "../lib/api";
 import type { Selection } from "../lib/navigate";
 import Home from "../pages/Home.svelte";
-import MindDetail from "../pages/MindDetail.svelte";
 import Chat from "./Chat.svelte";
 
 let {
@@ -12,6 +11,8 @@ let {
   recentPages,
   username,
   onConversationId,
+  onOpenMind,
+  onSelectPage,
 }: {
   selection: Selection;
   minds: Mind[];
@@ -19,6 +20,8 @@ let {
   recentPages: RecentPage[];
   username: string;
   onConversationId: (id: string) => void;
+  onOpenMind: (mind: Mind) => void;
+  onSelectPage: (mind: string, path: string) => void;
 } = $props();
 
 let chatMindName = $derived.by(() => {
@@ -43,12 +46,10 @@ let conversationId = $derived(
 </script>
 
 <div class="main-frame">
-  {#if selection.kind === "mind" && selection.name}
-    {#key selection.name}
-      <div class="frame-content padded">
-        <MindDetail name={selection.name} />
-      </div>
-    {/key}
+  {#if selection.kind === "page"}
+    <div class="frame-content">
+      <iframe src="/pages/{selection.mind}/{selection.path}" class="page-iframe" title="Page"></iframe>
+    </div>
   {:else if selection.kind === "conversation"}
     <div class="frame-content">
       <Chat
@@ -62,7 +63,7 @@ let conversationId = $derived(
     </div>
   {:else}
     <div class="frame-content padded">
-      <Home {username} {minds} {conversations} {recentPages} />
+      <Home {username} {minds} {conversations} {recentPages} {onOpenMind} {onSelectPage} />
     </div>
   {/if}
 </div>
@@ -80,5 +81,11 @@ let conversationId = $derived(
 
   .frame-content.padded {
     padding: 24px;
+  }
+
+  .page-iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
   }
 </style>

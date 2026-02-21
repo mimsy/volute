@@ -22,11 +22,15 @@ let {
   minds,
   conversations,
   recentPages,
+  onOpenMind,
+  onSelectPage,
 }: {
   username: string;
   minds: Mind[];
   conversations: ConversationWithDetails[];
   recentPages: RecentPage[];
+  onOpenMind: (mind: Mind) => void;
+  onSelectPage: (mind: string, path: string) => void;
 } = $props();
 
 let sortedMinds = $derived(
@@ -65,7 +69,8 @@ let recentConversations = $derived(
       <div class="mind-row">
         {#each sortedMinds as mind}
           {@const connectedChannels = mind.channels.filter(ch => ch.name !== "web" && ch.name !== "volute" && ch.status === "connected")}
-          <a href={`/mind/${mind.name}`} class="home-mind-card">
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="home-mind-card" onclick={() => onOpenMind(mind)} onkeydown={() => {}}>
             <div class="mind-card-header">
               <span class="mind-name">{mind.name}</span>
               <StatusBadge status={getDisplayStatus(mind)} />
@@ -83,7 +88,7 @@ let recentConversations = $derived(
             <div class="mind-activity">
               {mind.lastActiveAt ? `active ${formatRelativeTime(mind.lastActiveAt)}` : "no activity"}
             </div>
-          </a>
+          </div>
         {/each}
       </div>
     {/if}
@@ -129,12 +134,13 @@ let recentConversations = $derived(
       </div>
       <div class="pages-list">
         {#each recentPages as page}
-          <a href={page.url} target="_blank" rel="noopener noreferrer" class="page-row">
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="page-row" onclick={() => onSelectPage(page.mind, page.file)} onkeydown={() => {}}>
             <span>
               <span class="page-mind">{page.mind}/</span>{page.file}
             </span>
             <span class="page-time">{formatRelativeTime(page.modified)}</span>
-          </a>
+          </div>
         {/each}
       </div>
     </div>
@@ -192,6 +198,7 @@ let recentConversations = $derived(
     min-width: 150px;
     transition: border-color 0.15s;
     flex-shrink: 0;
+    cursor: pointer;
   }
 
   .home-mind-card:hover {
@@ -301,10 +308,10 @@ let recentConversations = $derived(
     border-radius: var(--radius);
     background: var(--bg-2);
     border: 1px solid var(--border);
-    text-decoration: none;
     color: var(--text-0);
     font-size: 12px;
     transition: border-color 0.15s;
+    cursor: pointer;
   }
 
   .page-row:hover {

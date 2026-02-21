@@ -1,14 +1,14 @@
 export type Selection =
   | { kind: "home" }
-  | { kind: "mind"; name: string }
+  | { kind: "page"; mind: string; path: string }
   | { kind: "conversation"; conversationId?: string; mindName?: string };
 
 export function parseSelection(): Selection {
   const path = window.location.pathname;
   const search = new URLSearchParams(window.location.search);
 
-  const mindMatch = path.match(/^\/mind\/(.+)$/);
-  if (mindMatch) return { kind: "mind", name: mindMatch[1] };
+  const pageMatch = path.match(/^\/page\/([^/]+)\/(.+)$/);
+  if (pageMatch) return { kind: "page", mind: pageMatch[1], path: pageMatch[2] };
 
   const chatIdMatch = path.match(/^\/chats?\/(.+)$/);
   if (chatIdMatch) return { kind: "conversation", conversationId: chatIdMatch[1] };
@@ -24,8 +24,8 @@ export function parseSelection(): Selection {
 
 export function selectionToPath(selection: Selection): string {
   switch (selection.kind) {
-    case "mind":
-      return `/mind/${selection.name}`;
+    case "page":
+      return `/page/${selection.mind}/${selection.path}`;
     case "conversation":
       if (selection.conversationId) return `/chats/${selection.conversationId}`;
       if (selection.mindName) return `/chats?mind=${selection.mindName}`;
