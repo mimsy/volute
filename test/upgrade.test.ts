@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, it } from "node:test";
+import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import {
   applyInitFiles,
   composeTemplate,
@@ -140,19 +140,32 @@ describe("template helpers", () => {
 
 describe("upgrade git operations", () => {
   const repoDir = join(tmpDir, "upgrade-repo");
+  const baseRepoDir = join(tmpDir, "upgrade-repo-base");
+
+  before(() => {
+    if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true });
+    setupGitRepo(baseRepoDir);
+  });
 
   beforeEach(() => {
-    if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true });
-    setupGitRepo(repoDir);
+    // Clean up previous test state but preserve base repo
+    if (existsSync(repoDir)) rmSync(repoDir, { recursive: true });
+    for (const name of ["shared-history-repo", "real-conflict-repo"]) {
+      const d = join(tmpDir, name);
+      if (existsSync(d)) rmSync(d, { recursive: true });
+    }
+    cpSync(baseRepoDir, repoDir, { recursive: true });
   });
 
   afterEach(() => {
-    // Clean up worktrees before removing the directory
     try {
       git(["worktree", "prune"], repoDir);
     } catch {
       // ignore
     }
+  });
+
+  after(() => {
     if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true });
   });
 
