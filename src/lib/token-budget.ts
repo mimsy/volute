@@ -182,7 +182,8 @@ export class TokenBudget {
         periodMinutes: 0, // will be overwritten by caller
         tokenLimit: 0, // will be overwritten by caller
       };
-    } catch {
+    } catch (err) {
+      tlog.warn(`failed to load budget state for ${mind}`, log.errorData(err));
       return null;
     }
   }

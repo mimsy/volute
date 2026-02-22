@@ -49,7 +49,7 @@ import {
   subscribe as subscribeMindEvent,
 } from "../../lib/mind-events.js";
 import { getMindManager } from "../../lib/mind-manager.js";
-// Re-export for route handlers — actual logic lives in mind-service.ts
+// Lifecycle functions from mind-service.ts
 import {
   startMindFull as startMindFullService,
   stopMindFull as stopMindFullService,
@@ -754,7 +754,7 @@ const app = new Hono<AuthEnv>()
         if (branchErr) {
           return c.json({ error: `Invalid variant name: ${branchErr}` }, 400);
         }
-        log.error(`[daemon] merging variant for ${baseName}: ${mergeVariantName}`);
+        log.error(`merging variant for ${baseName}: ${mergeVariantName}`);
         const variant = findVariant(baseName, mergeVariantName);
         if (variant) {
           const projectRoot = mindDir(baseName);
@@ -1237,7 +1237,7 @@ const app = new Hono<AuthEnv>()
       .then(async (res) => {
         if (!res.ok) {
           const text = await res.text().catch(() => "");
-          log.error(`[daemon] mind ${name} responded with ${res.status}: ${text}`);
+          log.error(`mind ${name} responded with ${res.status}: ${text}`);
         }
       })
       .catch((err) => {

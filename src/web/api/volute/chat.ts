@@ -14,6 +14,7 @@ import {
   getParticipants,
   isParticipantOrOwner,
 } from "../../../lib/conversations.js";
+import log from "../../../lib/logger.js";
 import { deliverMessage } from "../../../lib/message-delivery.js";
 import { findMind } from "../../../lib/registry.js";
 import { buildVoluteSlug } from "../../../lib/slugify.js";
@@ -73,7 +74,7 @@ async function fanOutToMinds(opts: {
     try {
       writeChannelEntry(ap.username, slugForMind(ap.username), channelEntry);
     } catch (err) {
-      console.warn(`[chat] failed to write channel entry for ${ap.username}:`, err);
+      log.warn(`failed to write channel entry for ${ap.username}`, log.errorData(err));
     }
   }
 
