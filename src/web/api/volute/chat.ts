@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -16,7 +14,8 @@ import {
   getParticipants,
   isParticipantOrOwner,
 } from "../../../lib/conversations.js";
-import { daemonLoopback, findMind, voluteHome } from "../../../lib/registry.js";
+import { deliverMessage } from "../../../lib/message-delivery.js";
+import { findMind } from "../../../lib/registry.js";
 import { buildVoluteSlug } from "../../../lib/slugify.js";
 import { getTypingMap } from "../../../lib/typing.js";
 import type { AuthEnv } from "../../middleware/auth.js";
@@ -34,26 +33,6 @@ const chatSchema = z.object({
     )
     .optional(),
 });
-
-function getDaemonUrl(): string {
-  try {
-    const data = JSON.parse(readFileSync(resolve(voluteHome(), "daemon.json"), "utf-8"));
-    return `http://${daemonLoopback()}:${data.port}`;
-  } catch (err) {
-    throw new Error(`Failed to read daemon config: ${err instanceof Error ? err.message : err}`);
-  }
-}
-
-function daemonFetchInternal(path: string, body: string): Promise<Response> {
-  const daemonUrl = getDaemonUrl();
-  const token = process.env.VOLUTE_DAEMON_TOKEN;
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Origin: daemonUrl,
-  };
-  if (token) headers.Authorization = `Bearer ${token}`;
-  return fetch(`${daemonUrl}${path}`, { method: "POST", headers, body });
-}
 
 const app = new Hono<AuthEnv>()
   .post("/:name/chat", zValidator("json", chatSchema), async (c) => {
@@ -177,13 +156,13 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    // Fire-and-forget: send to all running minds via daemon /message route
+    // Fire-and-forget: send to all running minds via direct delivery
     for (const mindName of runningMinds) {
       const targetName = mindName === baseName ? name : mindName;
       const channel = channelForMind(mindName);
       const typingMap = getTypingMap();
       const currentlyTyping = typingMap.get(channel);
-      const payload = JSON.stringify({
+      deliverMessage(targetName, {
         content: contentBlocks,
         channel,
         conversationId,
@@ -192,17 +171,7 @@ const app = new Hono<AuthEnv>()
         participantCount: participants.length,
         isDM,
         ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
-      });
-      daemonFetchInternal(`/api/minds/${encodeURIComponent(targetName)}/message`, payload)
-        .then(async (res) => {
-          if (!res.ok) {
-            const text = await res.text().catch(() => "");
-            console.error(`[chat] mind ${mindName} responded ${res.status}: ${text}`);
-          }
-        })
-        .catch((err) => {
-          console.error(`[chat] mind ${mindName} unreachable via daemon:`, err);
-        });
+      }).catch(() => {}); // deliverMessage logs errors internally
     }
 
     return c.json({ ok: true, conversationId });
@@ -322,7 +291,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       });
       const typingMap = getTypingMap();
       const currentlyTyping = typingMap.get(channel);
-      const payload = JSON.stringify({
+      deliverMessage(mindName, {
         content: contentBlocks,
         channel,
         conversationId: body.conversationId,
@@ -331,17 +300,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
         participantCount: participants.length,
         isDM,
         ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
-      });
-      daemonFetchInternal(`/api/minds/${encodeURIComponent(mindName)}/message`, payload)
-        .then(async (res) => {
-          if (!res.ok) {
-            const text = await res.text().catch(() => "");
-            console.error(`[chat] mind ${mindName} responded ${res.status}: ${text}`);
-          }
-        })
-        .catch((err) => {
-          console.error(`[chat] mind ${mindName} unreachable via daemon:`, err);
-        });
+      }).catch(() => {}); // deliverMessage logs errors internally
     }
 
     return c.json({ ok: true, conversationId: body.conversationId });

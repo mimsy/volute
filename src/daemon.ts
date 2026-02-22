@@ -5,14 +5,20 @@ import { resolve } from "node:path";
 import { format } from "node:util";
 import { initConnectorManager } from "./lib/connector-manager.js";
 import log from "./lib/logger.js";
-import { ensureMailAddress, getMailPoller } from "./lib/mail-poller.js";
+import { ensureMailAddress, initMailPoller } from "./lib/mail-poller.js";
 import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
 import { migrateDotVoluteDir, migrateMindState } from "./lib/migrate-state.js";
 import { initMindManager } from "./lib/mind-manager.js";
-import { mindDir, readRegistry, setMindRunning, voluteHome } from "./lib/registry.js";
+import {
+  initRegistryCache,
+  mindDir,
+  readRegistry,
+  setMindRunning,
+  voluteHome,
+} from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
-import { getScheduler } from "./lib/scheduler.js";
-import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "./lib/token-budget.js";
+import { initScheduler } from "./lib/scheduler.js";
+import { DEFAULT_BUDGET_PERIOD_MINUTES, initTokenBudget } from "./lib/token-budget.js";
 import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
 import { readVoluteConfig } from "./lib/volute-config.js";
 import { cleanExpiredSessions } from "./web/middleware/auth.js";
@@ -51,6 +57,9 @@ export async function startDaemon(opts: {
   // One-time migration: agents.json → minds.json, agents/ → minds/
   migrateAgentsToMinds();
 
+  // Load registry into memory for fast reads within the daemon
+  initRegistryCache();
+
   // Use existing token if set (for testing), otherwise generate one
   const token = process.env.VOLUTE_DAEMON_TOKEN || randomBytes(32).toString("hex");
 
@@ -84,12 +93,12 @@ export async function startDaemon(opts: {
   const manager = initMindManager();
   manager.loadCrashAttempts();
   const connectors = initConnectorManager();
-  const scheduler = getScheduler();
-  scheduler.start(port, token);
-  const mailPoller = getMailPoller();
-  mailPoller.start(port, token);
-  const tokenBudget = getTokenBudget();
-  tokenBudget.start(port, token);
+  const scheduler = initScheduler();
+  scheduler.start();
+  const mailPoller = initMailPoller();
+  mailPoller.start();
+  const tokenBudget = initTokenBudget();
+  tokenBudget.start();
 
   // Migrate .volute/ → .mind/ and system state for all registered minds
   const registry = readRegistry();

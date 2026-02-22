@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { rmSync } from "node:fs";
+import { resolve } from "node:path";
+import { beforeEach, describe, it } from "node:test";
 import { TokenBudget } from "../src/lib/token-budget.js";
 
 describe("TokenBudget", () => {
+  // Clean up persisted budget state between tests to ensure isolation
+  beforeEach(() => {
+    const stateBase = resolve(process.env.VOLUTE_HOME!, "state");
+    try {
+      rmSync(stateBase, { recursive: true, force: true });
+    } catch {}
+  });
   it("returns ok when no budget is configured", () => {
     const tb = new TokenBudget();
     assert.equal(tb.checkBudget("mind1"), "ok");
@@ -155,18 +164,18 @@ describe("TokenBudget", () => {
     assert.equal(tb.getUsage("mind1")!.tokensUsed, 0);
   });
 
-  it("tick drains queue and re-enqueues when daemon is not configured", () => {
+  it("tick drains queue on period reset", () => {
     const tb = new TokenBudget();
     tb.setBudget("mind1", 10000, 0);
 
     tb.enqueue("mind1", { channel: "ch", sender: null, textContent: "queued" });
     assert.equal(tb.getUsage("mind1")!.queueLength, 1);
 
-    // Without start(), replay re-enqueues synchronously since daemon is unavailable
+    // tick() resets the period and drains the queue for replay
     tb.tick();
 
-    // Messages preserved — not lost
-    assert.equal(tb.getUsage("mind1")!.queueLength, 1);
+    // Queue is drained (deliverMessage handles delivery or logs if mind not found)
+    assert.equal(tb.getUsage("mind1")!.queueLength, 0);
   });
 
   it("tick does not reset unexpired periods", () => {
@@ -231,7 +240,7 @@ describe("TokenBudget", () => {
 
   it("start and stop manage interval", () => {
     const tb = new TokenBudget();
-    tb.start(4200, "token123");
+    tb.start();
     tb.stop();
     assert.ok(true);
   });

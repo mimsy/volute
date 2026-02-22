@@ -1,5 +1,6 @@
 import log from "./logger.js";
-import { daemonLoopback, findMind } from "./registry.js";
+import { deliverMessage } from "./message-delivery.js";
+import { findMind } from "./registry.js";
 import { readSystemsConfig } from "./systems-config.js";
 
 const mlog = log.child("mail");
@@ -40,8 +41,6 @@ const MAX_RECONNECT_MS = 60_000;
 
 export class MailPoller {
   private ws: WebSocket | null = null;
-  private daemonPort: number | null = null;
-  private daemonToken: string | null = null;
   private running = false;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -49,7 +48,7 @@ export class MailPoller {
   private reconnectAttempts = 0;
   private disconnectedAt: string | null = null;
 
-  start(daemonPort?: number, daemonToken?: string): void {
+  start(): void {
     if (this.running) {
       mlog.warn("already running — ignoring duplicate start");
       return;
@@ -61,8 +60,6 @@ export class MailPoller {
       return;
     }
 
-    this.daemonPort = daemonPort ?? null;
-    this.daemonToken = daemonToken ?? null;
     this.running = true;
 
     this.connect();
@@ -261,57 +258,33 @@ export class MailPoller {
       return;
     }
 
-    const channel = `mail:${email.from.address}`;
-    const sender = email.from.name || email.from.address;
-
     const text = formatEmailContent(email);
 
-    const body = JSON.stringify({
-      content: [{ type: "text", text }],
-      channel,
-      sender,
-      platform: "Email",
-      isDM: true,
-    });
-
-    if (!this.daemonPort || !this.daemonToken) {
-      mlog.warn(`cannot deliver to ${mind}: daemon port/token not set`);
-      return;
-    }
-
-    const daemonUrl = `http://${daemonLoopback()}:${this.daemonPort}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 120_000);
-
     try {
-      const res = await fetch(`${daemonUrl}/api/minds/${encodeURIComponent(mind)}/message`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.daemonToken}`,
-          Origin: daemonUrl,
-        },
-        body,
-        signal: controller.signal,
+      await deliverMessage(mind, {
+        content: [{ type: "text", text }],
+        channel: `mail:${email.from.address}`,
+        sender: email.from.name || email.from.address,
+        platform: "Email",
+        isDM: true,
       });
-      if (!res.ok) {
-        mlog.warn(`deliver to ${mind} got HTTP ${res.status}`);
-      } else {
-        mlog.info(`delivered email from ${email.from.address} to ${mind}`);
-      }
-      await res.text().catch(() => {});
+      mlog.info(`delivered email from ${email.from.address} to ${mind}`);
     } catch (err) {
       mlog.warn(`failed to deliver to ${mind}`, log.errorData(err));
-    } finally {
-      clearTimeout(timeout);
     }
   }
 }
 
 let instance: MailPoller | null = null;
 
+export function initMailPoller(): MailPoller {
+  if (instance) throw new Error("MailPoller already initialized");
+  instance = new MailPoller();
+  return instance;
+}
+
 export function getMailPoller(): MailPoller {
-  if (!instance) instance = new MailPoller();
+  if (!instance) throw new Error("MailPoller not initialized — call initMailPoller() first");
   return instance;
 }
 
