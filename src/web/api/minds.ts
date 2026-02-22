@@ -280,6 +280,149 @@ async function npmInstallAsMind(cwd: string, mindName: string): Promise<void> {
   }
 }
 
+/** Import a mind from a .volute archive (extracted to tempDir by CLI). */
+async function importFromArchive(
+  c: any,
+  tempDir: string,
+  nameOverride: string | undefined,
+  manifest: import("../../lib/archive.js").ExportManifest,
+) {
+  const extractedMindDir = resolve(tempDir, "mind");
+  if (!existsSync(extractedMindDir)) {
+    return c.json({ error: "Invalid archive: missing mind/ directory" }, 400);
+  }
+
+  if (!manifest?.includes || !manifest.name || !manifest.template) {
+    return c.json({ error: "Invalid archive manifest" }, 400);
+  }
+
+  const name = nameOverride ?? manifest.name;
+
+  const nameErr = validateMindName(name);
+  if (nameErr) return c.json({ error: nameErr }, 400);
+
+  if (findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
+
+  ensureVoluteHome();
+  const dest = mindDir(name);
+  if (existsSync(dest)) return c.json({ error: "Mind directory already exists" }, 409);
+
+  try {
+    // Copy extracted mind directory to final location
+    cpSync(extractedMindDir, dest, { recursive: true });
+
+    // Generate new identity if not included in archive
+    if (!manifest.includes.identity) {
+      generateIdentity(dest);
+    }
+
+    // Copy state files (channels.json, env.json) to centralized state dir
+    const state = stateDir(name);
+    mkdirSync(state, { recursive: true });
+
+    const channelsJson = resolve(tempDir, "state/channels.json");
+    if (existsSync(channelsJson)) {
+      cpSync(channelsJson, resolve(state, "channels.json"));
+    }
+
+    const envJson = resolve(tempDir, "state/env.json");
+    if (existsSync(envJson)) {
+      cpSync(envJson, resolve(state, "env.json"));
+    }
+
+    // Assign port and register
+    const port = nextPort();
+    addMind(name, port, undefined, manifest.template);
+
+    // Set up per-mind user isolation
+    const homeDir = resolve(dest, "home");
+    ensureVoluteGroup();
+    createMindUser(name, homeDir);
+    chownMindDir(dest, name);
+
+    // Install dependencies
+    await npmInstallAsMind(dest, name);
+
+    // Import history rows into DB (per-line to avoid losing all rows on a single bad line)
+    const historyJsonl = resolve(tempDir, "history.jsonl");
+    if (existsSync(historyJsonl)) {
+      try {
+        const db = await getDb();
+        const lines = readFileSync(historyJsonl, "utf-8").trim().split("\n");
+        let imported = 0;
+        let failed = 0;
+        for (const line of lines) {
+          if (!line) continue;
+          try {
+            const row = JSON.parse(line);
+            if (!row.type) {
+              failed++;
+              continue;
+            }
+            await db.insert(mindHistory).values({
+              mind: name,
+              channel: row.channel ?? null,
+              session: row.session ?? null,
+              sender: row.sender ?? null,
+              message_id: row.message_id ?? null,
+              type: row.type,
+              content: row.content ?? null,
+              metadata: row.metadata ?? null,
+              created_at: row.created_at ?? new Date().toISOString(),
+            });
+            imported++;
+          } catch (lineErr) {
+            log.warn("Failed to import history line", log.errorData(lineErr));
+            failed++;
+          }
+        }
+        if (failed > 0) {
+          log.warn(`History import: ${imported} imported, ${failed} failed`);
+        }
+      } catch (err) {
+        log.error("Failed to open database for history import", log.errorData(err));
+      }
+    }
+
+    // Import sessions — copy JSONL files to .mind/sessions/
+    const sessionsDir = resolve(tempDir, "sessions");
+    if (existsSync(sessionsDir)) {
+      const destSessions = resolve(dest, ".mind/sessions");
+      mkdirSync(destSessions, { recursive: true });
+      for (const file of readdirSync(sessionsDir)) {
+        cpSync(resolve(sessionsDir, file), resolve(destSessions, file));
+      }
+    }
+
+    // git init if .git/ doesn't exist
+    if (!existsSync(resolve(dest, ".git"))) {
+      const env = isIsolationEnabled()
+        ? { ...process.env, HOME: resolve(dest, "home") }
+        : undefined;
+      await gitExec(["init"], { cwd: dest, mindName: name, env });
+      await gitExec(["add", "-A"], { cwd: dest, mindName: name, env });
+      await gitExec(["commit", "-m", "import from archive"], { cwd: dest, mindName: name, env });
+    }
+
+    // Fix ownership
+    chownMindDir(dest, name);
+
+    // Clean up temp dir
+    rmSync(tempDir, { recursive: true, force: true });
+
+    return c.json({ ok: true, name, port, message: `Imported mind: ${name} (port ${port})` });
+  } catch (err) {
+    if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
+    try {
+      removeMind(name);
+    } catch (cleanupErr) {
+      log.error(`Failed to clean up registry for ${name}`, log.errorData(cleanupErr));
+    }
+    rmSync(tempDir, { recursive: true, force: true });
+    return c.json({ error: err instanceof Error ? err.message : "Failed to import mind" }, 500);
+  }
+}
+
 const createMindSchema = z.object({
   name: z.string(),
   template: z.string().optional(),
@@ -427,13 +570,25 @@ const app = new Hono<AuthEnv>()
       rmSync(composedDir, { recursive: true, force: true });
     }
   })
-  // Import mind from OpenClaw workspace — admin only
+  // Import mind from OpenClaw workspace or .volute archive — admin only
   .post("/import", requireAdmin, async (c) => {
-    let body: { workspacePath: string; name?: string; template?: string; sessionPath?: string };
+    let body: {
+      workspacePath?: string;
+      name?: string;
+      template?: string;
+      sessionPath?: string;
+      archivePath?: string;
+      manifest?: import("../../lib/archive.js").ExportManifest;
+    };
     try {
       body = await c.req.json();
     } catch {
       return c.json({ error: "Invalid JSON" }, 400);
+    }
+
+    // Route to archive import if archivePath + manifest are present
+    if (body.archivePath && body.manifest) {
+      return importFromArchive(c, body.archivePath, body.name, body.manifest);
     }
 
     const wsDir = body.workspacePath;
