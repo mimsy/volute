@@ -5,22 +5,16 @@ import { resolve } from "node:path";
 import { format } from "node:util";
 import { initConnectorManager } from "./lib/connector-manager.js";
 import log from "./lib/logger.js";
-import { ensureMailAddress, initMailPoller } from "./lib/mail-poller.js";
+import { initMailPoller } from "./lib/mail-poller.js";
 import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
 import { migrateDotVoluteDir, migrateMindState } from "./lib/migrate-state.js";
 import { initMindManager } from "./lib/mind-manager.js";
-import {
-  initRegistryCache,
-  mindDir,
-  readRegistry,
-  setMindRunning,
-  voluteHome,
-} from "./lib/registry.js";
+import { startMindFull } from "./lib/mind-service.js";
+import { initRegistryCache, readRegistry, setMindRunning, voluteHome } from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
 import { initScheduler } from "./lib/scheduler.js";
-import { DEFAULT_BUDGET_PERIOD_MINUTES, initTokenBudget } from "./lib/token-budget.js";
+import { initTokenBudget } from "./lib/token-budget.js";
 import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
-import { readVoluteConfig } from "./lib/volute-config.js";
 import { cleanExpiredSessions } from "./web/middleware/auth.js";
 import { startServer } from "./web/server.js";
 
@@ -111,36 +105,20 @@ export async function startDaemon(opts: {
     }
   }
 
-  // Start all minds that were previously running, then their connectors and schedules
+  // Start all minds that were previously running (parallel, concurrency limit of 5)
   const runningEntries = registry.filter((e) => e.running);
-  async function startMindFull(entry: (typeof registry)[number]) {
-    try {
-      await manager.startMind(entry.name);
-      // Seed minds only get the server — no connectors, schedules, or budget
-      if (entry.stage === "seed") return;
-      const dir = mindDir(entry.name);
-      await connectors.startConnectors(entry.name, dir, entry.port, port);
-      scheduler.loadSchedules(entry.name);
-      ensureMailAddress(entry.name).catch(() => {}); // logs internally
-      const config = readVoluteConfig(dir);
-      if (config?.tokenBudget) {
-        tokenBudget.setBudget(
-          entry.name,
-          config.tokenBudget,
-          config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
-        );
-      }
-    } catch (err) {
-      log.error(`failed to start mind ${entry.name}`, log.errorData(err));
-      setMindRunning(entry.name, false);
-    }
-  }
-
-  // Start minds in parallel (concurrency limit of 5)
   {
     const queue = [...runningEntries];
     const workers = Array.from({ length: Math.min(5, queue.length) }, async () => {
-      while (queue.length > 0) await startMindFull(queue.shift()!);
+      while (queue.length > 0) {
+        const entry = queue.shift()!;
+        try {
+          await startMindFull(entry.name);
+        } catch (err) {
+          log.error(`failed to start mind ${entry.name}`, log.errorData(err));
+          setMindRunning(entry.name, false);
+        }
+      }
     });
     await Promise.all(workers);
   }
@@ -154,7 +132,7 @@ export async function startDaemon(opts: {
         const { mindName, variant } = queue.shift()!;
         const compositeKey = `${mindName}@${variant.name}`;
         try {
-          await manager.startMind(compositeKey);
+          await startMindFull(compositeKey);
         } catch (err) {
           log.error(`failed to start variant ${compositeKey}`, log.errorData(err));
           setVariantRunning(mindName, variant.name, false);

@@ -44,12 +44,16 @@ import {
   wrapForIsolation,
 } from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
-import { ensureMailAddress } from "../../lib/mail-poller.js";
 import {
   publish as publishMindEvent,
   subscribe as subscribeMindEvent,
 } from "../../lib/mind-events.js";
 import { getMindManager } from "../../lib/mind-manager.js";
+// Re-export for route handlers — actual logic lives in mind-service.ts
+import {
+  startMindFull as startMindFullService,
+  stopMindFull as stopMindFullService,
+} from "../../lib/mind-service.js";
 import {
   getMindPromptDefaults,
   getPrompt,
@@ -68,7 +72,6 @@ import {
   stateDir,
   validateMindName,
 } from "../../lib/registry.js";
-import { getScheduler } from "../../lib/scheduler.js";
 import { conversations, mindHistory } from "../../lib/schema.js";
 import {
   applyInitFiles,
@@ -78,7 +81,7 @@ import {
   listFiles,
   type TemplateManifest,
 } from "../../lib/template.js";
-import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "../../lib/token-budget.js";
+import { getTokenBudget } from "../../lib/token-budget.js";
 import { getTypingMap } from "../../lib/typing.js";
 import {
   addVariant,
@@ -92,35 +95,6 @@ import {
 import { readVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
-/** Start mind server and (for base minds) connectors, schedules, and token budget. */
-async function startMindFull(
-  name: string,
-  baseName: string,
-  variantName: string | undefined,
-): Promise<void> {
-  await getMindManager().startMind(name);
-  if (variantName) return;
-
-  // Seed minds only get the server — no connectors, schedules, or budget
-  if (findMind(baseName)?.stage === "seed") return;
-
-  const dir = mindDir(baseName);
-  const entry = findMind(baseName)!;
-  await getConnectorManager().startConnectors(baseName, dir, entry.port, getDaemonPort());
-  getScheduler().loadSchedules(baseName);
-  ensureMailAddress(baseName).catch((err: unknown) =>
-    log.error(`failed to ensure mail address for ${baseName}`, log.errorData(err)),
-  );
-  const config = readVoluteConfig(dir);
-  if (config?.tokenBudget) {
-    getTokenBudget().setBudget(
-      baseName,
-      config.tokenBudget,
-      config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
-    );
-  }
-}
-
 function extractTextContent(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -130,12 +104,6 @@ function extractTextContent(content: unknown): string {
       .join("\n");
   }
   return JSON.stringify(content);
-}
-
-function getDaemonPort(): number | undefined {
-  const envPort = process.env.VOLUTE_DAEMON_PORT;
-  if (envPort) return parseInt(envPort, 10);
-  return undefined;
 }
 
 type ChannelStatus = {
@@ -736,7 +704,7 @@ const app = new Hono<AuthEnv>()
     }
 
     try {
-      await startMindFull(name, baseName, variantName);
+      await startMindFullService(name);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to start mind" }, 500);
@@ -776,11 +744,7 @@ const app = new Hono<AuthEnv>()
     try {
       // Stop running mind and connectors
       if (manager.isRunning(name)) {
-        if (!variantName) {
-          await getConnectorManager().stopConnectors(baseName);
-          getTokenBudget().removeBudget(baseName);
-        }
-        await manager.stopMind(name);
+        await stopMindFullService(name);
       }
 
       // Handle mind-initiated merge: perform merge operations directly
@@ -874,7 +838,7 @@ const app = new Hono<AuthEnv>()
         }
       }
 
-      await startMindFull(name, baseName, variantName);
+      await startMindFullService(name);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to restart mind" }, 500);
@@ -899,12 +863,7 @@ const app = new Hono<AuthEnv>()
     }
 
     try {
-      if (!variantName) {
-        await getConnectorManager().stopConnectors(baseName);
-        getScheduler().unloadSchedules(baseName);
-        getTokenBudget().removeBudget(baseName);
-      }
-      await manager.stopMind(name);
+      await stopMindFullService(name);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to stop mind" }, 500);
@@ -933,9 +892,7 @@ const app = new Hono<AuthEnv>()
     // Stop connectors and mind if running
     const manager = getMindManager();
     if (manager.isRunning(name)) {
-      await getConnectorManager().stopConnectors(name);
-      getTokenBudget().removeBudget(name);
-      await manager.stopMind(name);
+      await stopMindFullService(name);
     }
 
     removeAllVariants(name);
