@@ -26,6 +26,7 @@ import { consolidateMemory } from "../../lib/consolidate.js";
 import { addMessage } from "../../lib/conversations.js";
 import { convertSession } from "../../lib/convert-session.js";
 import { getDb } from "../../lib/db.js";
+import { getDeliveryManager } from "../../lib/delivery-manager.js";
 import { exec, gitExec } from "../../lib/exec.js";
 import {
   generateIdentity,
@@ -1081,7 +1082,7 @@ const app = new Hono<AuthEnv>()
       );
     }
   })
-  // Proxy message to mind
+  // Proxy message to mind — enriches, then delegates to delivery manager
   .post("/:name/message", async (c) => {
     const name = c.req.param("name");
     const [baseName, variantName] = name.split("@", 2);
@@ -1089,11 +1090,9 @@ const app = new Hono<AuthEnv>()
     const entry = findMind(baseName);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    let port = entry.port;
     if (variantName) {
       const variant = findVariant(baseName, variantName);
       if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
-      port = variant.port;
     }
 
     if (!getMindManager().isRunning(name)) {
@@ -1144,21 +1143,21 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Token budget exceeded — message queued for next period" }, 429);
     }
 
+    if (!parsed) return c.json({ error: "Invalid JSON" }, 400);
+
     // Enrich payload with currently-typing senders (exclude the receiving mind
     // and the message sender — they just sent a message, so they're not typing)
     const typingMap = getTypingMap();
-    const sender = (parsed?.sender as string) ?? "";
+    const sender = (parsed.sender as string) ?? "";
     if (sender) typingMap.delete(channel, sender);
     const currentlyTyping = typingMap.get(channel).filter((s) => s !== baseName);
-    let forwardBody = body;
-    if (parsed && currentlyTyping.length > 0) {
+    if (currentlyTyping.length > 0) {
       parsed.typing = currentlyTyping;
-      forwardBody = JSON.stringify(parsed);
     }
 
     // Sign message BEFORE content mutation (budget warnings, seed nudges)
     // so the signature covers the original content the sender intended
-    if (parsed && sender && findMind(sender)) {
+    if (sender && findMind(sender)) {
       try {
         const senderDir = mindDir(sender);
         const senderPrivateKey = getPrivateKey(senderDir);
@@ -1169,7 +1168,6 @@ const app = new Hono<AuthEnv>()
           parsed.signature = signMessage(senderPrivateKey, textContent, timestamp);
           parsed.signatureTimestamp = timestamp;
           parsed.signerFingerprint = getFingerprint(senderPublicKey);
-          forwardBody = JSON.stringify(parsed);
         }
       } catch (err) {
         log.warn(`failed to sign message from ${sender}`, { error: (err as Error).message });
@@ -1177,7 +1175,7 @@ const app = new Hono<AuthEnv>()
     }
 
     // Inject one-time budget warning (triggers once at >=80% per period)
-    if (budgetStatus === "warning" && parsed) {
+    if (budgetStatus === "warning") {
       const usage = budget.getUsage(baseName);
       const pct = usage?.percentUsed ?? 80;
       const warningText = `\n[System: Token budget is at ${pct}% — conserve tokens to avoid message queuing]`;
@@ -1187,12 +1185,11 @@ const app = new Hono<AuthEnv>()
         parsed.content = [...parsed.content, { type: "text", text: warningText }];
       }
       budget.acknowledgeWarning(baseName);
-      forwardBody = JSON.stringify(parsed);
     }
 
     // Nudge seed minds toward sprouting after extended conversation
     const seedEntry = findMind(baseName);
-    if (seedEntry?.stage === "seed" && parsed) {
+    if (seedEntry?.stage === "seed") {
       try {
         const countResult = await db
           .select({ count: sql<number>`count(*)` })
@@ -1207,33 +1204,36 @@ const app = new Hono<AuthEnv>()
           } else if (Array.isArray(parsed.content)) {
             parsed.content = [...parsed.content, { type: "text", text: nudge }];
           }
-          forwardBody = JSON.stringify(parsed);
         }
       } catch (err) {
         log.error(`failed to check seed message count for ${baseName}`, log.errorData(err));
       }
     }
 
-    typingMap.set(channel, baseName, { persistent: true });
-    const conversationId = (parsed?.conversationId as string) ?? null;
-    if (conversationId) typingMap.set(`volute:${conversationId}`, baseName, { persistent: true });
+    // Delegate to delivery manager for routing + delivery
+    const deliveryPayload: Record<string, unknown> = {
+      channel: parsed.channel as string,
+      sender: (parsed.sender as string) ?? null,
+      content: parsed.content,
+      conversationId: (parsed.conversationId as string) ?? undefined,
+      typing: parsed.typing as string[] | undefined,
+      platform: (parsed.platform as string) ?? undefined,
+      isDM: (parsed.isDM as boolean) ?? undefined,
+      participants: (parsed.participants as string[]) ?? undefined,
+      participantCount: (parsed.participantCount as number) ?? undefined,
+    };
+    // Pass through signature fields for verification by mind
+    if (parsed.signature) {
+      deliveryPayload.signature = parsed.signature;
+      deliveryPayload.signatureTimestamp = parsed.signatureTimestamp;
+      deliveryPayload.signerFingerprint = parsed.signerFingerprint;
+    }
 
-    // Fire-and-forget: POST to mind server, don't await response
-    fetch(`http://127.0.0.1:${port}/message`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: forwardBody,
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          const text = await res.text().catch(() => "");
-          log.error(`mind ${name} responded with ${res.status}: ${text}`);
-        }
-      })
+    // Fire-and-forget: delivery manager handles routing, timing, and HTTP delivery
+    getDeliveryManager()
+      .routeAndDeliver(name, deliveryPayload as any)
       .catch((err) => {
-        log.error(`mind ${name} unreachable on port ${port}`, log.errorData(err));
-        // Clear typing on error — mind won't send a done event
-        typingMap.delete(channel, baseName);
+        log.error(`delivery failed for ${name}`, log.errorData(err));
       });
 
     return c.json({ ok: true });
@@ -1245,6 +1245,21 @@ const app = new Hono<AuthEnv>()
     const usage = getTokenBudget().getUsage(baseName);
     if (!usage) return c.json({ error: "No budget configured" }, 404);
     return c.json(usage);
+  })
+  // Get pending/gated delivery messages
+  .get("/:name/delivery/pending", async (c) => {
+    const name = c.req.param("name");
+    const [baseName] = name.split("@", 2);
+    try {
+      const pending = await getDeliveryManager().getPending(baseName);
+      return c.json(pending);
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("not initialized")) {
+        return c.json([]);
+      }
+      log.error(`failed to get pending deliveries for ${baseName}`, log.errorData(err));
+      return c.json({ error: "Failed to retrieve pending messages" }, 500);
+    }
   })
   // Receive events from mind, persist to mind_history, publish to pub-sub
   .post("/:name/events", async (c) => {
@@ -1297,12 +1312,26 @@ const app = new Hono<AuthEnv>()
       metadata: body.metadata,
     });
 
-    // Clear typing indicator when mind finishes processing
+    // Clear typing on first outbound event for a channel (text, outbound)
+    // This gives faster feedback than waiting for done
+    if ((body.type === "text" || body.type === "outbound") && body.channel) {
+      getTypingMap().delete(body.channel, baseName);
+    }
+
+    // Clear all typing + notify delivery manager when mind finishes processing
     if (body.type === "done") {
       if (body.channel) {
         getTypingMap().delete(body.channel, baseName);
       } else {
         getTypingMap().deleteSender(baseName);
+      }
+      // Notify delivery manager of session completion
+      try {
+        getDeliveryManager().sessionDone(baseName, body.session);
+      } catch (err) {
+        if (!(err instanceof Error && err.message.includes("not initialized"))) {
+          log.error(`delivery manager sessionDone failed for ${baseName}`, log.errorData(err));
+        }
       }
     }
 

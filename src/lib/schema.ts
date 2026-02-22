@@ -94,6 +94,24 @@ export const sharedSkills = sqliteTable("shared_skills", {
   updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });
 
+export const deliveryQueue = sqliteTable(
+  "delivery_queue",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    mind: text("mind").notNull(),
+    session: text("session").notNull(),
+    channel: text("channel"),
+    sender: text("sender"),
+    status: text("status").notNull().default("pending"),
+    payload: text("payload").notNull(),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    index("idx_delivery_queue_mind_session").on(table.mind, table.session),
+    index("idx_delivery_queue_mind_status").on(table.mind, table.status),
+  ],
+);
+
 export const messages = sqliteTable(
   "messages",
   {

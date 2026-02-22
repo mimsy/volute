@@ -25,6 +25,9 @@ export async function run(args: string[]) {
     case "invite":
       await inviteChannel(args.slice(1));
       break;
+    case "pending":
+      await pendingChannel(args.slice(1));
+      break;
     case "--help":
     case "-h":
     case undefined:
@@ -43,7 +46,8 @@ function printUsage() {
   volute channel users <platform> [--mind <name>]
   volute channel create <platform> --participants user1,user2 [--name "..."] [--mind <name>]
   volute channel typing <channel-uri> [--mind <name>]
-  volute channel invite <channel-name> <username>`);
+  volute channel invite <channel-name> <username>
+  volute channel pending [--mind <name>]`);
 }
 
 async function readChannel(args: string[]) {
@@ -237,6 +241,43 @@ async function inviteChannel(args: string[]) {
     process.exit(1);
   }
   console.log(`Invited ${username} to #${channelName}`);
+}
+
+async function pendingChannel(args: string[]) {
+  const { flags } = parseArgs(args, {
+    mind: { type: "string" },
+  });
+
+  const mindName = resolveMindName(flags);
+
+  const res = await daemonFetch(`/api/minds/${encodeURIComponent(mindName)}/delivery/pending`);
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    console.error(body.error ?? `Server responded with ${res.status}`);
+    process.exit(1);
+  }
+
+  const pending = (await res.json()) as {
+    channel: string | null;
+    sender: string | null;
+    count: number;
+    firstSeen: string;
+    preview: string;
+  }[];
+
+  if (pending.length === 0) {
+    console.log("No pending messages.");
+    return;
+  }
+
+  for (const entry of pending) {
+    console.log(
+      `${(entry.channel ?? "unknown").padEnd(30)}  ${String(entry.count).padEnd(6)}  ${entry.sender ?? "unknown"}`,
+    );
+    console.log(`  First seen: ${entry.firstSeen}`);
+    console.log(`  Preview: ${entry.preview}`);
+    console.log();
+  }
 }
 
 function parseUri(uri: string): { platform: string; channelId: string } {

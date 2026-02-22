@@ -21,6 +21,13 @@ function extractText(content: VoluteContentPart[] | string): string {
     .join("\n");
 }
 
+/** Normalize content to VoluteContentPart[] — connectors may send plain strings. */
+function normalizeContent(content: unknown): VoluteContentPart[] {
+  if (Array.isArray(content)) return content as VoluteContentPart[];
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  return [{ type: "text", text: JSON.stringify(content) }];
+}
+
 /** Verify an Ed25519 signature against a public key */
 function verifySignature(
   publicKeyPem: string,
@@ -99,7 +106,22 @@ export function createVoluteServer(options: {
         const verified = await verifyRequest(body);
         if (verified !== undefined) body.verified = verified;
 
-        router.route(body.content, body);
+        // Normalize content — connectors may send plain strings
+        body.content = normalizeContent(body.content);
+
+        // Handle batch payloads from delivery manager
+        if ((body as any).batch) {
+          const batch = (body as any).batch as {
+            channels: Record<string, any[]>;
+          };
+          router.dispatchBatch(batch, body.session ?? "main", body);
+        } else if (body.session) {
+          // Pre-routed by daemon delivery manager — dispatch directly
+          router.dispatch(body.content, body.session, body);
+        } else {
+          // Legacy: local routing (for minds running with old daemon)
+          router.route(body.content, body);
+        }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true }));
       } catch (err) {

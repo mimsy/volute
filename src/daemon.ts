@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { format } from "node:util";
 import { initConnectorManager } from "./lib/connector-manager.js";
+import { initDeliveryManager } from "./lib/delivery-manager.js";
 import log from "./lib/logger.js";
 import { initMailPoller } from "./lib/mail-poller.js";
 import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
@@ -83,7 +84,8 @@ export async function startDaemon(opts: {
     mode: 0o644,
   });
 
-  // Start mind manager, connector manager, and scheduler
+  // Start delivery manager, mind manager, connector manager, and scheduler
+  const delivery = initDeliveryManager();
   const manager = initMindManager();
   manager.loadCrashAttempts();
   const connectors = initConnectorManager();
@@ -142,6 +144,11 @@ export async function startDaemon(opts: {
     await Promise.all(workers);
   }
 
+  // Restore delivery queue from DB (non-blocking)
+  delivery.restoreFromDb().catch((err) => {
+    log.warn("failed to restore delivery queue", log.errorData(err));
+  });
+
   // Clean up expired sessions (non-blocking)
   cleanExpiredSessions().catch(() => {});
 
@@ -176,6 +183,7 @@ export async function startDaemon(opts: {
     scheduler.saveState();
     mailPoller.stop();
     tokenBudget.stop();
+    delivery.dispose();
     await connectors.stopAll();
     await manager.stopAll();
     manager.clearCrashAttempts();
