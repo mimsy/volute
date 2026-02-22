@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   cpSync,
   existsSync,
@@ -8,14 +9,21 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "./db.js";
 import { exec, gitExec } from "./exec.js";
+import log from "./logger.js";
 import { voluteHome } from "./registry.js";
 import { sharedSkills } from "./schema.js";
 
 const VALID_SKILL_ID = /^[a-zA-Z0-9_-]+$/;
+
+/** Skills installed for seed minds (pre-sprout) */
+export const SEED_SKILLS = ["orientation", "memory"];
+
+/** Skills installed for fully sprouted minds */
+export const STANDARD_SKILLS = ["volute-mind", "memory", "sessions"];
 
 function validateSkillId(id: string): void {
   if (!id || !VALID_SKILL_ID.test(id)) {
@@ -425,4 +433,70 @@ export function listFilesRecursive(dir: string, prefix = ""): string[] {
     }
   }
   return results;
+}
+
+// --- Built-in skill sync ---
+
+/**
+ * Find the skills/ root directory by walking up from the calling module's location.
+ * Same pattern as findTemplatesRoot() in template.ts.
+ */
+export function findSkillsRoot(): string {
+  let dir = dirname(new URL(import.meta.url).pathname);
+  for (let i = 0; i < 5; i++) {
+    const candidate = resolve(dir, "skills");
+    if (existsSync(candidate) && readdirSync(candidate).length > 0) return candidate;
+    dir = dirname(dir);
+  }
+  throw new Error("Skills directory not found");
+}
+
+/**
+ * SHA-256 hash of all file contents in a directory for change detection.
+ */
+export function hashSkillDir(dir: string): string {
+  const hash = createHash("sha256");
+  const files = listFilesRecursive(dir).sort();
+  for (const file of files) {
+    hash.update(file);
+    hash.update(readFileSync(join(dir, file)));
+  }
+  return hash.digest("hex");
+}
+
+/**
+ * Sync built-in skills from the repo's skills/ directory into the shared pool.
+ * Only imports when content has changed (via hash comparison).
+ */
+export async function syncBuiltinSkills(): Promise<void> {
+  let skillsRoot: string;
+  try {
+    skillsRoot = findSkillsRoot();
+  } catch {
+    log.warn("built-in skills directory not found, skipping sync");
+    return;
+  }
+
+  const entries = readdirSync(skillsRoot, { withFileTypes: true }).filter((e) => e.isDirectory());
+
+  for (const entry of entries) {
+    const sourceDir = join(skillsRoot, entry.name);
+    if (!existsSync(join(sourceDir, "SKILL.md"))) continue;
+
+    try {
+      const sourceHash = hashSkillDir(sourceDir);
+
+      // Check if shared pool already has this version
+      const destDir = join(sharedSkillsDir(), entry.name);
+      if (existsSync(destDir)) {
+        const destHash = hashSkillDir(destDir);
+        if (sourceHash === destHash) continue;
+      }
+
+      await importSkillFromDir(sourceDir, "volute");
+      log.info(`synced built-in skill: ${entry.name}`);
+    } catch (err) {
+      log.error(`failed to sync built-in skill: ${entry.name}`, log.errorData(err));
+    }
+  }
 }

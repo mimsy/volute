@@ -48,11 +48,8 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, ".init/.config/scripts/session-reader.ts")));
       assert.ok(existsSync(resolve(composedDir, ".init/.claude/settings.json")));
 
-      // Skills mapped to skillsDir
-      assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "volute-mind/SKILL.md")));
-      assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "memory/SKILL.md")));
-      assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "sessions/SKILL.md")));
-      assert.ok(!existsSync(resolve(composedDir, "_skills")), "_skills should be removed");
+      // Skills no longer bundled in template (managed via shared pool)
+      assert.ok(!existsSync(resolve(composedDir, "_skills")), "_skills should not exist");
 
       // Manifest should be removed from composed output
       assert.ok(!existsSync(resolve(composedDir, "volute-template.json")));
@@ -77,7 +74,7 @@ describe("template composition", () => {
   });
 
   it("composes pi template with all expected files", () => {
-    const { composedDir, manifest } = composeTemplate(templatesRoot, "pi");
+    const { composedDir } = composeTemplate(templatesRoot, "pi");
     try {
       // Base files
       assert.ok(existsSync(resolve(composedDir, ".gitignore")));
@@ -117,10 +114,8 @@ describe("template composition", () => {
       // Pi overrides home/.config/config.json.tmpl with its own default model
       assert.ok(existsSync(resolve(composedDir, "home/.config/config.json.tmpl")));
 
-      // Skills mapped to skillsDir
-      assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "volute-mind/SKILL.md")));
-      assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "memory/SKILL.md")));
-      assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "sessions/SKILL.md")));
+      // Skills no longer bundled in template (managed via shared pool)
+      assert.ok(!existsSync(resolve(composedDir, "_skills")), "_skills should not exist");
     } finally {
       rmSync(composedDir, { recursive: true, force: true });
     }

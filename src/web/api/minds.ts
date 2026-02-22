@@ -76,6 +76,7 @@ import {
 } from "../../lib/registry.js";
 import { conversations, mindHistory } from "../../lib/schema.js";
 import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
+import { installSkill, SEED_SKILLS, STANDARD_SKILLS } from "../../lib/skills.js";
 import {
   applyInitFiles,
   composeTemplate,
@@ -430,6 +431,7 @@ const createMindSchema = z.object({
   description: z.string().optional(),
   model: z.string().optional(),
   seedSoul: z.string().optional(),
+  skills: z.array(z.string()).optional(),
 });
 
 // Create mind — admin only
@@ -523,12 +525,17 @@ const app = new Hono<AuthEnv>()
           ? substitute(seedSoulRaw, { name, description: descLine })
           : seedSoulRaw;
         writeFileSync(resolve(dest, "home/SOUL.md"), seedSoul);
+      }
 
-        // Remove full skills, keep only orientation
-        const skillsDir = resolve(dest, manifest.skillsDir);
-        for (const skill of ["volute-mind", "memory", "sessions"]) {
-          const skillPath = resolve(skillsDir, skill);
-          if (existsSync(skillPath)) rmSync(skillPath, { recursive: true, force: true });
+      // Install skills from shared pool (after git init so installSkill can commit)
+      const skillSet = body.skills ?? (body.stage === "seed" ? SEED_SKILLS : STANDARD_SKILLS);
+      const skillWarnings: string[] = [];
+      for (const skillId of skillSet) {
+        try {
+          await installSkill(name, dest, skillId);
+        } catch (err) {
+          log.error(`failed to install skill ${skillId} for ${name}`, log.errorData(err));
+          skillWarnings.push(`Failed to install skill: ${skillId}`);
         }
       }
 
@@ -556,6 +563,7 @@ const app = new Hono<AuthEnv>()
         stage: body.stage ?? "sprouted",
         message: `Created mind: ${name} (port ${port})`,
         ...(gitWarning && { warning: gitWarning }),
+        ...(skillWarnings.length > 0 && { skillWarnings }),
       });
     } catch (err) {
       // Clean up partial state

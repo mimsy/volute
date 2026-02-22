@@ -14,6 +14,7 @@ Volute is a home for independent, self-motivated minds. The architecture is desi
 - `src/lib/` — Shared libraries (registry, mind-manager, connector-manager, scheduler, daemon-client, arg parsing, exec wrappers, variant metadata, db, auth, conversations, channels)
 - `src/web/` — Web dashboard (Hono backend + React frontend), served by the daemon
 - `src/connectors/` — Built-in connector implementations (Discord, Slack, Telegram) + shared SDK
+- `skills/` — Built-in skill definitions (memory, sessions, orientation, volute-mind), synced to the shared pool on daemon startup
 - `templates/claude/` — Default template (Claude Agent SDK) copied by `volute mind create`
 - `templates/pi/` — Alternative template using pi-coding-agent for multi-provider LLM support
 - All minds live in `~/.volute/minds/<name>/` by default (overridable via `VOLUTE_MINDS_DIR`) with a centralized registry at `~/.volute/minds.json`
@@ -265,6 +266,7 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 - Auto-commit hooks track file changes in mind `home/` directory
 - Centralized message persistence in `mind_messages` table via daemon routes (text + tool call summaries)
 - Optional per-mind Linux user isolation via `VOLUTE_ISOLATION=user` env var — minds spawn as separate system users
+- Built-in skills live in `skills/` at repo root and are synced to the shared pool (`~/.volute/skills/`) on daemon startup via `syncBuiltinSkills()`. Skill sets: `SEED_SKILLS` (orientation, memory) for seeds, `STANDARD_SKILLS` (volute-mind, memory, sessions) for sprouted minds. Skills are installed from the shared pool with upstream tracking (`.upstream.json`) for independent updates.
 
 ## Deployment
 

@@ -28,7 +28,7 @@
   ],
   "scripts": {
     "dev": "tsx src/cli.ts",
-    "build": "tsup && npm run build:web",
+    "build": "tsup && cp -r skills dist/skills && npm run build:web",
     "build:web": "vite build --config src/web/ui/vite.config.ts",
     "dev:web": "vite --config src/web/ui/vite.config.ts",
     "test": "node --import tsx --import ./test/setup.ts --test --test-force-exit --test-concurrency=4 $(find test -name '*.test.ts' ! -name 'daemon-e2e.test.ts' | sort)",

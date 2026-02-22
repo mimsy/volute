@@ -16,6 +16,7 @@ import {
   publishSkill,
   removeSharedSkill,
   sharedSkillsDir,
+  syncBuiltinSkills,
   uninstallSkill,
   updateSkill,
 } from "../src/lib/skills.js";
@@ -396,5 +397,65 @@ describe("mind skill operations", () => {
 
     // Local changes to extra.md should be preserved
     assert.ok(readFileSync(localExtra, "utf-8").includes("My local changes"));
+  });
+});
+
+describe("syncBuiltinSkills", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  it("syncs built-in skills with author 'volute'", async () => {
+    await syncBuiltinSkills();
+
+    const skills = await listSharedSkills();
+    assert.ok(skills.length > 0, "should have synced at least one skill");
+
+    // All built-in skills should have author "volute"
+    for (const skill of skills) {
+      assert.equal(skill.author, "volute");
+    }
+
+    // Check specific known skills exist
+    const ids = skills.map((s) => s.id).sort();
+    assert.ok(ids.includes("memory"), "should include memory skill");
+    assert.ok(ids.includes("orientation"), "should include orientation skill");
+    assert.ok(ids.includes("sessions"), "should include sessions skill");
+    assert.ok(ids.includes("volute-mind"), "should include volute-mind skill");
+
+    // Verify files were copied to shared dir
+    assert.ok(existsSync(join(sharedSkillsDir(), "memory", "SKILL.md")));
+    assert.ok(existsSync(join(sharedSkillsDir(), "orientation", "SKILL.md")));
+  });
+
+  it("does not bump version on repeated sync with same content", async () => {
+    await syncBuiltinSkills();
+
+    const first = await getSharedSkill("memory");
+    assert.ok(first);
+    const firstVersion = first.version;
+
+    // Sync again — content unchanged, version should stay the same
+    await syncBuiltinSkills();
+
+    const second = await getSharedSkill("memory");
+    assert.ok(second);
+    assert.equal(second.version, firstVersion, "version should not bump when content is unchanged");
+  });
+
+  it("bumps version when content changes", async () => {
+    await syncBuiltinSkills();
+
+    const first = await getSharedSkill("memory");
+    assert.ok(first);
+
+    // Manually modify the shared copy to make hashes differ on next sync
+    const sharedSkillMd = join(sharedSkillsDir(), "memory", "SKILL.md");
+    writeFileSync(sharedSkillMd, "modified content");
+
+    await syncBuiltinSkills();
+
+    const second = await getSharedSkill("memory");
+    assert.ok(second);
+    assert.equal(second.version, first.version + 1, "version should bump when content differs");
   });
 });
