@@ -327,7 +327,13 @@ export async function fetchSystemInfo(): Promise<{ system: string | null }> {
 
 export async function createSeedMind(
   name: string,
-  opts?: { description?: string; template?: string; model?: string; seedSoul?: string },
+  opts?: {
+    description?: string;
+    template?: string;
+    model?: string;
+    seedSoul?: string;
+    skills?: string[];
+  },
 ): Promise<{ name: string; port: number }> {
   const res = await client.api.minds.$post({
     json: {
@@ -337,6 +343,7 @@ export async function createSeedMind(
       template: opts?.template,
       model: opts?.model,
       seedSoul: opts?.seedSoul,
+      skills: opts?.skills,
     },
   });
   if (!res.ok) {

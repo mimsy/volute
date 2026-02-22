@@ -15,7 +15,6 @@ import { dirname, join, relative, resolve } from "node:path";
 export type TemplateManifest = {
   rename: Record<string, string>;
   substitute: string[];
-  skillsDir: string;
 };
 
 /**
@@ -89,15 +88,6 @@ export function composeTemplate(
     process.exit(1);
   }
   const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as TemplateManifest;
-
-  // Map _skills/ → skillsDir
-  const skillsSrc = resolve(composedDir, "_skills");
-  if (existsSync(skillsSrc)) {
-    const skillsDest = resolve(composedDir, manifest.skillsDir);
-    mkdirSync(skillsDest, { recursive: true });
-    cpSync(skillsSrc, skillsDest, { recursive: true });
-    rmSync(skillsSrc, { recursive: true, force: true });
-  }
 
   // Remove manifest from composed output
   rmSync(manifestPath);

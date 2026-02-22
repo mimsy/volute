@@ -1,7 +1,15 @@
 <script lang="ts">
 import { onMount } from "svelte";
-import { createSeedMind, fetchPrompts, startMind } from "../lib/api";
+import {
+  createSeedMind,
+  fetchPrompts,
+  fetchSharedSkills,
+  type SharedSkill,
+  startMind,
+} from "../lib/api";
 import Modal from "./Modal.svelte";
+
+const SEED_DEFAULTS = ["orientation", "memory"];
 
 let { onClose, onCreated }: { onClose: () => void; onCreated: (name: string) => void } = $props();
 
@@ -15,6 +23,8 @@ let nameInput: HTMLInputElement;
 let showAdvanced = $state(false);
 let seedSoul = $state("");
 let defaultSeedSoul = $state("");
+let sharedSkills = $state<SharedSkill[]>([]);
+let selectedSkills = $state<Set<string>>(new Set(SEED_DEFAULTS));
 
 onMount(() => {
   nameInput?.focus();
@@ -29,7 +39,24 @@ onMount(() => {
     .catch((e) => {
       console.error("Failed to load prompt templates:", e);
     });
+  fetchSharedSkills()
+    .then((skills) => {
+      sharedSkills = skills;
+    })
+    .catch((e) => {
+      console.error("Failed to load shared skills:", e);
+    });
 });
+
+function toggleSkill(id: string) {
+  const next = new Set(selectedSkills);
+  if (next.has(id)) {
+    next.delete(id);
+  } else {
+    next.add(id);
+  }
+  selectedSkills = next;
+}
 
 async function handleSubmit() {
   const trimmed = name.trim();
@@ -38,11 +65,13 @@ async function handleSubmit() {
   error = "";
   try {
     const customSoul = showAdvanced && seedSoul !== defaultSeedSoul ? seedSoul : undefined;
+    const customSkills = showAdvanced ? [...selectedSkills] : undefined;
     await createSeedMind(trimmed, {
       description: description.trim() || undefined,
       template,
       model: model.trim() || undefined,
       seedSoul: customSoul,
+      skills: customSkills,
     });
     await startMind(trimmed);
     onCreated(trimmed);
@@ -111,6 +140,24 @@ async function handleSubmit() {
         ></textarea>
         <span class="hint">Variables: {"${name}"}, {"${description}"}</span>
       </label>
+
+      {#if sharedSkills.length > 0}
+        <div class="field">
+          <span class="label">Skills</span>
+          <div class="skill-list">
+            {#each sharedSkills as skill}
+              <label class="skill-item">
+                <input
+                  type="checkbox"
+                  checked={selectedSkills.has(skill.id)}
+                  onchange={() => toggleSkill(skill.id)}
+                />
+                <span class="skill-name">{skill.id}</span>
+              </label>
+            {/each}
+          </div>
+        </div>
+      {/if}
     {/if}
 
     {#if error}
@@ -232,6 +279,25 @@ async function handleSubmit() {
   .hint {
     color: var(--text-2);
     font-size: 10px;
+    font-family: var(--mono);
+  }
+
+  .skill-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .skill-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-1);
+    cursor: pointer;
+  }
+
+  .skill-name {
     font-family: var(--mono);
   }
 </style>

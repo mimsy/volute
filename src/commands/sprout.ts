@@ -1,7 +1,7 @@
-import { cpSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { findMind, mindDir } from "../lib/registry.js";
-import { composeTemplate, findTemplatesRoot } from "../lib/template.js";
+import { getSharedSkill, installSkill, STANDARD_SKILLS, uninstallSkill } from "../lib/skills.js";
 
 const ORIENTATION_MARKER = "You don't have a soul yet";
 
@@ -46,28 +46,23 @@ export async function run(_args: string[]) {
     process.exit(1);
   }
 
-  // Install full skills: compose template, copy skills, remove orientation
-  const templatesRoot = findTemplatesRoot();
-  const { composedDir, manifest } = composeTemplate(templatesRoot, "claude");
-  try {
-    const skillsDir = resolve(dir, manifest.skillsDir);
-    const composedSkillsDir = resolve(composedDir, manifest.skillsDir);
-
-    // Copy full skills from template (must match the skill list in minds.ts seed creation)
-    for (const skill of ["volute-mind", "memory", "sessions"]) {
-      const src = resolve(composedSkillsDir, skill);
-      if (existsSync(src)) {
-        cpSync(src, resolve(skillsDir, skill), { recursive: true });
-      }
+  // Install standard skills from shared pool, remove orientation
+  for (const skillId of STANDARD_SKILLS) {
+    const shared = await getSharedSkill(skillId);
+    if (!shared) {
+      console.error(`Shared skill not found: ${skillId} — run 'volute up' to sync built-in skills`);
+      continue;
     }
-
-    // Remove orientation skill
-    const orientationPath = resolve(skillsDir, "orientation");
-    if (existsSync(orientationPath)) {
-      rmSync(orientationPath, { recursive: true, force: true });
+    const skillDir = resolve(dir, "home", ".claude", "skills", skillId);
+    if (!existsSync(skillDir)) {
+      await installSkill(mindName, dir, skillId);
     }
-  } finally {
-    rmSync(composedDir, { recursive: true, force: true });
+  }
+
+  // Remove orientation skill
+  const orientationDir = resolve(dir, "home", ".claude", "skills", "orientation");
+  if (existsSync(orientationDir)) {
+    await uninstallSkill(mindName, dir, "orientation");
   }
 
   // Flip stage via daemon API (mind user can't write to shared minds.json directly)

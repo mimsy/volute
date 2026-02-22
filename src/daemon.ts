@@ -15,6 +15,7 @@ import { initRegistryCache, readRegistry, setMindRunning, voluteHome } from "./l
 import { RotatingLog } from "./lib/rotating-log.js";
 import { initScheduler } from "./lib/scheduler.js";
 import { ensureSharedRepo } from "./lib/shared.js";
+import { syncBuiltinSkills } from "./lib/skills.js";
 import { initTokenBudget } from "./lib/token-budget.js";
 import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
 import { cleanExpiredSessions } from "./web/middleware/auth.js";
@@ -62,6 +63,13 @@ export async function startDaemon(opts: {
 
   // Load registry into memory for fast reads within the daemon
   initRegistryCache();
+
+  // Sync built-in skills into the shared pool (non-fatal)
+  try {
+    await syncBuiltinSkills();
+  } catch (err) {
+    log.warn("failed to sync built-in skills", log.errorData(err));
+  }
 
   // Use existing token if set (for testing), otherwise generate one
   const token = process.env.VOLUTE_DAEMON_TOKEN || randomBytes(32).toString("hex");
