@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { Hono } from "hono";
-import { createUser } from "../src/lib/auth.js";
-import { createChannel, deleteConversation, getParticipants } from "../src/lib/conversations.js";
+import { createUser, getOrCreateMindUser } from "../src/lib/auth.js";
+import {
+  createChannel,
+  deleteConversation,
+  getMessages,
+  getParticipants,
+} from "../src/lib/conversations.js";
 import { getDb } from "../src/lib/db.js";
 import {
   conversationParticipants,
@@ -231,6 +236,120 @@ describe("web volute channels routes", () => {
     assert.ok(Array.isArray(body));
     assert.equal(body.length, 1);
     assert.equal(body[0].username, "ch-admin");
+
+    await deleteConversation(ch.id);
+  });
+
+  it("POST /:name/invite — invites user to channel", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const ch = await createChannel("team", userId);
+    const invitee = await createUser("bob", "pass");
+
+    const res = await app.request("/api/volute/channels/team/invite", {
+      method: "POST",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ username: "bob" }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+
+    // Verify bob is now a participant
+    const participants = await getParticipants(ch.id);
+    assert.ok(participants.some((p) => p.userId === invitee.id));
+
+    // Verify system message was posted
+    const msgs = await getMessages(ch.id);
+    assert.ok(
+      msgs.some((m) => m.role === "system" && JSON.stringify(m.content).includes("invited bob")),
+    );
+
+    await deleteConversation(ch.id);
+  });
+
+  it("POST /:name/invite — invites mind user to channel", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const ch = await createChannel("minds-ch", userId);
+    // Create a mind user directly (simulating a registered mind)
+    const mindUser = await getOrCreateMindUser("test-mind");
+
+    const res = await app.request("/api/volute/channels/minds-ch/invite", {
+      method: "POST",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ username: "test-mind" }),
+    });
+    assert.equal(res.status, 200);
+
+    const participants = await getParticipants(ch.id);
+    assert.ok(participants.some((p) => p.userId === mindUser.id));
+
+    await deleteConversation(ch.id);
+  });
+
+  it("POST /:name/invite — 409 when already a member", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    // Create channel with admin already as member
+    const ch = await createChannel("solo", userId);
+
+    const res = await app.request("/api/volute/channels/solo/invite", {
+      method: "POST",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ username: "ch-admin" }),
+    });
+    assert.equal(res.status, 409);
+    const body = await res.json();
+    assert.equal(body.error, "Already a member");
+
+    await deleteConversation(ch.id);
+  });
+
+  it("POST /:name/invite — 404 for nonexistent channel", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const res = await app.request("/api/volute/channels/nope/invite", {
+      method: "POST",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ username: "someone" }),
+    });
+    assert.equal(res.status, 404);
+  });
+
+  it("POST /:name/invite — 404 for nonexistent user", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const ch = await createChannel("inv-test", userId);
+
+    const res = await app.request("/api/volute/channels/inv-test/invite", {
+      method: "POST",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ username: "ghost" }),
+    });
+    assert.equal(res.status, 404);
+    const body = await res.json();
+    assert.equal(body.error, "User not found");
 
     await deleteConversation(ch.id);
   });

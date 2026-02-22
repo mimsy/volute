@@ -43,6 +43,12 @@ let chatConvType = $derived.by(() => {
 let conversationId = $derived(
   selection.kind === "conversation" ? (selection.conversationId ?? null) : null,
 );
+
+let chatChannelName = $derived.by(() => {
+  if (selection.kind !== "conversation") return "";
+  const conv = conversations.find((c) => c.id === selection.conversationId);
+  return conv?.type === "channel" ? (conv.name ?? "") : "";
+});
 </script>
 
 <div class="main-frame">
@@ -59,6 +65,7 @@ let conversationId = $derived(
         {onConversationId}
         stage={chatMind?.stage}
         convType={chatConvType}
+        channelName={chatChannelName}
       />
     </div>
   {:else}
