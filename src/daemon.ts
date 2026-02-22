@@ -14,6 +14,7 @@ import { startMindFull } from "./lib/mind-service.js";
 import { initRegistryCache, readRegistry, setMindRunning, voluteHome } from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
 import { initScheduler } from "./lib/scheduler.js";
+import { ensureSharedRepo } from "./lib/shared.js";
 import { initTokenBudget } from "./lib/token-budget.js";
 import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
 import { cleanExpiredSessions } from "./web/middleware/auth.js";
@@ -51,6 +52,9 @@ export async function startDaemon(opts: {
 
   // One-time migration: agents.json → minds.json, agents/ → minds/
   migrateAgentsToMinds();
+
+  // Initialize shared repo for inter-mind collaboration
+  await ensureSharedRepo();
 
   // Load registry into memory for fast reads within the daemon
   initRegistryCache();

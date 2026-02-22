@@ -3,6 +3,7 @@ import { relative, resolve } from "node:path";
 import { parseArgs } from "../../lib/parse-args.js";
 import { mindDir } from "../../lib/registry.js";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";
+import { sharedDir } from "../../lib/shared.js";
 import { readSystemsConfig } from "../../lib/systems-config.js";
 import { systemsFetch } from "../../lib/systems-fetch.js";
 
@@ -17,8 +18,18 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  const mindName = resolveMindName(flags);
-  const pagesDir = resolve(mindDir(mindName), "home", "pages");
+  // If no mind specified, publish system-level pages from the shared repo
+  const hasMind = flags.mind || process.env.VOLUTE_MIND;
+  let mindName: string;
+  let pagesDir: string;
+
+  if (hasMind) {
+    mindName = resolveMindName(flags);
+    pagesDir = resolve(mindDir(mindName), "home", "pages");
+  } else {
+    mindName = "system";
+    pagesDir = resolve(sharedDir(), "pages");
+  }
 
   if (!existsSync(pagesDir)) {
     console.error(`No pages/ directory found at ${pagesDir}`);

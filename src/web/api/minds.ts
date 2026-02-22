@@ -75,6 +75,7 @@ import {
   validateMindName,
 } from "../../lib/registry.js";
 import { conversations, mindHistory } from "../../lib/schema.js";
+import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
 import {
   applyInitFiles,
   composeTemplate,
@@ -357,6 +358,13 @@ const app = new Hono<AuthEnv>()
           "Git setup failed — variants and upgrades won't be available until git is initialized.";
       }
 
+      // Add shared worktree (non-fatal — mind works fine without it)
+      try {
+        await addSharedWorktree(name, dest);
+      } catch (err) {
+        log.warn(`failed to add shared worktree for ${name}`, log.errorData(err));
+      }
+
       // Fix ownership after root git/file operations
       chownMindDir(dest, name);
 
@@ -538,6 +546,13 @@ const app = new Hono<AuthEnv>()
 
       // Import connectors
       importOpenClawConnectors(name, dest);
+
+      // Add shared worktree (non-fatal)
+      try {
+        await addSharedWorktree(name, dest);
+      } catch (err) {
+        log.warn(`failed to add shared worktree for ${name}`, log.errorData(err));
+      }
 
       // Fix ownership after root git/file operations
       chownMindDir(dest, name);
@@ -887,6 +902,14 @@ const app = new Hono<AuthEnv>()
     }
 
     removeAllVariants(name);
+
+    // Clean up shared worktree (best effort)
+    try {
+      await removeSharedWorktree(name, dir);
+    } catch {
+      // non-fatal
+    }
+
     removeMind(name);
     await deleteMindUser(name);
 
@@ -1009,6 +1032,18 @@ const app = new Hono<AuthEnv>()
       await gitExec(["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
     } catch {
       // branch doesn't exist
+    }
+
+    // Retroactively add shared worktree if missing (pre-feature minds)
+    if (!existsSync(resolve(dir, "home", "shared"))) {
+      try {
+        await addSharedWorktree(mindName, dir);
+      } catch (err) {
+        log.warn(
+          `failed to add shared worktree during upgrade for ${mindName}`,
+          log.errorData(err),
+        );
+      }
     }
 
     // Update template branch
