@@ -112,12 +112,12 @@ export async function startDaemon(opts: {
   }
 
   // Start all minds that were previously running, then their connectors and schedules
-  for (const entry of registry) {
-    if (!entry.running) continue;
+  const runningEntries = registry.filter((e) => e.running);
+  async function startMindFull(entry: (typeof registry)[number]) {
     try {
       await manager.startMind(entry.name);
       // Seed minds only get the server — no connectors, schedules, or budget
-      if (entry.stage === "seed") continue;
+      if (entry.stage === "seed") return;
       const dir = mindDir(entry.name);
       await connectors.startConnectors(entry.name, dir, entry.port, port);
       scheduler.loadSchedules(entry.name);
@@ -136,16 +136,32 @@ export async function startDaemon(opts: {
     }
   }
 
-  // Restore running variants
+  // Start minds in parallel (concurrency limit of 5)
+  {
+    const queue = [...runningEntries];
+    const workers = Array.from({ length: Math.min(5, queue.length) }, async () => {
+      while (queue.length > 0) await startMindFull(queue.shift()!);
+    });
+    await Promise.all(workers);
+  }
+
+  // Restore running variants (in parallel with same pattern)
   const runningVariants = getAllRunningVariants();
-  for (const { mindName, variant } of runningVariants) {
-    const compositeKey = `${mindName}@${variant.name}`;
-    try {
-      await manager.startMind(compositeKey);
-    } catch (err) {
-      log.error(`failed to start variant ${compositeKey}`, log.errorData(err));
-      setVariantRunning(mindName, variant.name, false);
-    }
+  {
+    const queue = [...runningVariants];
+    const workers = Array.from({ length: Math.min(5, queue.length) }, async () => {
+      while (queue.length > 0) {
+        const { mindName, variant } = queue.shift()!;
+        const compositeKey = `${mindName}@${variant.name}`;
+        try {
+          await manager.startMind(compositeKey);
+        } catch (err) {
+          log.error(`failed to start variant ${compositeKey}`, log.errorData(err));
+          setVariantRunning(mindName, variant.name, false);
+        }
+      }
+    });
+    await Promise.all(workers);
   }
 
   // Clean up expired sessions (non-blocking)
