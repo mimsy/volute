@@ -1253,8 +1253,12 @@ const app = new Hono<AuthEnv>()
     try {
       const pending = await getDeliveryManager().getPending(baseName);
       return c.json(pending);
-    } catch {
-      return c.json([]);
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("not initialized")) {
+        return c.json([]);
+      }
+      log.error(`failed to get pending deliveries for ${baseName}`, log.errorData(err));
+      return c.json({ error: "Failed to retrieve pending messages" }, 500);
     }
   })
   // Receive events from mind, persist to mind_history, publish to pub-sub
@@ -1324,8 +1328,10 @@ const app = new Hono<AuthEnv>()
       // Notify delivery manager of session completion
       try {
         getDeliveryManager().sessionDone(baseName, body.session);
-      } catch {
-        // Delivery manager may not be initialized (e.g., in tests)
+      } catch (err) {
+        if (!(err instanceof Error && err.message.includes("not initialized"))) {
+          log.error(`delivery manager sessionDone failed for ${baseName}`, log.errorData(err));
+        }
       }
     }
 

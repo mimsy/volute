@@ -516,10 +516,10 @@ export function createRouter(options: {
 
     try {
       handler.handle(withInstructions, { sessionName: session, messageId }, noop);
+      log("router", `dispatched batch for session ${session}: ${allMessages.length} messages`);
     } catch (err) {
       log("router", `error dispatching batch for session ${session}:`, err);
     }
-    log("router", `dispatched batch for session ${session}: ${allMessages.length} messages`);
   }
 
   function close() {

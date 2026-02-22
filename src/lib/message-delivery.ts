@@ -64,8 +64,11 @@ export async function deliverMessage(mindName: string, payload: DeliveryPayload)
       const manager = getDeliveryManager();
       await manager.routeAndDeliver(mindName, payload);
       return;
-    } catch {
+    } catch (err) {
       // Delivery manager not initialized — fall back to direct delivery
+      if (err instanceof Error && !err.message.includes("not initialized")) {
+        dlog.warn("delivery manager error, falling back to direct delivery", log.errorData(err));
+      }
     }
 
     // Fallback: direct HTTP delivery (pre-delivery-manager behavior)

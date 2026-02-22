@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "./db.js";
 import {
   getRoutingConfig,
@@ -10,7 +10,6 @@ import {
 } from "./delivery-router.js";
 import log from "./logger.js";
 import { type DeliveryPayload, extractTextContent } from "./message-delivery.js";
-import { subscribe as subscribeMindEvent } from "./mind-events.js";
 import { findMind } from "./registry.js";
 import { deliveryQueue } from "./schema.js";
 import { getTypingMap } from "./typing.js";
@@ -48,7 +47,6 @@ type QueuedMessage = {
 export class DeliveryManager {
   private sessionStates = new Map<string, Map<string, SessionState>>();
   private batchBuffers = new Map<string, BatchBuffer>();
-  private unsubscribes: (() => void)[] = [];
 
   // --- Public API ---
 
@@ -145,19 +143,6 @@ export class DeliveryManager {
   }
 
   /**
-   * Subscribe to mind events for session tracking.
-   * Call this once after initializing the delivery manager.
-   */
-  subscribeToEvents(mindName: string): void {
-    const unsub = subscribeMindEvent(mindName, (event) => {
-      if (event.type === "done") {
-        this.sessionDone(mindName, event.session);
-      }
-    });
-    this.unsubscribes.push(unsub);
-  }
-
-  /**
    * Restore queued messages from DB on daemon restart.
    */
   async restoreFromDb(): Promise<void> {
@@ -166,7 +151,16 @@ export class DeliveryManager {
       const rows = await db.select().from(deliveryQueue).where(eq(deliveryQueue.status, "pending"));
 
       for (const row of rows) {
-        const payload = JSON.parse(row.payload) as DeliveryPayload;
+        let payload: DeliveryPayload;
+        try {
+          payload = JSON.parse(row.payload) as DeliveryPayload;
+        } catch (parseErr) {
+          dlog.warn(
+            `corrupt payload in delivery queue row ${row.id}, skipping`,
+            log.errorData(parseErr),
+          );
+          continue;
+        }
         const config = getRoutingConfig(row.mind);
         const sessionConfig = resolveDeliveryMode(config, row.session);
 
@@ -174,9 +168,17 @@ export class DeliveryManager {
           this.addToBatchBuffer(row.mind, row.session, payload, sessionConfig);
         } else {
           // Immediate messages that were queued but not delivered — deliver now
-          this.deliverToMind(row.mind, row.session, payload, sessionConfig).catch((err) => {
-            dlog.warn(`failed to restore delivery for ${row.mind}`, log.errorData(err));
-          });
+          this.deliverToMind(row.mind, row.session, payload, sessionConfig)
+            .then(async () => {
+              // Clean up the delivered row
+              try {
+                const db2 = await getDb();
+                await db2.delete(deliveryQueue).where(eq(deliveryQueue.id, row.id));
+              } catch {}
+            })
+            .catch((err) => {
+              dlog.warn(`failed to restore delivery for ${row.mind}`, log.errorData(err));
+            });
         }
       }
 
@@ -201,7 +203,10 @@ export class DeliveryManager {
     }[]
   > {
     const db = await getDb();
-    const rows = await db.select().from(deliveryQueue).where(eq(deliveryQueue.mind, mindName));
+    const rows = await db
+      .select()
+      .from(deliveryQueue)
+      .where(and(eq(deliveryQueue.mind, mindName), eq(deliveryQueue.status, "gated")));
 
     // Group by channel
     const byChannel = new Map<string, typeof rows>();
@@ -244,8 +249,6 @@ export class DeliveryManager {
     }
     this.batchBuffers.clear();
     this.sessionStates.clear();
-    for (const unsub of this.unsubscribes) unsub();
-    this.unsubscribes = [];
     if (instance === this) instance = undefined;
   }
 
@@ -354,10 +357,10 @@ export class DeliveryManager {
     // Increment active count
     this.incrementActive(baseName, session);
 
-    // Set typing indicators for all channels in the batch
+    // Set typing indicators for all real channels in the batch
     const typingMap = getTypingMap();
     for (const ch of Object.keys(channels)) {
-      typingMap.set(ch, baseName, { persistent: true });
+      if (ch !== "unknown") typingMap.set(ch, baseName, { persistent: true });
     }
 
     const batchBody = {
@@ -387,6 +390,24 @@ export class DeliveryManager {
         }
       } else {
         await res.text().catch(() => {});
+        // Clean up DB entries only after successful delivery
+        try {
+          const db = await getDb();
+          await db
+            .delete(deliveryQueue)
+            .where(
+              and(
+                eq(deliveryQueue.mind, baseName),
+                eq(deliveryQueue.session, session),
+                eq(deliveryQueue.status, "pending"),
+              ),
+            );
+        } catch (err) {
+          dlog.warn(
+            `failed to clean delivery queue for ${baseName}/${session}`,
+            log.errorData(err),
+          );
+        }
       }
     } catch (err) {
       dlog.warn(`failed to deliver batch to ${mindName}`, log.errorData(err));
@@ -396,23 +417,6 @@ export class DeliveryManager {
       }
     } finally {
       clearTimeout(timeout);
-    }
-
-    // Clean up DB entries for delivered messages
-    try {
-      const db = await getDb();
-      const { and } = await import("drizzle-orm");
-      await db
-        .delete(deliveryQueue)
-        .where(
-          and(
-            eq(deliveryQueue.mind, baseName),
-            eq(deliveryQueue.session, session),
-            eq(deliveryQueue.status, "pending"),
-          ),
-        );
-    } catch (err) {
-      dlog.warn(`failed to clean delivery queue for ${baseName}/${session}`, log.errorData(err));
     }
   }
 
@@ -444,7 +448,7 @@ export class DeliveryManager {
 
     // Persist to DB
     this.persistToQueue(mindName, session, payload).catch((err) => {
-      dlog.warn(`failed to persist to delivery queue`, log.errorData(err));
+      dlog.warn(`failed to persist batch message for ${mindName}/${session}`, log.errorData(err));
     });
 
     this.addToBatchBuffer(mindName, session, payload, sessionConfig);
@@ -548,7 +552,6 @@ export class DeliveryManager {
     // Check if this is the first gated message for this channel — send invite
     try {
       const db = await getDb();
-      const { and, sql } = await import("drizzle-orm");
       const count = await db
         .select({ count: sql<number>`count(*)` })
         .from(deliveryQueue)
@@ -620,7 +623,10 @@ export class DeliveryManager {
         payload: JSON.stringify(payload),
       });
     } catch (err) {
-      dlog.warn(`failed to persist to delivery queue`, log.errorData(err));
+      dlog.warn(
+        `failed to persist to delivery queue for ${mindName}/${session}`,
+        log.errorData(err),
+      );
     }
   }
 
