@@ -444,7 +444,7 @@ export async function inviteToChannel(channelName: string, username: string): Pr
     body: JSON.stringify({ username }),
   });
   if (!res.ok) {
-    const data = (await res.json()) as { error?: string };
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error || "Failed to invite user");
   }
 }

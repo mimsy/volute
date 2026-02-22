@@ -5,7 +5,6 @@ import {
   fetchConversationMessages,
   fetchConversationMessagesById,
   fetchTyping,
-  type Participant,
   reportTyping,
 } from "../lib/api";
 import { renderMarkdown } from "../lib/markdown";
@@ -147,7 +146,9 @@ $effect(() => {
     .then((m) => {
       memberCount = m.length;
     })
-    .catch(() => {});
+    .catch((err) => {
+      console.warn("[chat] failed to load member count:", err);
+    });
 });
 
 // SSE subscription for real-time updates
@@ -416,7 +417,7 @@ function toggleTool(idx: number) {
   {#if showInviteModal && channelName}
     <InviteModal {channelName} onClose={() => {
       showInviteModal = false;
-      if (channelName) fetchChannelMembers(channelName).then((m) => { memberCount = m.length; }).catch(() => {});
+      if (channelName) fetchChannelMembers(channelName).then((m) => { memberCount = m.length; }).catch((err) => { console.warn("[chat] failed to refresh member count:", err); });
     }} />
   {/if}
 
