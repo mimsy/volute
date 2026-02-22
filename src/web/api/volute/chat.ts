@@ -20,6 +20,82 @@ import { buildVoluteSlug } from "../../../lib/slugify.js";
 import { getTypingMap } from "../../../lib/typing.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
+type SlugOpts = Parameters<typeof buildVoluteSlug>[0];
+
+async function fanOutToMinds(opts: {
+  conversationId: string;
+  contentBlocks: ContentBlock[];
+  senderName: string;
+  convTitle: string | null;
+  /** Override isDM (defaults to participants.length === 2) */
+  isDM?: boolean;
+  /** Override channel entry type (defaults to isDM ? "dm" : "group") */
+  channelEntryType?: "dm" | "group";
+  /** Extra fields passed to buildVoluteSlug (e.g. convType, convName) */
+  slugExtra?: Partial<SlugOpts>;
+  /** Maps mind username to delivery target name (for variant-aware targeting) */
+  targetName?: (username: string) => string;
+}): Promise<void> {
+  const participants = await getParticipants(opts.conversationId);
+  const mindParticipants = participants.filter((p) => p.userType === "mind");
+  const participantNames = participants.map((p) => p.username);
+  const isDM = opts.isDM ?? participants.length === 2;
+  const channelEntryType = opts.channelEntryType ?? (isDM ? "dm" : "group");
+
+  const { getMindManager } = await import("../../../lib/mind-manager.js");
+  const manager = getMindManager();
+
+  const runningMinds = mindParticipants
+    .map((ap) => {
+      const key = opts.targetName ? opts.targetName(ap.username) : ap.username;
+      return manager.isRunning(key) ? ap.username : null;
+    })
+    .filter((n): n is string => n !== null && n !== opts.senderName);
+
+  function slugForMind(mindUsername: string): string {
+    return buildVoluteSlug({
+      participants,
+      mindUsername,
+      convTitle: opts.convTitle,
+      conversationId: opts.conversationId,
+      ...opts.slugExtra,
+    });
+  }
+
+  // Write slug → platformId mapping for all mind participants
+  const channelEntry = {
+    platformId: opts.conversationId,
+    platform: "volute",
+    name: opts.convTitle ?? undefined,
+    type: channelEntryType,
+  };
+  for (const ap of mindParticipants) {
+    try {
+      writeChannelEntry(ap.username, slugForMind(ap.username), channelEntry);
+    } catch (err) {
+      console.warn(`[chat] failed to write channel entry for ${ap.username}:`, err);
+    }
+  }
+
+  // Fire-and-forget: deliver to all running minds
+  for (const mindName of runningMinds) {
+    const target = opts.targetName ? opts.targetName(mindName) : mindName;
+    const channel = slugForMind(mindName);
+    const typingMap = getTypingMap();
+    const currentlyTyping = typingMap.get(channel);
+    deliverMessage(target, {
+      content: opts.contentBlocks,
+      channel,
+      conversationId: opts.conversationId,
+      sender: opts.senderName,
+      participants: participantNames,
+      participantCount: participants.length,
+      isDM,
+      ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
+    }).catch(() => {}); // deliverMessage logs errors internally
+  }
+}
+
 const chatSchema = z.object({
   message: z.string().optional(),
   conversationId: z.string().optional(),
@@ -98,7 +174,7 @@ const app = new Hono<AuthEnv>()
     }
 
     const conv = await getConversation(conversationId);
-    const convTitle = conv?.title;
+    const convTitle = conv?.title ?? null;
 
     // Build content blocks
     const contentBlocks: ContentBlock[] = [];
@@ -114,65 +190,14 @@ const app = new Hono<AuthEnv>()
     // Save user message
     await addMessage(conversationId, "user", senderName, contentBlocks);
 
-    // Find all mind participants for fan-out
-    const participants = await getParticipants(conversationId);
-    const mindParticipants = participants.filter((p) => p.userType === "mind");
-    const participantNames = participants.map((p) => p.username);
-
-    // Find running mind participants (excluding the sender)
-    const { getMindManager } = await import("../../../lib/mind-manager.js");
-    const manager = getMindManager();
-    const runningMinds = mindParticipants
-      .map((ap) => {
-        // Use the full name (with variant) for the addressed mind, base name for others
-        const mindKey = ap.username === baseName ? name : ap.username;
-        return manager.isRunning(mindKey) ? ap.username : null;
-      })
-      .filter((n): n is string => n !== null && n !== senderName);
-
-    // Build channel slug — @username for DMs (matching the volute channel driver)
-    const isDM = participants.length === 2;
-    function channelForMind(mindUsername: string): string {
-      return buildVoluteSlug({
-        participants,
-        mindUsername,
-        convTitle,
-        conversationId: conversationId!,
-      });
-    }
-
-    // Write slug → platformId mapping for all mind participants so they can resolve it
-    const channelEntry = {
-      platformId: conversationId!,
-      platform: "volute",
-      name: convTitle ?? undefined,
-      type: (isDM ? "dm" : "group") as "dm" | "group",
-    };
-    for (const ap of mindParticipants) {
-      try {
-        writeChannelEntry(ap.username, channelForMind(ap.username), channelEntry);
-      } catch (err) {
-        console.warn(`[chat] failed to write channel entry for ${ap.username}:`, err);
-      }
-    }
-
-    // Fire-and-forget: send to all running minds via direct delivery
-    for (const mindName of runningMinds) {
-      const targetName = mindName === baseName ? name : mindName;
-      const channel = channelForMind(mindName);
-      const typingMap = getTypingMap();
-      const currentlyTyping = typingMap.get(channel);
-      deliverMessage(targetName, {
-        content: contentBlocks,
-        channel,
-        conversationId,
-        sender: senderName,
-        participants: participantNames,
-        participantCount: participants.length,
-        isDM,
-        ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
-      }).catch(() => {}); // deliverMessage logs errors internally
-    }
+    // Fan out to all running mind participants
+    await fanOutToMinds({
+      conversationId: conversationId!,
+      contentBlocks,
+      senderName,
+      convTitle,
+      targetName: (username) => (username === baseName ? name : username),
+    });
 
     return c.json({ ok: true, conversationId });
   })
@@ -247,61 +272,16 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     await addMessage(body.conversationId, "user", senderName, contentBlocks);
 
     // Fan out to running mind participants
-    const participants = await getParticipants(body.conversationId);
-    const mindParticipants = participants.filter((p) => p.userType === "mind");
-    const participantNames = participants.map((p) => p.username);
-
-    const { getMindManager } = await import("../../../lib/mind-manager.js");
-    const manager = getMindManager();
-    const runningMinds = mindParticipants
-      .map((ap) => (manager.isRunning(ap.username) ? ap.username : null))
-      .filter((n): n is string => n !== null && n !== senderName);
-
-    const isDM = conv.type === "dm" && participants.length === 2;
-    const channelEntry = {
-      platformId: body.conversationId,
-      platform: "volute",
-      name: conv.title ?? undefined,
-      type: (conv.type === "channel" ? "group" : isDM ? "dm" : "group") as "dm" | "group",
-    };
-    for (const ap of mindParticipants) {
-      const slug = buildVoluteSlug({
-        participants,
-        mindUsername: ap.username,
-        convTitle: conv.title,
-        conversationId: conv.id,
-        convType: conv.type,
-        convName: conv.name,
-      });
-      try {
-        writeChannelEntry(ap.username, slug, channelEntry);
-      } catch (err) {
-        console.warn(`[chat] failed to write channel entry for ${ap.username}:`, err);
-      }
-    }
-
-    for (const mindName of runningMinds) {
-      const channel = buildVoluteSlug({
-        participants,
-        mindUsername: mindName,
-        convTitle: conv.title,
-        conversationId: body.conversationId,
-        convType: conv.type,
-        convName: conv.name,
-      });
-      const typingMap = getTypingMap();
-      const currentlyTyping = typingMap.get(channel);
-      deliverMessage(mindName, {
-        content: contentBlocks,
-        channel,
-        conversationId: body.conversationId,
-        sender: senderName,
-        participants: participantNames,
-        participantCount: participants.length,
-        isDM,
-        ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
-      }).catch(() => {}); // deliverMessage logs errors internally
-    }
+    const isDM = conv.type === "dm";
+    await fanOutToMinds({
+      conversationId: body.conversationId,
+      contentBlocks,
+      senderName,
+      convTitle: conv.title,
+      isDM,
+      channelEntryType: conv.type === "channel" ? "group" : isDM ? "dm" : "group",
+      slugExtra: { convType: conv.type, convName: conv.name },
+    });
 
     return c.json({ ok: true, conversationId: body.conversationId });
   },
