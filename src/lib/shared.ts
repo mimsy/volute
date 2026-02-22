@@ -1,7 +1,8 @@
+import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { gitExec } from "./exec.js";
-import { isIsolationEnabled } from "./isolation.js";
+import { isIsolationEnabled, mindUserName } from "./isolation.js";
 import log from "./logger.js";
 import { voluteHome } from "./registry.js";
 
@@ -29,7 +30,13 @@ export async function ensureSharedRepo(): Promise<void> {
   await gitExec(["commit", "-m", "init shared repo"], { cwd: dir });
 
   if (isIsolationEnabled()) {
-    // Make group-writable so all mind users can access via volute group
+    // Make group-writable so all mind users can access via volute group.
+    // Set group to 'volute' (all mind users are in this group).
+    try {
+      execFileSync("chgrp", ["-R", "volute", dir], { stdio: "ignore" });
+    } catch (err) {
+      log.warn("failed to chgrp shared repo to volute group", log.errorData(err));
+    }
     chmodSync(dir, 0o2775);
     await gitExec(["config", "core.sharedRepository", "group"], { cwd: dir });
   }
@@ -56,6 +63,21 @@ export async function addSharedWorktree(mindName: string, mindDir: string): Prom
     await gitExec(["worktree", "add", worktreePath, mindName], { cwd: dir });
   } else {
     await gitExec(["worktree", "add", "-b", mindName, worktreePath], { cwd: dir });
+  }
+
+  if (isIsolationEnabled()) {
+    // Git stores worktree state (HEAD, index, refs) in .git/worktrees/<name>/.
+    // The mind process runs as mind-<name> user and needs write access to this
+    // directory for auto-commit. chown it to the mind user with group volute.
+    const worktreeGitDir = resolve(dir, ".git", "worktrees", mindName);
+    if (existsSync(worktreeGitDir)) {
+      try {
+        const user = mindUserName(mindName);
+        execFileSync("chown", ["-R", `${user}:volute`, worktreeGitDir], { stdio: "ignore" });
+      } catch (err) {
+        log.warn(`failed to chown worktree git dir for ${mindName}`, log.errorData(err));
+      }
+    }
   }
 }
 
@@ -90,6 +112,20 @@ export async function removeSharedWorktree(mindName: string, mindDir: string): P
 
 // Mutex for serializing merge/pull operations on the shared repo
 let sharedLock = Promise.resolve();
+
+/**
+ * Re-chown worktree files back to the mind user after daemon (root) operations
+ * like reset --hard or rebase that may create root-owned files.
+ */
+function rechownWorktree(worktreePath: string, mindName: string): void {
+  if (!isIsolationEnabled()) return;
+  try {
+    const user = mindUserName(mindName);
+    execFileSync("chown", ["-R", `${user}:volute`, worktreePath], { stdio: "ignore" });
+  } catch (err) {
+    log.warn(`failed to rechown worktree for ${mindName}`, log.errorData(err));
+  }
+}
 
 /**
  * Acquire the shared repo lock: waits for the previous operation to finish,
@@ -165,6 +201,9 @@ export async function sharedMerge(
       };
     }
 
+    // Daemon runs as root — restore mind user ownership on worktree files
+    rechownWorktree(worktreePath, mindName);
+
     return { ok: true };
   });
 }
@@ -189,6 +228,7 @@ export async function sharedPull(
 
     try {
       await gitExec(["rebase", "main"], { cwd: worktreePath });
+      rechownWorktree(worktreePath, mindName);
       return { ok: true };
     } catch {
       // Abort failed rebase
