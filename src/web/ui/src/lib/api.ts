@@ -436,6 +436,27 @@ export async function leaveVoluteChannel(name: string): Promise<void> {
   }
 }
 
+export async function inviteToChannel(channelName: string, username: string): Promise<void> {
+  const res = await fetch(`/api/volute/channels/${encodeURIComponent(channelName)}/invite`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ username }),
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to invite user");
+  }
+}
+
+export async function fetchChannelMembers(channelName: string): Promise<Participant[]> {
+  const res = await fetch(`/api/volute/channels/${encodeURIComponent(channelName)}/members`, {
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error("Failed to fetch members");
+  return res.json();
+}
+
 // --- Shared Skills API ---
 
 export type SharedSkill = {

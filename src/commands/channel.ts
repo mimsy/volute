@@ -22,6 +22,9 @@ export async function run(args: string[]) {
     case "typing":
       await typingChannel(args.slice(1));
       break;
+    case "invite":
+      await inviteChannel(args.slice(1));
+      break;
     case "--help":
     case "-h":
     case undefined:
@@ -39,7 +42,8 @@ function printUsage() {
   volute channel list [<platform>] [--mind <name>]
   volute channel users <platform> [--mind <name>]
   volute channel create <platform> --participants user1,user2 [--name "..."] [--mind <name>]
-  volute channel typing <channel-uri> [--mind <name>]`);
+  volute channel typing <channel-uri> [--mind <name>]
+  volute channel invite <channel-name> <username>`);
 }
 
 async function readChannel(args: string[]) {
@@ -210,6 +214,29 @@ async function typingChannel(args: string[]) {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
+}
+
+async function inviteChannel(args: string[]) {
+  const { positional } = parseArgs(args, {});
+
+  const channelName = positional[0];
+  const username = positional[1];
+  if (!channelName || !username) {
+    console.error("Usage: volute channel invite <channel-name> <username>");
+    process.exit(1);
+  }
+
+  const res = await daemonFetch(`/api/volute/channels/${encodeURIComponent(channelName)}/invite`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    console.error(body.error ?? `Server responded with ${res.status}`);
+    process.exit(1);
+  }
+  console.log(`Invited ${username} to #${channelName}`);
 }
 
 function parseUri(uri: string): { platform: string; channelId: string } {

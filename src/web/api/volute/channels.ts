@@ -1,14 +1,18 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
+import { getOrCreateMindUser, getUserByUsername } from "../../../lib/auth.js";
 import {
+  addMessage,
   createChannel,
   getChannelByName,
   getParticipants,
+  isParticipant,
   joinChannel,
   leaveChannel,
   listChannels,
 } from "../../../lib/conversations.js";
+import { findMind } from "../../../lib/registry.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
 const createSchema = z.object({
@@ -17,6 +21,10 @@ const createSchema = z.object({
     .min(1)
     .max(50)
     .regex(/^[a-z0-9][a-z0-9-]*$/, "Channel names must be lowercase alphanumeric with hyphens"),
+});
+
+const inviteSchema = z.object({
+  username: z.string().min(1),
 });
 
 const app = new Hono<AuthEnv>()
@@ -78,6 +86,34 @@ const app = new Hono<AuthEnv>()
 
     const participants = await getParticipants(ch.id);
     return c.json(participants);
+  })
+  .post("/:name/invite", zValidator("json", inviteSchema), async (c) => {
+    const name = c.req.param("name");
+    const inviter = c.get("user");
+    const { username } = c.req.valid("json");
+
+    const ch = await getChannelByName(name);
+    if (!ch) return c.json({ error: "Channel not found" }, 404);
+
+    // Resolve the invitee: try as existing user first, then as a mind
+    let user = await getUserByUsername(username);
+    if (!user && findMind(username)) {
+      user = await getOrCreateMindUser(username);
+    }
+    if (!user) return c.json({ error: "User not found" }, 404);
+
+    if (await isParticipant(ch.id, user.id)) {
+      return c.json({ error: "Already a member" }, 409);
+    }
+
+    await joinChannel(ch.id, user.id);
+
+    // Post a system message
+    await addMessage(ch.id, "system", "system", [
+      { type: "text", text: `${inviter.username} invited ${username} to #${name}` },
+    ]);
+
+    return c.json({ ok: true });
   });
 
 export default app;

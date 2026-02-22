@@ -1,13 +1,16 @@
 <script lang="ts">
 import {
   type ContentBlock,
+  fetchChannelMembers,
   fetchConversationMessages,
   fetchConversationMessagesById,
   fetchTyping,
+  type Participant,
   reportTyping,
 } from "../lib/api";
 import { renderMarkdown } from "../lib/markdown";
 import { sendChat, sendChatUnified } from "../lib/streams";
+import InviteModal from "./InviteModal.svelte";
 
 let {
   name,
@@ -16,6 +19,7 @@ let {
   onConversationId,
   stage,
   convType = "dm",
+  channelName = "",
 }: {
   name: string;
   username?: string;
@@ -23,6 +27,7 @@ let {
   onConversationId: (id: string) => void;
   stage?: "seed" | "sprouted";
   convType?: string;
+  channelName?: string;
 } = $props();
 
 let nextEntryId = 0;
@@ -57,6 +62,8 @@ let fileEl: HTMLInputElement;
 let typingTimer = 0;
 let lastPollFingerprint = "";
 let currentConvId = conversationId;
+let showInviteModal = $state(false);
+let memberCount = $state(0);
 
 // Tool open state tracking
 let openTools = $state<Set<number>>(new Set());
@@ -128,6 +135,19 @@ $effect(() => {
     return;
   }
   loadMessages(conversationId, true);
+});
+
+// Load member count for channels
+$effect(() => {
+  if (convType !== "channel" || !channelName) {
+    memberCount = 0;
+    return;
+  }
+  fetchChannelMembers(channelName)
+    .then((m) => {
+      memberCount = m.length;
+    })
+    .catch(() => {});
 });
 
 // SSE subscription for real-time updates
@@ -384,6 +404,22 @@ function toggleTool(idx: number) {
     <div class="orientation-bar">orientation</div>
   {/if}
 
+  <!-- Channel header -->
+  {#if convType === "channel" && channelName}
+    <div class="channel-header">
+      <span class="channel-title">#{channelName}</span>
+      <span class="channel-members">{memberCount} member{memberCount === 1 ? "" : "s"}</span>
+      <button class="invite-btn" onclick={() => { showInviteModal = true; }}>invite</button>
+    </div>
+  {/if}
+
+  {#if showInviteModal && channelName}
+    <InviteModal {channelName} onClose={() => {
+      showInviteModal = false;
+      if (channelName) fetchChannelMembers(channelName).then((m) => { memberCount = m.length; }).catch(() => {});
+    }} />
+  {/if}
+
   <!-- Messages -->
   <div class="messages" bind:this={scrollEl}>
     {#if loadError}
@@ -547,6 +583,41 @@ function toggleTool(idx: number) {
     text-transform: uppercase;
     opacity: 0.6;
     border-bottom: 1px solid var(--yellow-bg);
+  }
+
+  .channel-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .channel-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-0);
+  }
+
+  .channel-members {
+    font-size: 11px;
+    color: var(--text-2);
+    flex: 1;
+  }
+
+  .channel-header .invite-btn {
+    padding: 4px 12px;
+    font-size: 11px;
+    border-radius: var(--radius);
+    background: var(--bg-3);
+    color: var(--text-1);
+    font-weight: 500;
+  }
+
+  .channel-header .invite-btn:hover {
+    background: var(--accent-dim);
+    color: var(--accent);
   }
 
   .messages {
