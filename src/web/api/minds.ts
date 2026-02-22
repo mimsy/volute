@@ -498,7 +498,7 @@ const app = new Hono<AuthEnv>()
 
       // Assign port and register
       const port = nextPort();
-      addMind(name, port);
+      addMind(name, port, undefined, template);
 
       // Set up per-mind user isolation (no-ops if VOLUTE_ISOLATION !== "user")
       const homeDir = resolve(dest, "home");

@@ -28,8 +28,8 @@ export function exec(
 }
 
 /**
- * Run a git command, adding `-c safe.directory=<cwd>` when isolation is enabled
- * so the root-owned daemon can operate on mind-owned repositories.
+ * Run a git command, adding `-c safe.directory=*` when isolation is enabled
+ * so the root-owned daemon can operate on mind-owned repositories and their worktrees.
  */
 export function gitExec(
   args: string[],
