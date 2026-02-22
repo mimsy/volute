@@ -594,7 +594,7 @@ export class DeliveryManager {
     const invitePayload: DeliveryPayload = {
       channel: "system:delivery",
       sender: "system",
-      content: notification,
+      content: [{ type: "text", text: notification }],
     };
 
     const config = getRoutingConfig(mindName.split("@", 2)[0]);

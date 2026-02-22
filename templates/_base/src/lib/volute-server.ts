@@ -21,6 +21,13 @@ function extractText(content: VoluteContentPart[] | string): string {
     .join("\n");
 }
 
+/** Normalize content to VoluteContentPart[] — connectors may send plain strings. */
+function normalizeContent(content: unknown): VoluteContentPart[] {
+  if (Array.isArray(content)) return content as VoluteContentPart[];
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  return [{ type: "text", text: JSON.stringify(content) }];
+}
+
 /** Verify an Ed25519 signature against a public key */
 function verifySignature(
   publicKeyPem: string,
@@ -98,6 +105,9 @@ export function createVoluteServer(options: {
         // Best-effort signature verification (non-blocking)
         const verified = await verifyRequest(body);
         if (verified !== undefined) body.verified = verified;
+
+        // Normalize content — connectors may send plain strings
+        body.content = normalizeContent(body.content);
 
         // Handle batch payloads from delivery manager
         if ((body as any).batch) {
