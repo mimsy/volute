@@ -483,16 +483,20 @@ export async function syncBuiltinSkills(): Promise<void> {
     const sourceDir = join(skillsRoot, entry.name);
     if (!existsSync(join(sourceDir, "SKILL.md"))) continue;
 
-    const sourceHash = hashSkillDir(sourceDir);
+    try {
+      const sourceHash = hashSkillDir(sourceDir);
 
-    // Check if shared pool already has this version
-    const destDir = join(sharedSkillsDir(), entry.name);
-    if (existsSync(destDir)) {
-      const destHash = hashSkillDir(destDir);
-      if (sourceHash === destHash) continue;
+      // Check if shared pool already has this version
+      const destDir = join(sharedSkillsDir(), entry.name);
+      if (existsSync(destDir)) {
+        const destHash = hashSkillDir(destDir);
+        if (sourceHash === destHash) continue;
+      }
+
+      await importSkillFromDir(sourceDir, "volute");
+      log.info(`synced built-in skill: ${entry.name}`);
+    } catch (err) {
+      log.error(`failed to sync built-in skill: ${entry.name}`, log.errorData(err));
     }
-
-    await importSkillFromDir(sourceDir, "volute");
-    log.info(`synced built-in skill: ${entry.name}`);
   }
 }

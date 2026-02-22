@@ -68,7 +68,7 @@ export async function startDaemon(opts: {
   try {
     await syncBuiltinSkills();
   } catch (err) {
-    log.warn("failed to sync built-in skills", log.errorData(err));
+    log.error("failed to sync built-in skills", log.errorData(err));
   }
 
   // Use existing token if set (for testing), otherwise generate one

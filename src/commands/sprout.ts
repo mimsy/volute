@@ -47,22 +47,37 @@ export async function run(_args: string[]) {
   }
 
   // Install standard skills from shared pool, remove orientation
+  const failedSkills: string[] = [];
   for (const skillId of STANDARD_SKILLS) {
     const shared = await getSharedSkill(skillId);
     if (!shared) {
       console.error(`Shared skill not found: ${skillId} — run 'volute up' to sync built-in skills`);
+      failedSkills.push(skillId);
       continue;
     }
     const skillDir = resolve(dir, "home", ".claude", "skills", skillId);
     if (!existsSync(skillDir)) {
-      await installSkill(mindName, dir, skillId);
+      try {
+        await installSkill(mindName, dir, skillId);
+      } catch (err) {
+        console.error(`Failed to install skill ${skillId}: ${(err as Error).message}`);
+        failedSkills.push(skillId);
+      }
     }
   }
 
   // Remove orientation skill
   const orientationDir = resolve(dir, "home", ".claude", "skills", "orientation");
   if (existsSync(orientationDir)) {
-    await uninstallSkill(mindName, dir, "orientation");
+    try {
+      await uninstallSkill(mindName, dir, "orientation");
+    } catch (err) {
+      console.error(`Failed to uninstall orientation skill: ${(err as Error).message}`);
+    }
+  }
+
+  if (failedSkills.length > 0) {
+    console.error(`Warning: failed to install skills: ${failedSkills.join(", ")}`);
   }
 
   // Flip stage via daemon API (mind user can't write to shared minds.json directly)

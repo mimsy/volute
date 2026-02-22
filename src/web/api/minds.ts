@@ -386,11 +386,13 @@ const app = new Hono<AuthEnv>()
 
       // Install skills from shared pool (after git init so installSkill can commit)
       const skillSet = body.skills ?? (body.stage === "seed" ? SEED_SKILLS : STANDARD_SKILLS);
+      const skillWarnings: string[] = [];
       for (const skillId of skillSet) {
         try {
           await installSkill(name, dest, skillId);
         } catch (err) {
-          log.warn(`failed to install skill ${skillId} for ${name}`, log.errorData(err));
+          log.error(`failed to install skill ${skillId} for ${name}`, log.errorData(err));
+          skillWarnings.push(`Failed to install skill: ${skillId}`);
         }
       }
 
@@ -418,6 +420,7 @@ const app = new Hono<AuthEnv>()
         stage: body.stage ?? "sprouted",
         message: `Created mind: ${name} (port ${port})`,
         ...(gitWarning && { warning: gitWarning }),
+        ...(skillWarnings.length > 0 && { skillWarnings }),
       });
     } catch (err) {
       // Clean up partial state
