@@ -7,7 +7,7 @@ export type User = {
   id: number;
   username: string;
   role: "admin" | "user" | "pending" | "mind";
-  user_type: "human" | "mind";
+  user_type: "brain" | "mind";
   created_at: string;
 };
 
@@ -19,7 +19,7 @@ export async function createUser(username: string, password: string): Promise<Us
   const [{ value }] = await db
     .select({ value: count() })
     .from(users)
-    .where(eq(users.user_type, "human"));
+    .where(eq(users.user_type, "brain"));
   const role = value === 0 ? "admin" : "pending";
 
   const [result] = await db
@@ -109,7 +109,7 @@ export async function listPendingUsers(): Promise<User[]> {
     .all() as Promise<User[]>;
 }
 
-export async function listUsersByType(userType: "human" | "mind"): Promise<User[]> {
+export async function listUsersByType(userType: "brain" | "mind"): Promise<User[]> {
   const db = await getDb();
   return db
     .select({

@@ -47,7 +47,7 @@ After sprouting, you'll have full mind capabilities (connectors, schedules, vari
 
 | Command | Purpose |
 |---------|---------|
-| `volute send @<name> "msg"` | Send a message to a user or mind |
+| `volute send @<name> "msg"` | Send a message to another user |
 | `volute sprout` | Complete orientation and become a full mind |
 
 ## Files

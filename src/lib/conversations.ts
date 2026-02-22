@@ -25,7 +25,7 @@ export type Conversation = {
 export type Participant = {
   userId: number;
   username: string;
-  userType: "human" | "mind";
+  userType: "brain" | "mind";
   role: "owner" | "member";
 };
 
@@ -326,7 +326,7 @@ export async function listConversationsWithParticipants(
     arr.push({
       userId: r.userId,
       username: r.username,
-      userType: r.userType as "human" | "mind",
+      userType: r.userType as "brain" | "mind",
       role: r.role as "owner" | "member",
     });
   }
