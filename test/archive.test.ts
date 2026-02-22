@@ -162,6 +162,41 @@ describe("archive", () => {
       assert.ok(entries.includes("sessions/main.json"));
     });
 
+    it("excludes .git directory", () => {
+      // Add a fake .git dir
+      const dir = mindDir(testMind);
+      mkdirSync(resolve(dir, ".git/objects"), { recursive: true });
+      writeFileSync(resolve(dir, ".git/HEAD"), "ref: refs/heads/main\n");
+
+      const zip = createExportArchive({ name: testMind, template: "claude" });
+      const entries = zip.getEntries().map((e) => e.entryName);
+
+      assert.ok(!entries.some((e) => e.includes(".git")));
+    });
+
+    it("handles missing state directory gracefully", () => {
+      const state = stateDir(testMind);
+      rmSync(state, { recursive: true, force: true });
+
+      const zip = createExportArchive({ name: testMind, template: "claude" });
+      assert.ok(zip.getEntry("manifest.json"));
+      assert.ok(!zip.getEntry("state/channels.json"));
+      assert.ok(!zip.getEntry("state/env.json"));
+    });
+
+    it("does not duplicate sessions in mind/ when includeSessions is true", () => {
+      const zip = createExportArchive({
+        name: testMind,
+        template: "claude",
+        includeSessions: true,
+      });
+      const entries = zip.getEntries().map((e) => e.entryName);
+
+      // Sessions should be at sessions/ prefix only, not in mind/.mind/sessions/
+      assert.ok(entries.includes("sessions/main.json"));
+      assert.ok(!entries.some((e) => e.startsWith("mind/.mind/sessions/")));
+    });
+
     it("sets manifest includes flags correctly", () => {
       const zip = createExportArchive({
         name: testMind,
@@ -235,7 +270,60 @@ describe("archive", () => {
     });
   });
 
+  describe("readManifest", () => {
+    it("throws on unsupported manifest version", () => {
+      const zip = new AdmZip();
+      zip.addFile("manifest.json", Buffer.from(JSON.stringify({ version: 2, name: "test" })));
+      const archivePath = resolve("/tmp", `${testMind}-v2.volute`);
+      writeFileSync(archivePath, zip.toBuffer());
+      try {
+        assert.throws(() => readManifest(archivePath), /Unsupported archive version/);
+      } finally {
+        rmSync(archivePath, { force: true });
+      }
+    });
+  });
+
   describe("extractArchive", () => {
+    it("rejects archives with path traversal entries", () => {
+      const zip = new AdmZip();
+      zip.addFile(
+        "manifest.json",
+        Buffer.from(
+          JSON.stringify({
+            version: 1,
+            name: "evil",
+            template: "claude",
+            voluteVersion: "1.0.0",
+            exportedAt: new Date().toISOString(),
+            includes: {
+              env: false,
+              identity: false,
+              connectors: false,
+              history: false,
+              sessions: false,
+            },
+          }),
+        ),
+      );
+      zip.addFile("mind/home/SOUL.md", Buffer.from("legit"));
+      // adm-zip normalizes ../  in addFile, so mutate entry name after creation
+      zip.addFile("etc/evil.txt", Buffer.from("pwned"));
+      const entries = zip.getEntries();
+      entries[entries.length - 1].entryName = "../../etc/evil.txt";
+
+      const archivePath = resolve("/tmp", `${testMind}-evil.volute`);
+      const destDir = resolve("/tmp", `${testMind}-evil-dest`);
+      writeFileSync(archivePath, zip.toBuffer());
+
+      try {
+        assert.throws(() => extractArchive(archivePath, destDir), /path traversal/);
+      } finally {
+        rmSync(archivePath, { force: true });
+        rmSync(destDir, { recursive: true, force: true });
+      }
+    });
+
     it("extracts mind directory and state files", () => {
       const zip = createExportArchive({
         name: testMind,

@@ -28,10 +28,10 @@ export type ExportOptions = {
   includeSessions?: boolean;
 };
 
-const EXCLUDED_DIRS = new Set(["node_modules", ".variants"]);
+const EXCLUDED_DIRS = new Set(["node_modules", ".variants", ".git"]);
 
-/** Walk a directory tree, returning relative paths. Skips excluded dirs. */
-function walkDir(dir: string, base?: string): string[] {
+/** Walk a directory tree, returning relative paths. Skips excluded dirs and optionally sessions. */
+function walkDir(dir: string, base?: string, skipSessions?: boolean): string[] {
   const results: string[] = [];
   const baseDir = base ?? dir;
 
@@ -42,7 +42,9 @@ function walkDir(dir: string, base?: string): string[] {
 
     if (stat.isDirectory()) {
       if (EXCLUDED_DIRS.has(entry)) continue;
-      results.push(...walkDir(fullPath, baseDir));
+      // Skip .mind/sessions when sessions are bundled separately
+      if (skipSessions && relPath === join(".mind", "sessions")) continue;
+      results.push(...walkDir(fullPath, baseDir, skipSessions));
     } else {
       results.push(relPath);
     }
@@ -67,8 +69,8 @@ export function createExportArchive(options: ExportOptions): AdmZip {
   const state = stateDir(name);
   const zip = new AdmZip();
 
-  // Walk mind directory, skipping node_modules and .variants
-  const files = walkDir(dir);
+  // Walk mind directory, skipping node_modules, .variants, .git
+  const files = walkDir(dir, undefined, includeSessions);
   for (const relPath of files) {
     // Skip identity files unless included
     if (!includeIdentity && relPath.startsWith(join(".mind", "identity"))) continue;
@@ -81,23 +83,19 @@ export function createExportArchive(options: ExportOptions): AdmZip {
   }
 
   // Always include channels.json from state dir
-  const channelsPath = resolve(state, "channels.json");
-  if (existsSync(channelsPath)) {
-    zip.addFile("state/channels.json", readFileSync(channelsPath));
+  if (existsSync(state)) {
+    const channelsPath = resolve(state, "channels.json");
+    if (existsSync(channelsPath)) {
+      zip.addFile("state/channels.json", readFileSync(channelsPath));
+    }
   }
 
   // Optionally include env.json from state dir
-  if (includeEnv) {
+  if (includeEnv && existsSync(state)) {
     const envPath = resolve(state, "env.json");
     if (existsSync(envPath)) {
       zip.addFile("state/env.json", readFileSync(envPath));
     }
-  }
-
-  // Optionally include history from DB
-  if (includeHistory) {
-    // History is exported synchronously via the caller querying the DB
-    // and passing rows. We'll add a placeholder — the caller adds history.
   }
 
   // Optionally include session JSONL files from .mind/sessions/
@@ -119,7 +117,7 @@ export function createExportArchive(options: ExportOptions): AdmZip {
     const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
     voluteVersion = pkg.version;
   } catch {
-    // fallback
+    // Non-critical: archive works without exact version
   }
 
   // Write manifest
@@ -137,7 +135,7 @@ export function createExportArchive(options: ExportOptions): AdmZip {
       sessions: includeSessions,
     },
   };
-  zip.addFile("manifest.json", Buffer.from(JSON.stringify(manifest, null, 2) + "\n"));
+  zip.addFile("manifest.json", Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`));
 
   return zip;
 }
@@ -177,10 +175,20 @@ export function extractArchive(
   sessionsDir: string | null;
 } {
   const zip = new AdmZip(archivePath);
-  const manifest = readManifest(archivePath);
 
-  const extractedMindDir = resolve(destDir, "mind");
-  const extractedStateDir = resolve(destDir, "state");
+  // Read manifest from the already-opened zip
+  const manifestEntry = zip.getEntry("manifest.json");
+  if (!manifestEntry) {
+    throw new Error("Invalid archive: missing manifest.json");
+  }
+  const manifest = JSON.parse(manifestEntry.getData().toString("utf-8")) as ExportManifest;
+  if (manifest.version !== 1) {
+    throw new Error(`Unsupported archive version: ${manifest.version}`);
+  }
+
+  const normalizedDestDir = resolve(destDir);
+  const extractedMindDir = resolve(normalizedDestDir, "mind");
+  const extractedStateDir = resolve(normalizedDestDir, "state");
   mkdirSync(extractedMindDir, { recursive: true });
   mkdirSync(extractedStateDir, { recursive: true });
 
@@ -190,15 +198,19 @@ export function extractArchive(
 
     if (name === "manifest.json") continue;
 
-    const destPath = resolve(destDir, name);
+    const destPath = resolve(normalizedDestDir, name);
+    // Prevent zip-slip path traversal
+    if (!destPath.startsWith(`${normalizedDestDir}/`)) {
+      throw new Error(`Archive contains path traversal entry: ${name}`);
+    }
     mkdirSync(resolve(destPath, ".."), { recursive: true });
     writeFileSync(destPath, entry.getData());
   }
 
   const channelsJson = resolve(extractedStateDir, "channels.json");
   const envJson = resolve(extractedStateDir, "env.json");
-  const historyJsonl = resolve(destDir, "history.jsonl");
-  const sessionsDir = resolve(destDir, "sessions");
+  const historyJsonl = resolve(normalizedDestDir, "history.jsonl");
+  const sessionsDir = resolve(normalizedDestDir, "sessions");
 
   return {
     manifest,

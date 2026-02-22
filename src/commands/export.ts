@@ -62,14 +62,22 @@ export async function run(args: string[]) {
       const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, name));
       addHistoryToArchive(zip, rows);
     } catch (err) {
-      console.warn("Warning: could not export history:", (err as Error).message);
+      console.error(`Error: could not export history: ${(err as Error).message}`);
+      process.exit(1);
     }
   }
 
   const outputPath = resolve(flags.output ?? `${name}.volute`);
-  writeFileSync(outputPath, zip.toBuffer());
+  const buf = zip.toBuffer();
 
-  const sizeMB = (zip.toBuffer().length / 1024 / 1024).toFixed(2);
+  try {
+    writeFileSync(outputPath, buf);
+  } catch (err) {
+    console.error(`Failed to write archive to ${outputPath}: ${(err as Error).message}`);
+    process.exit(1);
+  }
+
+  const sizeMB = (buf.length / 1024 / 1024).toFixed(2);
   console.log(`\nExported ${name} → ${outputPath} (${sizeMB} MB)`);
 
   const included: string[] = [];

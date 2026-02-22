@@ -291,6 +291,10 @@ async function importFromArchive(
     return c.json({ error: "Invalid archive: missing mind/ directory" }, 400);
   }
 
+  if (!manifest?.includes || !manifest.name || !manifest.template) {
+    return c.json({ error: "Invalid archive manifest" }, 400);
+  }
+
   const name = nameOverride ?? manifest.name;
 
   const nameErr = validateMindName(name);
@@ -338,29 +342,44 @@ async function importFromArchive(
     // Install dependencies
     await npmInstallAsMind(dest, name);
 
-    // Import history rows into DB
+    // Import history rows into DB (per-line to avoid losing all rows on a single bad line)
     const historyJsonl = resolve(tempDir, "history.jsonl");
     if (existsSync(historyJsonl)) {
       try {
         const db = await getDb();
         const lines = readFileSync(historyJsonl, "utf-8").trim().split("\n");
+        let imported = 0;
+        let failed = 0;
         for (const line of lines) {
           if (!line) continue;
-          const row = JSON.parse(line);
-          await db.insert(mindHistory).values({
-            mind: name,
-            channel: row.channel ?? null,
-            session: row.session ?? null,
-            sender: row.sender ?? null,
-            message_id: row.message_id ?? null,
-            type: row.type,
-            content: row.content ?? null,
-            metadata: row.metadata ?? null,
-            created_at: row.created_at ?? new Date().toISOString(),
-          });
+          try {
+            const row = JSON.parse(line);
+            if (!row.type) {
+              failed++;
+              continue;
+            }
+            await db.insert(mindHistory).values({
+              mind: name,
+              channel: row.channel ?? null,
+              session: row.session ?? null,
+              sender: row.sender ?? null,
+              message_id: row.message_id ?? null,
+              type: row.type,
+              content: row.content ?? null,
+              metadata: row.metadata ?? null,
+              created_at: row.created_at ?? new Date().toISOString(),
+            });
+            imported++;
+          } catch (lineErr) {
+            log.warn("Failed to import history line", log.errorData(lineErr));
+            failed++;
+          }
+        }
+        if (failed > 0) {
+          log.warn(`History import: ${imported} imported, ${failed} failed`);
         }
       } catch (err) {
-        log.warn("Failed to import history", log.errorData(err));
+        log.error("Failed to open database for history import", log.errorData(err));
       }
     }
 
@@ -395,8 +414,8 @@ async function importFromArchive(
     if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
     try {
       removeMind(name);
-    } catch {
-      // ignore cleanup errors
+    } catch (cleanupErr) {
+      log.error(`Failed to clean up registry for ${name}`, log.errorData(cleanupErr));
     }
     rmSync(tempDir, { recursive: true, force: true });
     return c.json({ error: err instanceof Error ? err.message : "Failed to import mind" }, 500);

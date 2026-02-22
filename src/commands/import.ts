@@ -1,4 +1,15 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, resolve } from "node:path";
 import { mindEnvPath, readEnv, writeEnv } from "../lib/env.js";
@@ -58,11 +69,15 @@ export async function run(args: string[]) {
 function isZipFile(path: string): boolean {
   const resolved = resolve(path);
   if (!existsSync(resolved)) return false;
+  const fd = openSync(resolved, "r");
   try {
-    const fd = readFileSync(resolved, { encoding: null });
-    return fd.length >= 4 && fd[0] === 0x50 && fd[1] === 0x4b && fd[2] === 0x03 && fd[3] === 0x04;
-  } catch {
-    return false;
+    const buf = Buffer.alloc(4);
+    const bytesRead = readSync(fd, buf, 0, 4, 0);
+    return (
+      bytesRead === 4 && buf[0] === 0x50 && buf[1] === 0x4b && buf[2] === 0x03 && buf[3] === 0x04
+    );
+  } finally {
+    closeSync(fd);
   }
 }
 
@@ -83,39 +98,45 @@ async function importArchive(archivePath: string, nameOverride?: string): Promis
   try {
     extracted = extractArchive(archivePath, tempDir);
   } catch (err) {
+    rmSync(tempDir, { recursive: true, force: true });
     console.error(`Failed to extract archive: ${(err as Error).message}`);
     process.exit(1);
   }
 
-  const { daemonFetch } = await import("../lib/daemon-client.js");
-  const { getClient, urlOf } = await import("../lib/api-client.js");
-  const client = getClient();
+  try {
+    const { daemonFetch } = await import("../lib/daemon-client.js");
+    const { getClient, urlOf } = await import("../lib/api-client.js");
+    const client = getClient();
 
-  const res = await daemonFetch(urlOf((client.api.minds as any).import.$url()), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      archivePath: tempDir,
-      name: nameOverride,
-      manifest: extracted.manifest,
-    }),
-  });
+    const res = await daemonFetch(urlOf((client.api.minds as any).import.$url()), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        archivePath: tempDir,
+        name: nameOverride,
+        manifest: extracted.manifest,
+      }),
+    });
 
-  const data = (await res.json()) as {
-    ok?: boolean;
-    error?: string;
-    name?: string;
-    port?: number;
-    message?: string;
-  };
+    const data = (await res.json()) as {
+      ok?: boolean;
+      error?: string;
+      name?: string;
+      port?: number;
+      message?: string;
+    };
 
-  if (!res.ok) {
-    console.error(data.error ?? "Failed to import mind");
-    process.exit(1);
+    if (!res.ok) {
+      console.error(data.error ?? "Failed to import mind");
+      process.exit(1);
+    }
+
+    console.log(`\n${data.message ?? `Imported mind: ${data.name} (port ${data.port})`}`);
+    console.log(`\n  volute mind start ${data.name}`);
+  } catch (err) {
+    rmSync(tempDir, { recursive: true, force: true });
+    throw err;
   }
-
-  console.log(`\n${data.message ?? `Imported mind: ${data.name} (port ${data.port})`}`);
-  console.log(`\n  volute mind start ${data.name}`);
 }
 
 /** Auto-detect OpenClaw workspace: explicit path > cwd > ~/.openclaw/workspace */
