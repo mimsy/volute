@@ -1,17 +1,17 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, it } from "node:test";
+import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import AdmZip from "adm-zip";
 import { Hono } from "hono";
 import { getDb } from "../src/lib/db.js";
-import { exec } from "../src/lib/exec.js";
 import { addMind, mindDir, voluteHome } from "../src/lib/registry.js";
 import { sessions, sharedSkills, users } from "../src/lib/schema.js";
 import { importSkillFromDir } from "../src/lib/skills.js";
 import mindSkillsApp from "../src/web/api/mind-skills.js";
 import skillsApp from "../src/web/api/skills.js";
 import { type AuthEnv, authMiddleware } from "../src/web/middleware/auth.js";
+import { createMindGitRepo } from "./helpers/git.js";
 
 const testMindName = `skill-web-test-${Date.now()}`;
 let adminCookie: string;
@@ -24,7 +24,7 @@ function createApp() {
   return app;
 }
 
-async function setup() {
+async function setupAuth() {
   const db = await getDb();
   await db.delete(sharedSkills);
   await db.delete(sessions);
@@ -38,18 +38,6 @@ async function setup() {
   const sessionId = crypto.randomUUID();
   await db.insert(sessions).values({ id: sessionId, userId: user.id, createdAt: Date.now() });
   adminCookie = `volute_session=${sessionId}`;
-
-  // Create a test mind with git repo
-  const dir = mindDir(testMindName);
-  const skillsDir = join(dir, "home", ".claude", "skills");
-  mkdirSync(skillsDir, { recursive: true });
-  writeFileSync(join(dir, "home", ".gitkeep"), "");
-  await exec("git", ["init"], { cwd: dir });
-  await exec("git", ["config", "user.email", "test@test.com"], { cwd: dir });
-  await exec("git", ["config", "user.name", "Test"], { cwd: dir });
-  await exec("git", ["add", "-A"], { cwd: dir });
-  await exec("git", ["commit", "-m", "init"], { cwd: dir });
-  addMind(testMindName, 4199);
 }
 
 async function cleanup() {
@@ -77,7 +65,7 @@ function createSharedSkillDir(name: string): string {
 }
 
 describe("web skills API — shared skills", () => {
-  beforeEach(setup);
+  beforeEach(setupAuth);
   afterEach(cleanup);
 
   it("GET /skills returns empty list initially", async () => {
@@ -189,7 +177,25 @@ describe("web skills API — shared skills", () => {
 });
 
 describe("web skills API — mind skills", () => {
-  beforeEach(setup);
+  let baseRepoDir: string;
+
+  before(async () => {
+    baseRepoDir = `${mindDir(testMindName)}-base`;
+    await createMindGitRepo(baseRepoDir);
+  });
+
+  after(() => {
+    if (existsSync(baseRepoDir)) rmSync(baseRepoDir, { recursive: true });
+  });
+
+  beforeEach(async () => {
+    await setupAuth();
+    const dir = mindDir(testMindName);
+    if (existsSync(dir)) rmSync(dir, { recursive: true });
+    cpSync(baseRepoDir, dir, { recursive: true });
+    addMind(testMindName, 4199);
+  });
+
   afterEach(cleanup);
 
   it("GET /minds/:name/skills returns installed skills", async () => {

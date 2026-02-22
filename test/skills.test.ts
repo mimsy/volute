@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, it } from "node:test";
+import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { getDb } from "../src/lib/db.js";
 import { exec } from "../src/lib/exec.js";
 import { voluteHome } from "../src/lib/registry.js";
@@ -19,6 +19,7 @@ import {
   uninstallSkill,
   updateSkill,
 } from "../src/lib/skills.js";
+import { createMindGitRepo } from "./helpers/git.js";
 
 async function cleanup() {
   const db = await getDb();
@@ -38,22 +39,6 @@ function createSkillSource(name: string, description = "Test skill"): string {
     join(dir, "SKILL.md"),
     `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n\nContent here.\n`,
   );
-  return dir;
-}
-
-/** Create a minimal mind git repo for testing */
-async function createTestMindRepo(name: string): Promise<string> {
-  const dir = join(voluteHome(), "minds", name);
-  const skillsDir = join(dir, "home", ".claude", "skills");
-  mkdirSync(skillsDir, { recursive: true });
-  writeFileSync(join(dir, "home", ".gitkeep"), "");
-
-  await exec("git", ["init"], { cwd: dir });
-  await exec("git", ["config", "user.email", "test@test.com"], { cwd: dir });
-  await exec("git", ["config", "user.name", "Test"], { cwd: dir });
-  await exec("git", ["add", "-A"], { cwd: dir });
-  await exec("git", ["commit", "-m", "init"], { cwd: dir });
-
   return dir;
 }
 
@@ -161,6 +146,7 @@ describe("shared skill CRUD", () => {
 describe("mind skill operations", () => {
   let mindDir: string;
   const mindName = `skill-test-mind-${Date.now()}`;
+  let baseRepoDir: string;
 
   async function mindCleanup() {
     await cleanup();
@@ -168,9 +154,19 @@ describe("mind skill operations", () => {
     if (existsSync(dir)) rmSync(dir, { recursive: true });
   }
 
+  before(async () => {
+    baseRepoDir = join(voluteHome(), "minds", `${mindName}-base`);
+    await createMindGitRepo(baseRepoDir);
+  });
+
+  after(() => {
+    if (existsSync(baseRepoDir)) rmSync(baseRepoDir, { recursive: true });
+  });
+
   beforeEach(async () => {
     await mindCleanup();
-    mindDir = await createTestMindRepo(mindName);
+    mindDir = join(voluteHome(), "minds", mindName);
+    cpSync(baseRepoDir, mindDir, { recursive: true });
   });
 
   afterEach(mindCleanup);
