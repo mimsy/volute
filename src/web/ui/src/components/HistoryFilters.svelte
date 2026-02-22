@@ -97,6 +97,7 @@ function handleClickOutside(e: MouseEvent) {
 </script>
 
 <svelte:document onclick={handleClickOutside} />
+<svelte:window onblur={closeAll} />
 
 <div class="filters">
   <div class="custom-select" class:open={channelOpen}>
@@ -311,7 +312,7 @@ function handleClickOutside(e: MouseEvent) {
     color: var(--text-1);
   }
   .live-pill.active {
-    border-color: color-mix(in srgb, var(--accent) 25%, transparent);
+    border-color: var(--accent-border);
     background: color-mix(in srgb, var(--accent) 8%, transparent);
     color: var(--text-0);
   }

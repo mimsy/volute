@@ -1,5 +1,7 @@
 <script lang="ts">
+import { onMount } from "svelte";
 import { fetchSharedSkills, installMindSkill, type SharedSkill } from "../lib/api";
+import Modal from "./Modal.svelte";
 
 let {
   name,
@@ -18,7 +20,7 @@ let error = $state("");
 let loading = $state(true);
 let actionLoading = $state<string | null>(null);
 
-$effect(() => {
+onMount(() => {
   fetchSharedSkills()
     .then((s) => {
       skills = s;
@@ -47,106 +49,50 @@ async function handleInstall(skillId: string) {
 }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="modal-overlay" onclick={onClose} onkeydown={() => {}}>
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
-    <div class="modal-header">
-      <span class="modal-title">Add Skill</span>
-      <button class="close-btn" onclick={onClose}>&#x2715;</button>
-    </div>
-    <div class="modal-body">
-      {#if error}
-        <div class="error">{error}</div>
-      {/if}
+<Modal size="480px" title="Add Skill" {onClose}>
+  <div class="modal-body">
+    {#if error}
+      <div class="error">{error}</div>
+    {/if}
 
-      {#if loading}
-        <div class="empty">Loading...</div>
-      {:else if skills.length === 0}
-        <div class="empty">No shared skills available.</div>
-      {:else}
-        <div class="skill-list">
-          {#each skills as skill (skill.id)}
-            <div class="skill-row">
-              <div class="skill-info">
-                <div class="skill-name">{skill.name}</div>
-                {#if skill.description}
-                  <div class="skill-desc">{skill.description}</div>
-                {/if}
-                <div class="skill-meta">
-                  {skill.id} &middot; v{skill.version}
-                </div>
-              </div>
-              <div class="skill-actions">
-                {#if installedIds.has(skill.id)}
-                  <span class="installed-tag">installed</span>
-                {:else}
-                  <button
-                    class="action-btn install-btn"
-                    onclick={() => handleInstall(skill.id)}
-                    disabled={actionLoading !== null}
-                  >
-                    {actionLoading === skill.id ? "..." : "Install"}
-                  </button>
-                {/if}
+    {#if loading}
+      <div class="empty">Loading...</div>
+    {:else if skills.length === 0}
+      <div class="empty">No shared skills available.</div>
+    {:else}
+      <div class="skill-list">
+        {#each skills as skill (skill.id)}
+          <div class="skill-row">
+            <div class="skill-info">
+              <div class="skill-name">{skill.name}</div>
+              {#if skill.description}
+                <div class="skill-desc">{skill.description}</div>
+              {/if}
+              <div class="skill-meta">
+                {skill.id} &middot; v{skill.version}
               </div>
             </div>
-          {/each}
-        </div>
-      {/if}
-    </div>
+            <div class="skill-actions">
+              {#if installedIds.has(skill.id)}
+                <span class="installed-tag">installed</span>
+              {:else}
+                <button
+                  class="action-btn install-btn"
+                  onclick={() => handleInstall(skill.id)}
+                  disabled={actionLoading !== null}
+                >
+                  {actionLoading === skill.id ? "..." : "Install"}
+                </button>
+              {/if}
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
   </div>
-</div>
+</Modal>
 
 <style>
-  .modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 300;
-    animation: fadeIn 0.15s ease;
-  }
-
-  .modal {
-    width: 480px;
-    max-height: 60vh;
-    background: var(--bg-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-
-  .modal-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-0);
-  }
-
-  .close-btn {
-    background: none;
-    color: var(--text-2);
-    font-size: 14px;
-    padding: 4px 8px;
-  }
-
-  .close-btn:hover {
-    color: var(--text-0);
-  }
-
   .modal-body {
     flex: 1;
     overflow: auto;

@@ -1,4 +1,5 @@
 <script lang="ts">
+import { onMount } from "svelte";
 import {
   fetchHistory,
   fetchHistoryChannels,
@@ -115,7 +116,7 @@ async function loadMeta() {
 }
 
 // Initial load
-$effect(() => {
+onMount(() => {
   loadMeta();
   load(0);
 });
@@ -304,7 +305,7 @@ function handleFilterChange(next: FilterState) {
     top: 0;
     bottom: 0;
     width: 2px;
-    background: #333;
+    background: var(--timeline-rail);
   }
 
   .error {

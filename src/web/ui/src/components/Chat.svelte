@@ -25,7 +25,13 @@ let {
   convType?: string;
 } = $props();
 
-type ChatEntry = { role: "user" | "assistant"; blocks: ContentBlock[]; senderName?: string };
+let nextEntryId = 0;
+type ChatEntry = {
+  id: number;
+  role: "user" | "assistant";
+  blocks: ContentBlock[];
+  senderName?: string;
+};
 
 type ToolBlock = {
   name: string;
@@ -100,6 +106,7 @@ function loadMessages(convId: string, forceScroll?: boolean) {
 
       loadError = "";
       entries = msgs.map((m) => ({
+        id: nextEntryId++,
         role: m.role as "user" | "assistant",
         blocks: normalizeContent(m.content),
         senderName: m.sender_name ?? undefined,
@@ -204,7 +211,10 @@ async function handleSend() {
     inputEl.style.height = "auto";
     inputEl.style.overflow = "hidden";
   }
-  entries = [...entries, { role: "user", blocks: userBlocks, senderName: username }];
+  entries = [
+    ...entries,
+    { id: nextEntryId++, role: "user", blocks: userBlocks, senderName: username },
+  ];
   sending = true;
   if (currentConvId && name && username) {
     reportTyping(name, `volute:${currentConvId}`, username, false);
@@ -238,6 +248,7 @@ async function handleSend() {
     entries = [
       ...entries,
       {
+        id: nextEntryId++,
         role: "assistant",
         blocks: [{ type: "text", text: "*Failed to send message. Please try again.*" }],
         senderName: "system",
@@ -380,7 +391,7 @@ function toggleTool(idx: number) {
     {:else if entries.length === 0}
       <div class="empty">Send a message to start chatting.</div>
     {/if}
-    {#each entries as entry, i (i)}
+    {#each entries as entry, i (entry.id)}
       <!-- System divider -->
       {#if entry.senderName === "system" && entry.blocks.length === 1 && entry.blocks[0].type === "text"}
         {@const text = entry.blocks[0].text}
@@ -467,7 +478,7 @@ function toggleTool(idx: number) {
   <!-- Image preview strip -->
   {#if pendingImages.length > 0}
     <div class="image-strip">
-      {#each pendingImages as img, i (i)}
+      {#each pendingImages as img, i (img.preview)}
         <div class="image-preview">
           <img src={img.preview} alt="" class="preview-thumb" />
           <button class="remove-image" onclick={() => { pendingImages = pendingImages.filter((_, j) => j !== i); }}>x</button>
@@ -535,7 +546,7 @@ function toggleTool(idx: number) {
     letter-spacing: 0.05em;
     text-transform: uppercase;
     opacity: 0.6;
-    border-bottom: 1px solid rgba(251, 191, 36, 0.1);
+    border-bottom: 1px solid var(--yellow-bg);
   }
 
   .messages {

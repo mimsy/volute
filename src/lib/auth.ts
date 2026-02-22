@@ -182,6 +182,20 @@ export async function deleteMindUser(mindName: string): Promise<void> {
   await db.delete(users).where(and(eq(users.username, mindName), eq(users.user_type, "mind")));
 }
 
+export async function changePassword(
+  userId: number,
+  currentPassword: string,
+  newPassword: string,
+): Promise<boolean> {
+  const db = await getDb();
+  const row = await db.select().from(users).where(eq(users.id, userId)).get();
+  if (!row) return false;
+  if (!compareSync(currentPassword, row.password_hash)) return false;
+  const hash = hashSync(newPassword, 10);
+  await db.update(users).set({ password_hash: hash }).where(eq(users.id, userId));
+  return true;
+}
+
 export async function approveUser(id: number): Promise<void> {
   const db = await getDb();
   await db

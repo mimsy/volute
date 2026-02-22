@@ -22,11 +22,15 @@ let {
   minds,
   conversations,
   recentPages,
+  onOpenMind,
+  onSelectPage,
 }: {
   username: string;
   minds: Mind[];
   conversations: ConversationWithDetails[];
   recentPages: RecentPage[];
+  onOpenMind: (mind: Mind) => void;
+  onSelectPage: (mind: string, path: string) => void;
 } = $props();
 
 let sortedMinds = $derived(
@@ -65,7 +69,7 @@ let recentConversations = $derived(
       <div class="mind-row">
         {#each sortedMinds as mind}
           {@const connectedChannels = mind.channels.filter(ch => ch.name !== "web" && ch.name !== "volute" && ch.status === "connected")}
-          <a href={`/mind/${mind.name}`} class="home-mind-card">
+          <button class="home-mind-card" onclick={() => onOpenMind(mind)}>
             <div class="mind-card-header">
               <span class="mind-name">{mind.name}</span>
               <StatusBadge status={getDisplayStatus(mind)} />
@@ -83,7 +87,7 @@ let recentConversations = $derived(
             <div class="mind-activity">
               {mind.lastActiveAt ? `active ${formatRelativeTime(mind.lastActiveAt)}` : "no activity"}
             </div>
-          </a>
+          </button>
         {/each}
       </div>
     {/if}
@@ -129,12 +133,12 @@ let recentConversations = $derived(
       </div>
       <div class="pages-list">
         {#each recentPages as page}
-          <a href={page.url} target="_blank" rel="noopener noreferrer" class="page-row">
+          <button class="page-row" onclick={() => onSelectPage(page.mind, page.file)}>
             <span>
               <span class="page-mind">{page.mind}/</span>{page.file}
             </span>
             <span class="page-time">{formatRelativeTime(page.modified)}</span>
-          </a>
+          </button>
         {/each}
       </div>
     </div>
@@ -192,6 +196,10 @@ let recentConversations = $derived(
     min-width: 150px;
     transition: border-color 0.15s;
     flex-shrink: 0;
+    cursor: pointer;
+    text-align: left;
+    color: inherit;
+    font-size: inherit;
   }
 
   .home-mind-card:hover {
@@ -297,14 +305,16 @@ let recentConversations = $derived(
     display: flex;
     justify-content: space-between;
     align-items: center;
+    width: 100%;
     padding: 8px 12px;
     border-radius: var(--radius);
     background: var(--bg-2);
     border: 1px solid var(--border);
-    text-decoration: none;
     color: var(--text-0);
     font-size: 12px;
     transition: border-color 0.15s;
+    cursor: pointer;
+    text-align: left;
   }
 
   .page-row:hover {

@@ -1,5 +1,7 @@
 <script lang="ts">
+import { onMount } from "svelte";
 import { createSeedMind, fetchPrompts, startMind } from "../lib/api";
+import Modal from "./Modal.svelte";
 
 let { onClose, onCreated }: { onClose: () => void; onCreated: (name: string) => void } = $props();
 
@@ -14,11 +16,8 @@ let showAdvanced = $state(false);
 let seedSoul = $state("");
 let defaultSeedSoul = $state("");
 
-$effect(() => {
+onMount(() => {
   nameInput?.focus();
-});
-
-$effect(() => {
   fetchPrompts()
     .then((prompts) => {
       const p = prompts.find((p) => p.key === "seed_soul");
@@ -54,10 +53,8 @@ async function handleSubmit() {
 }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="overlay" onclick={onClose} onkeydown={() => {}}>
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
+<Modal size="340px" {onClose}>
+  <div class="modal-content">
     <div class="modal-title">Plant a seed</div>
 
     <label class="field">
@@ -132,25 +129,11 @@ async function handleSubmit() {
       </button>
     </div>
   </div>
-</div>
+</Modal>
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
-  }
-
-  .modal {
-    background: var(--bg-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+  .modal-content {
     padding: 24px;
-    width: 340px;
     display: flex;
     flex-direction: column;
     gap: 14px;

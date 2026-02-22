@@ -4,6 +4,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { z } from "zod";
 import {
   approveUser,
+  changePassword,
   createUser,
   getOrCreateMindUser,
   getUser,
@@ -26,6 +27,21 @@ const credentialsSchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1),
 });
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(1),
+});
+
+const authenticated = new Hono<AuthEnv>()
+  .use(authMiddleware)
+  .post("/change-password", zValidator("json", changePasswordSchema), async (c) => {
+    const user = c.get("user");
+    const { currentPassword, newPassword } = c.req.valid("json");
+    const ok = await changePassword(user.id, currentPassword, newPassword);
+    if (!ok) return c.json({ error: "Current password is incorrect" }, 400);
+    return c.json({ ok: true });
+  });
 
 const admin = new Hono<AuthEnv>()
   .use(authMiddleware)
@@ -109,6 +125,7 @@ const app = new Hono()
 
     return c.json({ id: user.id, username: user.username, role: user.role });
   })
-  .route("/", admin);
+  .route("/", admin)
+  .route("/", authenticated);
 
 export default app;

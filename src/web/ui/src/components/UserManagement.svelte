@@ -1,4 +1,5 @@
 <script lang="ts">
+import { onMount } from "svelte";
 import { type AuthUser, approveUser, fetchUsers } from "../lib/auth";
 
 let users = $state<AuthUser[]>([]);
@@ -15,7 +16,7 @@ function refresh() {
     });
 }
 
-$effect(() => {
+onMount(() => {
   refresh();
 });
 

@@ -1,40 +1,37 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind, RecentPage } from "../lib/api";
 import ConversationList from "./ConversationList.svelte";
-import MindList from "./MindList.svelte";
 import PagesList from "./PagesList.svelte";
 
 let {
   minds,
   conversations,
   pages,
-  selectedMind,
   activeConversationId,
   username,
-  onSelectMind,
   onSelectConversation,
   onDeleteConversation,
   onNewChat,
-  onNewGroup,
   onBrowseChannels,
-  onSeed,
+  onOpenMind,
+  onSelectPage,
+  onHideConversation,
 }: {
   minds: Mind[];
   conversations: ConversationWithParticipants[];
   pages: RecentPage[];
-  selectedMind: string | null;
   activeConversationId: string | null;
   username: string;
-  onSelectMind: (name: string) => void;
   onSelectConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
   onNewChat: () => void;
-  onNewGroup: () => void;
   onBrowseChannels: () => void;
-  onSeed: () => void;
+  onOpenMind: (mind: Mind) => void;
+  onSelectPage: (mind: string, path: string) => void;
+  onHideConversation?: (id: string) => void;
 } = $props();
 
-type Section = "minds" | "chats" | "pages";
+type Section = "dms" | "channels" | "pages";
 
 function loadCollapsed(): Set<Section> {
   try {
@@ -46,6 +43,9 @@ function loadCollapsed(): Set<Section> {
 }
 
 let collapsed = $state(loadCollapsed());
+
+let dmConversations = $derived(conversations.filter((c) => c.type !== "channel"));
+let channelConversations = $derived(conversations.filter((c) => c.type === "channel"));
 
 function toggleSection(section: Section) {
   if (collapsed.has(section)) {
@@ -59,40 +59,50 @@ function toggleSection(section: Section) {
 </script>
 
 <div class="sidebar-inner">
-  <div class="sidebar-actions">
-    <button class="new-chat-btn" onclick={onNewChat}>+ new chat</button>
-    <button class="group-btn" onclick={onNewGroup} title="New group">++</button>
-  </div>
-
   <div class="sections">
-    <!-- Minds -->
+    <!-- DMs -->
     <div class="section">
-      <button class="section-toggle" onclick={() => toggleSection("minds")}>
-        <span class="toggle-icon">{collapsed.has("minds") ? "\u25B8" : "\u25BE"}</span>
-        <span>Minds</span>
-        <span class="section-count">{minds.length}</span>
-      </button>
-      {#if !collapsed.has("minds")}
-        <MindList {minds} {selectedMind} onSelect={onSelectMind} onSeed={onSeed} />
-      {/if}
-    </div>
-
-    <!-- Conversations -->
-    <div class="section">
-      <button class="section-toggle" onclick={() => toggleSection("chats")}>
-        <span class="toggle-icon">{collapsed.has("chats") ? "\u25B8" : "\u25BE"}</span>
-        <span>Conversations</span>
-        <span class="section-count">{conversations.length}</span>
-      </button>
-      {#if !collapsed.has("chats")}
+      <div class="section-header-row">
+        <button class="section-toggle" onclick={() => toggleSection("dms")}>
+          <span class="toggle-icon">{collapsed.has("dms") ? "\u25B8" : "\u25BE"}</span>
+          <span>DMs</span>
+        </button>
+        <button class="section-add" onclick={onNewChat} title="New chat">+</button>
+      </div>
+      {#if !collapsed.has("dms")}
         <ConversationList
-          {conversations}
+          conversations={dmConversations}
           {minds}
           activeId={activeConversationId}
           {username}
+          mode="dms"
           onSelect={onSelectConversation}
           onDelete={onDeleteConversation}
-          onBrowse={onBrowseChannels}
+          {onOpenMind}
+          onHide={onHideConversation}
+        />
+      {/if}
+    </div>
+
+    <!-- Channels -->
+    <div class="section">
+      <div class="section-header-row">
+        <button class="section-toggle" onclick={() => toggleSection("channels")}>
+          <span class="toggle-icon">{collapsed.has("channels") ? "\u25B8" : "\u25BE"}</span>
+          <span>Channels</span>
+        </button>
+        <button class="section-add" onclick={onBrowseChannels} title="Browse channels">+</button>
+      </div>
+      {#if !collapsed.has("channels")}
+        <ConversationList
+          conversations={channelConversations}
+          {minds}
+          activeId={activeConversationId}
+          {username}
+          mode="channels"
+          onSelect={onSelectConversation}
+          onDelete={onDeleteConversation}
+          {onOpenMind}
         />
       {/if}
     </div>
@@ -100,13 +110,14 @@ function toggleSection(section: Section) {
     <!-- Pages -->
     {#if pages.length > 0}
       <div class="section">
-        <button class="section-toggle" onclick={() => toggleSection("pages")}>
-          <span class="toggle-icon">{collapsed.has("pages") ? "\u25B8" : "\u25BE"}</span>
-          <span>Pages</span>
-          <span class="section-count">{pages.length}</span>
-        </button>
+        <div class="section-header-row">
+          <button class="section-toggle" onclick={() => toggleSection("pages")}>
+            <span class="toggle-icon">{collapsed.has("pages") ? "\u25B8" : "\u25BE"}</span>
+            <span>Pages</span>
+          </button>
+        </div>
         {#if !collapsed.has("pages")}
-          <PagesList {pages} />
+          <PagesList {pages} {onSelectPage} />
         {/if}
       </div>
     {/if}
@@ -121,48 +132,28 @@ function toggleSection(section: Section) {
     overflow: hidden;
   }
 
-  .sidebar-actions {
-    display: flex;
-    gap: 4px;
-    padding: 8px;
-    flex-shrink: 0;
-  }
-
-  .new-chat-btn {
-    flex: 1;
-    padding: 6px 10px;
-    background: var(--accent-dim);
-    color: var(--accent);
-    border-radius: var(--radius);
-    font-size: 11px;
-    font-weight: 500;
-    text-align: left;
-  }
-
-  .group-btn {
-    padding: 6px 8px;
-    background: var(--bg-2);
-    color: var(--text-1);
-    border-radius: var(--radius);
-    font-size: 11px;
-    border: 1px solid var(--border);
-  }
-
   .sections {
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
+    padding-top: 4px;
   }
 
   .section {
     margin-bottom: 2px;
   }
 
+  .section-header-row {
+    display: flex;
+    align-items: center;
+    padding-right: 8px;
+  }
+
   .section-toggle {
     display: flex;
     align-items: center;
     gap: 4px;
-    width: 100%;
+    flex: 1;
     padding: 6px 12px;
     background: none;
     color: var(--text-2);
@@ -182,10 +173,17 @@ function toggleSection(section: Section) {
     width: 10px;
   }
 
-  .section-count {
-    margin-left: auto;
-    font-weight: 400;
-    font-size: 10px;
+  .section-add {
+    background: none;
     color: var(--text-2);
+    font-size: 14px;
+    padding: 2px 6px;
+    border-radius: var(--radius);
+    flex-shrink: 0;
+  }
+
+  .section-add:hover {
+    color: var(--text-0);
+    background: var(--bg-2);
   }
 </style>

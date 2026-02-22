@@ -1,4 +1,5 @@
 <script lang="ts">
+import { onMount } from "svelte";
 import { fetchPrompts, type Prompt, resetPrompt, updatePrompt } from "../lib/api";
 
 let prompts = $state<Prompt[]>([]);
@@ -40,7 +41,7 @@ async function load() {
   }
 }
 
-$effect(() => {
+onMount(() => {
   load();
 });
 
@@ -327,7 +328,7 @@ async function handleReset(key: string) {
   .btn-save {
     background: var(--accent-dim);
     color: var(--accent);
-    border-color: rgba(74, 222, 128, 0.2);
+    border-color: var(--accent-border);
   }
 
   .btn-save:hover:not(:disabled) {
@@ -345,9 +346,9 @@ async function handleReset(key: string) {
   }
 
   .btn-reset {
-    background: rgba(248, 113, 113, 0.08);
+    background: var(--red-bg);
     color: var(--red);
-    border-color: rgba(248, 113, 113, 0.2);
+    border-color: var(--red-border);
   }
 
   .btn-reset:hover:not(:disabled) {

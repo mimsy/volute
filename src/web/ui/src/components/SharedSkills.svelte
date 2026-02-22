@@ -1,4 +1,5 @@
 <script lang="ts">
+import { onMount } from "svelte";
 import { fetchSharedSkills, removeSharedSkill, type SharedSkill, uploadSkillZip } from "../lib/api";
 
 let skills = $state<SharedSkill[]>([]);
@@ -19,7 +20,7 @@ function refresh() {
     });
 }
 
-$effect(() => {
+onMount(() => {
   refresh();
 });
 
