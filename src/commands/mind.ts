@@ -41,6 +41,9 @@ export async function run(args: string[]) {
     case "import":
       await import("./import.js").then((m) => m.run(args.slice(1)));
       break;
+    case "export":
+      await import("./export.js").then((m) => m.run(args.slice(1)));
+      break;
     case "--help":
     case "-h":
     case undefined:
@@ -72,6 +75,7 @@ function printUsage() {
   volute mind logs [name] [--follow] [-n N]
   volute mind upgrade [name] [--template <name>] [--continue]
   volute mind import <path> [--name <name>] [--session <path>] [--template <name>]
+  volute mind export <name> [--include-env] [--include-identity] [--include-connectors] [--include-history] [--include-sessions] [--all] [--output <path>]
 
 Mind name can be omitted (where shown as [name]) if VOLUTE_MIND is set.`);
 }

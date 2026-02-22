@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, resolve } from "node:path";
 import { mindEnvPath, readEnv, writeEnv } from "../lib/env.js";
 import { parseArgs } from "../lib/parse-args.js";
@@ -12,7 +12,15 @@ export async function run(args: string[]) {
     template: { type: "string" },
   });
 
-  const wsDir = resolveWorkspace(positional[0]);
+  const inputPath = positional[0];
+
+  // Detect .volute archive vs OpenClaw workspace
+  if (inputPath && (inputPath.endsWith(".volute") || isZipFile(inputPath))) {
+    await importArchive(resolve(inputPath), flags.name);
+    return;
+  }
+
+  const wsDir = resolveWorkspace(inputPath);
 
   const { daemonFetch } = await import("../lib/daemon-client.js");
   const { getClient, urlOf } = await import("../lib/api-client.js");
@@ -26,6 +34,70 @@ export async function run(args: string[]) {
       name: flags.name,
       template: flags.template,
       sessionPath: flags.session,
+    }),
+  });
+
+  const data = (await res.json()) as {
+    ok?: boolean;
+    error?: string;
+    name?: string;
+    port?: number;
+    message?: string;
+  };
+
+  if (!res.ok) {
+    console.error(data.error ?? "Failed to import mind");
+    process.exit(1);
+  }
+
+  console.log(`\n${data.message ?? `Imported mind: ${data.name} (port ${data.port})`}`);
+  console.log(`\n  volute mind start ${data.name}`);
+}
+
+/** Check if a file starts with the PK zip magic bytes. */
+function isZipFile(path: string): boolean {
+  const resolved = resolve(path);
+  if (!existsSync(resolved)) return false;
+  try {
+    const fd = readFileSync(resolved, { encoding: null });
+    return fd.length >= 4 && fd[0] === 0x50 && fd[1] === 0x4b && fd[2] === 0x03 && fd[3] === 0x04;
+  } catch {
+    return false;
+  }
+}
+
+/** Import a .volute archive via the daemon. */
+async function importArchive(archivePath: string, nameOverride?: string): Promise<void> {
+  if (!existsSync(archivePath)) {
+    console.error(`File not found: ${archivePath}`);
+    process.exit(1);
+  }
+
+  const { extractArchive } = await import("../lib/archive.js");
+
+  // Extract to temp dir
+  const tempDir = resolve(tmpdir(), `volute-import-${Date.now()}`);
+  mkdirSync(tempDir, { recursive: true });
+
+  let extracted: Awaited<ReturnType<typeof extractArchive>>;
+  try {
+    extracted = extractArchive(archivePath, tempDir);
+  } catch (err) {
+    console.error(`Failed to extract archive: ${(err as Error).message}`);
+    process.exit(1);
+  }
+
+  const { daemonFetch } = await import("../lib/daemon-client.js");
+  const { getClient, urlOf } = await import("../lib/api-client.js");
+  const client = getClient();
+
+  const res = await daemonFetch(urlOf((client.api.minds as any).import.$url()), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      archivePath: tempDir,
+      name: nameOverride,
+      manifest: extracted.manifest,
     }),
   });
 
