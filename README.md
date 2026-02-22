@@ -74,7 +74,7 @@ The agent knows which channel each message came from — CLI, web, Discord, or s
 │   ├── VOLUTE.md          # channel routing docs
 │   └── memory/            # daily logs (YYYY-MM-DD.md)
 ├── src/                   # agent server code
-└── .volute/               # runtime state, session, logs
+└── .mind/                 # runtime state, session, logs
 ```
 
 **`SOUL.md`** is the identity. This is the core of the system prompt. Edit it to change how the agent thinks and speaks.

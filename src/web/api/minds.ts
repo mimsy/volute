@@ -28,6 +28,14 @@ import { convertSession } from "../../lib/convert-session.js";
 import { getDb } from "../../lib/db.js";
 import { exec, gitExec } from "../../lib/exec.js";
 import {
+  generateIdentity,
+  getFingerprint,
+  getPrivateKey,
+  getPublicKey,
+  publishPublicKey,
+  signMessage,
+} from "../../lib/identity.js";
+import {
   chownMindDir,
   createMindUser,
   deleteMindUser as deleteIsolationUser,
@@ -352,6 +360,9 @@ const app = new Hono<AuthEnv>()
       copyTemplateToDir(composedDir, dest, name, manifest);
       applyInitFiles(dest);
 
+      // Generate Ed25519 keypair for mind identity
+      const { publicKeyPem } = generateIdentity(dest);
+
       if (body.model) {
         const configPath = resolve(dest, "home/.config/config.json");
         const existing = existsSync(configPath)
@@ -430,6 +441,11 @@ const app = new Hono<AuthEnv>()
         }
       }
 
+      // Auto-publish public key to volute.systems (non-blocking)
+      publishPublicKey(name, publicKeyPem).catch((err: unknown) =>
+        log.warn(`failed to publish key for ${name}`, { error: (err as Error).message }),
+      );
+
       return c.json({
         ok: true,
         name,
@@ -498,6 +514,9 @@ const app = new Hono<AuthEnv>()
 
       applyInitFiles(dest);
 
+      // Generate Ed25519 keypair for mind identity
+      const { publicKeyPem: importPublicKey } = generateIdentity(dest);
+
       // Write SOUL.md (with IDENTITY.md merged in)
       writeFileSync(resolve(dest, "home/SOUL.md"), mergedSoul);
 
@@ -559,9 +578,9 @@ const app = new Hono<AuthEnv>()
           importPiSession(sessionFile, dest);
         } else if (template === "claude") {
           const sessionId = convertSession({ sessionPath: sessionFile, projectDir: dest });
-          const voluteDir = resolve(dest, ".volute");
-          mkdirSync(voluteDir, { recursive: true });
-          writeFileSync(resolve(voluteDir, "session.json"), JSON.stringify({ sessionId }));
+          const mindRuntimeDir = resolve(dest, ".mind");
+          mkdirSync(mindRuntimeDir, { recursive: true });
+          writeFileSync(resolve(mindRuntimeDir, "session.json"), JSON.stringify({ sessionId }));
         }
       }
 
@@ -570,6 +589,11 @@ const app = new Hono<AuthEnv>()
 
       // Fix ownership after root git/file operations
       chownMindDir(dest, name);
+
+      // Auto-publish public key to volute.systems (non-blocking)
+      publishPublicKey(name, importPublicKey).catch((err: unknown) =>
+        log.warn(`failed to publish key for ${name}`, { error: (err as Error).message }),
+      );
 
       return c.json({ ok: true, name, port, message: `Imported mind: ${name} (port ${port})` });
     } catch (err) {
@@ -1190,6 +1214,26 @@ const app = new Hono<AuthEnv>()
     if (parsed && currentlyTyping.length > 0) {
       parsed.typing = currentlyTyping;
       forwardBody = JSON.stringify(parsed);
+    }
+
+    // Sign message BEFORE content mutation (budget warnings, seed nudges)
+    // so the signature covers the original content the sender intended
+    if (parsed && sender && findMind(sender)) {
+      try {
+        const senderDir = mindDir(sender);
+        const senderPrivateKey = getPrivateKey(senderDir);
+        const senderPublicKey = getPublicKey(senderDir);
+        if (senderPrivateKey && senderPublicKey) {
+          const textContent = extractTextContent(parsed.content);
+          const timestamp = new Date().toISOString();
+          parsed.signature = signMessage(senderPrivateKey, textContent, timestamp);
+          parsed.signatureTimestamp = timestamp;
+          parsed.signerFingerprint = getFingerprint(senderPublicKey);
+          forwardBody = JSON.stringify(parsed);
+        }
+      } catch (err) {
+        log.warn(`failed to sign message from ${sender}`, { error: (err as Error).message });
+      }
     }
 
     // Inject one-time budget warning (triggers once at >=80% per period)

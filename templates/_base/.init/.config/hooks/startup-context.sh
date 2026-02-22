@@ -11,7 +11,7 @@ SOURCE=$(echo "$INPUT" | jq -r '.source // "startup"')
 CONTEXT="Session ${SOURCE} at $(date '+%Y-%m-%d %H:%M')."
 
 # Active sessions
-SESSIONS_DIR=".volute/sessions"
+SESSIONS_DIR=".mind/sessions"
 if [ -d "$SESSIONS_DIR" ]; then
   SESSION_LIST=$(ls -1 "$SESSIONS_DIR"/*.json 2>/dev/null | xargs -I{} basename {} .json | sort)
   if [ -n "$SESSION_LIST" ]; then

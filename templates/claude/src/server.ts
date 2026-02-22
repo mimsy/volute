@@ -20,10 +20,10 @@ if (config.model) log("server", `using model: ${config.model}`);
 if (config.maxThinkingTokens) log("server", `max thinking tokens: ${config.maxThinkingTokens}`);
 
 const systemPrompt = loadSystemPrompt();
-const sessionsDir = resolve(".volute/sessions");
+const sessionsDir = resolve(".mind/sessions");
 
 // Migrate old single session.json → sessions/main.json
-const oldSessionPath = resolve(".volute/session.json");
+const oldSessionPath = resolve(".mind/session.json");
 if (existsSync(oldSessionPath) && !existsSync(resolve(sessionsDir, "main.json"))) {
   mkdirSync(sessionsDir, { recursive: true });
   renameSync(oldSessionPath, resolve(sessionsDir, "main.json"));

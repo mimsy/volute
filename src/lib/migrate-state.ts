@@ -1,10 +1,22 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import { resolve } from "node:path";
 import { mindDir, stateDir } from "./registry.js";
 
-/** Migrate system state files from mind's .volute/ to the centralized state dir. */
+/** Rename legacy .volute/ → .mind/ within a mind directory. */
+export function migrateDotVoluteDir(name: string): void {
+  const dir = mindDir(name);
+  const oldDir = resolve(dir, ".volute");
+  const newDir = resolve(dir, ".mind");
+  if (existsSync(oldDir) && !existsSync(newDir)) {
+    renameSync(oldDir, newDir);
+  } else if (existsSync(oldDir) && existsSync(newDir)) {
+    console.warn(`[migrate] both .volute/ and .mind/ exist for ${name}, skipping rename`);
+  }
+}
+
+/** Migrate system state files from mind's .mind/ to the centralized state dir. */
 export function migrateMindState(name: string): void {
-  const src = resolve(mindDir(name), ".volute");
+  const src = resolve(mindDir(name), ".mind");
   if (!existsSync(src)) return;
 
   const dest = stateDir(name);

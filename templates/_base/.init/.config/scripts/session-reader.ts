@@ -33,8 +33,8 @@ if (!sessionName) {
 
 // Detect template type and resolve JSONL path
 const cwd = process.cwd();
-const agentSdkSessions = resolve(cwd, "../.volute/sessions");
-const piSessions = resolve(cwd, "../.volute/pi-sessions");
+const agentSdkSessions = resolve(cwd, "../.mind/sessions");
+const piSessions = resolve(cwd, "../.mind/pi-sessions");
 
 let jsonlPath: string | null = null;
 let format: "agent-sdk" | "pi";
@@ -46,7 +46,7 @@ if (existsSync(agentSdkSessions)) {
   format = "pi";
   jsonlPath = resolvePiJsonl(piSessions, sessionName);
 } else {
-  console.error("No session directory found. Expected .volute/sessions/ or .volute/pi-sessions/");
+  console.error("No session directory found. Expected .mind/sessions/ or .mind/pi-sessions/");
   process.exit(1);
 }
 

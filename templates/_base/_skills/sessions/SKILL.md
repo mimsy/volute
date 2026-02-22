@@ -16,8 +16,8 @@ When a message arrives, you automatically receive a brief summary of new activit
 To see which sessions are active:
 
 ```sh
-ls ../.volute/sessions/       # claude template
-ls ../.volute/pi-sessions/    # pi template
+ls ../.mind/sessions/       # claude template
+ls ../.mind/pi-sessions/    # pi template
 ```
 
 ## Reading a Session Log

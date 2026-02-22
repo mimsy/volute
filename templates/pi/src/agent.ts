@@ -83,7 +83,7 @@ export function createMind(options: {
 
     const sessionManager = isEphemeral
       ? SessionManager.inMemory()
-      : SessionManager.continueRecent(options.cwd, `.volute/pi-sessions/${session.name}`);
+      : SessionManager.continueRecent(options.cwd, `.mind/pi-sessions/${session.name}`);
 
     log("mind", `session "${session.name}": ${isEphemeral ? "ephemeral" : "persistent"}`);
 
