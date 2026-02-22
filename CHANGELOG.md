@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.18.0](https://github.com/mimsy/volute/compare/volute-v0.17.0...volute-v0.18.0) (2026-02-22)
+
+
+### Features
+
+* add shared skills system ([#103](https://github.com/mimsy/volute/issues/103)) ([57ce779](https://github.com/mimsy/volute/commit/57ce7796c70d08cddaa9646dda7dc3f8878874dd))
+* add volute channels ([#100](https://github.com/mimsy/volute/issues/100)) ([f3e308f](https://github.com/mimsy/volute/commit/f3e308f9b29669af68c238e058862942b5afb601))
+* prompt management with admin settings and per-mind customization ([#98](https://github.com/mimsy/volute/issues/98)) ([fd88a97](https://github.com/mimsy/volute/commit/fd88a973adc1ffeb95f88d465413a0e5ea011539))
+* unified IDE-like layout with sidebar, main frame, and status bar ([#102](https://github.com/mimsy/volute/issues/102)) ([1cbd3f7](https://github.com/mimsy/volute/commit/1cbd3f738409a1ed3a028ac56173fe3740832543))
+
+
+### Bug Fixes
+
+* normalize UTC timestamps for correct local time display ([#101](https://github.com/mimsy/volute/issues/101)) ([08ba0f1](https://github.com/mimsy/volute/commit/08ba0f1998770fbbbf73437ceaeb899cc6282785))
+
 ## [0.17.0](https://github.com/mimsy/volute/compare/volute-v0.16.0...volute-v0.17.0) (2026-02-21)
 
 
