@@ -332,7 +332,7 @@ const app = new Hono<AuthEnv>()
       );
 
       const port = nextPort();
-      addMind(name, port, body.stage);
+      addMind(name, port, body.stage, template);
 
       // Set up per-mind user isolation (no-ops if VOLUTE_ISOLATION !== "user")
       const homeDir = resolve(dest, "home");
@@ -499,7 +499,7 @@ const app = new Hono<AuthEnv>()
 
       // Assign port and register
       const port = nextPort();
-      addMind(name, port);
+      addMind(name, port, undefined, template);
 
       // Set up per-mind user isolation (no-ops if VOLUTE_ISOLATION !== "user")
       const homeDir = resolve(dest, "home");
@@ -919,7 +919,7 @@ const app = new Hono<AuthEnv>()
       // Empty body is fine
     }
 
-    const template = body.template ?? "claude";
+    const template = body.template ?? entry.template ?? "claude";
     const UPGRADE_VARIANT = "upgrade";
 
     if (body.continue) {

@@ -57,6 +57,7 @@ export type MindEntry = {
   created: string;
   running: boolean;
   stage?: "seed" | "sprouted";
+  template?: string;
 };
 
 export function ensureVoluteHome() {
@@ -90,12 +91,17 @@ export function validateMindName(name: string): string | null {
   return null;
 }
 
-export function addMind(name: string, port: number, stage?: "seed" | "sprouted") {
+export function addMind(
+  name: string,
+  port: number,
+  stage?: "seed" | "sprouted",
+  template?: string,
+) {
   const err = validateMindName(name);
   if (err) throw new Error(err);
   const entries = readRegistry();
   const filtered = entries.filter((e) => e.name !== name);
-  filtered.push({ name, port, created: new Date().toISOString(), running: false, stage });
+  filtered.push({ name, port, created: new Date().toISOString(), running: false, stage, template });
   writeRegistry(filtered);
 }
 
