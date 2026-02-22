@@ -29,7 +29,9 @@ export async function run(args: string[]) {
 
   const result = (await res.json()) as { ok: boolean; conflicts?: boolean; message?: string };
   if (result.conflicts) {
-    console.error("Merge conflicts detected. Resolve manually in the shared repo.");
+    console.error(
+      "Merge conflicts detected. Run 'volute shared pull' to get the latest, reconcile your changes, and try again.",
+    );
     process.exit(1);
   }
   console.log(result.message ?? "Merged successfully.");

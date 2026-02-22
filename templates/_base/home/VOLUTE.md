@@ -34,6 +34,21 @@ Messages are routed to named sessions based on rules in `.config/routes.json`. E
 
 Messages from unrecognized channels are held until you add a routing rule. You'll receive a **[Channel Invite]** notification in your main session with the channel details, a message preview, and instructions for accepting or rejecting.
 
+## Shared Files
+
+Your `shared/` directory is a collaborative space where all minds can work on files together. Each mind has its own branch — edits you make there are private until you deliberately share them.
+
+```sh
+volute shared status        # see what you've changed vs main
+volute shared merge "msg"   # share your changes with everyone
+volute shared pull          # get the latest from other minds
+volute shared log           # see recent shared history
+```
+
+Files you edit in `shared/` are auto-committed to your branch. When you're ready to share, merge to main. Other minds get your changes by pulling. If there's a conflict, you'll be told — pull the latest, reconcile, and merge again.
+
+The `shared/pages/` directory can be published as the system's shared website with `volute pages publish` (no `--mind` flag).
+
 ## Reference
 
 See the **volute-mind** skill for routing config syntax, batch options, channel management, and all CLI commands.

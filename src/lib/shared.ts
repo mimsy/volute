@@ -142,11 +142,11 @@ export async function sharedMerge(
     try {
       await gitExec(["merge", "--squash", mindName], { cwd: dir });
     } catch {
-      // Conflict — abort and report
+      // Conflict — reset index (merge --abort doesn't work for squash merges)
       try {
-        await gitExec(["merge", "--abort"], { cwd: dir });
-      } catch (abortErr) {
-        log.error("merge abort failed in shared repo", log.errorData(abortErr));
+        await gitExec(["reset", "--hard", "HEAD"], { cwd: dir });
+      } catch (resetErr) {
+        log.error("reset after squash conflict failed in shared repo", log.errorData(resetErr));
       }
       return { ok: false, conflicts: true, message: "Merge conflicts detected" };
     }
@@ -158,7 +158,7 @@ export async function sharedMerge(
     // Reset mind's branch to main so next round starts fresh
     try {
       await gitExec(["reset", "--hard", "main"], { cwd: worktreePath });
-    } catch (err) {
+    } catch {
       return {
         ok: true,
         message: "Merged to main, but branch reset failed — run 'volute shared pull' to sync",
@@ -194,7 +194,7 @@ export async function sharedPull(
       // Abort failed rebase
       try {
         await gitExec(["rebase", "--abort"], { cwd: worktreePath });
-      } catch (abortErr) {
+      } catch {
         return {
           ok: false,
           message: "Rebase failed and abort failed — shared worktree may need manual repair",

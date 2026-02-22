@@ -21,7 +21,10 @@ export async function run(args: string[]) {
 
   const result = (await res.json()) as { ok: boolean; message?: string };
   if (!result.ok) {
-    console.error(result.message ?? "Pull failed.");
+    console.error(
+      result.message ??
+        "Pull failed. Try: git -C shared reset --hard main (then re-apply your changes).",
+    );
     process.exit(1);
   }
   console.log("Pulled latest shared changes.");
