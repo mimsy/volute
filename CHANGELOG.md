@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/mimsy/volute/compare/volute-v0.18.0...volute-v0.19.0) (2026-02-22)
+
+
+### Features
+
+* add mind identity keypairs and rename .volute/ to .mind/ ([#107](https://github.com/mimsy/volute/issues/107)) ([efa9ef7](https://github.com/mimsy/volute/commit/efa9ef7ca90b94f6fb0b3e1b6071e729ad368aae))
+
 ## [0.18.0](https://github.com/mimsy/volute/compare/volute-v0.17.0...volute-v0.18.0) (2026-02-22)
 
 
