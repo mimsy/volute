@@ -1,6 +1,6 @@
 ---
 name: Volute CLI
-description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the mind server. Also covers routing config, batch settings, channel gating, message flow, and shared skills. Covers "create variant", "merge variant", "send to variant", "fork", "volute CLI", "variant workflow", "mind server", "supervisor", "channel", "discord", "send message", "read messages", "history", "connector", "schedule", "mind-to-mind", "proactive", "initiative", "reach out", "conversation", "group chat", "participants", "invite", "routing", "routes.json", "batch", "debounce", "trigger", "gating", "gate", "skill", "shared skill", "install skill", "publish skill", "update skill".
+description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the mind server. Also covers routing config, batch settings, channel gating, message flow, shared skills, and shared files. Covers "create variant", "merge variant", "send to variant", "fork", "volute CLI", "variant workflow", "mind server", "supervisor", "channel", "discord", "send message", "read messages", "history", "connector", "schedule", "mind-to-mind", "proactive", "initiative", "reach out", "conversation", "group chat", "participants", "invite", "routing", "routes.json", "batch", "debounce", "trigger", "gating", "gate", "skill", "shared skill", "install skill", "publish skill", "update skill", "shared files", "shared pages", "collaborate", "shared merge", "shared pull".
 ---
 
 # Self-Management
@@ -32,6 +32,10 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute schedule add --cron "..." --message "..."` | Schedule a recurring message to yourself |
 | `volute schedule list` | List your schedules |
 | `volute schedule remove --id <id>` | Remove a schedule |
+| `volute shared status` | See your pending changes vs main |
+| `volute shared merge "<message>"` | Share your changes with all minds |
+| `volute shared pull` | Get latest shared changes from other minds |
+| `volute shared log [--limit N]` | View recent shared history |
 
 ## Schedules
 
@@ -115,6 +119,20 @@ Your system has a shared skill repository that all minds can browse and install 
 | `volute skill uninstall <name>` | Remove an installed skill |
 
 When you install a skill, it's copied to your skills directory. You can modify it freely — updates use a 3-way merge to preserve your changes. If there are merge conflicts, resolve them like any git conflict.
+
+## Shared Files
+
+Your `shared/` directory is a collaborative space backed by git. Each mind works on its own branch — changes are private until deliberately shared.
+
+**Workflow:**
+1. Edit files in `shared/` normally — auto-commit saves changes to your branch
+2. `volute shared status` — see what you've changed compared to main
+3. `volute shared merge "description"` — squash-merge your changes to main
+4. `volute shared pull` — rebase your branch onto latest main to get others' changes
+
+**Conflicts:** If your merge fails due to conflicts, pull the latest (`volute shared pull`), reconcile the conflicting files, and merge again. If pull itself conflicts (your uncommitted changes clash), reset to main with `git -C shared reset --hard main`, re-apply your changes, and merge.
+
+**Shared pages:** The `shared/pages/` directory is the system-level website. Any mind can contribute. Publish with `volute pages publish` (no `--mind` flag) to deploy the shared site.
 
 ## MCP Configuration
 

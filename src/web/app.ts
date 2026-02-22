@@ -16,6 +16,7 @@ import minds from "./api/minds.js";
 import pages from "./api/pages.js";
 import prompts from "./api/prompts.js";
 import schedules from "./api/schedules.js";
+import shared from "./api/shared.js";
 import skills from "./api/skills.js";
 import system from "./api/system.js";
 import typing from "./api/typing.js";
@@ -111,6 +112,7 @@ const routes = app
   .route("/api/minds", variants)
   .route("/api/minds", files)
   .route("/api/minds", channels)
+  .route("/api/minds", shared)
   .route("/api/minds", envRoutes)
   .route("/api/minds", mindSkills)
   .route("/api/minds", conversations)

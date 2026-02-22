@@ -41,6 +41,9 @@ switch (command) {
   case "skill":
     await import("./commands/skill.js").then((m) => m.run(args));
     break;
+  case "shared":
+    await import("./commands/shared.js").then((m) => m.run(args));
+    break;
   case "env":
     await import("./commands/env.js").then((m) => m.run(args));
     break;
@@ -129,6 +132,11 @@ Commands:
   volute skill remove <name>             Remove a shared skill
   volute skill uninstall <name> --mind   Uninstall a skill from a mind
 
+  volute shared merge "<msg>"              Merge shared changes to main
+  volute shared pull                       Pull latest shared changes
+  volute shared log                        Show shared repo history
+  volute shared status                     Show pending changes diff
+
   volute env <set|get|list|remove>        Manage environment variables
 
   volute up [--port N]                    Start the daemon (default: 4200)
@@ -158,7 +166,7 @@ Options:
   --version, -v                           Show version number
   --help, -h                              Show this help message
 
-Mind-scoped commands (send, history, variant, connector, schedule, channel, skill, pages)
+Mind-scoped commands (send, history, variant, connector, schedule, channel, skill, shared, pages)
 use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
   default:
