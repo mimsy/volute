@@ -154,6 +154,38 @@ describe("shared repo", () => {
     await removeSharedWorktree("test-merge-empty", mindDir);
   });
 
+  it("sharedMerge detects conflicts and aborts cleanly", async () => {
+    await ensureSharedRepo();
+
+    const mindDirA = await createFakeMind("test-conflict-a");
+    const mindDirB = await createFakeMind("test-conflict-b");
+    await addSharedWorktree("test-conflict-a", mindDirA);
+    await addSharedWorktree("test-conflict-b", mindDirB);
+
+    const worktreeA = resolve(mindDirA, "home", "shared");
+    const worktreeB = resolve(mindDirB, "home", "shared");
+
+    // Both minds edit the same file differently
+    writeFileSync(resolve(worktreeA, "pages", "conflict.txt"), "version A");
+    writeFileSync(resolve(worktreeB, "pages", "conflict.txt"), "version B");
+
+    // Mind A merges first — should succeed
+    const resultA = await sharedMerge("test-conflict-a", mindDirA, "A's version");
+    assert.ok(resultA.ok);
+
+    // Mind B merges — should detect conflict
+    const resultB = await sharedMerge("test-conflict-b", mindDirB, "B's version");
+    assert.equal(resultB.ok, false);
+    assert.equal(resultB.conflicts, true);
+
+    // Verify main is clean (A's version persists, not broken)
+    const mainContent = await gitExec(["show", "main:pages/conflict.txt"], { cwd: sharedDir() });
+    assert.equal(mainContent, "version A");
+
+    await removeSharedWorktree("test-conflict-a", mindDirA);
+    await removeSharedWorktree("test-conflict-b", mindDirB);
+  });
+
   it("sharedPull rebases mind branch onto main", async () => {
     await ensureSharedRepo();
 

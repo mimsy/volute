@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { gitExec } from "./exec.js";
 import { isIsolationEnabled } from "./isolation.js";
+import log from "./logger.js";
 import { voluteHome } from "./registry.js";
 
 /** Path to the shared repo: ~/.volute/shared/ */
@@ -68,16 +69,16 @@ export async function removeSharedWorktree(mindName: string, mindDir: string): P
   if (existsSync(worktreePath)) {
     try {
       await gitExec(["worktree", "remove", "--force", worktreePath], { cwd: dir });
-    } catch {
-      // best effort
+    } catch (err) {
+      log.debug(`worktree remove failed for ${mindName}`, log.errorData(err));
     }
   }
 
   // Prune stale worktree refs before deleting the branch
   try {
     await gitExec(["worktree", "prune"], { cwd: dir });
-  } catch {
-    // best effort
+  } catch (err) {
+    log.debug(`worktree prune failed for ${mindName}`, log.errorData(err));
   }
 
   try {
@@ -87,8 +88,26 @@ export async function removeSharedWorktree(mindName: string, mindDir: string): P
   }
 }
 
-// Mutex for serializing merge operations on main
-let mergeLock = Promise.resolve();
+// Mutex for serializing merge/pull operations on the shared repo
+let sharedLock = Promise.resolve();
+
+/**
+ * Acquire the shared repo lock: waits for the previous operation to finish,
+ * then runs `fn`. The lock chain continues regardless of success/failure.
+ */
+async function withSharedLock<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = sharedLock;
+  let resolve_: () => void;
+  sharedLock = new Promise<void>((r) => {
+    resolve_ = r;
+  });
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    resolve_!();
+  }
+}
 
 /**
  * Squash-merge a mind's branch into main, then reset the mind's branch to main.
@@ -99,15 +118,10 @@ export async function sharedMerge(
   mindDir: string,
   message: string,
 ): Promise<{ ok: boolean; conflicts?: boolean; message?: string }> {
-  const dir = sharedDir();
-  const worktreePath = resolve(mindDir, "home", "shared");
+  return withSharedLock(async () => {
+    const dir = sharedDir();
+    const worktreePath = resolve(mindDir, "home", "shared");
 
-  // Serialize on the merge lock
-  let result: { ok: boolean; conflicts?: boolean; message?: string };
-  const prev = mergeLock;
-  mergeLock = prev.then(() => doMerge()).catch(() => {});
-
-  async function doMerge() {
     // Commit any pending changes on the mind's branch
     const status = (await gitExec(["status", "--porcelain"], { cwd: worktreePath })).trim();
     if (status) {
@@ -121,8 +135,7 @@ export async function sharedMerge(
     // Check if there's anything to merge
     const diff = (await gitExec(["diff", `main...${mindName}`, "--stat"], { cwd: dir })).trim();
     if (!diff) {
-      result = { ok: true, message: "Nothing to merge" };
-      return;
+      return { ok: true, message: "Nothing to merge" };
     }
 
     // Squash-merge into main from the central repo
@@ -132,11 +145,10 @@ export async function sharedMerge(
       // Conflict — abort and report
       try {
         await gitExec(["merge", "--abort"], { cwd: dir });
-      } catch {
-        // may not be in merge state
+      } catch (abortErr) {
+        log.error("merge abort failed in shared repo", log.errorData(abortErr));
       }
-      result = { ok: false, conflicts: true, message: "Merge conflicts detected" };
-      return;
+      return { ok: false, conflicts: true, message: "Merge conflicts detected" };
     }
 
     await gitExec(["commit", "--author", `${mindName} <${mindName}@volute>`, "-m", message], {
@@ -144,15 +156,17 @@ export async function sharedMerge(
     });
 
     // Reset mind's branch to main so next round starts fresh
-    await gitExec(["checkout", mindName], { cwd: worktreePath });
-    await gitExec(["reset", "--hard", "main"], { cwd: worktreePath });
+    try {
+      await gitExec(["reset", "--hard", "main"], { cwd: worktreePath });
+    } catch (err) {
+      return {
+        ok: true,
+        message: "Merged to main, but branch reset failed — run 'volute shared pull' to sync",
+      };
+    }
 
-    result = { ok: true };
-  }
-
-  await prev;
-  await doMerge();
-  return result!;
+    return { ok: true };
+  });
 }
 
 /** Rebase the mind's branch onto latest main to pick up others' changes. */
@@ -160,30 +174,35 @@ export async function sharedPull(
   mindName: string,
   mindDir: string,
 ): Promise<{ ok: boolean; message?: string }> {
-  const worktreePath = resolve(mindDir, "home", "shared");
+  return withSharedLock(async () => {
+    const worktreePath = resolve(mindDir, "home", "shared");
 
-  // Commit any pending changes first
-  const status = (await gitExec(["status", "--porcelain"], { cwd: worktreePath })).trim();
-  if (status) {
-    await gitExec(["add", "-A"], { cwd: worktreePath });
-    await gitExec(
-      ["commit", "--author", `${mindName} <${mindName}@volute>`, "-m", `wip: ${mindName}`],
-      { cwd: worktreePath },
-    );
-  }
-
-  try {
-    await gitExec(["rebase", "main"], { cwd: worktreePath });
-    return { ok: true };
-  } catch {
-    // Abort failed rebase
-    try {
-      await gitExec(["rebase", "--abort"], { cwd: worktreePath });
-    } catch {
-      // best effort
+    // Commit any pending changes first
+    const status = (await gitExec(["status", "--porcelain"], { cwd: worktreePath })).trim();
+    if (status) {
+      await gitExec(["add", "-A"], { cwd: worktreePath });
+      await gitExec(
+        ["commit", "--author", `${mindName} <${mindName}@volute>`, "-m", `wip: ${mindName}`],
+        { cwd: worktreePath },
+      );
     }
-    return { ok: false, message: "Rebase failed — conflicts with main" };
-  }
+
+    try {
+      await gitExec(["rebase", "main"], { cwd: worktreePath });
+      return { ok: true };
+    } catch {
+      // Abort failed rebase
+      try {
+        await gitExec(["rebase", "--abort"], { cwd: worktreePath });
+      } catch (abortErr) {
+        return {
+          ok: false,
+          message: "Rebase failed and abort failed — shared worktree may need manual repair",
+        };
+      }
+      return { ok: false, message: "Rebase failed — conflicts with main" };
+    }
+  });
 }
 
 /** Show recent shared repo history from main. */

@@ -906,8 +906,8 @@ const app = new Hono<AuthEnv>()
     // Clean up shared worktree (best effort)
     try {
       await removeSharedWorktree(name, dir);
-    } catch {
-      // non-fatal
+    } catch (err) {
+      log.warn(`failed to clean up shared worktree for ${name}`, log.errorData(err));
     }
 
     removeMind(name);

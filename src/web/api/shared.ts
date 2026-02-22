@@ -13,7 +13,7 @@ const app = new Hono<AuthEnv>()
     try {
       body = await c.req.json();
     } catch {
-      body = {};
+      return c.json({ error: "Invalid JSON in request body" }, 400);
     }
 
     const message = body.message || `shared: merge from ${name}`;

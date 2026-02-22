@@ -58,6 +58,8 @@ export function commitFileChange(filePath: string, cwd: string): void {
           .code === 0
       ) {
         log("auto-commit", `[shared] ${message}`);
+      } else {
+        log("auto-commit", `[shared] commit failed for ${sharedRelative}`);
       }
       // No auto-push for shared files — sharing is deliberate
     } else {

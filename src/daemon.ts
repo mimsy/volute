@@ -53,8 +53,12 @@ export async function startDaemon(opts: {
   // One-time migration: agents.json → minds.json, agents/ → minds/
   migrateAgentsToMinds();
 
-  // Initialize shared repo for inter-mind collaboration
-  await ensureSharedRepo();
+  // Initialize shared repo for inter-mind collaboration (non-fatal)
+  try {
+    await ensureSharedRepo();
+  } catch (err) {
+    log.warn("failed to initialize shared repo", log.errorData(err));
+  }
 
   // Load registry into memory for fast reads within the daemon
   initRegistryCache();
