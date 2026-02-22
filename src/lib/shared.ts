@@ -1,10 +1,23 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { gitExec } from "./exec.js";
 import { isIsolationEnabled, mindUserName } from "./isolation.js";
 import log from "./logger.js";
 import { voluteHome } from "./registry.js";
+
+/** Read the gitdir path from a worktree's .git file (e.g. "gitdir: /data/shared/.git/worktrees/shared"). */
+function readWorktreeGitDir(worktreePath: string): string | null {
+  const dotGit = resolve(worktreePath, ".git");
+  if (!existsSync(dotGit)) return null;
+  try {
+    const content = readFileSync(dotGit, "utf-8").trim();
+    const match = content.match(/^gitdir:\s*(.+)$/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Path to the shared repo: ~/.volute/shared/ */
 export function sharedDir(): string {
@@ -18,7 +31,10 @@ export async function ensureSharedRepo(): Promise<void> {
 
   if (existsSync(resolve(dir, ".git"))) return;
 
-  await gitExec(["init"], { cwd: dir });
+  // Under isolation, use --shared=group so git creates all directories and
+  // objects as group-writable from the start (objects 0444→0664, dirs 0755→2775).
+  const initArgs = isIsolationEnabled() ? ["init", "--shared=group"] : ["init"];
+  await gitExec(initArgs, { cwd: dir });
   await gitExec(["checkout", "-b", "main"], { cwd: dir });
 
   // Seed with pages/ directory
@@ -30,15 +46,14 @@ export async function ensureSharedRepo(): Promise<void> {
   await gitExec(["commit", "-m", "init shared repo"], { cwd: dir });
 
   if (isIsolationEnabled()) {
-    // Make group-writable so all mind users can access via volute group.
-    // Set group to 'volute' (all mind users are in this group).
+    // Set group to 'volute' and ensure setgid on the top-level dir.
+    // --shared=group handles .git/ internals; we just need the group right.
     try {
       execFileSync("chgrp", ["-R", "volute", dir], { stdio: "ignore" });
     } catch (err) {
       log.warn("failed to chgrp shared repo to volute group", log.errorData(err));
     }
     chmodSync(dir, 0o2775);
-    await gitExec(["config", "core.sharedRepository", "group"], { cwd: dir });
   }
 }
 
@@ -66,11 +81,11 @@ export async function addSharedWorktree(mindName: string, mindDir: string): Prom
   }
 
   if (isIsolationEnabled()) {
-    // Git stores worktree state (HEAD, index, refs) in .git/worktrees/<name>/.
-    // The mind process runs as mind-<name> user and needs write access to this
-    // directory for auto-commit. chown it to the mind user with group volute.
-    const worktreeGitDir = resolve(dir, ".git", "worktrees", mindName);
-    if (existsSync(worktreeGitDir)) {
+    // Git stores worktree state (HEAD, index, refs) in a directory referenced
+    // by the .git file in the worktree. The mind process needs write access
+    // to this directory for auto-commit.
+    const worktreeGitDir = readWorktreeGitDir(worktreePath);
+    if (worktreeGitDir) {
       try {
         const user = mindUserName(mindName);
         execFileSync("chown", ["-R", `${user}:volute`, worktreeGitDir], { stdio: "ignore" });
