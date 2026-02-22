@@ -1,5 +1,8 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import log from "./logger.js";
-import { daemonLoopback } from "./registry.js";
+import { deliverMessage } from "./message-delivery.js";
+import { stateDir } from "./registry.js";
 
 const tlog = log.child("token-budget");
 
@@ -24,12 +27,8 @@ type BudgetState = {
 export class TokenBudget {
   private budgets = new Map<string, BudgetState>();
   private interval: ReturnType<typeof setInterval> | null = null;
-  private daemonPort: number | null = null;
-  private daemonToken: string | null = null;
 
-  start(daemonPort?: number, daemonToken?: string): void {
-    this.daemonPort = daemonPort ?? null;
-    this.daemonToken = daemonToken ?? null;
+  start(): void {
     this.interval = setInterval(() => this.tick(), 60_000);
   }
 
@@ -45,14 +44,22 @@ export class TokenBudget {
       existing.tokenLimit = tokenLimit;
       existing.periodMinutes = periodMinutes;
     } else {
-      this.budgets.set(mind, {
-        tokensUsed: 0,
-        periodStart: Date.now(),
-        periodMinutes,
-        tokenLimit,
-        queue: [],
-        warningInjected: false,
-      });
+      // Try to load persisted state first
+      const persisted = this.loadBudgetState(mind);
+      if (persisted) {
+        persisted.tokenLimit = tokenLimit;
+        persisted.periodMinutes = periodMinutes;
+        this.budgets.set(mind, persisted);
+      } else {
+        this.budgets.set(mind, {
+          tokensUsed: 0,
+          periodStart: Date.now(),
+          periodMinutes,
+          tokenLimit,
+          queue: [],
+          warningInjected: false,
+        });
+      }
     }
   }
 
@@ -64,6 +71,7 @@ export class TokenBudget {
     const state = this.budgets.get(mind);
     if (!state) return;
     state.tokensUsed += inputTokens + outputTokens;
+    this.saveBudgetState(mind, state);
   }
 
   /** Returns current budget status. Does not mutate state — call acknowledgeWarning() after delivering a warning. */
@@ -128,6 +136,7 @@ export class TokenBudget {
         state.tokensUsed = 0;
         state.periodStart = now;
         state.warningInjected = false;
+        this.saveBudgetState(mind, state);
 
         const queued = this.drain(mind);
         if (queued.length > 0) {
@@ -139,17 +148,47 @@ export class TokenBudget {
     }
   }
 
-  private async replay(mindName: string, messages: QueuedMessage[]): Promise<void> {
-    if (!this.daemonPort || !this.daemonToken) {
-      tlog.warn(
-        `cannot replay ${messages.length} message(s) for ${mindName}: daemon not configured`,
-      );
-      // Re-enqueue so messages aren't lost
-      const state = this.budgets.get(mindName);
-      if (state) state.queue.push(...messages);
-      return;
-    }
+  private budgetStatePath(mind: string): string {
+    return resolve(stateDir(mind), "budget.json");
+  }
 
+  private saveBudgetState(mind: string, state: BudgetState): void {
+    try {
+      const dir = stateDir(mind);
+      mkdirSync(dir, { recursive: true });
+      const data = {
+        periodStart: state.periodStart,
+        tokensUsed: state.tokensUsed,
+        warningInjected: state.warningInjected,
+        queue: state.queue,
+      };
+      writeFileSync(this.budgetStatePath(mind), `${JSON.stringify(data)}\n`);
+    } catch (err) {
+      tlog.warn(`failed to save budget state for ${mind}`, log.errorData(err));
+    }
+  }
+
+  private loadBudgetState(mind: string): BudgetState | null {
+    try {
+      const path = this.budgetStatePath(mind);
+      if (!existsSync(path)) return null;
+      const data = JSON.parse(readFileSync(path, "utf-8"));
+      if (typeof data.periodStart !== "number" || typeof data.tokensUsed !== "number") return null;
+      return {
+        periodStart: data.periodStart,
+        tokensUsed: data.tokensUsed,
+        warningInjected: data.warningInjected ?? false,
+        queue: Array.isArray(data.queue) ? data.queue : [],
+        periodMinutes: 0, // will be overwritten by caller
+        tokenLimit: 0, // will be overwritten by caller
+      };
+    } catch (err) {
+      tlog.warn(`failed to load budget state for ${mind}`, log.errorData(err));
+      return null;
+    }
+  }
+
+  private async replay(mindName: string, messages: QueuedMessage[]): Promise<void> {
     const summary = messages
       .map((m) => {
         const from = m.sender ? `[${m.sender}]` : "";
@@ -158,53 +197,36 @@ export class TokenBudget {
       })
       .join("\n");
 
-    const body = JSON.stringify({
-      content: [
-        {
-          type: "text",
-          text: `[Budget replay] ${messages.length} queued message(s) from the previous budget period:\n\n${summary}`,
-        },
-      ],
-      channel: "system:budget-replay",
-      sender: "system",
-    });
-
-    const daemonUrl = `http://${daemonLoopback()}:${this.daemonPort}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 120_000);
-
     try {
-      const res = await fetch(`${daemonUrl}/api/minds/${encodeURIComponent(mindName)}/message`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.daemonToken}`,
-          Origin: daemonUrl,
-        },
-        body,
-        signal: controller.signal,
+      await deliverMessage(mindName, {
+        content: [
+          {
+            type: "text",
+            text: `[Budget replay] ${messages.length} queued message(s) from the previous budget period:\n\n${summary}`,
+          },
+        ],
+        channel: "system:budget-replay",
+        sender: "system",
       });
-      if (!res.ok) {
-        tlog.warn(`replay for ${mindName} got HTTP ${res.status}`);
-      } else {
-        tlog.info(`replayed ${messages.length} queued message(s) for ${mindName}`);
-      }
-      // Consume response body
-      await res.text().catch(() => {});
+      tlog.info(`replayed ${messages.length} queued message(s) for ${mindName}`);
     } catch (err) {
       tlog.warn(`failed to replay for ${mindName}`, log.errorData(err));
       // Re-enqueue so messages aren't lost
       const state = this.budgets.get(mindName);
       if (state) state.queue.push(...messages);
-    } finally {
-      clearTimeout(timeout);
     }
   }
 }
 
 let instance: TokenBudget | null = null;
 
+export function initTokenBudget(): TokenBudget {
+  if (instance) throw new Error("TokenBudget already initialized");
+  instance = new TokenBudget();
+  return instance;
+}
+
 export function getTokenBudget(): TokenBudget {
-  if (!instance) instance = new TokenBudget();
+  if (!instance) throw new Error("TokenBudget not initialized — call initTokenBudget() first");
   return instance;
 }

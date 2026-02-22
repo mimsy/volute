@@ -8,6 +8,7 @@ import { clearJsonMap, loadJsonMap, saveJsonMap } from "./json-state.js";
 import log from "./logger.js";
 import { getPrompt } from "./prompts.js";
 import { findMind, mindDir, setMindRunning, stateDir, voluteHome } from "./registry.js";
+import { RestartTracker } from "./restart-tracker.js";
 import { RotatingLog } from "./rotating-log.js";
 import { findVariant, setVariantRunning } from "./variants.js";
 
@@ -24,15 +25,11 @@ function mindPidPath(name: string): string {
   return resolve(stateDir(name), "mind.pid");
 }
 
-const MAX_RESTART_ATTEMPTS = 5;
-const BASE_RESTART_DELAY = 3000;
-const MAX_RESTART_DELAY = 60000;
-
 export class MindManager {
   private minds = new Map<string, TrackedMind>();
   private stopping = new Set<string>();
   private shuttingDown = false;
-  private restartAttempts = new Map<string, number>();
+  private restartTracker = new RestartTracker();
   private pendingContext = new Map<string, Record<string, unknown>>();
 
   private resolveTarget(name: string): {
@@ -203,7 +200,7 @@ export class MindManager {
     }
 
     // Set up crash recovery after successful start
-    if (this.restartAttempts.delete(name)) this.saveCrashAttempts();
+    if (this.restartTracker.reset(name)) this.saveCrashAttempts();
     this.setupCrashRecovery(name, child);
     if (isVariant) {
       setVariantRunning(baseName, variantName!, true);
@@ -263,9 +260,10 @@ export class MindManager {
 
       mlog.error(`mind ${name} exited with code ${code}`);
 
-      const attempts = this.restartAttempts.get(name) ?? 0;
-      if (attempts >= MAX_RESTART_ATTEMPTS) {
-        mlog.error(`${name} crashed ${attempts} times — giving up on restart`);
+      const { shouldRestart, delay, attempt } = this.restartTracker.recordCrash(name);
+      this.saveCrashAttempts();
+      if (!shouldRestart) {
+        mlog.error(`${name} crashed ${attempt} times — giving up on restart`);
         const [base, variant] = name.split("@", 2);
         if (variant) {
           setVariantRunning(base, variant, false);
@@ -274,11 +272,8 @@ export class MindManager {
         }
         return;
       }
-      const delay = Math.min(BASE_RESTART_DELAY * 2 ** attempts, MAX_RESTART_DELAY);
-      this.restartAttempts.set(name, attempts + 1);
-      this.saveCrashAttempts();
       mlog.info(
-        `crash recovery for ${name} — attempt ${attempts + 1}/${MAX_RESTART_ATTEMPTS}, restarting in ${delay}ms`,
+        `crash recovery for ${name} — attempt ${attempt}/${this.restartTracker.maxRestartAttempts}, restarting in ${delay}ms`,
       );
       setTimeout(() => {
         if (this.shuttingDown) return;
@@ -315,7 +310,7 @@ export class MindManager {
     });
 
     this.stopping.delete(name);
-    if (this.restartAttempts.delete(name)) this.saveCrashAttempts();
+    if (this.restartTracker.reset(name)) this.saveCrashAttempts();
     rmSync(mindPidPath(name), { force: true });
 
     if (!this.shuttingDown) {
@@ -354,15 +349,16 @@ export class MindManager {
   }
 
   loadCrashAttempts(): void {
-    this.restartAttempts = loadJsonMap(this.crashAttemptsPath);
+    this.restartTracker.load(loadJsonMap(this.crashAttemptsPath));
   }
 
   private saveCrashAttempts(): void {
-    saveJsonMap(this.crashAttemptsPath, this.restartAttempts);
+    saveJsonMap(this.crashAttemptsPath, this.restartTracker.save());
   }
 
   clearCrashAttempts(): void {
-    clearJsonMap(this.crashAttemptsPath, this.restartAttempts);
+    this.restartTracker.clear();
+    clearJsonMap(this.crashAttemptsPath, new Map());
   }
 }
 
@@ -402,6 +398,6 @@ export function initMindManager(): MindManager {
 }
 
 export function getMindManager(): MindManager {
-  if (!instance) instance = new MindManager();
+  if (!instance) throw new Error("MindManager not initialized — call initMindManager() first");
   return instance;
 }

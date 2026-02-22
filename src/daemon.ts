@@ -5,16 +5,16 @@ import { resolve } from "node:path";
 import { format } from "node:util";
 import { initConnectorManager } from "./lib/connector-manager.js";
 import log from "./lib/logger.js";
-import { ensureMailAddress, getMailPoller } from "./lib/mail-poller.js";
+import { initMailPoller } from "./lib/mail-poller.js";
 import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
 import { migrateDotVoluteDir, migrateMindState } from "./lib/migrate-state.js";
 import { initMindManager } from "./lib/mind-manager.js";
-import { mindDir, readRegistry, setMindRunning, voluteHome } from "./lib/registry.js";
+import { startMindFull } from "./lib/mind-service.js";
+import { initRegistryCache, readRegistry, setMindRunning, voluteHome } from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
-import { getScheduler } from "./lib/scheduler.js";
-import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "./lib/token-budget.js";
+import { initScheduler } from "./lib/scheduler.js";
+import { initTokenBudget } from "./lib/token-budget.js";
 import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
-import { readVoluteConfig } from "./lib/volute-config.js";
 import { cleanExpiredSessions } from "./web/middleware/auth.js";
 import { startServer } from "./web/server.js";
 
@@ -51,6 +51,9 @@ export async function startDaemon(opts: {
   // One-time migration: agents.json → minds.json, agents/ → minds/
   migrateAgentsToMinds();
 
+  // Load registry into memory for fast reads within the daemon
+  initRegistryCache();
+
   // Use existing token if set (for testing), otherwise generate one
   const token = process.env.VOLUTE_DAEMON_TOKEN || randomBytes(32).toString("hex");
 
@@ -84,12 +87,12 @@ export async function startDaemon(opts: {
   const manager = initMindManager();
   manager.loadCrashAttempts();
   const connectors = initConnectorManager();
-  const scheduler = getScheduler();
-  scheduler.start(port, token);
-  const mailPoller = getMailPoller();
-  mailPoller.start(port, token);
-  const tokenBudget = getTokenBudget();
-  tokenBudget.start(port, token);
+  const scheduler = initScheduler();
+  scheduler.start();
+  const mailPoller = initMailPoller();
+  mailPoller.start();
+  const tokenBudget = initTokenBudget();
+  tokenBudget.start();
 
   // Migrate .volute/ → .mind/ and system state for all registered minds
   const registry = readRegistry();
@@ -102,41 +105,41 @@ export async function startDaemon(opts: {
     }
   }
 
-  // Start all minds that were previously running, then their connectors and schedules
-  for (const entry of registry) {
-    if (!entry.running) continue;
-    try {
-      await manager.startMind(entry.name);
-      // Seed minds only get the server — no connectors, schedules, or budget
-      if (entry.stage === "seed") continue;
-      const dir = mindDir(entry.name);
-      await connectors.startConnectors(entry.name, dir, entry.port, port);
-      scheduler.loadSchedules(entry.name);
-      ensureMailAddress(entry.name).catch(() => {}); // logs internally
-      const config = readVoluteConfig(dir);
-      if (config?.tokenBudget) {
-        tokenBudget.setBudget(
-          entry.name,
-          config.tokenBudget,
-          config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
-        );
+  // Start all minds that were previously running (parallel, concurrency limit of 5)
+  const runningEntries = registry.filter((e) => e.running);
+  {
+    const queue = [...runningEntries];
+    const workers = Array.from({ length: Math.min(5, queue.length) }, async () => {
+      while (queue.length > 0) {
+        const entry = queue.shift()!;
+        try {
+          await startMindFull(entry.name);
+        } catch (err) {
+          log.error(`failed to start mind ${entry.name}`, log.errorData(err));
+          setMindRunning(entry.name, false);
+        }
       }
-    } catch (err) {
-      log.error(`failed to start mind ${entry.name}`, log.errorData(err));
-      setMindRunning(entry.name, false);
-    }
+    });
+    await Promise.all(workers);
   }
 
-  // Restore running variants
+  // Restore running variants (in parallel with same pattern)
   const runningVariants = getAllRunningVariants();
-  for (const { mindName, variant } of runningVariants) {
-    const compositeKey = `${mindName}@${variant.name}`;
-    try {
-      await manager.startMind(compositeKey);
-    } catch (err) {
-      log.error(`failed to start variant ${compositeKey}`, log.errorData(err));
-      setVariantRunning(mindName, variant.name, false);
-    }
+  {
+    const queue = [...runningVariants];
+    const workers = Array.from({ length: Math.min(5, queue.length) }, async () => {
+      while (queue.length > 0) {
+        const { mindName, variant } = queue.shift()!;
+        const compositeKey = `${mindName}@${variant.name}`;
+        try {
+          await startMindFull(compositeKey);
+        } catch (err) {
+          log.error(`failed to start variant ${compositeKey}`, log.errorData(err));
+          setVariantRunning(mindName, variant.name, false);
+        }
+      }
+    });
+    await Promise.all(workers);
   }
 
   // Clean up expired sessions (non-blocking)

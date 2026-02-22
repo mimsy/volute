@@ -2,7 +2,8 @@ import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "./json-state.js";
 import log from "./logger.js";
-import { daemonLoopback, findMind, mindDir, voluteHome } from "./registry.js";
+import { deliverMessage } from "./message-delivery.js";
+import { mindDir, voluteHome } from "./registry.js";
 import { readVoluteConfig, type Schedule } from "./volute-config.js";
 
 const slog = log.child("scheduler");
@@ -11,16 +12,12 @@ export class Scheduler {
   private schedules = new Map<string, Schedule[]>();
   private interval: ReturnType<typeof setInterval> | null = null;
   private lastFired = new Map<string, number>(); // "mind:scheduleId" → epoch minute
-  private daemonPort: number | null = null;
-  private daemonToken: string | null = null;
 
   private get statePath(): string {
     return resolve(voluteHome(), "scheduler-state.json");
   }
 
-  start(daemonPort?: number, daemonToken?: string): void {
-    this.daemonPort = daemonPort ?? null;
-    this.daemonToken = daemonToken ?? null;
+  start(): void {
     this.loadState();
     this.interval = setInterval(() => this.tick(), 60_000);
   }
@@ -58,11 +55,6 @@ export class Scheduler {
   }
 
   private tick(): void {
-    // Hot-reload schedules from config on every tick
-    for (const mind of this.schedules.keys()) {
-      this.loadSchedules(mind);
-    }
-
     const now = new Date();
     for (const [mind, schedules] of this.schedules) {
       for (const schedule of schedules) {
@@ -95,60 +87,28 @@ export class Scheduler {
   }
 
   private async fire(mindName: string, schedule: Schedule): Promise<void> {
-    const entry = findMind(mindName);
-    if (!entry) return;
-
-    const body = JSON.stringify({
-      content: [{ type: "text", text: schedule.message }],
-      channel: "system:scheduler",
-      sender: schedule.id,
-    });
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 120_000);
-
     try {
-      let res: Response;
-      if (this.daemonPort && this.daemonToken) {
-        // Route through daemon so messages are recorded in mind_messages
-        const daemonUrl = `http://${daemonLoopback()}:${this.daemonPort}`;
-        res = await fetch(`${daemonUrl}/api/minds/${encodeURIComponent(mindName)}/message`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${this.daemonToken}`,
-            Origin: daemonUrl,
-          },
-          body,
-          signal: controller.signal,
-        });
-      } else {
-        // Fallback to direct mind fetch
-        res = await fetch(`http://127.0.0.1:${entry.port}/message`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body,
-          signal: controller.signal,
-        });
-      }
-      if (!res.ok) {
-        slog.warn(`"${schedule.id}" for ${mindName} got HTTP ${res.status}`);
-      } else {
-        slog.info(`fired "${schedule.id}" for ${mindName}`);
-      }
-      // Consume response body
-      await res.text().catch(() => {});
+      await deliverMessage(mindName, {
+        content: [{ type: "text", text: schedule.message }],
+        channel: "system:scheduler",
+        sender: schedule.id,
+      });
+      slog.info(`fired "${schedule.id}" for ${mindName}`);
     } catch (err) {
       slog.warn(`failed to fire "${schedule.id}" for ${mindName}`, log.errorData(err));
-    } finally {
-      clearTimeout(timeout);
     }
   }
 }
 
 let instance: Scheduler | null = null;
 
+export function initScheduler(): Scheduler {
+  if (instance) throw new Error("Scheduler already initialized");
+  instance = new Scheduler();
+  return instance;
+}
+
 export function getScheduler(): Scheduler {
-  if (!instance) instance = new Scheduler();
+  if (!instance) throw new Error("Scheduler not initialized — call initScheduler() first");
   return instance;
 }

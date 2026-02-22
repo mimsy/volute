@@ -6,6 +6,7 @@ import { loadMergedEnv } from "./env.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "./isolation.js";
 import log from "./logger.js";
 import { daemonLoopback, stateDir, voluteHome } from "./registry.js";
+import { RestartTracker } from "./restart-tracker.js";
 import { RotatingLog } from "./rotating-log.js";
 import { readVoluteConfig } from "./volute-config.js";
 
@@ -26,15 +27,11 @@ type TrackedConnector = {
   type: string;
 };
 
-const MAX_RESTART_ATTEMPTS = 5;
-const BASE_RESTART_DELAY = 3000;
-const MAX_RESTART_DELAY = 60000;
-
 export class ConnectorManager {
   private connectors = new Map<string, Map<string, TrackedConnector>>();
   private stopping = new Set<string>(); // "mind:type" keys currently being explicitly stopped
   private shuttingDown = false;
-  private restartAttempts = new Map<string, number>(); // "mind:type" -> count
+  private restartTracker = new RestartTracker();
 
   async startConnectors(
     mindName: string,
@@ -197,7 +194,7 @@ export class ConnectorManager {
     this.connectors.get(mindName)!.set(type, { child, type });
 
     const stopKey = `${mindName}:${type}`;
-    this.restartAttempts.delete(stopKey);
+    this.restartTracker.reset(stopKey);
 
     // Crash recovery
     child.on("exit", (code) => {
@@ -213,15 +210,13 @@ export class ConnectorManager {
 
       clog.error(`connector ${type} for ${mindName} exited with code ${code}`);
       if (lastStderr) clog.warn(`connector ${type} last output: ${lastStderr}`);
-      const attempts = this.restartAttempts.get(stopKey) ?? 0;
-      if (attempts >= MAX_RESTART_ATTEMPTS) {
-        clog.error(`connector ${type} for ${mindName} crashed ${attempts} times — giving up`);
+      const { shouldRestart, delay, attempt } = this.restartTracker.recordCrash(stopKey);
+      if (!shouldRestart) {
+        clog.error(`connector ${type} for ${mindName} crashed ${attempt} times — giving up`);
         return;
       }
-      const delay = Math.min(BASE_RESTART_DELAY * 2 ** attempts, MAX_RESTART_DELAY);
-      this.restartAttempts.set(stopKey, attempts + 1);
       clog.info(
-        `restarting connector ${type} for ${mindName} — attempt ${attempts + 1}/${MAX_RESTART_ATTEMPTS}, in ${delay}ms`,
+        `restarting connector ${type} for ${mindName} — attempt ${attempt}/${this.restartTracker.maxRestartAttempts}, in ${delay}ms`,
       );
       setTimeout(() => {
         if (this.shuttingDown || this.stopping.has(stopKey)) return;
@@ -261,7 +256,7 @@ export class ConnectorManager {
     });
 
     this.stopping.delete(stopKey);
-    this.restartAttempts.delete(stopKey);
+    this.restartTracker.reset(stopKey);
     try {
       this.removeConnectorPid(mindName, type);
     } catch (err) {
@@ -349,6 +344,7 @@ export function initConnectorManager(): ConnectorManager {
 }
 
 export function getConnectorManager(): ConnectorManager {
-  if (!instance) instance = new ConnectorManager();
+  if (!instance)
+    throw new Error("ConnectorManager not initialized — call initConnectorManager() first");
   return instance;
 }

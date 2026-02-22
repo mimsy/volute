@@ -4,6 +4,36 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { findVariant, readVariants } from "./variants.js";
 
+// In-memory registry cache for the daemon process.
+// When active, reads come from memory and writes flush to disk.
+// CLI processes (daemon not running) continue reading from file.
+let registryCache: MindEntry[] | null = null;
+
+export function initRegistryCache(): void {
+  registryCache = readRegistryFromDisk();
+}
+
+export function getRegistryCache(): MindEntry[] | null {
+  return registryCache;
+}
+
+function readRegistryFromDisk(): MindEntry[] {
+  const registryPath = resolve(voluteHome(), "minds.json");
+  if (!existsSync(registryPath)) return [];
+  try {
+    const entries = JSON.parse(readFileSync(registryPath, "utf-8")) as Array<
+      Omit<MindEntry, "running"> & { running?: boolean }
+    >;
+    return entries.map((e) => ({
+      ...e,
+      running: e.running ?? false,
+      stage: e.stage ?? "sprouted",
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export function voluteHome(): string {
   if (process.env.VOLUTE_HOME) return process.env.VOLUTE_HOME;
 
@@ -35,23 +65,12 @@ export function ensureVoluteHome() {
 }
 
 export function readRegistry(): MindEntry[] {
-  const registryPath = resolve(voluteHome(), "minds.json");
-  if (!existsSync(registryPath)) return [];
-  try {
-    const entries = JSON.parse(readFileSync(registryPath, "utf-8")) as Array<
-      Omit<MindEntry, "running"> & { running?: boolean }
-    >;
-    return entries.map((e) => ({
-      ...e,
-      running: e.running ?? false,
-      stage: e.stage ?? "sprouted",
-    }));
-  } catch {
-    return [];
-  }
+  if (registryCache) return registryCache;
+  return readRegistryFromDisk();
 }
 
 export function writeRegistry(entries: MindEntry[]) {
+  if (registryCache) registryCache = entries;
   ensureVoluteHome();
   const registryPath = resolve(voluteHome(), "minds.json");
   const tmpPath = `${registryPath}.tmp`;

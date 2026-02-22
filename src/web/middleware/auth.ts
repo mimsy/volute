@@ -19,6 +19,14 @@ export type AuthEnv = {
 };
 
 const SESSION_MAX_AGE = 86400000; // 24 hours
+const SESSION_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+type CachedSession = { userId: number; user: User; expires: number };
+const sessionCache = new Map<string, CachedSession>();
+
+export function invalidateSessionCache(sessionId: string): void {
+  sessionCache.delete(sessionId);
+}
 
 export async function createSession(userId: number): Promise<string> {
   const db = await getDb();
@@ -28,6 +36,7 @@ export async function createSession(userId: number): Promise<string> {
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
+  sessionCache.delete(sessionId);
   const db = await getDb();
   await db.delete(sessions).where(eq(sessions.id, sessionId));
 }
@@ -72,13 +81,29 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   const sessionId = getCookie(c, "volute_session");
   if (!sessionId) return c.json({ error: "Unauthorized" }, 401);
 
+  // Check session cache first
+  const cached = sessionCache.get(sessionId);
+  if (cached && cached.expires > Date.now()) {
+    if (cached.user.role === "pending") return c.json({ error: "Account pending approval" }, 403);
+    c.set("user", cached.user);
+    await next();
+    return;
+  }
+
   const userId = await getSessionUserId(sessionId);
-  if (userId == null) return c.json({ error: "Unauthorized" }, 401);
+  if (userId == null) {
+    sessionCache.delete(sessionId);
+    return c.json({ error: "Unauthorized" }, 401);
+  }
 
   const user = await getUser(userId);
-  if (!user) return c.json({ error: "Unauthorized" }, 401);
+  if (!user) {
+    sessionCache.delete(sessionId);
+    return c.json({ error: "Unauthorized" }, 401);
+  }
   if (user.role === "pending") return c.json({ error: "Account pending approval" }, 403);
 
+  sessionCache.set(sessionId, { userId, user, expires: Date.now() + SESSION_CACHE_TTL });
   c.set("user", user);
   await next();
 });

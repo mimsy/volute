@@ -44,12 +44,17 @@ import {
   wrapForIsolation,
 } from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
-import { ensureMailAddress } from "../../lib/mail-poller.js";
+import { extractTextContent } from "../../lib/message-delivery.js";
 import {
   publish as publishMindEvent,
   subscribe as subscribeMindEvent,
 } from "../../lib/mind-events.js";
 import { getMindManager } from "../../lib/mind-manager.js";
+// Lifecycle functions from mind-service.ts
+import {
+  startMindFull as startMindFullService,
+  stopMindFull as stopMindFullService,
+} from "../../lib/mind-service.js";
 import {
   getMindPromptDefaults,
   getPrompt,
@@ -67,9 +72,7 @@ import {
   setMindStage,
   stateDir,
   validateMindName,
-  voluteHome,
 } from "../../lib/registry.js";
-import { getScheduler } from "../../lib/scheduler.js";
 import { conversations, mindHistory } from "../../lib/schema.js";
 import {
   applyInitFiles,
@@ -79,7 +82,7 @@ import {
   listFiles,
   type TemplateManifest,
 } from "../../lib/template.js";
-import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "../../lib/token-budget.js";
+import { getTokenBudget } from "../../lib/token-budget.js";
 import { getTypingMap } from "../../lib/typing.js";
 import {
   addVariant,
@@ -92,58 +95,6 @@ import {
 } from "../../lib/variants.js";
 import { readVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
-
-/** Start mind server and (for base minds) connectors, schedules, and token budget. */
-async function startMindFull(
-  name: string,
-  baseName: string,
-  variantName: string | undefined,
-): Promise<void> {
-  await getMindManager().startMind(name);
-  if (variantName) return;
-
-  // Seed minds only get the server — no connectors, schedules, or budget
-  if (findMind(baseName)?.stage === "seed") return;
-
-  const dir = mindDir(baseName);
-  const entry = findMind(baseName)!;
-  await getConnectorManager().startConnectors(baseName, dir, entry.port, getDaemonPort());
-  getScheduler().loadSchedules(baseName);
-  ensureMailAddress(baseName).catch((err: unknown) =>
-    console.error(`[mail] failed to ensure address for ${baseName}:`, err),
-  );
-  const config = readVoluteConfig(dir);
-  if (config?.tokenBudget) {
-    getTokenBudget().setBudget(
-      baseName,
-      config.tokenBudget,
-      config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
-    );
-  }
-}
-
-function extractTextContent(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return (content as { type: string; text?: string }[])
-      .filter((p) => p.type === "text" && p.text)
-      .map((p) => p.text)
-      .join("\n");
-  }
-  return JSON.stringify(content);
-}
-
-function getDaemonPort(): number | undefined {
-  try {
-    const data = JSON.parse(readFileSync(resolve(voluteHome(), "daemon.json"), "utf-8"));
-    return data.port;
-  } catch (err: any) {
-    if (err?.code !== "ENOENT") {
-      console.error("[daemon] failed to read daemon.json:", err);
-    }
-    return undefined;
-  }
-}
 
 type ChannelStatus = {
   name: string;
@@ -399,7 +350,7 @@ const app = new Hono<AuthEnv>()
         await gitExec(["init"], { cwd: dest, mindName: name, env });
         await initTemplateBranch(dest, composedDir, manifest, name, env);
       } catch (err) {
-        console.error(`[daemon] git setup failed for ${name}:`, err);
+        log.error(`git setup failed for ${name}`, log.errorData(err));
         rmSync(resolve(dest, ".git"), { recursive: true, force: true });
         gitWarning =
           "Git setup failed — variants and upgrades won't be available until git is initialized.";
@@ -743,7 +694,7 @@ const app = new Hono<AuthEnv>()
     }
 
     try {
-      await startMindFull(name, baseName, variantName);
+      await startMindFullService(name);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to start mind" }, 500);
@@ -774,7 +725,7 @@ const app = new Hono<AuthEnv>()
         const body = await c.req.json();
         if (body?.context) context = body.context as Record<string, unknown>;
       } catch (err) {
-        console.error(`[daemon] failed to parse restart context for ${name}:`, err);
+        log.error(`failed to parse restart context for ${name}`, log.errorData(err));
       }
     }
 
@@ -783,11 +734,7 @@ const app = new Hono<AuthEnv>()
     try {
       // Stop running mind and connectors
       if (manager.isRunning(name)) {
-        if (!variantName) {
-          await getConnectorManager().stopConnectors(baseName);
-          getTokenBudget().removeBudget(baseName);
-        }
-        await manager.stopMind(name);
+        await stopMindFullService(name);
       }
 
       // Handle mind-initiated merge: perform merge operations directly
@@ -797,7 +744,7 @@ const app = new Hono<AuthEnv>()
         if (branchErr) {
           return c.json({ error: `Invalid variant name: ${branchErr}` }, 400);
         }
-        console.error(`[daemon] merging variant for ${baseName}: ${mergeVariantName}`);
+        log.error(`merging variant for ${baseName}: ${mergeVariantName}`);
         const variant = findVariant(baseName, mergeVariantName);
         if (variant) {
           const projectRoot = mindDir(baseName);
@@ -812,9 +759,9 @@ const app = new Hono<AuthEnv>()
                   cwd: variant.path,
                 });
               } catch (e) {
-                console.error(
-                  `[daemon] failed to auto-commit variant worktree for ${baseName}:`,
-                  e,
+                log.error(
+                  `failed to auto-commit variant worktree for ${baseName}`,
+                  log.errorData(e),
                 );
               }
             }
@@ -831,7 +778,7 @@ const app = new Hono<AuthEnv>()
                 cwd: projectRoot,
               });
             } catch (e) {
-              console.error(`[daemon] failed to auto-commit main worktree for ${baseName}:`, e);
+              log.error(`failed to auto-commit main worktree for ${baseName}`, log.errorData(e));
             }
           }
 
@@ -852,7 +799,7 @@ const app = new Hono<AuthEnv>()
           try {
             await npmInstallAsMind(projectRoot, baseName);
           } catch (e) {
-            console.error(`[daemon] npm install failed after merge for ${baseName}:`, e);
+            log.error(`npm install failed after merge for ${baseName}`, log.errorData(e));
           }
         }
       }
@@ -877,11 +824,11 @@ const app = new Hono<AuthEnv>()
             ]);
           }
         } catch (err) {
-          console.error(`[daemon] failed to inject sprouted message for ${baseName}:`, err);
+          log.error(`failed to inject sprouted message for ${baseName}`, log.errorData(err));
         }
       }
 
-      await startMindFull(name, baseName, variantName);
+      await startMindFullService(name);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to restart mind" }, 500);
@@ -906,12 +853,7 @@ const app = new Hono<AuthEnv>()
     }
 
     try {
-      if (!variantName) {
-        await getConnectorManager().stopConnectors(baseName);
-        getScheduler().unloadSchedules(baseName);
-        getTokenBudget().removeBudget(baseName);
-      }
-      await manager.stopMind(name);
+      await stopMindFullService(name);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to stop mind" }, 500);
@@ -940,9 +882,7 @@ const app = new Hono<AuthEnv>()
     // Stop connectors and mind if running
     const manager = getMindManager();
     if (manager.isRunning(name)) {
-      await getConnectorManager().stopConnectors(name);
-      getTokenBudget().removeBudget(name);
-      await manager.stopMind(name);
+      await stopMindFullService(name);
     }
 
     removeAllVariants(name);
@@ -1040,9 +980,9 @@ const app = new Hono<AuthEnv>()
         try {
           chownMindDir(dir, mindName);
         } catch (chownErr) {
-          console.error(
-            `[daemon] failed to fix ownership during upgrade cleanup for ${mindName}:`,
-            chownErr,
+          log.error(
+            `failed to fix ownership during upgrade cleanup for ${mindName}`,
+            log.errorData(chownErr),
           );
         }
         return c.json(
@@ -1130,9 +1070,9 @@ const app = new Hono<AuthEnv>()
       try {
         chownMindDir(dir, mindName);
       } catch (chownErr) {
-        console.error(
-          `[daemon] failed to fix ownership during upgrade cleanup for ${mindName}:`,
-          chownErr,
+        log.error(
+          `failed to fix ownership during upgrade cleanup for ${mindName}`,
+          log.errorData(chownErr),
         );
       }
       return c.json(
@@ -1165,7 +1105,7 @@ const app = new Hono<AuthEnv>()
     try {
       parsed = JSON.parse(body);
     } catch (err) {
-      console.error(`[daemon] failed to parse message body for ${baseName}:`, err);
+      log.error(`failed to parse message body for ${baseName}`, log.errorData(err));
     }
 
     const channel = (parsed?.channel as string) ?? "unknown";
@@ -1184,7 +1124,7 @@ const app = new Hono<AuthEnv>()
           content,
         });
       } catch (err) {
-        console.error(`[daemon] failed to persist inbound message for ${baseName}:`, err);
+        log.error(`failed to persist inbound message for ${baseName}`, log.errorData(err));
       }
     }
 
@@ -1270,7 +1210,7 @@ const app = new Hono<AuthEnv>()
           forwardBody = JSON.stringify(parsed);
         }
       } catch (err) {
-        console.error(`[daemon] failed to check seed message count for ${baseName}:`, err);
+        log.error(`failed to check seed message count for ${baseName}`, log.errorData(err));
       }
     }
 
@@ -1287,11 +1227,11 @@ const app = new Hono<AuthEnv>()
       .then(async (res) => {
         if (!res.ok) {
           const text = await res.text().catch(() => "");
-          console.error(`[daemon] mind ${name} responded with ${res.status}: ${text}`);
+          log.error(`mind ${name} responded with ${res.status}: ${text}`);
         }
       })
       .catch((err) => {
-        console.error(`[daemon] mind ${name} unreachable on port ${port}:`, err);
+        log.error(`mind ${name} unreachable on port ${port}`, log.errorData(err));
         // Clear typing on error — mind won't send a done event
         typingMap.delete(channel, baseName);
       });
@@ -1342,7 +1282,7 @@ const app = new Hono<AuthEnv>()
         metadata: body.metadata ? JSON.stringify(body.metadata) : null,
       });
     } catch (err) {
-      console.error(`[daemon] failed to persist event for ${baseName}:`, err);
+      log.error(`failed to persist event for ${baseName}`, log.errorData(err));
       // Continue — persistence is best-effort, don't block real-time streaming
     }
 
@@ -1450,7 +1390,7 @@ const app = new Hono<AuthEnv>()
         content: body.content,
       });
     } catch (err) {
-      console.error(`[daemon] failed to persist external send for ${baseName}:`, err);
+      log.error(`failed to persist external send for ${baseName}`, log.errorData(err));
       return c.json({ error: "Failed to persist" }, 500);
     }
 
