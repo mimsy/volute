@@ -44,6 +44,7 @@ import {
   wrapForIsolation,
 } from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
+import { extractTextContent } from "../../lib/message-delivery.js";
 import {
   publish as publishMindEvent,
   subscribe as subscribeMindEvent,
@@ -94,17 +95,6 @@ import {
 } from "../../lib/variants.js";
 import { readVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
-
-function extractTextContent(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return (content as { type: string; text?: string }[])
-      .filter((p) => p.type === "text" && p.text)
-      .map((p) => p.text)
-      .join("\n");
-  }
-  return JSON.stringify(content);
-}
 
 type ChannelStatus = {
   name: string;

@@ -238,6 +238,56 @@ describe("TokenBudget", () => {
     assert.equal(tb.checkBudget("b"), "ok");
   });
 
+  it("persists budget state across instances", () => {
+    const tb1 = new TokenBudget();
+    tb1.setBudget("mind1", 10000, 60);
+    tb1.recordUsage("mind1", 3000, 2000); // 5000 tokens used
+
+    // New instance should load persisted state
+    const tb2 = new TokenBudget();
+    tb2.setBudget("mind1", 10000, 60);
+    assert.equal(tb2.getUsage("mind1")!.tokensUsed, 5000);
+  });
+
+  it("persists warningInjected flag via recordUsage", () => {
+    const tb1 = new TokenBudget();
+    tb1.setBudget("mind1", 10000, 60);
+    tb1.recordUsage("mind1", 4500, 4500); // 90% — triggers save
+    assert.equal(tb1.checkBudget("mind1"), "warning");
+    tb1.acknowledgeWarning("mind1");
+    // acknowledgeWarning doesn't save to disk, but a subsequent recordUsage does
+    tb1.recordUsage("mind1", 0, 0); // triggers save with warningInjected=true
+
+    const tb2 = new TokenBudget();
+    tb2.setBudget("mind1", 10000, 60);
+    // warningInjected was persisted, so checkBudget should return ok (already acknowledged)
+    assert.equal(tb2.checkBudget("mind1"), "ok");
+  });
+
+  it("persists queued messages when recordUsage triggers save", () => {
+    const tb1 = new TokenBudget();
+    tb1.setBudget("mind1", 10000, 60);
+    tb1.recordUsage("mind1", 5000, 5000); // exceed budget, triggers save
+    tb1.enqueue("mind1", { channel: "ch1", sender: "user1", textContent: "hello" });
+    tb1.enqueue("mind1", { channel: "ch2", sender: null, textContent: "world" });
+    // enqueue doesn't save, so trigger another recordUsage to flush state
+    tb1.recordUsage("mind1", 0, 0);
+
+    const tb2 = new TokenBudget();
+    tb2.setBudget("mind1", 10000, 60);
+    assert.equal(tb2.getUsage("mind1")!.queueLength, 2);
+
+    const drained = tb2.drain("mind1");
+    assert.equal(drained[0].textContent, "hello");
+    assert.equal(drained[1].textContent, "world");
+  });
+
+  it("handles missing budget state file gracefully", () => {
+    const tb = new TokenBudget();
+    tb.setBudget("nonexistent-mind", 10000, 60);
+    assert.equal(tb.getUsage("nonexistent-mind")!.tokensUsed, 0);
+  });
+
   it("start and stop manage interval", () => {
     const tb = new TokenBudget();
     tb.start();

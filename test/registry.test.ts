@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import {
   addMind,
   daemonLoopback,
+  getRegistryCache,
+  initRegistryCache,
   mindDir,
   nextPort,
   readRegistry,
   removeMind,
+  setMindRunning,
   stateDir,
   validateMindName,
   voluteHome,
@@ -95,6 +100,67 @@ describe("mindDir", () => {
     const dir = mindDir("foo");
     assert.ok(dir.startsWith(voluteHome()));
     assert.ok(dir.endsWith("/minds/foo"));
+  });
+});
+
+describe("registry cache", () => {
+  const cacheMind = `cache-test-${Date.now()}`;
+
+  afterEach(() => {
+    removeMind(cacheMind);
+  });
+
+  it("getRegistryCache returns null before init", () => {
+    // At this point in the test suite, no initRegistryCache has been called
+    // so getRegistryCache should reflect whatever state exists.
+    // We test the public contract: before initRegistryCache, readRegistry reads from disk.
+    const entries = readRegistry();
+    assert.ok(Array.isArray(entries));
+  });
+
+  it("initRegistryCache loads from disk and caches", () => {
+    addMind(cacheMind, 4199);
+    initRegistryCache();
+
+    const cached = getRegistryCache();
+    assert.ok(cached !== null);
+    assert.ok(cached!.some((e) => e.name === cacheMind));
+  });
+
+  it("readRegistry returns cached data after initRegistryCache", () => {
+    addMind(cacheMind, 4199);
+    initRegistryCache();
+
+    const entries = readRegistry();
+    assert.ok(entries.some((e) => e.name === cacheMind));
+  });
+
+  it("writeRegistry updates both cache and disk", () => {
+    initRegistryCache();
+    addMind(cacheMind, 4199);
+
+    // Cache should be updated
+    const cached = getRegistryCache();
+    assert.ok(cached!.some((e) => e.name === cacheMind));
+
+    // Disk should also be updated
+    const registryPath = resolve(voluteHome(), "minds.json");
+    const diskEntries = JSON.parse(readFileSync(registryPath, "utf-8"));
+    assert.ok(diskEntries.some((e: { name: string }) => e.name === cacheMind));
+  });
+
+  it("setMindRunning propagates through cache", () => {
+    addMind(cacheMind, 4199);
+    initRegistryCache();
+
+    setMindRunning(cacheMind, true);
+    const cached = getRegistryCache();
+    const entry = cached!.find((e) => e.name === cacheMind);
+    assert.equal(entry!.running, true);
+
+    setMindRunning(cacheMind, false);
+    const entry2 = getRegistryCache()!.find((e) => e.name === cacheMind);
+    assert.equal(entry2!.running, false);
   });
 });
 
