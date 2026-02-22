@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.19.0](https://github.com/mimsy/volute/compare/volute-v0.18.0...volute-v0.19.0) (2026-02-22)
+
+
+### Features
+
+* add channel invite mechanism ([#109](https://github.com/mimsy/volute/issues/109)) ([b2baa20](https://github.com/mimsy/volute/commit/b2baa20616989ab30ea107e2f79e3b17b7010485))
+* add mind export/import archive system ([#116](https://github.com/mimsy/volute/issues/116)) ([43713dc](https://github.com/mimsy/volute/commit/43713dc5563e5ed036220ebc04f066a1a3fdbd7a))
+* add mind identity keypairs and rename .volute/ to .mind/ ([#107](https://github.com/mimsy/volute/issues/107)) ([efa9ef7](https://github.com/mimsy/volute/commit/efa9ef7ca90b94f6fb0b3e1b6071e729ad368aae))
+* add shared files between minds via git worktrees ([#114](https://github.com/mimsy/volute/issues/114)) ([6f543e7](https://github.com/mimsy/volute/commit/6f543e78c2b80bd97713ab3c11024573e0c805dc))
+* daemon-managed message delivery system ([#112](https://github.com/mimsy/volute/issues/112)) ([835cb1f](https://github.com/mimsy/volute/commit/835cb1ff37c7b59c95eddbcb22634d2aaad68c4a))
+* move built-in skills to shared pool with auto-sync ([#117](https://github.com/mimsy/volute/issues/117)) ([59999a0](https://github.com/mimsy/volute/commit/59999a0ad5df17df1e7d90d49e19f41c94218a20))
+
+
+### Bug Fixes
+
+* mind upgrade template detection and git safe.directory ([#111](https://github.com/mimsy/volute/issues/111)) ([4abeb53](https://github.com/mimsy/volute/commit/4abeb536a534ae877396728398dceedcbf40617f))
+
+
+### Performance Improvements
+
+* optimize test suite with cpSync and parallelism ([#113](https://github.com/mimsy/volute/issues/113)) ([3694523](https://github.com/mimsy/volute/commit/3694523bbcd6dfc641511e8b207ebf061297d336))
+
 ## [0.18.0](https://github.com/mimsy/volute/compare/volute-v0.17.0...volute-v0.18.0) (2026-02-22)
 
 
