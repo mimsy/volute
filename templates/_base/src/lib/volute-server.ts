@@ -99,7 +99,19 @@ export function createVoluteServer(options: {
         const verified = await verifyRequest(body);
         if (verified !== undefined) body.verified = verified;
 
-        router.route(body.content, body);
+        // Handle batch payloads from delivery manager
+        if ((body as any).batch) {
+          const batch = (body as any).batch as {
+            channels: Record<string, any[]>;
+          };
+          router.dispatchBatch(batch, body.session ?? "main", body);
+        } else if (body.session) {
+          // Pre-routed by daemon delivery manager — dispatch directly
+          router.dispatch(body.content, body.session, body);
+        } else {
+          // Legacy: local routing (for minds running with old daemon)
+          router.route(body.content, body);
+        }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true }));
       } catch (err) {

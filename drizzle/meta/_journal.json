@@ -71,6 +71,13 @@
       "when": 1771800000000,
       "tag": "0009_shared_skills",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1771900000000,
+      "tag": "0010_delivery_queue",
+      "breakpoints": true
     }
   ]
 }

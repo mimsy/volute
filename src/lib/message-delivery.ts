@@ -2,7 +2,6 @@ import { getDb } from "./db.js";
 import log from "./logger.js";
 import { findMind } from "./registry.js";
 import { mindHistory } from "./schema.js";
-import { findVariant } from "./variants.js";
 
 const dlog = log.child("delivery");
 
@@ -30,27 +29,17 @@ export function extractTextContent(content: unknown): string {
 }
 
 /**
- * Deliver a message to a mind: persist to mind_history, then forward to mind HTTP server.
+ * Deliver a message to a mind via the delivery manager (routes, batches, gates).
+ * Falls back to direct HTTP delivery if the delivery manager is not initialized.
  * Fire-and-forget — logs errors but does not throw.
  */
 export async function deliverMessage(mindName: string, payload: DeliveryPayload): Promise<void> {
   try {
-    const [baseName, variantName] = mindName.split("@", 2);
+    const [baseName] = mindName.split("@", 2);
     const entry = findMind(baseName);
     if (!entry) {
       dlog.warn(`cannot deliver to ${mindName}: mind not found`);
       return;
-    }
-
-    // Resolve correct port: variant port if targeting a variant, else base mind port
-    let port = entry.port;
-    if (variantName) {
-      const variant = findVariant(baseName, variantName);
-      if (!variant) {
-        dlog.warn(`cannot deliver to ${mindName}: variant not found`);
-        return;
-      }
-      port = variant.port;
     }
 
     const textContent = extractTextContent(payload.content);
@@ -69,7 +58,29 @@ export async function deliverMessage(mindName: string, payload: DeliveryPayload)
       dlog.warn(`failed to persist message for ${baseName}`, log.errorData(err));
     }
 
-    // Forward to mind server
+    // Try delivery manager first (handles routing, batching, gating)
+    try {
+      const { getDeliveryManager } = await import("./delivery-manager.js");
+      const manager = getDeliveryManager();
+      await manager.routeAndDeliver(mindName, payload);
+      return;
+    } catch {
+      // Delivery manager not initialized — fall back to direct delivery
+    }
+
+    // Fallback: direct HTTP delivery (pre-delivery-manager behavior)
+    const { findVariant } = await import("./variants.js");
+    const [, variantName] = mindName.split("@", 2);
+    let port = entry.port;
+    if (variantName) {
+      const variant = findVariant(baseName, variantName);
+      if (!variant) {
+        dlog.warn(`cannot deliver to ${mindName}: variant not found`);
+        return;
+      }
+      port = variant.port;
+    }
+
     const body = JSON.stringify(payload);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 120_000);

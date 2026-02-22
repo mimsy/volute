@@ -15,6 +15,18 @@ export type Router = {
     meta: ChannelMeta,
     listener?: Listener,
   ): { messageId: string; unsubscribe: () => void };
+  /** Direct dispatch to a pre-routed session (daemon has already resolved the route). */
+  dispatch(
+    content: VoluteContentPart[],
+    session: string,
+    meta: ChannelMeta,
+    listener?: Listener,
+  ): { messageId: string; unsubscribe: () => void };
+  dispatchBatch(
+    batch: { channels: Record<string, any[]> },
+    session: string,
+    meta: ChannelMeta,
+  ): void;
   close(): void;
 };
 
@@ -247,6 +259,45 @@ export function createRouter(options: {
     }
   }
 
+  /**
+   * Direct dispatch to a pre-routed session. The daemon delivery manager has already
+   * resolved the route and session — just format and send.
+   */
+  function dispatch(
+    content: VoluteContentPart[],
+    session: string,
+    meta: ChannelMeta,
+    listener?: Listener,
+  ): { messageId: string; unsubscribe: () => void } {
+    const text = content
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join(" ");
+    logMessage("in", text, meta.channel);
+
+    const messageId = generateMessageId();
+    const noop = () => {};
+    const safeListener = listener ?? noop;
+
+    // Apply formatting
+    const formatted = applyPrefix(content, { ...meta, sessionName: session });
+    const withTyping = appendTypingSuffix(formatted, meta.typing);
+
+    // Resolve session config for instructions
+    const config = options.configPath ? loadRoutingConfig(options.configPath) : {};
+    const sessionConfig = resolveSessionConfig(config, session);
+    const withInstructions = prependInstructions(withTyping, sessionConfig.instructions);
+
+    const handler = options.mindHandler(session);
+    const interrupt = (meta as any).interrupt ?? sessionConfig.interrupt;
+    const unsubscribe = handler.handle(
+      withInstructions,
+      { ...meta, sessionName: session, messageId, interrupt },
+      safeListener,
+    );
+    return { messageId, unsubscribe };
+  }
+
   function route(
     content: VoluteContentPart[],
     meta: ChannelMeta,
@@ -400,6 +451,77 @@ export function createRouter(options: {
     return { messageId, unsubscribe };
   }
 
+  /**
+   * Handle a pre-batched payload from the daemon delivery manager.
+   * Formats messages grouped by channel into a single SDK message.
+   */
+  function dispatchBatch(
+    batch: { channels: Record<string, any[]> },
+    session: string,
+    _meta: ChannelMeta,
+  ): void {
+    const allMessages: { channel: string; payload: any }[] = [];
+    for (const [channel, messages] of Object.entries(batch.channels)) {
+      for (const msg of messages) {
+        allMessages.push({ channel, payload: msg });
+      }
+    }
+
+    if (allMessages.length === 0) return;
+
+    // Build channel summary
+    const channelCounts = new Map<string, number>();
+    for (const msg of allMessages) {
+      channelCounts.set(msg.channel, (channelCounts.get(msg.channel) ?? 0) + 1);
+    }
+    const channelLabels = [...channelCounts.entries()].map(([ch, n]) => `${n} from ${ch}`);
+    const summary = channelLabels.join(", ");
+
+    const header = `[Batch: ${allMessages.length} message${allMessages.length === 1 ? "" : "s"} — ${summary}]`;
+    const multiChannel = channelCounts.size > 1;
+
+    const body = allMessages
+      .map((m) => {
+        const sender = m.payload.sender ?? "unknown";
+        const text =
+          typeof m.payload.content === "string"
+            ? m.payload.content
+            : Array.isArray(m.payload.content)
+              ? (m.payload.content as { type: string; text?: string }[])
+                  .filter((p) => p.type === "text" && p.text)
+                  .map((p) => p.text)
+                  .join("\n")
+              : JSON.stringify(m.payload.content);
+        const time = new Date().toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+        });
+        const prefix = multiChannel
+          ? `[${sender} in ${m.channel} — ${time}]`
+          : `[${sender} — ${time}]`;
+        return `${prefix}\n${text}`;
+      })
+      .join("\n\n");
+
+    const content: VoluteContentPart[] = [{ type: "text", text: `${header}\n\n${body}` }];
+
+    // Resolve session config for instructions
+    const config = options.configPath ? loadRoutingConfig(options.configPath) : {};
+    const sessionConfig = resolveSessionConfig(config, session);
+    const withInstructions = prependInstructions(content, sessionConfig.instructions);
+
+    const messageId = generateMessageId();
+    const handler = options.mindHandler(session);
+    const noop = () => {};
+
+    try {
+      handler.handle(withInstructions, { sessionName: session, messageId }, noop);
+    } catch (err) {
+      log("router", `error dispatching batch for session ${session}:`, err);
+    }
+    log("router", `dispatched batch for session ${session}: ${allMessages.length} messages`);
+  }
+
   function close() {
     for (const [key, buffer] of batchBuffers) {
       if (buffer.debounceTimer) clearTimeout(buffer.debounceTimer);
@@ -409,5 +531,5 @@ export function createRouter(options: {
     batchBuffers.clear();
   }
 
-  return { route, close };
+  return { route, dispatch, dispatchBatch, close };
 }
