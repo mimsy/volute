@@ -1,5 +1,11 @@
 {
   "gateUnmatched": true,
-  "rules": [{ "channel": "volute:*", "isDM": true, "session": "${channel}" }],
+  "rules": [
+    { "channel": "volute:*", "isDM": true, "session": "${channel}" },
+    { "channel": "volute:*", "isDM": false, "session": "group-${channel}" }
+  ],
+  "sessions": {
+    "group-*": { "batch": { "debounce": 20, "maxWait": 120, "triggers": ["@{{name}}"] } }
+  },
   "default": "main"
 }
