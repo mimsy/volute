@@ -91,7 +91,12 @@ function handleSSEMessage(line: string) {
     const { event: _, ...item } = parsed;
     data.activity = [item, ...data.activity].slice(0, 50);
     // Refresh minds on status changes
-    if (item.type === "mind_started" || item.type === "mind_stopped") {
+    if (
+      item.type === "mind_started" ||
+      item.type === "mind_stopped" ||
+      item.type === "mind_active" ||
+      item.type === "mind_idle"
+    ) {
       fetchMinds()
         .then((m) => {
           data.minds = m;

@@ -45,6 +45,7 @@ import {
 } from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
 import { extractTextContent } from "../../lib/message-delivery.js";
+import { onMindEvent } from "../../lib/mind-activity-tracker.js";
 import {
   publish as publishMindEvent,
   subscribe as subscribeMindEvent,
@@ -1502,19 +1503,18 @@ const app = new Hono<AuthEnv>()
       metadata: body.metadata,
     });
 
+    // Track mind activity for dashboard timeline
+    onMindEvent(baseName, body.type, body.channel);
+
     // Clear typing on first outbound event for a channel (text, outbound)
-    // This gives faster feedback than waiting for done
+    // Use deleteSender to clear both slug and conversationId-based keys
     if ((body.type === "text" || body.type === "outbound") && body.channel) {
-      getTypingMap().delete(body.channel, baseName);
+      getTypingMap().deleteSender(baseName);
     }
 
     // Clear all typing + notify delivery manager when mind finishes processing
     if (body.type === "done") {
-      if (body.channel) {
-        getTypingMap().delete(body.channel, baseName);
-      } else {
-        getTypingMap().deleteSender(baseName);
-      }
+      getTypingMap().deleteSender(baseName);
       // Notify delivery manager of session completion
       try {
         getDeliveryManager().sessionDone(baseName, body.session);

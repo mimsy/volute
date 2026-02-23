@@ -9,6 +9,7 @@ import log from "./lib/logger.js";
 import { initMailPoller } from "./lib/mail-poller.js";
 import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
 import { migrateDotVoluteDir, migrateMindState } from "./lib/migrate-state.js";
+import { stopAll as stopAllActivityTrackers } from "./lib/mind-activity-tracker.js";
 import { initMindManager } from "./lib/mind-manager.js";
 import { startMindFull } from "./lib/mind-service.js";
 import { stopAllWatchers } from "./lib/pages-watcher.js";
@@ -197,6 +198,7 @@ export async function startDaemon(opts: {
     shuttingDown = true;
     log.info("shutting down...");
     stopAllWatchers();
+    stopAllActivityTrackers();
     scheduler.stop();
     scheduler.saveState();
     mailPoller.stop();

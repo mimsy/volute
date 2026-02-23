@@ -3,7 +3,7 @@ import log from "./logger.js";
 import { activity } from "./schema.js";
 
 export type ActivityEvent = {
-  type: "mind_started" | "mind_stopped" | "page_updated";
+  type: "mind_started" | "mind_stopped" | "mind_active" | "mind_idle" | "page_updated";
   mind: string;
   summary: string;
   metadata?: Record<string, unknown>;

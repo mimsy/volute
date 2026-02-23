@@ -2,6 +2,7 @@ import { publish as publishActivity } from "./activity-events.js";
 import { getConnectorManager } from "./connector-manager.js";
 import log from "./logger.js";
 import { ensureMailAddress } from "./mail-poller.js";
+import { markIdle } from "./mind-activity-tracker.js";
 import { getMindManager } from "./mind-manager.js";
 import { startWatcher, stopWatcher } from "./pages-watcher.js";
 import { findMind, mindDir } from "./registry.js";
@@ -59,6 +60,7 @@ export async function stopMindFull(name: string): Promise<void> {
 
   if (!variantName) {
     stopWatcher(baseName);
+    markIdle(baseName);
     await getConnectorManager().stopConnectors(baseName);
     getScheduler().unloadSchedules(baseName);
     getTokenBudget().removeBudget(baseName);

@@ -280,10 +280,13 @@ export class DeliveryManager {
     // Increment active count before delivery
     this.incrementActive(baseName, session);
 
-    // Set typing indicator
+    // Set typing indicator on both slug and conversationId keys
     const typingMap = getTypingMap();
     if (payload.channel) {
       typingMap.set(payload.channel, baseName, { persistent: true });
+    }
+    if (payload.conversationId) {
+      typingMap.set(`volute:${payload.conversationId}`, baseName, { persistent: true });
     }
 
     // Build the delivery body with session pre-set
@@ -310,14 +313,14 @@ export class DeliveryManager {
         dlog.warn(`mind ${mindName} responded ${res.status}: ${text}`);
         // On error, decrement active and clear typing
         this.decrementActive(baseName, session);
-        if (payload.channel) typingMap.delete(payload.channel, baseName);
+        typingMap.deleteSender(baseName);
       } else {
         await res.text().catch(() => {});
       }
     } catch (err) {
       dlog.warn(`failed to deliver to ${mindName}`, log.errorData(err));
       this.decrementActive(baseName, session);
-      if (payload.channel) typingMap.delete(payload.channel, baseName);
+      typingMap.deleteSender(baseName);
     } finally {
       clearTimeout(timeout);
     }
@@ -362,6 +365,14 @@ export class DeliveryManager {
     for (const ch of Object.keys(channels)) {
       if (ch !== "unknown") typingMap.set(ch, baseName, { persistent: true });
     }
+    // Also set on conversationId keys for web UI typing
+    const seenConvIds = new Set<string>();
+    for (const msg of messages) {
+      if (msg.payload.conversationId && !seenConvIds.has(msg.payload.conversationId)) {
+        seenConvIds.add(msg.payload.conversationId);
+        typingMap.set(`volute:${msg.payload.conversationId}`, baseName, { persistent: true });
+      }
+    }
 
     const batchBody = {
       session,
@@ -385,9 +396,7 @@ export class DeliveryManager {
         const text = await res.text().catch(() => "");
         dlog.warn(`mind ${mindName} batch responded ${res.status}: ${text}`);
         this.decrementActive(baseName, session);
-        for (const ch of Object.keys(channels)) {
-          typingMap.delete(ch, baseName);
-        }
+        typingMap.deleteSender(baseName);
       } else {
         await res.text().catch(() => {});
         // Clean up DB entries only after successful delivery
@@ -412,9 +421,7 @@ export class DeliveryManager {
     } catch (err) {
       dlog.warn(`failed to deliver batch to ${mindName}`, log.errorData(err));
       this.decrementActive(baseName, session);
-      for (const ch of Object.keys(channels)) {
-        typingMap.delete(ch, baseName);
-      }
+      typingMap.deleteSender(baseName);
     } finally {
       clearTimeout(timeout);
     }

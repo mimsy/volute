@@ -139,7 +139,7 @@ function handleActivityClick(item: ActivityItem) {
           {#if entry.kind === "activity"}
             {@const a = entry.item}
             <button class="timeline-row" onclick={() => handleActivityClick(a)}>
-              <span class="timeline-dot" class:dot-started={a.type === "mind_started"} class:dot-stopped={a.type === "mind_stopped"} class:dot-page={a.type === "page_updated"}></span>
+              <span class="timeline-dot" class:dot-started={a.type === "mind_started"} class:dot-stopped={a.type === "mind_stopped"} class:dot-active={a.type === "mind_active"} class:dot-idle={a.type === "mind_idle"} class:dot-page={a.type === "page_updated"}></span>
               <span class="timeline-text">{a.summary}</span>
               <span class="timeline-time">{formatRelativeTime(a.created_at)}</span>
             </button>
@@ -299,6 +299,14 @@ function handleActivityClick(item: ActivityItem) {
   }
 
   .dot-stopped {
+    background: var(--text-2);
+  }
+
+  .dot-active {
+    background: var(--accent);
+  }
+
+  .dot-idle {
     background: var(--text-2);
   }
 
