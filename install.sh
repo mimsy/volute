@@ -131,6 +131,10 @@ main() {
   install_node
   install_git
 
+  # Set system-wide git identity for daemon commits (same as Dockerfile)
+  git config --system user.name "Volute"
+  git config --system user.email "volute@localhost"
+
   # Verify system npm is available after Node.js install
   if [ ! -x "/usr/bin/npm" ]; then
     echo "Error: npm not found at /usr/bin/npm after Node.js installation."

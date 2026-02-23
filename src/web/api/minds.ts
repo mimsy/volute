@@ -1189,6 +1189,27 @@ const app = new Hono<AuthEnv>()
       );
     }
 
+    // Initialize git repo if missing (minds created before git config was fixed)
+    if (!existsSync(resolve(dir, ".git"))) {
+      try {
+        const env = isIsolationEnabled()
+          ? { ...process.env, HOME: resolve(dir, "home") }
+          : undefined;
+        await gitExec(["init"], { cwd: dir, mindName: mindName, env });
+        await gitExec(["add", "-A"], { cwd: dir, mindName: mindName, env });
+        await gitExec(["commit", "-m", "initial commit"], { cwd: dir, mindName: mindName, env });
+        chownMindDir(dir, mindName);
+      } catch (err) {
+        rmSync(resolve(dir, ".git"), { recursive: true, force: true });
+        return c.json(
+          {
+            error: `Git initialization failed: ${err instanceof Error ? err.message : String(err)}`,
+          },
+          500,
+        );
+      }
+    }
+
     // Clean up stale worktree refs and leftover branch
     await gitExec(["worktree", "prune"], { cwd: dir });
     try {

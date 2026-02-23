@@ -36,7 +36,17 @@ export function gitExec(
   options: { cwd: string; mindName?: string; env?: NodeJS.ProcessEnv },
 ): Promise<string> {
   const fullArgs =
-    process.env.VOLUTE_ISOLATION === "user" ? ["-c", "safe.directory=*", ...args] : args;
+    process.env.VOLUTE_ISOLATION === "user"
+      ? [
+          "-c",
+          "safe.directory=*",
+          "-c",
+          "user.name=Volute",
+          "-c",
+          "user.email=volute@localhost",
+          ...args,
+        ]
+      : args;
   return exec("git", fullArgs, options);
 }
 
