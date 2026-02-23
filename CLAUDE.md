@@ -12,7 +12,7 @@ Volute is a home for independent, self-motivated minds. The architecture is desi
 - `src/daemon.ts` — Daemon entry point, starts web server + mind/connector/scheduler managers
 - `src/commands/` — One file per command, each exports `async function run(args: string[])`. Top-level nouns (`mind.ts`, `channel.ts`, `connector.ts`, `env.ts`, `schedule.ts`, `service.ts`, `setup.ts`, `variant.ts`) dispatch to subcommand files.
 - `src/lib/` — Shared libraries (registry, mind-manager, connector-manager, scheduler, daemon-client, arg parsing, exec wrappers, variant metadata, db, auth, conversations, channels)
-- `src/web/` — Web dashboard (Hono backend + React frontend), served by the daemon
+- `src/web/` — Web dashboard (Hono backend + Svelte frontend), served by the daemon
 - `src/connectors/` — Built-in connector implementations (Discord, Slack, Telegram) + shared SDK
 - `skills/` — Built-in skill definitions (memory, sessions, orientation, volute-mind), synced to the shared pool on daemon startup
 - `templates/claude/` — Default template (Claude Agent SDK) copied by `volute mind create`
@@ -55,7 +55,7 @@ Each mind project (created from the template) has:
 │       ├── format-prefix.ts   # Shared message formatting (channel/sender/time prefix)
 │       ├── startup.ts         # Shared server.ts boilerplate (parseArgs, loadConfig, etc.)
 │       ├── auto-commit.ts     # Auto-commits file changes in home/ via SDK hooks
-│       ├── auto-reply.ts      # Auto-reply tracker for sending text output back to channels
+│       ├── transparency.ts    # Tool call transparency for connector channels
 │       ├── daemon-client.ts   # Mind-side daemon API client (daemonRestart, daemonSend)
 │       ├── session-monitor.ts # Session activity tracking and cross-session summaries
 │       ├── logger.ts          # Logging utilities
@@ -67,6 +67,7 @@ Each mind project (created from the template) has:
 │           ├── auto-commit.ts     # File change auto-commit hook
 │           ├── identity-reload.ts # Restart on SOUL.md/MEMORY.md change
 │           ├── pre-compact.ts     # Journal update before compaction
+│           ├── reply-instructions.ts # Reply format instructions
 │           └── session-context.ts # Startup context injection
 ├── home/                      # Mind working directory (cwd for the SDK)
 │   ├── SOUL.md                # System prompt / personality
@@ -93,18 +94,18 @@ The SDK runs with `cwd: home/` so it picks up `CLAUDE.md` and `.claude/skills/` 
 
 Templates have a `.init/` directory containing identity and config files. On `volute mind create`, these are copied into `home/` and `.init/` is deleted. On `volute mind upgrade`, `.init/` files are excluded so identity files are never overwritten.
 
-- **`_base/.init/`**: SOUL.md, MEMORY.md, memory/journal/, .config/hooks/startup-context.sh, .config/scripts/session-reader.ts
+- **`_base/.init/`**: SOUL.md, MEMORY.md, memory/journal/, .config/prompts.json, .config/hooks/startup-context.sh, .config/scripts/session-reader.ts
 - **`claude/.init/`**: CLAUDE.md, .claude/settings.json, .config/routes.json
 - **`pi/.init/`**: MINDS.md, .config/routes.json
 
 ### Web dashboard
 
-The daemon serves a Hono web server (default port 4200) with a React frontend.
+The daemon serves a Hono web server (default port 4200) with a Svelte frontend.
 
-- **Backend** (`src/web/`): Hono routes for auth, minds, chat, conversations, logs, variants, files, connectors, schedules
-- **Frontend** (`src/web/frontend/`): React SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs)
+- **Backend** (`src/web/`): Hono API routes for auth, minds, chat, conversations, logs, variants, files, connectors, schedules, channels, env, keys, pages, prompts, skills, file-sharing
+- **Frontend** (`src/web/ui/`): Svelte SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs)
 - **Auth**: Cookie-based (`volute_session`), in-memory session map, first user auto-admin
-- **Database**: libSQL at `~/.volute/volute.db` for users, conversations, messages, mind_messages
+- **Database**: libSQL at `~/.volute/volute.db` for users, conversations, messages, mind_history
 - **Build**: `vite build` → `dist/web-assets/`
 
 ## Commands
@@ -138,6 +139,11 @@ The daemon serves a Hono web server (default port 4200) with a React frontend.
 | `volute schedule list [--mind]` | List schedules for a mind |
 | `volute schedule add [--mind] --cron "..." --message/--script "..." [--id name]` | Add a cron schedule |
 | `volute schedule remove [--mind] --id <id>` | Remove a schedule |
+| `volute skill <list\|add\|remove> [--mind]` | Manage mind skills |
+| `volute shared <list\|add\|remove>` | Manage shared skill pool |
+| `volute seed <name>` | Create a minimal seed mind |
+| `volute sprout <name>` | Grow a seed into a full mind |
+| `volute file <send\|accept\|list\|trust> [--mind]` | Mind-to-mind file sharing |
 | `volute register [--name <name>]` | Register a system on volute.systems |
 | `volute login [--key <key>]` | Log in with an existing API key |
 | `volute logout` | Remove stored credentials |
@@ -168,6 +174,13 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 | `connector-defs.ts` | Connector type definitions and metadata |
 | `scheduler.ts` | Cron-based scheduled messages and scripts, per-mind schedule loading |
 | `daemon-client.ts` | HTTP client for CLI → daemon communication, reads `~/.volute/daemon.json` for port |
+| `api-client.ts` | HTTP client for mind → daemon API calls |
+| `delivery-manager.ts` | Message delivery orchestration |
+| `delivery-router.ts` | Message delivery routing logic |
+| `message-delivery.ts` | Message delivery primitives |
+| `mind-service.ts` | Mind service management utilities |
+| `mind-events.ts` | Mind event pub-sub system |
+| `restart-tracker.ts` | Tracks mind restart state |
 | `variants.ts` | Variant metadata (`~/.volute/variants.json`), health checks, git worktree ops |
 | `template.ts` | Template discovery, copying, `{{name}}` substitution, `.init/` → `home/` migration |
 | `spawn-server.ts` | Spawns `tsx src/server.ts`, waits for port listening (used for variants only) |
@@ -176,7 +189,7 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 | `exec.ts` | Async wrappers around `execFile` (returns stdout) and `spawn` (inherits stdio) |
 | `env.ts` | Environment variables (shared `~/.volute/env.json` + mind-specific state dir env) |
 | `format-tool.ts` | Shared tool call summarization (`[toolName primaryArg]` format) |
-| `schema.ts` | Drizzle ORM schema (users, conversations, conversation_participants, messages, mind_messages, sessions) |
+| `schema.ts` | Drizzle ORM schema (users, conversations, conversation_participants, messages, mind_history, sessions) |
 | `db.ts` | libSQL database singleton at `~/.volute/volute.db` (WAL mode, foreign keys) |
 | `auth.ts` | bcrypt password hashing, first user auto-admin, pending approval flow, mind users |
 | `conversations.ts` | Conversation and message CRUD, multi-participant conversations |
@@ -194,6 +207,13 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 | `logger.ts` | Logging utilities |
 | `mail-poller.ts` | Daemon-integrated mail polling (system-wide, uses volute.systems API) |
 | `migrate-state.ts` | Mind state migration from mind dirs to centralized state dir |
+| `migrate-agents-to-minds.ts` | Migration from legacy agent naming to minds |
+| `identity.ts` | Mind identity (Ed25519 keypair) management |
+| `file-sharing.ts` | Mind-to-mind file sharing with trust system |
+| `archive.ts` | Mind archival utilities |
+| `skills.ts` | Skill installation and management |
+| `shared.ts` | Shared resource management |
+| `prompts.ts` | Mind prompt management |
 | `rotating-log.ts` | Size-limited rotating log files |
 | `read-stdin.ts` | Reads piped stdin for send commands (returns undefined if TTY) |
 | `resolve-mind-name.ts` | Resolves mind name from `--mind` flag or `VOLUTE_MIND` env var |
@@ -215,19 +235,29 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 | `server.ts` | Hono app setup, static file serving, route mounting |
 | `app.ts` | Hono route composition, middleware setup, health endpoint |
 | `middleware/auth.ts` | Cookie-based auth middleware, in-memory session map |
-| `routes/auth.ts` | Login, register, logout, user management |
-| `routes/minds.ts` | List/start/stop minds, message proxy with persistence |
-| `routes/connectors.ts` | List/enable/disable connectors per mind |
-| `routes/schedules.ts` | CRUD schedules + webhook endpoint |
-| `routes/logs.ts` | Log streaming |
-| `routes/variants.ts` | Variant listing |
-| `routes/files.ts` | Read/write mind files |
-| `routes/system.ts` | System info and status |
-| `routes/typing.ts` | Typing indicator endpoints |
-| `routes/update.ts` | Update check endpoint |
-| `routes/volute/chat.ts` | POST /chat — fire-and-forget to minds; GET /conversations/:id/events — SSE |
-| `routes/volute/conversations.ts` | Conversation CRUD, group creation, participant management |
-| `routes/volute/user-conversations.ts` | User-facing conversation list and management |
+| `api/auth.ts` | Login, register, logout, user management |
+| `api/minds.ts` | List/start/stop minds, message proxy with persistence |
+| `api/channels.ts` | Channel listing and management |
+| `api/connectors.ts` | List/enable/disable connectors per mind |
+| `api/env.ts` | Environment variable management |
+| `api/file-sharing.ts` | Mind-to-mind file sharing |
+| `api/files.ts` | Read/write mind files |
+| `api/keys.ts` | API key management |
+| `api/logs.ts` | Log streaming |
+| `api/mind-skills.ts` | Per-mind skill management |
+| `api/pages.ts` | Pages publishing |
+| `api/prompts.ts` | Mind prompt management |
+| `api/schedules.ts` | CRUD schedules + webhook endpoint |
+| `api/shared.ts` | Shared resource endpoints |
+| `api/skills.ts` | Shared skill management |
+| `api/system.ts` | System info and status |
+| `api/typing.ts` | Typing indicator endpoints |
+| `api/update.ts` | Update check endpoint |
+| `api/variants.ts` | Variant listing |
+| `api/volute/channels.ts` | Volute platform channel operations |
+| `api/volute/chat.ts` | POST /chat — fire-and-forget to minds; GET /conversations/:id/events — SSE |
+| `api/volute/conversations.ts` | Conversation CRUD, group creation, participant management |
+| `api/volute/user-conversations.ts` | User-facing conversation list and management |
 
 ## Tech stack
 
@@ -235,7 +265,7 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 - **Language**: TypeScript (strict, ES2022, NodeNext modules)
 - **Agent SDK**: `@anthropic-ai/claude-agent-sdk`
 - **Web server**: Hono + @hono/node-server
-- **Frontend**: React 19 + Vite
+- **Frontend**: Svelte + Vite
 - **Database**: libsql (synchronous better-sqlite3-compatible API), drizzle-orm
 - **Auth**: bcryptjs
 - **Discord**: discord.js
@@ -264,7 +294,7 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 - Mind system prompt built from: SOUL.md + VOLUTE.md + MEMORY.md
 - Model configurable via `VOLUTE_MODEL` env var
 - Auto-commit hooks track file changes in mind `home/` directory
-- Centralized message persistence in `mind_messages` table via daemon routes (text + tool call summaries)
+- Centralized message persistence in `mind_history` table via daemon routes (text + tool call summaries)
 - Optional per-mind Linux user isolation via `VOLUTE_ISOLATION=user` env var — minds spawn as separate system users
 - Built-in skills live in `skills/` at repo root and are synced to the shared pool (`~/.volute/skills/`) on daemon startup via `syncBuiltinSkills()`. Skill sets: `SEED_SKILLS` (orientation, memory) for seeds, `STANDARD_SKILLS` (volute-mind, memory, sessions) for sprouted minds. Skills are installed from the shared pool with upstream tracking (`.upstream.json`) for independent updates.
 
