@@ -265,6 +265,7 @@ function handleResizeEnd() {
           onOpenMind={handleOpenMindModal}
           onSelectPage={handleSelectPage}
           onSelectSite={handleSelectSite}
+          onSelectPages={handleSelectPages}
         />
       </div>
     </div>

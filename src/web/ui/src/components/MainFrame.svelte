@@ -17,6 +17,7 @@ let {
   onOpenMind,
   onSelectPage,
   onSelectSite,
+  onSelectPages,
 }: {
   selection: Selection;
   minds: Mind[];
@@ -28,6 +29,7 @@ let {
   onOpenMind: (mind: Mind) => void;
   onSelectPage: (mind: string, path: string) => void;
   onSelectSite: (name: string) => void;
+  onSelectPages: () => void;
 } = $props();
 
 let selectedSite = $derived(
@@ -63,6 +65,13 @@ let chatChannelName = $derived.by(() => {
 
 <div class="main-frame">
   {#if selection.kind === "page"}
+    <div class="breadcrumbs">
+      <button class="breadcrumb-link" onclick={onSelectPages}>Pages</button>
+      <span class="breadcrumb-sep">/</span>
+      <button class="breadcrumb-link" onclick={() => onSelectSite(selection.mind)}>{selection.mind}</button>
+      <span class="breadcrumb-sep">/</span>
+      <span class="breadcrumb-current">{selection.path}</span>
+    </div>
     <div class="frame-content">
       <iframe src="/pages/{selection.mind}/{selection.path}" class="page-iframe" title="Page"></iframe>
     </div>
@@ -71,6 +80,11 @@ let chatChannelName = $derived.by(() => {
       <PagesDashboard {sites} {recentPages} {onSelectSite} {onSelectPage} />
     </div>
   {:else if selection.kind === "site" && selectedSite}
+    <div class="breadcrumbs">
+      <button class="breadcrumb-link" onclick={onSelectPages}>Pages</button>
+      <span class="breadcrumb-sep">/</span>
+      <span class="breadcrumb-current">{selectedSite.name}</span>
+    </div>
     <div class="frame-content padded">
       <SiteView site={selectedSite} {onSelectPage} />
     </div>
@@ -106,6 +120,43 @@ let chatChannelName = $derived.by(() => {
 
   .frame-content.padded {
     padding: 24px;
+  }
+
+  .breadcrumbs {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    font-family: var(--font-mono, monospace);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-2);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .breadcrumb-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    text-transform: inherit;
+    letter-spacing: inherit;
+    color: var(--text-1);
+    cursor: pointer;
+  }
+
+  .breadcrumb-link:hover {
+    color: var(--accent);
+  }
+
+  .breadcrumb-sep {
+    color: var(--text-2);
+  }
+
+  .breadcrumb-current {
+    color: var(--text-2);
   }
 
   .page-iframe {
