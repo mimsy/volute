@@ -20,12 +20,33 @@ function getState(mind: string): MindState {
   return state;
 }
 
+// Event types that don't indicate real processing activity
+const IGNORED_EVENTS = new Set(["done", "usage", "log"]);
+
 /** Called when a mind event is received. Tracks active/idle transitions. */
 export function onMindEvent(mind: string, type: string, channel?: string): void {
   const state = getState(mind);
-
-  if (type === "inbound") {
-    // Clear any pending idle timer — this is a new turn
+  if (type === "done") {
+    // Start idle timer — if no new activity within timeout, publish idle
+    if (state.idleTimer) {
+      clearTimeout(state.idleTimer);
+    }
+    state.idleTimer = setTimeout(() => {
+      state.idleTimer = null;
+      if (state.active) {
+        state.active = false;
+        publish({
+          type: "mind_idle",
+          mind,
+          summary: `${mind} is idle`,
+        }).catch((err) => {
+          log.error("[mind-activity] failed to publish mind_idle", log.errorData(err));
+        });
+      }
+    }, IDLE_TIMEOUT_MS);
+  } else if (!IGNORED_EVENTS.has(type)) {
+    // Any real processing event (session_start, text, tool_use, etc.)
+    // Clear any pending idle timer — mind is still working
     if (state.idleTimer) {
       clearTimeout(state.idleTimer);
       state.idleTimer = null;
@@ -43,24 +64,6 @@ export function onMindEvent(mind: string, type: string, channel?: string): void 
         log.error("[mind-activity] failed to publish mind_active", log.errorData(err));
       });
     }
-  } else if (type === "done") {
-    // Start idle timer — if no new inbound within timeout, publish idle
-    if (state.idleTimer) {
-      clearTimeout(state.idleTimer);
-    }
-    state.idleTimer = setTimeout(() => {
-      state.idleTimer = null;
-      if (state.active) {
-        state.active = false;
-        publish({
-          type: "mind_idle",
-          mind,
-          summary: `${mind} is idle`,
-        }).catch((err) => {
-          log.error("[mind-activity] failed to publish mind_idle", log.errorData(err));
-        });
-      }
-    }, IDLE_TIMEOUT_MS);
   }
 }
 

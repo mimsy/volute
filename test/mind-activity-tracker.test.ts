@@ -28,24 +28,40 @@ describe("mind-activity-tracker", () => {
     received.length = 0;
   });
 
-  test("inbound event transitions from idle to active", async () => {
-    onMindEvent("test-mind", "inbound");
+  test("session_start event transitions from idle to active", async () => {
+    onMindEvent("test-mind", "session_start");
     await wait();
     const active = received.filter((e) => e.type === "mind_active" && e.mind === "test-mind");
     assert.equal(active.length, 1);
     assert.equal(active[0].summary, "test-mind is active");
   });
 
-  test("repeated inbound events do not re-publish active", async () => {
-    onMindEvent("test-mind", "inbound");
-    onMindEvent("test-mind", "inbound");
+  test("text event also transitions from idle to active", async () => {
+    onMindEvent("test-mind", "text", "volute:@alice");
     await wait();
     const active = received.filter((e) => e.type === "mind_active" && e.mind === "test-mind");
     assert.equal(active.length, 1);
   });
 
+  test("repeated events do not re-publish active", async () => {
+    onMindEvent("test-mind", "session_start");
+    onMindEvent("test-mind", "text");
+    onMindEvent("test-mind", "tool_use");
+    await wait();
+    const active = received.filter((e) => e.type === "mind_active" && e.mind === "test-mind");
+    assert.equal(active.length, 1);
+  });
+
+  test("log and usage events are ignored", async () => {
+    onMindEvent("test-mind", "log");
+    onMindEvent("test-mind", "usage");
+    await wait();
+    const active = received.filter((e) => e.type === "mind_active");
+    assert.equal(active.length, 0);
+  });
+
   test("done event starts idle timer, not immediate idle", async () => {
-    onMindEvent("test-mind", "inbound");
+    onMindEvent("test-mind", "session_start");
     await wait();
     received.length = 0;
 
@@ -57,7 +73,7 @@ describe("mind-activity-tracker", () => {
   });
 
   test("markIdle publishes mind_idle immediately", async () => {
-    onMindEvent("test-mind", "inbound");
+    onMindEvent("test-mind", "session_start");
     await wait();
     received.length = 0;
 
@@ -74,22 +90,22 @@ describe("mind-activity-tracker", () => {
     assert.equal(idle.length, 0);
   });
 
-  test("inbound after done cancels idle timer and stays active", async () => {
-    onMindEvent("test-mind", "inbound");
+  test("new activity after done cancels idle timer", async () => {
+    onMindEvent("test-mind", "session_start");
     await wait();
     received.length = 0;
 
     onMindEvent("test-mind", "done");
-    // New inbound before idle fires
-    onMindEvent("test-mind", "inbound");
+    // New activity before idle fires
+    onMindEvent("test-mind", "session_start");
     await wait();
     // Should not publish anything (still active, idle timer cancelled)
     assert.equal(received.length, 0);
   });
 
   test("stopAll cleans up timers", async () => {
-    onMindEvent("mind-a", "inbound");
-    onMindEvent("mind-b", "inbound");
+    onMindEvent("mind-a", "session_start");
+    onMindEvent("mind-b", "text");
     await wait();
 
     onMindEvent("mind-a", "done");
