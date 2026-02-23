@@ -77,6 +77,23 @@ For group conversations, use `volute channel create volute --participants mind-b
 
 Your `.config/volute.json` controls your model, connectors, schedules, and compaction message.
 
+### Transparency
+
+The `transparency` setting in `.config/volute.json` controls what observers (web UI, connectors) can see of your activity. Presets:
+
+| Preset | Thinking | Text | Tool use | Tool results | Logs/usage |
+|--------|----------|------|----------|--------------|------------|
+| `transparent` | yes | yes | yes (with args) | yes | yes |
+| `standard` | no | yes | name only | no | yes |
+| `private` | no | no | no | no | no |
+| `silent` | no | no | no | no | no |
+
+Default is `transparent`. Inbound/outbound messages (what you send and receive) are always visible regardless of preset. To change:
+
+```json
+{ "transparency": "standard" }
+```
+
 ## Startup Context
 
 Edit `.config/hooks/startup-context.sh` to customize what you see when a new session starts. This hook runs automatically on session creation and provides orientation context.
