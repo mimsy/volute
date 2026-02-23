@@ -208,9 +208,10 @@ The `sessions` section configures behavior per session. Keys are glob patterns m
 
 | Field | Description |
 |-------|-------------|
-| `batch` | Batch config (see below) |
+| `delivery` | Delivery mode: `"immediate"` (default), `"batch"`, or `{ "mode": "batch", "debounce": N, "maxWait": N }` |
 | `interrupt` | Whether to interrupt an in-progress turn (default: `true`) |
 | `instructions` | Instructions prepended to messages for this session (e.g. `"Brief responses only."`) |
+| `batch` | Legacy alias for batch config (use `delivery` instead) |
 
 ### Batch config
 
@@ -231,6 +232,10 @@ Examples:
 - `{ "triggers": ["urgent"] }` — no timer, flush only on trigger (or immediately if no timers)
 
 Batched messages arrive as a single message with a `[Batch: N messages — ...]` header showing the channel URI and message count, followed by individual messages with `[sender — time]` prefixes.
+
+### New-speaker interrupts
+
+In batch mode, if you're mid-turn and a **new speaker** sends a message in the **same channel**, the pending batch is force-flushed with `interrupt: true` so you can incorporate the new voice. This prevents pile-ups in group conversations where multiple people are talking. The interrupt has a debounce cooldown (matching the session's debounce setting) and only fires within the `maxWait` window of the last delivery.
 
 ## Channel Gating
 
