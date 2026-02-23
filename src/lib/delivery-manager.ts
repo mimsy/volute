@@ -463,7 +463,8 @@ export class DeliveryManager {
     }
 
     // New-speaker interrupt: if mind is active on this channel and a different sender
-    // arrives, force-flush with interrupt so the mind can incorporate the new voice
+    // arrives (within the maxWait window and past the debounce cooldown), force-flush
+    // with interrupt so the mind can incorporate the new voice
     const [baseName] = mindName.split("@", 2);
     const state = this.sessionStates.get(baseName)?.get(session);
     if (
@@ -477,7 +478,7 @@ export class DeliveryManager {
       Date.now() - state.lastInterruptAt > delivery.debounce * 1000
     ) {
       state.lastInterruptAt = Date.now();
-      // Persist then flush with interrupt override
+      // Persist to DB (fire-and-forget) and flush immediately with interrupt override
       this.persistToQueue(mindName, session, payload).catch((err) => {
         dlog.warn(`failed to persist batch message for ${mindName}/${session}`, log.errorData(err));
       });

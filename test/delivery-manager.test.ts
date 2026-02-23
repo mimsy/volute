@@ -364,6 +364,89 @@ describe("DeliveryManager", () => {
       assert.equal(buffer.messages.length, 1);
       removeMind(name);
     });
+
+    it("null sender does not trigger interrupt", async () => {
+      const name = setBatchSession();
+      manager = new DeliveryManager();
+
+      // Simulate mind active from sender A
+      simulateActive(manager, name, "group", ["alice"], ["group:chat"]);
+
+      // Deliver a system message with no sender — should buffer normally
+      await manager.routeAndDeliver(name, {
+        channel: "group:chat",
+        sender: null,
+        content: "system notification",
+      });
+
+      // Buffer should have the message (no interrupt for null sender)
+      const buffer = getBatchBuffer(manager, name, "group");
+      assert.ok(buffer);
+      assert.equal(buffer.messages.length, 1);
+      removeMind(name);
+    });
+
+    it("inactive session does not trigger interrupt", async () => {
+      const name = setBatchSession();
+      manager = new DeliveryManager();
+
+      // Simulate session state with activeCount === 0 (mind finished processing)
+      const states = (manager as any).sessionStates as Map<string, Map<string, any>>;
+      const mindSessions = new Map();
+      states.set(name, mindSessions);
+      mindSessions.set("group", {
+        activeCount: 0,
+        lastDeliveredAt: Date.now(),
+        lastDeliverySenders: new Set(["alice"]),
+        lastDeliveryChannels: new Set(["group:chat"]),
+        lastInterruptAt: 0,
+      });
+
+      // Deliver from new sender — session is idle so no interrupt
+      await manager.routeAndDeliver(name, {
+        channel: "group:chat",
+        sender: "bob",
+        content: "hey",
+      });
+
+      // Buffer should have the message (no interrupt)
+      const buffer = getBatchBuffer(manager, name, "group");
+      assert.ok(buffer);
+      assert.equal(buffer.messages.length, 1);
+      removeMind(name);
+    });
+
+    it("interrupt flush includes existing buffered messages", async () => {
+      const name = setBatchSession();
+      manager = new DeliveryManager();
+
+      // First, buffer a message from alice while session is idle
+      await manager.routeAndDeliver(name, {
+        channel: "group:chat",
+        sender: "alice",
+        content: "first message",
+      });
+
+      // Verify it's buffered
+      let buffer = getBatchBuffer(manager, name, "group");
+      assert.ok(buffer);
+      assert.equal(buffer.messages.length, 1);
+
+      // Now simulate the session becoming active (e.g. from a previous flush)
+      simulateActive(manager, name, "group", ["alice"], ["group:chat"]);
+
+      // Deliver from bob — should trigger interrupt flush including alice's buffered message
+      await manager.routeAndDeliver(name, {
+        channel: "group:chat",
+        sender: "bob",
+        content: "hey alice",
+      });
+
+      // Buffer should be cleared — both messages were flushed together
+      buffer = getBatchBuffer(manager, name, "group");
+      assert.equal(buffer, undefined);
+      removeMind(name);
+    });
   });
 
   describe("getPending", () => {
