@@ -1,7 +1,9 @@
 <script lang="ts">
-import type { ConversationWithParticipants, Mind, RecentPage } from "../lib/api";
+import type { ConversationWithParticipants, Mind, RecentPage, Site } from "../lib/api";
 import type { Selection } from "../lib/navigate";
 import Home from "../pages/Home.svelte";
+import PagesDashboard from "../pages/PagesDashboard.svelte";
+import SiteView from "../pages/SiteView.svelte";
 import Chat from "./Chat.svelte";
 
 let {
@@ -9,20 +11,28 @@ let {
   minds,
   conversations,
   recentPages,
+  sites,
   username,
   onConversationId,
   onOpenMind,
   onSelectPage,
+  onSelectSite,
 }: {
   selection: Selection;
   minds: Mind[];
   conversations: ConversationWithParticipants[];
   recentPages: RecentPage[];
+  sites: Site[];
   username: string;
   onConversationId: (id: string) => void;
   onOpenMind: (mind: Mind) => void;
   onSelectPage: (mind: string, path: string) => void;
+  onSelectSite: (name: string) => void;
 } = $props();
+
+let selectedSite = $derived(
+  selection.kind === "site" ? sites.find((s) => s.name === selection.name) : undefined,
+);
 
 let chatMindName = $derived.by(() => {
   if (selection.kind !== "conversation") return "";
@@ -55,6 +65,14 @@ let chatChannelName = $derived.by(() => {
   {#if selection.kind === "page"}
     <div class="frame-content">
       <iframe src="/pages/{selection.mind}/{selection.path}" class="page-iframe" title="Page"></iframe>
+    </div>
+  {:else if selection.kind === "pages"}
+    <div class="frame-content padded">
+      <PagesDashboard {sites} {recentPages} {onSelectSite} {onSelectPage} />
+    </div>
+  {:else if selection.kind === "site" && selectedSite}
+    <div class="frame-content padded">
+      <SiteView site={selectedSite} {onSelectPage} />
     </div>
   {:else if selection.kind === "conversation"}
     <div class="frame-content">

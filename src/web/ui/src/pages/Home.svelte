@@ -1,4 +1,5 @@
 <script lang="ts">
+import PageThumbnail from "../components/PageThumbnail.svelte";
 import StatusBadge from "../components/StatusBadge.svelte";
 import type {
   ConversationWithParticipants,
@@ -131,14 +132,14 @@ let recentConversations = $derived(
       <div class="section-header">
         <span class="section-title">recent pages</span>
       </div>
-      <div class="pages-list">
-        {#each recentPages as page}
-          <button class="page-row" onclick={() => onSelectPage(page.mind, page.file)}>
-            <span>
-              <span class="page-mind">{page.mind}/</span>{page.file}
-            </span>
-            <span class="page-time">{formatRelativeTime(page.modified)}</span>
-          </button>
+      <div class="pages-grid">
+        {#each recentPages.slice(0, 5) as page}
+          <PageThumbnail
+            url={page.url}
+            label={page.file}
+            sublabel="{page.mind} · {formatRelativeTime(page.modified)}"
+            onclick={() => onSelectPage(page.mind, page.file)}
+          />
         {/each}
       </div>
     </div>
@@ -295,38 +296,9 @@ let recentConversations = $derived(
     flex-shrink: 0;
   }
 
-  .pages-list {
+  .pages-grid {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .page-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    width: 100%;
-    padding: 8px 12px;
-    border-radius: var(--radius);
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    color: var(--text-0);
-    font-size: 12px;
-    transition: border-color 0.15s;
-    cursor: pointer;
-    text-align: left;
-  }
-
-  .page-row:hover {
-    border-color: var(--border-bright);
-  }
-
-  .page-mind {
-    color: var(--text-2);
-  }
-
-  .page-time {
-    color: var(--text-2);
-    font-size: 10px;
+    flex-wrap: wrap;
+    gap: 16px;
   }
 </style>

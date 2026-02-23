@@ -4,9 +4,11 @@ import {
   fetchAllConversations,
   fetchMinds,
   fetchRecentPages,
+  fetchSites,
   fetchSystemInfo,
   type Mind,
   type RecentPage,
+  type Site,
 } from "./api";
 import { type AuthUser, fetchMe, logout } from "./auth";
 
@@ -57,6 +59,7 @@ export const data = $state({
   minds: [] as Mind[],
   conversations: [] as ConversationWithParticipants[],
   recentPages: [] as RecentPage[],
+  sites: [] as Site[],
   connectionOk: true,
 });
 
@@ -90,6 +93,13 @@ export function startPolling() {
   fetchRecentPages()
     .then((p) => {
       data.recentPages = p;
+    })
+    .catch(() => {
+      data.connectionOk = false;
+    });
+  fetchSites()
+    .then((s) => {
+      data.sites = s;
     })
     .catch(() => {
       data.connectionOk = false;

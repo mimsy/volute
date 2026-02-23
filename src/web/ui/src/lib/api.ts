@@ -288,6 +288,15 @@ export async function fetchRecentPages(): Promise<RecentPage[]> {
   return res.json();
 }
 
+export type SitePage = { file: string; modified: string; url: string };
+export type Site = { name: string; label: string; pages: SitePage[] };
+
+export async function fetchSites(): Promise<Site[]> {
+  const res = await fetch("/api/minds/pages/sites", { credentials: "include" });
+  if (!res.ok) throw new Error("Failed to fetch sites");
+  return res.json();
+}
+
 export function reportTyping(
   mindName: string,
   channel: string,
