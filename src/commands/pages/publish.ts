@@ -10,6 +10,7 @@ import { systemsFetch } from "../../lib/systems-fetch.js";
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
     mind: { type: "string" },
+    system: { type: "boolean" },
   });
 
   const config = readSystemsConfig();
@@ -18,12 +19,13 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  // If no mind specified, publish system-level pages from the shared repo
-  const hasMind = flags.mind || process.env.VOLUTE_MIND;
   let mindName: string;
   let pagesDir: string;
 
-  if (hasMind) {
+  if (flags.system) {
+    mindName = "system";
+    pagesDir = resolve(sharedDir(), "pages");
+  } else if (flags.mind || process.env.VOLUTE_MIND) {
     mindName = resolveMindName(flags);
     pagesDir = resolve(mindDir(mindName), "home", "pages");
   } else {
