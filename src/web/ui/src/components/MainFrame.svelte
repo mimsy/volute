@@ -76,6 +76,9 @@ let chatChannelName = $derived.by(() => {
       <iframe src="/pages/{selection.mind}/{selection.path}" class="page-iframe" title="Page"></iframe>
     </div>
   {:else if selection.kind === "pages"}
+    <div class="breadcrumbs">
+      <span class="breadcrumb-current">Pages</span>
+    </div>
     <div class="frame-content padded">
       <PagesDashboard {sites} {recentPages} {onSelectSite} {onSelectPage} />
     </div>

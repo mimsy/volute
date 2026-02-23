@@ -116,7 +116,7 @@ function toggleSection(section: Section) {
             <span class="toggle-icon">{collapsed.has("pages") ? "\u25B8" : "\u25BE"}</span>
             <span>Pages</span>
           </button>
-          <button class="section-add" onclick={onSelectPages} title="All pages">{"\u25A6"}</button>
+          <button class="section-add" onclick={onSelectPages} title="All pages">{"\u229E"}</button>
         </div>
         {#if !collapsed.has("pages")}
           <div class="site-list">
