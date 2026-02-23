@@ -803,10 +803,11 @@ const app = new Hono<AuthEnv>()
       }
 
       for (const item of items) {
+        if (item.startsWith(".")) continue;
         const fullPath = resolve(dir, item);
         try {
           const s = statSync(fullPath);
-          if (s.isFile()) {
+          if (s.isFile() && item.endsWith(".html")) {
             pages.push({
               file: item,
               modified: s.mtime.toISOString(),
@@ -874,10 +875,11 @@ const app = new Hono<AuthEnv>()
       }
 
       for (const item of items) {
+        if (item.startsWith(".")) continue;
         const fullPath = resolve(pagesDir, item);
         try {
           const s = statSync(fullPath);
-          if (s.isFile()) {
+          if (s.isFile() && item.endsWith(".html")) {
             pages.push({
               mind: entry.name,
               file: item,
