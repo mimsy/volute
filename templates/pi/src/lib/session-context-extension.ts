@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import { log } from "./logger.js";
 import { getSessionUpdates, resolvePiJsonl } from "./session-monitor.js";
 
 export function createSessionContextExtension(options: {
@@ -25,7 +26,8 @@ export function createSessionContextExtension(options: {
             display: true,
           },
         };
-      } catch {
+      } catch (err) {
+        log("mind", "session context extension failed:", err);
         return {};
       }
     });
