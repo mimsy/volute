@@ -21,9 +21,11 @@ if (config.thinkingLevel) log("server", `thinking level: ${config.thinkingLevel}
 const systemPrompt = loadSystemPrompt();
 const pkg = loadPackageInfo();
 
+const mindDir = resolve(".");
 const mind = createMind({
   systemPrompt,
   cwd: resolve("home"),
+  mindDir,
   model: config.model,
   thinkingLevel: config.thinkingLevel,
   compactionMessage: config.compactionMessage,

@@ -39,6 +39,7 @@ type PiSession = {
 export function createMind(options: {
   systemPrompt: string;
   cwd: string;
+  mindDir: string;
   model?: string;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   compactionMessage?: string;
@@ -111,7 +112,7 @@ export function createMind(options: {
 
     const sessionContextExtension = createSessionContextExtension({
       currentSession: session.name,
-      cwd: options.cwd,
+      mindDir: options.mindDir,
     });
 
     const replyInstructionsExtension = createReplyInstructionsExtension(session.messageChannels);
@@ -202,15 +203,20 @@ export function createMind(options: {
         // Fire-and-forget: await session ready then prompt
         (async () => {
           await session.ready;
-          if (session.agentSession!.isStreaming) {
+          if (!session.agentSession) {
+            log("mind", `session "${sessionName}": not initialized, dropping message`);
+            broadcast(session, { type: "done" });
+            return;
+          }
+          if (session.agentSession.isStreaming) {
             if (meta.interrupt) {
               interruptSession(sessionName);
-              session.agentSession!.prompt(text, { streamingBehavior: "steer", ...opts });
+              session.agentSession.prompt(text, { streamingBehavior: "steer", ...opts });
             } else {
-              session.agentSession!.prompt(text, { streamingBehavior: "followUp", ...opts });
+              session.agentSession.prompt(text, { streamingBehavior: "followUp", ...opts });
             }
           } else {
-            session.agentSession!.prompt(text, opts);
+            session.agentSession.prompt(text, opts);
           }
         })().catch((err) => {
           log("mind", `session "${sessionName}": prompt failed:`, err);
