@@ -16,6 +16,7 @@ let {
   onSelectSite,
   onSelectPages,
   onHideConversation,
+  onHome,
 }: {
   minds: Mind[];
   conversations: ConversationWithParticipants[];
@@ -30,6 +31,7 @@ let {
   onSelectSite: (name: string) => void;
   onSelectPages: () => void;
   onHideConversation?: (id: string) => void;
+  onHome: () => void;
 } = $props();
 
 type Section = "dms" | "channels" | "pages";
@@ -60,6 +62,7 @@ function toggleSection(section: Section) {
 </script>
 
 <div class="sidebar-inner">
+  <button class="sidebar-header" onclick={onHome}>Volute</button>
   <div class="sections">
     <!-- DMs -->
     <div class="section">
@@ -138,6 +141,22 @@ function toggleSection(section: Section) {
     flex-direction: column;
     height: 100%;
     overflow: hidden;
+  }
+
+  .sidebar-header {
+    padding: 12px 12px 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-1);
+    letter-spacing: 0.02em;
+    flex-shrink: 0;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .sidebar-header:hover {
+    color: var(--text-0);
   }
 
   .sections {

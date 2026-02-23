@@ -243,6 +243,7 @@ function handleResizeEnd() {
           onSelectSite={handleSelectSite}
           onSelectPages={handleSelectPages}
           onHideConversation={handleHideConversation}
+          onHome={() => (selection = { kind: "home" })}
         />
       </div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
