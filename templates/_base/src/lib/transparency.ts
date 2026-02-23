@@ -66,7 +66,7 @@ export function loadTransparencyPreset(): TransparencyPreset {
       // try next
     }
   }
-  return "standard";
+  return "transparent";
 }
 
 export function filterEvent(preset: TransparencyPreset, event: DaemonEvent): DaemonEvent | null {
