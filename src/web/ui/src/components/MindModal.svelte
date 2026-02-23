@@ -3,6 +3,7 @@ import { onMount } from "svelte";
 import { fetchMind, type Mind, startMind, stopMind } from "../lib/api";
 import { formatRelativeTime, getDisplayStatus } from "../lib/format";
 import History from "./History.svelte";
+import MindInfo from "./MindInfo.svelte";
 import MindSkills from "./MindSkills.svelte";
 import Modal from "./Modal.svelte";
 import StatusBadge from "./StatusBadge.svelte";
@@ -11,13 +12,13 @@ import VariantList from "./VariantList.svelte";
 
 let { mind: initialMind, onClose }: { mind: Mind; onClose: () => void } = $props();
 
-const TABS = ["History", "Skills", "Variants", "Connections"] as const;
+const TABS = ["Info", "History", "Skills", "Variants", "Connections"] as const;
 type Tab = (typeof TABS)[number];
 
 const mindName = initialMind.name;
 // eslint-disable-next-line svelte/valid-compile -- initialMind is intentionally captured once; refresh() updates mind via API
 let mind = $state<Mind>(initialMind);
-let tab = $state<Tab>("History");
+let tab = $state<Tab>("Info");
 let error = $state("");
 let actionLoading = $state(false);
 
@@ -99,7 +100,9 @@ const connectedChannels = $derived(
     {#if error}
       <div class="error-msg">{error}</div>
     {/if}
-    {#if tab === "History"}
+    {#if tab === "Info"}
+      <MindInfo name={mind.name} />
+    {:else if tab === "History"}
       <History name={mind.name} />
     {:else if tab === "Skills"}
       <MindSkills name={mind.name} />

@@ -98,7 +98,7 @@ import {
   removeVariant,
   validateBranchName,
 } from "../../lib/variants.js";
-import { readVoluteConfig } from "../../lib/volute-config.js";
+import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 type ChannelStatus = {
@@ -1437,6 +1437,94 @@ const app = new Hono<AuthEnv>()
     if (!usage) return c.json({ error: "No budget configured" }, 404);
     return c.json(usage);
   })
+  // Get mind config (registry + volute.json + env)
+  .get("/:name/config", (c) => {
+    const name = c.req.param("name");
+    const entry = findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+
+    const dir = mindDir(name);
+    if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
+
+    // Read volute config (handles both claude and pi templates)
+    let config = readVoluteConfig(dir);
+
+    // For pi template, also try config.json
+    if (!config && entry.template === "pi") {
+      const piConfigPath = resolve(dir, "home/.config/config.json");
+      if (existsSync(piConfigPath)) {
+        try {
+          config = JSON.parse(readFileSync(piConfigPath, "utf-8"));
+        } catch {
+          // ignore parse errors
+        }
+      }
+    }
+
+    return c.json({
+      registry: {
+        name: entry.name,
+        port: entry.port,
+        created: entry.created,
+        stage: entry.stage,
+        template: entry.template,
+      },
+      config: {
+        model: config?.model ?? null,
+        thinkingLevel: config?.thinkingLevel ?? null,
+        tokenBudget: config?.tokenBudget ?? null,
+        tokenBudgetPeriodMinutes: config?.tokenBudgetPeriodMinutes ?? null,
+      },
+    });
+  })
+  // Update mind config — admin only
+  .put(
+    "/:name/config",
+    requireAdmin,
+    zValidator(
+      "json",
+      z.object({
+        model: z.string().optional(),
+        thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
+        tokenBudget: z.number().int().positive().nullable().optional(),
+        tokenBudgetPeriodMinutes: z.number().int().positive().nullable().optional(),
+      }),
+    ),
+    async (c) => {
+      const name = c.req.param("name");
+      const entry = findMind(name);
+      if (!entry) return c.json({ error: "Mind not found" }, 404);
+
+      const dir = mindDir(name);
+      if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
+
+      const body = c.req.valid("json");
+
+      const existing = readVoluteConfig(dir) ?? {};
+
+      if (body.model !== undefined) existing.model = body.model;
+      if (body.thinkingLevel !== undefined) {
+        existing.thinkingLevel = body.thinkingLevel;
+      }
+      if (body.tokenBudget !== undefined) {
+        if (body.tokenBudget === null) {
+          delete existing.tokenBudget;
+        } else {
+          existing.tokenBudget = body.tokenBudget;
+        }
+      }
+      if (body.tokenBudgetPeriodMinutes !== undefined) {
+        if (body.tokenBudgetPeriodMinutes === null) {
+          delete existing.tokenBudgetPeriodMinutes;
+        } else {
+          existing.tokenBudgetPeriodMinutes = body.tokenBudgetPeriodMinutes;
+        }
+      }
+
+      writeVoluteConfig(dir, existing);
+      return c.json({ ok: true });
+    },
+  )
   // Get pending/gated delivery messages
   .get("/:name/delivery/pending", async (c) => {
     const name = c.req.param("name");
