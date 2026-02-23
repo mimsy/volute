@@ -4,16 +4,16 @@ import { getSessionUpdates, resolvePiJsonl } from "./session-monitor.js";
 
 export function createSessionContextExtension(options: {
   currentSession: string;
-  cwd: string;
+  mindDir: string;
 }): ExtensionFactory {
   return (pi) => {
     pi.on("before_agent_start", () => {
       try {
-        const sessionsDir = resolve(options.cwd, ".mind/pi-sessions");
+        const sessionsDir = resolve(options.mindDir, ".mind/pi-sessions");
         const summary = getSessionUpdates({
           currentSession: options.currentSession,
           sessionsDir,
-          cursorFile: resolve(options.cwd, ".mind/session-cursors.json"),
+          cursorFile: resolve(options.mindDir, ".mind/session-cursors.json"),
           jsonlResolver: (name) => resolvePiJsonl(sessionsDir, name),
           format: "pi",
         });

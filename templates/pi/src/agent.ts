@@ -1,3 +1,4 @@
+import { resolve as resolvePath } from "node:path";
 import {
   AuthStorage,
   createAgentSession,
@@ -111,7 +112,7 @@ export function createMind(options: {
 
     const sessionContextExtension = createSessionContextExtension({
       currentSession: session.name,
-      cwd: options.cwd,
+      mindDir: resolvePath(options.cwd, ".."),
     });
 
     const replyInstructionsExtension = createReplyInstructionsExtension(session.messageChannels);
