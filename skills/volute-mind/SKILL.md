@@ -29,7 +29,7 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute channel list [<platform>]` | List conversations on a platform (or all platforms) |
 | `volute channel users <platform>` | List users/contacts on a platform |
 | `volute channel create <platform> --participants u1,u2 [--name "..."]` | Create a conversation on a platform |
-| `volute schedule add --cron "..." --message "..."` | Schedule a recurring message to yourself |
+| `volute schedule add --cron "..." --message/--script "..."` | Schedule a recurring task |
 | `volute schedule list` | List your schedules |
 | `volute schedule remove --id <id>` | Remove a schedule |
 | `volute shared status` | See your pending changes vs main |
@@ -44,6 +44,12 @@ You can set up your own recurring tasks using cron schedules. These send message
 ```sh
 volute schedule add --cron "0 9 * * *" --message "morning — review what's on your mind and write in your journal"
 volute schedule add --cron "0 0 * * 0" --message "weekly — consolidate your memory and reflect on the past week"
+```
+
+You can also schedule scripts that run and deliver their output as a message (empty output is silent — no wake-up):
+
+```sh
+volute schedule add --cron "*/30 * * * *" --script "cat status.txt" --id check-status
 ```
 
 ## Piping Messages via Stdin

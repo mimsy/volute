@@ -131,4 +131,33 @@ describe("scheduler", () => {
     assert.ok(text.includes("[script error]"));
     assert.ok(text.includes("bad command"));
   });
+
+  it("fire delivers error without stderr when absent", async () => {
+    const scheduler = new TestScheduler();
+    scheduler.scriptResult = new Error("command not found");
+
+    await (scheduler as any).fire("test-mind", {
+      id: "fail-no-stderr",
+      cron: "* * * * *",
+      script: "missing-cmd",
+      enabled: true,
+    });
+
+    assert.equal(scheduler.deliveries.length, 1);
+    const text = scheduler.deliveries[0].payload.content[0].text;
+    assert.equal(text, "[script error] command not found");
+  });
+
+  it("fire skips schedule with neither message nor script", async () => {
+    const scheduler = new TestScheduler();
+
+    await (scheduler as any).fire("test-mind", {
+      id: "empty-sched",
+      cron: "* * * * *",
+      enabled: true,
+    });
+
+    assert.equal(scheduler.deliveries.length, 0);
+    assert.equal(scheduler.scriptCalls.length, 0);
+  });
 });

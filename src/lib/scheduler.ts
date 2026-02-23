@@ -102,9 +102,13 @@ export class Scheduler {
         } catch (err) {
           const stderr = (err as Error & { stderr?: string }).stderr ?? "";
           text = `[script error] ${(err as Error).message}${stderr ? `\n${stderr}` : ""}`;
+          slog.warn(`script "${schedule.id}" failed for ${mindName}`, log.errorData(err));
         }
+      } else if (schedule.message) {
+        text = schedule.message;
       } else {
-        text = schedule.message!;
+        slog.warn(`schedule "${schedule.id}" for ${mindName} has no message or script`);
+        return;
       }
       await this.deliver(mindName, {
         content: [{ type: "text", text }],
