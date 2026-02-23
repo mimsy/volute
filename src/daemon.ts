@@ -11,6 +11,7 @@ import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
 import { migrateDotVoluteDir, migrateMindState } from "./lib/migrate-state.js";
 import { initMindManager } from "./lib/mind-manager.js";
 import { startMindFull } from "./lib/mind-service.js";
+import { stopAllWatchers } from "./lib/pages-watcher.js";
 import { initRegistryCache, readRegistry, setMindRunning, voluteHome } from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
 import { initScheduler } from "./lib/scheduler.js";
@@ -195,6 +196,7 @@ export async function startDaemon(opts: {
     if (shuttingDown) return;
     shuttingDown = true;
     log.info("shutting down...");
+    stopAllWatchers();
     scheduler.stop();
     scheduler.saveState();
     mailPoller.stop();

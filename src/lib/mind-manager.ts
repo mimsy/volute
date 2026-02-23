@@ -260,6 +260,13 @@ export class MindManager {
 
       mlog.error(`mind ${name} exited with code ${code}`);
 
+      // Publish crash as mind_stopped activity (dynamic import to avoid circular deps)
+      import("./activity-events.js")
+        .then(({ publish }) =>
+          publish({ type: "mind_stopped", mind: name, summary: `${name} crashed (exit ${code})` }),
+        )
+        .catch(() => {});
+
       const { shouldRestart, delay, attempt } = this.restartTracker.recordCrash(name);
       this.saveCrashAttempts();
       if (!shouldRestart) {

@@ -30,6 +30,15 @@ export type RecentPage = {
   url: string;
 };
 
+export type ActivityItem = {
+  id: number;
+  type: "mind_started" | "mind_stopped" | "page_updated";
+  mind: string;
+  summary: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+};
+
 export type VoluteEvent =
   | { type: "meta"; conversationId: string; senderName?: string }
   | { type: "done" };

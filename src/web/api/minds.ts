@@ -5,10 +5,9 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
@@ -56,6 +55,7 @@ import {
   startMindFull as startMindFullService,
   stopMindFull as stopMindFullService,
 } from "../../lib/mind-service.js";
+import { getCachedRecentPages, getCachedSites } from "../../lib/pages-watcher.js";
 import {
   getMindPromptDefaults,
   getPrompt,
@@ -73,7 +73,6 @@ import {
   setMindStage,
   stateDir,
   validateMindName,
-  voluteHome,
 } from "../../lib/registry.js";
 import { conversations, mindHistory } from "../../lib/schema.js";
 import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
@@ -787,129 +786,13 @@ const app = new Hono<AuthEnv>()
     );
     return c.json(minds);
   })
-  // Scan a pages directory and return page entries
+  // Scan a pages directory and return page entries (uses cache from pages-watcher)
   .get("/pages/sites", async (c) => {
-    type SitePage = { file: string; modified: string; url: string };
-    type Site = { name: string; label: string; pages: SitePage[] };
-
-    function scanPagesDir(dir: string, urlPrefix: string): SitePage[] {
-      const pages: SitePage[] = [];
-      let items: string[];
-      try {
-        items = readdirSync(dir);
-      } catch (err) {
-        log.warn("Failed to read pages dir", { dir, error: (err as Error).message });
-        return pages;
-      }
-
-      for (const item of items) {
-        if (item.startsWith(".")) continue;
-        const fullPath = resolve(dir, item);
-        try {
-          const s = statSync(fullPath);
-          if (s.isFile() && item.endsWith(".html")) {
-            pages.push({
-              file: item,
-              modified: s.mtime.toISOString(),
-              url: `${urlPrefix}/${item}`,
-            });
-          } else if (s.isDirectory()) {
-            const indexPath = resolve(fullPath, "index.html");
-            if (existsSync(indexPath)) {
-              const indexStat = statSync(indexPath);
-              pages.push({
-                file: join(item, "index.html"),
-                modified: indexStat.mtime.toISOString(),
-                url: `${urlPrefix}/${item}/`,
-              });
-            }
-          }
-        } catch (err) {
-          log.warn("Failed to stat page item", { dir, item, error: (err as Error).message });
-        }
-      }
-
-      pages.sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime());
-      return pages;
-    }
-
-    const sites: Site[] = [];
-
-    // System pages
-    const systemPagesDir = resolve(voluteHome(), "shared", "pages");
-    if (existsSync(systemPagesDir)) {
-      const systemPages = scanPagesDir(systemPagesDir, "/pages/_system");
-      if (systemPages.length > 0) {
-        sites.push({ name: "_system", label: "System", pages: systemPages });
-      }
-    }
-
-    // Mind pages
-    const entries = readRegistry();
-    for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
-      const pagesDir = resolve(mindDir(entry.name), "home", "pages");
-      if (!existsSync(pagesDir)) continue;
-      const mindPages = scanPagesDir(pagesDir, `/pages/${entry.name}`);
-      if (mindPages.length > 0) {
-        sites.push({ name: entry.name, label: entry.name, pages: mindPages });
-      }
-    }
-
-    return c.json(sites);
+    return c.json(getCachedSites());
   })
-  // Recent pages across all minds (used by Home page)
+  // Recent pages across all minds (uses cache from pages-watcher)
   .get("/pages/recent", async (c) => {
-    const entries = readRegistry();
-    const pages: { mind: string; file: string; modified: string; url: string }[] = [];
-
-    for (const entry of entries) {
-      const pagesDir = resolve(mindDir(entry.name), "home", "pages");
-      if (!existsSync(pagesDir)) continue;
-
-      let items: string[];
-      try {
-        items = readdirSync(pagesDir);
-      } catch (err) {
-        log.warn("Failed to read pages dir", { mind: entry.name, error: (err as Error).message });
-        continue;
-      }
-
-      for (const item of items) {
-        if (item.startsWith(".")) continue;
-        const fullPath = resolve(pagesDir, item);
-        try {
-          const s = statSync(fullPath);
-          if (s.isFile() && item.endsWith(".html")) {
-            pages.push({
-              mind: entry.name,
-              file: item,
-              modified: s.mtime.toISOString(),
-              url: `/pages/${entry.name}/${item}`,
-            });
-          } else if (s.isDirectory()) {
-            const indexPath = resolve(fullPath, "index.html");
-            if (existsSync(indexPath)) {
-              const indexStat = statSync(indexPath);
-              pages.push({
-                mind: entry.name,
-                file: join(item, "index.html"),
-                modified: indexStat.mtime.toISOString(),
-                url: `/pages/${entry.name}/${item}/`,
-              });
-            }
-          }
-        } catch (err) {
-          log.warn("Failed to stat page item", {
-            mind: entry.name,
-            item,
-            error: (err as Error).message,
-          });
-        }
-      }
-    }
-
-    pages.sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime());
-    return c.json(pages.slice(0, 10));
+    return c.json(getCachedRecentPages());
   })
   // Get single mind
   .get("/:name", async (c) => {
