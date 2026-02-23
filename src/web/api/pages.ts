@@ -1,7 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { Hono } from "hono";
-import { findMind, mindDir } from "../../lib/registry.js";
+import { findMind, mindDir, voluteHome } from "../../lib/registry.js";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",
@@ -23,9 +23,13 @@ const MIME_TYPES: Record<string, string> = {
 const app = new Hono().get("/:name/*", async (c) => {
   const name = c.req.param("name");
 
-  if (!findMind(name)) return c.text("Not found", 404);
-
-  const pagesRoot = resolve(mindDir(name), "home", "pages");
+  let pagesRoot: string;
+  if (name === "_system") {
+    pagesRoot = resolve(voluteHome(), "shared", "pages");
+  } else {
+    if (!findMind(name)) return c.text("Not found", 404);
+    pagesRoot = resolve(mindDir(name), "home", "pages");
+  }
   const wildcard = c.req.path.replace(`/pages/${name}`, "") || "/";
   const requestedPath = resolve(pagesRoot, wildcard.slice(1));
 

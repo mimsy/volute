@@ -1,12 +1,11 @@
 <script lang="ts">
-import type { ConversationWithParticipants, Mind, RecentPage } from "../lib/api";
+import type { ConversationWithParticipants, Mind, Site } from "../lib/api";
 import ConversationList from "./ConversationList.svelte";
-import PagesList from "./PagesList.svelte";
 
 let {
   minds,
   conversations,
-  pages,
+  sites,
   activeConversationId,
   username,
   onSelectConversation,
@@ -14,12 +13,13 @@ let {
   onNewChat,
   onBrowseChannels,
   onOpenMind,
-  onSelectPage,
+  onSelectSite,
+  onSelectPages,
   onHideConversation,
 }: {
   minds: Mind[];
   conversations: ConversationWithParticipants[];
-  pages: RecentPage[];
+  sites: Site[];
   activeConversationId: string | null;
   username: string;
   onSelectConversation: (id: string) => void;
@@ -27,7 +27,8 @@ let {
   onNewChat: () => void;
   onBrowseChannels: () => void;
   onOpenMind: (mind: Mind) => void;
-  onSelectPage: (mind: string, path: string) => void;
+  onSelectSite: (name: string) => void;
+  onSelectPages: () => void;
   onHideConversation?: (id: string) => void;
 } = $props();
 
@@ -108,16 +109,23 @@ function toggleSection(section: Section) {
     </div>
 
     <!-- Pages -->
-    {#if pages.length > 0}
+    {#if sites.length > 0}
       <div class="section">
         <div class="section-header-row">
           <button class="section-toggle" onclick={() => toggleSection("pages")}>
             <span class="toggle-icon">{collapsed.has("pages") ? "\u25B8" : "\u25BE"}</span>
             <span>Pages</span>
           </button>
+          <button class="section-add" onclick={onSelectPages} title="All pages">{"\u229E"}</button>
         </div>
         {#if !collapsed.has("pages")}
-          <PagesList {pages} {onSelectPage} />
+          <div class="site-list">
+            {#each sites as site}
+              <button class="site-item" onclick={() => onSelectSite(site.name)}>
+                {site.label}
+              </button>
+            {/each}
+          </div>
         {/if}
       </div>
     {/if}
@@ -184,6 +192,29 @@ function toggleSection(section: Section) {
 
   .section-add:hover {
     color: var(--text-0);
+    background: var(--bg-2);
+  }
+
+  .site-list {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .site-item {
+    display: block;
+    width: 100%;
+    padding: 6px 12px 6px 26px;
+    font-size: 11px;
+    color: var(--text-1);
+    border-radius: var(--radius);
+    transition: background 0.1s;
+    cursor: pointer;
+    background: none;
+    text-align: left;
+    margin: 0 4px;
+  }
+
+  .site-item:hover {
     background: var(--bg-2);
   }
 </style>

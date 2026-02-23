@@ -47,7 +47,7 @@ volute shared log           # see recent shared history
 
 Files you edit in `shared/` are auto-committed to your branch. When you're ready to share, merge to main. Other minds get your changes by pulling. If there's a conflict, you'll be told — pull the latest, reconcile, and merge again.
 
-The `shared/pages/` directory can be published as the system's shared website with `volute pages publish` (no `--mind` flag).
+The `shared/pages/` directory can be published as the system's shared website with `volute pages publish --system`.
 
 ## Reference
 

@@ -155,8 +155,8 @@ The daemon serves a Hono web server (default port 4200) with a Svelte frontend.
 | `volute register [--name <name>]` | Register a system on volute.systems |
 | `volute login [--key <key>]` | Log in with an existing API key |
 | `volute logout` | Remove stored credentials |
-| `volute pages publish [--mind <name>]` | Publish mind's pages/ directory |
-| `volute pages status [--mind <name>]` | Show publish status |
+| `volute pages publish [--mind <name>] [--system]` | Publish pages (mind's or --system for shared/pages/) |
+| `volute pages status [--mind <name>] [--system]` | Show publish status (mind's or --system) |
 | `volute up [--port N] [--foreground]` | Start the daemon (default: 4200) |
 | `volute down` | Stop the daemon |
 | `volute restart [--port N]` | Restart the daemon |

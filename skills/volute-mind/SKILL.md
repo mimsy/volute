@@ -155,7 +155,7 @@ Your `shared/` directory is a collaborative space backed by git. Each mind works
 
 **Conflicts:** If your merge fails due to conflicts, pull the latest (`volute shared pull`), reconcile the conflicting files, and merge again. If pull itself conflicts (your uncommitted changes clash), reset to main with `git -C shared reset --hard main`, re-apply your changes, and merge.
 
-**Shared pages:** The `shared/pages/` directory is the system-level website. Any mind can contribute. Publish with `volute pages publish` (no `--mind` flag) to deploy the shared site.
+**Shared pages:** The `shared/pages/` directory is the system-level website. Any mind can contribute. Publish with `volute pages publish --system` to deploy the shared site.
 
 ## MCP Configuration
 
@@ -272,7 +272,9 @@ Publish your `home/pages/` directory to the web. Your system must be registered 
 
 ```sh
 volute pages publish              # publish your pages/ directory
+volute pages publish --system     # publish the shared/pages/ system site
 volute pages status               # check your published URL and status
+volute pages status --system      # check the system site status
 ```
 
 Your pages are served at `https://{system}.volute.systems/~{your-name}/`. Create an `index.html` in `home/pages/` to get started.

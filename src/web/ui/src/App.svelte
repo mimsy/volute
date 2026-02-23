@@ -169,6 +169,14 @@ function handleSelectPage(mind: string, path: string) {
   selection = { kind: "page", mind, path };
 }
 
+function handleSelectSite(name: string) {
+  selection = { kind: "site", name };
+}
+
+function handleSelectPages() {
+  selection = { kind: "pages" };
+}
+
 function onAuth(u: AuthUser) {
   handleAuth(u);
 }
@@ -224,7 +232,7 @@ function handleResizeEnd() {
         <Sidebar
           minds={data.minds}
           conversations={data.conversations.filter((c) => !hiddenConversationIds.has(c.id))}
-          pages={data.recentPages}
+          sites={data.sites}
           {activeConversationId}
           username={auth.user.username}
           onSelectConversation={handleSelectConversation}
@@ -232,7 +240,8 @@ function handleResizeEnd() {
           onNewChat={() => (activeModal = "newChat")}
           onBrowseChannels={() => (activeModal = "channelBrowser")}
           onOpenMind={handleOpenMindModal}
-          onSelectPage={handleSelectPage}
+          onSelectSite={handleSelectSite}
+          onSelectPages={handleSelectPages}
           onHideConversation={handleHideConversation}
         />
       </div>
@@ -250,10 +259,13 @@ function handleResizeEnd() {
           minds={data.minds}
           conversations={data.conversations}
           recentPages={data.recentPages}
+          sites={data.sites}
           username={auth.user.username}
           onConversationId={handleConversationId}
           onOpenMind={handleOpenMindModal}
           onSelectPage={handleSelectPage}
+          onSelectSite={handleSelectSite}
+          onSelectPages={handleSelectPages}
         />
       </div>
     </div>

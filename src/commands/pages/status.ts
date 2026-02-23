@@ -6,6 +6,7 @@ import { systemsFetch } from "../../lib/systems-fetch.js";
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
     mind: { type: "string" },
+    system: { type: "boolean" },
   });
 
   const config = readSystemsConfig();
@@ -14,7 +15,7 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  const mindName = resolveMindName(flags);
+  const mindName = flags.mind || process.env.VOLUTE_MIND ? resolveMindName(flags) : "system";
 
   const res = await systemsFetch(`${config.apiUrl}/api/pages/status/${mindName}`, {
     headers: { Authorization: `Bearer ${config.apiKey}` },
