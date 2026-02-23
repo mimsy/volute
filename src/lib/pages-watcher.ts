@@ -9,18 +9,15 @@ type Site = { name: string; label: string; pages: SitePage[] };
 type RecentPage = { mind: string; file: string; modified: string; url: string };
 
 const watchers = new Map<string, FSWatcher>();
+// Watchers on home/ waiting for pages/ to appear
+const homeWatchers = new Map<string, FSWatcher>();
 const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 // Caches invalidated by file watcher
 let sitesCache: Site[] | null = null;
 let recentPagesCache: RecentPage[] | null = null;
 
-export function startWatcher(mindName: string): void {
-  if (watchers.has(mindName)) return;
-
-  const pagesDir = resolve(mindDir(mindName), "home", "pages");
-  if (!existsSync(pagesDir)) return;
-
+function startPagesWatcher(mindName: string, pagesDir: string): void {
   try {
     const watcher = watch(pagesDir, { recursive: true }, (_eventType, filename) => {
       if (!filename || !filename.endsWith(".html")) return;
@@ -52,11 +49,46 @@ export function startWatcher(mindName: string): void {
   }
 }
 
+export function startWatcher(mindName: string): void {
+  if (watchers.has(mindName)) return;
+
+  const pagesDir = resolve(mindDir(mindName), "home", "pages");
+  if (existsSync(pagesDir)) {
+    startPagesWatcher(mindName, pagesDir);
+    return;
+  }
+
+  // pages/ doesn't exist yet — watch home/ for its creation
+  if (homeWatchers.has(mindName)) return;
+  const homeDir = resolve(mindDir(mindName), "home");
+  if (!existsSync(homeDir)) return;
+
+  try {
+    const hw = watch(homeDir, (_eventType, filename) => {
+      if (filename !== "pages") return;
+      if (!existsSync(pagesDir)) return;
+      // pages/ appeared — stop home watcher, start real pages watcher
+      hw.close();
+      homeWatchers.delete(mindName);
+      invalidateCache();
+      startPagesWatcher(mindName, pagesDir);
+    });
+    homeWatchers.set(mindName, hw);
+  } catch (err) {
+    log.warn(`failed to start home watcher for ${mindName}`, log.errorData(err));
+  }
+}
+
 export function stopWatcher(mindName: string): void {
   const watcher = watchers.get(mindName);
   if (watcher) {
     watcher.close();
     watchers.delete(mindName);
+  }
+  const hw = homeWatchers.get(mindName);
+  if (hw) {
+    hw.close();
+    homeWatchers.delete(mindName);
   }
   // Clear any pending debounce timers
   for (const [key, timer] of debounceTimers) {
@@ -68,14 +100,18 @@ export function stopWatcher(mindName: string): void {
 }
 
 export function stopAllWatchers(): void {
-  for (const [name, watcher] of watchers) {
+  for (const [, watcher] of watchers) {
     watcher.close();
-    watchers.delete(name);
   }
-  for (const [key, timer] of debounceTimers) {
+  watchers.clear();
+  for (const [, hw] of homeWatchers) {
+    hw.close();
+  }
+  homeWatchers.clear();
+  for (const [, timer] of debounceTimers) {
     clearTimeout(timer);
-    debounceTimers.delete(key);
   }
+  debounceTimers.clear();
   invalidateCache();
 }
 
