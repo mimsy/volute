@@ -24,6 +24,9 @@ const MAX_BATCH_SIZE = 50;
 type SessionState = {
   activeCount: number;
   lastDeliveredAt: number;
+  lastDeliverySenders: Set<string>;
+  lastDeliveryChannels: Set<string>;
+  lastInterruptAt: number;
 };
 
 // --- Batch buffer ---
@@ -277,8 +280,12 @@ export class DeliveryManager {
       port = variant.port;
     }
 
-    // Increment active count before delivery
-    this.incrementActive(baseName, session);
+    // Increment active count before delivery with sender/channel metadata
+    const senders = new Set<string>();
+    if (payload.sender) senders.add(payload.sender);
+    const channels = new Set<string>();
+    if (payload.channel) channels.add(payload.channel);
+    this.incrementActive(baseName, session, senders, channels);
 
     // Set typing indicator
     const typingMap = getTypingMap();
@@ -328,6 +335,7 @@ export class DeliveryManager {
     session: string,
     messages: QueuedMessage[],
     sessionConfig: ResolvedSessionConfig,
+    interruptOverride?: boolean,
   ): Promise<void> {
     const [baseName, variantName] = mindName.split("@", 2);
     const entry = findMind(baseName);
@@ -354,8 +362,16 @@ export class DeliveryManager {
       channels[ch].push(msg.payload);
     }
 
-    // Increment active count
-    this.incrementActive(baseName, session);
+    // Collect sender/channel metadata from messages
+    const senders = new Set<string>();
+    const channelSet = new Set<string>();
+    for (const msg of messages) {
+      if (msg.sender) senders.add(msg.sender);
+      if (msg.channel) channelSet.add(msg.channel);
+    }
+
+    // Increment active count with metadata
+    this.incrementActive(baseName, session, senders, channelSet);
 
     // Set typing indicators for all real channels in the batch
     const typingMap = getTypingMap();
@@ -366,7 +382,7 @@ export class DeliveryManager {
     const batchBody = {
       session,
       batch: { channels },
-      interrupt: sessionConfig.interrupt,
+      interrupt: interruptOverride ?? sessionConfig.interrupt,
       instructions: sessionConfig.instructions,
     };
 
@@ -446,6 +462,35 @@ export class DeliveryManager {
       }
     }
 
+    // New-speaker interrupt: if mind is active on this channel and a different sender
+    // arrives (within the maxWait window and past the debounce cooldown), force-flush
+    // with interrupt so the mind can incorporate the new voice
+    const [baseName] = mindName.split("@", 2);
+    const state = this.sessionStates.get(baseName)?.get(session);
+    if (
+      state &&
+      state.activeCount > 0 &&
+      payload.sender &&
+      !state.lastDeliverySenders.has(payload.sender) &&
+      payload.channel &&
+      state.lastDeliveryChannels.has(payload.channel) &&
+      Date.now() - state.lastDeliveredAt < delivery.maxWait * 1000 &&
+      Date.now() - state.lastInterruptAt > delivery.debounce * 1000
+    ) {
+      state.lastInterruptAt = Date.now();
+      // Persist to DB (fire-and-forget) and flush immediately with interrupt override
+      this.persistToQueue(mindName, session, payload).catch((err) => {
+        dlog.warn(`failed to persist batch message for ${mindName}/${session}`, log.errorData(err));
+      });
+      this.flushBatch(
+        mindName,
+        session,
+        [{ payload, channel: payload.channel, sender: payload.sender, createdAt: Date.now() }],
+        true,
+      );
+      return;
+    }
+
     // Persist to DB
     this.persistToQueue(mindName, session, payload).catch((err) => {
       dlog.warn(`failed to persist batch message for ${mindName}/${session}`, log.errorData(err));
@@ -514,7 +559,12 @@ export class DeliveryManager {
     }
   }
 
-  private flushBatch(mindName: string, session: string, extra?: QueuedMessage[]): void {
+  private flushBatch(
+    mindName: string,
+    session: string,
+    extra?: QueuedMessage[],
+    interruptOverride?: boolean,
+  ): void {
     const bufferKey = `${mindName}:${session}`;
     const buffer = this.batchBuffers.get(bufferKey);
 
@@ -535,10 +585,14 @@ export class DeliveryManager {
     const config = getRoutingConfig(baseName);
     const sessionConfig = resolveDeliveryMode(config, session);
 
-    dlog.info(`flushing batch for ${mindName}/${session}: ${messages.length} messages`);
-    this.deliverBatchToMind(mindName, session, messages, sessionConfig).catch((err) => {
-      dlog.warn(`failed to flush batch for ${mindName}/${session}`, log.errorData(err));
-    });
+    dlog.info(
+      `flushing batch for ${mindName}/${session}: ${messages.length} messages${interruptOverride ? " (new-speaker interrupt)" : ""}`,
+    );
+    this.deliverBatchToMind(mindName, session, messages, sessionConfig, interruptOverride).catch(
+      (err) => {
+        dlog.warn(`failed to flush batch for ${mindName}/${session}`, log.errorData(err));
+      },
+    );
   }
 
   private async gateMessage(
@@ -630,15 +684,28 @@ export class DeliveryManager {
     }
   }
 
-  private incrementActive(mind: string, session: string): void {
+  private incrementActive(
+    mind: string,
+    session: string,
+    senders?: Set<string>,
+    channels?: Set<string>,
+  ): void {
     let mindSessions = this.sessionStates.get(mind);
     if (!mindSessions) {
       mindSessions = new Map();
       this.sessionStates.set(mind, mindSessions);
     }
-    const state = mindSessions.get(session) ?? { activeCount: 0, lastDeliveredAt: 0 };
+    const state = mindSessions.get(session) ?? {
+      activeCount: 0,
+      lastDeliveredAt: 0,
+      lastDeliverySenders: new Set<string>(),
+      lastDeliveryChannels: new Set<string>(),
+      lastInterruptAt: 0,
+    };
     state.activeCount++;
     state.lastDeliveredAt = Date.now();
+    if (senders) state.lastDeliverySenders = senders;
+    if (channels) state.lastDeliveryChannels = channels;
     mindSessions.set(session, state);
   }
 
