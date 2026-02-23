@@ -19,7 +19,7 @@ import type { AuthEnv } from "../middleware/auth.js";
 
 async function notifyMind(port: number, message: string, channel: string, sender: string) {
   try {
-    await fetch(`http://127.0.0.1:${port}/message`, {
+    const res = await fetch(`http://127.0.0.1:${port}/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -28,8 +28,11 @@ async function notifyMind(port: number, message: string, channel: string, sender
         sender,
       }),
     });
-  } catch {
-    // Best-effort notification
+    if (!res.ok) {
+      console.warn(`[file-sharing] notify mind on port ${port} failed: ${res.status}`);
+    }
+  } catch (err) {
+    console.warn(`[file-sharing] notify mind on port ${port} failed:`, err);
   }
 }
 
@@ -132,7 +135,11 @@ const app = new Hono<AuthEnv>()
     try {
       result = acceptPending(name, body.id, mindDir(name));
     } catch (err) {
-      return c.json({ error: (err as Error).message }, 404);
+      const message = (err as Error).message;
+      if (message.includes("not found") || message.includes("Invalid pending")) {
+        return c.json({ error: message }, 404);
+      }
+      return c.json({ error: `Failed to accept file: ${message}` }, 500);
     }
 
     // Notify sender that file was accepted
@@ -161,7 +168,11 @@ const app = new Hono<AuthEnv>()
     try {
       result = rejectPending(name, body.id);
     } catch (err) {
-      return c.json({ error: (err as Error).message }, 404);
+      const message = (err as Error).message;
+      if (message.includes("not found") || message.includes("Invalid pending")) {
+        return c.json({ error: message }, 404);
+      }
+      return c.json({ error: `Failed to reject file: ${message}` }, 500);
     }
 
     // Notify sender that file was rejected

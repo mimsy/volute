@@ -44,7 +44,8 @@ export function readFileSharingConfig(dir: string): FileSharingConfig {
   if (!existsSync(p)) return {};
   try {
     return JSON.parse(readFileSync(p, "utf-8")) as FileSharingConfig;
-  } catch {
+  } catch (err) {
+    console.warn(`[file-sharing] failed to parse config at ${p}:`, err);
     return {};
   }
 }
@@ -143,8 +144,8 @@ export function listPending(receiver: string): PendingFileMetadata[] {
     if (!existsSync(metaPath)) continue;
     try {
       result.push(JSON.parse(readFileSync(metaPath, "utf-8")) as PendingFileMetadata);
-    } catch {
-      // skip malformed entries
+    } catch (err) {
+      console.warn(`[file-sharing] skipping malformed pending entry ${entry.name}:`, err);
     }
   }
 
@@ -157,7 +158,8 @@ export function getPending(receiver: string, id: string): PendingFileMetadata | 
   if (!existsSync(metaPath)) return null;
   try {
     return JSON.parse(readFileSync(metaPath, "utf-8")) as PendingFileMetadata;
-  } catch {
+  } catch (err) {
+    console.warn(`[file-sharing] failed to read pending metadata for ${id}:`, err);
     return null;
   }
 }
