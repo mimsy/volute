@@ -54,6 +54,7 @@ let {
     transform-origin: top left;
     pointer-events: none;
     border: none;
+    background: white;
   }
 
   .thumbnail-label {
