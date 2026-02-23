@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
+import { exec } from "./exec.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "./json-state.js";
 import log from "./logger.js";
 import { deliverMessage } from "./message-delivery.js";
@@ -88,8 +89,25 @@ export class Scheduler {
 
   private async fire(mindName: string, schedule: Schedule): Promise<void> {
     try {
-      await deliverMessage(mindName, {
-        content: [{ type: "text", text: schedule.message }],
+      let text: string;
+      if (schedule.script) {
+        const homeDir = resolve(mindDir(mindName), "home");
+        try {
+          const output = await this.runScript(schedule.script, homeDir, mindName);
+          if (!output.trim()) {
+            slog.info(`fired script "${schedule.id}" for ${mindName} (no output)`);
+            return;
+          }
+          text = output;
+        } catch (err) {
+          const stderr = (err as Error & { stderr?: string }).stderr ?? "";
+          text = `[script error] ${(err as Error).message}${stderr ? `\n${stderr}` : ""}`;
+        }
+      } else {
+        text = schedule.message!;
+      }
+      await this.deliver(mindName, {
+        content: [{ type: "text", text }],
         channel: "system:scheduler",
         sender: schedule.id,
       });
@@ -97,6 +115,17 @@ export class Scheduler {
     } catch (err) {
       slog.warn(`failed to fire "${schedule.id}" for ${mindName}`, log.errorData(err));
     }
+  }
+
+  protected runScript(script: string, cwd: string, mindName: string): Promise<string> {
+    return exec("bash", ["-c", script], { cwd, mindName });
+  }
+
+  protected deliver(
+    mindName: string,
+    payload: { content: { type: string; text: string }[]; channel: string; sender: string },
+  ): Promise<void> {
+    return deliverMessage(mindName, payload);
   }
 }
 

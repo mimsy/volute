@@ -4,7 +4,8 @@ import { dirname, resolve } from "node:path";
 export type Schedule = {
   id: string;
   cron: string;
-  message: string;
+  message?: string;
+  script?: string;
   enabled: boolean;
 };
 

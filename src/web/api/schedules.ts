@@ -32,8 +32,14 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Seed minds cannot use schedules — sprout first" }, 403);
 
     const body = (await c.req.json()) as Partial<Schedule>;
-    if (!body.cron || !body.message) {
-      return c.json({ error: "cron and message are required" }, 400);
+    if (!body.cron) {
+      return c.json({ error: "cron is required" }, 400);
+    }
+    if (!body.message && !body.script) {
+      return c.json({ error: "message or script is required" }, 400);
+    }
+    if (body.message && body.script) {
+      return c.json({ error: "message and script are mutually exclusive" }, 400);
     }
 
     const schedules = readSchedules(name);
@@ -43,7 +49,10 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: `Schedule "${id}" already exists` }, 409);
     }
 
-    schedules.push({ id, cron: body.cron, message: body.message, enabled: body.enabled ?? true });
+    const schedule: Schedule = { id, cron: body.cron, enabled: body.enabled ?? true };
+    if (body.message) schedule.message = body.message;
+    if (body.script) schedule.script = body.script;
+    schedules.push(schedule);
     writeSchedules(name, schedules);
     return c.json({ ok: true, id }, 201);
   })
@@ -58,8 +67,18 @@ const app = new Hono<AuthEnv>()
     if (idx === -1) return c.json({ error: "Schedule not found" }, 404);
 
     const body = (await c.req.json()) as Partial<Schedule>;
+    if (body.message && body.script) {
+      return c.json({ error: "message and script are mutually exclusive" }, 400);
+    }
     if (body.cron !== undefined) schedules[idx].cron = body.cron;
-    if (body.message !== undefined) schedules[idx].message = body.message;
+    if (body.message !== undefined) {
+      schedules[idx].message = body.message;
+      delete schedules[idx].script;
+    }
+    if (body.script !== undefined) {
+      schedules[idx].script = body.script;
+      delete schedules[idx].message;
+    }
     if (body.enabled !== undefined) schedules[idx].enabled = body.enabled;
 
     writeSchedules(name, schedules);
