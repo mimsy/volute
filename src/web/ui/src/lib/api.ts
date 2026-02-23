@@ -292,7 +292,7 @@ export type SitePage = { file: string; modified: string; url: string };
 export type Site = { name: string; label: string; pages: SitePage[] };
 
 export async function fetchSites(): Promise<Site[]> {
-  const res = await fetch("/api/minds/pages/sites", { credentials: "include" });
+  const res = await client.api.minds.pages.sites.$get();
   if (!res.ok) throw new Error("Failed to fetch sites");
   return res.json();
 }

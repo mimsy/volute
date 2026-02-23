@@ -114,11 +114,14 @@ let chatChannelName = $derived.by(() => {
   .main-frame {
     height: 100%;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
   }
 
   .frame-content {
-    height: 100%;
+    flex: 1;
     overflow: auto;
+    min-height: 0;
   }
 
   .frame-content.padded {

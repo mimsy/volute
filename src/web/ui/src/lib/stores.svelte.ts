@@ -90,6 +90,7 @@ export function startPolling() {
     refreshConversations();
   }
   refresh();
+  // Pages data fetched once on load (not polled — pages change infrequently)
   fetchRecentPages()
     .then((p) => {
       data.recentPages = p;

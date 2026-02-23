@@ -15,14 +15,7 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  let mindName: string;
-  if (flags.system) {
-    mindName = "system";
-  } else if (flags.mind || process.env.VOLUTE_MIND) {
-    mindName = resolveMindName(flags);
-  } else {
-    mindName = "system";
-  }
+  const mindName = flags.mind || process.env.VOLUTE_MIND ? resolveMindName(flags) : "system";
 
   const res = await systemsFetch(`${config.apiUrl}/api/pages/status/${mindName}`, {
     headers: { Authorization: `Bearer ${config.apiKey}` },

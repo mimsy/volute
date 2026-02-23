@@ -797,7 +797,8 @@ const app = new Hono<AuthEnv>()
       let items: string[];
       try {
         items = readdirSync(dir);
-      } catch {
+      } catch (err) {
+        log.warn("Failed to read pages dir", { dir, error: (err as Error).message });
         return pages;
       }
 
@@ -822,8 +823,8 @@ const app = new Hono<AuthEnv>()
               });
             }
           }
-        } catch {
-          // skip unreadable items
+        } catch (err) {
+          log.warn("Failed to stat page item", { dir, item, error: (err as Error).message });
         }
       }
 

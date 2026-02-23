@@ -25,7 +25,7 @@ let {
       <div class="thumbnail-grid">
         {#each sites as site}
           <PageThumbnail
-            url={site.pages[0]?.url ?? ""}
+            url={site.pages[0]?.url ?? "about:blank"}
             label={site.label}
             onclick={() => onSelectSite(site.name)}
           />

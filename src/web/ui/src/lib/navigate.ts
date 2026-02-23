@@ -11,7 +11,7 @@ export function parseSelection(): Selection {
 
   if (path === "/page" || path === "/pages") return { kind: "pages" };
 
-  const siteMatch = path.match(/^\/page(?:s)?\/([^/]+)$/);
+  const siteMatch = path.match(/^\/page\/([^/]+)$/);
   if (siteMatch) return { kind: "site", name: siteMatch[1] };
 
   const pageMatch = path.match(/^\/page\/([^/]+)\/(.+)$/);
