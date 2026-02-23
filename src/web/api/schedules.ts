@@ -1,8 +1,12 @@
+import { CronExpressionParser } from "cron-parser";
 import { Hono } from "hono";
+import log from "../../lib/logger.js";
 import { findMind, mindDir } from "../../lib/registry.js";
 import { getScheduler } from "../../lib/scheduler.js";
 import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
+
+const slog = log.child("schedules");
 
 function readSchedules(name: string): Schedule[] {
   return readVoluteConfig(mindDir(name))?.schedules ?? [];
@@ -42,6 +46,12 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "message and script are mutually exclusive" }, 400);
     }
 
+    try {
+      CronExpressionParser.parse(body.cron);
+    } catch {
+      return c.json({ error: `Invalid cron expression: ${body.cron}` }, 400);
+    }
+
     const schedules = readSchedules(name);
     const id = body.id || `schedule-${Date.now()}`;
 
@@ -70,7 +80,14 @@ const app = new Hono<AuthEnv>()
     if (body.message && body.script) {
       return c.json({ error: "message and script are mutually exclusive" }, 400);
     }
-    if (body.cron !== undefined) schedules[idx].cron = body.cron;
+    if (body.cron !== undefined) {
+      try {
+        CronExpressionParser.parse(body.cron);
+      } catch {
+        return c.json({ error: `Invalid cron expression: ${body.cron}` }, 400);
+      }
+      schedules[idx].cron = body.cron;
+    }
     if (body.message !== undefined) {
       schedules[idx].message = body.message;
       delete schedules[idx].script;
@@ -124,7 +141,8 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: `Mind responded with ${res.status}` }, 502);
       }
       return c.json({ ok: true });
-    } catch {
+    } catch (err) {
+      slog.warn(`webhook delivery failed for ${name}`, log.errorData(err));
       return c.json({ error: "Failed to reach mind" }, 502);
     }
   });

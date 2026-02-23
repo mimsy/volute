@@ -26,7 +26,8 @@ function readJson(path: string): VoluteConfig | null {
   if (!existsSync(path)) return null;
   try {
     return JSON.parse(readFileSync(path, "utf-8"));
-  } catch {
+  } catch (err) {
+    console.error(`[volute-config] failed to parse ${path}: ${err}`);
     return null;
   }
 }

@@ -1,3 +1,4 @@
+import { CronExpressionParser } from "cron-parser";
 import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
@@ -99,6 +100,13 @@ async function addSchedule(args: string[]) {
   }
   if (flags.message && flags.script) {
     console.error("--message and --script are mutually exclusive");
+    process.exit(1);
+  }
+
+  try {
+    CronExpressionParser.parse(flags.cron);
+  } catch {
+    console.error(`Invalid cron expression: ${flags.cron}`);
     process.exit(1);
   }
 
