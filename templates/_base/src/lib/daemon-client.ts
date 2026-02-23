@@ -74,6 +74,28 @@ export async function daemonEmit(event: DaemonEvent): Promise<void> {
   }
 }
 
+export async function daemonSendFile(
+  targetMind: string,
+  filePath: string,
+): Promise<{ status: string; id?: string; destPath?: string }> {
+  if (!port || !mind) {
+    throw new Error("[volute] daemonSendFile: VOLUTE_DAEMON_PORT or VOLUTE_MIND not set");
+  }
+  const res = await fetch(
+    `http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/files/send`,
+    {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ targetMind, filePath }),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`daemonSendFile failed (${res.status}): ${body}`);
+  }
+  return (await res.json()) as { status: string; id?: string; destPath?: string };
+}
+
 export async function daemonSend(channel: string, text: string): Promise<void> {
   if (!port || !mind) {
     console.error("[volute] daemonSend: VOLUTE_DAEMON_PORT or VOLUTE_MIND not set");

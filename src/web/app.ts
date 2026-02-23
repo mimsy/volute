@@ -8,6 +8,7 @@ import auth from "./api/auth.js";
 import channels from "./api/channels.js";
 import connectors from "./api/connectors.js";
 import envRoutes, { sharedEnvApp } from "./api/env.js";
+import fileSharing from "./api/file-sharing.js";
 import files from "./api/files.js";
 import keys from "./api/keys.js";
 import logs from "./api/logs.js";
@@ -111,6 +112,7 @@ const routes = app
   .route("/api/minds", typing)
   .route("/api/minds", variants)
   .route("/api/minds", files)
+  .route("/api/minds", fileSharing)
   .route("/api/minds", channels)
   .route("/api/minds", shared)
   .route("/api/minds", envRoutes)
