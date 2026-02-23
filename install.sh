@@ -131,6 +131,13 @@ main() {
   install_node
   install_git
 
+  # Set system-wide git identity for daemon commits if not already configured
+  if ! git config --system user.name >/dev/null 2>&1; then
+    git config --system user.name "Volute" && \
+    git config --system user.email "volute@localhost" || \
+      echo "Warning: failed to set system git config — git commits may fail."
+  fi
+
   # Verify system npm is available after Node.js install
   if [ ! -x "/usr/bin/npm" ]; then
     echo "Error: npm not found at /usr/bin/npm after Node.js installation."

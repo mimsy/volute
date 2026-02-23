@@ -104,6 +104,24 @@ function install(port?: number, host?: string): void {
   ensureVoluteGroup({ force: true });
   console.log("Ensured volute group exists");
 
+  // Set system-wide git identity for daemon commits if not already configured
+  try {
+    execFileSync("git", ["config", "--system", "user.name"]);
+    console.log("System git identity already configured, skipping");
+  } catch {
+    try {
+      execFileSync("git", ["config", "--system", "user.name", "Volute"]);
+      execFileSync("git", ["config", "--system", "user.email", "volute@localhost"]);
+      console.log("Configured system git identity");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`Warning: failed to set system git config: ${msg}`);
+      console.warn("Git commits by the daemon may fail. You can set this manually with:");
+      console.warn('  git config --system user.name "Volute"');
+      console.warn('  git config --system user.email "volute@localhost"');
+    }
+  }
+
   // Set permissions on data and minds directories
   execFileSync("chmod", ["755", DATA_DIR]);
   execFileSync("chmod", ["755", MINDS_DIR]);

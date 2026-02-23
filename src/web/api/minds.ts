@@ -77,6 +77,7 @@ import {
 import { conversations, mindHistory } from "../../lib/schema.js";
 import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
 import { installSkill, SEED_SKILLS, STANDARD_SKILLS } from "../../lib/skills.js";
+import { readSystemsConfig } from "../../lib/systems-config.js";
 import {
   applyInitFiles,
   composeTemplate,
@@ -145,6 +146,17 @@ async function getMindStatus(name: string, port: number) {
 }
 
 const TEMPLATE_BRANCH = "volute/template";
+
+/** Configure per-repo git identity for a mind: name = mind name, email = [mind].[system]@volute.systems. */
+async function configureGitIdentity(
+  mindName: string,
+  opts: { cwd: string; mindName?: string; env?: NodeJS.ProcessEnv },
+) {
+  const systemsConfig = readSystemsConfig();
+  const system = systemsConfig?.system ?? "local";
+  await gitExec(["config", "user.name", mindName], opts);
+  await gitExec(["config", "user.email", `${mindName}.${system}@volute.systems`], opts);
+}
 
 /**
  * Create the volute/template tracking branch and main branch with shared history.
@@ -401,6 +413,7 @@ async function importFromArchive(
         ? { ...process.env, HOME: resolve(dest, "home") }
         : undefined;
       await gitExec(["init"], { cwd: dest, mindName: name, env });
+      await configureGitIdentity(name, { cwd: dest, mindName: name, env });
       await gitExec(["add", "-A"], { cwd: dest, mindName: name, env });
       await gitExec(["commit", "-m", "import from archive"], { cwd: dest, mindName: name, env });
     }
@@ -495,6 +508,7 @@ const app = new Hono<AuthEnv>()
       try {
         const env = isIsolationEnabled() ? { ...process.env, HOME: homeDir } : undefined;
         await gitExec(["init"], { cwd: dest, mindName: name, env });
+        await configureGitIdentity(name, { cwd: dest, mindName: name, env });
         await initTemplateBranch(dest, composedDir, manifest, name, env);
       } catch (err) {
         log.error(`git setup failed for ${name}`, log.errorData(err));
@@ -691,6 +705,7 @@ const app = new Hono<AuthEnv>()
         ? { ...process.env, HOME: resolve(dest, "home") }
         : undefined;
       await gitExec(["init"], { cwd: dest, mindName: name, env });
+      await configureGitIdentity(name, { cwd: dest, mindName: name, env });
       await gitExec(["add", "-A"], { cwd: dest, mindName: name, env });
       await gitExec(["commit", "-m", "import from OpenClaw"], { cwd: dest, mindName: name, env });
 
@@ -1187,6 +1202,28 @@ const app = new Hono<AuthEnv>()
         { error: "Upgrade variant already exists. Use continue or delete it first." },
         409,
       );
+    }
+
+    // Initialize git repo if missing (minds created before git config was fixed)
+    if (!existsSync(resolve(dir, ".git"))) {
+      try {
+        const env = isIsolationEnabled()
+          ? { ...process.env, HOME: resolve(dir, "home") }
+          : undefined;
+        await gitExec(["init"], { cwd: dir, mindName: mindName, env });
+        await configureGitIdentity(mindName, { cwd: dir, mindName: mindName, env });
+        await gitExec(["add", "-A"], { cwd: dir, mindName: mindName, env });
+        await gitExec(["commit", "-m", "initial commit"], { cwd: dir, mindName: mindName, env });
+        chownMindDir(dir, mindName);
+      } catch (err) {
+        rmSync(resolve(dir, ".git"), { recursive: true, force: true });
+        return c.json(
+          {
+            error: `Git initialization failed: ${err instanceof Error ? err.message : String(err)}`,
+          },
+          500,
+        );
+      }
     }
 
     // Clean up stale worktree refs and leftover branch

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { gitExec } from "./exec.js";
 import { isIsolationEnabled, mindUserName } from "./isolation.js";
@@ -29,7 +29,22 @@ export async function ensureSharedRepo(): Promise<void> {
   const dir = sharedDir();
   mkdirSync(dir, { recursive: true });
 
-  if (existsSync(resolve(dir, ".git"))) return;
+  if (existsSync(resolve(dir, ".git"))) {
+    // Verify the repo has at least one commit (previous init may have failed mid-way)
+    try {
+      await gitExec(["rev-parse", "HEAD"], { cwd: dir });
+      return;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("unknown revision") || msg.includes("bad default revision")) {
+        // Repo exists but has no commits — remove and re-initialize
+        log.warn("shared repo has no commits, re-initializing");
+        rmSync(resolve(dir, ".git"), { recursive: true, force: true });
+      } else {
+        throw err;
+      }
+    }
+  }
 
   // Under isolation, use --shared=group so git creates all directories and
   // objects as group-writable from the start (objects 0444→0664, dirs 0755→2775).
