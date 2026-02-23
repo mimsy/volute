@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import {
@@ -54,6 +54,19 @@ const app = new Hono<AuthEnv>()
     // Read file from sender's home directory
     const senderDir = mindDir(senderName);
     const filePath = resolve(senderDir, "home", body.filePath);
+
+    const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
+    const stat = statSync(filePath, { throwIfNoEntry: false });
+    if (!stat) return c.json({ error: `File not found: ${body.filePath}` }, 404);
+    if (stat.size > MAX_FILE_SIZE) {
+      return c.json(
+        {
+          error: `File too large (${formatFileSize(stat.size)}, max ${formatFileSize(MAX_FILE_SIZE)})`,
+        },
+        413,
+      );
+    }
+
     let content: Buffer;
     try {
       content = readFileSync(filePath);

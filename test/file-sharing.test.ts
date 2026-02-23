@@ -182,6 +182,27 @@ describe("file-sharing", () => {
       );
     });
 
+    it("stageFile rejects sender with path separators", () => {
+      const name = "stage-sender-slash";
+      setup(name);
+      assert.throws(
+        () => stageFile(name, "alice/../bob", "file.txt", Buffer.from("x"), "file.txt"),
+        /sender/i,
+      );
+    });
+
+    it("acceptPending rejects id with path traversal", () => {
+      const name = "accept-id-traversal";
+      const dir = setup(name);
+      assert.throws(() => acceptPending(name, "../../etc", dir), /invalid pending file id/i);
+    });
+
+    it("rejectPending rejects id with path traversal", () => {
+      const name = "reject-id-traversal";
+      setup(name);
+      assert.throws(() => rejectPending(name, "../../../tmp"), /invalid pending file id/i);
+    });
+
     it("acceptPending uses custom inboxPath", () => {
       const name = "stage-custom-inbox";
       const dir = setup(name);

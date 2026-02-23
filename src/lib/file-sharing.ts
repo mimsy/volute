@@ -85,6 +85,12 @@ function pendingDir(receiver: string): string {
   return resolve(stateDir(receiver), "pending-files");
 }
 
+function validateId(id: string): void {
+  if (!id || id.includes("/") || id.includes("\\") || id.includes("..")) {
+    throw new Error("Invalid pending file id");
+  }
+}
+
 function generateId(sender: string): string {
   const ts = Date.now();
   const rand = randomBytes(2).toString("hex");
@@ -100,6 +106,10 @@ export function stageFile(
 ): { id: string } {
   const err = validateFilePath(filename);
   if (err) throw new Error(err);
+
+  if (sender.includes("/") || sender.includes("\\")) {
+    throw new Error("Invalid sender name");
+  }
 
   const id = generateId(sender);
   const dir = resolve(pendingDir(receiver), id);
@@ -142,6 +152,7 @@ export function listPending(receiver: string): PendingFileMetadata[] {
 }
 
 export function getPending(receiver: string, id: string): PendingFileMetadata | null {
+  validateId(id);
   const metaPath = resolve(pendingDir(receiver), id, "metadata.json");
   if (!existsSync(metaPath)) return null;
   try {
