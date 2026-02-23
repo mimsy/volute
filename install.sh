@@ -132,8 +132,9 @@ main() {
   install_git
 
   # Set system-wide git identity for daemon commits (same as Dockerfile)
-  git config --system user.name "Volute"
-  git config --system user.email "volute@localhost"
+  git config --system user.name "Volute" && \
+  git config --system user.email "volute@localhost" || \
+    echo "Warning: failed to set system git config — git commits may fail."
 
   # Verify system npm is available after Node.js install
   if [ ! -x "/usr/bin/npm" ]; then

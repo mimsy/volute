@@ -34,9 +34,15 @@ export async function ensureSharedRepo(): Promise<void> {
     try {
       await gitExec(["rev-parse", "HEAD"], { cwd: dir });
       return;
-    } catch {
-      // Repo exists but has no commits — remove and re-initialize
-      rmSync(resolve(dir, ".git"), { recursive: true, force: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("unknown revision") || msg.includes("bad default revision")) {
+        // Repo exists but has no commits — remove and re-initialize
+        log.warn("shared repo has no commits, re-initializing");
+        rmSync(resolve(dir, ".git"), { recursive: true, force: true });
+      } else {
+        throw err;
+      }
     }
   }
 

@@ -30,23 +30,15 @@ export function exec(
 /**
  * Run a git command, adding `-c safe.directory=*` when isolation is enabled
  * so the root-owned daemon can operate on mind-owned repositories and their worktrees.
+ * Git identity comes from per-repo config (configureGitIdentity) or system config
+ * (install.sh / setup.ts / Dockerfile).
  */
 export function gitExec(
   args: string[],
   options: { cwd: string; mindName?: string; env?: NodeJS.ProcessEnv },
 ): Promise<string> {
   const fullArgs =
-    process.env.VOLUTE_ISOLATION === "user"
-      ? [
-          "-c",
-          "safe.directory=*",
-          "-c",
-          "user.name=Volute",
-          "-c",
-          "user.email=volute@localhost",
-          ...args,
-        ]
-      : args;
+    process.env.VOLUTE_ISOLATION === "user" ? ["-c", "safe.directory=*", ...args] : args;
   return exec("git", fullArgs, options);
 }
 

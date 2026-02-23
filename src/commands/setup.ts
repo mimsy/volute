@@ -109,8 +109,12 @@ function install(port?: number, host?: string): void {
     execFileSync("git", ["config", "--system", "user.name", "Volute"]);
     execFileSync("git", ["config", "--system", "user.email", "volute@localhost"]);
     console.log("Configured system git identity");
-  } catch {
-    console.warn("Warning: failed to set system git config — git commits may fail.");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`Warning: failed to set system git config: ${msg}`);
+    console.warn("Git commits by the daemon may fail. You can set this manually with:");
+    console.warn('  git config --system user.name "Volute"');
+    console.warn('  git config --system user.email "volute@localhost"');
   }
 
   // Set permissions on data and minds directories
