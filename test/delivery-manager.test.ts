@@ -199,6 +199,173 @@ describe("DeliveryManager", () => {
     });
   });
 
+  describe("new-speaker batch interrupt", () => {
+    function setBatchSession() {
+      return createMindWithRoutes({
+        rules: [{ channel: "group:*", session: "group" }],
+        sessions: { group: { delivery: { mode: "batch", debounce: 2, maxWait: 10 } } },
+        gateUnmatched: false,
+      });
+    }
+
+    function simulateActive(
+      mgr: DeliveryManager,
+      mind: string,
+      session: string,
+      senders: string[],
+      channels: string[],
+    ) {
+      const states = (mgr as any).sessionStates as Map<string, Map<string, any>>;
+      let mindSessions = states.get(mind);
+      if (!mindSessions) {
+        mindSessions = new Map();
+        states.set(mind, mindSessions);
+      }
+      mindSessions.set(session, {
+        activeCount: 1,
+        lastDeliveredAt: Date.now(),
+        lastDeliverySenders: new Set(senders),
+        lastDeliveryChannels: new Set(channels),
+        lastInterruptAt: 0,
+      });
+    }
+
+    function getBatchBuffer(mgr: DeliveryManager, mind: string, session: string) {
+      return (mgr as any).batchBuffers.get(`${mind}:${session}`);
+    }
+
+    it("new speaker in same channel triggers interrupt flush", async () => {
+      const name = setBatchSession();
+      manager = new DeliveryManager();
+
+      // Simulate mind active from a delivery to sender A in group:chat
+      simulateActive(manager, name, "group", ["alice"], ["group:chat"]);
+
+      // Deliver from sender B in same channel — should trigger interrupt flush
+      const result = await manager.routeAndDeliver(name, {
+        channel: "group:chat",
+        sender: "bob",
+        content: "hey",
+      });
+
+      assert.equal(result.routed, true);
+      if (result.routed) assert.equal(result.mode, "batch");
+
+      // Buffer should be empty — message was flushed immediately
+      const buffer = getBatchBuffer(manager, name, "group");
+      assert.equal(buffer, undefined);
+      removeMind(name);
+    });
+
+    it("same sender does not trigger interrupt", async () => {
+      const name = setBatchSession();
+      manager = new DeliveryManager();
+
+      // Simulate mind active from sender A
+      simulateActive(manager, name, "group", ["alice"], ["group:chat"]);
+
+      // Deliver from same sender A — should buffer normally
+      await manager.routeAndDeliver(name, {
+        channel: "group:chat",
+        sender: "alice",
+        content: "more from me",
+      });
+
+      // Buffer should have the message (not flushed)
+      const buffer = getBatchBuffer(manager, name, "group");
+      assert.ok(buffer);
+      assert.equal(buffer.messages.length, 1);
+      removeMind(name);
+    });
+
+    it("different channel does not trigger interrupt", async () => {
+      const name = setBatchSession();
+      manager = new DeliveryManager();
+
+      // Simulate mind active on group:chat
+      simulateActive(manager, name, "group", ["alice"], ["group:chat"]);
+
+      // Deliver from sender B but on a different channel
+      await manager.routeAndDeliver(name, {
+        channel: "group:other",
+        sender: "bob",
+        content: "hey",
+      });
+
+      // Buffer should have the message (not interrupt-flushed)
+      const buffer = getBatchBuffer(manager, name, "group");
+      assert.ok(buffer);
+      assert.equal(buffer.messages.length, 1);
+      removeMind(name);
+    });
+
+    it("debounce cooldown prevents rapid interrupts", async () => {
+      const name = setBatchSession();
+      manager = new DeliveryManager();
+
+      // Simulate mind active with a recent interrupt
+      const states = (manager as any).sessionStates as Map<string, Map<string, any>>;
+      let mindSessions = states.get(name);
+      if (!mindSessions) {
+        mindSessions = new Map();
+        states.set(name, mindSessions);
+      }
+      mindSessions.set("group", {
+        activeCount: 1,
+        lastDeliveredAt: Date.now(),
+        lastDeliverySenders: new Set(["alice"]),
+        lastDeliveryChannels: new Set(["group:chat"]),
+        lastInterruptAt: Date.now(), // just interrupted
+      });
+
+      // Deliver from new sender — debounce should prevent interrupt
+      await manager.routeAndDeliver(name, {
+        channel: "group:chat",
+        sender: "charlie",
+        content: "hey",
+      });
+
+      // Buffer should have the message (debounce prevented interrupt)
+      const buffer = getBatchBuffer(manager, name, "group");
+      assert.ok(buffer);
+      assert.equal(buffer.messages.length, 1);
+      removeMind(name);
+    });
+
+    it("maxWait window expiry prevents interrupt", async () => {
+      const name = setBatchSession();
+      manager = new DeliveryManager();
+
+      // Simulate mind active but delivery was long ago (beyond maxWait of 10s)
+      const states = (manager as any).sessionStates as Map<string, Map<string, any>>;
+      let mindSessions = states.get(name);
+      if (!mindSessions) {
+        mindSessions = new Map();
+        states.set(name, mindSessions);
+      }
+      mindSessions.set("group", {
+        activeCount: 1,
+        lastDeliveredAt: Date.now() - 20_000, // 20s ago, well past 10s maxWait
+        lastDeliverySenders: new Set(["alice"]),
+        lastDeliveryChannels: new Set(["group:chat"]),
+        lastInterruptAt: 0,
+      });
+
+      // Deliver from new sender — maxWait expired so no interrupt
+      await manager.routeAndDeliver(name, {
+        channel: "group:chat",
+        sender: "bob",
+        content: "hey",
+      });
+
+      // Buffer should have the message (no interrupt)
+      const buffer = getBatchBuffer(manager, name, "group");
+      assert.ok(buffer);
+      assert.equal(buffer.messages.length, 1);
+      removeMind(name);
+    });
+  });
+
   describe("getPending", () => {
     it("returns empty for mind with no pending messages", async () => {
       manager = new DeliveryManager();
