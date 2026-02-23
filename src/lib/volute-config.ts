@@ -4,7 +4,8 @@ import { dirname, resolve } from "node:path";
 export type Schedule = {
   id: string;
   cron: string;
-  message: string;
+  message?: string;
+  script?: string;
   enabled: boolean;
 };
 
@@ -25,7 +26,8 @@ function readJson(path: string): VoluteConfig | null {
   if (!existsSync(path)) return null;
   try {
     return JSON.parse(readFileSync(path, "utf-8"));
-  } catch {
+  } catch (err) {
+    console.error(`[volute-config] failed to parse ${path}: ${err}`);
     return null;
   }
 }

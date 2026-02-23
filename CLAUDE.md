@@ -25,7 +25,7 @@ A single daemon process (`volute up`) manages all minds, connectors, and schedul
 
 - **MindManager** (`src/lib/mind-manager.ts`) — Spawns/stops mind server processes, crash recovery
 - **ConnectorManager** (`src/lib/connector-manager.ts`) — Manages connector processes (Discord, etc.) per mind
-- **Scheduler** (`src/lib/scheduler.ts`) — Cron-based scheduled messages to minds
+- **Scheduler** (`src/lib/scheduler.ts`) — Cron-based scheduled messages and scripts for minds
 - **MailPoller** (`src/lib/mail-poller.ts`) — System-wide email polling via volute.systems API (auto-activates when a systems account exists)
 - **DaemonClient** (`src/lib/daemon-client.ts`) — CLI commands talk to the daemon via HTTP API
 
@@ -136,7 +136,7 @@ The daemon serves a Hono web server (default port 4200) with a React frontend.
 | `volute channel create <platform> --participants u1,u2 [--mind]` | Create a conversation on a platform |
 | `volute channel typing <uri> [--mind]` | Check who is typing in a channel |
 | `volute schedule list [--mind]` | List schedules for a mind |
-| `volute schedule add [--mind] --cron "..." --message "..." [--id name]` | Add a cron schedule |
+| `volute schedule add [--mind] --cron "..." --message/--script "..." [--id name]` | Add a cron schedule |
 | `volute schedule remove [--mind] --id <id>` | Remove a schedule |
 | `volute register [--name <name>]` | Register a system on volute.systems |
 | `volute login [--key <key>]` | Log in with an existing API key |
@@ -166,7 +166,7 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 | `mind-manager.ts` | Spawns/stops mind servers, crash recovery (3s delay), merge-restart coordination |
 | `connector-manager.ts` | Manages connector processes per mind, resolves built-in → shared → mind-specific connectors |
 | `connector-defs.ts` | Connector type definitions and metadata |
-| `scheduler.ts` | Cron-based scheduled messages, per-mind schedule loading |
+| `scheduler.ts` | Cron-based scheduled messages and scripts, per-mind schedule loading |
 | `daemon-client.ts` | HTTP client for CLI → daemon communication, reads `~/.volute/daemon.json` for port |
 | `variants.ts` | Variant metadata (`~/.volute/variants.json`), health checks, git worktree ops |
 | `template.ts` | Template discovery, copying, `{{name}}` substitution, `.init/` → `home/` migration |
