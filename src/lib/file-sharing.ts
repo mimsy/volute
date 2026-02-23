@@ -164,6 +164,14 @@ export function deliverFile(
   if (err) throw new Error(err);
 
   const inbox = inboxPath ?? "inbox";
+  const inboxErr = validateFilePath(inbox);
+  if (inboxErr) throw new Error(`Invalid inboxPath: ${inboxErr}`);
+
+  // Validate sender has no path separators (defense-in-depth)
+  if (sender.includes("/") || sender.includes("\\")) {
+    throw new Error("Invalid sender name");
+  }
+
   const destDir = resolve(receiverDir, "home", inbox, sender);
   mkdirSync(destDir, { recursive: true });
 

@@ -214,6 +214,22 @@ describe("file-sharing", () => {
       const dir = setup("deliver-traversal");
       assert.throws(() => deliverFile(dir, "alice", "../evil.txt", Buffer.from("x")), /traversal/i);
     });
+
+    it("rejects path traversal in inboxPath", () => {
+      const dir = setup("deliver-inbox-traversal");
+      assert.throws(
+        () => deliverFile(dir, "alice", "readme.md", Buffer.from("x"), "../../etc"),
+        /inboxPath/i,
+      );
+    });
+
+    it("rejects sender with path separators", () => {
+      const dir = setup("deliver-sender-slash");
+      assert.throws(
+        () => deliverFile(dir, "alice/../../etc", "readme.md", Buffer.from("x")),
+        /sender/i,
+      );
+    });
   });
 
   describe("listPending returns empty when no state dir", () => {
