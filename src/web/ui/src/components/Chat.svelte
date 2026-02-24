@@ -9,7 +9,6 @@ import {
 } from "../lib/api";
 import { renderMarkdown } from "../lib/markdown";
 import { sendChat, sendChatUnified } from "../lib/streams";
-import InviteModal from "./InviteModal.svelte";
 
 let {
   name,
@@ -69,7 +68,6 @@ let typingTimer = 0;
 let typingSafetyTimer = 0;
 let lastPollFingerprint = "";
 let currentConvId: string | null = null;
-let showInviteModal = $state(false);
 let memberCount = $state(0);
 
 // Tool open state tracking
@@ -433,15 +431,7 @@ function showSenderHeader(i: number): boolean {
     <div class="channel-header">
       <span class="channel-title">#{channelName}</span>
       <span class="channel-members">{memberCount} member{memberCount === 1 ? "" : "s"}</span>
-      <button class="invite-btn" onclick={() => { showInviteModal = true; }}>invite</button>
     </div>
-  {/if}
-
-  {#if showInviteModal && channelName}
-    <InviteModal {channelName} onClose={() => {
-      showInviteModal = false;
-      if (channelName) fetchChannelMembers(channelName).then((m) => { memberCount = m.length; }).catch((err) => { console.warn("[chat] failed to refresh member count:", err); });
-    }} />
   {/if}
 
   <!-- Messages -->
@@ -623,20 +613,6 @@ function showSenderHeader(i: number): boolean {
     font-size: 11px;
     color: var(--text-2);
     flex: 1;
-  }
-
-  .channel-header .invite-btn {
-    padding: 4px 12px;
-    font-size: 11px;
-    border-radius: var(--radius);
-    background: var(--bg-3);
-    color: var(--text-1);
-    font-weight: 500;
-  }
-
-  .channel-header .invite-btn:hover {
-    background: var(--accent-dim);
-    color: var(--accent);
   }
 
   .messages {

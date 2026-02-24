@@ -34,7 +34,7 @@ let {
   onHome: () => void;
 } = $props();
 
-type Section = "dms" | "channels" | "pages";
+type Section = "minds" | "groups" | "channels" | "pages";
 
 function loadCollapsed(): Set<Section> {
   try {
@@ -47,7 +47,28 @@ function loadCollapsed(): Set<Section> {
 
 let collapsed = $state(loadCollapsed());
 
-let dmConversations = $derived(conversations.filter((c) => c.type !== "channel"));
+let mindNames = $derived(new Set(minds.map((m) => m.name)));
+
+let mindConversations = $derived(
+  conversations.filter((c) => {
+    if (c.type === "channel") return false;
+    const parts = c.participants ?? [];
+    if (parts.length !== 2) return false;
+    const other = parts.find((p) => p.username !== username);
+    return other ? mindNames.has(other.username) : false;
+  }),
+);
+
+let groupConversations = $derived(
+  conversations.filter((c) => {
+    if (c.type === "channel") return false;
+    const parts = c.participants ?? [];
+    if (parts.length !== 2) return true;
+    const other = parts.find((p) => p.username !== username);
+    return other ? !mindNames.has(other.username) : true;
+  }),
+);
+
 let channelConversations = $derived(conversations.filter((c) => c.type === "channel"));
 
 function toggleSection(section: Section) {
@@ -64,18 +85,18 @@ function toggleSection(section: Section) {
 <div class="sidebar-inner">
   <button class="sidebar-header" onclick={onHome}>Volute</button>
   <div class="sections">
-    <!-- DMs -->
+    <!-- Minds (1-on-1 DMs with minds) -->
     <div class="section">
       <div class="section-header-row">
-        <button class="section-toggle" onclick={() => toggleSection("dms")}>
-          <span class="toggle-icon">{collapsed.has("dms") ? "\u25B8" : "\u25BE"}</span>
-          <span>DMs</span>
+        <button class="section-toggle" onclick={() => toggleSection("minds")}>
+          <span class="toggle-icon">{collapsed.has("minds") ? "\u25B8" : "\u25BE"}</span>
+          <span>Minds</span>
         </button>
         <button class="section-add" onclick={onNewChat} title="New chat">+</button>
       </div>
-      {#if !collapsed.has("dms")}
+      {#if !collapsed.has("minds")}
         <ConversationList
-          conversations={dmConversations}
+          conversations={mindConversations}
           {minds}
           activeId={activeConversationId}
           {username}
@@ -87,6 +108,32 @@ function toggleSection(section: Section) {
         />
       {/if}
     </div>
+
+    <!-- Groups -->
+    {#if groupConversations.length > 0}
+      <div class="section">
+        <div class="section-header-row">
+          <button class="section-toggle" onclick={() => toggleSection("groups")}>
+            <span class="toggle-icon">{collapsed.has("groups") ? "\u25B8" : "\u25BE"}</span>
+            <span>Groups</span>
+          </button>
+          <button class="section-add" onclick={onNewChat} title="New group">+</button>
+        </div>
+        {#if !collapsed.has("groups")}
+          <ConversationList
+            conversations={groupConversations}
+            {minds}
+            activeId={activeConversationId}
+            {username}
+            mode="dms"
+            onSelect={onSelectConversation}
+            onDelete={onDeleteConversation}
+            {onOpenMind}
+            onHide={onHideConversation}
+          />
+        {/if}
+      </div>
+    {/if}
 
     <!-- Channels -->
     <div class="section">

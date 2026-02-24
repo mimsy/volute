@@ -58,7 +58,7 @@ let activeConv = $derived.by(() => {
 let contextMindName = $derived.by(() => {
   if (selection.kind !== "conversation") return "";
   if (selection.mindName) return selection.mindName;
-  if (!activeConv || activeConv.type === "channel") return "";
+  if (!activeConv || activeConv.type === "channel" || activeConv.type === "group") return "";
   return activeConv.mind_name ?? "";
 });
 
@@ -317,7 +317,7 @@ function handleResizeEnd() {
               : undefined}
           />
         {/key}
-      {:else if activeConv?.type === "channel"}
+      {:else if activeConv?.type === "channel" || activeConv?.type === "group"}
         <ChannelMembersPanel
           conversation={activeConv}
           minds={data.minds}
