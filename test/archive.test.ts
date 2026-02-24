@@ -217,13 +217,15 @@ describe("archive", () => {
       assert.equal(manifest.includes.sessions, true);
     });
 
-    it("excludes src/ by default (home-only)", () => {
+    it("excludes src/ but includes home/ and .mind/ by default (home-only)", () => {
       const zip = createExportArchive({ name: testMind, template: "claude" });
       const entries = zip.getEntries().map((e) => e.entryName);
 
       assert.ok(!entries.some((e) => e.includes("mind/src/")));
       assert.ok(entries.includes("mind/home/SOUL.md"));
       assert.ok(entries.includes("mind/home/MEMORY.md"));
+      // .mind/ files should be included (via walkDir, since .mind/ is gitignored)
+      assert.ok(entries.some((e) => e.startsWith("mind/.mind/")));
     });
 
     it("sets format to home-only by default", () => {

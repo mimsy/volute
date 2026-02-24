@@ -71,7 +71,11 @@ function gitListFiles(dir: string): string[] | null {
     });
     const files = [...tracked.trim().split("\n"), ...untracked.trim().split("\n")].filter(Boolean);
     return [...new Set(files)];
-  } catch {
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes("not a git repository")) {
+      console.error(`Warning: git ls-files failed, .gitignore rules will not apply: ${msg}`);
+    }
     return null;
   }
 }

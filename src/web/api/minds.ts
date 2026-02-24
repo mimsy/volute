@@ -364,7 +364,7 @@ async function importFromFullArchive(
 
     // Assign port and register
     const port = nextPort();
-    addMind(name, port, undefined, manifest.template);
+    addMind(name, port, manifest.stage, manifest.template);
 
     // Set up per-mind user isolation
     const homeDir = resolve(dest, "home");
@@ -377,17 +377,22 @@ async function importFromFullArchive(
 
     // Import history and sessions
     await importHistoryFromArchive(name, tempDir);
-    await importSessionsFromArchive(dest, tempDir);
+    importSessionsFromArchive(dest, tempDir);
 
-    // git init if .git/ doesn't exist
+    // git init if .git/ doesn't exist (non-fatal — mind works without git)
     if (!existsSync(resolve(dest, ".git"))) {
-      const env = isIsolationEnabled()
-        ? { ...process.env, HOME: resolve(dest, "home") }
-        : undefined;
-      await gitExec(["init"], { cwd: dest, mindName: name, env });
-      await configureGitIdentity(name, { cwd: dest, mindName: name, env });
-      await gitExec(["add", "-A"], { cwd: dest, mindName: name, env });
-      await gitExec(["commit", "-m", "import from archive"], { cwd: dest, mindName: name, env });
+      try {
+        const env = isIsolationEnabled()
+          ? { ...process.env, HOME: resolve(dest, "home") }
+          : undefined;
+        await gitExec(["init"], { cwd: dest, mindName: name, env });
+        await configureGitIdentity(name, { cwd: dest, mindName: name, env });
+        await gitExec(["add", "-A"], { cwd: dest, mindName: name, env });
+        await gitExec(["commit", "-m", "import from archive"], { cwd: dest, mindName: name, env });
+      } catch (err) {
+        log.error(`git setup failed for imported mind ${name}`, log.errorData(err));
+        rmSync(resolve(dest, ".git"), { recursive: true, force: true });
+      }
     }
 
     // Fix ownership
@@ -495,6 +500,7 @@ async function importFromHomeOnlyArchive(
     await npmInstallAsMind(dest, name);
 
     // 10. Git init with template branch (enables upgrades)
+    let gitWarning: string | undefined;
     try {
       const env = isIsolationEnabled() ? { ...process.env, HOME: homeDir } : undefined;
       await gitExec(["init"], { cwd: dest, mindName: name, env });
@@ -503,9 +509,11 @@ async function importFromHomeOnlyArchive(
     } catch (err) {
       log.error(`git setup failed for imported mind ${name}`, log.errorData(err));
       rmSync(resolve(dest, ".git"), { recursive: true, force: true });
+      gitWarning =
+        "Git setup failed — variants and upgrades won't be available until git is initialized.";
     }
 
-    // 11. Shared worktree setup
+    // 11. Shared worktree setup (non-fatal — mind works fine without it)
     try {
       await addSharedWorktree(name, dest);
     } catch (err) {
@@ -514,17 +522,19 @@ async function importFromHomeOnlyArchive(
 
     // 12. Install skills based on stage
     const skillSet = manifest.stage === "seed" ? SEED_SKILLS : STANDARD_SKILLS;
+    const skillWarnings: string[] = [];
     for (const skillId of skillSet) {
       try {
         await installSkill(name, dest, skillId);
       } catch (err) {
         log.error(`failed to install skill ${skillId} for ${name}`, log.errorData(err));
+        skillWarnings.push(`Failed to install skill: ${skillId}`);
       }
     }
 
     // 13. Import history and sessions from archive
     await importHistoryFromArchive(name, tempDir);
-    await importSessionsFromArchive(dest, tempDir);
+    importSessionsFromArchive(dest, tempDir);
 
     // 14. Fix ownership, publish public key
     chownMindDir(dest, name);
@@ -541,6 +551,8 @@ async function importFromHomeOnlyArchive(
       port,
       stage: manifest.stage ?? "sprouted",
       message: `Imported mind: ${name} (port ${port})`,
+      ...(gitWarning && { warning: gitWarning }),
+      ...(skillWarnings.length > 0 && { skillWarnings }),
     });
   } catch (err) {
     if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
@@ -599,15 +611,19 @@ async function importHistoryFromArchive(name: string, tempDir: string): Promise<
   }
 }
 
-/** Import session files from archive into .mind/sessions/. */
-async function importSessionsFromArchive(dest: string, tempDir: string): Promise<void> {
+/** Import session files from archive into .mind/sessions/. Non-fatal on failure. */
+function importSessionsFromArchive(dest: string, tempDir: string): void {
   const sessionsDir = resolve(tempDir, "sessions");
   if (!existsSync(sessionsDir)) return;
 
-  const destSessions = resolve(dest, ".mind/sessions");
-  mkdirSync(destSessions, { recursive: true });
-  for (const file of readdirSync(sessionsDir)) {
-    cpSync(resolve(sessionsDir, file), resolve(destSessions, file));
+  try {
+    const destSessions = resolve(dest, ".mind/sessions");
+    mkdirSync(destSessions, { recursive: true });
+    for (const file of readdirSync(sessionsDir)) {
+      cpSync(resolve(sessionsDir, file), resolve(destSessions, file));
+    }
+  } catch (err) {
+    log.error("Failed to import sessions from archive", log.errorData(err));
   }
 }
 
