@@ -43,7 +43,7 @@ async function fanOutToMinds(opts: {
   const isDM = opts.isDM ?? participants.length === 2;
   const channelEntryType = opts.channelEntryType ?? (isDM ? "dm" : "group");
 
-  const { getMindManager } = await import("../../../lib/mind-manager.js");
+  const { getMindManager } = await import("../../../lib/daemon/mind-manager.js");
   const manager = getMindManager();
 
   const runningMinds = mindParticipants
