@@ -111,6 +111,8 @@ let chatChannelName = $derived.by(() => {
         stage={chatMind?.stage}
         convType={chatConvType}
         channelName={chatChannelName}
+        {minds}
+        {onOpenMind}
       />
     </div>
   {:else}

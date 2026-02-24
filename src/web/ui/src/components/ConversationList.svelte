@@ -132,7 +132,7 @@ $effect(() => {
                 style:background={mindDotColor(dmInfo.mind)}
                 onclick={(e) => { e.stopPropagation(); onOpenMind(dmInfo.mind!); }}
               ></button>
-              <span class="conv-label-text">{dmInfo.otherName}</span>
+              <button class="conv-label-mind" onclick={(e) => { e.stopPropagation(); onOpenMind(dmInfo.mind!); }}>{dmInfo.otherName}</button>
             {:else if dmInfo.otherName}
               <span class="conv-label-text">@{dmInfo.otherName}</span>
             {:else}
@@ -251,6 +251,21 @@ $effect(() => {
   .conv-label-text {
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .conv-label-mind {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  .conv-label-mind:hover {
+    text-decoration: underline;
   }
 
   .seed-tag {

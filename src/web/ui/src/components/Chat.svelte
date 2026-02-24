@@ -5,6 +5,7 @@ import {
   fetchConversationMessages,
   fetchConversationMessagesById,
   fetchTyping,
+  type Mind,
   reportTyping,
 } from "../lib/api";
 import { renderMarkdown } from "../lib/markdown";
@@ -19,6 +20,8 @@ let {
   stage,
   convType = "dm",
   channelName = "",
+  minds = [],
+  onOpenMind,
 }: {
   name: string;
   username?: string;
@@ -27,7 +30,11 @@ let {
   stage?: "seed" | "sprouted";
   convType?: string;
   channelName?: string;
+  minds?: Mind[];
+  onOpenMind?: (mind: Mind) => void;
 } = $props();
+
+let mindsByName = $derived(new Map(minds.map((m) => [m.name, m])));
 
 let nextEntryId = 0;
 type ChatEntry = {
@@ -441,14 +448,22 @@ function toggleTool(idx: number) {
           </div>
         {:else if entry.role === "user"}
           <div class="entry">
-            <span class="sender user" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--blue)"}>{entry.senderName || "you"}</span>
+            {#if entry.senderName && mindsByName.has(entry.senderName) && onOpenMind}
+              <button class="sender sender-link user" style:color={colorMap.get(entry.senderName) ?? "var(--blue)"} onclick={() => onOpenMind(mindsByName.get(entry.senderName!)!)}>{entry.senderName}</button>
+            {:else}
+              <span class="sender user" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--blue)"}>{entry.senderName || "you"}</span>
+            {/if}
             <div class="entry-content">
               <div class="user-text">{text}</div>
             </div>
           </div>
         {:else}
           <div class="entry">
-            <span class="sender" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--accent)"}>{entry.senderName || "mind"}</span>
+            {#if entry.senderName && mindsByName.has(entry.senderName) && onOpenMind}
+              <button class="sender sender-link" style:color={colorMap.get(entry.senderName) ?? "var(--accent)"} onclick={() => onOpenMind(mindsByName.get(entry.senderName!)!)}>{entry.senderName}</button>
+            {:else}
+              <span class="sender" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--accent)"}>{entry.senderName || "mind"}</span>
+            {/if}
             <div class="entry-content">
               <div class="markdown-body">{@html renderMarkdown(text)}</div>
             </div>
@@ -457,7 +472,11 @@ function toggleTool(idx: number) {
       {:else}
         <div class="entry">
           {#if entry.role === "user"}
-            <span class="sender user" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--blue)"}>{entry.senderName || "you"}</span>
+            {#if entry.senderName && mindsByName.has(entry.senderName) && onOpenMind}
+              <button class="sender sender-link user" style:color={colorMap.get(entry.senderName) ?? "var(--blue)"} onclick={() => onOpenMind(mindsByName.get(entry.senderName!)!)}>{entry.senderName}</button>
+            {:else}
+              <span class="sender user" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--blue)"}>{entry.senderName || "you"}</span>
+            {/if}
             <div class="entry-content">
               {#each entry.blocks as block}
                 {#if block.type === "text"}
@@ -469,7 +488,11 @@ function toggleTool(idx: number) {
             </div>
           {:else}
             {@const items = buildAssistantItems(entry.blocks)}
-            <span class="sender" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--accent)"}>{entry.senderName || "mind"}</span>
+            {#if entry.senderName && mindsByName.has(entry.senderName) && onOpenMind}
+              <button class="sender sender-link" style:color={colorMap.get(entry.senderName) ?? "var(--accent)"} onclick={() => onOpenMind(mindsByName.get(entry.senderName!)!)}>{entry.senderName}</button>
+            {:else}
+              <span class="sender" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--accent)"}>{entry.senderName || "mind"}</span>
+            {/if}
             <div class="entry-content">
               {#each items as item, j}
                 {#if item.kind === "text"}
@@ -651,6 +674,21 @@ function toggleTool(idx: number) {
     flex-shrink: 0;
     margin-top: 2px;
     text-transform: uppercase;
+  }
+
+  .sender-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+
+  .sender-link:hover {
+    text-decoration: underline;
   }
 
   .entry-content {
