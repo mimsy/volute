@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.20.0](https://github.com/mimsy/volute/compare/volute-v0.19.0...volute-v0.20.0) (2026-02-24)
+
+
+### Features
+
+* add mind-to-mind file sharing with trust system ([#119](https://github.com/mimsy/volute/issues/119)) ([b454638](https://github.com/mimsy/volute/commit/b454638ff7c068813cbd5d68a674a2bf102822e2))
+* add new-speaker batch interrupt for turn-taking ([#126](https://github.com/mimsy/volute/issues/126)) ([1771e3f](https://github.com/mimsy/volute/commit/1771e3fa56acefb31975abb0d5a694ef2594ae6f))
+* add pages UI with sites, thumbnails, and breadcrumb navigation ([#125](https://github.com/mimsy/volute/issues/125)) ([30708fc](https://github.com/mimsy/volute/commit/30708fc08e87eb2692b96e35dcfcb67b82db0816))
+* add script execution to scheduling system ([#120](https://github.com/mimsy/volute/issues/120)) ([af11e73](https://github.com/mimsy/volute/commit/af11e73e8f29b50686a59754eaf3c76c1e916b23))
+* dashboard activity stream, mind modal, and reactive UI ([#127](https://github.com/mimsy/volute/issues/127)) ([0da42cd](https://github.com/mimsy/volute/commit/0da42cdaa2055921082f814f66bc461697cfb2d6))
+* default transparency to full mode ([#124](https://github.com/mimsy/volute/issues/124)) ([80e1463](https://github.com/mimsy/volute/commit/80e14633db905936d05f71d4593f12af0bf66188))
+
+
+### Bug Fixes
+
+* configure git identity for system installs to fix upgrade failures ([#118](https://github.com/mimsy/volute/issues/118)) ([5f8c47a](https://github.com/mimsy/volute/commit/5f8c47a2a28aa29f7ef8dcbdc5454d0fb475efbf))
+* resolve pi session-context paths from mind root directory ([#123](https://github.com/mimsy/volute/issues/123)) ([74a649f](https://github.com/mimsy/volute/commit/74a649f9edaad3ceba2c3936b8d6ef43a7f5921b))
+
 ## [0.19.0](https://github.com/mimsy/volute/compare/volute-v0.18.0...volute-v0.19.0) (2026-02-22)
 
 
