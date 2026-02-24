@@ -86,6 +86,7 @@ function handleSSEMessage(line: string) {
     data.sites = parsed.sites ?? [];
     data.recentPages = parsed.recentPages ?? [];
     data.connectionOk = true;
+    activeMinds.clear();
     // Minds not in snapshot — fetch separately since they need health checks
     fetchMinds()
       .then((m) => {
@@ -121,6 +122,10 @@ function handleSSEMessage(line: string) {
     }
   } else if (parsed.event === "conversation") {
     const { event: _, conversationId, ...msgEvent } = parsed;
+    // Mind finished responding — clear active state
+    if (msgEvent.senderName && data.minds.some((m) => m.name === msgEvent.senderName)) {
+      activeMinds.delete(msgEvent.senderName);
+    }
     const conv = data.conversations.find((c) => c.id === conversationId);
     if (conv && msgEvent.type === "message") {
       // Extract text from content blocks

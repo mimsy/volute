@@ -322,17 +322,16 @@ $effect(() => {
 
   .status-dot.iridescent {
     animation: iridescent 3s ease-in-out infinite;
-    box-shadow: 0 0 5px currentColor;
   }
 
   @keyframes iridescent {
-    0%   { background: #4ade80; color: #4ade80; }
-    16%  { background: #60a5fa; color: #60a5fa; }
-    33%  { background: #c084fc; color: #c084fc; }
-    50%  { background: #f472b6; color: #f472b6; }
-    66%  { background: #fbbf24; color: #fbbf24; }
-    83%  { background: #34d399; color: #34d399; }
-    100% { background: #4ade80; color: #4ade80; }
+    0%   { background: #4ade80; }
+    16%  { background: #60a5fa; }
+    33%  { background: #c084fc; }
+    50%  { background: #f472b6; }
+    66%  { background: #fbbf24; }
+    83%  { background: #34d399; }
+    100% { background: #4ade80; }
   }
 
   .status-dot:hover {
