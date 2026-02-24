@@ -145,6 +145,33 @@ else
   echo "  Warning: user creation response: $REGISTER_RESP" >&2
 fi
 
+# Register 'root' user so CLI commands (volute send @mind) work inside Docker
+# (the container runs as root, and @target DMs resolve the OS username as sender)
+ROOT_REGISTER_RESP=$(curl -sf -X POST \
+  -H "Content-Type: application/json" \
+  -H "Origin: http://127.0.0.1:4200" \
+  -d '{"username":"root","password":"root"}' \
+  "http://localhost:$HOST_PORT/api/auth/register" 2>&1) || true
+
+ROOT_USER_ID=$(echo "$ROOT_REGISTER_RESP" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+if [[ -n "$ROOT_USER_ID" ]]; then
+  # Get admin session cookie to approve the pending root user
+  SESSION_COOKIE=$(curl -sf -X POST \
+    -H "Content-Type: application/json" \
+    -H "Origin: http://127.0.0.1:4200" \
+    -c - \
+    -d '{"username":"tester","password":"tester"}' \
+    "http://localhost:$HOST_PORT/api/auth/login" 2>/dev/null | grep volute_session | awk '{print $NF}')
+
+  if [[ -n "$SESSION_COOKIE" ]]; then
+    curl -sf -X POST \
+      -H "Cookie: volute_session=$SESSION_COOKIE" \
+      -H "Origin: http://127.0.0.1:4200" \
+      "http://localhost:$HOST_PORT/api/auth/users/$ROOT_USER_ID/approve" >/dev/null 2>&1 || true
+  fi
+  echo "  User 'root' created (for CLI inside container)"
+fi
+
 # Set OPENROUTER_API_KEY as a global env var if present
 if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
   docker exec "$CONTAINER" node dist/cli.js env set OPENROUTER_API_KEY "$OPENROUTER_API_KEY" >/dev/null 2>&1
@@ -205,8 +232,8 @@ echo ""
 echo "  # Seed a mind"
 echo "  $VEXEC seed my-mind --template claude --model claude-sonnet-4-6"
 echo ""
-echo "  # Send a message (--sender needed because Docker runs as root)"
-echo "  $VEXEC send @my-mind \"hello, who are you?\" --sender tester --wait"
+echo "  # Send a message and wait for the response"
+echo "  $VEXEC send @my-mind \"hello, who are you?\" --wait"
 echo ""
 echo "Teardown: bash test/integration-teardown.sh"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
