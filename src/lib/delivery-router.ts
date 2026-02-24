@@ -62,6 +62,31 @@ export type MatchMeta = {
   participantCount?: number;
 };
 
+// --- Delivery payload ---
+
+export interface DeliveryPayload {
+  channel: string;
+  sender: string | null;
+  content: unknown; // string or content block array
+  conversationId?: string;
+  typing?: string[];
+  platform?: string;
+  isDM?: boolean;
+  participants?: string[];
+  participantCount?: number;
+}
+
+export function extractTextContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return (content as { type: string; text?: string }[])
+      .filter((p) => p.type === "text" && p.text)
+      .map((p) => p.text)
+      .join("\n");
+  }
+  return JSON.stringify(content);
+}
+
 // --- Config cache ---
 
 type CachedConfig = { config: RoutingConfig; mtime: number };

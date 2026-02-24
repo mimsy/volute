@@ -1,6 +1,8 @@
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "./db.js";
 import {
+  type DeliveryPayload,
+  extractTextContent,
   getRoutingConfig,
   type MatchMeta,
   type ResolvedDeliveryMode,
@@ -9,7 +11,6 @@ import {
   resolveRoute,
 } from "./delivery-router.js";
 import log from "./logger.js";
-import { type DeliveryPayload, extractTextContent } from "./message-delivery.js";
 import { findMind } from "./registry.js";
 import { deliveryQueue } from "./schema.js";
 import { getTypingMap, publishTypingForChannels } from "./typing.js";
@@ -170,18 +171,14 @@ export class DeliveryManager {
         if (sessionConfig.delivery.mode === "batch") {
           this.addToBatchBuffer(row.mind, row.session, payload, sessionConfig);
         } else {
-          // Immediate messages that were queued but not delivered — deliver now
-          this.deliverToMind(row.mind, row.session, payload, sessionConfig)
-            .then(async () => {
-              // Clean up the delivered row
-              try {
-                const db2 = await getDb();
-                await db2.delete(deliveryQueue).where(eq(deliveryQueue.id, row.id));
-              } catch {}
-            })
-            .catch((err) => {
-              dlog.warn(`failed to restore delivery for ${row.mind}`, log.errorData(err));
-            });
+          // Immediate messages that were queued but not delivered — delete first
+          // to prevent re-delivery on daemon crash during replay
+          try {
+            await db.delete(deliveryQueue).where(eq(deliveryQueue.id, row.id));
+          } catch {}
+          this.deliverToMind(row.mind, row.session, payload, sessionConfig).catch((err) => {
+            dlog.warn(`failed to restore delivery for ${row.mind}`, log.errorData(err));
+          });
         }
       }
 
@@ -257,28 +254,54 @@ export class DeliveryManager {
 
   // --- Private ---
 
+  private resolvePort(mindName: string): { baseName: string; port: number } | null {
+    const [baseName, variantName] = mindName.split("@", 2);
+    const entry = findMind(baseName);
+    if (!entry) return null;
+
+    if (variantName) {
+      const variant = findVariant(baseName, variantName);
+      if (!variant) return null;
+      return { baseName, port: variant.port };
+    }
+
+    return { baseName, port: entry.port };
+  }
+
+  private async postToMind(port: number, body: string): Promise<boolean> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120_000);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        dlog.warn(`mind responded ${res.status}: ${text}`);
+        return false;
+      }
+      await res.text().catch(() => {});
+      return true;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   private async deliverToMind(
     mindName: string,
     session: string,
     payload: DeliveryPayload,
     sessionConfig: ResolvedSessionConfig,
   ): Promise<void> {
-    const [baseName, variantName] = mindName.split("@", 2);
-    const entry = findMind(baseName);
-    if (!entry) {
+    const resolved = this.resolvePort(mindName);
+    if (!resolved) {
       dlog.warn(`cannot deliver to ${mindName}: mind not found`);
       return;
     }
-
-    let port = entry.port;
-    if (variantName) {
-      const variant = findVariant(baseName, variantName);
-      if (!variant) {
-        dlog.warn(`cannot deliver to ${mindName}: variant not found`);
-        return;
-      }
-      port = variant.port;
-    }
+    const { baseName, port } = resolved;
 
     // Increment active count before delivery with sender/channel metadata
     const senders = new Set<string>();
@@ -296,40 +319,23 @@ export class DeliveryManager {
       typingMap.set(`volute:${payload.conversationId}`, baseName, { persistent: true });
     }
 
-    // Build the delivery body with session pre-set
-    const deliveryBody = {
+    const body = JSON.stringify({
       ...payload,
       session,
       interrupt: sessionConfig.interrupt,
       instructions: sessionConfig.instructions,
-    };
-
-    const body = JSON.stringify(deliveryBody);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 120_000);
+    });
 
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/message`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        dlog.warn(`mind ${mindName} responded ${res.status}: ${text}`);
-        // On error, decrement active and clear typing
+      const ok = await this.postToMind(port, body);
+      if (!ok) {
         this.decrementActive(baseName, session);
         publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
-      } else {
-        await res.text().catch(() => {});
       }
     } catch (err) {
       dlog.warn(`failed to deliver to ${mindName}`, log.errorData(err));
       this.decrementActive(baseName, session);
       publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
-    } finally {
-      clearTimeout(timeout);
     }
   }
 
@@ -340,22 +346,12 @@ export class DeliveryManager {
     sessionConfig: ResolvedSessionConfig,
     interruptOverride?: boolean,
   ): Promise<void> {
-    const [baseName, variantName] = mindName.split("@", 2);
-    const entry = findMind(baseName);
-    if (!entry) {
+    const resolved = this.resolvePort(mindName);
+    if (!resolved) {
       dlog.warn(`cannot deliver batch to ${mindName}: mind not found`);
       return;
     }
-
-    let port = entry.port;
-    if (variantName) {
-      const variant = findVariant(baseName, variantName);
-      if (!variant) {
-        dlog.warn(`cannot deliver batch to ${mindName}: variant not found`);
-        return;
-      }
-      port = variant.port;
-    }
+    const { baseName, port } = resolved;
 
     // Group messages by channel
     const channels: Record<string, DeliveryPayload[]> = {};
@@ -390,31 +386,19 @@ export class DeliveryManager {
       }
     }
 
-    const batchBody = {
+    const body = JSON.stringify({
       session,
       batch: { channels },
       interrupt: interruptOverride ?? sessionConfig.interrupt,
       instructions: sessionConfig.instructions,
-    };
-
-    const body = JSON.stringify(batchBody);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 120_000);
+    });
 
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/message`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        dlog.warn(`mind ${mindName} batch responded ${res.status}: ${text}`);
+      const ok = await this.postToMind(port, body);
+      if (!ok) {
         this.decrementActive(baseName, session);
         publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
       } else {
-        await res.text().catch(() => {});
         // Clean up DB entries only after successful delivery
         try {
           const db = await getDb();
@@ -438,8 +422,6 @@ export class DeliveryManager {
       dlog.warn(`failed to deliver batch to ${mindName}`, log.errorData(err));
       this.decrementActive(baseName, session);
       publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
-    } finally {
-      clearTimeout(timeout);
     }
   }
 
@@ -741,7 +723,7 @@ export class DeliveryManager {
 let instance: DeliveryManager | undefined;
 
 export function initDeliveryManager(): DeliveryManager {
-  if (instance) return instance;
+  if (instance) throw new Error("DeliveryManager already initialized");
   instance = new DeliveryManager();
   return instance;
 }

@@ -27,6 +27,7 @@ import { addMessage } from "../../lib/conversations.js";
 import { convertSession } from "../../lib/convert-session.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery-manager.js";
+import { extractTextContent } from "../../lib/delivery-router.js";
 import { exec, gitExec } from "../../lib/exec.js";
 import {
   generateIdentity,
@@ -45,7 +46,6 @@ import {
   wrapForIsolation,
 } from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
-import { extractTextContent } from "../../lib/message-delivery.js";
 import { onMindEvent } from "../../lib/mind-activity-tracker.js";
 import {
   publish as publishMindEvent,
