@@ -1,5 +1,11 @@
 <script lang="ts">
-import type { ConversationWithParticipants, Mind, RecentPage, Site } from "../lib/api";
+import type {
+  ActivityItem,
+  ConversationWithParticipants,
+  Mind,
+  RecentPage,
+  Site,
+} from "../lib/api";
 import type { Selection } from "../lib/navigate";
 import Home from "../pages/Home.svelte";
 import PagesDashboard from "../pages/PagesDashboard.svelte";
@@ -12,24 +18,28 @@ let {
   conversations,
   recentPages,
   sites,
+  activity,
   username,
   onConversationId,
   onOpenMind,
   onSelectPage,
   onSelectSite,
   onSelectPages,
+  onSelectConversation,
 }: {
   selection: Selection;
   minds: Mind[];
   conversations: ConversationWithParticipants[];
   recentPages: RecentPage[];
   sites: Site[];
+  activity: ActivityItem[];
   username: string;
   onConversationId: (id: string) => void;
   onOpenMind: (mind: Mind) => void;
   onSelectPage: (mind: string, path: string) => void;
   onSelectSite: (name: string) => void;
   onSelectPages: () => void;
+  onSelectConversation: (id: string) => void;
 } = $props();
 
 let selectedSite = $derived(
@@ -101,11 +111,13 @@ let chatChannelName = $derived.by(() => {
         stage={chatMind?.stage}
         convType={chatConvType}
         channelName={chatChannelName}
+        {minds}
+        {onOpenMind}
       />
     </div>
   {:else}
     <div class="frame-content padded">
-      <Home {username} {minds} {conversations} {recentPages} {onOpenMind} {onSelectPage} />
+      <Home {username} {minds} {conversations} {recentPages} {activity} {onOpenMind} {onSelectPage} {onSelectConversation} />
     </div>
   {/if}
 </div>

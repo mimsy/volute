@@ -1,6 +1,7 @@
 <script lang="ts">
 import type { Mind } from "../lib/api";
 import { getDisplayStatus, mindDotColor } from "../lib/format";
+import { activeMinds } from "../lib/stores.svelte";
 
 let {
   minds,
@@ -124,8 +125,9 @@ function handleClickOutside(e: MouseEvent) {
             >
               <span
                 class="mind-dot"
-                style:background={mindDotColor(mind)}
-                style:box-shadow={getDisplayStatus(mind) === "running" || getDisplayStatus(mind) === "active" ? `0 0 6px ${mindDotColor(mind)}` : "none"}
+                class:iridescent={activeMinds.has(mind.name)}
+                style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
+                style:box-shadow={!activeMinds.has(mind.name) && (getDisplayStatus(mind) === "running" || getDisplayStatus(mind) === "active") ? `0 0 6px ${mindDotColor(mind)}` : undefined}
               ></span>
               {mind.name}
             </button>
@@ -286,6 +288,20 @@ function handleClickOutside(e: MouseEvent) {
     height: 6px;
     border-radius: 50%;
     flex-shrink: 0;
+  }
+
+  .mind-dot.iridescent {
+    animation: iridescent 3s ease-in-out infinite;
+  }
+
+  @keyframes iridescent {
+    0%   { background: #4ade80; }
+    16%  { background: #60a5fa; }
+    33%  { background: #c084fc; }
+    50%  { background: #f472b6; }
+    66%  { background: #fbbf24; }
+    83%  { background: #34d399; }
+    100% { background: #4ade80; }
   }
 
   .dropdown-divider {

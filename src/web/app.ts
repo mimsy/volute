@@ -4,6 +4,7 @@ import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
 import log from "../lib/logger.js";
 import { checkForUpdateCached, getCurrentVersion } from "../lib/update-check.js";
+import activityRoutes from "./api/activity.js";
 import auth from "./api/auth.js";
 import channels from "./api/channels.js";
 import connectors from "./api/connectors.js";
@@ -87,6 +88,7 @@ app.use("/api/*", bodyLimit({ maxSize: 10 * 1024 * 1024 }));
 app.use("/api/*", csrf());
 
 // Protected API routes
+app.use("/api/activity/*", authMiddleware);
 app.use("/api/minds/*", authMiddleware);
 app.use("/api/conversations/*", authMiddleware);
 app.use("/api/volute/*", authMiddleware);
@@ -100,6 +102,7 @@ app.route("/pages", pages);
 
 // Chain route registrations to capture types
 const routes = app
+  .route("/api/activity", activityRoutes)
   .route("/api/keys", keys)
   .route("/api/auth", auth)
   .route("/api/system", system)

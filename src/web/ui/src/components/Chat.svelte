@@ -4,7 +4,7 @@ import {
   fetchChannelMembers,
   fetchConversationMessages,
   fetchConversationMessagesById,
-  fetchTyping,
+  type Mind,
   reportTyping,
 } from "../lib/api";
 import { renderMarkdown } from "../lib/markdown";
@@ -19,6 +19,8 @@ let {
   stage,
   convType = "dm",
   channelName = "",
+  minds = [],
+  onOpenMind,
 }: {
   name: string;
   username?: string;
@@ -27,7 +29,11 @@ let {
   stage?: "seed" | "sprouted";
   convType?: string;
   channelName?: string;
+  minds?: Mind[];
+  onOpenMind?: (mind: Mind) => void;
 } = $props();
+
+let mindsByName = $derived(new Map(minds.map((m) => [m.name, m])));
 
 let nextEntryId = 0;
 type ChatEntry = {
@@ -59,8 +65,9 @@ let scrollEl: HTMLDivElement;
 let inputEl: HTMLTextAreaElement;
 let fileEl: HTMLInputElement;
 let typingTimer = 0;
+let typingSafetyTimer = 0;
 let lastPollFingerprint = "";
-let currentConvId = conversationId;
+let currentConvId: string | null = null;
 let showInviteModal = $state(false);
 let memberCount = $state(0);
 
@@ -129,6 +136,8 @@ $effect(() => {
   currentConvId = conversationId;
   lastPollFingerprint = "";
   openTools = new Set();
+  clearTimeout(typingSafetyTimer);
+  typingNames = [];
   if (!conversationId) {
     entries = [];
     return;
@@ -167,6 +176,16 @@ $effect(() => {
       if (event.type === "message") {
         loadMessages(conversationId, false);
         scrollToBottom();
+      } else if (event.type === "typing") {
+        const senders: string[] = event.senders;
+        typingNames = senders.filter((n) => n !== username);
+        // Reset safety timers — clear stale entries after 15s of no updates
+        clearTimeout(typingSafetyTimer);
+        if (typingNames.length > 0) {
+          typingSafetyTimer = window.setTimeout(() => {
+            typingNames = [];
+          }, 15_000);
+        }
       }
     } catch (err) {
       console.warn("[chat] failed to parse SSE event:", err);
@@ -178,26 +197,9 @@ $effect(() => {
   eventSource.onerror = () => {
     console.warn("[chat] SSE connection error, browser will attempt reconnect");
   };
-  return () => eventSource.close();
-});
-
-// Poll typing indicators
-$effect(() => {
-  if (!conversationId || !name || convType === "channel") return;
-  let cancelled = false;
-  const poll = () => {
-    fetchTyping(name, `volute:${conversationId}`)
-      .then((names) => {
-        if (cancelled) return;
-        typingNames = names.filter((n) => n !== username);
-      })
-      .catch(() => {});
-  };
-  poll();
-  const id = setInterval(poll, 5000);
   return () => {
-    cancelled = true;
-    clearInterval(id);
+    eventSource.close();
+    clearTimeout(typingSafetyTimer);
   };
 });
 
@@ -441,14 +443,22 @@ function toggleTool(idx: number) {
           </div>
         {:else if entry.role === "user"}
           <div class="entry">
-            <span class="sender user" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--blue)"}>{entry.senderName || "you"}</span>
+            {#if entry.senderName && mindsByName.has(entry.senderName) && onOpenMind}
+              <button class="sender sender-link user" style:color={colorMap.get(entry.senderName) ?? "var(--blue)"} onclick={() => onOpenMind(mindsByName.get(entry.senderName!)!)}>{entry.senderName}</button>
+            {:else}
+              <span class="sender user" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--blue)"}>{entry.senderName || "you"}</span>
+            {/if}
             <div class="entry-content">
               <div class="user-text">{text}</div>
             </div>
           </div>
         {:else}
           <div class="entry">
-            <span class="sender" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--accent)"}>{entry.senderName || "mind"}</span>
+            {#if entry.senderName && mindsByName.has(entry.senderName) && onOpenMind}
+              <button class="sender sender-link" style:color={colorMap.get(entry.senderName) ?? "var(--accent)"} onclick={() => onOpenMind(mindsByName.get(entry.senderName!)!)}>{entry.senderName}</button>
+            {:else}
+              <span class="sender" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--accent)"}>{entry.senderName || "mind"}</span>
+            {/if}
             <div class="entry-content">
               <div class="markdown-body">{@html renderMarkdown(text)}</div>
             </div>
@@ -457,7 +467,11 @@ function toggleTool(idx: number) {
       {:else}
         <div class="entry">
           {#if entry.role === "user"}
-            <span class="sender user" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--blue)"}>{entry.senderName || "you"}</span>
+            {#if entry.senderName && mindsByName.has(entry.senderName) && onOpenMind}
+              <button class="sender sender-link user" style:color={colorMap.get(entry.senderName) ?? "var(--blue)"} onclick={() => onOpenMind(mindsByName.get(entry.senderName!)!)}>{entry.senderName}</button>
+            {:else}
+              <span class="sender user" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--blue)"}>{entry.senderName || "you"}</span>
+            {/if}
             <div class="entry-content">
               {#each entry.blocks as block}
                 {#if block.type === "text"}
@@ -469,7 +483,11 @@ function toggleTool(idx: number) {
             </div>
           {:else}
             {@const items = buildAssistantItems(entry.blocks)}
-            <span class="sender" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--accent)"}>{entry.senderName || "mind"}</span>
+            {#if entry.senderName && mindsByName.has(entry.senderName) && onOpenMind}
+              <button class="sender sender-link" style:color={colorMap.get(entry.senderName) ?? "var(--accent)"} onclick={() => onOpenMind(mindsByName.get(entry.senderName!)!)}>{entry.senderName}</button>
+            {:else}
+              <span class="sender" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--accent)"}>{entry.senderName || "mind"}</span>
+            {/if}
             <div class="entry-content">
               {#each items as item, j}
                 {#if item.kind === "text"}
@@ -651,6 +669,21 @@ function toggleTool(idx: number) {
     flex-shrink: 0;
     margin-top: 2px;
     text-transform: uppercase;
+  }
+
+  .sender-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+
+  .sender-link:hover {
+    text-decoration: underline;
   }
 
   .entry-content {

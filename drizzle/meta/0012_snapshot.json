@@ -1,0 +1,7 @@
+{
+  "id": "0012_activity",
+  "prevId": "0011_rename_human_to_brain",
+  "version": "6",
+  "dialect": "sqlite",
+  "tables": {}
+}

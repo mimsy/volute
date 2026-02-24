@@ -5,10 +5,9 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
@@ -19,6 +18,7 @@ import {
   importPiSession,
   parseNameFromIdentity,
 } from "../../commands/import.js";
+import { broadcast } from "../../lib/activity-events.js";
 import { deleteMindUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { getConnectorManager } from "../../lib/connector-manager.js";
@@ -46,6 +46,7 @@ import {
 } from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
 import { extractTextContent } from "../../lib/message-delivery.js";
+import { onMindEvent } from "../../lib/mind-activity-tracker.js";
 import {
   publish as publishMindEvent,
   subscribe as subscribeMindEvent,
@@ -56,6 +57,7 @@ import {
   startMindFull as startMindFullService,
   stopMindFull as stopMindFullService,
 } from "../../lib/mind-service.js";
+import { getCachedRecentPages, getCachedSites } from "../../lib/pages-watcher.js";
 import {
   getMindPromptDefaults,
   getPrompt,
@@ -73,7 +75,6 @@ import {
   setMindStage,
   stateDir,
   validateMindName,
-  voluteHome,
 } from "../../lib/registry.js";
 import { conversations, mindHistory } from "../../lib/schema.js";
 import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
@@ -88,7 +89,7 @@ import {
   type TemplateManifest,
 } from "../../lib/template.js";
 import { getTokenBudget } from "../../lib/token-budget.js";
-import { getTypingMap } from "../../lib/typing.js";
+import { getTypingMap, publishTypingForChannels } from "../../lib/typing.js";
 import {
   addVariant,
   checkHealth,
@@ -98,7 +99,7 @@ import {
   removeVariant,
   validateBranchName,
 } from "../../lib/variants.js";
-import { readVoluteConfig } from "../../lib/volute-config.js";
+import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 type ChannelStatus = {
@@ -787,129 +788,13 @@ const app = new Hono<AuthEnv>()
     );
     return c.json(minds);
   })
-  // Scan a pages directory and return page entries
+  // Scan a pages directory and return page entries (uses cache from pages-watcher)
   .get("/pages/sites", async (c) => {
-    type SitePage = { file: string; modified: string; url: string };
-    type Site = { name: string; label: string; pages: SitePage[] };
-
-    function scanPagesDir(dir: string, urlPrefix: string): SitePage[] {
-      const pages: SitePage[] = [];
-      let items: string[];
-      try {
-        items = readdirSync(dir);
-      } catch (err) {
-        log.warn("Failed to read pages dir", { dir, error: (err as Error).message });
-        return pages;
-      }
-
-      for (const item of items) {
-        if (item.startsWith(".")) continue;
-        const fullPath = resolve(dir, item);
-        try {
-          const s = statSync(fullPath);
-          if (s.isFile() && item.endsWith(".html")) {
-            pages.push({
-              file: item,
-              modified: s.mtime.toISOString(),
-              url: `${urlPrefix}/${item}`,
-            });
-          } else if (s.isDirectory()) {
-            const indexPath = resolve(fullPath, "index.html");
-            if (existsSync(indexPath)) {
-              const indexStat = statSync(indexPath);
-              pages.push({
-                file: join(item, "index.html"),
-                modified: indexStat.mtime.toISOString(),
-                url: `${urlPrefix}/${item}/`,
-              });
-            }
-          }
-        } catch (err) {
-          log.warn("Failed to stat page item", { dir, item, error: (err as Error).message });
-        }
-      }
-
-      pages.sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime());
-      return pages;
-    }
-
-    const sites: Site[] = [];
-
-    // System pages
-    const systemPagesDir = resolve(voluteHome(), "shared", "pages");
-    if (existsSync(systemPagesDir)) {
-      const systemPages = scanPagesDir(systemPagesDir, "/pages/_system");
-      if (systemPages.length > 0) {
-        sites.push({ name: "_system", label: "System", pages: systemPages });
-      }
-    }
-
-    // Mind pages
-    const entries = readRegistry();
-    for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
-      const pagesDir = resolve(mindDir(entry.name), "home", "pages");
-      if (!existsSync(pagesDir)) continue;
-      const mindPages = scanPagesDir(pagesDir, `/pages/${entry.name}`);
-      if (mindPages.length > 0) {
-        sites.push({ name: entry.name, label: entry.name, pages: mindPages });
-      }
-    }
-
-    return c.json(sites);
+    return c.json(getCachedSites());
   })
-  // Recent pages across all minds (used by Home page)
+  // Recent pages across all minds (uses cache from pages-watcher)
   .get("/pages/recent", async (c) => {
-    const entries = readRegistry();
-    const pages: { mind: string; file: string; modified: string; url: string }[] = [];
-
-    for (const entry of entries) {
-      const pagesDir = resolve(mindDir(entry.name), "home", "pages");
-      if (!existsSync(pagesDir)) continue;
-
-      let items: string[];
-      try {
-        items = readdirSync(pagesDir);
-      } catch (err) {
-        log.warn("Failed to read pages dir", { mind: entry.name, error: (err as Error).message });
-        continue;
-      }
-
-      for (const item of items) {
-        if (item.startsWith(".")) continue;
-        const fullPath = resolve(pagesDir, item);
-        try {
-          const s = statSync(fullPath);
-          if (s.isFile() && item.endsWith(".html")) {
-            pages.push({
-              mind: entry.name,
-              file: item,
-              modified: s.mtime.toISOString(),
-              url: `/pages/${entry.name}/${item}`,
-            });
-          } else if (s.isDirectory()) {
-            const indexPath = resolve(fullPath, "index.html");
-            if (existsSync(indexPath)) {
-              const indexStat = statSync(indexPath);
-              pages.push({
-                mind: entry.name,
-                file: join(item, "index.html"),
-                modified: indexStat.mtime.toISOString(),
-                url: `/pages/${entry.name}/${item}/`,
-              });
-            }
-          }
-        } catch (err) {
-          log.warn("Failed to stat page item", {
-            mind: entry.name,
-            item,
-            error: (err as Error).message,
-          });
-        }
-      }
-    }
-
-    pages.sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime());
-    return c.json(pages.slice(0, 10));
+    return c.json(getCachedRecentPages());
   })
   // Get single mind
   .get("/:name", async (c) => {
@@ -1553,6 +1438,94 @@ const app = new Hono<AuthEnv>()
     if (!usage) return c.json({ error: "No budget configured" }, 404);
     return c.json(usage);
   })
+  // Get mind config (registry + volute.json + env)
+  .get("/:name/config", (c) => {
+    const name = c.req.param("name");
+    const entry = findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+
+    const dir = mindDir(name);
+    if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
+
+    // Read volute config (handles both claude and pi templates)
+    let config = readVoluteConfig(dir);
+
+    // For pi template, also try config.json
+    if (!config && entry.template === "pi") {
+      const piConfigPath = resolve(dir, "home/.config/config.json");
+      if (existsSync(piConfigPath)) {
+        try {
+          config = JSON.parse(readFileSync(piConfigPath, "utf-8"));
+        } catch {
+          // ignore parse errors
+        }
+      }
+    }
+
+    return c.json({
+      registry: {
+        name: entry.name,
+        port: entry.port,
+        created: entry.created,
+        stage: entry.stage,
+        template: entry.template,
+      },
+      config: {
+        model: config?.model ?? null,
+        thinkingLevel: config?.thinkingLevel ?? null,
+        tokenBudget: config?.tokenBudget ?? null,
+        tokenBudgetPeriodMinutes: config?.tokenBudgetPeriodMinutes ?? null,
+      },
+    });
+  })
+  // Update mind config — admin only
+  .put(
+    "/:name/config",
+    requireAdmin,
+    zValidator(
+      "json",
+      z.object({
+        model: z.string().optional(),
+        thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
+        tokenBudget: z.number().int().positive().nullable().optional(),
+        tokenBudgetPeriodMinutes: z.number().int().positive().nullable().optional(),
+      }),
+    ),
+    async (c) => {
+      const name = c.req.param("name");
+      const entry = findMind(name);
+      if (!entry) return c.json({ error: "Mind not found" }, 404);
+
+      const dir = mindDir(name);
+      if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
+
+      const body = c.req.valid("json");
+
+      const existing = readVoluteConfig(dir) ?? {};
+
+      if (body.model !== undefined) existing.model = body.model;
+      if (body.thinkingLevel !== undefined) {
+        existing.thinkingLevel = body.thinkingLevel;
+      }
+      if (body.tokenBudget !== undefined) {
+        if (body.tokenBudget === null) {
+          delete existing.tokenBudget;
+        } else {
+          existing.tokenBudget = body.tokenBudget;
+        }
+      }
+      if (body.tokenBudgetPeriodMinutes !== undefined) {
+        if (body.tokenBudgetPeriodMinutes === null) {
+          delete existing.tokenBudgetPeriodMinutes;
+        } else {
+          existing.tokenBudgetPeriodMinutes = body.tokenBudgetPeriodMinutes;
+        }
+      }
+
+      writeVoluteConfig(dir, existing);
+      return c.json({ ok: true });
+    },
+  )
   // Get pending/gated delivery messages
   .get("/:name/delivery/pending", async (c) => {
     const name = c.req.param("name");
@@ -1619,19 +1592,24 @@ const app = new Hono<AuthEnv>()
       metadata: body.metadata,
     });
 
+    // Track mind activity for dashboard timeline
+    onMindEvent(baseName, body.type, body.channel);
+
     // Clear typing on first outbound event for a channel (text, outbound)
-    // This gives faster feedback than waiting for done
+    // Use deleteSender to clear both slug and conversationId-based keys
     if ((body.type === "text" || body.type === "outbound") && body.channel) {
-      getTypingMap().delete(body.channel, baseName);
+      const map = getTypingMap();
+      const affected = map.deleteSender(baseName);
+      publishTypingForChannels(affected, map);
     }
 
     // Clear all typing + notify delivery manager when mind finishes processing
     if (body.type === "done") {
-      if (body.channel) {
-        getTypingMap().delete(body.channel, baseName);
-      } else {
-        getTypingMap().deleteSender(baseName);
-      }
+      const map = getTypingMap();
+      const affected = map.deleteSender(baseName);
+      publishTypingForChannels(affected, map);
+      // Broadcast mind_done to SSE subscribers (ephemeral — not persisted to DB)
+      broadcast({ type: "mind_done", mind: baseName, summary: "Finished processing" });
       // Notify delivery manager of session completion
       try {
         getDeliveryManager().sessionDone(baseName, body.session);

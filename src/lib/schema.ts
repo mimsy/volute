@@ -112,6 +112,22 @@ export const deliveryQueue = sqliteTable(
   ],
 );
 
+export const activity = sqliteTable(
+  "activity",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    type: text("type").notNull(),
+    mind: text("mind").notNull(),
+    summary: text("summary").notNull(),
+    metadata: text("metadata"),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    index("idx_activity_created_at").on(table.created_at),
+    index("idx_activity_mind").on(table.mind),
+  ],
+);
+
 export const messages = sqliteTable(
   "messages",
   {

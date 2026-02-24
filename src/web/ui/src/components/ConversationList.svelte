@@ -1,6 +1,7 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "../lib/api";
 import { getConversationLabel, mindDotColor } from "../lib/format";
+import { activeMinds } from "../lib/stores.svelte";
 
 let {
   conversations,
@@ -128,11 +129,12 @@ $effect(() => {
             {#if dmInfo.isMindDm && dmInfo.mind}
               <button
                 class="status-dot"
+                class:iridescent={activeMinds.has(dmInfo.mind.name)}
                 title="Open {dmInfo.otherName}"
-                style:background={mindDotColor(dmInfo.mind)}
+                style:background={activeMinds.has(dmInfo.mind.name) ? undefined : mindDotColor(dmInfo.mind)}
                 onclick={(e) => { e.stopPropagation(); onOpenMind(dmInfo.mind!); }}
               ></button>
-              <span class="conv-label-text">{dmInfo.otherName}</span>
+              <button class="conv-label-mind" onclick={(e) => { e.stopPropagation(); onOpenMind(dmInfo.mind!); }}>{dmInfo.otherName}</button>
             {:else if dmInfo.otherName}
               <span class="conv-label-text">@{dmInfo.otherName}</span>
             {:else}
@@ -253,6 +255,21 @@ $effect(() => {
     text-overflow: ellipsis;
   }
 
+  .conv-label-mind {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  .conv-label-mind:hover {
+    text-decoration: underline;
+  }
+
   .seed-tag {
     font-size: 9px;
     color: var(--yellow);
@@ -301,6 +318,20 @@ $effect(() => {
     border: none;
     padding: 0;
     cursor: pointer;
+  }
+
+  .status-dot.iridescent {
+    animation: iridescent 3s ease-in-out infinite;
+  }
+
+  @keyframes iridescent {
+    0%   { background: #4ade80; }
+    16%  { background: #60a5fa; }
+    33%  { background: #c084fc; }
+    50%  { background: #f472b6; }
+    66%  { background: #fbbf24; }
+    83%  { background: #34d399; }
+    100% { background: #4ade80; }
   }
 
   .status-dot:hover {

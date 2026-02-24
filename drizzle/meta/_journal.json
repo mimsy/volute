@@ -85,6 +85,13 @@
       "when": 1772000000000,
       "tag": "0011_rename_human_to_brain",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1772100000000,
+      "tag": "0012_activity",
+      "breakpoints": true
     }
   ]
 }

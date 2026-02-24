@@ -18,6 +18,7 @@ export type Mind = {
   created: string;
   status: "running" | "stopped" | "starting";
   stage?: "seed" | "sprouted";
+  template?: string;
   channels: Channel[];
   hasPages?: boolean;
   lastActiveAt?: string | null;
@@ -28,6 +29,21 @@ export type RecentPage = {
   file: string;
   modified: string;
   url: string;
+};
+
+export type ActivityItem = {
+  id: number;
+  type:
+    | "mind_started"
+    | "mind_stopped"
+    | "mind_active"
+    | "mind_idle"
+    | "mind_done"
+    | "page_updated";
+  mind: string;
+  summary: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
 };
 
 export type VoluteEvent =
@@ -310,15 +326,6 @@ export function reportTyping(
   }).catch(() => {});
 }
 
-export async function fetchTyping(mindName: string, channel: string): Promise<string[]> {
-  const res = await fetch(
-    `/api/minds/${encodeURIComponent(mindName)}/typing?channel=${encodeURIComponent(channel)}`,
-  );
-  if (!res.ok) throw new Error(`Failed to fetch typing (${res.status})`);
-  const data = (await res.json()) as { typing: string[] };
-  return data.typing;
-}
-
 export async function restartDaemon(): Promise<void> {
   const res = await client.api.system.restart.$post();
   if (!res.ok) throw new Error("Failed to restart daemon");
@@ -590,4 +597,88 @@ export async function uploadSkillZip(file: File): Promise<SharedSkill> {
     throw new Error(data.error || "Failed to upload skill");
   }
   return res.json();
+}
+
+// --- Mind Config API ---
+
+export type MindConfig = {
+  registry: {
+    name: string;
+    port: number;
+    created: string;
+    stage?: string;
+    template?: string;
+  };
+  config: {
+    model: string | null;
+    thinkingLevel: string | null;
+    tokenBudget: number | null;
+    tokenBudgetPeriodMinutes: number | null;
+  };
+};
+
+export type MindEnv = {
+  shared: Record<string, string>;
+  mind: Record<string, string>;
+};
+
+export async function fetchMindConfig(name: string): Promise<MindConfig> {
+  const res = await fetch(`/api/minds/${encodeURIComponent(name)}/config`, {
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error("Failed to fetch config");
+  return res.json();
+}
+
+export async function updateMindConfig(
+  name: string,
+  updates: {
+    model?: string;
+    thinkingLevel?: string;
+    tokenBudget?: number | null;
+    tokenBudgetPeriodMinutes?: number | null;
+  },
+): Promise<void> {
+  const res = await fetch(`/api/minds/${encodeURIComponent(name)}/config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to update config");
+  }
+}
+
+export async function fetchMindEnv(name: string): Promise<MindEnv> {
+  const res = await fetch(`/api/minds/${encodeURIComponent(name)}/env`, {
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error("Failed to fetch env");
+  return res.json();
+}
+
+export async function setMindEnvVar(name: string, key: string, value: string): Promise<void> {
+  const res = await fetch(`/api/minds/${encodeURIComponent(name)}/env/${encodeURIComponent(key)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ value }),
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to set env var");
+  }
+}
+
+export async function deleteMindEnvVar(name: string, key: string): Promise<void> {
+  const res = await fetch(`/api/minds/${encodeURIComponent(name)}/env/${encodeURIComponent(key)}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to delete env var");
+  }
 }

@@ -260,6 +260,14 @@ export class MindManager {
 
       mlog.error(`mind ${name} exited with code ${code}`);
 
+      // Clear activity tracking and publish crash as mind_stopped
+      import("./mind-activity-tracker.js").then(({ markIdle }) => markIdle(name)).catch(() => {});
+      import("./activity-events.js")
+        .then(({ publish }) =>
+          publish({ type: "mind_stopped", mind: name, summary: `${name} crashed (exit ${code})` }),
+        )
+        .catch(() => {});
+
       const { shouldRestart, delay, attempt } = this.restartTracker.recordCrash(name);
       this.saveCrashAttempts();
       if (!shouldRestart) {

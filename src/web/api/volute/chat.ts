@@ -83,7 +83,10 @@ async function fanOutToMinds(opts: {
     const target = opts.targetName ? opts.targetName(mindName) : mindName;
     const channel = slugForMind(mindName);
     const typingMap = getTypingMap();
-    const currentlyTyping = typingMap.get(channel);
+    // Filter typing to only participants of this conversation (slugs are shared across DMs)
+    const currentlyTyping = typingMap
+      .get(channel)
+      .filter((name) => participantNames.includes(name));
     deliverMessage(target, {
       content: opts.contentBlocks,
       channel,

@@ -1,7 +1,10 @@
+import { publish as publishActivity } from "./activity-events.js";
 import { getConnectorManager } from "./connector-manager.js";
 import log from "./logger.js";
 import { ensureMailAddress } from "./mail-poller.js";
+import { markIdle } from "./mind-activity-tracker.js";
 import { getMindManager } from "./mind-manager.js";
+import { startWatcher, stopWatcher } from "./pages-watcher.js";
 import { findMind, mindDir } from "./registry.js";
 import { getScheduler } from "./scheduler.js";
 import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "./token-budget.js";
@@ -15,6 +18,13 @@ export async function startMindFull(name: string): Promise<void> {
   const [baseName, variantName] = name.split("@", 2);
 
   await getMindManager().startMind(name);
+
+  publishActivity({
+    type: "mind_started",
+    mind: name,
+    summary: `${name} started`,
+  }).catch((err) => log.error("failed to publish mind_started activity", log.errorData(err)));
+
   if (variantName) return;
 
   // Seed minds only get the server — no connectors, schedules, or budget
@@ -38,6 +48,8 @@ export async function startMindFull(name: string): Promise<void> {
       config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
     );
   }
+
+  startWatcher(baseName);
 }
 
 /**
@@ -47,9 +59,17 @@ export async function stopMindFull(name: string): Promise<void> {
   const [baseName, variantName] = name.split("@", 2);
 
   if (!variantName) {
+    stopWatcher(baseName);
+    markIdle(baseName);
     await getConnectorManager().stopConnectors(baseName);
     getScheduler().unloadSchedules(baseName);
     getTokenBudget().removeBudget(baseName);
   }
   await getMindManager().stopMind(name);
+
+  publishActivity({
+    type: "mind_stopped",
+    mind: name,
+    summary: `${name} stopped`,
+  }).catch((err) => log.error("failed to publish mind_stopped activity", log.errorData(err)));
 }

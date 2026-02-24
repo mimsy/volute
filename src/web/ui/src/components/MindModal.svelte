@@ -1,8 +1,9 @@
 <script lang="ts">
-import { onMount } from "svelte";
-import { fetchMind, type Mind, startMind, stopMind } from "../lib/api";
+import { fetchMinds, type Mind, startMind, stopMind } from "../lib/api";
 import { formatRelativeTime, getDisplayStatus } from "../lib/format";
+import { data } from "../lib/stores.svelte";
 import History from "./History.svelte";
+import MindInfo from "./MindInfo.svelte";
 import MindSkills from "./MindSkills.svelte";
 import Modal from "./Modal.svelte";
 import StatusBadge from "./StatusBadge.svelte";
@@ -11,52 +12,43 @@ import VariantList from "./VariantList.svelte";
 
 let { mind: initialMind, onClose }: { mind: Mind; onClose: () => void } = $props();
 
-const TABS = ["History", "Skills", "Variants", "Connections"] as const;
+const TABS = ["Info", "History", "Skills", "Variants", "Connections"] as const;
 type Tab = (typeof TABS)[number];
 
-const mindName = initialMind.name;
-// eslint-disable-next-line svelte/valid-compile -- initialMind is intentionally captured once; refresh() updates mind via API
-let mind = $state<Mind>(initialMind);
-let tab = $state<Tab>("History");
+let mind = $derived(data.minds.find((m) => m.name === initialMind.name) ?? initialMind);
+let tab = $state<Tab>("Info");
 let error = $state("");
 let actionLoading = $state(false);
 
-function refresh() {
-  fetchMind(mindName)
-    .then((m) => {
-      mind = m;
-      error = "";
-    })
-    .catch(() => {
-      error = "Unable to reach server";
-    });
-}
-
-onMount(() => {
-  refresh();
-  const interval = setInterval(refresh, 5000);
-  return () => clearInterval(interval);
-});
-
 async function handleStart() {
   actionLoading = true;
+  error = "";
   try {
     await startMind(mind.name);
-    refresh();
   } catch (e) {
     error = e instanceof Error ? e.message : "Failed to start";
   }
+  fetchMinds()
+    .then((m) => {
+      data.minds = m;
+    })
+    .catch(() => {});
   actionLoading = false;
 }
 
 async function handleStop() {
   actionLoading = true;
+  error = "";
   try {
     await stopMind(mind.name);
-    refresh();
   } catch (e) {
     error = e instanceof Error ? e.message : "Failed to stop";
   }
+  fetchMinds()
+    .then((m) => {
+      data.minds = m;
+    })
+    .catch(() => {});
   actionLoading = false;
 }
 
@@ -99,7 +91,9 @@ const connectedChannels = $derived(
     {#if error}
       <div class="error-msg">{error}</div>
     {/if}
-    {#if tab === "History"}
+    {#if tab === "Info"}
+      <MindInfo name={mind.name} />
+    {:else if tab === "History"}
       <History name={mind.name} />
     {:else if tab === "Skills"}
       <MindSkills name={mind.name} />

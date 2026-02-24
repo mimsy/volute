@@ -1,7 +1,7 @@
 <script lang="ts">
-import PageThumbnail from "../components/PageThumbnail.svelte";
 import StatusBadge from "../components/StatusBadge.svelte";
 import type {
+  ActivityItem,
   ConversationWithParticipants,
   LastMessageSummary,
   Mind,
@@ -18,21 +18,53 @@ type ConversationWithDetails = ConversationWithParticipants & {
   lastMessage?: LastMessageSummary;
 };
 
+type TimelineItem =
+  | { kind: "activity"; item: ActivityItem; timestamp: number }
+  | { kind: "conversation"; item: ConversationWithDetails; timestamp: number };
+
 let {
   username,
   minds,
   conversations,
   recentPages,
+  activity,
   onOpenMind,
   onSelectPage,
+  onSelectConversation,
 }: {
   username: string;
   minds: Mind[];
   conversations: ConversationWithDetails[];
   recentPages: RecentPage[];
+  activity: ActivityItem[];
   onOpenMind: (mind: Mind) => void;
   onSelectPage: (mind: string, path: string) => void;
+  onSelectConversation: (id: string) => void;
 } = $props();
+
+let timelineItems = $derived.by(() => {
+  const items: TimelineItem[] = [];
+
+  for (const a of activity) {
+    items.push({
+      kind: "activity",
+      item: a,
+      timestamp: new Date(normalizeTimestamp(a.created_at)).getTime(),
+    });
+  }
+
+  for (const c of conversations) {
+    if (!(c as any).lastMessage) continue;
+    items.push({
+      kind: "conversation",
+      item: c,
+      timestamp: new Date(normalizeTimestamp(c.updated_at)).getTime(),
+    });
+  }
+
+  items.sort((a, b) => b.timestamp - a.timestamp);
+  return items.slice(0, 50);
+});
 
 let sortedMinds = $derived(
   [...minds].sort((a, b) => {
@@ -44,16 +76,18 @@ let sortedMinds = $derived(
   }),
 );
 
-let recentConversations = $derived(
-  [...conversations]
-    .sort((a, b) => {
-      return (
-        new Date(normalizeTimestamp(b.updated_at)).getTime() -
-        new Date(normalizeTimestamp(a.updated_at)).getTime()
-      );
-    })
-    .slice(0, 5),
-);
+function mindForActivity(mindName: string): Mind | undefined {
+  return minds.find((m) => m.name === mindName);
+}
+
+function handleActivityClick(item: ActivityItem) {
+  if (item.type === "page_updated" && item.metadata?.file) {
+    onSelectPage(item.mind, item.metadata.file as string);
+  } else {
+    const mind = mindForActivity(item.mind);
+    if (mind) onOpenMind(mind);
+  }
+}
 </script>
 
 <div class="home">
@@ -68,7 +102,7 @@ let recentConversations = $derived(
       </div>
     {:else}
       <div class="mind-row">
-        {#each sortedMinds as mind}
+        {#each sortedMinds as mind (mind.name)}
           {@const connectedChannels = mind.channels.filter(ch => ch.name !== "web" && ch.name !== "volute" && ch.status === "connected")}
           <button class="home-mind-card" onclick={() => onOpenMind(mind)}>
             <div class="mind-card-header">
@@ -80,7 +114,7 @@ let recentConversations = $derived(
             </div>
             {#if connectedChannels.length > 0}
               <div class="channel-row">
-                {#each connectedChannels as ch}
+                {#each connectedChannels as ch (ch.name)}
                   <span class="channel-chip">{ch.displayName || ch.name}</span>
                 {/each}
               </div>
@@ -94,52 +128,36 @@ let recentConversations = $derived(
     {/if}
   </div>
 
-  <!-- Recent conversations -->
-  {#if recentConversations.length > 0}
+  <!-- Activity timeline -->
+  {#if timelineItems.length > 0}
     <div class="section">
       <div class="section-header">
-        <span class="section-title">recent conversations</span>
+        <span class="section-title">activity</span>
       </div>
-      <div class="conv-list">
-        {#each recentConversations as conv}
-          {@const label = getConversationLabel(conv.participants ?? [], conv.title, username)}
-          {@const isSeed = minds.find(a => a.name === conv.mind_name)?.stage === "seed"}
-          {@const msg = conv.lastMessage}
-          <a href={`/chats/${conv.id}`} class="conv-card">
-            <div class="conv-content">
-              <div class="conv-header">
-                <span class="conv-label">{label}</span>
-                {#if isSeed}
-                  <span class="seed-tag">seed</span>
-                {/if}
-              </div>
-              {#if msg}
-                <div class="conv-preview">
+      <div class="timeline">
+        {#each timelineItems as entry (`${entry.kind}-${entry.item.id}`)}
+          {#if entry.kind === "activity"}
+            {@const a = entry.item}
+            <button class="timeline-row" onclick={() => handleActivityClick(a)}>
+              <span class="timeline-dot" class:dot-started={a.type === "mind_started"} class:dot-stopped={a.type === "mind_stopped"} class:dot-active={a.type === "mind_active"} class:dot-idle={a.type === "mind_idle"} class:dot-page={a.type === "page_updated"}></span>
+              <span class="timeline-text">{a.summary}</span>
+              <span class="timeline-time">{formatRelativeTime(a.created_at)}</span>
+            </button>
+          {:else}
+            {@const c = entry.item}
+            {@const label = getConversationLabel(c.participants ?? [], c.title, username)}
+            {@const msg = c.lastMessage}
+            <button class="timeline-row" onclick={() => onSelectConversation(c.id)}>
+              <span class="timeline-dot dot-message"></span>
+              <span class="timeline-text">
+                <span class="conv-label">{label}:</span>
+                {#if msg}
                   {msg.senderName ? `${msg.senderName}: ` : ""}{msg.text}
-                </div>
-              {/if}
-            </div>
-            <span class="conv-time">{formatRelativeTime(conv.updated_at)}</span>
-          </a>
-        {/each}
-      </div>
-    </div>
-  {/if}
-
-  <!-- Recent pages -->
-  {#if recentPages.length > 0}
-    <div class="section">
-      <div class="section-header">
-        <span class="section-title">recent pages</span>
-      </div>
-      <div class="pages-grid">
-        {#each recentPages.slice(0, 5) as page}
-          <PageThumbnail
-            url={page.url}
-            label={page.file}
-            sublabel="{page.mind} · {formatRelativeTime(page.modified)}"
-            onclick={() => onSelectPage(page.mind, page.file)}
-          />
+                {/if}
+              </span>
+              <span class="timeline-time">{formatRelativeTime(c.updated_at)}</span>
+            </button>
+          {/if}
         {/each}
       </div>
     </div>
@@ -243,62 +261,80 @@ let recentConversations = $derived(
     color: var(--text-2);
   }
 
-  .conv-list {
+  .timeline {
     display: flex;
     flex-direction: column;
-    gap: 8px;
   }
 
-  .conv-card {
+  .timeline-row {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 10px 14px;
+    gap: 10px;
+    padding: 7px 10px;
     border-radius: var(--radius-lg);
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    color: inherit;
+    font-size: 12px;
+    transition: background 0.12s;
+    width: 100%;
+  }
+
+  .timeline-row:hover {
     background: var(--bg-2);
-    border: 1px solid var(--border);
-    transition: border-color 0.15s;
   }
 
-  .conv-card:hover {
-    border-color: var(--border-bright);
+  .timeline-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--text-2);
   }
 
-  .conv-content {
+  .dot-started {
+    background: var(--accent);
+  }
+
+  .dot-stopped {
+    background: var(--text-2);
+  }
+
+  .dot-active {
+    background: var(--accent);
+  }
+
+  .dot-idle {
+    background: var(--text-2);
+  }
+
+  .dot-page {
+    background: var(--yellow);
+  }
+
+  .dot-message {
+    background: var(--blue, var(--accent));
+  }
+
+  .timeline-text {
     flex: 1;
     min-width: 0;
-  }
-
-  .conv-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 2px;
-  }
-
-  .conv-label {
-    color: var(--text-0);
-    font-weight: 500;
-    font-size: 12px;
-  }
-
-  .conv-preview {
-    font-size: 11px;
-    color: var(--text-2);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    color: var(--text-1);
   }
 
-  .conv-time {
+  .timeline-text .conv-label {
+    color: var(--text-0);
+    font-weight: 500;
+  }
+
+  .timeline-time {
     color: var(--text-2);
     font-size: 10px;
     flex-shrink: 0;
-  }
-
-  .pages-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 16px;
   }
 </style>

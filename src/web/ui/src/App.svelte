@@ -17,16 +17,16 @@ import { navigate, parseSelection, type Selection, selectionToPath } from "./lib
 import {
   auth,
   checkAuth,
+  connectActivity,
   data,
+  disconnectActivity,
   handleAuth,
   handleLogout,
   hiddenConversationIds,
   hideConversation,
-  refreshConversations,
+  reconnectActivity,
   saveSidebarWidth,
   sidebar,
-  startPolling,
-  stopPolling,
   unhideConversation,
 } from "./lib/stores.svelte";
 
@@ -54,8 +54,8 @@ onMount(() => {
 // Data polling
 $effect(() => {
   if (!auth.user) return;
-  startPolling();
-  return () => stopPolling();
+  connectActivity();
+  return () => disconnectActivity();
 });
 
 // Track whether selection change came from popstate (to avoid pushing duplicate history)
@@ -117,7 +117,7 @@ async function handleDeleteConversation(id: string) {
     console.error("Failed to delete conversation:", err);
     return;
   }
-  refreshConversations();
+  reconnectActivity();
   if (activeConversationId === id) {
     selection = { kind: "home" };
   }
@@ -125,7 +125,7 @@ async function handleDeleteConversation(id: string) {
 
 function handleConversationId(id: string) {
   selection = { kind: "conversation", conversationId: id };
-  refreshConversations();
+  reconnectActivity();
 }
 
 function handleNewChatCreated(name: string) {
@@ -150,13 +150,13 @@ function handleNewChatCreated(name: string) {
 
 function handleNewGroupCreated(conv: Conversation) {
   activeModal = null;
-  refreshConversations();
+  reconnectActivity();
   selection = { kind: "conversation", conversationId: conv.id };
 }
 
 function handleChannelJoined(conv: Conversation) {
   activeModal = null;
-  refreshConversations();
+  reconnectActivity();
   selection = { kind: "conversation", conversationId: conv.id };
 }
 
@@ -243,6 +243,7 @@ function handleResizeEnd() {
           onSelectSite={handleSelectSite}
           onSelectPages={handleSelectPages}
           onHideConversation={handleHideConversation}
+          onHome={() => (selection = { kind: "home" })}
         />
       </div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -260,8 +261,10 @@ function handleResizeEnd() {
           conversations={data.conversations}
           recentPages={data.recentPages}
           sites={data.sites}
+          activity={data.activity}
           username={auth.user.username}
           onConversationId={handleConversationId}
+          onSelectConversation={handleSelectConversation}
           onOpenMind={handleOpenMindModal}
           onSelectPage={handleSelectPage}
           onSelectSite={handleSelectSite}
