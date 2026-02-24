@@ -77,15 +77,15 @@ function generateUnit(voluteBin: string, port?: number, host?: string): string {
   return lines.join("\n");
 }
 
-function install(port?: number, host?: string): void {
+export function install(port?: number, host?: string): void {
   if (host) validateHost(host);
   if (process.getuid?.() !== 0) {
-    console.error("Error: volute setup must be run as root (use sudo).");
+    console.error("Error: volute service install --system must be run as root (use sudo).");
     process.exit(1);
   }
 
   if (process.platform !== "linux") {
-    console.error("Error: volute setup is only supported on Linux.");
+    console.error("Error: volute service install --system is only supported on Linux.");
     console.error("On macOS, use `volute service install` for user-level service management.");
     process.exit(1);
   }
@@ -175,9 +175,9 @@ function install(port?: number, host?: string): void {
   }
 }
 
-function uninstall(force: boolean): void {
+export function uninstall(force: boolean): void {
   if (process.getuid?.() !== 0) {
-    console.error("Error: volute setup uninstall must be run as root (use sudo).");
+    console.error("Error: volute service uninstall --system must be run as root (use sudo).");
     process.exit(1);
   }
 
@@ -270,8 +270,8 @@ export async function run(args: string[]) {
       break;
     default:
       console.log(`Usage:
-  volute setup [--port N] [--host H]     Install system-level service with user isolation
-  volute setup uninstall [--force]        Remove service (--force removes data + users)`);
+  volute service install --system [--port N] [--host H]   Install system-level service with user isolation
+  volute service uninstall --system [--force]              Remove service (--force removes data + users)`);
       console.error(`\nUnknown subcommand: ${subcommand}`);
       process.exit(1);
   }

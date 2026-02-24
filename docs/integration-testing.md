@@ -27,7 +27,7 @@ bash test/integration-setup.sh
 
 # Seed a mind and wait for its response
 docker exec -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY <container> \
-  volute seed my-mind --template claude --model claude-sonnet-4-6
+  volute mind seed my-mind --template claude --model claude-sonnet-4-6
 
 docker exec <container> volute send @my-mind "hello, who are you?" --wait
 
@@ -127,8 +127,8 @@ docker exec $CONTAINER cat /minds/aria/home/SOUL.md
 docker exec $CONTAINER cat /minds/kimi/home/SOUL.md
 
 # Sprout them once they've developed identity
-docker exec -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY $CONTAINER volute sprout --mind aria
-docker exec -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY $CONTAINER volute sprout --mind kimi
+docker exec -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY -e VOLUTE_MIND=aria $CONTAINER volute mind sprout
+docker exec -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY -e VOLUTE_MIND=kimi $CONTAINER volute mind sprout
 
 # Check status
 docker exec $CONTAINER volute status

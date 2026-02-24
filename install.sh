@@ -150,8 +150,8 @@ main() {
   /usr/bin/npm install -g volute
 
   # Run setup (writes /etc/profile.d/volute.sh for CLI env vars)
-  echo "Running volute setup..."
-  /usr/bin/volute setup --host 0.0.0.0
+  echo "Running volute service install --system..."
+  /usr/bin/volute service install --system --host 0.0.0.0
 
   # Source the profile so env vars are available in this session
   # shellcheck disable=SC1091

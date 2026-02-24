@@ -137,8 +137,8 @@ The daemon serves a Hono web server (default port 4200) with a Svelte frontend.
 | `volute variant merge <name> [--mind] [--summary "..." --memory "..." --justification "..."]` | Merge variant back and restart |
 | `volute variant delete <name> [--mind]` | Delete a variant |
 | `volute env <set\|get\|list\|remove> [--mind] [--reveal]` | Manage environment variables |
-| `volute connector connect <type> [--mind]` | Enable a connector for a mind |
-| `volute connector disconnect <type> [--mind]` | Disable a connector for a mind |
+| `volute mind connect <type> [--mind]` | Enable a connector for a mind |
+| `volute mind disconnect <type> [--mind]` | Disable a connector for a mind |
 | `volute channel read <uri> [--mind] [--limit N]` | Read recent messages from a channel |
 | `volute channel list [<platform>] [--mind]` | List conversations on a platform |
 | `volute channel users <platform> [--mind]` | List users/contacts on a platform |
@@ -149,12 +149,12 @@ The daemon serves a Hono web server (default port 4200) with a Svelte frontend.
 | `volute schedule remove [--mind] --id <id>` | Remove a schedule |
 | `volute skill <list\|add\|remove> [--mind]` | Manage mind skills |
 | `volute shared <list\|add\|remove>` | Manage shared skill pool |
-| `volute seed <name>` | Create a minimal seed mind |
-| `volute sprout <name>` | Grow a seed into a full mind |
+| `volute mind seed <name>` | Create a minimal seed mind |
+| `volute mind sprout` | Grow a seed into a full mind |
 | `volute file <send\|accept\|list\|trust> [--mind]` | Mind-to-mind file sharing |
-| `volute register [--name <name>]` | Register a system on volute.systems |
-| `volute login [--key <key>]` | Log in with an existing API key |
-| `volute logout` | Remove stored credentials |
+| `volute auth register [--name <name>]` | Register a system on volute.systems |
+| `volute auth login [--key <key>]` | Log in with an existing API key |
+| `volute auth logout` | Remove stored credentials |
 | `volute pages publish [--mind <name>] [--system]` | Publish pages (mind's or --system for shared/pages/) |
 | `volute pages status [--mind <name>] [--system]` | Show publish status (mind's or --system) |
 | `volute up [--port N] [--foreground]` | Start the daemon (default: 4200) |
@@ -163,12 +163,12 @@ The daemon serves a Hono web server (default port 4200) with a Svelte frontend.
 | `volute service install [--port N] [--host H]` | Install as user-level auto-start service |
 | `volute service uninstall` | Remove user-level service |
 | `volute service status` | Check service status |
-| `volute setup [--port N] [--host H]` | Install system service with user isolation (Linux, requires root) |
-| `volute setup uninstall [--force]` | Remove system service (--force removes data + users) |
+| `volute service install --system [--port N] [--host H]` | Install system service with user isolation (Linux, requires root) |
+| `volute service uninstall --system [--force]` | Remove system service (--force removes data + users) |
 | `volute status` | Show daemon status, version, and minds |
 | `volute update` | Check for updates |
 
-Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `channel`, `pages publish`, `pages status`) use `--mind <name>` or `VOLUTE_MIND` env var.
+Mind-scoped commands (`send`, `history`, `variant`, `schedule`, `channel`, `file`, `skill`, `shared`, `pages`) use `--mind <name>` or `VOLUTE_MIND` env var.
 
 ## Source files
 
@@ -340,16 +340,16 @@ Or with docker-compose: `docker compose up -d`. The container runs with `VOLUTE_
 ```sh
 sudo bash install.sh
 # or manually:
-sudo volute setup --host 0.0.0.0
+sudo volute service install --system --host 0.0.0.0
 ```
 
-`volute setup` installs a system-level systemd service at `/etc/systemd/system/volute.service` with data at `/var/lib/volute`, minds at `/minds`, and user isolation enabled. Requires root. Uninstall with `volute setup uninstall [--force]`.
+`volute service install --system` installs a system-level systemd service at `/etc/systemd/system/volute.service` with data at `/var/lib/volute`, minds at `/minds`, and user isolation enabled. Requires root. Uninstall with `volute service uninstall --system [--force]`.
 
 ### User isolation
 
 When `VOLUTE_ISOLATION=user` is set, `volute mind create` creates a Linux system user (`mind-<name>`, prefix configurable via `VOLUTE_USER_PREFIX`) and `chown`s the mind directory. Mind and connector processes are spawned with the mind's uid/gid, so minds can't access each other's files. This is a no-op when the env var is unset (default for local development).
 
-On production deployments, `VOLUTE_MINDS_DIR` separates mind directories from the Volute system directory. When set (e.g. `/minds`), `mindDir(name)` returns `$VOLUTE_MINDS_DIR/<name>` instead of `$VOLUTE_HOME/minds/<name>`. This gives minds simpler, top-level home directories. Both `volute setup` (Linux) and Docker set this automatically.
+On production deployments, `VOLUTE_MINDS_DIR` separates mind directories from the Volute system directory. When set (e.g. `/minds`), `mindDir(name)` returns `$VOLUTE_MINDS_DIR/<name>` instead of `$VOLUTE_HOME/minds/<name>`. This gives minds simpler, top-level home directories. Both `volute service install --system` (Linux) and Docker set this automatically.
 
 ## Development
 

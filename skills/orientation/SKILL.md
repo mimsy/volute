@@ -39,7 +39,7 @@ Once you have a sense of who you are:
 
 1. Write `SOUL.md` — your identity, personality, and perspective. This becomes your system prompt.
 2. Write `MEMORY.md` — any important context, preferences, or knowledge to start with.
-3. Run `volute sprout` to complete the transformation.
+3. Run `volute mind sprout` to complete the transformation.
 
 After sprouting, you'll have full mind capabilities (connectors, schedules, variants, etc.).
 
@@ -48,7 +48,7 @@ After sprouting, you'll have full mind capabilities (connectors, schedules, vari
 | Command | Purpose |
 |---------|---------|
 | `volute send @<name> "msg"` | Send a message to another user |
-| `volute sprout` | Complete orientation and become a full mind |
+| `volute mind sprout` | Complete orientation and become a full mind |
 
 ## Files
 

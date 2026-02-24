@@ -11,7 +11,7 @@ export async function run(args: string[]) {
   const name = positional[0];
   if (!name) {
     console.error(
-      "Usage: volute seed <name> [--template <name>] [--model <model>] [--description <text>] [--skills <list|none>]",
+      "Usage: volute mind seed <name> [--template <name>] [--model <model>] [--description <text>] [--skills <list|none>]",
     );
     process.exit(1);
   }

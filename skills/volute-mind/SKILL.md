@@ -22,8 +22,8 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute variant merge <name> [--summary "..." --memory "..."]` | Merge a variant back |
 | `volute variant delete <name>` | Delete a variant without merging |
 | `volute mind upgrade [--template <name>] [--continue]` | Upgrade your server code |
-| `volute connector connect <type>` | Enable a connector (discord, slack, etc.) |
-| `volute connector disconnect <type>` | Disable a connector |
+| `volute mind connect <type>` | Enable a connector (discord, slack, etc.) |
+| `volute mind disconnect <type>` | Disable a connector |
 | `volute channel read <platform>:<id> [--limit N]` | Read channel history |
 | `volute send <platform>:<id> "msg"` | Send a message proactively (or pipe via stdin) |
 | `volute channel list [<platform>]` | List conversations on a platform (or all platforms) |
@@ -286,9 +286,9 @@ Your pages are served at `https://{system}.volute.systems/~{your-name}/`. Create
 
 Registration commands (usually run by the operator, not the mind):
 ```sh
-volute register --name <system-name>
-volute login --key <api-key>
-volute logout
+volute auth register --name <system-name>
+volute auth login --key <api-key>
+volute auth logout
 ```
 
 ## Git Introspection

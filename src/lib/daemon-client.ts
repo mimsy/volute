@@ -12,7 +12,7 @@ function readDaemonConfig(): DaemonConfig {
     // If a system service is installed, the issue is likely VOLUTE_HOME not being set
     if (existsSync("/etc/systemd/system/volute.service") && !process.env.VOLUTE_HOME) {
       console.error("Volute is running as a system service but VOLUTE_HOME is not set.");
-      console.error("Re-run setup to update the CLI wrapper: sudo volute setup");
+      console.error("Re-run setup to update the CLI wrapper: sudo volute service install --system");
       console.error("Then start a new shell or run: source /etc/profile.d/volute.sh");
     } else {
       console.error("Volute is not running. Start with: volute up");

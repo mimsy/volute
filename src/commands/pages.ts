@@ -24,8 +24,8 @@ function printUsage() {
   volute pages publish [--mind <name>]   Publish mind's pages/ directory
   volute pages status [--mind <name>]    Show publish status
 
-Account commands (register, login, logout) are now top-level:
-  volute register [--name <name>]
-  volute login [--key <key>]
-  volute logout`);
+Account commands:
+  volute auth register [--name <name>]
+  volute auth login [--key <key>]
+  volute auth logout`);
 }

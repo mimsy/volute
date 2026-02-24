@@ -27,8 +27,8 @@ export async function run(args: string[]) {
 
 function printUsage() {
   console.log(`Usage:
-  volute connector connect <type> [--mind <name>]
-  volute connector disconnect <type> [--mind <name>]`);
+  volute mind connect <type> [--mind <name>]
+  volute mind disconnect <type> [--mind <name>]`);
 }
 
 type MissingEnvResponse = {
@@ -46,7 +46,7 @@ async function connectConnector(args: string[]) {
   const type = positional[0];
 
   if (!type) {
-    console.error("Usage: volute connector connect <type> [--mind <name>]");
+    console.error("Usage: volute mind connect <type> [--mind <name>]");
     process.exit(1);
   }
 
@@ -131,7 +131,7 @@ async function disconnectConnector(args: string[]) {
   const type = positional[0];
 
   if (!type) {
-    console.error("Usage: volute connector disconnect <type> [--mind <name>]");
+    console.error("Usage: volute mind disconnect <type> [--mind <name>]");
     process.exit(1);
   }
 
