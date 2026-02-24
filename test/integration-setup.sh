@@ -26,7 +26,11 @@ HOST_PORT=""
 while [[ $# -gt 0 ]]; do
   case $1 in
     --with-fixtures) WITH_FIXTURES=true; shift ;;
-    --port) HOST_PORT="$2"; shift 2 ;;
+    --port)
+      if [[ $# -lt 2 ]]; then
+        echo "Error: --port requires a value" >&2; exit 1
+      fi
+      HOST_PORT="$2"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -40,6 +44,24 @@ CONTAINER="volute-integration-$$"
 IMAGE="volute-integration-$$"
 ENV_FILE="/tmp/volute-integration.env"
 
+# Check for existing environment
+if [[ -f "$ENV_FILE" ]]; then
+  echo "Error: existing integration environment found ($ENV_FILE)" >&2
+  echo "Run 'bash test/integration-teardown.sh' first" >&2
+  exit 1
+fi
+
+# Cleanup on failure -- disabled on success at the end of the script
+SETUP_COMPLETE=false
+cleanup_on_failure() {
+  if [[ "$SETUP_COMPLETE" == "true" ]]; then return; fi
+  echo "Setup failed, cleaning up..." >&2
+  docker rm -f "$CONTAINER" 2>/dev/null || true
+  docker rmi "$IMAGE" 2>/dev/null || true
+  rm -f "$ENV_FILE"
+}
+trap cleanup_on_failure EXIT
+
 # Build dist if needed
 if [[ ! -f dist/daemon.js ]]; then
   echo "Building project (dist/daemon.js not found)..."
@@ -47,14 +69,24 @@ if [[ ! -f dist/daemon.js ]]; then
 fi
 
 echo "Building Docker image..."
-docker build -t "$IMAGE" . >/dev/null 2>&1
+BUILD_LOG=$(mktemp)
+if ! docker build -t "$IMAGE" . >"$BUILD_LOG" 2>&1; then
+  echo "Error: Docker build failed" >&2
+  tail -20 "$BUILD_LOG" >&2
+  rm -f "$BUILD_LOG"
+  exit 1
+fi
+rm -f "$BUILD_LOG"
 echo "  Image: $IMAGE"
 
 echo "Starting container on port $HOST_PORT..."
-docker run -d --name "$CONTAINER" \
+if ! docker run -d --name "$CONTAINER" \
   -p "$HOST_PORT:4200" \
   -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" \
-  "$IMAGE" >/dev/null
+  "$IMAGE" >/dev/null; then
+  echo "Error: failed to start container (port $HOST_PORT may be in use)" >&2
+  exit 1
+fi
 echo "  Container: $CONTAINER"
 
 # Reuse patterns from docker-e2e.sh
@@ -74,27 +106,35 @@ poll_until() {
 health_check() { curl -sf "http://localhost:$HOST_PORT/api/health" >/dev/null; }
 
 echo "Waiting for daemon to become healthy..."
-if poll_until 30 health_check; then
-  echo "  Daemon is healthy"
-else
+if ! poll_until 30 health_check; then
   echo "Error: daemon did not become healthy within 30s" >&2
   echo "Container logs:"
   docker logs "$CONTAINER" 2>&1 | tail -20
-  docker rm -f "$CONTAINER" 2>/dev/null || true
-  docker rmi "$IMAGE" 2>/dev/null || true
+  exit 1
+fi
+echo "  Daemon is healthy"
+
+echo "Reading daemon token..."
+if ! TOKEN=$(docker exec "$CONTAINER" node -e \
+  "process.stdout.write(JSON.parse(require('fs').readFileSync('/data/daemon.json','utf8')).token)" 2>&1); then
+  echo "Error: failed to read daemon token" >&2
+  echo "  $TOKEN" >&2
   exit 1
 fi
 
-TOKEN=$(docker exec "$CONTAINER" node -e \
-  "process.stdout.write(JSON.parse(require('fs').readFileSync('/data/daemon.json','utf8')).token)")
+if [[ -z "$TOKEN" ]]; then
+  echo "Error: daemon token is empty" >&2
+  exit 1
+fi
 
-# Save connection info
-cat > "$ENV_FILE" <<EOF
-CONTAINER=$CONTAINER
-IMAGE=$IMAGE
-HOST_PORT=$HOST_PORT
-TOKEN=$TOKEN
+# Save connection info (restricted permissions, quoted values)
+(umask 077; cat > "$ENV_FILE" <<EOF
+CONTAINER='$CONTAINER'
+IMAGE='$IMAGE'
+HOST_PORT='$HOST_PORT'
+TOKEN='$TOKEN'
 EOF
+)
 
 # Import fixtures if requested
 if [[ "$WITH_FIXTURES" == "true" ]]; then
@@ -104,16 +144,27 @@ if [[ "$WITH_FIXTURES" == "true" ]]; then
       [[ -d "$fixture_dir/home" ]] || continue
       name=$(basename "$fixture_dir")
       echo "Importing fixture: $name"
-      docker exec -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" "$CONTAINER" \
-        node dist/cli.js mind create "$name" >/dev/null 2>&1
-      docker cp "$fixture_dir/home/." "$CONTAINER:/minds/$name/home/"
-      docker exec "$CONTAINER" chown -R "mind-$name:mind-$name" "/minds/$name/home/"
+      if ! docker exec -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" "$CONTAINER" \
+          node dist/cli.js mind create "$name" 2>&1; then
+        echo "Error: failed to create mind '$name' in container" >&2
+        exit 1
+      fi
+      if ! docker cp "$fixture_dir/home/." "$CONTAINER:/minds/$name/home/"; then
+        echo "Error: failed to copy fixture files for '$name'" >&2
+        exit 1
+      fi
+      if ! docker exec "$CONTAINER" chown -R "mind-$name:mind-$name" "/minds/$name/home/"; then
+        echo "Error: failed to set ownership for '$name'" >&2
+        exit 1
+      fi
       echo "  $name imported"
     done
   else
     echo "  No fixtures directory found at $FIXTURES_DIR"
   fi
 fi
+
+SETUP_COMPLETE=true
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

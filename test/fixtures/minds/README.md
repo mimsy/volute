@@ -22,21 +22,22 @@ minds/
 ## Creating a Fixture
 
 1. Start a test environment: `bash test/integration-setup.sh`
-2. Create a mind and interact with it until it develops a personality:
+2. Load the container name: `source /tmp/volute-integration.env`
+3. Create a mind and interact with it until it develops a personality:
    ```sh
    docker exec -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-     volute-integration-$$ node dist/cli.js mind create echo
+     $CONTAINER node dist/cli.js mind create echo
    # Start it, send messages, let it develop...
    ```
-3. Copy its home directory out:
+4. Copy its home directory out:
    ```sh
-   docker cp volute-integration-$$:/minds/echo/home test/fixtures/minds/echo/home
+   docker cp $CONTAINER:/minds/echo/home test/fixtures/minds/echo/home
    ```
-4. Clean up runtime artifacts that shouldn't be in fixtures:
+5. Clean up runtime artifacts that shouldn't be in fixtures:
    - Remove `.claude/` (SDK state)
-   - Remove `.config/hooks/` (generated at create time)
+   - Remove `.config/hooks/`, `.config/scripts/`, `.config/prompts.json`, `.config/routes.json` (copied from template)
    - Remove any session state files
-5. Keep:
+6. Keep:
    - `SOUL.md` — the mind's personality
    - `MEMORY.md` — accumulated knowledge
    - `memory/journal/` — daily journal entries
@@ -50,13 +51,13 @@ The setup script handles this with `--with-fixtures`:
 bash test/integration-setup.sh --with-fixtures
 ```
 
-Or manually inside a container:
+Or manually (after `source /tmp/volute-integration.env`):
 
 ```sh
 docker exec -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-  CONTAINER node dist/cli.js mind create echo
-docker cp test/fixtures/minds/echo/home/. CONTAINER:/minds/echo/home/
-docker exec CONTAINER chown -R mind-echo:mind-echo /minds/echo/home/
+  $CONTAINER node dist/cli.js mind create echo
+docker cp test/fixtures/minds/echo/home/. $CONTAINER:/minds/echo/home/
+docker exec $CONTAINER chown -R mind-echo:mind-echo /minds/echo/home/
 ```
 
 ## Maintenance

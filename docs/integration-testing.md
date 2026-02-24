@@ -29,7 +29,7 @@ bash test/integration-teardown.sh
 
 ### Manual setup
 
-Build the image from your current branch:
+Build the image from your current branch (`npm run build` is required because the Docker image copies pre-built `dist/` files):
 
 ```sh
 npm run build
@@ -58,7 +58,7 @@ TOKEN=$(docker exec volute-test node -e \
   "process.stdout.write(JSON.parse(require('fs').readFileSync('/data/daemon.json','utf8')).token)")
 ```
 
-Make API calls:
+Make API calls (`/api/health` is unauthenticated; all other endpoints require the Bearer token and Origin header):
 
 ```sh
 curl -s -H "Authorization: Bearer $TOKEN" \
@@ -121,7 +121,7 @@ The `--with-fixtures` flag on the setup script does this automatically for all f
 1. Start a test environment (`bash test/integration-setup.sh`)
 2. Create and interact with a mind until it has a distinct personality
 3. Copy its home directory out: `docker cp volute-test:/minds/<name>/home test/fixtures/minds/<name>/home`
-4. Remove runtime artifacts that shouldn't be in fixtures (`.claude/`, `.config/hooks/`, session state)
+4. Remove runtime artifacts that shouldn't be in fixtures (`.claude/` SDK state, `.config/hooks/` copied from template, `.config/scripts/`, `.config/prompts.json`, `.config/routes.json`)
 5. Keep: `SOUL.md`, `MEMORY.md`, `memory/journal/`, any files the mind created in `home/`
 
 ### Maintenance
@@ -150,6 +150,8 @@ If template changes break the home directory contract, fixtures may need updatin
 
 ### Creating a mind and sending a message
 
+Replace `$HOST_PORT` and `$TOKEN` with values from the setup script output (or `source /tmp/volute-integration.env`).
+
 ```sh
 # Create
 docker exec -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" \
@@ -158,14 +160,17 @@ docker exec -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" \
 # Start
 curl -sf -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Origin: http://127.0.0.1:4200" \
-  http://localhost:$PORT/api/minds/test-mind/start
+  http://localhost:$HOST_PORT/api/minds/test-mind/start
+
+# Wait for the mind to reach "running" status before sending messages.
+# See test/docker-e2e.sh for the poll_until pattern.
 
 # Send a message
 curl -sf -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Origin: http://127.0.0.1:4200" \
   -H "Content-Type: application/json" \
   -d '{"content":[{"type":"text","text":"I just added a new feature — try exploring your memory directory and tell me what you find."}],"channel":"test","sender":"developer"}' \
-  http://localhost:$PORT/api/minds/test-mind/message
+  http://localhost:$HOST_PORT/api/minds/test-mind/message
 ```
 
 ## Interaction Guidelines
