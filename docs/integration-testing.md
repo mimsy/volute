@@ -115,8 +115,8 @@ source /tmp/volute-integration.env
 V="docker exec -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY $CONTAINER volute"
 
 # Seed two minds with different templates
-$V seed aria --template claude --model claude-sonnet-4-6
-$V seed kimi --template pi --model "openrouter:moonshotai/kimi-k2.5"
+$V mind seed aria --template claude --model claude-sonnet-4-6
+$V mind seed kimi --template pi --model "openrouter:moonshotai/kimi-k2.5"
 
 # Talk to them and see their responses
 docker exec $CONTAINER volute send @aria "tell me about yourself" --wait

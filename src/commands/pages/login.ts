@@ -19,7 +19,7 @@ export async function run(args: string[]) {
   let key = flags.key;
   if (!key) {
     if (!process.stdin.isTTY) {
-      console.error("Usage: volute pages login --key <api-key>");
+      console.error("Usage: volute auth login --key <api-key>");
       process.exit(1);
     }
     key = await promptLine("API key: ");

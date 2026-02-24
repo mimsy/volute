@@ -18,7 +18,7 @@ Core values:
 
 - `src/cli.ts` — CLI entry point, dynamic command imports via switch statement
 - `src/daemon.ts` — Daemon entry point, starts web server + mind/connector/scheduler managers
-- `src/commands/` — One file per command, each exports `async function run(args: string[])`. Top-level nouns (`mind.ts`, `channel.ts`, `connector.ts`, `env.ts`, `schedule.ts`, `service.ts`, `setup.ts`, `variant.ts`) dispatch to subcommand files.
+- `src/commands/` — One file per command, each exports `async function run(args: string[])`. Top-level nouns (`mind.ts`, `auth.ts`, `channel.ts`, `env.ts`, `schedule.ts`, `service.ts`, `variant.ts`) dispatch to subcommand files.
 - `src/lib/` — Shared libraries (registry, mind-manager, connector-manager, scheduler, daemon-client, arg parsing, exec wrappers, variant metadata, db, auth, conversations, channels)
 - `src/web/` — Web dashboard (Hono backend + Svelte frontend), served by the daemon
 - `src/connectors/` — Built-in connector implementations (Discord, Slack, Telegram) + shared SDK

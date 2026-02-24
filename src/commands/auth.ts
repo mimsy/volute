@@ -18,6 +18,7 @@ export async function run(args: string[]) {
       break;
     default:
       printUsage();
+      console.error(`\nUnknown subcommand: ${subcommand}`);
       process.exit(1);
   }
 }

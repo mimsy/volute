@@ -19,7 +19,7 @@ export async function run(args: string[]) {
   let name = flags.name;
   if (!name) {
     if (!process.stdin.isTTY) {
-      console.error("Usage: volute pages register --name <system-name>");
+      console.error("Usage: volute auth register --name <system-name>");
       process.exit(1);
     }
     name = await promptLine("Choose a system name: ");
@@ -51,7 +51,7 @@ export async function run(args: string[]) {
   } catch (err) {
     console.error(`Failed to save credentials: ${(err as Error).message}`);
     console.error(`Your API key is: ${apiKey}`);
-    console.error(`Save it and run: volute pages login --key ${apiKey}`);
+    console.error(`Save it and run: volute auth login --key ${apiKey}`);
     process.exit(1);
   }
   console.log(`Registered as "${system}". Credentials saved.`);
