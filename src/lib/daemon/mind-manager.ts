@@ -266,12 +266,12 @@ export class MindManager {
       // Clear activity tracking and publish crash as mind_stopped
       import("../events/mind-activity-tracker.js")
         .then(({ markIdle }) => markIdle(name))
-        .catch(() => {});
+        .catch((err) => mlog.warn(`failed to mark ${name} idle after crash`, log.errorData(err)));
       import("../events/activity-events.js")
         .then(({ publish }) =>
           publish({ type: "mind_stopped", mind: name, summary: `${name} crashed (exit ${code})` }),
         )
-        .catch(() => {});
+        .catch((err) => mlog.warn(`failed to publish crash event for ${name}`, log.errorData(err)));
 
       const { shouldRestart, delay, attempt } = this.restartTracker.recordCrash(name);
       this.saveCrashAttempts();

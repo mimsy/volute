@@ -832,9 +832,11 @@ const app = new Hono<AuthEnv>()
     const entry = findMind(baseName);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
+    let targetPort = entry.port;
     if (variantName) {
       const variant = findVariant(baseName, variantName);
       if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
+      targetPort = variant.port;
     } else {
       const dir = mindDir(baseName);
       if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
@@ -846,7 +848,7 @@ const app = new Hono<AuthEnv>()
 
     try {
       await startMindFullService(name);
-      return c.json({ ok: true, port: entry.port });
+      return c.json({ ok: true, port: targetPort });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to start mind" }, 500);
     }
@@ -860,9 +862,11 @@ const app = new Hono<AuthEnv>()
     const entry = findMind(baseName);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
+    let targetPort = entry.port;
     if (variantName) {
       const variant = findVariant(baseName, variantName);
       if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
+      targetPort = variant.port;
     } else {
       const dir = mindDir(baseName);
       if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
@@ -980,7 +984,7 @@ const app = new Hono<AuthEnv>()
       }
 
       await startMindFullService(name);
-      return c.json({ ok: true, port: entry.port });
+      return c.json({ ok: true, port: targetPort });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to restart mind" }, 500);
     }

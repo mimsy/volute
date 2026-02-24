@@ -99,7 +99,7 @@ export async function run(args: string[]) {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform: "volute", participants }),
+        body: JSON.stringify({ platform: "volute", participants, sender }),
       },
     );
     if (!createRes.ok) {
@@ -121,6 +121,7 @@ export async function run(args: string[]) {
           uri: channelUri,
           message: message ?? "",
           images,
+          sender,
         }),
       },
     );
@@ -134,7 +135,7 @@ export async function run(args: string[]) {
     // Persist outgoing to mind_messages if sender is a registered mind
     if (mindSelf) {
       try {
-        await daemonFetch(
+        const histRes = await daemonFetch(
           urlOf(client.api.minds[":name"].history.$url({ param: { name: mindSelf } })),
           {
             method: "POST",
@@ -142,6 +143,9 @@ export async function run(args: string[]) {
             body: JSON.stringify({ channel: parsed.uri, content: message ?? "" }),
           },
         );
+        if (!histRes.ok) {
+          console.error(`Failed to persist to history: HTTP ${histRes.status}`);
+        }
       } catch (err) {
         console.error(`Failed to persist to history: ${err instanceof Error ? err.message : err}`);
       }
@@ -173,7 +177,7 @@ export async function run(args: string[]) {
     // Persist outgoing to mind_messages if sender is a registered mind
     if (process.env.VOLUTE_MIND) {
       try {
-        await daemonFetch(
+        const histRes = await daemonFetch(
           urlOf(client.api.minds[":name"].history.$url({ param: { name: mindName } })),
           {
             method: "POST",
@@ -181,6 +185,9 @@ export async function run(args: string[]) {
             body: JSON.stringify({ channel: channelUri, content: message ?? "" }),
           },
         );
+        if (!histRes.ok) {
+          console.error(`Failed to persist to history: HTTP ${histRes.status}`);
+        }
       } catch (err) {
         console.error(`Failed to persist to history: ${err instanceof Error ? err.message : err}`);
       }

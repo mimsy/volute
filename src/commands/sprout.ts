@@ -65,8 +65,8 @@ export async function run(_args: string[]) {
         },
       );
       if (!installRes.ok) {
-        const data = (await installRes.json()) as { error?: string };
-        console.error(`Failed to install skill ${skillId}: ${data.error}`);
+        const data = await installRes.json().catch(() => ({ error: `HTTP ${installRes.status}` }));
+        console.error(`Failed to install skill ${skillId}: ${(data as { error?: string }).error}`);
         failedSkills.push(skillId);
       }
     }
@@ -84,8 +84,8 @@ export async function run(_args: string[]) {
       { method: "DELETE" },
     );
     if (!delRes.ok) {
-      const data = (await delRes.json()) as { error?: string };
-      console.error(`Failed to uninstall orientation skill: ${data.error}`);
+      const data = await delRes.json().catch(() => ({ error: `HTTP ${delRes.status}` }));
+      console.error(`Failed to uninstall orientation skill: ${(data as { error?: string }).error}`);
     }
   }
 
@@ -98,8 +98,8 @@ export async function run(_args: string[]) {
     { method: "POST" },
   );
   if (!sproutRes.ok) {
-    const data = (await sproutRes.json()) as { error?: string };
-    console.error(data.error ?? "Failed to update stage");
+    const data = await sproutRes.json().catch(() => ({ error: `HTTP ${sproutRes.status}` }));
+    console.error((data as { error?: string }).error ?? "Failed to update stage");
     process.exit(1);
   }
 
@@ -114,8 +114,8 @@ export async function run(_args: string[]) {
   );
 
   if (!res.ok) {
-    const data = (await res.json()) as { error?: string };
-    console.error(data.error ?? "Failed to restart after sprouting");
+    const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    console.error((data as { error?: string }).error ?? "Failed to restart after sprouting");
     process.exit(1);
   }
 

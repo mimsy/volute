@@ -61,7 +61,10 @@ export async function run(args: string[]) {
       const res = await daemonFetch(
         urlOf(client.api.minds[":name"].history.export.$url({ param: { name } })),
       );
-      if (!res.ok) throw new Error("Failed to fetch history");
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`Failed to fetch history: HTTP ${res.status}${text ? ` - ${text}` : ""}`);
+      }
       const rows = (await res.json()) as Record<string, unknown>[];
       addHistoryToArchive(zip, rows);
     } catch (err) {

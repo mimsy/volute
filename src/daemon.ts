@@ -168,7 +168,9 @@ export async function startDaemon(opts: {
   });
 
   // Clean up expired sessions (non-blocking)
-  cleanExpiredSessions().catch(() => {});
+  cleanExpiredSessions().catch((err) => {
+    log.warn("failed to clean expired sessions", log.errorData(err));
+  });
 
   log.info(`running on ${hostname}:${port}, pid ${myPid}`);
 
@@ -197,18 +199,27 @@ export async function startDaemon(opts: {
     if (shuttingDown) return;
     shuttingDown = true;
     log.info("shutting down...");
+    const safe = (label: string, fn: () => unknown) => {
+      try {
+        const result = fn();
+        if (result instanceof Promise)
+          return result.catch((err) => log.error(`shutdown: ${label} failed`, log.errorData(err)));
+      } catch (err) {
+        log.error(`shutdown: ${label} failed`, log.errorData(err));
+      }
+    };
     try {
-      stopAllWatchers();
-      stopAllActivityTrackers();
-      scheduler.stop();
-      scheduler.saveState();
-      mailPoller.stop();
-      tokenBudget.stop();
-      delivery.dispose();
-      await connectors.stopAll();
-      await manager.stopAll();
-      manager.clearCrashAttempts();
-      server.close();
+      safe("stopAllWatchers", stopAllWatchers);
+      safe("stopAllActivityTrackers", stopAllActivityTrackers);
+      safe("scheduler.stop", () => scheduler.stop());
+      safe("scheduler.saveState", () => scheduler.saveState());
+      safe("mailPoller.stop", () => mailPoller.stop());
+      safe("tokenBudget.stop", () => tokenBudget.stop());
+      safe("delivery.dispose", () => delivery.dispose());
+      await safe("connectors.stopAll", () => connectors.stopAll());
+      await safe("manager.stopAll", () => manager.stopAll());
+      safe("clearCrashAttempts", () => manager.clearCrashAttempts());
+      safe("server.close", () => server.close());
     } catch (err) {
       log.error("error during shutdown", log.errorData(err));
     } finally {

@@ -175,7 +175,9 @@ export class DeliveryManager {
           // to prevent re-delivery on daemon crash during replay
           try {
             await db.delete(deliveryQueue).where(eq(deliveryQueue.id, row.id));
-          } catch {}
+          } catch (err) {
+            dlog.warn(`failed to delete queue row ${row.id} for ${row.mind}`, log.errorData(err));
+          }
           this.deliverToMind(row.mind, row.session, payload, sessionConfig).catch((err) => {
             dlog.warn(`failed to restore delivery for ${row.mind}`, log.errorData(err));
           });

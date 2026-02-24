@@ -117,8 +117,8 @@ async function listVariants(args: string[]) {
   );
 
   if (!res.ok) {
-    const data = (await res.json()) as { error?: string };
-    console.error(data.error ?? "Failed to list variants");
+    const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    console.error((data as { error?: string }).error ?? "Failed to list variants");
     process.exit(1);
   }
 

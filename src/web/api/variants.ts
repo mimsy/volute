@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { getMindManager } from "../../lib/daemon/mind-manager.js";
 import { exec, gitExec } from "../../lib/exec.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../../lib/isolation.js";
+import log from "../../lib/logger.js";
 import { findMind, mindDir, nextPort } from "../../lib/registry.js";
 import { spawnServer } from "../../lib/spawn-server.js";
 import {
@@ -33,12 +34,17 @@ const app = new Hono<AuthEnv>()
       }),
     );
 
-    // Sync running status back to variants.json
-    const updated = results.map(({ status, ...v }) => ({
-      ...v,
-      running: status === "running",
-    }));
-    writeVariants(name, updated);
+    // Sync running status back to variants.json (best-effort)
+    try {
+      const updated = results.map(({ status, ...v }) => ({
+        ...v,
+        running: status === "running",
+      }));
+      const changed = variants.some((v, i) => v.running !== updated[i].running);
+      if (changed) writeVariants(name, updated);
+    } catch (err) {
+      log.warn(`failed to sync variant status for ${name}`, log.errorData(err));
+    }
 
     return c.json(results);
   })
