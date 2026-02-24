@@ -1,6 +1,9 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind, Site } from "../lib/api";
+import { getDisplayStatus, mindDotColor } from "../lib/format";
+import { activeMinds } from "../lib/stores.svelte";
 import ConversationList from "./ConversationList.svelte";
+import StatusBadge from "./StatusBadge.svelte";
 
 let {
   minds,
@@ -13,6 +16,8 @@ let {
   onNewChat,
   onBrowseChannels,
   onOpenMind,
+  onSelectMind,
+  onSeed,
   onSelectSite,
   onSelectPages,
   onHideConversation,
@@ -28,6 +33,8 @@ let {
   onNewChat: () => void;
   onBrowseChannels: () => void;
   onOpenMind: (mind: Mind) => void;
+  onSelectMind: (name: string) => void;
+  onSeed: () => void;
   onSelectSite: (name: string) => void;
   onSelectPages: () => void;
   onHideConversation?: (id: string) => void;
@@ -49,13 +56,31 @@ let collapsed = $state(loadCollapsed());
 
 let mindNames = $derived(new Set(minds.map((m) => m.name)));
 
-let mindConversations = $derived(
-  conversations.filter((c) => {
-    if (c.type === "channel") return false;
-    const parts = c.participants ?? [];
-    if (parts.length !== 2) return false;
-    const other = parts.find((p) => p.username !== username);
-    return other ? mindNames.has(other.username) : false;
+// Map mind name → DM conversation ID for active highlighting
+let mindDmMap = $derived(
+  new Map(
+    conversations
+      .filter((c) => {
+        if (c.type === "channel") return false;
+        const parts = c.participants ?? [];
+        if (parts.length !== 2) return false;
+        const other = parts.find((p) => p.username !== username);
+        return other ? mindNames.has(other.username) : false;
+      })
+      .map((c) => {
+        const other = c.participants!.find((p) => p.username !== username)!;
+        return [other.username, c.id] as const;
+      }),
+  ),
+);
+
+// Sort minds: active first, then running, then by name
+let sortedMinds = $derived(
+  [...minds].sort((a, b) => {
+    const aActive = activeMinds.has(a.name) ? 0 : a.status === "running" ? 1 : 2;
+    const bActive = activeMinds.has(b.name) ? 0 : b.status === "running" ? 1 : 2;
+    if (aActive !== bActive) return aActive - bActive;
+    return a.name.localeCompare(b.name);
   }),
 );
 
@@ -85,27 +110,34 @@ function toggleSection(section: Section) {
 <div class="sidebar-inner">
   <button class="sidebar-header" onclick={onHome}>Volute</button>
   <div class="sections">
-    <!-- Minds (1-on-1 DMs with minds) -->
+    <!-- Minds -->
     <div class="section">
       <div class="section-header-row">
         <button class="section-toggle" onclick={() => toggleSection("minds")}>
           <span class="toggle-icon">{collapsed.has("minds") ? "\u25B8" : "\u25BE"}</span>
           <span>Minds</span>
         </button>
-        <button class="section-add" onclick={onNewChat} title="New chat">+</button>
+        <button class="section-add" onclick={onSeed} title="Plant a seed">+</button>
       </div>
       {#if !collapsed.has("minds")}
-        <ConversationList
-          conversations={mindConversations}
-          {minds}
-          activeId={activeConversationId}
-          {username}
-          mode="dms"
-          onSelect={onSelectConversation}
-          onDelete={onDeleteConversation}
-          {onOpenMind}
-          onHide={onHideConversation}
-        />
+        <div class="mind-list">
+          {#each sortedMinds as mind}
+            {@const dmId = mindDmMap.get(mind.name)}
+            <button
+              class="mind-item"
+              class:active={dmId === activeConversationId}
+              onclick={() => onSelectMind(mind.name)}
+            >
+              <span
+                class="status-dot"
+                class:iridescent={activeMinds.has(mind.name)}
+                style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
+              ></span>
+              <span class="mind-item-name">{mind.name}</span>
+              <StatusBadge status={getDisplayStatus(mind)} />
+            </button>
+          {/each}
+        </div>
       {/if}
     </div>
 
@@ -259,6 +291,65 @@ function toggleSection(section: Section) {
   .section-add:hover {
     color: var(--text-0);
     background: var(--bg-2);
+  }
+
+  .mind-list {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .mind-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 12px 6px 26px;
+    font-size: 11px;
+    color: var(--text-1);
+    transition: background 0.1s;
+    cursor: pointer;
+    background: none;
+    text-align: left;
+    margin: 0 4px;
+    border-radius: var(--radius);
+  }
+
+  .mind-item:hover {
+    background: var(--bg-2);
+  }
+
+  .mind-item.active {
+    background: var(--bg-2);
+    color: var(--text-0);
+  }
+
+  .mind-item-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .status-dot.iridescent {
+    animation: iridescent 3s ease-in-out infinite;
+  }
+
+  @keyframes iridescent {
+    0%   { background: #4ade80; }
+    16%  { background: #60a5fa; }
+    33%  { background: #c084fc; }
+    50%  { background: #f472b6; }
+    66%  { background: #fbbf24; }
+    83%  { background: #34d399; }
+    100% { background: #4ade80; }
   }
 
   .site-list {

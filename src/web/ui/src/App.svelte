@@ -274,6 +274,8 @@ function handleResizeEnd() {
           onNewChat={() => (activeModal = "newChat")}
           onBrowseChannels={() => (activeModal = "channelBrowser")}
           onOpenMind={handleOpenMindModal}
+          onSelectMind={handleNewChatCreated}
+          onSeed={() => (activeModal = "seed")}
           onSelectSite={handleSelectSite}
           onSelectPages={handleSelectPages}
           onHideConversation={handleHideConversation}
