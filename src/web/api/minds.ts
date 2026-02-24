@@ -18,6 +18,7 @@ import {
   importPiSession,
   parseNameFromIdentity,
 } from "../../commands/import.js";
+import { broadcast } from "../../lib/activity-events.js";
 import { deleteMindUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { getConnectorManager } from "../../lib/connector-manager.js";
@@ -1603,6 +1604,8 @@ const app = new Hono<AuthEnv>()
     // Clear all typing + notify delivery manager when mind finishes processing
     if (body.type === "done") {
       getTypingMap().deleteSender(baseName);
+      // Broadcast mind_done to SSE subscribers (ephemeral — not persisted to DB)
+      broadcast({ type: "mind_done", mind: baseName, summary: "Finished processing" });
       // Notify delivery manager of session completion
       try {
         getDeliveryManager().sessionDone(baseName, body.session);

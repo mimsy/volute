@@ -33,7 +33,13 @@ export type RecentPage = {
 
 export type ActivityItem = {
   id: number;
-  type: "mind_started" | "mind_stopped" | "mind_active" | "mind_idle" | "page_updated";
+  type:
+    | "mind_started"
+    | "mind_stopped"
+    | "mind_active"
+    | "mind_idle"
+    | "mind_done"
+    | "page_updated";
   mind: string;
   summary: string;
   metadata: Record<string, unknown> | null;

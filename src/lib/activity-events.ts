@@ -3,7 +3,13 @@ import log from "./logger.js";
 import { activity } from "./schema.js";
 
 export type ActivityEvent = {
-  type: "mind_started" | "mind_stopped" | "mind_active" | "mind_idle" | "page_updated";
+  type:
+    | "mind_started"
+    | "mind_stopped"
+    | "mind_active"
+    | "mind_idle"
+    | "mind_done"
+    | "page_updated";
   mind: string;
   summary: string;
   metadata?: Record<string, unknown>;
@@ -40,9 +46,19 @@ export async function publish(event: ActivityEvent): Promise<void> {
   }
 
   const full = { ...event, id, created_at };
+  notify(full);
+}
+
+/** Broadcast to subscribers without persisting to DB. */
+export function broadcast(event: ActivityEvent): void {
+  const created_at = event.created_at ?? new Date().toISOString().replace("T", " ").slice(0, 19);
+  notify({ ...event, id: 0, created_at });
+}
+
+function notify(event: ActivityEvent & { id: number; created_at: string }): void {
   for (const cb of subscribers) {
     try {
-      cb(full);
+      cb(event);
     } catch (err) {
       log.error("[activity-events] subscriber threw:", log.errorData(err));
       subscribers.delete(cb);

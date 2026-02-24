@@ -98,7 +98,8 @@ function handleSSEMessage(line: string) {
     data.activity = [item, ...data.activity].slice(0, 50);
     // Track real-time active/idle state
     if (item.type === "mind_active") activeMinds.add(item.mind);
-    if (item.type === "mind_idle" || item.type === "mind_stopped") activeMinds.delete(item.mind);
+    if (item.type === "mind_idle" || item.type === "mind_stopped" || item.type === "mind_done")
+      activeMinds.delete(item.mind);
 
     // Refresh minds on status changes
     if (
@@ -122,10 +123,6 @@ function handleSSEMessage(line: string) {
     }
   } else if (parsed.event === "conversation") {
     const { event: _, conversationId, ...msgEvent } = parsed;
-    // Mind finished responding — clear active state
-    if (msgEvent.senderName && data.minds.some((m) => m.name === msgEvent.senderName)) {
-      activeMinds.delete(msgEvent.senderName);
-    }
     const conv = data.conversations.find((c) => c.id === conversationId);
     if (conv && msgEvent.type === "message") {
       // Extract text from content blocks
