@@ -62,6 +62,11 @@ export const data = $state({
   connectionOk: true,
 });
 
+// --- Real-time mind activity ---
+
+/** Minds that are currently processing (between mind_active and mind_idle SSE events). */
+export const activeMinds = new SvelteSet<string>();
+
 // --- Activity SSE ---
 
 let sseController: AbortController | null = null;
@@ -90,6 +95,10 @@ function handleSSEMessage(line: string) {
   } else if (parsed.event === "activity") {
     const { event: _, ...item } = parsed;
     data.activity = [item, ...data.activity].slice(0, 50);
+    // Track real-time active/idle state
+    if (item.type === "mind_active") activeMinds.add(item.mind);
+    if (item.type === "mind_idle" || item.type === "mind_stopped") activeMinds.delete(item.mind);
+
     // Refresh minds on status changes
     if (
       item.type === "mind_started" ||
