@@ -4,6 +4,8 @@ import { voluteHome } from "./registry.js";
 
 type DaemonConfig = { port: number; hostname?: string; token?: string };
 
+// This module is CLI-only (imported by src/commands/). process.exit() is intentional —
+// CLI commands should terminate immediately with a clear error when the daemon is unreachable.
 function readDaemonConfig(): DaemonConfig {
   const configPath = resolve(voluteHome(), "daemon.json");
   if (!existsSync(configPath)) {

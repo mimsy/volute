@@ -480,7 +480,8 @@ export class DeliveryManager {
       return;
     }
 
-    // Persist to DB
+    // Persist to DB (fire-and-forget): the in-memory buffer is primary for batches,
+    // DB persistence is for crash recovery only. Gated messages await because DB is their only store.
     this.persistToQueue(mindName, session, payload).catch((err) => {
       dlog.warn(`failed to persist batch message for ${mindName}/${session}`, log.errorData(err));
     });

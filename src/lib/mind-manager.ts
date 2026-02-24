@@ -218,6 +218,9 @@ export class MindManager {
     this.pendingContext.set(name, context);
   }
 
+  /** Deliver pending context (merge info, sprout, restart) directly to the mind via HTTP.
+   *  Intentionally bypasses DeliveryManager — these are system messages that should not be
+   *  routed, gated, or batched. */
   private async deliverPendingContext(name: string): Promise<void> {
     const context = this.pendingContext.get(name);
     if (!context) return;
