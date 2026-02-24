@@ -14,6 +14,7 @@ Docker is the canonical path for integration testing. It gives you a clean, isol
 
 - Docker
 - `ANTHROPIC_API_KEY` environment variable
+- `OPENROUTER_API_KEY` (optional, for pi-template minds using OpenRouter models)
 
 ### Quick start
 
@@ -21,11 +22,44 @@ Docker is the canonical path for integration testing. It gives you a clean, isol
 # Start a test environment
 bash test/integration-setup.sh
 
-# ... interact with minds via the API or dashboard ...
+# The setup script prints a shorthand for running volute commands:
+#   docker exec -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY <container> volute ...
+
+# Seed a mind and wait for its response
+docker exec -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY <container> \
+  volute seed my-mind --template claude --model claude-sonnet-4-6
+
+docker exec <container> volute send @my-mind "hello, who are you?" --wait
 
 # Tear down when done
 bash test/integration-teardown.sh
 ```
+
+### Setup script
+
+`test/integration-setup.sh` automates environment setup:
+
+1. Builds the Docker image from the current working directory
+2. Starts a container with a randomized port (or `--port N`)
+3. Waits for the daemon to become healthy
+4. Creates a test user account (`tester`/`tester`, auto-admin)
+5. Sets `OPENROUTER_API_KEY` as a global env var for minds (if present)
+6. Prints connection info and CLI usage examples
+
+Options:
+
+- `--with-fixtures` — imports test mind fixtures after setup (see [Test Mind Fixtures](#test-mind-fixtures))
+- `--port N` — use a specific host port instead of random
+
+The script writes connection details to `/tmp/volute-integration.env` so the teardown script can find the container.
+
+### Teardown script
+
+`test/integration-teardown.sh` stops and removes the container.
+
+Options:
+
+- `--clean` — also removes the Docker image
 
 ### Manual setup
 
@@ -45,51 +79,72 @@ docker run -d --name volute-test \
   volute-test
 ```
 
-Wait for health:
+The `volute` CLI is available inside the container:
 
 ```sh
-curl -sf http://localhost:14200/api/health
+docker exec volute-test volute status
 ```
 
-Read the daemon token for API access:
+## CLI Usage
+
+All `volute` commands work inside the container. The general pattern:
 
 ```sh
-TOKEN=$(docker exec volute-test node -e \
-  "process.stdout.write(JSON.parse(require('fs').readFileSync('/data/daemon.json','utf8')).token)")
+docker exec -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY <container> volute <command>
 ```
 
-Make API calls (`/api/health` is unauthenticated; all other endpoints require the Bearer token and Origin header):
+The `ANTHROPIC_API_KEY` is needed for commands that create or start minds (it gets passed to the mind process). For read-only commands like `status`, `history`, or `mind list`, you can omit it.
+
+### Sending messages with `--wait`
+
+`volute send --wait` sends a message to a mind and streams the response back to your terminal:
 
 ```sh
-curl -s -H "Authorization: Bearer $TOKEN" \
-  -H "Origin: http://127.0.0.1:4200" \
-  http://localhost:14200/api/minds
+docker exec <container> volute send @my-mind "what are you thinking about?" --wait
 ```
 
-### Setup script
+This connects to the mind's event stream, prints response text as it arrives, and exits when the mind finishes processing. Default timeout is 120 seconds; override with `--timeout <ms>`.
 
-`test/integration-setup.sh` automates all of the above:
+Without `--wait`, the command returns immediately after the message is delivered.
 
-1. Builds the image from the current working directory
-2. Starts a container with a randomized port
-3. Waits for the daemon to become healthy
-4. Extracts the daemon token
-5. Prints connection info (port, token, example curl commands)
+### Example session
 
-Options:
+```sh
+# Load container name from setup
+source /tmp/volute-integration.env
+V="docker exec -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY $CONTAINER volute"
 
-- `--with-fixtures` — imports test mind fixtures after setup (see [Test Mind Fixtures](#test-mind-fixtures))
-- `--port N` — use a specific host port instead of random
+# Seed two minds with different templates
+$V seed aria --template claude --model claude-sonnet-4-6
+$V seed kimi --template pi --model "openrouter:moonshotai/kimi-k2.5"
 
-The script writes connection details to `/tmp/volute-integration.env` so the teardown script can find the container.
+# Talk to them and see their responses
+docker exec $CONTAINER volute send @aria "tell me about yourself" --wait
+docker exec $CONTAINER volute send @kimi "what interests you?" --wait
 
-### Teardown script
+# Check their files
+docker exec $CONTAINER cat /minds/aria/home/SOUL.md
+docker exec $CONTAINER cat /minds/kimi/home/SOUL.md
 
-`test/integration-teardown.sh` stops and removes the container.
+# Sprout them once they've developed identity
+docker exec -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY $CONTAINER volute sprout --mind aria
+docker exec -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY $CONTAINER volute sprout --mind kimi
 
-Options:
+# Check status
+docker exec $CONTAINER volute status
+```
 
-- `--clean` — also removes the Docker image
+## Testing via the Web Dashboard
+
+The setup script creates a test user (`tester`/`tester`) with admin access. Open the dashboard at the URL printed by the setup script (e.g., `http://localhost:15432`).
+
+The dashboard is useful for:
+- Real-time chat with streaming responses
+- Viewing mind logs and file changes
+- Testing the dashboard UI itself
+- Multi-mind conversations
+
+For scripted or automated testing, prefer the CLI.
 
 ## Test Mind Fixtures
 
@@ -99,19 +154,19 @@ Each fixture is a mind's `home/` directory — the identity layer (SOUL.md, MEMO
 
 ### Using fixtures
 
-Inside a running test container:
+Inside a running test container (after `source /tmp/volute-integration.env`):
 
 ```sh
 # Create the mind (sets up project structure)
 docker exec -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" \
-  volute-test node dist/cli.js mind create echo
+  $CONTAINER volute mind create echo
 
 # Overlay with fixture identity
 docker cp test/fixtures/minds/echo/home/. \
-  volute-test:/minds/echo/home/
+  $CONTAINER:/minds/echo/home/
 
 # Fix ownership (required for user isolation)
-docker exec volute-test chown -R mind-echo:mind-echo /minds/echo/home/
+docker exec $CONTAINER chown -R mind-echo:mind-echo /minds/echo/home/
 ```
 
 The `--with-fixtures` flag on the setup script does this automatically for all fixtures in the directory.
@@ -119,10 +174,11 @@ The `--with-fixtures` flag on the setup script does this automatically for all f
 ### Creating new fixtures
 
 1. Start a test environment (`bash test/integration-setup.sh`)
-2. Create and interact with a mind until it has a distinct personality
-3. Copy its home directory out: `docker cp volute-test:/minds/<name>/home test/fixtures/minds/<name>/home`
-4. Remove runtime artifacts that shouldn't be in fixtures (`.claude/` SDK state, `.config/hooks/` copied from template, `.config/scripts/`, `.config/prompts.json`, `.config/routes.json`)
-5. Keep: `SOUL.md`, `MEMORY.md`, `memory/journal/`, any files the mind created in `home/`
+2. Load the container name: `source /tmp/volute-integration.env`
+3. Create and interact with a mind until it has a distinct personality
+4. Copy its home directory out: `docker cp $CONTAINER:/minds/<name>/home test/fixtures/minds/<name>/home`
+5. Remove runtime artifacts that shouldn't be in fixtures (`.claude/` SDK state, `.config/hooks/` copied from template, `.config/scripts/`, `.config/prompts.json`, `.config/routes.json`)
+6. Keep: `SOUL.md`, `MEMORY.md`, `memory/journal/`, any files the mind created in `home/`
 
 ### Maintenance
 
@@ -147,31 +203,6 @@ If template changes break the home directory contract, fixtures may need updatin
 | Fixture import | When you need minds with existing personality/history |
 | `mind upgrade` | Testing template changes |
 | Connector setup | Testing Discord/Slack/Telegram integration |
-
-### Creating a mind and sending a message
-
-Replace `$HOST_PORT` and `$TOKEN` with values from the setup script output (or `source /tmp/volute-integration.env`).
-
-```sh
-# Create
-docker exec -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" \
-  volute-test node dist/cli.js mind create test-mind
-
-# Start
-curl -sf -X POST -H "Authorization: Bearer $TOKEN" \
-  -H "Origin: http://127.0.0.1:4200" \
-  http://localhost:$HOST_PORT/api/minds/test-mind/start
-
-# Wait for the mind to reach "running" status before sending messages.
-# See test/docker-e2e.sh for the poll_until pattern.
-
-# Send a message
-curl -sf -X POST -H "Authorization: Bearer $TOKEN" \
-  -H "Origin: http://127.0.0.1:4200" \
-  -H "Content-Type: application/json" \
-  -d '{"content":[{"type":"text","text":"I just added a new feature — try exploring your memory directory and tell me what you find."}],"channel":"test","sender":"developer"}' \
-  http://localhost:$HOST_PORT/api/minds/test-mind/message
-```
 
 ## Interaction Guidelines
 

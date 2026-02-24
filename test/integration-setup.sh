@@ -79,10 +79,14 @@ fi
 rm -f "$BUILD_LOG"
 echo "  Image: $IMAGE"
 
+# Collect API key env vars to pass to container
+ENV_ARGS=(-e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
+[[ -n "${OPENROUTER_API_KEY:-}" ]] && ENV_ARGS+=(-e "OPENROUTER_API_KEY=$OPENROUTER_API_KEY")
+
 echo "Starting container on port $HOST_PORT..."
 if ! docker run -d --name "$CONTAINER" \
   -p "$HOST_PORT:4200" \
-  -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" \
+  "${ENV_ARGS[@]}" \
   "$IMAGE" >/dev/null; then
   echo "Error: failed to start container (port $HOST_PORT may be in use)" >&2
   exit 1
@@ -127,6 +131,26 @@ if [[ -z "$TOKEN" ]]; then
   exit 1
 fi
 
+# Create a test user account (first user auto-becomes admin)
+echo "Creating test user account..."
+REGISTER_RESP=$(curl -sf -X POST \
+  -H "Content-Type: application/json" \
+  -H "Origin: http://127.0.0.1:4200" \
+  -d '{"username":"tester","password":"tester"}' \
+  "http://localhost:$HOST_PORT/api/auth/register" 2>&1) || true
+
+if echo "$REGISTER_RESP" | grep -q '"role":"admin"'; then
+  echo "  User 'tester' created (admin)"
+else
+  echo "  Warning: user creation response: $REGISTER_RESP" >&2
+fi
+
+# Set OPENROUTER_API_KEY as a global env var if present
+if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
+  docker exec "$CONTAINER" node dist/cli.js env set OPENROUTER_API_KEY "$OPENROUTER_API_KEY" >/dev/null 2>&1
+  echo "  OPENROUTER_API_KEY set for minds"
+fi
+
 # Save connection info (restricted permissions, quoted values)
 (umask 077; cat > "$ENV_FILE" <<EOF
 CONTAINER='$CONTAINER'
@@ -145,7 +169,7 @@ if [[ "$WITH_FIXTURES" == "true" ]]; then
       name=$(basename "$fixture_dir")
       echo "Importing fixture: $name"
       if ! docker exec -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" "$CONTAINER" \
-          node dist/cli.js mind create "$name" 2>&1; then
+          volute mind create "$name" 2>&1; then
         echo "Error: failed to create mind '$name' in container" >&2
         exit 1
       fi
@@ -166,25 +190,27 @@ fi
 
 SETUP_COMPLETE=true
 
+# Helper alias for running volute commands inside the container
+VEXEC="docker exec -e ANTHROPIC_API_KEY=\$ANTHROPIC_API_KEY $CONTAINER volute"
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Integration environment ready"
 echo ""
 echo "  Port:      $HOST_PORT"
-echo "  Token:     $TOKEN"
 echo "  Container: $CONTAINER"
-echo "  Dashboard: http://localhost:$HOST_PORT"
+echo "  Dashboard: http://localhost:$HOST_PORT (login: tester/tester)"
 echo ""
-echo "Example API calls:"
+echo "CLI usage (run volute commands inside the container):"
 echo ""
-echo "  # List minds"
-echo "  curl -s -H 'Authorization: Bearer $TOKEN' \\"
-echo "    -H 'Origin: http://127.0.0.1:4200' \\"
-echo "    http://localhost:$HOST_PORT/api/minds"
+echo "  # Shorthand"
+echo "  $VEXEC status"
 echo ""
-echo "  # Create a mind"
-echo "  docker exec -e ANTHROPIC_API_KEY=\$ANTHROPIC_API_KEY \\"
-echo "    $CONTAINER node dist/cli.js mind create test-mind"
+echo "  # Seed a mind"
+echo "  $VEXEC seed my-mind --template claude --model claude-sonnet-4-6"
+echo ""
+echo "  # Send a message and wait for the response"
+echo "  $VEXEC send @my-mind \"hello, who are you?\" --wait"
 echo ""
 echo "Teardown: bash test/integration-teardown.sh"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
