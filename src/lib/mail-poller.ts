@@ -1,5 +1,5 @@
+import { deliverMessage } from "./delivery/message-delivery.js";
 import log from "./logger.js";
-import { deliverMessage } from "./message-delivery.js";
 import { findMind } from "./registry.js";
 import { readSystemsConfig, type SystemsConfig } from "./systems-config.js";
 

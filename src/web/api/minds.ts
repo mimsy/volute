@@ -26,8 +26,8 @@ import { consolidateMemory } from "../../lib/consolidate.js";
 import { addMessage } from "../../lib/conversations.js";
 import { convertSession } from "../../lib/convert-session.js";
 import { getDb } from "../../lib/db.js";
-import { getDeliveryManager } from "../../lib/delivery-manager.js";
-import { extractTextContent } from "../../lib/delivery-router.js";
+import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
+import { extractTextContent } from "../../lib/delivery/delivery-router.js";
 import { exec, gitExec } from "../../lib/exec.js";
 import {
   generateIdentity,

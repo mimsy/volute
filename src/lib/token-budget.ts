@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { deliverMessage } from "./delivery/message-delivery.js";
 import log from "./logger.js";
-import { deliverMessage } from "./message-delivery.js";
 import { stateDir } from "./registry.js";
 
 const tlog = log.child("token-budget");

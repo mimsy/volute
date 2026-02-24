@@ -1,9 +1,9 @@
-import { getDb } from "./db.js";
+import { getDb } from "../db.js";
+import log from "../logger.js";
+import { findMind } from "../registry.js";
+import { mindHistory } from "../schema.js";
 import { getDeliveryManager } from "./delivery-manager.js";
 import { type DeliveryPayload, extractTextContent } from "./delivery-router.js";
-import log from "./logger.js";
-import { findMind } from "./registry.js";
-import { mindHistory } from "./schema.js";
 
 const dlog = log.child("delivery");
 

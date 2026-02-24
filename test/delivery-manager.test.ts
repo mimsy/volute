@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { DeliveryManager } from "../src/lib/delivery-manager.js";
-import type { RoutingConfig } from "../src/lib/delivery-router.js";
-import { clearConfigCache } from "../src/lib/delivery-router.js";
+import { DeliveryManager } from "../src/lib/delivery/delivery-manager.js";
+import type { RoutingConfig } from "../src/lib/delivery/delivery-router.js";
+import { clearConfigCache } from "../src/lib/delivery/delivery-router.js";
 import { addMind, removeMind } from "../src/lib/registry.js";
 
 function createMindWithRoutes(config: RoutingConfig | object): string {

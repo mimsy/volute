@@ -1,5 +1,10 @@
 import { and, eq, sql } from "drizzle-orm";
-import { getDb } from "./db.js";
+import { getDb } from "../db.js";
+import log from "../logger.js";
+import { findMind } from "../registry.js";
+import { deliveryQueue } from "../schema.js";
+import { getTypingMap, publishTypingForChannels } from "../typing.js";
+import { findVariant } from "../variants.js";
 import {
   type DeliveryPayload,
   extractTextContent,
@@ -10,11 +15,6 @@ import {
   resolveDeliveryMode,
   resolveRoute,
 } from "./delivery-router.js";
-import log from "./logger.js";
-import { findMind } from "./registry.js";
-import { deliveryQueue } from "./schema.js";
-import { getTypingMap, publishTypingForChannels } from "./typing.js";
-import { findVariant } from "./variants.js";
 
 const dlog = log.child("delivery-manager");
 

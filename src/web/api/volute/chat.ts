@@ -14,8 +14,8 @@ import {
   getParticipants,
   isParticipantOrOwner,
 } from "../../../lib/conversations.js";
+import { deliverMessage } from "../../../lib/delivery/message-delivery.js";
 import log from "../../../lib/logger.js";
-import { deliverMessage } from "../../../lib/message-delivery.js";
 import { findMind } from "../../../lib/registry.js";
 import { buildVoluteSlug } from "../../../lib/slugify.js";
 import { getTypingMap } from "../../../lib/typing.js";

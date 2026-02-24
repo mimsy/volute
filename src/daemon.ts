@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { format } from "node:util";
 import { initConnectorManager } from "./lib/connector-manager.js";
-import { initDeliveryManager } from "./lib/delivery-manager.js";
+import { initDeliveryManager } from "./lib/delivery/delivery-manager.js";
 import log from "./lib/logger.js";
 import { initMailPoller } from "./lib/mail-poller.js";
 import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
