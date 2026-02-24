@@ -162,6 +162,18 @@ export async function startDaemon(opts: {
     await Promise.all(workers);
   }
 
+  // Backfill template hashes + notify minds about version updates
+  try {
+    const { backfillTemplateHashes, notifyVersionUpdate } = await import("./lib/version-notify.js");
+    backfillTemplateHashes();
+    // Fire-and-forget notification (non-blocking)
+    notifyVersionUpdate().catch((err) => {
+      log.warn("failed to send version update notifications", log.errorData(err));
+    });
+  } catch (err) {
+    log.warn("failed to initialize version notifications", log.errorData(err));
+  }
+
   // Restore delivery queue from DB (non-blocking)
   delivery.restoreFromDb().catch((err) => {
     log.warn("failed to restore delivery queue", log.errorData(err));

@@ -248,6 +248,18 @@ const app = new Hono<AuthEnv>()
     // Remove from variants.json
     removeVariant(mindName, variantName);
 
+    // Update template hash after upgrade merge
+    if (variantName === "upgrade") {
+      try {
+        const { computeTemplateHash } = await import("../../lib/template-hash.js");
+        const { setMindTemplateHash } = await import("../../lib/registry.js");
+        const tmpl = entry.template ?? "claude";
+        setMindTemplateHash(mindName, computeTemplateHash(tmpl));
+      } catch (err) {
+        console.error(`[daemon] failed to update template hash for ${mindName}:`, err);
+      }
+    }
+
     // Fix ownership before npm install so it runs as the mind user
     chownMindDir(projectRoot, mindName);
 

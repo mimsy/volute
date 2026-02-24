@@ -75,6 +75,7 @@ import {
   readRegistry,
   removeMind,
   setMindStage,
+  setMindTemplateHash,
   stateDir,
   validateMindName,
 } from "../../lib/registry.js";
@@ -90,6 +91,7 @@ import {
   listFiles,
   type TemplateManifest,
 } from "../../lib/template.js";
+import { computeTemplateHash } from "../../lib/template-hash.js";
 import { getTypingMap, publishTypingForChannels } from "../../lib/typing.js";
 import {
   addVariant,
@@ -365,6 +367,11 @@ async function importFromFullArchive(
     // Assign port and register
     const port = nextPort();
     addMind(name, port, manifest.stage, manifest.template);
+    try {
+      setMindTemplateHash(name, computeTemplateHash(manifest.template));
+    } catch (err) {
+      log.warn(`failed to set template hash for ${name}`, log.errorData(err));
+    }
 
     // Set up per-mind user isolation
     const homeDir = resolve(dest, "home");
@@ -682,6 +689,11 @@ const app = new Hono<AuthEnv>()
 
       const port = nextPort();
       addMind(name, port, body.stage, template);
+      try {
+        setMindTemplateHash(name, computeTemplateHash(template));
+      } catch (err) {
+        log.warn(`failed to set template hash for ${name}`, log.errorData(err));
+      }
 
       // Set up per-mind user isolation (no-ops if VOLUTE_ISOLATION !== "user")
       const homeDir = resolve(dest, "home");
@@ -875,6 +887,11 @@ const app = new Hono<AuthEnv>()
       // Assign port and register
       const port = nextPort();
       addMind(name, port, undefined, template);
+      try {
+        setMindTemplateHash(name, computeTemplateHash(template));
+      } catch (err) {
+        log.warn(`failed to set template hash for ${name}`, log.errorData(err));
+      }
 
       // Set up per-mind user isolation (no-ops if VOLUTE_ISOLATION !== "user")
       const homeDir = resolve(dest, "home");

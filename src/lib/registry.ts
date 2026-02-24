@@ -58,6 +58,7 @@ export type MindEntry = {
   running: boolean;
   stage?: "seed" | "sprouted";
   template?: string;
+  templateHash?: string;
 };
 
 export function ensureVoluteHome() {
@@ -124,6 +125,15 @@ export function setMindStage(name: string, stage: "seed" | "sprouted") {
   const entry = entries.find((e) => e.name === name);
   if (entry) {
     entry.stage = stage;
+    writeRegistry(entries);
+  }
+}
+
+export function setMindTemplateHash(name: string, hash: string) {
+  const entries = readRegistry();
+  const entry = entries.find((e) => e.name === name);
+  if (entry) {
+    entry.templateHash = hash;
     writeRegistry(entries);
   }
 }
