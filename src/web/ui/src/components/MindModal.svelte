@@ -5,7 +5,6 @@ import { data } from "../lib/stores.svelte";
 import History from "./History.svelte";
 import MindInfo from "./MindInfo.svelte";
 import MindSkills from "./MindSkills.svelte";
-import Modal from "./Modal.svelte";
 import StatusBadge from "./StatusBadge.svelte";
 import TabBar from "./TabBar.svelte";
 import VariantList from "./VariantList.svelte";
@@ -16,7 +15,7 @@ const TABS = ["Info", "History", "Skills", "Variants", "Connections"] as const;
 type Tab = (typeof TABS)[number];
 
 let mind = $derived(data.minds.find((m) => m.name === initialMind.name) ?? initialMind);
-let tab = $state<Tab>("Info");
+let tab = $state<Tab>("History");
 let error = $state("");
 let actionLoading = $state(false);
 
@@ -57,37 +56,37 @@ const connectedChannels = $derived(
 );
 </script>
 
-<Modal size="full" {onClose}>
-  <div class="modal-header">
-    <div class="header-left">
-      <span class="mind-name">{mind.name}</span>
-      <StatusBadge status={getDisplayStatus(mind)} />
-      {#if mind.status === "stopped"}
-        <button
-          onclick={handleStart}
-          disabled={actionLoading}
-          class="action-btn start-btn"
-          style:opacity={actionLoading ? 0.5 : 1}
-        >
-          {actionLoading ? "Starting..." : "Start"}
-        </button>
-      {:else}
-        <button
-          onclick={handleStop}
-          disabled={actionLoading}
-          class="action-btn stop-btn"
-          style:opacity={actionLoading ? 0.5 : 1}
-        >
-          {actionLoading ? "Stopping..." : "Stop"}
-        </button>
-      {/if}
-    </div>
-    <div class="header-right">
-      <TabBar tabs={[...TABS]} active={tab} onchange={(t) => (tab = t as Tab)} />
+<div class="mind-panel">
+  <div class="panel-header">
+    <div class="header-top">
+      <div class="header-left">
+        <span class="mind-name">{mind.name}</span>
+        <StatusBadge status={getDisplayStatus(mind)} />
+        {#if mind.status === "stopped"}
+          <button
+            onclick={handleStart}
+            disabled={actionLoading}
+            class="action-btn start-btn"
+            style:opacity={actionLoading ? 0.5 : 1}
+          >
+            {actionLoading ? "Starting..." : "Start"}
+          </button>
+        {:else}
+          <button
+            onclick={handleStop}
+            disabled={actionLoading}
+            class="action-btn stop-btn"
+            style:opacity={actionLoading ? 0.5 : 1}
+          >
+            {actionLoading ? "Stopping..." : "Stop"}
+          </button>
+        {/if}
+      </div>
       <button class="close-btn" onclick={onClose}>&#x2715;</button>
     </div>
+    <TabBar tabs={[...TABS]} active={tab} onchange={(t) => (tab = t as Tab)} />
   </div>
-  <div class="modal-body">
+  <div class="panel-body">
     {#if error}
       <div class="error-msg">{error}</div>
     {/if}
@@ -129,16 +128,32 @@ const connectedChannels = $derived(
       {/if}
     {/if}
   </div>
-</Modal>
+</div>
 
 <style>
-  .modal-header {
+  .mind-panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: var(--bg-1);
+    border-left: 1px solid var(--border);
+    width: 480px;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    display: flex;
+    flex-direction: column;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .header-top {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    border-bottom: 1px solid var(--border);
-    padding: 0 16px;
-    flex-shrink: 0;
+    padding: 8px 16px 0;
   }
 
   .header-left {
@@ -153,25 +168,18 @@ const connectedChannels = $derived(
     color: var(--text-0);
   }
 
-  .header-right {
-    display: flex;
-    align-items: center;
-    gap: 0;
-  }
-
   .close-btn {
     background: none;
     color: var(--text-2);
     font-size: 14px;
     padding: 4px 8px;
-    margin-left: 8px;
   }
 
   .close-btn:hover {
     color: var(--text-0);
   }
 
-  .modal-body {
+  .panel-body {
     flex: 1;
     overflow: auto;
     padding: 16px;

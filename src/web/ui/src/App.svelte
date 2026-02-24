@@ -271,6 +271,15 @@ function handleResizeEnd() {
           onSelectPages={handleSelectPages}
         />
       </div>
+      {#if activeModal === "mind" && selectedModalMind}
+        <MindModal
+          mind={selectedModalMind}
+          onClose={() => {
+            activeModal = null;
+            selectedModalMind = null;
+          }}
+        />
+      {/if}
     </div>
     <StatusBar
       minds={data.minds}
@@ -304,15 +313,6 @@ function handleResizeEnd() {
   {/if}
   {#if activeModal === "userSettings"}
     <UserSettingsModal onClose={() => (activeModal = null)} />
-  {/if}
-  {#if activeModal === "mind" && selectedModalMind}
-    <MindModal
-      mind={selectedModalMind}
-      onClose={() => {
-        activeModal = null;
-        selectedModalMind = null;
-      }}
-    />
   {/if}
 {/if}
 
