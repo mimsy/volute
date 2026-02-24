@@ -7,6 +7,7 @@ import {
   addHistoryToArchive,
   createExportArchive,
   extractArchive,
+  isHomeOnlyArchive,
   readManifest,
 } from "../src/lib/archive.js";
 import { addMind, mindDir, removeMind, stateDir } from "../src/lib/registry.js";
@@ -72,8 +73,8 @@ describe("archive", () => {
       assert.ok(parsed.exportedAt);
     });
 
-    it("includes mind files under mind/ prefix", () => {
-      const zip = createExportArchive({ name: testMind, template: "claude" });
+    it("includes mind files under mind/ prefix with includeSrc", () => {
+      const zip = createExportArchive({ name: testMind, template: "claude", includeSrc: true });
       const entries = zip.getEntries().map((e) => e.entryName);
 
       assert.ok(entries.includes("mind/home/SOUL.md"));
@@ -215,6 +216,70 @@ describe("archive", () => {
       assert.equal(manifest.includes.history, true);
       assert.equal(manifest.includes.sessions, true);
     });
+
+    it("excludes src/ by default (home-only)", () => {
+      const zip = createExportArchive({ name: testMind, template: "claude" });
+      const entries = zip.getEntries().map((e) => e.entryName);
+
+      assert.ok(!entries.some((e) => e.includes("mind/src/")));
+      assert.ok(entries.includes("mind/home/SOUL.md"));
+      assert.ok(entries.includes("mind/home/MEMORY.md"));
+    });
+
+    it("sets format to home-only by default", () => {
+      const zip = createExportArchive({ name: testMind, template: "claude" });
+      const manifest = JSON.parse(zip.getEntry("manifest.json")!.getData().toString("utf-8"));
+
+      assert.equal(manifest.format, "home-only");
+    });
+
+    it("includes src/ with includeSrc flag", () => {
+      const zip = createExportArchive({ name: testMind, template: "claude", includeSrc: true });
+      const entries = zip.getEntries().map((e) => e.entryName);
+
+      assert.ok(entries.includes("mind/src/server.ts"));
+      const manifest = JSON.parse(zip.getEntry("manifest.json")!.getData().toString("utf-8"));
+      assert.equal(manifest.format, "full");
+    });
+
+    it("preserves stage in manifest", () => {
+      const zip = createExportArchive({ name: testMind, template: "claude", stage: "seed" });
+      const manifest = JSON.parse(zip.getEntry("manifest.json")!.getData().toString("utf-8"));
+
+      assert.equal(manifest.stage, "seed");
+    });
+  });
+
+  describe("isHomeOnlyArchive", () => {
+    it("returns true for home-only format", () => {
+      const zip = createExportArchive({ name: testMind, template: "claude" });
+      const manifest = JSON.parse(zip.getEntry("manifest.json")!.getData().toString("utf-8"));
+      assert.equal(isHomeOnlyArchive(manifest), true);
+    });
+
+    it("returns false for full format", () => {
+      const zip = createExportArchive({ name: testMind, template: "claude", includeSrc: true });
+      const manifest = JSON.parse(zip.getEntry("manifest.json")!.getData().toString("utf-8"));
+      assert.equal(isHomeOnlyArchive(manifest), false);
+    });
+
+    it("returns false for absent format (legacy archives)", () => {
+      const manifest = {
+        version: 1 as const,
+        name: "test",
+        template: "claude",
+        voluteVersion: "1.0.0",
+        exportedAt: new Date().toISOString(),
+        includes: {
+          env: false,
+          identity: false,
+          connectors: false,
+          history: false,
+          sessions: false,
+        },
+      };
+      assert.equal(isHomeOnlyArchive(manifest), false);
+    });
   });
 
   describe("addHistoryToArchive", () => {
@@ -328,6 +393,7 @@ describe("archive", () => {
       const zip = createExportArchive({
         name: testMind,
         template: "claude",
+        includeSrc: true,
         includeEnv: true,
       });
       const archivePath = resolve("/tmp", `${testMind}-extract.volute`);

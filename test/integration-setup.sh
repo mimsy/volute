@@ -164,21 +164,17 @@ EOF
 if [[ "$WITH_FIXTURES" == "true" ]]; then
   FIXTURES_DIR="$(cd "$(dirname "$0")" && pwd)/fixtures/minds"
   if [[ -d "$FIXTURES_DIR" ]]; then
-    for fixture_dir in "$FIXTURES_DIR"/*/; do
-      [[ -d "$fixture_dir/home" ]] || continue
-      name=$(basename "$fixture_dir")
+    for archive in "$FIXTURES_DIR"/*.volute; do
+      [[ -f "$archive" ]] || continue
+      name=$(basename "$archive" .volute)
       echo "Importing fixture: $name"
+      if ! docker cp "$archive" "$CONTAINER:/tmp/$name.volute"; then
+        echo "Error: failed to copy archive for '$name'" >&2
+        exit 1
+      fi
       if ! docker exec -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" "$CONTAINER" \
-          volute mind create "$name" 2>&1; then
-        echo "Error: failed to create mind '$name' in container" >&2
-        exit 1
-      fi
-      if ! docker cp "$fixture_dir/home/." "$CONTAINER:/minds/$name/home/"; then
-        echo "Error: failed to copy fixture files for '$name'" >&2
-        exit 1
-      fi
-      if ! docker exec "$CONTAINER" chown -R "mind-$name:mind-$name" "/minds/$name/home/"; then
-        echo "Error: failed to set ownership for '$name'" >&2
+          volute mind import "/tmp/$name.volute" --name "$name" 2>&1; then
+        echo "Error: failed to import mind '$name'" >&2
         exit 1
       fi
       echo "  $name imported"

@@ -18,6 +18,7 @@ import {
   importPiSession,
   parseNameFromIdentity,
 } from "../../commands/import.js";
+import { type ExportManifest, isHomeOnlyArchive } from "../../lib/archive.js";
 import { deleteMindUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { consolidateMemory } from "../../lib/consolidate.js";
@@ -300,7 +301,7 @@ async function importFromArchive(
   c: any,
   tempDir: string,
   nameOverride: string | undefined,
-  manifest: import("../../lib/archive.js").ExportManifest,
+  manifest: ExportManifest,
 ) {
   const extractedMindDir = resolve(tempDir, "mind");
   if (!existsSync(extractedMindDir)) {
@@ -311,6 +312,22 @@ async function importFromArchive(
     return c.json({ error: "Invalid archive manifest" }, 400);
   }
 
+  // Route home-only archives through the template-composed import path
+  if (isHomeOnlyArchive(manifest)) {
+    return importFromHomeOnlyArchive(c, tempDir, extractedMindDir, nameOverride, manifest);
+  }
+
+  return importFromFullArchive(c, tempDir, extractedMindDir, nameOverride, manifest);
+}
+
+/** Import a full archive (contains src/, home/, .mind/) — original behavior. */
+async function importFromFullArchive(
+  c: any,
+  tempDir: string,
+  extractedMindDir: string,
+  nameOverride: string | undefined,
+  manifest: ExportManifest,
+) {
   const name = nameOverride ?? manifest.name;
 
   const nameErr = validateMindName(name);
@@ -358,56 +375,9 @@ async function importFromArchive(
     // Install dependencies
     await npmInstallAsMind(dest, name);
 
-    // Import history rows into DB (per-line to avoid losing all rows on a single bad line)
-    const historyJsonl = resolve(tempDir, "history.jsonl");
-    if (existsSync(historyJsonl)) {
-      try {
-        const db = await getDb();
-        const lines = readFileSync(historyJsonl, "utf-8").trim().split("\n");
-        let imported = 0;
-        let failed = 0;
-        for (const line of lines) {
-          if (!line) continue;
-          try {
-            const row = JSON.parse(line);
-            if (!row.type) {
-              failed++;
-              continue;
-            }
-            await db.insert(mindHistory).values({
-              mind: name,
-              channel: row.channel ?? null,
-              session: row.session ?? null,
-              sender: row.sender ?? null,
-              message_id: row.message_id ?? null,
-              type: row.type,
-              content: row.content ?? null,
-              metadata: row.metadata ?? null,
-              created_at: row.created_at ?? new Date().toISOString(),
-            });
-            imported++;
-          } catch (lineErr) {
-            log.warn("Failed to import history line", log.errorData(lineErr));
-            failed++;
-          }
-        }
-        if (failed > 0) {
-          log.warn(`History import: ${imported} imported, ${failed} failed`);
-        }
-      } catch (err) {
-        log.error("Failed to open database for history import", log.errorData(err));
-      }
-    }
-
-    // Import sessions — copy JSONL files to .mind/sessions/
-    const sessionsDir = resolve(tempDir, "sessions");
-    if (existsSync(sessionsDir)) {
-      const destSessions = resolve(dest, ".mind/sessions");
-      mkdirSync(destSessions, { recursive: true });
-      for (const file of readdirSync(sessionsDir)) {
-        cpSync(resolve(sessionsDir, file), resolve(destSessions, file));
-      }
-    }
+    // Import history and sessions
+    await importHistoryFromArchive(name, tempDir);
+    await importSessionsFromArchive(dest, tempDir);
 
     // git init if .git/ doesn't exist
     if (!existsSync(resolve(dest, ".git"))) {
@@ -436,6 +406,208 @@ async function importFromArchive(
     }
     rmSync(tempDir, { recursive: true, force: true });
     return c.json({ error: err instanceof Error ? err.message : "Failed to import mind" }, 500);
+  }
+}
+
+/** Import a home-only archive by composing a fresh template and overlaying mind-owned files. */
+async function importFromHomeOnlyArchive(
+  c: any,
+  tempDir: string,
+  extractedMindDir: string,
+  nameOverride: string | undefined,
+  manifest: ExportManifest,
+) {
+  const name = nameOverride ?? manifest.name;
+
+  const nameErr = validateMindName(name);
+  if (nameErr) return c.json({ error: nameErr }, 400);
+
+  if (findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
+
+  ensureVoluteHome();
+  const dest = mindDir(name);
+  if (existsSync(dest)) return c.json({ error: "Mind directory already exists" }, 409);
+
+  const templatesRoot = findTemplatesRoot();
+  const { composedDir, manifest: templateManifest } = composeTemplate(
+    templatesRoot,
+    manifest.template,
+  );
+
+  try {
+    // 1. Compose fresh template
+    copyTemplateToDir(composedDir, dest, name, templateManifest);
+    applyInitFiles(dest);
+
+    // 2. Overlay home/ from archive (archive files win over template defaults)
+    const extractedHome = resolve(extractedMindDir, "home");
+    if (existsSync(extractedHome)) {
+      cpSync(extractedHome, resolve(dest, "home"), { recursive: true });
+    }
+
+    // 3. Overlay .mind/ from archive (preserves connectors, schedules, etc.)
+    const extractedMindInternal = resolve(extractedMindDir, ".mind");
+    if (existsSync(extractedMindInternal)) {
+      cpSync(extractedMindInternal, resolve(dest, ".mind"), { recursive: true });
+    }
+
+    // 4. Generate new identity if not included in archive
+    const identityDir = resolve(dest, ".mind/identity");
+    let publicKeyPem: string;
+    if (!manifest.includes.identity || !existsSync(resolve(identityDir, "private.pem"))) {
+      ({ publicKeyPem } = generateIdentity(dest));
+    } else {
+      publicKeyPem = readFileSync(resolve(identityDir, "public.pem"), "utf-8");
+    }
+
+    // 5. Stamp prompts.json only if archive didn't provide one
+    const promptsPath = resolve(dest, "home/.config/prompts.json");
+    if (!existsSync(promptsPath)) {
+      const mindPrompts = await getMindPromptDefaults();
+      writeFileSync(promptsPath, `${JSON.stringify(mindPrompts, null, 2)}\n`);
+    }
+
+    // 6. Copy state files (channels.json, env.json) to centralized state dir
+    const state = stateDir(name);
+    mkdirSync(state, { recursive: true });
+
+    const channelsJson = resolve(tempDir, "state/channels.json");
+    if (existsSync(channelsJson)) {
+      cpSync(channelsJson, resolve(state, "channels.json"));
+    }
+
+    const envJson = resolve(tempDir, "state/env.json");
+    if (existsSync(envJson)) {
+      cpSync(envJson, resolve(state, "env.json"));
+    }
+
+    // 7. Register with correct stage and template
+    const port = nextPort();
+    addMind(name, port, manifest.stage, manifest.template);
+
+    // 8. User isolation setup
+    const homeDir = resolve(dest, "home");
+    ensureVoluteGroup();
+    createMindUser(name, homeDir);
+    chownMindDir(dest, name);
+
+    // 9. npm install
+    await npmInstallAsMind(dest, name);
+
+    // 10. Git init with template branch (enables upgrades)
+    try {
+      const env = isIsolationEnabled() ? { ...process.env, HOME: homeDir } : undefined;
+      await gitExec(["init"], { cwd: dest, mindName: name, env });
+      await configureGitIdentity(name, { cwd: dest, mindName: name, env });
+      await initTemplateBranch(dest, composedDir, templateManifest, name, env);
+    } catch (err) {
+      log.error(`git setup failed for imported mind ${name}`, log.errorData(err));
+      rmSync(resolve(dest, ".git"), { recursive: true, force: true });
+    }
+
+    // 11. Shared worktree setup
+    try {
+      await addSharedWorktree(name, dest);
+    } catch (err) {
+      log.warn(`failed to add shared worktree for ${name}`, log.errorData(err));
+    }
+
+    // 12. Install skills based on stage
+    const skillSet = manifest.stage === "seed" ? SEED_SKILLS : STANDARD_SKILLS;
+    for (const skillId of skillSet) {
+      try {
+        await installSkill(name, dest, skillId);
+      } catch (err) {
+        log.error(`failed to install skill ${skillId} for ${name}`, log.errorData(err));
+      }
+    }
+
+    // 13. Import history and sessions from archive
+    await importHistoryFromArchive(name, tempDir);
+    await importSessionsFromArchive(dest, tempDir);
+
+    // 14. Fix ownership, publish public key
+    chownMindDir(dest, name);
+    publishPublicKey(name, publicKeyPem).catch((err: unknown) =>
+      log.warn(`failed to publish key for ${name}`, { error: (err as Error).message }),
+    );
+
+    // 15. Clean up
+    rmSync(tempDir, { recursive: true, force: true });
+
+    return c.json({
+      ok: true,
+      name,
+      port,
+      stage: manifest.stage ?? "sprouted",
+      message: `Imported mind: ${name} (port ${port})`,
+    });
+  } catch (err) {
+    if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
+    try {
+      removeMind(name);
+    } catch (cleanupErr) {
+      log.error(`Failed to clean up registry for ${name}`, log.errorData(cleanupErr));
+    }
+    rmSync(tempDir, { recursive: true, force: true });
+    return c.json({ error: err instanceof Error ? err.message : "Failed to import mind" }, 500);
+  } finally {
+    rmSync(composedDir, { recursive: true, force: true });
+  }
+}
+
+/** Import history rows from archive into the database. */
+async function importHistoryFromArchive(name: string, tempDir: string): Promise<void> {
+  const historyJsonl = resolve(tempDir, "history.jsonl");
+  if (!existsSync(historyJsonl)) return;
+
+  try {
+    const db = await getDb();
+    const lines = readFileSync(historyJsonl, "utf-8").trim().split("\n");
+    let imported = 0;
+    let failed = 0;
+    for (const line of lines) {
+      if (!line) continue;
+      try {
+        const row = JSON.parse(line);
+        if (!row.type) {
+          failed++;
+          continue;
+        }
+        await db.insert(mindHistory).values({
+          mind: name,
+          channel: row.channel ?? null,
+          session: row.session ?? null,
+          sender: row.sender ?? null,
+          message_id: row.message_id ?? null,
+          type: row.type,
+          content: row.content ?? null,
+          metadata: row.metadata ?? null,
+          created_at: row.created_at ?? new Date().toISOString(),
+        });
+        imported++;
+      } catch (lineErr) {
+        log.warn("Failed to import history line", log.errorData(lineErr));
+        failed++;
+      }
+    }
+    if (failed > 0) {
+      log.warn(`History import: ${imported} imported, ${failed} failed`);
+    }
+  } catch (err) {
+    log.error("Failed to open database for history import", log.errorData(err));
+  }
+}
+
+/** Import session files from archive into .mind/sessions/. */
+async function importSessionsFromArchive(dest: string, tempDir: string): Promise<void> {
+  const sessionsDir = resolve(tempDir, "sessions");
+  if (!existsSync(sessionsDir)) return;
+
+  const destSessions = resolve(dest, ".mind/sessions");
+  mkdirSync(destSessions, { recursive: true });
+  for (const file of readdirSync(sessionsDir)) {
+    cpSync(resolve(sessionsDir, file), resolve(destSessions, file));
   }
 }
 
@@ -602,7 +774,7 @@ const app = new Hono<AuthEnv>()
       template?: string;
       sessionPath?: string;
       archivePath?: string;
-      manifest?: import("../../lib/archive.js").ExportManifest;
+      manifest?: ExportManifest;
     };
     try {
       body = await c.req.json();

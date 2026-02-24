@@ -2,4 +2,11 @@ node_modules/
 dist/
 .variants/
 .mind/
+.npm/
+.local/
+.cache/
 home/shared/
+home/.claude/
+home/.claude.json*
+!home/.claude/settings.json
+!home/.claude/skills/
