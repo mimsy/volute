@@ -37,7 +37,7 @@ function handleMouseLeave() {
 >
   {@render children()}
   {#if showCard}
-    <div class="hover-card" style="pointer-events: none;">
+    <div class="hover-card">
       {#if mind.avatar}
         <img
           src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
@@ -84,6 +84,7 @@ function handleMouseLeave() {
     border-radius: var(--radius);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     white-space: nowrap;
+    pointer-events: none;
   }
 
   .avatar {

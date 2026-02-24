@@ -680,7 +680,8 @@ const app = new Hono<AuthEnv>()
 
       // Persist description to volute.json if provided
       if (body.description) {
-        const seedConfig = readVoluteConfig(dest) ?? {};
+        const seedConfig = readVoluteConfig(dest);
+        if (!seedConfig) throw new Error("Failed to read volute.json after identity generation");
         seedConfig.description = body.description;
         writeVoluteConfig(dest, seedConfig);
       }

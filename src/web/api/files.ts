@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { Hono } from "hono";
 import { findMind, mindDir } from "../../lib/registry.js";
@@ -13,8 +13,9 @@ const AVATAR_MIME: Record<string, string> = {
   ".jpeg": "image/jpeg",
   ".gif": "image/gif",
   ".webp": "image/webp",
-  ".svg": "image/svg+xml",
 };
+
+const MAX_AVATAR_SIZE = 2 * 1024 * 1024; // 2MB
 
 const app = new Hono()
   // Serve avatar image
@@ -34,9 +35,22 @@ const app = new Hono()
     const homeDir = resolve(dir, "home");
     const avatarPath = resolve(homeDir, config.avatar);
     if (!avatarPath.startsWith(homeDir)) return c.json({ error: "Invalid avatar path" }, 400);
-    if (!existsSync(avatarPath)) return c.json({ error: "Avatar file not found" }, 404);
 
-    const body = await readFile(avatarPath);
+    // Resolve symlinks and re-check containment
+    let realAvatarPath: string;
+    try {
+      const realHome = await realpath(homeDir);
+      realAvatarPath = await realpath(avatarPath);
+      if (!realAvatarPath.startsWith(realHome))
+        return c.json({ error: "Invalid avatar path" }, 400);
+    } catch {
+      return c.json({ error: "Avatar file not found" }, 404);
+    }
+
+    const fileStat = await stat(realAvatarPath);
+    if (fileStat.size > MAX_AVATAR_SIZE) return c.json({ error: "Avatar file too large" }, 400);
+
+    const body = await readFile(realAvatarPath);
     return c.body(body, 200, {
       "Content-Type": mime,
       "Cache-Control": "public, max-age=300",
