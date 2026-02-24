@@ -57,34 +57,51 @@ export class Scheduler {
 
   private tick(): void {
     const now = new Date();
+    const epochMinute = Math.floor(now.getTime() / 60000);
+    // Cache cron parse results within this tick — same cron string only parsed once
+    const cronCache = new Map<string, number>();
+    let anyFired = false;
+
     for (const [mind, schedules] of this.schedules) {
       for (const schedule of schedules) {
         if (!schedule.enabled) continue;
-        if (this.shouldFire(schedule, now, mind)) {
+        if (this.shouldFire(schedule, epochMinute, mind, cronCache)) {
+          anyFired = true;
           this.fire(mind, schedule);
         }
       }
     }
+
+    if (anyFired) this.saveState();
   }
 
-  private shouldFire(schedule: Schedule, now: Date, mind: string): boolean {
-    try {
-      const interval = CronExpressionParser.parse(schedule.cron);
-      const prev = interval.prev().toDate();
-      const epochMinute = Math.floor(now.getTime() / 60000);
-      const key = `${mind}:${schedule.id}`;
-      if (this.lastFired.get(key) === epochMinute) return false;
-      const prevMinute = Math.floor(prev.getTime() / 60000);
-      if (prevMinute === epochMinute) {
-        this.lastFired.set(key, epochMinute);
-        this.saveState();
-        return true;
+  private shouldFire(
+    schedule: Schedule,
+    epochMinute: number,
+    mind: string,
+    cronCache: Map<string, number>,
+  ): boolean {
+    const key = `${mind}:${schedule.id}`;
+    if (this.lastFired.get(key) === epochMinute) return false;
+
+    let prevMinute = cronCache.get(schedule.cron);
+    if (prevMinute === undefined) {
+      try {
+        const interval = CronExpressionParser.parse(schedule.cron);
+        const prev = interval.prev().toDate();
+        prevMinute = Math.floor(prev.getTime() / 60000);
+        cronCache.set(schedule.cron, prevMinute);
+      } catch (err) {
+        slog.warn(`invalid cron "${schedule.cron}" for ${mind}:${schedule.id}`, log.errorData(err));
+        return false;
       }
-      return false;
-    } catch (err) {
-      slog.warn(`invalid cron "${schedule.cron}" for ${mind}:${schedule.id}`, log.errorData(err));
-      return false;
     }
+
+    if (prevMinute === epochMinute) {
+      this.lastFired.set(key, epochMinute);
+      return true;
+    }
+    return false;
   }
 
   private async fire(mindName: string, schedule: Schedule): Promise<void> {

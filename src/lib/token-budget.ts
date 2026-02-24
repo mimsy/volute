@@ -27,12 +27,14 @@ type BudgetState = {
 export class TokenBudget {
   private budgets = new Map<string, BudgetState>();
   private interval: ReturnType<typeof setInterval> | null = null;
+  private dirty = new Set<string>();
 
   start(): void {
     this.interval = setInterval(() => this.tick(), 60_000);
   }
 
   stop(): void {
+    this.flush();
     if (this.interval) clearInterval(this.interval);
     this.interval = null;
   }
@@ -71,7 +73,7 @@ export class TokenBudget {
     const state = this.budgets.get(mind);
     if (!state) return;
     state.tokensUsed += inputTokens + outputTokens;
-    this.saveBudgetState(mind, state);
+    this.dirty.add(mind);
   }
 
   /** Returns current budget status. Does not mutate state — call acknowledgeWarning() after delivering a warning. */
@@ -136,7 +138,7 @@ export class TokenBudget {
         state.tokensUsed = 0;
         state.periodStart = now;
         state.warningInjected = false;
-        this.saveBudgetState(mind, state);
+        this.dirty.add(mind);
 
         const queued = this.drain(mind);
         if (queued.length > 0) {
@@ -146,6 +148,16 @@ export class TokenBudget {
         }
       }
     }
+    this.flush();
+  }
+
+  /** Flush all dirty budget states to disk. */
+  flush(): void {
+    for (const mind of this.dirty) {
+      const state = this.budgets.get(mind);
+      if (state) this.saveBudgetState(mind, state);
+    }
+    this.dirty.clear();
   }
 
   private budgetStatePath(mind: string): string {

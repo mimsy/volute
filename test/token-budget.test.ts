@@ -242,6 +242,7 @@ describe("TokenBudget", () => {
     const tb1 = new TokenBudget();
     tb1.setBudget("mind1", 10000, 60);
     tb1.recordUsage("mind1", 3000, 2000); // 5000 tokens used
+    tb1.flush();
 
     // New instance should load persisted state
     const tb2 = new TokenBudget();
@@ -249,14 +250,13 @@ describe("TokenBudget", () => {
     assert.equal(tb2.getUsage("mind1")!.tokensUsed, 5000);
   });
 
-  it("persists warningInjected flag via recordUsage", () => {
+  it("persists warningInjected flag via flush", () => {
     const tb1 = new TokenBudget();
     tb1.setBudget("mind1", 10000, 60);
-    tb1.recordUsage("mind1", 4500, 4500); // 90% — triggers save
+    tb1.recordUsage("mind1", 4500, 4500); // 90%
     assert.equal(tb1.checkBudget("mind1"), "warning");
     tb1.acknowledgeWarning("mind1");
-    // acknowledgeWarning doesn't save to disk, but a subsequent recordUsage does
-    tb1.recordUsage("mind1", 0, 0); // triggers save with warningInjected=true
+    tb1.flush();
 
     const tb2 = new TokenBudget();
     tb2.setBudget("mind1", 10000, 60);
@@ -264,14 +264,13 @@ describe("TokenBudget", () => {
     assert.equal(tb2.checkBudget("mind1"), "ok");
   });
 
-  it("persists queued messages when recordUsage triggers save", () => {
+  it("persists queued messages via flush", () => {
     const tb1 = new TokenBudget();
     tb1.setBudget("mind1", 10000, 60);
-    tb1.recordUsage("mind1", 5000, 5000); // exceed budget, triggers save
+    tb1.recordUsage("mind1", 5000, 5000); // exceed budget
     tb1.enqueue("mind1", { channel: "ch1", sender: "user1", textContent: "hello" });
     tb1.enqueue("mind1", { channel: "ch2", sender: null, textContent: "world" });
-    // enqueue doesn't save, so trigger another recordUsage to flush state
-    tb1.recordUsage("mind1", 0, 0);
+    tb1.flush();
 
     const tb2 = new TokenBudget();
     tb2.setBudget("mind1", 10000, 60);
