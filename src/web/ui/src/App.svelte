@@ -272,13 +272,15 @@ function handleResizeEnd() {
         />
       </div>
       {#if activeModal === "mind" && selectedModalMind}
-        <MindModal
-          mind={selectedModalMind}
-          onClose={() => {
-            activeModal = null;
-            selectedModalMind = null;
-          }}
-        />
+        {#key selectedModalMind.name}
+          <MindModal
+            mind={selectedModalMind}
+            onClose={() => {
+              activeModal = null;
+              selectedModalMind = null;
+            }}
+          />
+        {/key}
       {/if}
     </div>
     <StatusBar
