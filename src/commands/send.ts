@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { extname } from "node:path";
 import { getClient, urlOf } from "../lib/api-client.js";
-import { getChannelDriver, type ImageAttachment } from "../lib/channels.js";
+import type { ImageAttachment } from "../lib/channels.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { parseTarget } from "../lib/parse-target.js";
@@ -78,24 +78,14 @@ export async function run(args: string[]) {
     };
   }
 
-  const driver = getChannelDriver(parsed.platform);
-  if (!driver) {
-    console.error(`No driver for platform: ${parsed.platform}`);
-    process.exit(1);
-  }
-
+  const client = getClient();
   let channelUri = parsed.uri;
 
   if (parsed.isDM && parsed.platform === "volute") {
-    // For volute DMs (@target), create/find conversation via the volute driver
+    // For volute DMs (@target), create/find conversation via daemon
     const targetName = parsed.identifier.slice(1); // strip @
     const mindSelf = process.env.VOLUTE_MIND;
     const sender = mindSelf || userInfo().username;
-
-    if (!driver.createConversation) {
-      console.error("Volute driver does not support creating conversations");
-      process.exit(1);
-    }
 
     // When a mind sends to a non-mind (human), use the sender mind's context
     // so the conversation is created under the mind (humans aren't in the registry).
@@ -103,30 +93,47 @@ export async function run(args: string[]) {
     const contextMind = mindSelf && !targetIsMind ? mindSelf : targetName;
     const participants = mindSelf && !targetIsMind ? [targetName] : [sender];
 
-    const env: Record<string, string> = {
-      VOLUTE_MIND: contextMind,
-      VOLUTE_SENDER: sender,
-    };
-
-    try {
-      channelUri = await driver.createConversation(env, participants);
-    } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err));
+    // Create/find conversation via daemon
+    const createRes = await daemonFetch(
+      urlOf(client.api.minds[":name"].channels.create.$url({ param: { name: contextMind } })),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform: "volute", participants }),
+      },
+    );
+    if (!createRes.ok) {
+      const data = await createRes.json().catch(() => ({ error: "Unknown error" }));
+      console.error((data as { error: string }).error);
       process.exit(1);
     }
+    const { slug } = (await createRes.json()) as { slug: string };
+    channelUri = slug;
 
-    try {
-      await driver.send(env, channelUri, message ?? "", images);
-      console.log("Message sent.");
-    } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err));
+    // Send via daemon
+    const sendRes = await daemonFetch(
+      urlOf(client.api.minds[":name"].channels.send.$url({ param: { name: contextMind } })),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          platform: "volute",
+          uri: channelUri,
+          message: message ?? "",
+          images,
+        }),
+      },
+    );
+    if (!sendRes.ok) {
+      const data = await sendRes.json().catch(() => ({ error: "Unknown error" }));
+      console.error((data as { error: string }).error);
       process.exit(1);
     }
+    console.log("Message sent.");
 
     // Persist outgoing to mind_messages if sender is a registered mind
     if (mindSelf) {
       try {
-        const client = getClient();
         await daemonFetch(
           urlOf(client.api.minds[":name"].history.$url({ param: { name: mindSelf } })),
           {
@@ -143,7 +150,6 @@ export async function run(args: string[]) {
     // For all other targets, send through the daemon channel API
     const mindName = resolveMindName(flags);
 
-    const client = getClient();
     const res = await daemonFetch(
       urlOf(client.api.minds[":name"].channels.send.$url({ param: { name: mindName } })),
       {
