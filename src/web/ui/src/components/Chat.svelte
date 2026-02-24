@@ -136,6 +136,8 @@ $effect(() => {
   currentConvId = conversationId;
   lastPollFingerprint = "";
   openTools = new Set();
+  clearTimeout(typingSafetyTimer);
+  typingNames = [];
   if (!conversationId) {
     entries = [];
     return;
@@ -175,8 +177,8 @@ $effect(() => {
         loadMessages(conversationId, false);
         scrollToBottom();
       } else if (event.type === "typing") {
-        const senders: string[] = event.senders ?? [];
-        typingNames = senders.filter((n: string) => n !== username);
+        const senders: string[] = event.senders;
+        typingNames = senders.filter((n) => n !== username);
         // Reset safety timers — clear stale entries after 15s of no updates
         clearTimeout(typingSafetyTimer);
         if (typingNames.length > 0) {
@@ -195,7 +197,10 @@ $effect(() => {
   eventSource.onerror = () => {
     console.warn("[chat] SSE connection error, browser will attempt reconnect");
   };
-  return () => eventSource.close();
+  return () => {
+    eventSource.close();
+    clearTimeout(typingSafetyTimer);
+  };
 });
 
 // Clear typing on unmount

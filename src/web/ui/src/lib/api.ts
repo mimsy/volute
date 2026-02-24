@@ -326,15 +326,6 @@ export function reportTyping(
   }).catch(() => {});
 }
 
-export async function fetchTyping(mindName: string, channel: string): Promise<string[]> {
-  const res = await fetch(
-    `/api/minds/${encodeURIComponent(mindName)}/typing?channel=${encodeURIComponent(channel)}`,
-  );
-  if (!res.ok) throw new Error(`Failed to fetch typing (${res.status})`);
-  const data = (await res.json()) as { typing: string[] };
-  return data.typing;
-}
-
 export async function restartDaemon(): Promise<void> {
   const res = await client.api.system.restart.$post();
   if (!res.ok) throw new Error("Failed to restart daemon");

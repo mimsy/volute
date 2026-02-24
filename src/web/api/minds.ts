@@ -89,7 +89,7 @@ import {
   type TemplateManifest,
 } from "../../lib/template.js";
 import { getTokenBudget } from "../../lib/token-budget.js";
-import { getTypingMap } from "../../lib/typing.js";
+import { getTypingMap, publishTypingForChannels } from "../../lib/typing.js";
 import {
   addVariant,
   checkHealth,
@@ -1598,12 +1598,16 @@ const app = new Hono<AuthEnv>()
     // Clear typing on first outbound event for a channel (text, outbound)
     // Use deleteSender to clear both slug and conversationId-based keys
     if ((body.type === "text" || body.type === "outbound") && body.channel) {
-      getTypingMap().deleteSender(baseName);
+      const map = getTypingMap();
+      const affected = map.deleteSender(baseName);
+      publishTypingForChannels(affected, map);
     }
 
     // Clear all typing + notify delivery manager when mind finishes processing
     if (body.type === "done") {
-      getTypingMap().deleteSender(baseName);
+      const map = getTypingMap();
+      const affected = map.deleteSender(baseName);
+      publishTypingForChannels(affected, map);
       // Broadcast mind_done to SSE subscribers (ephemeral — not persisted to DB)
       broadcast({ type: "mind_done", mind: baseName, summary: "Finished processing" });
       // Notify delivery manager of session completion

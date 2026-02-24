@@ -23,23 +23,33 @@ let actionLoading = $state(false);
 
 async function handleStart() {
   actionLoading = true;
+  error = "";
   try {
     await startMind(mind.name);
-    data.minds = await fetchMinds();
   } catch (e) {
     error = e instanceof Error ? e.message : "Failed to start";
   }
+  fetchMinds()
+    .then((m) => {
+      data.minds = m;
+    })
+    .catch(() => {});
   actionLoading = false;
 }
 
 async function handleStop() {
   actionLoading = true;
+  error = "";
   try {
     await stopMind(mind.name);
-    data.minds = await fetchMinds();
   } catch (e) {
     error = e instanceof Error ? e.message : "Failed to stop";
   }
+  fetchMinds()
+    .then((m) => {
+      data.minds = m;
+    })
+    .catch(() => {});
   actionLoading = false;
 }
 

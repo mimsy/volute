@@ -12,7 +12,7 @@ import log from "./logger.js";
 import { type DeliveryPayload, extractTextContent } from "./message-delivery.js";
 import { findMind } from "./registry.js";
 import { deliveryQueue } from "./schema.js";
-import { getTypingMap } from "./typing.js";
+import { getTypingMap, publishTypingForChannels } from "./typing.js";
 import { findVariant } from "./variants.js";
 
 const dlog = log.child("delivery-manager");
@@ -313,14 +313,14 @@ export class DeliveryManager {
         dlog.warn(`mind ${mindName} responded ${res.status}: ${text}`);
         // On error, decrement active and clear typing
         this.decrementActive(baseName, session);
-        typingMap.deleteSender(baseName);
+        publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
       } else {
         await res.text().catch(() => {});
       }
     } catch (err) {
       dlog.warn(`failed to deliver to ${mindName}`, log.errorData(err));
       this.decrementActive(baseName, session);
-      typingMap.deleteSender(baseName);
+      publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
     } finally {
       clearTimeout(timeout);
     }
@@ -396,7 +396,7 @@ export class DeliveryManager {
         const text = await res.text().catch(() => "");
         dlog.warn(`mind ${mindName} batch responded ${res.status}: ${text}`);
         this.decrementActive(baseName, session);
-        typingMap.deleteSender(baseName);
+        publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
       } else {
         await res.text().catch(() => {});
         // Clean up DB entries only after successful delivery
@@ -421,7 +421,7 @@ export class DeliveryManager {
     } catch (err) {
       dlog.warn(`failed to deliver batch to ${mindName}`, log.errorData(err));
       this.decrementActive(baseName, session);
-      typingMap.deleteSender(baseName);
+      publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
     } finally {
       clearTimeout(timeout);
     }

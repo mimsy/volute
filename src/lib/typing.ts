@@ -1,5 +1,8 @@
+import { publish } from "./conversation-events.js";
+
 const DEFAULT_TTL_MS = 10_000;
 const SWEEP_INTERVAL_MS = 5_000;
+const VOLUTE_PREFIX = "volute:";
 
 type Entry = { expiresAt: number };
 
@@ -33,14 +36,19 @@ export class TypingMap {
     }
   }
 
-  /** Remove a sender from all channels (e.g. when a mind finishes processing). */
-  deleteSender(sender: string): void {
+  /** Remove a sender from all channels (e.g. when a mind finishes processing). Returns affected channel names. */
+  deleteSender(sender: string): string[] {
+    const affected: string[] = [];
     for (const [channel, senders] of this.channels) {
-      senders.delete(sender);
+      if (senders.has(sender)) {
+        senders.delete(sender);
+        affected.push(channel);
+      }
       if (senders.size === 0) {
         this.channels.delete(channel);
       }
     }
+    return affected;
   }
 
   get(channel: string): string[] {
@@ -85,4 +93,14 @@ export function getTypingMap(): TypingMap {
     instance = new TypingMap();
   }
   return instance;
+}
+
+/** Publish typing SSE events for any volute: channels in the affected list. */
+export function publishTypingForChannels(channels: string[], map: TypingMap): void {
+  for (const channel of channels) {
+    if (channel.startsWith(VOLUTE_PREFIX)) {
+      const conversationId = channel.slice(VOLUTE_PREFIX.length);
+      publish(conversationId, { type: "typing", senders: map.get(channel) });
+    }
+  }
 }
