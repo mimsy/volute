@@ -589,6 +589,7 @@ function showSenderHeader(i: number): boolean {
     display: flex;
     flex-direction: column;
     height: 100%;
+    padding: 0 16px;
   }
 
   .orientation-bar {
