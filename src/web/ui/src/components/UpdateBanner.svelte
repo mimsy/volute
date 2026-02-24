@@ -29,10 +29,8 @@ $effect(() => {
   }
 
   poll();
-  const id = setInterval(poll, 60_000);
   return () => {
     mounted = false;
-    clearInterval(id);
   };
 });
 

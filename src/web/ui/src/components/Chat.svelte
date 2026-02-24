@@ -4,7 +4,6 @@ import {
   fetchChannelMembers,
   fetchConversationMessages,
   fetchConversationMessagesById,
-  fetchTyping,
   type Mind,
   reportTyping,
 } from "../lib/api";
@@ -66,6 +65,7 @@ let scrollEl: HTMLDivElement;
 let inputEl: HTMLTextAreaElement;
 let fileEl: HTMLInputElement;
 let typingTimer = 0;
+let typingSafetyTimer = 0;
 let lastPollFingerprint = "";
 let currentConvId = conversationId;
 let showInviteModal = $state(false);
@@ -174,6 +174,16 @@ $effect(() => {
       if (event.type === "message") {
         loadMessages(conversationId, false);
         scrollToBottom();
+      } else if (event.type === "typing") {
+        const senders: string[] = event.senders ?? [];
+        typingNames = senders.filter((n: string) => n !== username);
+        // Reset safety timers — clear stale entries after 15s of no updates
+        clearTimeout(typingSafetyTimer);
+        if (typingNames.length > 0) {
+          typingSafetyTimer = window.setTimeout(() => {
+            typingNames = [];
+          }, 15_000);
+        }
       }
     } catch (err) {
       console.warn("[chat] failed to parse SSE event:", err);
@@ -186,26 +196,6 @@ $effect(() => {
     console.warn("[chat] SSE connection error, browser will attempt reconnect");
   };
   return () => eventSource.close();
-});
-
-// Poll typing indicators
-$effect(() => {
-  if (!conversationId || !name || convType === "channel") return;
-  let cancelled = false;
-  const poll = () => {
-    fetchTyping(name, `volute:${conversationId}`)
-      .then((names) => {
-        if (cancelled) return;
-        typingNames = names.filter((n) => n !== username);
-      })
-      .catch(() => {});
-  };
-  poll();
-  const id = setInterval(poll, 5000);
-  return () => {
-    cancelled = true;
-    clearInterval(id);
-  };
 });
 
 // Clear typing on unmount

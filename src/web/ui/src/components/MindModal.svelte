@@ -1,7 +1,7 @@
 <script lang="ts">
-import { onMount } from "svelte";
-import { fetchMind, type Mind, startMind, stopMind } from "../lib/api";
+import { fetchMinds, type Mind, startMind, stopMind } from "../lib/api";
 import { formatRelativeTime, getDisplayStatus } from "../lib/format";
+import { data } from "../lib/stores.svelte";
 import History from "./History.svelte";
 import MindInfo from "./MindInfo.svelte";
 import MindSkills from "./MindSkills.svelte";
@@ -16,34 +16,16 @@ const TABS = ["Info", "History", "Skills", "Variants", "Connections"] as const;
 type Tab = (typeof TABS)[number];
 
 const mindName = initialMind.name;
-// eslint-disable-next-line svelte/valid-compile -- initialMind is intentionally captured once; refresh() updates mind via API
-let mind = $state<Mind>(initialMind);
+let mind = $derived(data.minds.find((m) => m.name === mindName) ?? initialMind);
 let tab = $state<Tab>("Info");
 let error = $state("");
 let actionLoading = $state(false);
-
-function refresh() {
-  fetchMind(mindName)
-    .then((m) => {
-      mind = m;
-      error = "";
-    })
-    .catch(() => {
-      error = "Unable to reach server";
-    });
-}
-
-onMount(() => {
-  refresh();
-  const interval = setInterval(refresh, 5000);
-  return () => clearInterval(interval);
-});
 
 async function handleStart() {
   actionLoading = true;
   try {
     await startMind(mind.name);
-    refresh();
+    data.minds = await fetchMinds();
   } catch (e) {
     error = e instanceof Error ? e.message : "Failed to start";
   }
@@ -54,7 +36,7 @@ async function handleStop() {
   actionLoading = true;
   try {
     await stopMind(mind.name);
-    refresh();
+    data.minds = await fetchMinds();
   } catch (e) {
     error = e instanceof Error ? e.message : "Failed to stop";
   }
