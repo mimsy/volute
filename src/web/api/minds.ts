@@ -18,11 +18,9 @@ import {
   importPiSession,
   parseNameFromIdentity,
 } from "../../commands/import.js";
-import { broadcast } from "../../lib/activity-events.js";
 import { deleteMindUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { consolidateMemory } from "../../lib/consolidate.js";
-import { addMessage } from "../../lib/conversations.js";
 import { convertSession } from "../../lib/convert-session.js";
 import { getConnectorManager } from "../../lib/daemon/connector-manager.js";
 import { getMindManager } from "../../lib/daemon/mind-manager.js";
@@ -35,6 +33,13 @@ import { getTokenBudget } from "../../lib/daemon/token-budget.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
 import { extractTextContent } from "../../lib/delivery/delivery-router.js";
+import { broadcast } from "../../lib/events/activity-events.js";
+import { addMessage } from "../../lib/events/conversations.js";
+import { onMindEvent } from "../../lib/events/mind-activity-tracker.js";
+import {
+  publish as publishMindEvent,
+  subscribe as subscribeMindEvent,
+} from "../../lib/events/mind-events.js";
 import { exec, gitExec } from "../../lib/exec.js";
 import {
   generateIdentity,
@@ -53,11 +58,6 @@ import {
   wrapForIsolation,
 } from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
-import { onMindEvent } from "../../lib/mind-activity-tracker.js";
-import {
-  publish as publishMindEvent,
-  subscribe as subscribeMindEvent,
-} from "../../lib/mind-events.js";
 import { getCachedRecentPages, getCachedSites } from "../../lib/pages-watcher.js";
 import {
   getMindPromptDefaults,

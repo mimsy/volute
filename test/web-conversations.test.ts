@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { Hono } from "hono";
 import { approveUser, createUser } from "../src/lib/auth.js";
+import { getDb } from "../src/lib/db.js";
 import {
   addMessage,
   type ContentBlock,
@@ -9,8 +10,7 @@ import {
   deleteConversation,
   getMessages,
   getParticipants,
-} from "../src/lib/conversations.js";
-import { getDb } from "../src/lib/db.js";
+} from "../src/lib/events/conversations.js";
 import {
   conversationParticipants,
   conversations,

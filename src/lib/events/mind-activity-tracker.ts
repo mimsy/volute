@@ -1,5 +1,5 @@
+import log from "../logger.js";
 import { publish } from "./activity-events.js";
-import log from "./logger.js";
 
 const IDLE_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 

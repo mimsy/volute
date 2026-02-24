@@ -4,7 +4,8 @@ import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { writeChannelEntry } from "../../../connectors/sdk.js";
 import { getOrCreateMindUser } from "../../../lib/auth.js";
-import { subscribe } from "../../../lib/conversation-events.js";
+import { deliverMessage } from "../../../lib/delivery/message-delivery.js";
+import { subscribe } from "../../../lib/events/conversation-events.js";
 import {
   addMessage,
   type ContentBlock,
@@ -13,8 +14,7 @@ import {
   getConversation,
   getParticipants,
   isParticipantOrOwner,
-} from "../../../lib/conversations.js";
-import { deliverMessage } from "../../../lib/delivery/message-delivery.js";
+} from "../../../lib/events/conversations.js";
 import log from "../../../lib/logger.js";
 import { findMind } from "../../../lib/registry.js";
 import { buildVoluteSlug } from "../../../lib/slugify.js";

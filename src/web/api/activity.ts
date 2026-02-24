@@ -1,12 +1,12 @@
 import { desc } from "drizzle-orm";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { subscribe as subscribeActivity } from "../../lib/activity-events.js";
-import { subscribe as subscribeConversation } from "../../lib/conversation-events.js";
-import { listConversationsWithParticipants } from "../../lib/conversations.js";
 import { getDb } from "../../lib/db.js";
+import { subscribe as subscribeActivity } from "../../lib/events/activity-events.js";
+import { subscribe as subscribeConversation } from "../../lib/events/conversation-events.js";
+import { listConversationsWithParticipants } from "../../lib/events/conversations.js";
+import { getActiveMinds } from "../../lib/events/mind-activity-tracker.js";
 import log from "../../lib/logger.js";
-import { getActiveMinds } from "../../lib/mind-activity-tracker.js";
 import { getCachedRecentPages, getCachedSites } from "../../lib/pages-watcher.js";
 import { activity } from "../../lib/schema.js";
 import type { AuthEnv } from "../middleware/auth.js";

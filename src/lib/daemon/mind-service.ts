@@ -1,6 +1,6 @@
-import { publish as publishActivity } from "../activity-events.js";
+import { publish as publishActivity } from "../events/activity-events.js";
+import { markIdle } from "../events/mind-activity-tracker.js";
 import log from "../logger.js";
-import { markIdle } from "../mind-activity-tracker.js";
 import { startWatcher, stopWatcher } from "../pages-watcher.js";
 import { findMind, mindDir } from "../registry.js";
 import { readVoluteConfig } from "../volute-config.js";

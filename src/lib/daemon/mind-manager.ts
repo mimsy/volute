@@ -264,8 +264,10 @@ export class MindManager {
       mlog.error(`mind ${name} exited with code ${code}`);
 
       // Clear activity tracking and publish crash as mind_stopped
-      import("../mind-activity-tracker.js").then(({ markIdle }) => markIdle(name)).catch(() => {});
-      import("../activity-events.js")
+      import("../events/mind-activity-tracker.js")
+        .then(({ markIdle }) => markIdle(name))
+        .catch(() => {});
+      import("../events/activity-events.js")
         .then(({ publish }) =>
           publish({ type: "mind_stopped", mind: name, summary: `${name} crashed (exit ${code})` }),
         )
