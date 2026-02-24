@@ -846,7 +846,7 @@ const app = new Hono<AuthEnv>()
 
     try {
       await startMindFullService(name);
-      return c.json({ ok: true });
+      return c.json({ ok: true, port: entry.port });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to start mind" }, 500);
     }
@@ -980,7 +980,7 @@ const app = new Hono<AuthEnv>()
       }
 
       await startMindFullService(name);
-      return c.json({ ok: true });
+      return c.json({ ok: true, port: entry.port });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to restart mind" }, 500);
     }
