@@ -3,6 +3,7 @@ import type { ConversationWithParticipants, Mind, Site } from "../lib/api";
 import { mindDotColor } from "../lib/format";
 import { activeMinds } from "../lib/stores.svelte";
 import ConversationList from "./ConversationList.svelte";
+import MindHoverCard from "./MindHoverCard.svelte";
 
 let {
   minds,
@@ -127,12 +128,16 @@ function toggleSection(section: Section) {
               class:active={dmId === activeConversationId}
               onclick={() => onSelectMind(mind.name)}
             >
-              <span
-                class="status-dot"
-                class:iridescent={activeMinds.has(mind.name)}
-                style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
-              ></span>
-              <span class="mind-item-name">{mind.name}</span>
+              <MindHoverCard {mind}>
+                {#snippet children()}
+                  <span
+                    class="status-dot"
+                    class:iridescent={activeMinds.has(mind.name)}
+                    style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
+                  ></span>
+                  <span class="mind-item-name">{mind.displayName ?? mind.name}</span>
+                {/snippet}
+              </MindHoverCard>
             </button>
           {/each}
         </div>

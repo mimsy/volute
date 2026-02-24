@@ -22,6 +22,9 @@ export type Mind = {
   channels: Channel[];
   hasPages?: boolean;
   lastActiveAt?: string | null;
+  displayName?: string;
+  description?: string;
+  avatar?: string;
 };
 
 export type RecentPage = {

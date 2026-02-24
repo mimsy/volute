@@ -1,12 +1,47 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { extname, resolve } from "node:path";
 import { Hono } from "hono";
 import { findMind, mindDir } from "../../lib/registry.js";
+import { readVoluteConfig } from "../../lib/volute-config.js";
 
 const ALLOWED_FILES = new Set(["SOUL.md", "MEMORY.md", "CLAUDE.md", "VOLUTE.md"]);
 
+const AVATAR_MIME: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+};
+
 const app = new Hono()
+  // Serve avatar image
+  .get("/:name/avatar", async (c) => {
+    const name = c.req.param("name");
+    const entry = findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+
+    const dir = mindDir(name);
+    const config = readVoluteConfig(dir);
+    if (!config?.avatar) return c.json({ error: "No avatar configured" }, 404);
+
+    const ext = extname(config.avatar).toLowerCase();
+    const mime = AVATAR_MIME[ext];
+    if (!mime) return c.json({ error: "Invalid avatar extension" }, 400);
+
+    const homeDir = resolve(dir, "home");
+    const avatarPath = resolve(homeDir, config.avatar);
+    if (!avatarPath.startsWith(homeDir)) return c.json({ error: "Invalid avatar path" }, 400);
+    if (!existsSync(avatarPath)) return c.json({ error: "Avatar file not found" }, 404);
+
+    const body = await readFile(avatarPath);
+    return c.body(body, 200, {
+      "Content-Type": mime,
+      "Cache-Control": "public, max-age=300",
+    });
+  })
   // List markdown files in home/
   .get("/:name/files", async (c) => {
     const name = c.req.param("name");

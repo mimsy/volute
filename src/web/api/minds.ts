@@ -121,7 +121,8 @@ async function getMindStatus(name: string, port: number) {
     status = health.ok ? "running" : "starting";
   }
 
-  const channelConfig = readVoluteConfig(mindDir(name))?.channels;
+  const config = readVoluteConfig(mindDir(name));
+  const channelConfig = config?.channels;
   const channels: ChannelStatus[] = [];
 
   // Built-in channels (e.g. volute)
@@ -147,7 +148,13 @@ async function getMindStatus(name: string, port: number) {
     });
   }
 
-  return { status, channels };
+  return {
+    status,
+    channels,
+    displayName: config?.displayName,
+    description: config?.description,
+    avatar: config?.avatar,
+  };
 }
 
 const TEMPLATE_BRANCH = "volute/template";
@@ -670,6 +677,13 @@ const app = new Hono<AuthEnv>()
 
       // Generate Ed25519 keypair for mind identity
       const { publicKeyPem } = generateIdentity(dest);
+
+      // Persist description to volute.json if provided
+      if (body.description) {
+        const seedConfig = readVoluteConfig(dest) ?? {};
+        seedConfig.description = body.description;
+        writeVoluteConfig(dest, seedConfig);
+      }
 
       if (body.model) {
         const configPath = resolve(dest, "home/.config/config.json");

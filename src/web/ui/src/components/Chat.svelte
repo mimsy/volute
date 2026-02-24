@@ -9,6 +9,7 @@ import {
 } from "../lib/api";
 import { renderMarkdown } from "../lib/markdown";
 import { sendChat, sendChatUnified } from "../lib/streams";
+import MindHoverCard from "./MindHoverCard.svelte";
 
 let {
   name,
@@ -458,7 +459,12 @@ function showSenderHeader(i: number): boolean {
           {#if isNewSender}
             <div class="entry-header">
               {#if entry.senderName && mindsByName.has(entry.senderName) && onOpenMind}
-                <button class="sender sender-link" style:color={senderColor} onclick={() => onOpenMind(mindsByName.get(entry.senderName!)!)}>{entry.senderName}</button>
+                {@const senderMind = mindsByName.get(entry.senderName)!}
+                <MindHoverCard mind={senderMind}>
+                  {#snippet children()}
+                    <button class="sender sender-link" style:color={senderColor} onclick={() => onOpenMind(senderMind)}>{senderMind.displayName ?? entry.senderName}</button>
+                  {/snippet}
+                </MindHoverCard>
               {:else}
                 <span class="sender" style:color={senderColor}>{entry.senderName || (entry.role === "user" ? "you" : "mind")}</span>
               {/if}
