@@ -682,3 +682,14 @@ export async function deleteMindEnvVar(name: string, key: string): Promise<void>
     throw new Error(data.error || "Failed to delete env var");
   }
 }
+
+export async function deleteSharedEnvVar(key: string): Promise<void> {
+  const res = await fetch(`/api/env/${encodeURIComponent(key)}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to delete env var");
+  }
+}

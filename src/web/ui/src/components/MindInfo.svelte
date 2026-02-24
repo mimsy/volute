@@ -2,6 +2,7 @@
 import { onMount } from "svelte";
 import {
   deleteMindEnvVar,
+  deleteSharedEnvVar,
   fetchMindConfig,
   fetchMindEnv,
   type MindConfig,
@@ -161,11 +162,15 @@ async function saveEnvEdit() {
   saving = null;
 }
 
-async function deleteEnv(key: string) {
+async function deleteEnv(key: string, source: "shared" | "mind") {
   saving = `env:${key}`;
   error = "";
   try {
-    await deleteMindEnvVar(name, key);
+    if (source === "shared") {
+      await deleteSharedEnvVar(key);
+    } else {
+      await deleteMindEnvVar(name, key);
+    }
     env = await fetchMindEnv(name);
   } catch (e) {
     error = e instanceof Error ? e.message : "Failed to delete";
@@ -361,15 +366,15 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
                 <button class="icon-btn" onclick={() => startEditEnv(entry.key, entry.value)} title="Edit">
                   Edit
                 </button>
-                <button
-                  class="icon-btn danger"
-                  onclick={() => deleteEnv(entry.key)}
-                  disabled={saving !== null}
-                  title="Delete"
-                >
-                  {saving === `env:${entry.key}` ? "..." : "Del"}
-                </button>
               {/if}
+              <button
+                class="icon-btn danger"
+                onclick={() => deleteEnv(entry.key, entry.source)}
+                disabled={saving !== null}
+                title="Delete"
+              >
+                {saving === `env:${entry.key}` ? "..." : "Del"}
+              </button>
             {/if}
           </div>
         {/each}
