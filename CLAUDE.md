@@ -365,6 +365,13 @@ The CLI is installed globally via `npm link` (requires `npm run build` first) or
 
 Tests run with `node --import tsx --test test/*.test.ts`.
 
+### Testing
+
+- **Unit tests** (`npm test`): Primary safety net. Run before every PR.
+- **Daemon e2e** (`test/daemon-e2e.test.ts`): Tests daemon API without Docker. Included in `npm test`. Add tests here for new API endpoints or daemon features.
+- **Docker e2e** (`test/docker-e2e.sh`): Full Docker lifecycle with user isolation. Run for PRs touching daemon, mind lifecycle, or Docker setup.
+- **Integration testing**: For manual testing with real minds in Docker — see `docs/integration-testing.md` for setup scripts, test mind fixtures, and interaction guidelines. Use `test/integration-setup.sh` to spin up an environment and `test/integration-teardown.sh` to clean up.
+
 ## Commits and releases
 
 We use [Conventional Commits](https://www.conventionalcommits.org/) and squash-merge PRs. Release-please reads the squash commit message (which comes from the PR title) to determine version bumps and changelog entries.
