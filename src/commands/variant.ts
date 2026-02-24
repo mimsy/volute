@@ -1,7 +1,6 @@
 import { parseArgs } from "../lib/parse-args.js";
-import { resolveMind } from "../lib/registry.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
-import { checkHealth, readVariants, type Variant, writeVariants } from "../lib/variants.js";
+import type { Variant } from "../lib/variants.js";
 
 export async function run(args: string[]) {
   const subcommand = args[0];
@@ -108,10 +107,24 @@ async function listVariants(args: string[]) {
 
   const mindName = resolveMindName(flags);
   const { json } = flags;
-  resolveMind(mindName); // validate mind exists
-  const variants = readVariants(mindName);
 
-  if (variants.length === 0) {
+  const { daemonFetch } = await import("../lib/daemon-client.js");
+  const { getClient, urlOf } = await import("../lib/api-client.js");
+  const client = getClient();
+
+  const res = await daemonFetch(
+    urlOf(client.api.minds[":name"].variants.$url({ param: { name: mindName } })),
+  );
+
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    console.error(data.error ?? "Failed to list variants");
+    process.exit(1);
+  }
+
+  const results = (await res.json()) as (Variant & { status: string })[];
+
+  if (results.length === 0) {
     if (json) {
       console.log("[]");
     } else {
@@ -119,22 +132,6 @@ async function listVariants(args: string[]) {
     }
     return;
   }
-
-  // Health-check all variants in parallel
-  const results: (Variant & { status: string })[] = await Promise.all(
-    variants.map(async (v) => {
-      if (!v.port) return { ...v, status: "no-server" };
-      const health = await checkHealth(v.port);
-      return { ...v, status: health.ok ? "running" : "dead" };
-    }),
-  );
-
-  // Update variants.json to clear running status for dead variants
-  const updated = results.map(({ status, ...v }) => ({
-    ...v,
-    running: status === "running",
-  }));
-  writeVariants(mindName, updated);
 
   if (json) {
     console.log(JSON.stringify(results, null, 2));

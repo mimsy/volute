@@ -13,6 +13,7 @@ import {
   readVariants,
   removeVariant,
   validateBranchName,
+  writeVariants,
 } from "../../lib/variants.js";
 import { verify } from "../../lib/verify.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
@@ -31,6 +32,13 @@ const app = new Hono<AuthEnv>()
         return { ...v, status: health.ok ? "running" : "dead" };
       }),
     );
+
+    // Sync running status back to variants.json
+    const updated = results.map(({ status, ...v }) => ({
+      ...v,
+      running: status === "running",
+    }));
+    writeVariants(name, updated);
 
     return c.json(results);
   })
