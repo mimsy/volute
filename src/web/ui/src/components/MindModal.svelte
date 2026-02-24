@@ -11,7 +11,7 @@ import VariantList from "./VariantList.svelte";
 
 let { mind: initialMind, onClose }: { mind: Mind; onClose: () => void } = $props();
 
-const TABS = ["Info", "History", "Skills", "Variants", "Connections"] as const;
+const TABS = ["History", "Details"] as const;
 type Tab = (typeof TABS)[number];
 
 let mind = $derived(data.minds.find((m) => m.name === initialMind.name) ?? initialMind);
@@ -90,42 +90,41 @@ const connectedChannels = $derived(
     {#if error}
       <div class="error-msg">{error}</div>
     {/if}
-    {#if tab === "Info"}
-      <MindInfo name={mind.name} />
-    {:else if tab === "History"}
+    {#if tab === "History"}
       <History name={mind.name} />
-    {:else if tab === "Skills"}
-      <MindSkills name={mind.name} />
-    {:else if tab === "Variants"}
-      <VariantList name={mind.name} />
-    {:else if tab === "Connections"}
-      {#if connectedChannels.length === 0}
-        <div class="connections-empty">No active connections.</div>
-      {:else}
-        <div class="connections-list">
-          {#each connectedChannels as channel}
-            <div class="connection-card">
-              <div class="connection-icon">&#10687;</div>
-              <div class="connection-info">
-                <div class="connection-header">
-                  <span class="connection-name">{channel.displayName}</span>
-                  <StatusBadge status="connected" />
-                </div>
+    {:else if tab === "Details"}
+      <MindInfo name={mind.name} />
+
+      <div class="detail-section">
+        <MindSkills name={mind.name} />
+      </div>
+
+      <div class="detail-section">
+        <div class="section-title">Connections</div>
+        {#if connectedChannels.length === 0}
+          <div class="connections-empty">No active connections.</div>
+        {:else}
+          <div class="connections-list">
+            {#each connectedChannels as channel}
+              <div class="connection-row">
+                <span class="connection-name">{channel.displayName}</span>
+                <StatusBadge status="connected" />
                 {#if channel.username}
-                  <div class="connection-bot">
-                    Bot: <span class="bot-name">{channel.username}</span>
-                  </div>
+                  <span class="connection-bot">{channel.username}</span>
                 {/if}
                 {#if channel.connectedAt}
-                  <div class="connection-time">
-                    Connected {formatRelativeTime(channel.connectedAt)}
-                  </div>
+                  <span class="connection-time">{formatRelativeTime(channel.connectedAt)}</span>
                 {/if}
               </div>
-            </div>
-          {/each}
-        </div>
-      {/if}
+            {/each}
+          </div>
+        {/if}
+      </div>
+
+      <div class="detail-section">
+        <div class="section-title">Variants</div>
+        <VariantList name={mind.name} />
+      </div>
     {/if}
   </div>
 </div>
@@ -209,71 +208,58 @@ const connectedChannels = $derived(
     color: var(--red);
   }
 
+  .detail-section {
+    margin-top: 24px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+  }
+
+  .section-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-2);
+    margin-bottom: 8px;
+  }
+
   .connections-empty {
     color: var(--text-2);
-    padding: 24px;
-    text-align: center;
+    padding: 12px 0;
+    font-size: 13px;
   }
 
   .connections-list {
-    padding: 8px 0;
     display: flex;
     flex-direction: column;
-    gap: 12px;
   }
 
-  .connection-card {
-    display: flex;
-    align-items: flex-start;
-    gap: 16px;
-    padding: 16px;
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-  }
-
-  .connection-icon {
-    width: 40px;
-    height: 40px;
-    border-radius: var(--radius);
-    background: var(--bg-3);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 18px;
-    color: var(--accent);
-    flex-shrink: 0;
-  }
-
-  .connection-info {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .connection-header {
+  .connection-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 6px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+
+  .connection-row:last-child {
+    border-bottom: none;
   }
 
   .connection-name {
-    font-weight: 600;
+    font-weight: 500;
     color: var(--text-0);
   }
 
   .connection-bot {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-1);
-    margin-bottom: 4px;
-  }
-
-  .bot-name {
-    color: var(--text-0);
   }
 
   .connection-time {
     font-size: 11px;
     color: var(--text-2);
+    margin-left: auto;
   }
 </style>
