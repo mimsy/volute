@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { findMind, mindDir } from "../lib/registry.js";
-import { getSharedSkill, installSkill, STANDARD_SKILLS, uninstallSkill } from "../lib/skills.js";
+import { STANDARD_SKILLS } from "../lib/skills.js";
 
 const ORIENTATION_MARKER = "You don't have a soul yet";
 
@@ -46,44 +46,52 @@ export async function run(_args: string[]) {
     process.exit(1);
   }
 
-  // Install standard skills from shared pool, remove orientation
+  // Set up daemon client for API calls
+  const { daemonFetch } = await import("../lib/daemon-client.js");
+  const { getClient, urlOf } = await import("../lib/api-client.js");
+  const client = getClient();
+
+  // Install standard skills from shared pool via daemon, remove orientation
   const failedSkills: string[] = [];
   for (const skillId of STANDARD_SKILLS) {
-    const shared = await getSharedSkill(skillId);
-    if (!shared) {
-      console.error(`Shared skill not found: ${skillId} — run 'volute up' to sync built-in skills`);
-      failedSkills.push(skillId);
-      continue;
-    }
     const skillDir = resolve(dir, "home", ".claude", "skills", skillId);
     if (!existsSync(skillDir)) {
-      try {
-        await installSkill(mindName, dir, skillId);
-      } catch (err) {
-        console.error(`Failed to install skill ${skillId}: ${(err as Error).message}`);
+      const installRes = await daemonFetch(
+        urlOf(client.api.minds[":name"].skills.install.$url({ param: { name: mindName } })),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ skillId }),
+        },
+      );
+      if (!installRes.ok) {
+        const data = (await installRes.json()) as { error?: string };
+        console.error(`Failed to install skill ${skillId}: ${data.error}`);
         failedSkills.push(skillId);
       }
     }
   }
 
-  // Remove orientation skill
+  // Remove orientation skill via daemon
   const orientationDir = resolve(dir, "home", ".claude", "skills", "orientation");
   if (existsSync(orientationDir)) {
-    try {
-      await uninstallSkill(mindName, dir, "orientation");
-    } catch (err) {
-      console.error(`Failed to uninstall orientation skill: ${(err as Error).message}`);
+    const delRes = await daemonFetch(
+      urlOf(
+        client.api.minds[":name"].skills[":skill"].$url({
+          param: { name: mindName, skill: "orientation" },
+        }),
+      ),
+      { method: "DELETE" },
+    );
+    if (!delRes.ok) {
+      const data = (await delRes.json()) as { error?: string };
+      console.error(`Failed to uninstall orientation skill: ${data.error}`);
     }
   }
 
   if (failedSkills.length > 0) {
     console.error(`Warning: failed to install skills: ${failedSkills.join(", ")}`);
   }
-
-  // Flip stage via daemon API (mind user can't write to shared minds.json directly)
-  const { daemonFetch } = await import("../lib/daemon-client.js");
-  const { getClient, urlOf } = await import("../lib/api-client.js");
-  const client = getClient();
 
   const sproutRes = await daemonFetch(
     urlOf(client.api.minds[":name"].sprout.$url({ param: { name: mindName } })),
