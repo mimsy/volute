@@ -6,6 +6,7 @@ import { subscribe as subscribeConversation } from "../../lib/conversation-event
 import { listConversationsWithParticipants } from "../../lib/conversations.js";
 import { getDb } from "../../lib/db.js";
 import log from "../../lib/logger.js";
+import { getActiveMinds } from "../../lib/mind-activity-tracker.js";
 import { getCachedRecentPages, getCachedSites } from "../../lib/pages-watcher.js";
 import { activity } from "../../lib/schema.js";
 import type { AuthEnv } from "../middleware/auth.js";
@@ -56,6 +57,7 @@ const app = new Hono<AuthEnv>().get("/events", async (c) => {
           conversations,
           sites,
           recentPages,
+          activeMinds: getActiveMinds(),
         }),
       });
 

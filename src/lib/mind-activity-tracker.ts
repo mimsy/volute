@@ -27,14 +27,17 @@ const IGNORED_EVENTS = new Set(["done", "usage", "log"]);
 export function onMindEvent(mind: string, type: string, channel?: string): void {
   const state = getState(mind);
   if (type === "done") {
-    // Start idle timer — if no new activity within timeout, publish idle
+    // Mark inactive immediately so the next turn re-emits mind_active.
+    // The frontend clears the active dot on mind_done; without this reset,
+    // subsequent turns within the idle window would skip re-emitting.
+    state.active = false;
+    // Start idle timer — publish mind_idle if no new activity (for cleanup)
     if (state.idleTimer) {
       clearTimeout(state.idleTimer);
     }
     state.idleTimer = setTimeout(() => {
       state.idleTimer = null;
-      if (state.active) {
-        state.active = false;
+      if (!state.active) {
         publish({
           type: "mind_idle",
           mind,
@@ -86,6 +89,15 @@ export function markIdle(mind: string): void {
     });
   }
   minds.delete(mind);
+}
+
+/** Return the set of currently active mind names. */
+export function getActiveMinds(): string[] {
+  const result: string[] = [];
+  for (const [mind, state] of minds) {
+    if (state.active) result.push(mind);
+  }
+  return result;
 }
 
 /** Clean up all timers (e.g. on daemon shutdown). */

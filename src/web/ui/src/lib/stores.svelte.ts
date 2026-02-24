@@ -87,6 +87,9 @@ function handleSSEMessage(line: string) {
     data.recentPages = parsed.recentPages ?? [];
     data.connectionOk = true;
     activeMinds.clear();
+    if (Array.isArray(parsed.activeMinds)) {
+      for (const name of parsed.activeMinds) activeMinds.add(name);
+    }
     // Minds not in snapshot — fetch separately since they need health checks
     fetchMinds()
       .then((m) => {

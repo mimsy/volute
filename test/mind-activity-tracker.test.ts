@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { after, afterEach, before, describe, test } from "node:test";
 import { type ActivityEvent, subscribe } from "../src/lib/activity-events.js";
 import { getDb } from "../src/lib/db.js";
-import { markIdle, onMindEvent, stopAll } from "../src/lib/mind-activity-tracker.js";
+import {
+  getActiveMinds,
+  markIdle,
+  onMindEvent,
+  stopAll,
+} from "../src/lib/mind-activity-tracker.js";
 
 // Wait for an async fire-and-forget publish to complete
 function wait(ms = 200) {
@@ -90,17 +95,27 @@ describe("mind-activity-tracker", () => {
     assert.equal(idle.length, 0);
   });
 
-  test("new activity after done cancels idle timer", async () => {
+  test("new activity after done re-emits mind_active", async () => {
     onMindEvent("test-mind", "session_start");
     await wait();
     received.length = 0;
 
     onMindEvent("test-mind", "done");
-    // New activity before idle fires
+    // New activity before idle fires — should re-emit mind_active
     onMindEvent("test-mind", "session_start");
     await wait();
-    // Should not publish anything (still active, idle timer cancelled)
-    assert.equal(received.length, 0);
+    const active = received.filter((e) => e.type === "mind_active" && e.mind === "test-mind");
+    assert.equal(active.length, 1);
+  });
+
+  test("getActiveMinds returns currently active minds", async () => {
+    assert.deepEqual(getActiveMinds(), []);
+    onMindEvent("mind-a", "session_start");
+    onMindEvent("mind-b", "text");
+    await wait();
+    assert.deepEqual(getActiveMinds().sort(), ["mind-a", "mind-b"]);
+    onMindEvent("mind-a", "done");
+    assert.deepEqual(getActiveMinds(), ["mind-b"]);
   });
 
   test("stopAll cleans up timers", async () => {
