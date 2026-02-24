@@ -308,11 +308,14 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     // Start mind
     const startRes = await daemonRequest(`/api/minds/${TEST_MIND}/start`, { method: "POST" });
     // May already be running from previous test or 409 if so
-    const startBody = await startRes.text();
+    const startBody = (await startRes.json()) as { ok?: boolean; port?: number; error?: string };
     assert.ok(
       startRes.status === 200 || startRes.status === 409,
-      `Start: expected 200 or 409, got ${startRes.status}: ${startBody}`,
+      `Start: expected 200 or 409, got ${startRes.status}: ${JSON.stringify(startBody)}`,
     );
+    if (startRes.status === 200) {
+      assert.equal(typeof startBody.port, "number", "Start response should include port");
+    }
 
     // Wait for health
     const healthDeadline = Date.now() + 30000;

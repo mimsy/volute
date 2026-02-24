@@ -159,6 +159,16 @@ describe("web minds routes", () => {
     await deleteSession(cookie2);
   });
 
+  it("GET /:name/history/export — 404 for missing mind", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../src/web/app.js");
+
+    const res = await app.request("/api/minds/nonexistent-mind-xyz/history/export", {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 404);
+  });
+
   it("GET / — non-admin user can still list minds", async () => {
     await setupAuth();
     const user2 = await createUser("regular-user2", "pass");

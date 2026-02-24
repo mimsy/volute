@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { getConnectorManager } from "../../lib/connector-manager.js";
-import { getMailPoller } from "../../lib/mail-poller.js";
+import { getConnectorManager } from "../../lib/daemon/connector-manager.js";
+import { getMailPoller } from "../../lib/daemon/mail-poller.js";
 import { findMind, mindDir } from "../../lib/registry.js";
 import { readSystemsConfig } from "../../lib/systems-config.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";

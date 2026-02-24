@@ -3,14 +3,14 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { getOrCreateMindUser, getUserByUsername } from "../../../lib/auth.js";
-import { subscribe } from "../../../lib/conversation-events.js";
+import { subscribe } from "../../../lib/events/conversation-events.js";
 import {
   createConversation,
   deleteConversationForUser,
   getMessages,
   isParticipantOrOwner,
   listConversationsWithParticipants,
-} from "../../../lib/conversations.js";
+} from "../../../lib/events/conversations.js";
 import { findMind } from "../../../lib/registry.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
 

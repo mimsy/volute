@@ -1,7 +1,7 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
-import { publish } from "../../lib/conversation-events.js";
+import { publish } from "../../lib/events/conversation-events.js";
 import { getTypingMap } from "../../lib/typing.js";
 import type { AuthEnv } from "../middleware/auth.js";
 

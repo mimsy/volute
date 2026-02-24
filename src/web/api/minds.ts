@@ -18,15 +18,28 @@ import {
   importPiSession,
   parseNameFromIdentity,
 } from "../../commands/import.js";
-import { broadcast } from "../../lib/activity-events.js";
 import { deleteMindUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
-import { getConnectorManager } from "../../lib/connector-manager.js";
 import { consolidateMemory } from "../../lib/consolidate.js";
-import { addMessage } from "../../lib/conversations.js";
 import { convertSession } from "../../lib/convert-session.js";
+import { getConnectorManager } from "../../lib/daemon/connector-manager.js";
+import { getMindManager } from "../../lib/daemon/mind-manager.js";
+// Lifecycle functions from mind-service.ts
+import {
+  startMindFull as startMindFullService,
+  stopMindFull as stopMindFullService,
+} from "../../lib/daemon/mind-service.js";
+import { getTokenBudget } from "../../lib/daemon/token-budget.js";
 import { getDb } from "../../lib/db.js";
-import { getDeliveryManager } from "../../lib/delivery-manager.js";
+import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
+import { extractTextContent } from "../../lib/delivery/delivery-router.js";
+import { broadcast } from "../../lib/events/activity-events.js";
+import { addMessage } from "../../lib/events/conversations.js";
+import { onMindEvent } from "../../lib/events/mind-activity-tracker.js";
+import {
+  publish as publishMindEvent,
+  subscribe as subscribeMindEvent,
+} from "../../lib/events/mind-events.js";
 import { exec, gitExec } from "../../lib/exec.js";
 import {
   generateIdentity,
@@ -45,18 +58,6 @@ import {
   wrapForIsolation,
 } from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
-import { extractTextContent } from "../../lib/message-delivery.js";
-import { onMindEvent } from "../../lib/mind-activity-tracker.js";
-import {
-  publish as publishMindEvent,
-  subscribe as subscribeMindEvent,
-} from "../../lib/mind-events.js";
-import { getMindManager } from "../../lib/mind-manager.js";
-// Lifecycle functions from mind-service.ts
-import {
-  startMindFull as startMindFullService,
-  stopMindFull as stopMindFullService,
-} from "../../lib/mind-service.js";
 import { getCachedRecentPages, getCachedSites } from "../../lib/pages-watcher.js";
 import {
   getMindPromptDefaults,
@@ -88,7 +89,6 @@ import {
   listFiles,
   type TemplateManifest,
 } from "../../lib/template.js";
-import { getTokenBudget } from "../../lib/token-budget.js";
 import { getTypingMap, publishTypingForChannels } from "../../lib/typing.js";
 import {
   addVariant,
@@ -832,9 +832,11 @@ const app = new Hono<AuthEnv>()
     const entry = findMind(baseName);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
+    let targetPort = entry.port;
     if (variantName) {
       const variant = findVariant(baseName, variantName);
       if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
+      targetPort = variant.port;
     } else {
       const dir = mindDir(baseName);
       if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
@@ -846,7 +848,7 @@ const app = new Hono<AuthEnv>()
 
     try {
       await startMindFullService(name);
-      return c.json({ ok: true });
+      return c.json({ ok: true, port: targetPort });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to start mind" }, 500);
     }
@@ -860,9 +862,11 @@ const app = new Hono<AuthEnv>()
     const entry = findMind(baseName);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
+    let targetPort = entry.port;
     if (variantName) {
       const variant = findVariant(baseName, variantName);
       if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
+      targetPort = variant.port;
     } else {
       const dir = mindDir(baseName);
       if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
@@ -980,7 +984,7 @@ const app = new Hono<AuthEnv>()
       }
 
       await startMindFullService(name);
-      return c.json({ ok: true });
+      return c.json({ ok: true, port: targetPort });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to restart mind" }, 500);
     }
@@ -1737,6 +1741,14 @@ const app = new Hono<AuthEnv>()
       .from(mindHistory)
       .where(eq(mindHistory.mind, name));
     return c.json(rows.map((r) => r.channel));
+  })
+  .get("/:name/history/export", async (c) => {
+    const name = c.req.param("name");
+    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
+
+    const db = await getDb();
+    const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, name));
+    return c.json(rows);
   })
   .get("/:name/history", async (c) => {
     const name = c.req.param("name");

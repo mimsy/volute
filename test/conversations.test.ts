@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { getOrCreateMindUser } from "../src/lib/auth.js";
+import { getDb } from "../src/lib/db.js";
 import {
   addMessage,
   addParticipant,
@@ -19,8 +20,7 @@ import {
   listChannels,
   listConversationsForUser,
   removeParticipant,
-} from "../src/lib/conversations.js";
-import { getDb } from "../src/lib/db.js";
+} from "../src/lib/events/conversations.js";
 import { messages, users } from "../src/lib/schema.js";
 
 describe("conversations", () => {

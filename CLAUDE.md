@@ -177,18 +177,9 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 | File | Purpose |
 |------|---------|
 | `registry.ts` | Mind registry at `~/.volute/minds.json`, port allocation (4100+), `running` field, name@variant resolution |
-| `mind-manager.ts` | Spawns/stops mind servers, crash recovery (3s delay), merge-restart coordination |
-| `connector-manager.ts` | Manages connector processes per mind, resolves built-in → shared → mind-specific connectors |
 | `connector-defs.ts` | Connector type definitions and metadata |
-| `scheduler.ts` | Cron-based scheduled messages and scripts, per-mind schedule loading |
 | `daemon-client.ts` | HTTP client for CLI → daemon communication, reads `~/.volute/daemon.json` for port |
 | `api-client.ts` | HTTP client for mind → daemon API calls |
-| `delivery-manager.ts` | Message delivery orchestration |
-| `delivery-router.ts` | Message delivery routing logic |
-| `message-delivery.ts` | Message delivery primitives |
-| `mind-service.ts` | Mind service management utilities |
-| `mind-events.ts` | Mind event pub-sub system |
-| `restart-tracker.ts` | Tracks mind restart state |
 | `variants.ts` | Variant metadata (`~/.volute/variants.json`), health checks, git worktree ops |
 | `template.ts` | Template discovery, copying, `{{name}}` substitution, `.init/` → `home/` migration |
 | `spawn-server.ts` | Spawns `tsx src/server.ts`, waits for port listening (used for variants only) |
@@ -200,8 +191,6 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 | `schema.ts` | Drizzle ORM schema (users, conversations, conversation_participants, messages, mind_history, sessions) |
 | `db.ts` | libSQL database singleton at `~/.volute/volute.db` (WAL mode, foreign keys) |
 | `auth.ts` | bcrypt password hashing, first user auto-admin, pending approval flow, mind users |
-| `conversations.ts` | Conversation and message CRUD, multi-participant conversations |
-| `conversation-events.ts` | In-process pub-sub for conversation events, consumed by SSE endpoint |
 | `channels.ts` | ChannelProvider registry with optional drivers (read/send), display names, slug resolution via `channels.json` |
 | `channels/discord.ts` | Discord channel driver (read/send via REST API, slug-to-ID resolution) |
 | `channels/slack.ts` | Slack channel driver (read/send via Slack API, slug-to-ID resolution) |
@@ -213,7 +202,6 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 | `json-state.ts` | JSON file state management utilities |
 | `log-buffer.ts` | Log buffering utilities |
 | `logger.ts` | Logging utilities |
-| `mail-poller.ts` | Daemon-integrated mail polling (system-wide, uses volute.systems API) |
 | `migrate-state.ts` | Mind state migration from mind dirs to centralized state dir |
 | `migrate-agents-to-minds.ts` | Migration from legacy agent naming to minds |
 | `identity.ts` | Mind identity (Ed25519 keypair) management |
@@ -225,7 +213,6 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 | `rotating-log.ts` | Size-limited rotating log files |
 | `read-stdin.ts` | Reads piped stdin for send commands (returns undefined if TTY) |
 | `resolve-mind-name.ts` | Resolves mind name from `--mind` flag or `VOLUTE_MIND` env var |
-| `token-budget.ts` | Per-mind token budget enforcement |
 | `typing.ts` | Typing indicator tracking |
 | `service-mode.ts` | Service mode detection (manual/systemd/launchd), service control, health polling, daemon config reader |
 | `systems-config.ts` | Read/write `~/.volute/systems.json` (API key, system name, API URL) |
@@ -235,6 +222,37 @@ Mind-scoped commands (`send`, `history`, `variant`, `connector`, `schedule`, `ch
 | `verify.ts` | Mind verification utilities |
 | `volute-config.ts` | Mind volute.json config reader |
 | `isolation.ts` | Per-mind Linux user isolation (`VOLUTE_ISOLATION=user`), user/group management, chown |
+| `pages-watcher.ts` | Filesystem watcher for mind pages, publishes activity events |
+
+### src/lib/daemon/
+
+| File | Purpose |
+|------|---------|
+| `mind-manager.ts` | Spawns/stops mind servers, crash recovery (3s delay), merge-restart coordination |
+| `connector-manager.ts` | Manages connector processes per mind, resolves built-in → shared → mind-specific connectors |
+| `scheduler.ts` | Cron-based scheduled messages and scripts, per-mind schedule loading |
+| `mail-poller.ts` | Daemon-integrated mail polling (system-wide, uses volute.systems API) |
+| `token-budget.ts` | Per-mind token budget enforcement |
+| `restart-tracker.ts` | Tracks mind restart state |
+| `mind-service.ts` | Mind service management utilities |
+
+### src/lib/delivery/
+
+| File | Purpose |
+|------|---------|
+| `delivery-manager.ts` | Message delivery orchestration |
+| `delivery-router.ts` | Message delivery routing logic |
+| `message-delivery.ts` | Message delivery primitives |
+
+### src/lib/events/
+
+| File | Purpose |
+|------|---------|
+| `activity-events.ts` | In-process pub-sub for activity events (mind start/stop/active/idle) |
+| `conversation-events.ts` | In-process pub-sub for conversation events, consumed by SSE endpoint |
+| `conversations.ts` | Conversation and message CRUD, multi-participant conversations |
+| `mind-events.ts` | Mind event pub-sub system |
+| `mind-activity-tracker.ts` | Mind activity tracking with idle timeout detection |
 
 ### src/web/
 

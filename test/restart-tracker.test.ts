@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { RestartTracker } from "../src/lib/restart-tracker.js";
+import { RestartTracker } from "../src/lib/daemon/restart-tracker.js";
 
 describe("RestartTracker", () => {
   it("allows restarts up to maxAttempts", () => {

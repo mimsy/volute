@@ -1,7 +1,7 @@
-import log from "./logger.js";
-import { deliverMessage } from "./message-delivery.js";
-import { findMind } from "./registry.js";
-import { readSystemsConfig } from "./systems-config.js";
+import { deliverMessage } from "../delivery/message-delivery.js";
+import log from "../logger.js";
+import { findMind } from "../registry.js";
+import { readSystemsConfig, type SystemsConfig } from "../systems-config.js";
 
 const mlog = log.child("mail");
 
@@ -47,6 +47,7 @@ export class MailPoller {
   private reconnectDelay = INITIAL_RECONNECT_MS;
   private reconnectAttempts = 0;
   private disconnectedAt: string | null = null;
+  private config: SystemsConfig | null = null;
 
   start(): void {
     if (this.running) {
@@ -54,8 +55,8 @@ export class MailPoller {
       return;
     }
 
-    const config = readSystemsConfig();
-    if (!config) {
+    this.config = readSystemsConfig();
+    if (!this.config) {
       mlog.info("no systems config — mail disabled");
       return;
     }
@@ -67,6 +68,7 @@ export class MailPoller {
 
   stop(): void {
     this.running = false;
+    this.config = null;
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.pingTimer = null;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
@@ -84,19 +86,20 @@ export class MailPoller {
   private connect(): void {
     if (!this.running) return;
 
-    const config = readSystemsConfig();
-    if (!config) {
+    // Refresh config on each reconnect
+    this.config = readSystemsConfig();
+    if (!this.config) {
       mlog.info("systems config removed — stopping");
       this.stop();
       return;
     }
 
-    const wsUrl = `${config.apiUrl.replace(/^http/, "ws")}/api/ws`;
+    const wsUrl = `${this.config.apiUrl.replace(/^http/, "ws")}/api/ws`;
 
     try {
       // Node.js WebSocket accepts headers in options; TS types don't reflect this
       this.ws = new WebSocket(wsUrl, {
-        headers: { Authorization: `Bearer ${config.apiKey}` },
+        headers: { Authorization: `Bearer ${this.config!.apiKey}` },
       } as any);
     } catch (err) {
       mlog.warn("failed to create WebSocket", log.errorData(err));
@@ -177,13 +180,12 @@ export class MailPoller {
 
   /** Fetch emails that arrived while disconnected */
   private catchUp(since: string): void {
-    const config = readSystemsConfig();
-    if (!config) return;
+    if (!this.config) return;
 
-    const url = `${config.apiUrl}/api/mail/system/poll?since=${encodeURIComponent(since)}`;
+    const url = `${this.config.apiUrl}/api/mail/system/poll?since=${encodeURIComponent(since)}`;
 
     fetch(url, {
-      headers: { Authorization: `Bearer ${config.apiKey}` },
+      headers: { Authorization: `Bearer ${this.config.apiKey}` },
     })
       .then(async (res) => {
         if (!res.ok) {
@@ -230,16 +232,15 @@ export class MailPoller {
     mind: string,
     notification: EmailNotification["email"],
   ): Promise<void> {
-    const config = readSystemsConfig();
-    if (!config) {
+    if (!this.config) {
       mlog.warn(`systems config missing — cannot fetch email ${notification.id} for ${mind}`);
       return;
     }
 
     // Fetch full email content
-    const url = `${config.apiUrl}/api/mail/emails/${encodeURIComponent(mind)}/${encodeURIComponent(notification.id)}`;
+    const url = `${this.config.apiUrl}/api/mail/emails/${encodeURIComponent(mind)}/${encodeURIComponent(notification.id)}`;
     const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${config.apiKey}` },
+      headers: { Authorization: `Bearer ${this.config.apiKey}` },
     });
 
     if (!res.ok) {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { Scheduler } from "../src/lib/scheduler.js";
+import { Scheduler } from "../src/lib/daemon/scheduler.js";
 
 type DeliveryPayload = {
   content: { type: string; text: string }[];

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { type ConversationEvent, publish, subscribe } from "../src/lib/conversation-events.js";
+import {
+  type ConversationEvent,
+  publish,
+  subscribe,
+} from "../src/lib/events/conversation-events.js";
 
 function makeEvent(
   overrides?: Partial<ConversationEvent & { type: "message" }>,

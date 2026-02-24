@@ -4,7 +4,8 @@ import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { writeChannelEntry } from "../../../connectors/sdk.js";
 import { getOrCreateMindUser } from "../../../lib/auth.js";
-import { subscribe } from "../../../lib/conversation-events.js";
+import { deliverMessage } from "../../../lib/delivery/message-delivery.js";
+import { subscribe } from "../../../lib/events/conversation-events.js";
 import {
   addMessage,
   type ContentBlock,
@@ -13,9 +14,8 @@ import {
   getConversation,
   getParticipants,
   isParticipantOrOwner,
-} from "../../../lib/conversations.js";
+} from "../../../lib/events/conversations.js";
 import log from "../../../lib/logger.js";
-import { deliverMessage } from "../../../lib/message-delivery.js";
 import { findMind } from "../../../lib/registry.js";
 import { buildVoluteSlug } from "../../../lib/slugify.js";
 import { getTypingMap } from "../../../lib/typing.js";
@@ -43,7 +43,7 @@ async function fanOutToMinds(opts: {
   const isDM = opts.isDM ?? participants.length === 2;
   const channelEntryType = opts.channelEntryType ?? (isDM ? "dm" : "group");
 
-  const { getMindManager } = await import("../../../lib/mind-manager.js");
+  const { getMindManager } = await import("../../../lib/daemon/mind-manager.js");
   const manager = getMindManager();
 
   const runningMinds = mindParticipants

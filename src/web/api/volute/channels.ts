@@ -11,7 +11,7 @@ import {
   joinChannel,
   leaveChannel,
   listChannels,
-} from "../../../lib/conversations.js";
+} from "../../../lib/events/conversations.js";
 import { findMind } from "../../../lib/registry.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 

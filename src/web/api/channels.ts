@@ -14,16 +14,18 @@ const app = new Hono<AuthEnv>()
     const name = c.req.param("name");
     if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
 
-    const { platform, uri, message, images } = await c.req.json<{
+    const { platform, uri, message, images, sender } = await c.req.json<{
       platform: string;
       uri: string;
       message: string;
       images?: ImageAttachment[];
+      sender?: string;
     }>();
     const driver = getChannelDriver(platform);
     if (!driver) return c.json({ error: `No driver for platform: ${platform}` }, 400);
 
     const env = buildEnv(name);
+    if (sender) env.VOLUTE_SENDER = sender;
     try {
       await driver.send(env, uri, message, images);
       return c.json({ ok: true });
@@ -110,10 +112,12 @@ const app = new Hono<AuthEnv>()
       platform,
       participants,
       name: convName,
+      sender,
     } = await c.req.json<{
       platform: string;
       participants: string[];
       name?: string;
+      sender?: string;
     }>();
 
     const driver = getChannelDriver(platform);
@@ -122,6 +126,7 @@ const app = new Hono<AuthEnv>()
     }
 
     const env = buildEnv(name);
+    if (sender) env.VOLUTE_SENDER = sender;
     try {
       const slug = await driver.createConversation(env, participants, convName);
       return c.json({ slug });

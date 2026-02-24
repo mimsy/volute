@@ -1,12 +1,10 @@
 import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
-import { resolveMind } from "../lib/registry.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
 
 export async function run(args: string[]) {
   const name = resolveMindName({ mind: args[0] });
 
-  resolveMind(name); // Validate mind exists
   const client = getClient();
 
   const res = await daemonFetch(urlOf(client.api.minds[":name"].stop.$url({ param: { name } })), {

@@ -1,6 +1,6 @@
-import { getDb } from "./db.js";
-import log from "./logger.js";
-import { activity } from "./schema.js";
+import { getDb } from "../db.js";
+import log from "../logger.js";
+import { activity } from "../schema.js";
 
 export type ActivityEvent = {
   type:
