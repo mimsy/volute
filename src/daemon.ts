@@ -3,22 +3,22 @@ import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { format } from "node:util";
-import { initConnectorManager } from "./lib/connector-manager.js";
-import { initDeliveryManager } from "./lib/delivery-manager.js";
+import { initConnectorManager } from "./lib/daemon/connector-manager.js";
+import { initMailPoller } from "./lib/daemon/mail-poller.js";
+import { initMindManager } from "./lib/daemon/mind-manager.js";
+import { startMindFull } from "./lib/daemon/mind-service.js";
+import { initScheduler } from "./lib/daemon/scheduler.js";
+import { initTokenBudget } from "./lib/daemon/token-budget.js";
+import { initDeliveryManager } from "./lib/delivery/delivery-manager.js";
+import { stopAll as stopAllActivityTrackers } from "./lib/events/mind-activity-tracker.js";
 import log from "./lib/logger.js";
-import { initMailPoller } from "./lib/mail-poller.js";
 import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
 import { migrateDotVoluteDir, migrateMindState } from "./lib/migrate-state.js";
-import { stopAll as stopAllActivityTrackers } from "./lib/mind-activity-tracker.js";
-import { initMindManager } from "./lib/mind-manager.js";
-import { startMindFull } from "./lib/mind-service.js";
 import { stopAllWatchers } from "./lib/pages-watcher.js";
 import { initRegistryCache, readRegistry, setMindRunning, voluteHome } from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
-import { initScheduler } from "./lib/scheduler.js";
 import { ensureSharedRepo } from "./lib/shared.js";
 import { syncBuiltinSkills } from "./lib/skills.js";
-import { initTokenBudget } from "./lib/token-budget.js";
 import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
 import { cleanExpiredSessions } from "./web/middleware/auth.js";
 import { startServer } from "./web/server.js";
@@ -180,7 +180,9 @@ export async function startDaemon(opts: {
   });
 
   // Clean up expired sessions (non-blocking)
-  cleanExpiredSessions().catch(() => {});
+  cleanExpiredSessions().catch((err) => {
+    log.warn("failed to clean expired sessions", log.errorData(err));
+  });
 
   log.info(`running on ${hostname}:${port}, pid ${myPid}`);
 
@@ -209,19 +211,33 @@ export async function startDaemon(opts: {
     if (shuttingDown) return;
     shuttingDown = true;
     log.info("shutting down...");
-    stopAllWatchers();
-    stopAllActivityTrackers();
-    scheduler.stop();
-    scheduler.saveState();
-    mailPoller.stop();
-    tokenBudget.stop();
-    delivery.dispose();
-    await connectors.stopAll();
-    await manager.stopAll();
-    manager.clearCrashAttempts();
-    server.close();
-    cleanup();
-    process.exit(0);
+    const safe = (label: string, fn: () => unknown) => {
+      try {
+        const result = fn();
+        if (result instanceof Promise)
+          return result.catch((err) => log.error(`shutdown: ${label} failed`, log.errorData(err)));
+      } catch (err) {
+        log.error(`shutdown: ${label} failed`, log.errorData(err));
+      }
+    };
+    try {
+      safe("stopAllWatchers", stopAllWatchers);
+      safe("stopAllActivityTrackers", stopAllActivityTrackers);
+      safe("scheduler.stop", () => scheduler.stop());
+      safe("scheduler.saveState", () => scheduler.saveState());
+      safe("mailPoller.stop", () => mailPoller.stop());
+      safe("tokenBudget.stop", () => tokenBudget.stop());
+      safe("delivery.dispose", () => delivery.dispose());
+      await safe("connectors.stopAll", () => connectors.stopAll());
+      await safe("manager.stopAll", () => manager.stopAll());
+      safe("clearCrashAttempts", () => manager.clearCrashAttempts());
+      safe("server.close", () => server.close());
+    } catch (err) {
+      log.error("error during shutdown", log.errorData(err));
+    } finally {
+      cleanup();
+      process.exit(0);
+    }
   }
 
   process.on("SIGINT", shutdown);

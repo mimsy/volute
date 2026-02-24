@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { extractTextContent } from "../src/lib/message-delivery.js";
+import { extractTextContent } from "../src/lib/delivery/delivery-router.js";
 
 describe("extractTextContent", () => {
   it("returns string content as-is", () => {

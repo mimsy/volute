@@ -12,6 +12,10 @@ RUN npm ci --production --ignore-scripts
 COPY dist/ dist/
 COPY drizzle/ drizzle/
 COPY templates/ templates/
+COPY skills/ skills/
+
+# Make volute CLI available in PATH for minds and operators
+RUN ln -s /opt/volute/dist/cli.js /usr/local/bin/volute
 
 ENV VOLUTE_HOME=/data
 ENV VOLUTE_MINDS_DIR=/minds

@@ -1,6 +1,6 @@
 import { existsSync, type FSWatcher, readdirSync, statSync, watch } from "node:fs";
 import { join, resolve } from "node:path";
-import { publish } from "./activity-events.js";
+import { publish } from "./events/activity-events.js";
 import log from "./logger.js";
 import { mindDir, readRegistry, voluteHome } from "./registry.js";
 

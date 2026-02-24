@@ -1,4 +1,4 @@
-import { publish } from "./conversation-events.js";
+import { publish } from "./events/conversation-events.js";
 
 const DEFAULT_TTL_MS = 10_000;
 const SWEEP_INTERVAL_MS = 5_000;

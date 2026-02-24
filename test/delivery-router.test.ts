@@ -8,7 +8,7 @@ import {
   type RoutingConfig,
   resolveDeliveryMode,
   resolveRoute,
-} from "../src/lib/delivery-router.js";
+} from "../src/lib/delivery/delivery-router.js";
 import { addMind, removeMind } from "../src/lib/registry.js";
 
 function createMindWithRoutes(config: RoutingConfig | object): string {

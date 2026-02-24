@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import log from "./logger.js";
-import { mindDir } from "./registry.js";
+import log from "../logger.js";
+import { mindDir } from "../registry.js";
 
 // --- Types ---
 
@@ -62,10 +62,37 @@ export type MatchMeta = {
   participantCount?: number;
 };
 
+// --- Delivery payload ---
+
+export interface DeliveryPayload {
+  channel: string;
+  sender: string | null;
+  content: unknown; // string or content block array
+  conversationId?: string;
+  typing?: string[];
+  platform?: string;
+  isDM?: boolean;
+  participants?: string[];
+  participantCount?: number;
+}
+
+export function extractTextContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return (content as { type: string; text?: string }[])
+      .filter((p) => p.type === "text" && p.text)
+      .map((p) => p.text)
+      .join("\n");
+  }
+  return JSON.stringify(content);
+}
+
 // --- Config cache ---
 
 type CachedConfig = { config: RoutingConfig; mtime: number };
 const configCache = new Map<string, CachedConfig>();
+const statCheckCache = new Map<string, { mtime: number; checkedAt: number }>();
+const STAT_TTL_MS = 5_000;
 
 const dlog = log.child("delivery-router");
 
@@ -76,16 +103,26 @@ function configPath(mindName: string): string {
 export function getRoutingConfig(mindName: string): RoutingConfig {
   const path = configPath(mindName);
 
+  // Skip statSync if we checked recently and have a cached config
+  const now = Date.now();
+  const statCached = statCheckCache.get(mindName);
+  const cached = configCache.get(mindName);
+  if (statCached && cached && now - statCached.checkedAt < STAT_TTL_MS) {
+    return cached.config;
+  }
+
   let mtime: number;
   try {
     mtime = statSync(path).mtimeMs;
   } catch {
     // No config file — return empty config, don't cache
     configCache.delete(mindName);
+    statCheckCache.delete(mindName);
     return {};
   }
 
-  const cached = configCache.get(mindName);
+  statCheckCache.set(mindName, { mtime, checkedAt: now });
+
   if (cached && cached.mtime === mtime) {
     return cached.config;
   }
@@ -102,19 +139,29 @@ export function getRoutingConfig(mindName: string): RoutingConfig {
   }
 }
 
+// --- Glob matching ---
+
+const globRegexCache = new Map<string, RegExp>();
+
 export function clearConfigCache(mindName?: string): void {
   if (mindName) {
     configCache.delete(mindName);
+    statCheckCache.delete(mindName);
   } else {
     configCache.clear();
+    statCheckCache.clear();
+    globRegexCache.clear();
   }
 }
 
-// --- Glob matching ---
-
 function globMatch(pattern: string, value: string): boolean {
-  const regex = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-  return new RegExp(`^${regex}$`).test(value);
+  let regex = globRegexCache.get(pattern);
+  if (!regex) {
+    const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+    regex = new RegExp(`^${escaped}$`);
+    globRegexCache.set(pattern, regex);
+  }
+  return regex.test(value);
 }
 
 // --- Rule matching ---

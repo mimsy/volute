@@ -2,15 +2,15 @@ import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:chil
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
-import { loadMergedEnv } from "./env.js";
-import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "./isolation.js";
-import { clearJsonMap, loadJsonMap, saveJsonMap } from "./json-state.js";
-import log from "./logger.js";
-import { getPrompt } from "./prompts.js";
-import { findMind, mindDir, setMindRunning, stateDir, voluteHome } from "./registry.js";
+import { loadMergedEnv } from "../env.js";
+import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../isolation.js";
+import { clearJsonMap, loadJsonMap, saveJsonMap } from "../json-state.js";
+import log from "../logger.js";
+import { getPrompt } from "../prompts.js";
+import { findMind, mindDir, setMindRunning, stateDir, voluteHome } from "../registry.js";
+import { RotatingLog } from "../rotating-log.js";
+import { findVariant, setVariantRunning } from "../variants.js";
 import { RestartTracker } from "./restart-tracker.js";
-import { RotatingLog } from "./rotating-log.js";
-import { findVariant, setVariantRunning } from "./variants.js";
 
 const mlog = log.child("minds");
 
@@ -218,6 +218,9 @@ export class MindManager {
     this.pendingContext.set(name, context);
   }
 
+  /** Deliver pending context (merge info, sprout, restart) directly to the mind via HTTP.
+   *  Intentionally bypasses DeliveryManager — these are system messages that should not be
+   *  routed, gated, or batched. */
   private async deliverPendingContext(name: string): Promise<void> {
     const context = this.pendingContext.get(name);
     if (!context) return;
@@ -261,12 +264,14 @@ export class MindManager {
       mlog.error(`mind ${name} exited with code ${code}`);
 
       // Clear activity tracking and publish crash as mind_stopped
-      import("./mind-activity-tracker.js").then(({ markIdle }) => markIdle(name)).catch(() => {});
-      import("./activity-events.js")
+      import("../events/mind-activity-tracker.js")
+        .then(({ markIdle }) => markIdle(name))
+        .catch((err) => mlog.warn(`failed to mark ${name} idle after crash`, log.errorData(err)));
+      import("../events/activity-events.js")
         .then(({ publish }) =>
           publish({ type: "mind_stopped", mind: name, summary: `${name} crashed (exit ${code})` }),
         )
-        .catch(() => {});
+        .catch((err) => mlog.warn(`failed to publish crash event for ${name}`, log.errorData(err)));
 
       const { shouldRestart, delay, attempt } = this.restartTracker.recordCrash(name);
       this.saveCrashAttempts();

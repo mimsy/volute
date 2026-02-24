@@ -445,10 +445,17 @@ export function findSkillsRoot(): string {
   let dir = dirname(new URL(import.meta.url).pathname);
   for (let i = 0; i < 5; i++) {
     const candidate = resolve(dir, "skills");
-    if (existsSync(candidate) && readdirSync(candidate).length > 0) return candidate;
+    if (existsSync(candidate) && hasSkillSubdir(candidate)) return candidate;
     dir = dirname(dir);
   }
   throw new Error("Skills directory not found");
+}
+
+/** Check that a directory contains at least one subdirectory with a SKILL.md file. */
+function hasSkillSubdir(dir: string): boolean {
+  return readdirSync(dir, { withFileTypes: true }).some(
+    (e) => e.isDirectory() && existsSync(join(dir, e.name, "SKILL.md")),
+  );
 }
 
 /**

@@ -11,6 +11,7 @@ export async function run(args: string[]) {
     "include-connectors": { type: "boolean" },
     "include-history": { type: "boolean" },
     "include-sessions": { type: "boolean" },
+    "include-src": { type: "boolean" },
     all: { type: "boolean" },
     output: { type: "string" },
   });
@@ -18,7 +19,7 @@ export async function run(args: string[]) {
   const name = positional[0];
   if (!name) {
     console.error(
-      "Usage: volute mind export <name> [--include-env] [--include-identity] [--include-connectors] [--include-history] [--include-sessions] [--all] [--output <path>]",
+      "Usage: volute mind export <name> [--include-env] [--include-identity] [--include-connectors] [--include-history] [--include-sessions] [--include-src] [--all] [--output <path>]",
     );
     process.exit(1);
   }
@@ -41,10 +42,13 @@ export async function run(args: string[]) {
   const includeConnectors = includeAll || flags["include-connectors"];
   const includeHistory = includeAll || flags["include-history"];
   const includeSessions = includeAll || flags["include-sessions"];
+  const includeSrc = includeAll || flags["include-src"];
 
   const zip = createExportArchive({
     name,
     template: entry.template ?? "claude",
+    stage: entry.stage,
+    includeSrc,
     includeEnv,
     includeIdentity,
     includeConnectors,
@@ -52,14 +56,20 @@ export async function run(args: string[]) {
     includeSessions,
   });
 
-  // Add history from DB if requested
+  // Add history from daemon API if requested
   if (includeHistory) {
     try {
-      const { getDb } = await import("../lib/db.js");
-      const { eq } = await import("drizzle-orm");
-      const { mindHistory } = await import("../lib/schema.js");
-      const db = await getDb();
-      const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, name));
+      const { daemonFetch } = await import("../lib/daemon-client.js");
+      const { getClient, urlOf } = await import("../lib/api-client.js");
+      const client = getClient();
+      const res = await daemonFetch(
+        urlOf(client.api.minds[":name"].history.export.$url({ param: { name } })),
+      );
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`Failed to fetch history: HTTP ${res.status}${text ? ` - ${text}` : ""}`);
+      }
+      const rows = (await res.json()) as Record<string, unknown>[];
       addHistoryToArchive(zip, rows);
     } catch (err) {
       console.error(`Error: could not export history: ${(err as Error).message}`);
@@ -83,6 +93,7 @@ export async function run(args: string[]) {
   const included: string[] = [];
   const excluded: string[] = [];
   for (const [key, val] of [
+    ["src", includeSrc],
     ["env", includeEnv],
     ["identity", includeIdentity],
     ["connectors", includeConnectors],

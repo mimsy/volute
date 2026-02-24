@@ -1,14 +1,14 @@
 import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { checkMissingEnvVars, getConnectorDef } from "./connector-defs.js";
-import { loadMergedEnv } from "./env.js";
-import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "./isolation.js";
-import log from "./logger.js";
-import { daemonLoopback, stateDir, voluteHome } from "./registry.js";
+import { checkMissingEnvVars, getConnectorDef } from "../connector-defs.js";
+import { loadMergedEnv } from "../env.js";
+import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../isolation.js";
+import log from "../logger.js";
+import { daemonLoopback, stateDir, voluteHome } from "../registry.js";
+import { RotatingLog } from "../rotating-log.js";
+import { readVoluteConfig } from "../volute-config.js";
 import { RestartTracker } from "./restart-tracker.js";
-import { RotatingLog } from "./rotating-log.js";
-import { readVoluteConfig } from "./volute-config.js";
 
 const clog = log.child("connectors");
 
@@ -42,13 +42,13 @@ export class ConnectorManager {
     const config = readVoluteConfig(mindDir) ?? {};
     const types = config.connectors ?? [];
 
-    for (const type of types) {
-      try {
-        await this.startConnector(mindName, mindDir, mindPort, type, daemonPort);
-      } catch (err) {
-        clog.warn(`failed to start connector ${type} for ${mindName}`, log.errorData(err));
-      }
-    }
+    await Promise.all(
+      types.map((type) =>
+        this.startConnector(mindName, mindDir, mindPort, type, daemonPort).catch((err) => {
+          clog.warn(`failed to start connector ${type} for ${mindName}`, log.errorData(err));
+        }),
+      ),
+    );
   }
 
   checkConnectorEnv(
@@ -90,13 +90,21 @@ export class ConnectorManager {
       await new Promise<void>((res) => {
         existing.child.on("exit", () => res());
         try {
-          existing.child.kill("SIGTERM");
+          if (existing.child.pid) {
+            process.kill(-existing.child.pid, "SIGTERM");
+          } else {
+            existing.child.kill("SIGTERM");
+          }
         } catch {
           res();
         }
         setTimeout(() => {
           try {
-            existing.child.kill("SIGKILL");
+            if (existing.child.pid) {
+              process.kill(-existing.child.pid, "SIGKILL");
+            } else {
+              existing.child.kill("SIGKILL");
+            }
           } catch {}
           res();
         }, 3000);
@@ -156,6 +164,7 @@ export class ConnectorManager {
 
     const spawnOpts: SpawnOptions = {
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
       env: {
         ...process.env,
         VOLUTE_MIND_PORT: String(mindPort),
@@ -243,13 +252,13 @@ export class ConnectorManager {
     await new Promise<void>((resolve) => {
       tracked.child.on("exit", () => resolve());
       try {
-        tracked.child.kill("SIGTERM");
+        process.kill(-tracked.child.pid!, "SIGTERM");
       } catch {
         resolve();
       }
       setTimeout(() => {
         try {
-          tracked.child.kill("SIGKILL");
+          process.kill(-tracked.child.pid!, "SIGKILL");
         } catch {}
         resolve();
       }, 5000);
@@ -313,7 +322,12 @@ export class ConnectorManager {
     try {
       const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
       if (pid > 0) {
-        process.kill(pid, "SIGTERM");
+        // Kill the process group to clean up child processes
+        try {
+          process.kill(-pid, "SIGTERM");
+        } catch {
+          process.kill(pid, "SIGTERM");
+        }
         clog.warn(`killed orphan connector ${type} (pid ${pid})`);
       }
     } catch {

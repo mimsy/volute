@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { getDb } from "../db.js";
+import { conversationParticipants, conversations, messages, users } from "../schema.js";
 import { publish } from "./conversation-events.js";
-import { getDb } from "./db.js";
-import { conversationParticipants, conversations, messages, users } from "./schema.js";
 
 export type ContentBlock =
   | { type: "text"; text: string }

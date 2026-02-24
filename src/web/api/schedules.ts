@@ -1,8 +1,8 @@
 import { CronExpressionParser } from "cron-parser";
 import { Hono } from "hono";
+import { getScheduler } from "../../lib/daemon/scheduler.js";
 import log from "../../lib/logger.js";
 import { findMind, mindDir } from "../../lib/registry.js";
-import { getScheduler } from "../../lib/scheduler.js";
 import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../../lib/volute-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 

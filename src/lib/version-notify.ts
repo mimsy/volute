@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { deliverMessage } from "./delivery/message-delivery.js";
 import log from "./logger.js";
-import { deliverMessage } from "./message-delivery.js";
 import { readRegistry, voluteHome, writeRegistry } from "./registry.js";
 import { parseReleaseNotes } from "./release-notes.js";
 import { computeTemplateHash } from "./template-hash.js";
