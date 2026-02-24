@@ -4,7 +4,6 @@ import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { resolveVoluteBin } from "../lib/exec.js";
 import { ensureVoluteGroup } from "../lib/isolation.js";
-import { parseArgs } from "../lib/parse-args.js";
 import { SYSTEM_SERVICE_PATH } from "../lib/service-mode.js";
 
 const SERVICE_NAME = "volute.service";
@@ -249,30 +248,5 @@ export function uninstall(force: boolean): void {
   } else {
     console.log(`Data directory preserved: ${DATA_DIR}`);
     console.log("Use --force to also remove data and system users.");
-  }
-}
-
-export async function run(args: string[]) {
-  const { positional, flags } = parseArgs(args, {
-    port: { type: "number" },
-    host: { type: "string" },
-    force: { type: "boolean" },
-  });
-
-  const subcommand = positional[0];
-
-  switch (subcommand) {
-    case "uninstall":
-      uninstall(!!flags.force);
-      break;
-    case undefined:
-      install(flags.port, flags.host);
-      break;
-    default:
-      console.log(`Usage:
-  volute service install --system [--port N] [--host H]   Install system-level service with user isolation
-  volute service uninstall --system [--force]              Remove service (--force removes data + users)`);
-      console.error(`\nUnknown subcommand: ${subcommand}`);
-      process.exit(1);
   }
 }
