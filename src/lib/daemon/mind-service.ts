@@ -1,14 +1,14 @@
-import { publish as publishActivity } from "./activity-events.js";
+import { publish as publishActivity } from "../activity-events.js";
+import log from "../logger.js";
+import { markIdle } from "../mind-activity-tracker.js";
+import { startWatcher, stopWatcher } from "../pages-watcher.js";
+import { findMind, mindDir } from "../registry.js";
+import { readVoluteConfig } from "../volute-config.js";
 import { getConnectorManager } from "./connector-manager.js";
-import log from "./logger.js";
 import { ensureMailAddress } from "./mail-poller.js";
-import { markIdle } from "./mind-activity-tracker.js";
 import { getMindManager } from "./mind-manager.js";
-import { startWatcher, stopWatcher } from "./pages-watcher.js";
-import { findMind, mindDir } from "./registry.js";
 import { getScheduler } from "./scheduler.js";
 import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "./token-budget.js";
-import { readVoluteConfig } from "./volute-config.js";
 
 /**
  * Start a mind server and (for non-seed base minds) connectors, schedules, mail, and token budget.

@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Hono } from "hono";
+import { getMindManager } from "../../lib/daemon/mind-manager.js";
 import { exec, gitExec } from "../../lib/exec.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../../lib/isolation.js";
-import { getMindManager } from "../../lib/mind-manager.js";
 import { findMind, mindDir, nextPort } from "../../lib/registry.js";
 import { spawnServer } from "../../lib/spawn-server.js";
 import {

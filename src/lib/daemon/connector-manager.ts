@@ -1,14 +1,14 @@
 import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { checkMissingEnvVars, getConnectorDef } from "./connector-defs.js";
-import { loadMergedEnv } from "./env.js";
-import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "./isolation.js";
-import log from "./logger.js";
-import { daemonLoopback, stateDir, voluteHome } from "./registry.js";
+import { checkMissingEnvVars, getConnectorDef } from "../connector-defs.js";
+import { loadMergedEnv } from "../env.js";
+import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../isolation.js";
+import log from "../logger.js";
+import { daemonLoopback, stateDir, voluteHome } from "../registry.js";
+import { RotatingLog } from "../rotating-log.js";
+import { readVoluteConfig } from "../volute-config.js";
 import { RestartTracker } from "./restart-tracker.js";
-import { RotatingLog } from "./rotating-log.js";
-import { readVoluteConfig } from "./volute-config.js";
 
 const clog = log.child("connectors");
 

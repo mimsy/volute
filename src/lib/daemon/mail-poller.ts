@@ -1,7 +1,7 @@
-import { deliverMessage } from "./delivery/message-delivery.js";
-import log from "./logger.js";
-import { findMind } from "./registry.js";
-import { readSystemsConfig, type SystemsConfig } from "./systems-config.js";
+import { deliverMessage } from "../delivery/message-delivery.js";
+import log from "../logger.js";
+import { findMind } from "../registry.js";
+import { readSystemsConfig, type SystemsConfig } from "../systems-config.js";
 
 const mlog = log.child("mail");
 

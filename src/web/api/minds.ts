@@ -21,10 +21,17 @@ import {
 import { broadcast } from "../../lib/activity-events.js";
 import { deleteMindUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
-import { getConnectorManager } from "../../lib/connector-manager.js";
 import { consolidateMemory } from "../../lib/consolidate.js";
 import { addMessage } from "../../lib/conversations.js";
 import { convertSession } from "../../lib/convert-session.js";
+import { getConnectorManager } from "../../lib/daemon/connector-manager.js";
+import { getMindManager } from "../../lib/daemon/mind-manager.js";
+// Lifecycle functions from mind-service.ts
+import {
+  startMindFull as startMindFullService,
+  stopMindFull as stopMindFullService,
+} from "../../lib/daemon/mind-service.js";
+import { getTokenBudget } from "../../lib/daemon/token-budget.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
 import { extractTextContent } from "../../lib/delivery/delivery-router.js";
@@ -51,12 +58,6 @@ import {
   publish as publishMindEvent,
   subscribe as subscribeMindEvent,
 } from "../../lib/mind-events.js";
-import { getMindManager } from "../../lib/mind-manager.js";
-// Lifecycle functions from mind-service.ts
-import {
-  startMindFull as startMindFullService,
-  stopMindFull as stopMindFullService,
-} from "../../lib/mind-service.js";
 import { getCachedRecentPages, getCachedSites } from "../../lib/pages-watcher.js";
 import {
   getMindPromptDefaults,
@@ -88,7 +89,6 @@ import {
   listFiles,
   type TemplateManifest,
 } from "../../lib/template.js";
-import { getTokenBudget } from "../../lib/token-budget.js";
 import { getTypingMap, publishTypingForChannels } from "../../lib/typing.js";
 import {
   addVariant,

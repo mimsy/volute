@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, it } from "node:test";
-import { TokenBudget } from "../src/lib/token-budget.js";
+import { TokenBudget } from "../src/lib/daemon/token-budget.js";
 
 describe("TokenBudget", () => {
   // Clean up persisted budget state between tests to ensure isolation
