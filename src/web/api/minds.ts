@@ -1738,6 +1738,14 @@ const app = new Hono<AuthEnv>()
       .where(eq(mindHistory.mind, name));
     return c.json(rows.map((r) => r.channel));
   })
+  .get("/:name/history/export", async (c) => {
+    const name = c.req.param("name");
+    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
+
+    const db = await getDb();
+    const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, name));
+    return c.json(rows);
+  })
   .get("/:name/history", async (c) => {
     const name = c.req.param("name");
     const channel = c.req.query("channel");
