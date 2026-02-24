@@ -1,9 +1,8 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind, Site } from "../lib/api";
-import { getDisplayStatus, mindDotColor } from "../lib/format";
+import { mindDotColor } from "../lib/format";
 import { activeMinds } from "../lib/stores.svelte";
 import ConversationList from "./ConversationList.svelte";
-import StatusBadge from "./StatusBadge.svelte";
 
 let {
   minds,
@@ -134,7 +133,6 @@ function toggleSection(section: Section) {
                 style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
               ></span>
               <span class="mind-item-name">{mind.name}</span>
-              <StatusBadge status={getDisplayStatus(mind)} />
             </button>
           {/each}
         </div>
