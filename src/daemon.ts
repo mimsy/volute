@@ -197,19 +197,24 @@ export async function startDaemon(opts: {
     if (shuttingDown) return;
     shuttingDown = true;
     log.info("shutting down...");
-    stopAllWatchers();
-    stopAllActivityTrackers();
-    scheduler.stop();
-    scheduler.saveState();
-    mailPoller.stop();
-    tokenBudget.stop();
-    delivery.dispose();
-    await connectors.stopAll();
-    await manager.stopAll();
-    manager.clearCrashAttempts();
-    server.close();
-    cleanup();
-    process.exit(0);
+    try {
+      stopAllWatchers();
+      stopAllActivityTrackers();
+      scheduler.stop();
+      scheduler.saveState();
+      mailPoller.stop();
+      tokenBudget.stop();
+      delivery.dispose();
+      await connectors.stopAll();
+      await manager.stopAll();
+      manager.clearCrashAttempts();
+      server.close();
+    } catch (err) {
+      log.error("error during shutdown", log.errorData(err));
+    } finally {
+      cleanup();
+      process.exit(0);
+    }
   }
 
   process.on("SIGINT", shutdown);
