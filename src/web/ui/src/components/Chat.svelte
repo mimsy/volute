@@ -67,7 +67,7 @@ let fileEl: HTMLInputElement;
 let typingTimer = 0;
 let typingSafetyTimer = 0;
 let lastPollFingerprint = "";
-let currentConvId = conversationId;
+let currentConvId: string | null = null;
 let showInviteModal = $state(false);
 let memberCount = $state(0);
 

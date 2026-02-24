@@ -15,8 +15,7 @@ let { mind: initialMind, onClose }: { mind: Mind; onClose: () => void } = $props
 const TABS = ["Info", "History", "Skills", "Variants", "Connections"] as const;
 type Tab = (typeof TABS)[number];
 
-const mindName = initialMind.name;
-let mind = $derived(data.minds.find((m) => m.name === mindName) ?? initialMind);
+let mind = $derived(data.minds.find((m) => m.name === initialMind.name) ?? initialMind);
 let tab = $state<Tab>("Info");
 let error = $state("");
 let actionLoading = $state(false);
