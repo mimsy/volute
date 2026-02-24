@@ -9,7 +9,7 @@ import StatusBadge from "./StatusBadge.svelte";
 import TabBar from "./TabBar.svelte";
 import VariantList from "./VariantList.svelte";
 
-let { mind: initialMind, onClose }: { mind: Mind; onClose: () => void } = $props();
+let { mind: initialMind, onClose }: { mind: Mind; onClose?: () => void } = $props();
 
 const TABS = ["History", "Details"] as const;
 type Tab = (typeof TABS)[number];
@@ -82,7 +82,9 @@ const connectedChannels = $derived(
           </button>
         {/if}
       </div>
-      <button class="close-btn" onclick={onClose}>&#x2715;</button>
+      {#if onClose}
+        <button class="close-btn" onclick={onClose}>&#x2715;</button>
+      {/if}
     </div>
     <TabBar tabs={[...TABS]} active={tab} onchange={(t) => (tab = t as Tab)} />
   </div>
