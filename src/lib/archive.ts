@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import AdmZip from "adm-zip";
@@ -9,6 +10,8 @@ export type ExportManifest = {
   template: string;
   voluteVersion: string;
   exportedAt: string;
+  format?: "home-only" | "full";
+  stage?: "seed" | "sprouted";
   includes: {
     env: boolean;
     identity: boolean;
@@ -21,6 +24,8 @@ export type ExportManifest = {
 export type ExportOptions = {
   name: string;
   template: string;
+  stage?: "seed" | "sprouted";
+  includeSrc?: boolean;
   includeEnv?: boolean;
   includeIdentity?: boolean;
   includeConnectors?: boolean;
@@ -53,11 +58,40 @@ function walkDir(dir: string, base?: string, skipSessions?: boolean): string[] {
   return results;
 }
 
+/**
+ * List files using git (tracked + untracked-but-not-ignored).
+ * Falls back to walkDir if git fails (e.g. mind not a git repo).
+ */
+function gitListFiles(dir: string): string[] | null {
+  try {
+    const tracked = execFileSync("git", ["ls-files"], { cwd: dir, encoding: "utf-8" });
+    const untracked = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], {
+      cwd: dir,
+      encoding: "utf-8",
+    });
+    const files = [...tracked.trim().split("\n"), ...untracked.trim().split("\n")].filter(Boolean);
+    return [...new Set(files)];
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes("not a git repository")) {
+      console.error(`Warning: git ls-files failed, .gitignore rules will not apply: ${msg}`);
+    }
+    return null;
+  }
+}
+
+/** Check if a manifest represents a home-only archive. */
+export function isHomeOnlyArchive(manifest: ExportManifest): boolean {
+  return manifest.format === "home-only";
+}
+
 /** Create an export archive zip from a mind. */
 export function createExportArchive(options: ExportOptions): AdmZip {
   const {
     name,
     template,
+    stage,
+    includeSrc = false,
     includeEnv = false,
     includeIdentity = false,
     includeConnectors = false,
@@ -68,18 +102,42 @@ export function createExportArchive(options: ExportOptions): AdmZip {
   const dir = mindDir(name);
   const state = stateDir(name);
   const zip = new AdmZip();
+  const format = includeSrc ? "full" : "home-only";
 
-  // Walk mind directory, skipping node_modules, .variants, .git
-  const files = walkDir(dir, undefined, includeSessions);
-  for (const relPath of files) {
-    // Skip identity files unless included
-    if (!includeIdentity && relPath.startsWith(join(".mind", "identity"))) continue;
+  if (includeSrc) {
+    // Full export: walk entire mind directory (original behavior)
+    const files = walkDir(dir, undefined, includeSessions);
+    for (const relPath of files) {
+      if (!includeIdentity && relPath.startsWith(join(".mind", "identity"))) continue;
+      if (!includeConnectors && relPath.startsWith(join(".mind", "connectors"))) continue;
+      const fullPath = resolve(dir, relPath);
+      zip.addFile(`mind/${relPath}`, readFileSync(fullPath));
+    }
+  } else {
+    // Home-only export: use git ls-files for home/, walkDir for .mind/
+    const gitFiles = gitListFiles(dir);
+    const homeFiles = gitFiles
+      ? gitFiles.filter((f) => f.startsWith("home/") || f.startsWith("home\\"))
+      : walkDir(resolve(dir, "home"), dir);
 
-    // Skip connector configs unless included
-    if (!includeConnectors && relPath.startsWith(join(".mind", "connectors"))) continue;
+    for (const relPath of homeFiles) {
+      const fullPath = resolve(dir, relPath);
+      if (existsSync(fullPath)) {
+        zip.addFile(`mind/${relPath}`, readFileSync(fullPath));
+      }
+    }
 
-    const fullPath = resolve(dir, relPath);
-    zip.addFile(`mind/${relPath}`, readFileSync(fullPath));
+    // .mind/ files via walkDir (it's gitignored so git ls-files won't find it)
+    const mindInternalDir = resolve(dir, ".mind");
+    if (existsSync(mindInternalDir)) {
+      const mindFiles = walkDir(mindInternalDir, dir, includeSessions);
+      for (const relPath of mindFiles) {
+        if (!includeIdentity && relPath.startsWith(join(".mind", "identity"))) continue;
+        if (!includeConnectors && relPath.startsWith(join(".mind", "connectors"))) continue;
+        const fullPath = resolve(dir, relPath);
+        zip.addFile(`mind/${relPath}`, readFileSync(fullPath));
+      }
+    }
   }
 
   // Always include channels.json from state dir
@@ -127,6 +185,8 @@ export function createExportArchive(options: ExportOptions): AdmZip {
     template,
     voluteVersion,
     exportedAt: new Date().toISOString(),
+    format,
+    stage,
     includes: {
       env: includeEnv,
       identity: includeIdentity,
