@@ -4,7 +4,6 @@ import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { resolveVoluteBin } from "../lib/exec.js";
 import { ensureVoluteGroup } from "../lib/isolation.js";
-import { parseArgs } from "../lib/parse-args.js";
 import { SYSTEM_SERVICE_PATH } from "../lib/service-mode.js";
 
 const SERVICE_NAME = "volute.service";
@@ -77,15 +76,15 @@ function generateUnit(voluteBin: string, port?: number, host?: string): string {
   return lines.join("\n");
 }
 
-function install(port?: number, host?: string): void {
+export function install(port?: number, host?: string): void {
   if (host) validateHost(host);
   if (process.getuid?.() !== 0) {
-    console.error("Error: volute setup must be run as root (use sudo).");
+    console.error("Error: volute service install --system must be run as root (use sudo).");
     process.exit(1);
   }
 
   if (process.platform !== "linux") {
-    console.error("Error: volute setup is only supported on Linux.");
+    console.error("Error: volute service install --system is only supported on Linux.");
     console.error("On macOS, use `volute service install` for user-level service management.");
     process.exit(1);
   }
@@ -175,9 +174,9 @@ function install(port?: number, host?: string): void {
   }
 }
 
-function uninstall(force: boolean): void {
+export function uninstall(force: boolean): void {
   if (process.getuid?.() !== 0) {
-    console.error("Error: volute setup uninstall must be run as root (use sudo).");
+    console.error("Error: volute service uninstall --system must be run as root (use sudo).");
     process.exit(1);
   }
 
@@ -249,30 +248,5 @@ function uninstall(force: boolean): void {
   } else {
     console.log(`Data directory preserved: ${DATA_DIR}`);
     console.log("Use --force to also remove data and system users.");
-  }
-}
-
-export async function run(args: string[]) {
-  const { positional, flags } = parseArgs(args, {
-    port: { type: "number" },
-    host: { type: "string" },
-    force: { type: "boolean" },
-  });
-
-  const subcommand = positional[0];
-
-  switch (subcommand) {
-    case "uninstall":
-      uninstall(!!flags.force);
-      break;
-    case undefined:
-      install(flags.port, flags.host);
-      break;
-    default:
-      console.log(`Usage:
-  volute setup [--port N] [--host H]     Install system-level service with user isolation
-  volute setup uninstall [--force]        Remove service (--force removes data + users)`);
-      console.error(`\nUnknown subcommand: ${subcommand}`);
-      process.exit(1);
   }
 }

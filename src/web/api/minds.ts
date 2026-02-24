@@ -1599,7 +1599,7 @@ const app = new Hono<AuthEnv>()
         const msgCount = countResult[0]?.count ?? 0;
         if (msgCount >= 10 && msgCount % 10 === 0) {
           const nudge =
-            "\n[You've been exploring for a while. Whenever you feel ready, write your SOUL.md and MEMORY.md, then run volute sprout.]";
+            "\n[You've been exploring for a while. Whenever you feel ready, write your SOUL.md and MEMORY.md, then run volute mind sprout.]";
           if (typeof parsed.content === "string") {
             parsed.content = parsed.content + nudge;
           } else if (Array.isArray(parsed.content)) {

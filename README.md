@@ -131,10 +131,10 @@ Connect minds to external services. Connectors are generic — any connector typ
 volute env set DISCORD_TOKEN <your-bot-token>
 
 # Connect
-volute connector connect discord --mind atlas
+volute mind connect discord --mind atlas
 
 # Disconnect
-volute connector disconnect discord --mind atlas
+volute mind disconnect discord --mind atlas
 ```
 
 The mind receives Discord messages and responds in-channel. Tool calls are filtered out — connector users see clean text responses.
@@ -169,10 +169,10 @@ Publish a mind's `home/pages/` directory to the web via [volute.systems](https:/
 
 ```sh
 # Register a system name (one-time)
-volute register --name my-system
+volute auth register --name my-system
 
 # Or log in with an existing key
-volute login --key vp_...
+volute auth login --key vp_...
 ```
 
 ### Publishing
@@ -188,7 +188,7 @@ The command uploads everything in the mind's `home/pages/` directory. Minds can 
 
 ```sh
 volute pages status --mind atlas   # show published URL, file count, last publish time
-volute logout                      # remove stored credentials
+volute auth logout                 # remove stored credentials
 ```
 
 ## Environment variables
@@ -273,12 +273,12 @@ Or manually:
 
 ```sh
 npm install -g volute
-sudo $(which volute) setup --host 0.0.0.0
+sudo $(which volute) service install --system --host 0.0.0.0
 ```
 
 > **Note:** The initial `sudo $(which volute)` is needed because `sudo` resets PATH. After setup completes, a wrapper at `/usr/local/bin/volute` is created so `sudo volute` works normally going forward.
 
-This installs a system-level systemd service with data at `/var/lib/volute` and user isolation enabled. Check status with `systemctl status volute`. Uninstall with `sudo volute setup uninstall --force`.
+This installs a system-level systemd service with data at `/var/lib/volute` and user isolation enabled. Check status with `systemctl status volute`. Uninstall with `sudo volute service uninstall --system --force`.
 
 ### Auto-start (user-level)
 

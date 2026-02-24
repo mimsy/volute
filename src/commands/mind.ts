@@ -44,6 +44,18 @@ export async function run(args: string[]) {
     case "export":
       await import("./export.js").then((m) => m.run(args.slice(1)));
       break;
+    case "connect":
+      await import("./connector.js").then((m) => m.run(["connect", ...args.slice(1)]));
+      break;
+    case "disconnect":
+      await import("./connector.js").then((m) => m.run(["disconnect", ...args.slice(1)]));
+      break;
+    case "seed":
+      await import("./seed.js").then((m) => m.run(args.slice(1)));
+      break;
+    case "sprout":
+      await import("./sprout.js").then((m) => m.run(args.slice(1)));
+      break;
     case "--help":
     case "-h":
     case undefined:
@@ -66,6 +78,7 @@ function transformMindFlag(args: string[]): string[] {
 function printUsage() {
   console.log(`Usage:
   volute mind create <name> [--template <name>]
+  volute mind seed <name> [--template <name>]
   volute mind start <name>
   volute mind stop [name]
   volute mind restart [name]
@@ -73,6 +86,9 @@ function printUsage() {
   volute mind list
   volute mind status [name]
   volute mind logs [name] [--follow] [-n N]
+  volute mind connect <type> [--mind <name>]
+  volute mind disconnect <type> [--mind <name>]
+  volute mind sprout
   volute mind upgrade [name] [--template <name>] [--continue]
   volute mind import <path> [--name <name>] [--session <path>] [--template <name>]
   volute mind export <name> [--include-env] [--include-identity] [--include-connectors] [--include-history] [--include-sessions] [--all] [--output <path>]

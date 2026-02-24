@@ -11,7 +11,7 @@ export async function run(args: string[]) {
 
   const config = readSystemsConfig();
   if (!config) {
-    console.error('Not logged in. Run "volute pages register" or "volute pages login" first.');
+    console.error('Not logged in. Run "volute auth register" or "volute auth login" first.');
     process.exit(1);
   }
 

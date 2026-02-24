@@ -12,14 +12,14 @@ export async function run(args: string[]) {
 
   const existing = readSystemsConfig();
   if (existing) {
-    console.error(`Already logged in as "${existing.system}". Run "volute logout" first.`);
+    console.error(`Already logged in as "${existing.system}". Run "volute auth logout" first.`);
     process.exit(1);
   }
 
   let key = flags.key;
   if (!key) {
     if (!process.stdin.isTTY) {
-      console.error("Usage: volute pages login --key <api-key>");
+      console.error("Usage: volute auth login --key <api-key>");
       process.exit(1);
     }
     key = await promptLine("API key: ");

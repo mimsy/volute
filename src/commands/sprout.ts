@@ -8,7 +8,7 @@ const ORIENTATION_MARKER = "You don't have a soul yet";
 export async function run(_args: string[]) {
   const mindName = process.env.VOLUTE_MIND;
   if (!mindName) {
-    console.error("volute sprout must be run by a mind (VOLUTE_MIND not set)");
+    console.error("volute mind sprout must be run by a mind (VOLUTE_MIND not set)");
     process.exit(1);
   }
 
