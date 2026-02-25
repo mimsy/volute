@@ -112,12 +112,12 @@ function formatCreated(dateStr: string): string {
         {/if}
         <div class="profile-info">
           <div class="profile-name-row">
-            <span class="profile-display-name">{mind.displayName ?? mind.name}</span>
             <span
               class="profile-dot"
               class:iridescent={activeMinds.has(mind.name)}
               style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
             ></span>
+            <span class="profile-display-name">{mind.displayName ?? mind.name}</span>
           </div>
           {#if mind.displayName}
             <span class="profile-handle">@{mind.name}</span>
@@ -312,7 +312,7 @@ function formatCreated(dateStr: string): string {
   .profile-avatar {
     width: 96px;
     height: 96px;
-    border-radius: 50%;
+    border-radius: var(--radius);
     object-fit: cover;
   }
 

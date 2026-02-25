@@ -65,16 +65,16 @@ function handleMouseLeave() {
     {/if}
     <div class="info">
       <span class="name-row">
-        {#if mind.displayName}
-          <span class="display-name">{mind.displayName}</span>
-        {:else}
-          <span class="display-name">{mind.name}</span>
-        {/if}
         <span
           class="status-dot"
           class:iridescent={activeMinds.has(mind.name)}
           style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
         ></span>
+        {#if mind.displayName}
+          <span class="display-name">{mind.displayName}</span>
+        {:else}
+          <span class="display-name">{mind.name}</span>
+        {/if}
       </span>
       {#if mind.displayName}
         <span class="handle">@{mind.name}</span>
