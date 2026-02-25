@@ -4,6 +4,7 @@ import { getScheduler } from "../../lib/daemon/scheduler.js";
 import log from "../../lib/logger.js";
 import { findMind, mindDir } from "../../lib/registry.js";
 import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../../lib/volute-config.js";
+import { fireWebhook } from "../../lib/webhook.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 const slog = log.child("schedules");
@@ -18,6 +19,12 @@ function writeSchedules(name: string, schedules: Schedule[]): void {
   config.schedules = schedules.length > 0 ? schedules : undefined;
   writeVoluteConfig(dir, config);
   getScheduler().loadSchedules(name);
+  fireWebhook({
+    event: "schedule_changed",
+    mind: name,
+    data: { schedules },
+    timestamp: new Date().toISOString(),
+  });
 }
 
 const app = new Hono<AuthEnv>()

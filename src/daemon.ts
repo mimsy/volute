@@ -20,6 +20,7 @@ import { RotatingLog } from "./lib/rotating-log.js";
 import { ensureSharedRepo } from "./lib/shared.js";
 import { syncBuiltinSkills } from "./lib/skills.js";
 import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
+import { initWebhook } from "./lib/webhook.js";
 import { cleanExpiredSessions } from "./web/middleware/auth.js";
 import { startServer } from "./web/server.js";
 
@@ -113,6 +114,7 @@ export async function startDaemon(opts: {
   mailPoller.start();
   const tokenBudget = initTokenBudget();
   tokenBudget.start();
+  const unsubscribeWebhook = initWebhook();
 
   // Migrate .volute/ → .mind/ and system state for all registered minds
   const registry = readRegistry();
@@ -223,6 +225,7 @@ export async function startDaemon(opts: {
     try {
       safe("stopAllWatchers", stopAllWatchers);
       safe("stopAllActivityTrackers", stopAllActivityTrackers);
+      safe("unsubscribeWebhook", unsubscribeWebhook);
       safe("scheduler.stop", () => scheduler.stop());
       safe("scheduler.saveState", () => scheduler.saveState());
       safe("mailPoller.stop", () => mailPoller.stop());
