@@ -5,13 +5,21 @@ import {
   deleteSharedEnvVar,
   fetchMindConfig,
   fetchMindEnv,
+  fetchMinds,
+  type Mind,
   type MindConfig,
   type MindEnv,
   setMindEnvVar,
+  startMind,
+  stopMind,
   updateMindConfig,
 } from "../lib/api";
+import { getDisplayStatus } from "../lib/format";
+import { data } from "../lib/stores.svelte";
+import StatusBadge from "./StatusBadge.svelte";
 
-let { name }: { name: string } = $props();
+let { mind }: { mind: Mind } = $props();
+let name = $derived(mind.name);
 
 let config = $state<MindConfig | null>(null);
 let env = $state<MindEnv | null>(null);
@@ -194,6 +202,41 @@ async function addEnvVar() {
   saving = null;
 }
 
+let actionLoading = $state(false);
+let actionError = $state("");
+
+async function handleStart() {
+  actionLoading = true;
+  actionError = "";
+  try {
+    await startMind(name);
+  } catch (e) {
+    actionError = e instanceof Error ? e.message : "Failed to start";
+  }
+  fetchMinds()
+    .then((m) => {
+      data.minds = m;
+    })
+    .catch(() => {});
+  actionLoading = false;
+}
+
+async function handleStop() {
+  actionLoading = true;
+  actionError = "";
+  try {
+    await stopMind(name);
+  } catch (e) {
+    actionError = e instanceof Error ? e.message : "Failed to stop";
+  }
+  fetchMinds()
+    .then((m) => {
+      data.minds = m;
+    })
+    .catch(() => {});
+  actionLoading = false;
+}
+
 function handleKeydown(e: KeyboardEvent, action: () => void) {
   if (e.key === "Enter") action();
 }
@@ -209,20 +252,32 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
   {/if}
 
   <div class="section">
-    <div class="section-title">Info</div>
-    <div class="info-grid">
-      <div class="info-label">Template</div>
-      <div class="info-value">{config.registry.template ?? "unknown"}</div>
-
-      <div class="info-label">Created</div>
-      <div class="info-value">{formatDate(config.registry.created)}</div>
-
-      <div class="info-label">Stage</div>
-      <div class="info-value">{config.registry.stage ?? "sprouted"}</div>
-
-      <div class="info-label">Port</div>
-      <div class="info-value">{config.registry.port}</div>
+    <div class="section-title">Status</div>
+    <div class="status-row">
+      <StatusBadge status={getDisplayStatus(mind)} />
+      {#if mind.status === "stopped"}
+        <button
+          onclick={handleStart}
+          disabled={actionLoading}
+          class="action-btn start-btn"
+          style:opacity={actionLoading ? 0.5 : 1}
+        >
+          {actionLoading ? "Starting..." : "Start"}
+        </button>
+      {:else}
+        <button
+          onclick={handleStop}
+          disabled={actionLoading}
+          class="action-btn stop-btn"
+          style:opacity={actionLoading ? 0.5 : 1}
+        >
+          {actionLoading ? "Stopping..." : "Stop"}
+        </button>
+      {/if}
     </div>
+    {#if actionError}
+      <div class="error">{actionError}</div>
+    {/if}
   </div>
 
   <div class="section">
@@ -421,19 +476,28 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
     margin-bottom: 8px;
   }
 
-  .info-grid {
-    display: grid;
-    grid-template-columns: 100px 1fr;
-    gap: 6px 12px;
-    font-size: 13px;
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
   }
 
-  .info-label {
-    color: var(--text-2);
+  .action-btn {
+    padding: 4px 12px;
+    border-radius: var(--radius);
+    font-size: 11px;
+    font-weight: 500;
+    transition: opacity 0.15s;
   }
 
-  .info-value {
-    color: var(--text-0);
+  .start-btn {
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
+
+  .stop-btn {
+    background: var(--red-dim);
+    color: var(--red);
   }
 
   .setting-row {

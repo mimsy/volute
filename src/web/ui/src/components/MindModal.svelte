@@ -1,5 +1,5 @@
 <script lang="ts">
-import { fetchMinds, type Mind, startMind, stopMind } from "../lib/api";
+import type { Mind } from "../lib/api";
 import { formatRelativeTime, getDisplayStatus } from "../lib/format";
 import { data } from "../lib/stores.svelte";
 import History from "./History.svelte";
@@ -16,40 +16,6 @@ type Tab = (typeof TABS)[number];
 
 let mind = $derived(data.minds.find((m) => m.name === initialMind.name) ?? initialMind);
 let tab = $state<Tab>("Info");
-let error = $state("");
-let actionLoading = $state(false);
-
-async function handleStart() {
-  actionLoading = true;
-  error = "";
-  try {
-    await startMind(mind.name);
-  } catch (e) {
-    error = e instanceof Error ? e.message : "Failed to start";
-  }
-  fetchMinds()
-    .then((m) => {
-      data.minds = m;
-    })
-    .catch(() => {});
-  actionLoading = false;
-}
-
-async function handleStop() {
-  actionLoading = true;
-  error = "";
-  try {
-    await stopMind(mind.name);
-  } catch (e) {
-    error = e instanceof Error ? e.message : "Failed to stop";
-  }
-  fetchMinds()
-    .then((m) => {
-      data.minds = m;
-    })
-    .catch(() => {});
-  actionLoading = false;
-}
 
 const connectedChannels = $derived(
   mind.channels.filter((ch) => ch.name !== "web" && ch.status === "connected"),
@@ -70,25 +36,6 @@ function formatCreated(dateStr: string): string {
     <div class="header-top">
       <div class="header-left">
         <span class="mind-name">{mind.displayName ?? mind.name}</span>
-        {#if mind.status === "stopped"}
-          <button
-            onclick={handleStart}
-            disabled={actionLoading}
-            class="action-btn start-btn"
-            style:opacity={actionLoading ? 0.5 : 1}
-          >
-            {actionLoading ? "Starting..." : "Start"}
-          </button>
-        {:else}
-          <button
-            onclick={handleStop}
-            disabled={actionLoading}
-            class="action-btn stop-btn"
-            style:opacity={actionLoading ? 0.5 : 1}
-          >
-            {actionLoading ? "Stopping..." : "Stop"}
-          </button>
-        {/if}
       </div>
       {#if onClose}
         <button class="close-btn" onclick={onClose}>&#x2715;</button>
@@ -97,9 +44,6 @@ function formatCreated(dateStr: string): string {
     <TabBar tabs={[...TABS]} active={tab} onchange={(t) => (tab = t as Tab)} />
   </div>
   <div class="panel-body">
-    {#if error}
-      <div class="error-msg">{error}</div>
-    {/if}
     {#if tab === "Info"}
       <div class="profile-section">
         <span class="profile-display-name">{mind.displayName ?? mind.name}</span>
@@ -119,7 +63,7 @@ function formatCreated(dateStr: string): string {
     {:else if tab === "History"}
       <History name={mind.name} />
     {:else if tab === "Settings"}
-      <MindInfo name={mind.name} />
+      <MindInfo {mind} />
 
       <div class="detail-section">
         <MindSkills name={mind.name} />
@@ -208,30 +152,6 @@ function formatCreated(dateStr: string): string {
     flex: 1;
     overflow: auto;
     padding: 16px;
-  }
-
-  .error-msg {
-    color: var(--red);
-    margin-bottom: 12px;
-    font-size: 13px;
-  }
-
-  .action-btn {
-    padding: 4px 12px;
-    border-radius: var(--radius);
-    font-size: 11px;
-    font-weight: 500;
-    transition: opacity 0.15s;
-  }
-
-  .start-btn {
-    background: var(--accent-dim);
-    color: var(--accent);
-  }
-
-  .stop-btn {
-    background: var(--red-dim);
-    color: var(--red);
   }
 
   .detail-section {
