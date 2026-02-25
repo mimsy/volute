@@ -1,9 +1,12 @@
 <script lang="ts">
 let { status }: { status: string } = $props();
 
-const statusConfig: Record<string, { color: string; bg: string; glow?: boolean; label: string }> = {
-  active: { color: "var(--accent)", bg: "var(--accent-bg)", glow: true, label: "active" },
-  running: { color: "var(--accent)", bg: "var(--accent-bg)", glow: true, label: "awake" },
+const statusConfig: Record<
+  string,
+  { color: string; bg: string; iridescent?: boolean; label: string }
+> = {
+  active: { color: "var(--text-0)", bg: "var(--muted-bg)", iridescent: true, label: "active" },
+  running: { color: "var(--text-0)", bg: "var(--muted-bg)", label: "awake" },
   starting: { color: "var(--yellow)", bg: "var(--yellow-bg)", label: "waking" },
   stopped: { color: "var(--text-2)", bg: "var(--muted-bg)", label: "asleep" },
   connected: { color: "var(--blue)", bg: "var(--blue-bg)", label: "connected" },
@@ -22,8 +25,8 @@ let config = $derived(statusConfig[status] ?? statusConfig.stopped);
 >
   <span
     class="dot"
-    style:background={config.color}
-    style:box-shadow={config.glow ? `0 0 6px ${config.color}` : "none"}
+    class:iridescent={config.iridescent}
+    style:background={config.iridescent ? undefined : config.color}
     style:animation={status === "starting" ? "pulse 1.5s ease infinite" : "none"}
   ></span>
   {config.label}
@@ -46,5 +49,19 @@ let config = $derived(statusConfig[status] ?? statusConfig.stopped);
     width: 5px;
     height: 5px;
     border-radius: 50%;
+  }
+
+  .dot.iridescent {
+    animation: iridescent 3s ease-in-out infinite;
+  }
+
+  @keyframes iridescent {
+    0%   { background: #4ade80; }
+    16%  { background: #60a5fa; }
+    33%  { background: #c084fc; }
+    50%  { background: #f472b6; }
+    66%  { background: #fbbf24; }
+    83%  { background: #34d399; }
+    100% { background: #4ade80; }
   }
 </style>

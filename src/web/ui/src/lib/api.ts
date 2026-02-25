@@ -22,6 +22,9 @@ export type Mind = {
   channels: Channel[];
   hasPages?: boolean;
   lastActiveAt?: string | null;
+  displayName?: string;
+  description?: string;
+  avatar?: string;
 };
 
 export type RecentPage = {
@@ -674,6 +677,17 @@ export async function setMindEnvVar(name: string, key: string, value: string): P
 
 export async function deleteMindEnvVar(name: string, key: string): Promise<void> {
   const res = await fetch(`/api/minds/${encodeURIComponent(name)}/env/${encodeURIComponent(key)}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "Failed to delete env var");
+  }
+}
+
+export async function deleteSharedEnvVar(key: string): Promise<void> {
+  const res = await fetch(`/api/env/${encodeURIComponent(key)}`, {
     method: "DELETE",
     credentials: "include",
   });

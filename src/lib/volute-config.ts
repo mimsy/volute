@@ -19,6 +19,9 @@ export type VoluteConfig = {
   tokenBudget?: number;
   tokenBudgetPeriodMinutes?: number;
   identity?: { privateKey: string; publicKey: string };
+  displayName?: string;
+  description?: string;
+  avatar?: string; // relative path from home/, e.g. "avatar.png"
   [key: string]: unknown;
 };
 

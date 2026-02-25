@@ -1,6 +1,9 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind, Site } from "../lib/api";
+import { mindDotColor } from "../lib/format";
+import { activeMinds } from "../lib/stores.svelte";
 import ConversationList from "./ConversationList.svelte";
+import MindHoverCard from "./MindHoverCard.svelte";
 
 let {
   minds,
@@ -13,6 +16,8 @@ let {
   onNewChat,
   onBrowseChannels,
   onOpenMind,
+  onSelectMind,
+  onSeed,
   onSelectSite,
   onSelectPages,
   onHideConversation,
@@ -28,13 +33,15 @@ let {
   onNewChat: () => void;
   onBrowseChannels: () => void;
   onOpenMind: (mind: Mind) => void;
+  onSelectMind: (name: string) => void;
+  onSeed: () => void;
   onSelectSite: (name: string) => void;
   onSelectPages: () => void;
   onHideConversation?: (id: string) => void;
   onHome: () => void;
 } = $props();
 
-type Section = "dms" | "channels" | "pages";
+type Section = "minds" | "groups" | "channels" | "pages";
 
 function loadCollapsed(): Set<Section> {
   try {
@@ -47,7 +54,46 @@ function loadCollapsed(): Set<Section> {
 
 let collapsed = $state(loadCollapsed());
 
-let dmConversations = $derived(conversations.filter((c) => c.type !== "channel"));
+let mindNames = $derived(new Set(minds.map((m) => m.name)));
+
+// Map mind name → DM conversation ID for active highlighting
+let mindDmMap = $derived(
+  new Map(
+    conversations
+      .filter((c) => {
+        if (c.type === "channel") return false;
+        const parts = c.participants ?? [];
+        if (parts.length !== 2) return false;
+        const other = parts.find((p) => p.username !== username);
+        return other ? mindNames.has(other.username) : false;
+      })
+      .map((c) => {
+        const other = c.participants!.find((p) => p.username !== username)!;
+        return [other.username, c.id] as const;
+      }),
+  ),
+);
+
+// Sort minds: active first, then running, then by name
+let sortedMinds = $derived(
+  [...minds].sort((a, b) => {
+    const aActive = activeMinds.has(a.name) ? 0 : a.status === "running" ? 1 : 2;
+    const bActive = activeMinds.has(b.name) ? 0 : b.status === "running" ? 1 : 2;
+    if (aActive !== bActive) return aActive - bActive;
+    return a.name.localeCompare(b.name);
+  }),
+);
+
+let groupConversations = $derived(
+  conversations.filter((c) => {
+    if (c.type === "channel") return false;
+    const parts = c.participants ?? [];
+    if (parts.length !== 2) return true;
+    const other = parts.find((p) => p.username !== username);
+    return other ? !mindNames.has(other.username) : true;
+  }),
+);
+
 let channelConversations = $derived(conversations.filter((c) => c.type === "channel"));
 
 function toggleSection(section: Section) {
@@ -64,29 +110,65 @@ function toggleSection(section: Section) {
 <div class="sidebar-inner">
   <button class="sidebar-header" onclick={onHome}>Volute</button>
   <div class="sections">
-    <!-- DMs -->
+    <!-- Minds -->
     <div class="section">
       <div class="section-header-row">
-        <button class="section-toggle" onclick={() => toggleSection("dms")}>
-          <span class="toggle-icon">{collapsed.has("dms") ? "\u25B8" : "\u25BE"}</span>
-          <span>DMs</span>
+        <button class="section-toggle" onclick={() => toggleSection("minds")}>
+          <span class="toggle-icon">{collapsed.has("minds") ? "\u25B8" : "\u25BE"}</span>
+          <span>Minds</span>
         </button>
-        <button class="section-add" onclick={onNewChat} title="New chat">+</button>
+        <button class="section-add" onclick={onSeed} title="Plant a seed">+</button>
       </div>
-      {#if !collapsed.has("dms")}
-        <ConversationList
-          conversations={dmConversations}
-          {minds}
-          activeId={activeConversationId}
-          {username}
-          mode="dms"
-          onSelect={onSelectConversation}
-          onDelete={onDeleteConversation}
-          {onOpenMind}
-          onHide={onHideConversation}
-        />
+      {#if !collapsed.has("minds")}
+        <div class="mind-list">
+          {#each sortedMinds as mind}
+            {@const dmId = mindDmMap.get(mind.name)}
+            <button
+              class="mind-item"
+              class:active={dmId === activeConversationId}
+              onclick={() => onSelectMind(mind.name)}
+            >
+              <MindHoverCard {mind}>
+                {#snippet children()}
+                  <span
+                    class="status-dot"
+                    class:iridescent={activeMinds.has(mind.name)}
+                    style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
+                  ></span>
+                  <span class="mind-item-name">{mind.displayName ?? mind.name}</span>
+                {/snippet}
+              </MindHoverCard>
+            </button>
+          {/each}
+        </div>
       {/if}
     </div>
+
+    <!-- Groups -->
+    {#if groupConversations.length > 0}
+      <div class="section">
+        <div class="section-header-row">
+          <button class="section-toggle" onclick={() => toggleSection("groups")}>
+            <span class="toggle-icon">{collapsed.has("groups") ? "\u25B8" : "\u25BE"}</span>
+            <span>Groups</span>
+          </button>
+          <button class="section-add" onclick={onNewChat} title="New group">+</button>
+        </div>
+        {#if !collapsed.has("groups")}
+          <ConversationList
+            conversations={groupConversations}
+            {minds}
+            activeId={activeConversationId}
+            {username}
+            mode="dms"
+            onSelect={onSelectConversation}
+            onDelete={onDeleteConversation}
+            {onOpenMind}
+            onHide={onHideConversation}
+          />
+        {/if}
+      </div>
+    {/if}
 
     <!-- Channels -->
     <div class="section">
@@ -212,6 +294,65 @@ function toggleSection(section: Section) {
   .section-add:hover {
     color: var(--text-0);
     background: var(--bg-2);
+  }
+
+  .mind-list {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .mind-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 12px 6px 26px;
+    font-size: 11px;
+    color: var(--text-1);
+    transition: background 0.1s;
+    cursor: pointer;
+    background: none;
+    text-align: left;
+    margin: 0 4px;
+    border-radius: var(--radius);
+  }
+
+  .mind-item:hover {
+    background: var(--bg-2);
+  }
+
+  .mind-item.active {
+    background: var(--bg-2);
+    color: var(--text-0);
+  }
+
+  .mind-item-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .status-dot.iridescent {
+    animation: iridescent 3s ease-in-out infinite;
+  }
+
+  @keyframes iridescent {
+    0%   { background: #4ade80; }
+    16%  { background: #60a5fa; }
+    33%  { background: #c084fc; }
+    50%  { background: #f472b6; }
+    66%  { background: #fbbf24; }
+    83%  { background: #34d399; }
+    100% { background: #4ade80; }
   }
 
   .site-list {

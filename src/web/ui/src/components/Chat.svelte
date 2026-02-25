@@ -9,7 +9,7 @@ import {
 } from "../lib/api";
 import { renderMarkdown } from "../lib/markdown";
 import { sendChat, sendChatUnified } from "../lib/streams";
-import InviteModal from "./InviteModal.svelte";
+import MindHoverCard from "./MindHoverCard.svelte";
 
 let {
   name,
@@ -41,6 +41,7 @@ type ChatEntry = {
   role: "user" | "assistant";
   blocks: ContentBlock[];
   senderName?: string;
+  createdAt?: string;
 };
 
 type ToolBlock = {
@@ -68,7 +69,6 @@ let typingTimer = 0;
 let typingSafetyTimer = 0;
 let lastPollFingerprint = "";
 let currentConvId: string | null = null;
-let showInviteModal = $state(false);
 let memberCount = $state(0);
 
 // Tool open state tracking
@@ -123,6 +123,7 @@ function loadMessages(convId: string, forceScroll?: boolean) {
         role: m.role as "user" | "assistant",
         blocks: normalizeContent(m.content),
         senderName: m.sender_name ?? undefined,
+        createdAt: m.created_at,
       }));
       if (forceScroll) scrollToBottom(true);
     })
@@ -399,6 +400,25 @@ function toggleTool(idx: number) {
   else next.add(idx);
   openTools = next;
 }
+
+function formatTime(dateStr?: string): string {
+  if (!dateStr) return "";
+  try {
+    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
+    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
+function showSenderHeader(i: number): boolean {
+  if (i === 0) return true;
+  const prev = entries[i - 1];
+  const cur = entries[i];
+  if (prev.senderName !== cur.senderName) return true;
+  if (prev.senderName === "system") return true;
+  return false;
+}
 </script>
 
 <div class="chat">
@@ -412,15 +432,7 @@ function toggleTool(idx: number) {
     <div class="channel-header">
       <span class="channel-title">#{channelName}</span>
       <span class="channel-members">{memberCount} member{memberCount === 1 ? "" : "s"}</span>
-      <button class="invite-btn" onclick={() => { showInviteModal = true; }}>invite</button>
     </div>
-  {/if}
-
-  {#if showInviteModal && channelName}
-    <InviteModal {channelName} onClose={() => {
-      showInviteModal = false;
-      if (channelName) fetchChannelMembers(channelName).then((m) => { memberCount = m.length; }).catch((err) => { console.warn("[chat] failed to refresh member count:", err); });
-    }} />
   {/if}
 
   <!-- Messages -->
@@ -432,47 +444,37 @@ function toggleTool(idx: number) {
     {/if}
     {#each entries as entry, i (entry.id)}
       <!-- System divider -->
-      {#if entry.senderName === "system" && entry.blocks.length === 1 && entry.blocks[0].type === "text"}
-        {@const text = entry.blocks[0].text}
-        {@const dividerMatch = text.match(/^\[(.+)\]$/)}
-        {#if dividerMatch}
-          <div class="divider">
-            <div class="divider-line"></div>
-            <span>{dividerMatch[1]}</span>
-            <div class="divider-line"></div>
-          </div>
-        {:else if entry.role === "user"}
-          <div class="entry">
-            {#if entry.senderName && mindsByName.has(entry.senderName) && onOpenMind}
-              <button class="sender sender-link user" style:color={colorMap.get(entry.senderName) ?? "var(--blue)"} onclick={() => onOpenMind(mindsByName.get(entry.senderName!)!)}>{entry.senderName}</button>
-            {:else}
-              <span class="sender user" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--blue)"}>{entry.senderName || "you"}</span>
-            {/if}
-            <div class="entry-content">
-              <div class="user-text">{text}</div>
-            </div>
-          </div>
-        {:else}
-          <div class="entry">
-            {#if entry.senderName && mindsByName.has(entry.senderName) && onOpenMind}
-              <button class="sender sender-link" style:color={colorMap.get(entry.senderName) ?? "var(--accent)"} onclick={() => onOpenMind(mindsByName.get(entry.senderName!)!)}>{entry.senderName}</button>
-            {:else}
-              <span class="sender" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--accent)"}>{entry.senderName || "mind"}</span>
-            {/if}
-            <div class="entry-content">
-              <div class="markdown-body">{@html renderMarkdown(text)}</div>
-            </div>
-          </div>
-        {/if}
+      {#if entry.senderName === "system" && entry.blocks.length === 1 && entry.blocks[0].type === "text" && entry.blocks[0].text.match(/^\[.+\]$/)}
+        <div class="divider">
+          <div class="divider-line"></div>
+          <span>{entry.blocks[0].text.slice(1, -1)}</span>
+          <div class="divider-line"></div>
+        </div>
       {:else}
-        <div class="entry">
-          {#if entry.role === "user"}
-            {#if entry.senderName && mindsByName.has(entry.senderName) && onOpenMind}
-              <button class="sender sender-link user" style:color={colorMap.get(entry.senderName) ?? "var(--blue)"} onclick={() => onOpenMind(mindsByName.get(entry.senderName!)!)}>{entry.senderName}</button>
-            {:else}
-              <span class="sender user" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--blue)"}>{entry.senderName || "you"}</span>
-            {/if}
-            <div class="entry-content">
+        {@const isNewSender = showSenderHeader(i)}
+        {@const senderColor = entry.role === "user"
+          ? (entry.senderName ? colorMap.get(entry.senderName) ?? "var(--blue)" : "var(--blue)")
+          : (entry.senderName ? colorMap.get(entry.senderName) ?? "var(--accent)" : "var(--accent)")}
+        <div class="entry" class:new-sender={isNewSender}>
+          {#if isNewSender}
+            <div class="entry-header">
+              {#if entry.senderName && mindsByName.has(entry.senderName) && onOpenMind}
+                {@const senderMind = mindsByName.get(entry.senderName)!}
+                <MindHoverCard mind={senderMind}>
+                  {#snippet children()}
+                    <button class="sender sender-link" style:color={senderColor} onclick={() => onOpenMind(senderMind)}>{senderMind.displayName ?? entry.senderName}</button>
+                  {/snippet}
+                </MindHoverCard>
+              {:else}
+                <span class="sender" style:color={senderColor}>{entry.senderName || (entry.role === "user" ? "you" : "mind")}</span>
+              {/if}
+              {#if entry.createdAt}
+                <span class="timestamp">{formatTime(entry.createdAt)}</span>
+              {/if}
+            </div>
+          {/if}
+          <div class="entry-content">
+            {#if entry.role === "user"}
               {#each entry.blocks as block}
                 {#if block.type === "text"}
                   <div class="user-text">{block.text}</div>
@@ -480,15 +482,8 @@ function toggleTool(idx: number) {
                   <img src={`data:${block.media_type};base64,${block.data}`} alt="" class="chat-image" />
                 {/if}
               {/each}
-            </div>
-          {:else}
-            {@const items = buildAssistantItems(entry.blocks)}
-            {#if entry.senderName && mindsByName.has(entry.senderName) && onOpenMind}
-              <button class="sender sender-link" style:color={colorMap.get(entry.senderName) ?? "var(--accent)"} onclick={() => onOpenMind(mindsByName.get(entry.senderName!)!)}>{entry.senderName}</button>
             {:else}
-              <span class="sender" style:color={entry.senderName ? colorMap.get(entry.senderName) : "var(--accent)"}>{entry.senderName || "mind"}</span>
-            {/if}
-            <div class="entry-content">
+              {@const items = buildAssistantItems(entry.blocks)}
               {#each items as item, j}
                 {#if item.kind === "text"}
                   <div class="markdown-body">{@html renderMarkdown(item.text)}</div>
@@ -523,8 +518,8 @@ function toggleTool(idx: number) {
                   <img src={`data:${item.media_type};base64,${item.data}`} alt="" class="chat-image" />
                 {/if}
               {/each}
-            </div>
-          {/if}
+            {/if}
+          </div>
         </div>
       {/if}
     {/each}
@@ -590,6 +585,7 @@ function toggleTool(idx: number) {
     display: flex;
     flex-direction: column;
     height: 100%;
+    padding: 0 16px;
   }
 
   .orientation-bar {
@@ -625,20 +621,6 @@ function toggleTool(idx: number) {
     flex: 1;
   }
 
-  .channel-header .invite-btn {
-    padding: 4px 12px;
-    font-size: 11px;
-    border-radius: var(--radius);
-    background: var(--bg-3);
-    color: var(--text-1);
-    font-weight: 500;
-  }
-
-  .channel-header .invite-btn:hover {
-    background: var(--accent-dim);
-    color: var(--accent);
-  }
-
   .messages {
     flex: 1;
     overflow: auto;
@@ -657,18 +639,24 @@ function toggleTool(idx: number) {
   }
 
   .entry {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 16px;
+    padding: 2px 0;
     animation: fadeIn 0.2s ease both;
   }
 
+  .entry.new-sender {
+    margin-top: 12px;
+  }
+
+  .entry-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 2px;
+  }
+
   .sender {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
-    flex-shrink: 0;
-    margin-top: 2px;
-    text-transform: uppercase;
   }
 
   .sender-link {
@@ -676,9 +664,8 @@ function toggleTool(idx: number) {
     border: none;
     padding: 0;
     font: inherit;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
-    text-transform: uppercase;
     cursor: pointer;
   }
 
@@ -686,8 +673,12 @@ function toggleTool(idx: number) {
     text-decoration: underline;
   }
 
+  .timestamp {
+    font-size: 11px;
+    color: var(--text-2);
+  }
+
   .entry-content {
-    flex: 1;
     min-width: 0;
   }
 

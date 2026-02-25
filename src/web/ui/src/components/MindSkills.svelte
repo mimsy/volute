@@ -84,7 +84,7 @@ async function handleUninstall(skillId: string) {
   {/if}
 
   <div class="section-header">
-    <span class="section-title">Installed</span>
+    <span class="section-title">Skills</span>
     <button class="add-btn" onclick={() => (showAddModal = true)}>
       Add skill
     </button>
@@ -158,14 +158,13 @@ async function handleUninstall(skillId: string) {
 <style>
   .error {
     color: var(--red);
-    padding: 8px 12px;
+    padding: 8px 0;
     font-size: 12px;
   }
 
   .empty {
     color: var(--text-2);
-    padding: 24px;
-    text-align: center;
+    padding: 12px 0;
     font-size: 13px;
   }
 
@@ -173,7 +172,7 @@ async function handleUninstall(skillId: string) {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 12px;
+    margin-bottom: 8px;
   }
 
   .section-title {
@@ -203,7 +202,7 @@ async function handleUninstall(skillId: string) {
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 10px 12px;
+    padding: 6px 0;
     border-bottom: 1px solid var(--border);
   }
 

@@ -2,7 +2,7 @@ import type { Mind } from "./api";
 
 export function mindDotColor(mind: Mind): string {
   const s = getDisplayStatus(mind);
-  if (s === "running" || s === "active") return "var(--accent)";
+  if (s === "running" || s === "active") return "var(--text-0)";
   if (s === "starting") return "var(--yellow)";
   return "var(--text-2)";
 }

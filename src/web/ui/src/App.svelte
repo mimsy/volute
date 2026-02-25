@@ -2,6 +2,7 @@
 import { onMount } from "svelte";
 import AdminModal from "./components/AdminModal.svelte";
 import ChannelBrowserModal from "./components/ChannelBrowserModal.svelte";
+import ChannelMembersPanel from "./components/ChannelMembersPanel.svelte";
 import LoginPage from "./components/LoginPage.svelte";
 import MainFrame from "./components/MainFrame.svelte";
 import MindModal from "./components/MindModal.svelte";
@@ -45,6 +46,31 @@ let resizing = $state(false);
 let activeConversationId = $derived(
   selection.kind === "conversation" ? (selection.conversationId ?? null) : null,
 );
+
+// Right panel: auto-show mind details for DMs, channel members for channels
+let activeConv = $derived.by(() => {
+  const sel = selection;
+  if (sel.kind !== "conversation") return undefined;
+  if (!sel.conversationId) return undefined;
+  return data.conversations.find((c) => c.id === sel.conversationId);
+});
+
+let contextMindName = $derived.by(() => {
+  if (selection.kind !== "conversation") return "";
+  if (selection.mindName) return selection.mindName;
+  if (!activeConv || activeConv.type === "channel" || activeConv.type === "group") return "";
+  return activeConv.mind_name ?? "";
+});
+
+let contextMind = $derived(
+  contextMindName ? data.minds.find((m) => m.name === contextMindName) : undefined,
+);
+
+let rightPanelMind = $derived(
+  activeModal === "mind" && selectedModalMind ? selectedModalMind : (contextMind ?? undefined),
+);
+
+let rightPanelIsManual = $derived(!!(activeModal === "mind" && selectedModalMind));
 
 // Auth — one-time fetch on mount
 onMount(() => {
@@ -108,6 +134,10 @@ function handleOpenMindModal(mind: Mind) {
 
 function handleSelectConversation(id: string) {
   selection = { kind: "conversation", conversationId: id };
+  if (activeModal === "mind") {
+    activeModal = null;
+    selectedModalMind = null;
+  }
 }
 
 async function handleDeleteConversation(id: string) {
@@ -130,6 +160,7 @@ function handleConversationId(id: string) {
 
 function handleNewChatCreated(name: string) {
   activeModal = null;
+  selectedModalMind = null;
   // Check for existing 2-person DM with this user
   const existing = data.conversations.find((c) => {
     if (c.type === "channel") return false;
@@ -150,18 +181,21 @@ function handleNewChatCreated(name: string) {
 
 function handleNewGroupCreated(conv: Conversation) {
   activeModal = null;
+  selectedModalMind = null;
   reconnectActivity();
   selection = { kind: "conversation", conversationId: conv.id };
 }
 
 function handleChannelJoined(conv: Conversation) {
   activeModal = null;
+  selectedModalMind = null;
   reconnectActivity();
   selection = { kind: "conversation", conversationId: conv.id };
 }
 
 function handleSeedCreated(mindName: string) {
   activeModal = null;
+  selectedModalMind = null;
   selection = { kind: "conversation", mindName };
 }
 
@@ -240,6 +274,8 @@ function handleResizeEnd() {
           onNewChat={() => (activeModal = "newChat")}
           onBrowseChannels={() => (activeModal = "channelBrowser")}
           onOpenMind={handleOpenMindModal}
+          onSelectMind={handleNewChatCreated}
+          onSeed={() => (activeModal = "seed")}
           onSelectSite={handleSelectSite}
           onSelectPages={handleSelectPages}
           onHideConversation={handleHideConversation}
@@ -271,6 +307,25 @@ function handleResizeEnd() {
           onSelectPages={handleSelectPages}
         />
       </div>
+      {#if rightPanelMind}
+        {#key rightPanelMind.name}
+          <MindModal
+            mind={rightPanelMind}
+            onClose={rightPanelIsManual
+              ? () => {
+                  activeModal = null;
+                  selectedModalMind = null;
+                }
+              : undefined}
+          />
+        {/key}
+      {:else if activeConv?.type === "channel" || activeConv?.type === "group"}
+        <ChannelMembersPanel
+          conversation={activeConv}
+          minds={data.minds}
+          onOpenMind={handleOpenMindModal}
+        />
+      {/if}
     </div>
     <StatusBar
       minds={data.minds}
@@ -304,15 +359,6 @@ function handleResizeEnd() {
   {/if}
   {#if activeModal === "userSettings"}
     <UserSettingsModal onClose={() => (activeModal = null)} />
-  {/if}
-  {#if activeModal === "mind" && selectedModalMind}
-    <MindModal
-      mind={selectedModalMind}
-      onClose={() => {
-        activeModal = null;
-        selectedModalMind = null;
-      }}
-    />
   {/if}
 {/if}
 
