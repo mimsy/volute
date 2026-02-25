@@ -3,7 +3,7 @@ let { status }: { status: string } = $props();
 
 const statusConfig: Record<
   string,
-  { color: string; bg: string; glow?: boolean; iridescent?: boolean; label: string }
+  { color: string; bg: string; iridescent?: boolean; label: string }
 > = {
   active: { color: "var(--text-0)", bg: "var(--muted-bg)", iridescent: true, label: "active" },
   running: { color: "var(--text-0)", bg: "var(--muted-bg)", label: "awake" },
@@ -27,7 +27,6 @@ let config = $derived(statusConfig[status] ?? statusConfig.stopped);
     class="dot"
     class:iridescent={config.iridescent}
     style:background={config.iridescent ? undefined : config.color}
-    style:box-shadow={config.glow ? `0 0 6px ${config.color}` : "none"}
     style:animation={status === "starting" ? "pulse 1.5s ease infinite" : "none"}
   ></span>
   {config.label}

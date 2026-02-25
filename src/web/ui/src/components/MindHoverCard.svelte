@@ -62,11 +62,7 @@ function handleMouseLeave() {
     {/if}
     <div class="info">
       <span class="name-row">
-        {#if mind.displayName}
-          <span class="display-name">{mind.displayName}</span>
-        {:else}
-          <span class="display-name">{mind.name}</span>
-        {/if}
+        <span class="display-name">{mind.displayName ?? mind.name}</span>
         <StatusBadge status={getDisplayStatus(mind)} />
       </span>
       {#if mind.description}

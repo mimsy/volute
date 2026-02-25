@@ -212,12 +212,14 @@ async function handleStart() {
     await startMind(name);
   } catch (e) {
     actionError = e instanceof Error ? e.message : "Failed to start";
+    actionLoading = false;
+    return;
   }
-  fetchMinds()
-    .then((m) => {
-      data.minds = m;
-    })
-    .catch(() => {});
+  try {
+    data.minds = await fetchMinds();
+  } catch {
+    actionError = "Started but failed to refresh status";
+  }
   actionLoading = false;
 }
 
@@ -228,12 +230,14 @@ async function handleStop() {
     await stopMind(name);
   } catch (e) {
     actionError = e instanceof Error ? e.message : "Failed to stop";
+    actionLoading = false;
+    return;
   }
-  fetchMinds()
-    .then((m) => {
-      data.minds = m;
-    })
-    .catch(() => {});
+  try {
+    data.minds = await fetchMinds();
+  } catch {
+    actionError = "Stopped but failed to refresh status";
+  }
   actionLoading = false;
 }
 

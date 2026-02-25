@@ -34,27 +34,32 @@ const app = new Hono()
 
     const homeDir = resolve(dir, "home");
     const avatarPath = resolve(homeDir, config.avatar);
-    if (!avatarPath.startsWith(homeDir)) return c.json({ error: "Invalid avatar path" }, 400);
+    if (!avatarPath.startsWith(`${homeDir}/`)) return c.json({ error: "Invalid avatar path" }, 400);
 
     // Resolve symlinks and re-check containment
     let realAvatarPath: string;
     try {
       const realHome = await realpath(homeDir);
       realAvatarPath = await realpath(avatarPath);
-      if (!realAvatarPath.startsWith(realHome))
+      if (!realAvatarPath.startsWith(`${realHome}/`))
         return c.json({ error: "Invalid avatar path" }, 400);
-    } catch {
-      return c.json({ error: "Avatar file not found" }, 404);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT")
+        return c.json({ error: "Avatar file not found" }, 404);
+      return c.json({ error: "Failed to resolve avatar path" }, 500);
     }
 
-    const fileStat = await stat(realAvatarPath);
-    if (fileStat.size > MAX_AVATAR_SIZE) return c.json({ error: "Avatar file too large" }, 400);
-
-    const body = await readFile(realAvatarPath);
-    return c.body(body, 200, {
-      "Content-Type": mime,
-      "Cache-Control": "public, max-age=300",
-    });
+    try {
+      const fileStat = await stat(realAvatarPath);
+      if (fileStat.size > MAX_AVATAR_SIZE) return c.json({ error: "Avatar file too large" }, 400);
+      const body = await readFile(realAvatarPath);
+      return c.body(body, 200, {
+        "Content-Type": mime,
+        "Cache-Control": "public, max-age=300",
+      });
+    } catch {
+      return c.json({ error: "Failed to read avatar file" }, 500);
+    }
   })
   // List markdown files in home/
   .get("/:name/files", async (c) => {
