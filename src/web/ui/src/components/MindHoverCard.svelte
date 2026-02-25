@@ -18,8 +18,6 @@ let cardY = $state(0);
 let hoverTimer: ReturnType<typeof setTimeout> | undefined;
 let wrapperEl: HTMLSpanElement;
 
-let hasProfile = $derived(!!mind.displayName || !!mind.description || !!mind.avatar);
-
 function formatCreated(dateStr: string): string {
   try {
     const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
@@ -30,7 +28,6 @@ function formatCreated(dateStr: string): string {
 }
 
 function handleMouseEnter() {
-  if (!hasProfile) return;
   hoverTimer = setTimeout(() => {
     const rect = wrapperEl.getBoundingClientRect();
     cardX = rect.left;
