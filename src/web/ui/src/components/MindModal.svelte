@@ -1,7 +1,7 @@
 <script lang="ts">
 import { fetchMinds, type Mind, startMind, stopMind } from "../lib/api";
-import { formatRelativeTime, getDisplayStatus, mindDotColor } from "../lib/format";
-import { activeMinds, data } from "../lib/stores.svelte";
+import { formatRelativeTime, getDisplayStatus } from "../lib/format";
+import { data } from "../lib/stores.svelte";
 import History from "./History.svelte";
 import MindInfo from "./MindInfo.svelte";
 import MindSkills from "./MindSkills.svelte";
@@ -69,8 +69,7 @@ function formatCreated(dateStr: string): string {
   <div class="panel-header">
     <div class="header-top">
       <div class="header-left">
-        <span class="mind-name">{mind.name}</span>
-        <StatusBadge status={getDisplayStatus(mind)} />
+        <span class="mind-name">{mind.displayName ?? mind.name}</span>
         {#if mind.status === "stopped"}
           <button
             onclick={handleStart}
@@ -103,6 +102,7 @@ function formatCreated(dateStr: string): string {
     {/if}
     {#if tab === "Info"}
       <div class="profile-section">
+        <span class="profile-display-name">{mind.displayName ?? mind.name}</span>
         {#if mind.avatar}
           <img
             src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
@@ -110,23 +110,11 @@ function formatCreated(dateStr: string): string {
             class="profile-avatar"
           />
         {/if}
-        <div class="profile-info">
-          <div class="profile-name-row">
-            <span
-              class="profile-dot"
-              class:iridescent={activeMinds.has(mind.name)}
-              style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
-            ></span>
-            <span class="profile-display-name">{mind.displayName ?? mind.name}</span>
-          </div>
-          {#if mind.displayName}
-            <span class="profile-handle">@{mind.name}</span>
-          {/if}
-          {#if mind.description}
-            <p class="profile-description">{mind.description}</p>
-          {/if}
-          <span class="profile-created">{mind.stage === "seed" ? "Planted" : "Sprouted"} {formatCreated(mind.created)}</span>
-        </div>
+        <StatusBadge status={getDisplayStatus(mind)} />
+        {#if mind.description}
+          <p class="profile-description">{mind.description}</p>
+        {/if}
+        <span class="profile-meta">@{mind.name} &middot; since {formatCreated(mind.created)}</span>
       </div>
     {:else if tab === "History"}
       <History name={mind.name} />
@@ -316,49 +304,10 @@ function formatCreated(dateStr: string): string {
     object-fit: cover;
   }
 
-  .profile-info {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .profile-name-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
   .profile-display-name {
     font-size: 18px;
     font-weight: 600;
     color: var(--text-0);
-  }
-
-  .profile-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  .profile-dot.iridescent {
-    animation: iridescent 3s ease-in-out infinite;
-  }
-
-  @keyframes iridescent {
-    0%   { background: #4ade80; }
-    16%  { background: #60a5fa; }
-    33%  { background: #c084fc; }
-    50%  { background: #f472b6; }
-    66%  { background: #fbbf24; }
-    83%  { background: #34d399; }
-    100% { background: #4ade80; }
-  }
-
-  .profile-handle {
-    font-size: 13px;
-    color: var(--text-2);
   }
 
   .profile-description {
@@ -370,7 +319,7 @@ function formatCreated(dateStr: string): string {
     line-height: 1.4;
   }
 
-  .profile-created {
+  .profile-meta {
     font-size: 11px;
     color: var(--text-2);
     margin-top: 4px;

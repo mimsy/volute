@@ -1,8 +1,8 @@
 <script lang="ts">
 import type { Snippet } from "svelte";
 import type { Mind } from "../lib/api";
-import { mindDotColor } from "../lib/format";
-import { activeMinds } from "../lib/stores.svelte";
+import { getDisplayStatus } from "../lib/format";
+import StatusBadge from "./StatusBadge.svelte";
 
 let {
   mind,
@@ -65,26 +65,17 @@ function handleMouseLeave() {
     {/if}
     <div class="info">
       <span class="name-row">
-        <span
-          class="status-dot"
-          class:iridescent={activeMinds.has(mind.name)}
-          style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
-        ></span>
         {#if mind.displayName}
           <span class="display-name">{mind.displayName}</span>
         {:else}
           <span class="display-name">{mind.name}</span>
         {/if}
+        <StatusBadge status={getDisplayStatus(mind)} />
       </span>
-      {#if mind.displayName}
-        <span class="handle">@{mind.name}</span>
-      {/if}
       {#if mind.description}
         <span class="description">{mind.description}</span>
       {/if}
-      {#if mind.created}
-        <span class="created">{mind.stage === "seed" ? "Planted" : "Sprouted"} {formatCreated(mind.created)}</span>
-      {/if}
+      <span class="meta">@{mind.name}{#if mind.created} &middot; since {formatCreated(mind.created)}{/if}</span>
     </div>
   </div>
 {/if}
@@ -111,9 +102,9 @@ function handleMouseLeave() {
   }
 
   .avatar {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
+    width: 64px;
+    height: 64px;
+    border-radius: var(--radius);
     object-fit: cover;
     flex-shrink: 0;
   }
@@ -137,32 +128,6 @@ function handleMouseLeave() {
     color: var(--text-0);
   }
 
-  .status-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  .status-dot.iridescent {
-    animation: iridescent 3s ease-in-out infinite;
-  }
-
-  @keyframes iridescent {
-    0%   { background: #4ade80; }
-    16%  { background: #60a5fa; }
-    33%  { background: #c084fc; }
-    50%  { background: #f472b6; }
-    66%  { background: #fbbf24; }
-    83%  { background: #34d399; }
-    100% { background: #4ade80; }
-  }
-
-  .handle {
-    font-size: 11px;
-    color: var(--text-2);
-  }
-
   .description {
     font-size: 11px;
     color: var(--text-1);
@@ -171,7 +136,7 @@ function handleMouseLeave() {
     margin-top: 2px;
   }
 
-  .created {
+  .meta {
     font-size: 10px;
     color: var(--text-2);
     margin-top: 2px;
