@@ -16,8 +16,8 @@ function getWebhookUrl(): string | undefined {
 
 function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const token = process.env.VOLUTE_DAEMON_TOKEN;
-  if (token) headers.Authorization = `Bearer ${token}`;
+  const secret = process.env.VOLUTE_WEBHOOK_SECRET;
+  if (secret) headers.Authorization = `Bearer ${secret}`;
   return headers;
 }
 
@@ -28,9 +28,15 @@ export function fireWebhook(event: WebhookEvent): void {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify(event),
-  }).catch((err) => {
-    slog.warn(`webhook delivery failed for ${event.event}`, log.errorData(err));
-  });
+  })
+    .then((res) => {
+      if (!res.ok) {
+        slog.warn(`webhook ${event.event} returned HTTP ${res.status}`);
+      }
+    })
+    .catch((err) => {
+      slog.warn(`webhook delivery failed for ${event.event}`, log.errorData(err));
+    });
 }
 
 /** Subscribe to ActivityEvents and forward them to the webhook URL. */
@@ -38,14 +44,29 @@ export function initWebhook(): () => void {
   const url = getWebhookUrl();
   if (!url) return () => {};
 
-  slog.info(`webhook enabled: ${url}`);
+  try {
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      slog.error(`VOLUTE_WEBHOOK_URL has unsupported protocol: ${parsed.protocol}`);
+      return () => {};
+    }
+  } catch {
+    slog.error(`VOLUTE_WEBHOOK_URL is not a valid URL`);
+    return () => {};
+  }
+
+  slog.info("webhook enabled");
 
   return subscribe((event: ActivityEvent & { id: number; created_at: string }) => {
-    fireWebhook({
-      event: event.type,
-      mind: event.mind,
-      data: { summary: event.summary, ...event.metadata },
-      timestamp: event.created_at,
-    });
+    try {
+      fireWebhook({
+        event: event.type,
+        mind: event.mind,
+        data: { summary: event.summary, ...event.metadata },
+        timestamp: event.created_at,
+      });
+    } catch (err) {
+      slog.error(`failed to fire webhook for ${event.type}`, log.errorData(err));
+    }
   });
 }
