@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.21.0](https://github.com/mimsy/volute/compare/volute-v0.20.0...volute-v0.21.0) (2026-02-25)
+
+
+### Features
+
+* integration testing, home-only export/import, CLI-daemon boundary ([#129](https://github.com/mimsy/volute/issues/129)) ([69ba095](https://github.com/mimsy/volute/commit/69ba095165d892950f1395a98aa712412717481f))
+* mind UI overhaul with profiles, hover cards, and panel redesign ([#133](https://github.com/mimsy/volute/issues/133)) ([7feff30](https://github.com/mimsy/volute/commit/7feff3035242fe81ff4d3a743d953dbc0a8622f6))
+* restructure CLI commands with tiered help ([#132](https://github.com/mimsy/volute/issues/132)) ([d134032](https://github.com/mimsy/volute/commit/d1340323d3db2d5a3476b352f6fee1ff010c6c23))
+* version update notifications for minds ([#128](https://github.com/mimsy/volute/issues/128)) ([08c444c](https://github.com/mimsy/volute/commit/08c444cdd3e5f3f2048949205a1a68f599693a65))
+
 ## [0.20.0](https://github.com/mimsy/volute/compare/volute-v0.19.0...volute-v0.20.0) (2026-02-24)
 
 
