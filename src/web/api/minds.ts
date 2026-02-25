@@ -995,12 +995,11 @@ const app = new Hono<AuthEnv>()
 
     const minds = await Promise.all(
       entries.map(async (entry) => {
-        const { status, channels } = await getMindStatus(entry.name, entry.port);
+        const mindStatus = await getMindStatus(entry.name, entry.port);
         const hasPages = existsSync(resolve(mindDir(entry.name), "home", "pages"));
         return {
           ...entry,
-          status,
-          channels,
+          ...mindStatus,
           hasPages,
           lastActiveAt: lastActiveMap.get(entry.name) ?? null,
         };
@@ -1024,7 +1023,7 @@ const app = new Hono<AuthEnv>()
 
     if (!existsSync(mindDir(name))) return c.json({ error: "Mind directory missing" }, 404);
 
-    const { status, channels } = await getMindStatus(name, entry.port);
+    const mindStatus = await getMindStatus(name, entry.port);
 
     // Include variant info
     const variants = readVariants(name);
@@ -1042,7 +1041,7 @@ const app = new Hono<AuthEnv>()
     );
 
     const hasPages = existsSync(resolve(mindDir(name), "home", "pages"));
-    return c.json({ ...entry, status, channels, variants: variantStatuses, hasPages });
+    return c.json({ ...entry, ...mindStatus, variants: variantStatuses, hasPages });
   })
   // Start mind (supports name@variant) — admin only
   .post("/:name/start", requireAdmin, async (c) => {

@@ -13,13 +13,19 @@ let {
 } = $props();
 
 let showCard = $state(false);
+let cardX = $state(0);
+let cardY = $state(0);
 let hoverTimer: ReturnType<typeof setTimeout> | undefined;
+let wrapperEl: HTMLSpanElement;
 
 let hasProfile = $derived(!!mind.displayName || !!mind.description || !!mind.avatar);
 
 function handleMouseEnter() {
   if (!hasProfile) return;
   hoverTimer = setTimeout(() => {
+    const rect = wrapperEl.getBoundingClientRect();
+    cardX = rect.left;
+    cardY = rect.top - 6;
     showCard = true;
   }, 300);
 }
@@ -32,49 +38,50 @@ function handleMouseLeave() {
 
 <span
   class="hover-wrapper"
+  bind:this={wrapperEl}
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
 >
   {@render children()}
-  {#if showCard}
-    <div class="hover-card">
-      {#if mind.avatar}
-        <img
-          src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
-          alt=""
-          class="avatar"
-        />
-      {/if}
-      <div class="info">
-        {#if mind.displayName}
-          <span class="display-name">{mind.displayName}</span>
-        {/if}
-        <span class="name-row">
-          <span
-            class="status-dot"
-            class:iridescent={activeMinds.has(mind.name)}
-            style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
-          ></span>
-          @{mind.name}
-        </span>
-        {#if mind.description}
-          <span class="description">{mind.description}</span>
-        {/if}
-      </div>
-    </div>
-  {/if}
 </span>
+
+{#if showCard}
+  <div class="hover-card" style:left="{cardX}px" style:bottom="{window.innerHeight - cardY}px">
+    {#if mind.avatar}
+      <img
+        src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
+        alt=""
+        class="avatar"
+      />
+    {/if}
+    <div class="info">
+      {#if mind.displayName}
+        <span class="display-name">{mind.displayName}</span>
+      {/if}
+      <span class="name-row">
+        <span
+          class="status-dot"
+          class:iridescent={activeMinds.has(mind.name)}
+          style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
+        ></span>
+        @{mind.name}
+      </span>
+      {#if mind.description}
+        <span class="description">{mind.description}</span>
+      {/if}
+    </div>
+  </div>
+{/if}
 
 <style>
   .hover-wrapper {
-    position: relative;
-    display: inline;
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
   .hover-card {
-    position: absolute;
-    bottom: calc(100% + 6px);
-    left: 0;
+    position: fixed;
     z-index: 100;
     display: flex;
     gap: 10px;
