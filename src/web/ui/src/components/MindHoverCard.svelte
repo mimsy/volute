@@ -20,6 +20,15 @@ let wrapperEl: HTMLSpanElement;
 
 let hasProfile = $derived(!!mind.displayName || !!mind.description || !!mind.avatar);
 
+function formatCreated(dateStr: string): string {
+  try {
+    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
+    return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  } catch {
+    return "";
+  }
+}
+
 function handleMouseEnter() {
   if (!hasProfile) return;
   hoverTimer = setTimeout(() => {
@@ -55,19 +64,26 @@ function handleMouseLeave() {
       />
     {/if}
     <div class="info">
-      {#if mind.displayName}
-        <span class="display-name">{mind.displayName}</span>
-      {/if}
       <span class="name-row">
+        {#if mind.displayName}
+          <span class="display-name">{mind.displayName}</span>
+        {:else}
+          <span class="display-name">{mind.name}</span>
+        {/if}
         <span
           class="status-dot"
           class:iridescent={activeMinds.has(mind.name)}
           style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
         ></span>
-        @{mind.name}
       </span>
+      {#if mind.displayName}
+        <span class="handle">@{mind.name}</span>
+      {/if}
       {#if mind.description}
         <span class="description">{mind.description}</span>
+      {/if}
+      {#if mind.created}
+        <span class="created">{mind.stage === "seed" ? "Planted" : "Sprouted"} {formatCreated(mind.created)}</span>
       {/if}
     </div>
   </div>
@@ -95,8 +111,8 @@ function handleMouseLeave() {
   }
 
   .avatar {
-    width: 32px;
-    height: 32px;
+    width: 48px;
+    height: 48px;
     border-radius: 50%;
     object-fit: cover;
     flex-shrink: 0;
@@ -109,18 +125,16 @@ function handleMouseLeave() {
     min-width: 0;
   }
 
-  .display-name {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-0);
-  }
-
   .name-row {
     display: flex;
     align-items: center;
-    gap: 4px;
-    font-size: 11px;
-    color: var(--text-2);
+    gap: 6px;
+  }
+
+  .display-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-0);
   }
 
   .status-dot {
@@ -144,10 +158,22 @@ function handleMouseLeave() {
     100% { background: #4ade80; }
   }
 
+  .handle {
+    font-size: 11px;
+    color: var(--text-2);
+  }
+
   .description {
     font-size: 11px;
     color: var(--text-1);
     white-space: normal;
-    max-width: 200px;
+    max-width: 220px;
+    margin-top: 2px;
+  }
+
+  .created {
+    font-size: 10px;
+    color: var(--text-2);
+    margin-top: 2px;
   }
 </style>

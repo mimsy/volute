@@ -1,7 +1,7 @@
 <script lang="ts">
 import { fetchMinds, type Mind, startMind, stopMind } from "../lib/api";
-import { formatRelativeTime, getDisplayStatus } from "../lib/format";
-import { data } from "../lib/stores.svelte";
+import { formatRelativeTime, getDisplayStatus, mindDotColor } from "../lib/format";
+import { activeMinds, data } from "../lib/stores.svelte";
 import History from "./History.svelte";
 import MindInfo from "./MindInfo.svelte";
 import MindSkills from "./MindSkills.svelte";
@@ -11,11 +11,11 @@ import VariantList from "./VariantList.svelte";
 
 let { mind: initialMind, onClose }: { mind: Mind; onClose?: () => void } = $props();
 
-const TABS = ["History", "Details"] as const;
+const TABS = ["Info", "History", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 
 let mind = $derived(data.minds.find((m) => m.name === initialMind.name) ?? initialMind);
-let tab = $state<Tab>("History");
+let tab = $state<Tab>("Info");
 let error = $state("");
 let actionLoading = $state(false);
 
@@ -54,6 +54,15 @@ async function handleStop() {
 const connectedChannels = $derived(
   mind.channels.filter((ch) => ch.name !== "web" && ch.status === "connected"),
 );
+
+function formatCreated(dateStr: string): string {
+  try {
+    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
+    return d.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+  } catch {
+    return dateStr;
+  }
+}
 </script>
 
 <div class="mind-panel">
@@ -92,9 +101,36 @@ const connectedChannels = $derived(
     {#if error}
       <div class="error-msg">{error}</div>
     {/if}
-    {#if tab === "History"}
+    {#if tab === "Info"}
+      <div class="profile-section">
+        {#if mind.avatar}
+          <img
+            src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
+            alt=""
+            class="profile-avatar"
+          />
+        {/if}
+        <div class="profile-info">
+          <div class="profile-name-row">
+            <span class="profile-display-name">{mind.displayName ?? mind.name}</span>
+            <span
+              class="profile-dot"
+              class:iridescent={activeMinds.has(mind.name)}
+              style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
+            ></span>
+          </div>
+          {#if mind.displayName}
+            <span class="profile-handle">@{mind.name}</span>
+          {/if}
+          {#if mind.description}
+            <p class="profile-description">{mind.description}</p>
+          {/if}
+          <span class="profile-created">{mind.stage === "seed" ? "Planted" : "Sprouted"} {formatCreated(mind.created)}</span>
+        </div>
+      </div>
+    {:else if tab === "History"}
       <History name={mind.name} />
-    {:else if tab === "Details"}
+    {:else if tab === "Settings"}
       <MindInfo name={mind.name} />
 
       <div class="detail-section">
@@ -263,5 +299,80 @@ const connectedChannels = $derived(
     font-size: 11px;
     color: var(--text-2);
     margin-left: auto;
+  }
+
+  .profile-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 0;
+  }
+
+  .profile-avatar {
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    object-fit: cover;
+  }
+
+  .profile-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .profile-name-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .profile-display-name {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-0);
+  }
+
+  .profile-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .profile-dot.iridescent {
+    animation: iridescent 3s ease-in-out infinite;
+  }
+
+  @keyframes iridescent {
+    0%   { background: #4ade80; }
+    16%  { background: #60a5fa; }
+    33%  { background: #c084fc; }
+    50%  { background: #f472b6; }
+    66%  { background: #fbbf24; }
+    83%  { background: #34d399; }
+    100% { background: #4ade80; }
+  }
+
+  .profile-handle {
+    font-size: 13px;
+    color: var(--text-2);
+  }
+
+  .profile-description {
+    font-size: 13px;
+    color: var(--text-1);
+    text-align: center;
+    max-width: 320px;
+    margin: 4px 0 0;
+    line-height: 1.4;
+  }
+
+  .profile-created {
+    font-size: 11px;
+    color: var(--text-2);
+    margin-top: 4px;
   }
 </style>
