@@ -56,12 +56,6 @@ export function createMind(options: {
   const compactionInstructions = prompts.compaction_instructions;
   const maxContextTokens = options.maxContextTokens;
 
-  if (compactionInstructions && !maxContextTokens) {
-    log(
-      "mind",
-      "compaction_instructions set but maxContextTokens is not — instructions won't be used",
-    );
-  }
   if (maxContextTokens) {
     log("mind", `compaction threshold: ${maxContextTokens} tokens`);
   }

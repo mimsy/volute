@@ -53,12 +53,6 @@ export function createMind(options: {
   const compactionInstructions = prompts.compaction_instructions;
   const maxContextTokens = options.maxContextTokens;
 
-  if (compactionInstructions && !maxContextTokens) {
-    log(
-      "mind",
-      "compaction_instructions set but maxContextTokens is not — instructions won't be used",
-    );
-  }
   if (maxContextTokens) {
     log("mind", `compaction threshold: ${maxContextTokens} tokens`);
   }
@@ -105,6 +99,8 @@ export function createMind(options: {
     let manualCompactPending = false;
     // eslint-disable-next-line prefer-const -- reassigned in callbacks
     let compactionTriggered = false;
+    // eslint-disable-next-line prefer-const -- reassigned in callbacks
+    let compactOnNextTurnEnd = false;
 
     const preCompactExtension: ExtensionFactory = (pi) => {
       pi.on("session_before_compact", () => {
@@ -192,11 +188,18 @@ export function createMind(options: {
           : undefined,
         onTurnEnd: maxContextTokens
           ? () => {
-              if (compactionTriggered) {
-                compactionTriggered = false;
+              // Compact on the turn AFTER the warning was sent (so the mind gets a turn to save state)
+              if (compactOnNextTurnEnd) {
+                compactOnNextTurnEnd = false;
                 manualCompactPending = true;
                 log("mind", `session "${session.name}": compacting with custom instructions`);
-                session.agentSession?.compact(compactionInstructions);
+                Promise.resolve(session.agentSession?.compact(compactionInstructions)).catch(
+                  (err) => log("mind", `session "${session.name}": compact() failed:`, err),
+                );
+              }
+              if (compactionTriggered) {
+                compactionTriggered = false;
+                compactOnNextTurnEnd = true;
               }
             }
           : undefined,
