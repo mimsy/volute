@@ -146,8 +146,8 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
               outputTokens += msg.usage.output ?? 0;
               const contextTokens =
                 (msg.usage.input ?? 0) +
-                (msg.usage.cache_creation ?? 0) +
-                (msg.usage.cache_read ?? 0);
+                (msg.usage.cacheWrite ?? msg.usage.cache_creation ?? 0) +
+                (msg.usage.cacheRead ?? msg.usage.cache_read ?? 0);
               if (contextTokens) lastInputTokens = contextTokens;
             }
           }
