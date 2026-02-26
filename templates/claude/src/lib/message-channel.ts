@@ -2,6 +2,7 @@ import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
 export type MessageChannel = {
   push: (msg: SDKUserMessage) => void;
+  drain: () => SDKUserMessage[];
   iterable: AsyncIterable<SDKUserMessage>;
 };
 
@@ -18,6 +19,9 @@ export function createMessageChannel(): MessageChannel {
       } else {
         queue.push(msg);
       }
+    },
+    drain() {
+      return queue.splice(0);
     },
     iterable: {
       [Symbol.asyncIterator]() {

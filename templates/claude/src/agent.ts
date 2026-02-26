@@ -234,7 +234,9 @@ export function createMind(options: {
               // Stream was aborted for compaction — run /compact then resume
               await runCompact(currentSessionId);
               streamAbort = new AbortController();
+              const pending = session.channel.drain();
               session.channel = createMessageChannel();
+              for (const msg of pending) session.channel.push(msg);
               continue; // restart the stream loop
             }
             throw err; // rethrow non-compaction errors
