@@ -29,6 +29,7 @@ const mind = createMind({
   model: config.model,
   thinkingLevel: config.thinkingLevel,
   compactionMessage: config.compactionMessage,
+  maxContextTokens: config.compaction?.maxContextTokens,
 });
 
 const router = createRouter({

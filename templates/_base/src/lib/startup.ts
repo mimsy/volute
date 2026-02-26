@@ -16,13 +16,18 @@ export function parseArgs(): { port: number } {
   return { port };
 }
 
-export function loadConfig(): { model?: string; compactionMessage?: string } {
+export function loadConfig(): {
+  model?: string;
+  compactionMessage?: string;
+  compaction?: { maxContextTokens?: number };
+} {
   // Mind-own config lives in config.json; fall back to volute.json for older minds
   for (const file of ["home/.config/config.json", "home/.config/volute.json"]) {
     try {
       return JSON.parse(readFileSync(resolve(file), "utf-8"));
-    } catch {
-      // try next
+    } catch (err: any) {
+      if (err?.code === "ENOENT") continue;
+      log("startup", `failed to parse ${file}:`, err);
     }
   }
   return {};
@@ -104,6 +109,7 @@ export async function handleStartupContext(sendMessage: (content: string) => voi
 
 export type MindPrompts = {
   compaction_warning: string;
+  compaction_instructions: string;
   reply_instructions: string;
   channel_invite: string;
 };
@@ -111,6 +117,8 @@ export type MindPrompts = {
 const DEFAULT_PROMPTS: MindPrompts = {
   compaction_warning:
     "Context is getting long — compaction is about to summarize this conversation. Before that happens, save anything important to files (MEMORY.md, memory/journal/${date}.md, etc.) since those survive compaction. Focus on: decisions made, open tasks, and anything you'd need to pick up where you left off.",
+  compaction_instructions:
+    "Preserve your sense of who you are, what matters to you, what happened in this conversation, and the threads of thought and connection you'd want to return to.",
   reply_instructions: 'To reply to this message, use: volute send ${channel} "your message"',
   channel_invite: `[Channel Invite]
 \${headers}

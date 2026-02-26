@@ -14,6 +14,8 @@ export type EventSession = {
 export type EventHandlerOptions = {
   cwd: string;
   broadcast: (event: VoluteEvent) => void;
+  onContextTokens?: (tokens: number) => void;
+  onTurnEnd?: () => void;
 };
 
 // Loaded once at startup — mind restarts on config changes
@@ -133,14 +135,20 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
           session.messageChannels.delete(session.currentMessageId);
         }
         log("mind", `session "${session.name}": turn done`);
-        // Sum usage from assistant messages
+        // Sum usage from assistant messages. The last assistant message's input tokens
+        // approximate current context size (it includes the full conversation up to that point).
         if (event.messages) {
           let inputTokens = 0;
           let outputTokens = 0;
+          let lastInputTokens = 0;
           for (const msg of event.messages as any[]) {
             if (msg.role === "assistant" && msg.usage) {
               inputTokens += msg.usage.input ?? 0;
               outputTokens += msg.usage.output ?? 0;
+              const cacheWrite = msg.usage.cacheWrite ?? msg.usage.cache_creation ?? 0;
+              const cacheRead = msg.usage.cacheRead ?? msg.usage.cache_read ?? 0;
+              const contextTokens = (msg.usage.input ?? 0) + cacheWrite + cacheRead;
+              if (contextTokens) lastInputTokens = contextTokens;
             }
           }
           if (inputTokens > 0 || outputTokens > 0) {
@@ -148,10 +156,14 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
             options.broadcast({ type: "usage", ...usage });
             emit(session, { type: "usage", metadata: usage });
           }
+          if (lastInputTokens > 0) {
+            options.onContextTokens?.(lastInputTokens);
+          }
         }
         options.broadcast({ type: "done" });
         emit(session, { type: "done" });
         session.currentMessageId = undefined;
+        options.onTurnEnd?.();
       }
     } catch (err) {
       log("mind", `session "${session.name}": event handler error (${event?.type}):`, err);

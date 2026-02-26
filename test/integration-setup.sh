@@ -9,8 +9,18 @@ set -euo pipefail
 #
 # Writes connection details to /tmp/volute-integration.env
 
+# Source .env from repo root if it exists (for API keys)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [[ -f "$REPO_ROOT/.env" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/.env"
+  set +a
+fi
+
 if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-  echo "Error: ANTHROPIC_API_KEY must be set" >&2
+  echo "Error: ANTHROPIC_API_KEY must be set (export it or add to .env)" >&2
   exit 1
 fi
 

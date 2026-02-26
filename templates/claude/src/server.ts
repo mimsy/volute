@@ -40,6 +40,7 @@ const mind = createMind({
   maxThinkingTokens: config.maxThinkingTokens,
   sessionsDir,
   compactionMessage: config.compactionMessage,
+  maxContextTokens: config.compaction?.maxContextTokens,
   onIdentityReload: async () => {
     log("server", "identity file changed — restarting to reload");
     await mind.waitForCommits();
