@@ -93,13 +93,13 @@ import {
 } from "../../lib/template.js";
 import { computeTemplateHash } from "../../lib/template-hash.js";
 import { getTypingMap, publishTypingForChannels } from "../../lib/typing.js";
+import { cleanupVariant } from "../../lib/variant-cleanup.js";
 import {
   addVariant,
   checkHealth,
   findVariant,
   readVariants,
   removeAllVariants,
-  removeVariant,
   validateBranchName,
 } from "../../lib/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
@@ -1158,18 +1158,7 @@ const app = new Hono<AuthEnv>()
 
           // Merge, cleanup worktree/branch, reinstall
           await gitExec(["merge", variant.branch], { cwd: projectRoot });
-          if (existsSync(variant.path)) {
-            try {
-              await gitExec(["worktree", "remove", "--force", variant.path], {
-                cwd: projectRoot,
-              });
-            } catch {}
-          }
-          try {
-            await gitExec(["branch", "-D", variant.branch], { cwd: projectRoot });
-          } catch {}
-          removeVariant(baseName, mergeVariantName);
-          chownMindDir(projectRoot, baseName);
+          await cleanupVariant(baseName, mergeVariantName, projectRoot, variant.path);
           try {
             await npmInstallAsMind(projectRoot, baseName);
           } catch (e) {
@@ -1293,7 +1282,7 @@ const app = new Hono<AuthEnv>()
     const dir = mindDir(mindName);
     if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
 
-    let body: { template?: string; continue?: boolean } = {};
+    let body: { template?: string; continue?: boolean; abort?: boolean } = {};
     try {
       body = await c.req.json();
     } catch {
@@ -1302,6 +1291,33 @@ const app = new Hono<AuthEnv>()
 
     const template = body.template ?? entry.template ?? "claude";
     const UPGRADE_VARIANT = "upgrade";
+
+    if (body.abort) {
+      const worktreeDir = resolve(dir, ".variants", UPGRADE_VARIANT);
+      if (!existsSync(worktreeDir)) {
+        return c.json({ error: "No upgrade in progress" }, 400);
+      }
+
+      try {
+        // Abort merge if mid-merge
+        try {
+          const gitDirContent = readFileSync(resolve(worktreeDir, ".git"), "utf-8").trim();
+          const gitDir = gitDirContent.replace("gitdir: ", "");
+          if (existsSync(resolve(gitDir, "MERGE_HEAD"))) {
+            await gitExec(["merge", "--abort"], { cwd: worktreeDir });
+          }
+        } catch {}
+
+        await cleanupVariant(mindName, UPGRADE_VARIANT, dir, worktreeDir, { stop: true });
+
+        return c.json({ ok: true });
+      } catch (err) {
+        return c.json(
+          { error: err instanceof Error ? err.message : "Failed to abort upgrade" },
+          500,
+        );
+      }
+    }
 
     if (body.continue) {
       // Continue upgrade after conflict resolution
@@ -1323,7 +1339,14 @@ const app = new Hono<AuthEnv>()
         await gitExec(["commit", "-m", "merge template update"], { cwd: worktreeDir });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        if (!msg.includes("nothing to commit")) throw e;
+        const stderr = (e as any)?.stderr ?? "";
+        const stdout = (e as any)?.stdout ?? "";
+        if (
+          !msg.includes("nothing to commit") &&
+          !stderr.includes("nothing to commit") &&
+          !stdout.includes("nothing to commit")
+        )
+          throw e;
       }
 
       // Fix ownership after root git operations so npm install can run as mind user
@@ -1350,23 +1373,7 @@ const app = new Hono<AuthEnv>()
           port: variantPort,
         });
       } catch (err) {
-        try {
-          removeVariant(mindName, UPGRADE_VARIANT);
-        } catch {}
-        try {
-          await gitExec(["worktree", "remove", "--force", worktreeDir], { cwd: dir });
-        } catch {}
-        try {
-          await gitExec(["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
-        } catch {}
-        try {
-          chownMindDir(dir, mindName);
-        } catch (chownErr) {
-          log.error(
-            `failed to fix ownership during upgrade cleanup for ${mindName}`,
-            log.errorData(chownErr),
-          );
-        }
+        await cleanupVariant(mindName, UPGRADE_VARIANT, dir, worktreeDir);
         return c.json(
           { error: err instanceof Error ? err.message : "Failed to continue upgrade" },
           500,
@@ -1474,23 +1481,7 @@ const app = new Hono<AuthEnv>()
         port: variantPort,
       });
     } catch (err) {
-      try {
-        removeVariant(mindName, UPGRADE_VARIANT);
-      } catch {}
-      try {
-        await gitExec(["worktree", "remove", "--force", worktreeDir], { cwd: dir });
-      } catch {}
-      try {
-        await gitExec(["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
-      } catch {}
-      try {
-        chownMindDir(dir, mindName);
-      } catch (chownErr) {
-        log.error(
-          `failed to fix ownership during upgrade cleanup for ${mindName}`,
-          log.errorData(chownErr),
-        );
-      }
+      await cleanupVariant(mindName, UPGRADE_VARIANT, dir, worktreeDir);
       return c.json(
         { error: err instanceof Error ? err.message : "Failed to complete upgrade" },
         500,

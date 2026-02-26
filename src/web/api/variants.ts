@@ -7,12 +7,12 @@ import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../../lib/is
 import log from "../../lib/logger.js";
 import { findMind, mindDir, nextPort } from "../../lib/registry.js";
 import { spawnServer } from "../../lib/spawn-server.js";
+import { cleanupVariant } from "../../lib/variant-cleanup.js";
 import {
   addVariant,
   checkHealth,
   findVariant,
   readVariants,
-  removeVariant,
   validateBranchName,
   writeVariants,
 } from "../../lib/variants.js";
@@ -229,24 +229,7 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Merge failed. Resolve conflicts manually." }, 500);
     }
 
-    // Remove worktree
-    if (existsSync(variant.path)) {
-      try {
-        await gitExec(["worktree", "remove", "--force", variant.path], { cwd: projectRoot });
-      } catch {
-        // Best effort
-      }
-    }
-
-    // Delete branch
-    try {
-      await gitExec(["branch", "-D", variant.branch], { cwd: projectRoot });
-    } catch {
-      // Best effort
-    }
-
-    // Remove from variants.json
-    removeVariant(mindName, variantName);
+    await cleanupVariant(mindName, variantName, projectRoot, variant.path);
 
     // Update template hash after upgrade merge
     if (variantName === "upgrade") {
@@ -259,9 +242,6 @@ const app = new Hono<AuthEnv>()
         console.error(`[daemon] failed to update template hash for ${mindName}:`, err);
       }
     }
-
-    // Fix ownership before npm install so it runs as the mind user
-    chownMindDir(projectRoot, mindName);
 
     // Reinstall dependencies
     try {
@@ -314,39 +294,8 @@ const app = new Hono<AuthEnv>()
     if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
 
     const projectRoot = mindDir(mindName);
-    const manager = getMindManager();
-    const compositeKey = `${mindName}@${variantName}`;
 
-    // Stop the variant if running
-    if (manager.isRunning(compositeKey)) {
-      try {
-        await manager.stopMind(compositeKey);
-      } catch {
-        // Best effort
-      }
-    }
-
-    // Remove the git worktree
-    if (existsSync(variant.path)) {
-      try {
-        await gitExec(["worktree", "remove", "--force", variant.path], { cwd: projectRoot });
-      } catch {
-        // Best effort
-      }
-    }
-
-    // Delete the git branch
-    try {
-      await gitExec(["branch", "-D", variant.branch], { cwd: projectRoot });
-    } catch {
-      // Best effort
-    }
-
-    // Remove from variants.json
-    removeVariant(mindName, variantName);
-
-    // Fix ownership — worktree removal modifies .git/worktrees/ as root
-    chownMindDir(projectRoot, mindName);
+    await cleanupVariant(mindName, variantName, projectRoot, variant.path, { stop: true });
 
     return c.json({ ok: true });
   });
