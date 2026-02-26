@@ -147,7 +147,7 @@ export function createMind(options: {
           const wasCompacting = compactionTriggered.get(session.name);
           compactionTriggered.set(session.name, false);
           if (wasCompacting) {
-            // Mind just finished saving state — abort the stream so we can /compact
+            // Mind's turn after compaction warning is done — abort the stream to run /compact
             log("mind", `session "${session.name}": aborting stream for compaction`);
             streamAbort.abort(new CompactionAbort());
           } else if (identityReload.needsReload()) {
@@ -197,6 +197,7 @@ export function createMind(options: {
             resume: sessionId,
           },
         });
+        let gotResult = false;
         for await (const msg of compactQuery) {
           if ("session_id" in msg && msg.session_id) {
             currentSessionId = msg.session_id as string;
@@ -204,7 +205,10 @@ export function createMind(options: {
               sessionStore.save(session.name, currentSessionId);
             }
           }
+          if (msg.type === "result") gotResult = true;
         }
+        if (!gotResult)
+          log("mind", `session "${session.name}": compaction stream ended without result`);
         log("mind", `session "${session.name}": compaction complete`);
       }
 
@@ -220,7 +224,7 @@ export function createMind(options: {
       }
 
       try {
-        // eslint-disable-next-line no-constant-condition -- abort breaks the loop
+        // eslint-disable-next-line no-constant-condition -- loop exits via break (normal) or throw (error)
         while (true) {
           try {
             await runStream(currentSessionId);
@@ -231,8 +235,21 @@ export function createMind(options: {
               streamAbort.signal.reason instanceof CompactionAbort &&
               currentSessionId
             ) {
-              // Stream was aborted for compaction — run /compact then resume
-              await runCompact(currentSessionId);
+              // Stream was aborted for compaction — run /compact, then loop to resume
+              try {
+                await runCompact(currentSessionId);
+              } catch (compactErr) {
+                log(
+                  "mind",
+                  `session "${session.name}": custom compaction failed, starting fresh:`,
+                  compactErr,
+                );
+                sessionStore.delete(session.name);
+                currentSessionId = undefined;
+                streamAbort = new AbortController();
+                session.channel = createMessageChannel();
+                break;
+              }
               streamAbort = new AbortController();
               const pending = session.channel.drain();
               session.channel = createMessageChannel();

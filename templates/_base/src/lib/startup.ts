@@ -25,8 +25,9 @@ export function loadConfig(): {
   for (const file of ["home/.config/config.json", "home/.config/volute.json"]) {
     try {
       return JSON.parse(readFileSync(resolve(file), "utf-8"));
-    } catch {
-      // try next
+    } catch (err: any) {
+      if (err?.code === "ENOENT") continue;
+      log("startup", `failed to parse ${file}:`, err);
     }
   }
   return {};

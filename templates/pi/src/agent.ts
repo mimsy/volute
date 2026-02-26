@@ -95,16 +95,25 @@ export function createMind(options: {
 
     log("mind", `session "${session.name}": ${isEphemeral ? "ephemeral" : "persistent"}`);
 
+    // Compaction state machine:
+    // 1. onContextTokens sets compactionTriggered=true and sends warning
+    // 2. onTurnEnd (after warning turn): compactionTriggered -> compactOnNextTurnEnd
+    // 3. onTurnEnd (after mind's save turn): compactOnNextTurnEnd -> call compact()
     let compactBlocked = false;
     let manualCompactPending = false;
-    // eslint-disable-next-line prefer-const -- reassigned in callbacks
     let compactionTriggered = false;
-    // eslint-disable-next-line prefer-const -- reassigned in callbacks
     let compactOnNextTurnEnd = false;
+    let compactionInProgress = false;
+
+    function resetCompactionState() {
+      compactionTriggered = false;
+      compactOnNextTurnEnd = false;
+      compactionInProgress = false;
+    }
 
     const preCompactExtension: ExtensionFactory = (pi) => {
       pi.on("session_before_compact", () => {
-        // Manual compaction with custom instructions = our threshold-triggered compact — allow through
+        // Our programmatic compact() call (triggered by token threshold) — allow through
         if (manualCompactPending) {
           manualCompactPending = false;
           log(
@@ -172,15 +181,22 @@ export function createMind(options: {
         broadcast: (event) => broadcast(session, event),
         onContextTokens: maxContextTokens
           ? (tokens: number) => {
-              if (tokens >= maxContextTokens && !compactionTriggered) {
+              if (tokens >= maxContextTokens && !compactionTriggered && !compactionInProgress) {
+                if (!session.agentSession) {
+                  log(
+                    "mind",
+                    `session "${session.name}": compaction threshold hit but session not ready`,
+                  );
+                  return;
+                }
                 compactionTriggered = true;
                 log(
                   "mind",
                   `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — triggering compaction`,
                 );
-                // Send compaction warning, then compact on next turn end
+                // Send compaction warning; compaction will follow after the mind finishes its response turn
                 session.messageIds.push(undefined);
-                session.agentSession?.prompt(compactionMessage, {
+                session.agentSession.prompt(compactionMessage, {
                   streamingBehavior: "followUp",
                 });
               }
@@ -188,18 +204,32 @@ export function createMind(options: {
           : undefined,
         onTurnEnd: maxContextTokens
           ? () => {
-              // Compact on the turn AFTER the warning was sent (so the mind gets a turn to save state)
-              if (compactOnNextTurnEnd) {
-                compactOnNextTurnEnd = false;
-                manualCompactPending = true;
-                log("mind", `session "${session.name}": compacting with custom instructions`);
-                Promise.resolve(session.agentSession?.compact(compactionInstructions)).catch(
-                  (err) => log("mind", `session "${session.name}": compact() failed:`, err),
+              try {
+                // Compact on the turn AFTER the warning was sent (so the mind gets a turn to save state)
+                if (compactOnNextTurnEnd) {
+                  compactOnNextTurnEnd = false;
+                  manualCompactPending = true;
+                  compactionInProgress = true;
+                  log("mind", `session "${session.name}": compacting with custom instructions`);
+                  Promise.resolve(session.agentSession?.compact(compactionInstructions))
+                    .catch((err) =>
+                      log("mind", `session "${session.name}": compact() failed:`, err),
+                    )
+                    .finally(() => {
+                      compactionInProgress = false;
+                    });
+                }
+                if (compactionTriggered) {
+                  compactionTriggered = false;
+                  compactOnNextTurnEnd = true;
+                }
+              } catch (err) {
+                log(
+                  "mind",
+                  `session "${session.name}": onTurnEnd error, resetting compaction state:`,
+                  err,
                 );
-              }
-              if (compactionTriggered) {
-                compactionTriggered = false;
-                compactOnNextTurnEnd = true;
+                resetCompactionState();
               }
             }
           : undefined,

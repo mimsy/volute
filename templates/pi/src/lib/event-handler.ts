@@ -135,7 +135,8 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
           session.messageChannels.delete(session.currentMessageId);
         }
         log("mind", `session "${session.name}": turn done`);
-        // Sum usage from assistant messages; track last assistant input tokens as context size
+        // Sum usage from assistant messages. The last assistant message's input tokens
+        // approximate current context size (it includes the full conversation up to that point).
         if (event.messages) {
           let inputTokens = 0;
           let outputTokens = 0;
@@ -144,10 +145,9 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
             if (msg.role === "assistant" && msg.usage) {
               inputTokens += msg.usage.input ?? 0;
               outputTokens += msg.usage.output ?? 0;
-              const contextTokens =
-                (msg.usage.input ?? 0) +
-                (msg.usage.cacheWrite ?? msg.usage.cache_creation ?? 0) +
-                (msg.usage.cacheRead ?? msg.usage.cache_read ?? 0);
+              const cacheWrite = msg.usage.cacheWrite ?? msg.usage.cache_creation ?? 0;
+              const cacheRead = msg.usage.cacheRead ?? msg.usage.cache_read ?? 0;
+              const contextTokens = (msg.usage.input ?? 0) + cacheWrite + cacheRead;
               if (contextTokens) lastInputTokens = contextTokens;
             }
           }

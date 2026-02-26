@@ -21,6 +21,8 @@ export function createMessageChannel(): MessageChannel {
       }
     },
     drain() {
+      // Clear any pending iterator wait so it doesn't consume a message after drain
+      resolve = null;
       return queue.splice(0);
     },
     iterable: {
