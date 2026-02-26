@@ -5,6 +5,7 @@ export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
     template: { type: "string" },
     continue: { type: "boolean" },
+    abort: { type: "boolean" },
   });
 
   const mindName = resolveMindName({ mind: positional[0] });
@@ -21,6 +22,7 @@ export async function run(args: string[]) {
       body: JSON.stringify({
         template: flags.template,
         continue: flags.continue,
+        abort: flags.abort,
       }),
     },
   );
@@ -40,11 +42,18 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
+  if (flags.abort) {
+    console.log(`Upgrade aborted for ${mindName}.`);
+    return;
+  }
+
   if (data.conflicts) {
     console.log("\nMerge conflicts detected. Resolve them in:");
     console.log(`  ${data.worktreeDir}`);
     console.log(`\nThen run:`);
     console.log(`  volute mind upgrade ${mindName} --continue`);
+    console.log(`\nOr abort:`);
+    console.log(`  volute mind upgrade ${mindName} --abort`);
     return;
   }
 

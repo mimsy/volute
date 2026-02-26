@@ -455,4 +455,107 @@ describe("upgrade git operations", () => {
 
     git(["worktree", "remove", "--force", worktreeDir], repoDir);
   });
+
+  it("continue succeeds when mind already committed the merge", () => {
+    // Create a file on main
+    writeFileSync(join(repoDir, "conflict.txt"), "main version");
+    git(["add", "-A"], repoDir);
+    git(["commit", "-m", "add conflict file"], repoDir);
+
+    // Create orphan template branch with conflicting file
+    git(["checkout", "--orphan", "volute/template"], repoDir);
+    git(["rm", "-rf", "--cached", "."], repoDir);
+    writeFileSync(join(repoDir, "conflict.txt"), "template version");
+    git(["add", "-A"], repoDir);
+    git(["commit", "-m", "template update"], repoDir);
+    git(["checkout", "main"], repoDir);
+
+    // Create worktree and start merge (will conflict)
+    const worktreeDir = join(repoDir, ".variants", "upgrade");
+    git(["worktree", "add", "-b", "upgrade", worktreeDir], repoDir);
+    try {
+      git(
+        ["merge", "volute/template", "--allow-unrelated-histories", "-m", "merge template"],
+        worktreeDir,
+      );
+    } catch {
+      // Expected conflict
+    }
+
+    // Mind resolves conflict and commits (simulating what a mind would do)
+    writeFileSync(join(worktreeDir, "conflict.txt"), "resolved version");
+    git(["add", "-A"], worktreeDir);
+    git(["commit", "-m", "resolve merge conflicts"], worktreeDir);
+
+    // Now simulate --continue: git add -A && git commit should fail with "nothing to commit"
+    // The API code checks both err.message and err.stderr for "nothing to commit"
+    git(["add", "-A"], worktreeDir);
+    let commitFailed = false;
+    try {
+      git(["commit", "-m", "merge template update"], worktreeDir);
+    } catch (e) {
+      commitFailed = true;
+      // Verify the error contains "nothing to commit" somewhere
+      // (execFileSync puts it in stdout, the async exec() puts it in stderr)
+      const err = e as { message: string; stdout?: string; stderr?: string };
+      const allOutput = `${err.message} ${err.stdout ?? ""} ${err.stderr ?? ""}`;
+      assert.ok(
+        allOutput.includes("nothing to commit"),
+        `Expected 'nothing to commit' somewhere in error, got: ${allOutput}`,
+      );
+    }
+
+    assert.ok(commitFailed, "Expected commit to fail when nothing to commit");
+
+    // The worktree should still be valid and have the resolved content
+    assert.equal(readFileSync(join(worktreeDir, "conflict.txt"), "utf-8"), "resolved version");
+
+    git(["worktree", "remove", "--force", worktreeDir], repoDir);
+  });
+
+  it("abort cleans up worktree and branch", () => {
+    // Create a file on main
+    writeFileSync(join(repoDir, "conflict.txt"), "main version");
+    git(["add", "-A"], repoDir);
+    git(["commit", "-m", "add conflict file"], repoDir);
+
+    // Create orphan template branch with conflicting file
+    git(["checkout", "--orphan", "volute/template"], repoDir);
+    git(["rm", "-rf", "--cached", "."], repoDir);
+    writeFileSync(join(repoDir, "conflict.txt"), "template version");
+    git(["add", "-A"], repoDir);
+    git(["commit", "-m", "template update"], repoDir);
+    git(["checkout", "main"], repoDir);
+
+    // Create worktree and start merge (will conflict)
+    const worktreeDir = join(repoDir, ".variants", "upgrade");
+    git(["worktree", "add", "-b", "upgrade", worktreeDir], repoDir);
+    try {
+      git(
+        ["merge", "volute/template", "--allow-unrelated-histories", "-m", "merge template"],
+        worktreeDir,
+      );
+    } catch {
+      // Expected conflict
+    }
+
+    // Verify mid-merge state: MERGE_HEAD exists in worktree git dir
+    const gitFileContent = readFileSync(join(worktreeDir, ".git"), "utf-8").trim();
+    const gitDir = gitFileContent.replace("gitdir: ", "");
+    assert.ok(existsSync(join(gitDir, "MERGE_HEAD")), "Expected MERGE_HEAD to exist mid-merge");
+
+    // Abort merge
+    git(["merge", "--abort"], worktreeDir);
+
+    // Remove worktree and branch (simulating what --abort API does)
+    git(["worktree", "remove", "--force", worktreeDir], repoDir);
+    git(["branch", "-D", "upgrade"], repoDir);
+
+    // Verify cleanup
+    assert.ok(!existsSync(worktreeDir), "Worktree directory should be removed");
+
+    // Verify branch is gone
+    const branches = git(["branch", "--list", "upgrade"], repoDir).trim();
+    assert.equal(branches, "", "Upgrade branch should be deleted");
+  });
 });

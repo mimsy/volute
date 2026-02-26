@@ -1293,7 +1293,7 @@ const app = new Hono<AuthEnv>()
     const dir = mindDir(mindName);
     if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
 
-    let body: { template?: string; continue?: boolean } = {};
+    let body: { template?: string; continue?: boolean; abort?: boolean } = {};
     try {
       body = await c.req.json();
     } catch {
@@ -1302,6 +1302,63 @@ const app = new Hono<AuthEnv>()
 
     const template = body.template ?? entry.template ?? "claude";
     const UPGRADE_VARIANT = "upgrade";
+
+    if (body.abort) {
+      const worktreeDir = resolve(dir, ".variants", UPGRADE_VARIANT);
+      if (!existsSync(worktreeDir)) {
+        return c.json({ error: "No upgrade in progress" }, 400);
+      }
+
+      try {
+        // Stop the variant if running
+        try {
+          await getMindManager().stopMind(`${mindName}@${UPGRADE_VARIANT}`);
+        } catch {}
+
+        // Abort merge if mid-merge
+        // Worktrees use a .git file pointing to the main repo's worktrees dir
+        try {
+          const gitDirContent = readFileSync(resolve(worktreeDir, ".git"), "utf-8").trim();
+          const gitDir = gitDirContent.replace("gitdir: ", "");
+          if (existsSync(resolve(gitDir, "MERGE_HEAD"))) {
+            await gitExec(["merge", "--abort"], { cwd: worktreeDir });
+          }
+        } catch {}
+
+        // Remove worktree and branch
+        try {
+          await gitExec(["worktree", "remove", "--force", worktreeDir], { cwd: dir });
+        } catch {
+          rmSync(worktreeDir, { recursive: true, force: true });
+          await gitExec(["worktree", "prune"], { cwd: dir });
+        }
+        try {
+          await gitExec(["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
+        } catch {}
+
+        // Remove variant metadata
+        try {
+          removeVariant(mindName, UPGRADE_VARIANT);
+        } catch {}
+
+        // Fix ownership
+        try {
+          chownMindDir(dir, mindName);
+        } catch (chownErr) {
+          log.error(
+            `failed to fix ownership during upgrade abort for ${mindName}`,
+            log.errorData(chownErr),
+          );
+        }
+
+        return c.json({ ok: true });
+      } catch (err) {
+        return c.json(
+          { error: err instanceof Error ? err.message : "Failed to abort upgrade" },
+          500,
+        );
+      }
+    }
 
     if (body.continue) {
       // Continue upgrade after conflict resolution
@@ -1323,7 +1380,14 @@ const app = new Hono<AuthEnv>()
         await gitExec(["commit", "-m", "merge template update"], { cwd: worktreeDir });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        if (!msg.includes("nothing to commit")) throw e;
+        const stderr = (e as any)?.stderr ?? "";
+        const stdout = (e as any)?.stdout ?? "";
+        if (
+          !msg.includes("nothing to commit") &&
+          !stderr.includes("nothing to commit") &&
+          !stdout.includes("nothing to commit")
+        )
+          throw e;
       }
 
       // Fix ownership after root git operations so npm install can run as mind user

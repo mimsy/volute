@@ -17,7 +17,8 @@ export function exec(
       { cwd: options?.cwd, env: options?.env },
       (err, stdout, stderr) => {
         if (err) {
-          (err as Error & { stderr?: string }).stderr = stderr;
+          (err as Error & { stderr?: string; stdout?: string }).stderr = stderr;
+          (err as Error & { stderr?: string; stdout?: string }).stdout = stdout;
           reject(err);
         } else {
           resolve(stdout);
