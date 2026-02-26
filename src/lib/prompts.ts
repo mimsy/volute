@@ -19,6 +19,7 @@ export const PROMPT_KEYS = [
   "restart_message",
   "merge_message",
   "compaction_warning",
+  "compaction_instructions",
   "reply_instructions",
   "channel_invite",
 ] as const;
@@ -68,6 +69,13 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
     content: `Context is getting long — compaction is about to summarize this conversation. Before that happens, save anything important to files (MEMORY.md, memory/journal/\${date}.md, etc.) since those survive compaction. Focus on: decisions made, open tasks, and anything you'd need to pick up where you left off.`,
     description: "Pre-compaction save reminder sent to the mind",
     variables: ["date"],
+    category: "mind",
+  },
+  compaction_instructions: {
+    content:
+      "Preserve your sense of who you are, what matters to you, what happened in this conversation, and the threads of thought and connection you'd want to return to.",
+    description: "Custom instructions for the compaction summarizer",
+    variables: [],
     category: "mind",
   },
   reply_instructions: {

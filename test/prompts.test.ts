@@ -22,6 +22,7 @@ describe("prompts library", () => {
   it("PROMPT_KEYS includes all expected keys", () => {
     assert.ok(PROMPT_KEYS.includes("seed_soul"));
     assert.ok(PROMPT_KEYS.includes("compaction_warning"));
+    assert.ok(PROMPT_KEYS.includes("compaction_instructions"));
     assert.ok(PROMPT_KEYS.includes("reply_instructions"));
     assert.ok(PROMPT_KEYS.includes("channel_invite"));
     assert.ok(PROMPT_KEYS.includes("restart_message"));
@@ -97,12 +98,13 @@ describe("prompts library", () => {
     assert.equal(result, null);
   });
 
-  it("getMindPromptDefaults returns 3 mind-category prompts", async () => {
+  it("getMindPromptDefaults returns 4 mind-category prompts", async () => {
     const defaults = await getMindPromptDefaults();
     assert.ok("compaction_warning" in defaults);
+    assert.ok("compaction_instructions" in defaults);
     assert.ok("reply_instructions" in defaults);
     assert.ok("channel_invite" in defaults);
-    assert.equal(Object.keys(defaults).length, 3);
+    assert.equal(Object.keys(defaults).length, 4);
   });
 
   it("getMindPromptDefaults uses DB overrides", async () => {

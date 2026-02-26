@@ -43,12 +43,25 @@ export function createMind(options: {
   model?: string;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   compactionMessage?: string;
+  maxContextTokens?: number;
 }): { resolve: HandlerResolver } {
   const sessions = new Map<string, PiSession>();
   const prompts = loadPrompts();
   const today = new Date().toLocaleDateString("en-CA");
   const compactionMessage =
     options.compactionMessage ?? prompts.compaction_warning.replace("${date}", today);
+  const compactionInstructions = prompts.compaction_instructions;
+  const maxContextTokens = options.maxContextTokens;
+
+  if (compactionInstructions && !maxContextTokens) {
+    log(
+      "mind",
+      "compaction_instructions set but maxContextTokens is not — instructions won't be used",
+    );
+  }
+  if (maxContextTokens) {
+    log("mind", `compaction threshold: ${maxContextTokens} tokens`);
+  }
 
   // Shared setup (created once)
   const modelStr = options.model || process.env.PI_MODEL || "anthropic:claude-sonnet-4-20250514";
@@ -89,8 +102,23 @@ export function createMind(options: {
     log("mind", `session "${session.name}": ${isEphemeral ? "ephemeral" : "persistent"}`);
 
     let compactBlocked = false;
+    let manualCompactPending = false;
+    // eslint-disable-next-line prefer-const -- reassigned in callbacks
+    let compactionTriggered = false;
+
     const preCompactExtension: ExtensionFactory = (pi) => {
       pi.on("session_before_compact", () => {
+        // Manual compaction with custom instructions = our threshold-triggered compact — allow through
+        if (manualCompactPending) {
+          manualCompactPending = false;
+          log(
+            "mind",
+            `session "${session.name}": allowing manual compaction with custom instructions`,
+          );
+          return;
+        }
+
+        // Auto-compaction: two-pass block (first pass warns mind, second pass allows)
         if (!compactBlocked) {
           compactBlocked = true;
           log(
@@ -146,6 +174,32 @@ export function createMind(options: {
       createEventHandler(session, {
         cwd: options.cwd,
         broadcast: (event) => broadcast(session, event),
+        onContextTokens: maxContextTokens
+          ? (tokens: number) => {
+              if (tokens >= maxContextTokens && !compactionTriggered) {
+                compactionTriggered = true;
+                log(
+                  "mind",
+                  `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — triggering compaction`,
+                );
+                // Send compaction warning, then compact on next turn end
+                session.messageIds.push(undefined);
+                session.agentSession?.prompt(compactionMessage, {
+                  streamingBehavior: "followUp",
+                });
+              }
+            }
+          : undefined,
+        onTurnEnd: maxContextTokens
+          ? () => {
+              if (compactionTriggered) {
+                compactionTriggered = false;
+                manualCompactPending = true;
+                log("mind", `session "${session.name}": compacting with custom instructions`);
+                session.agentSession?.compact(compactionInstructions);
+              }
+            }
+          : undefined,
       }),
     );
 

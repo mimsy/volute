@@ -15,6 +15,7 @@ export type StreamCallbacks = {
   onSessionId?: (sessionId: string) => void;
   broadcast: (event: VoluteEvent) => void;
   onTurnEnd?: () => void;
+  onContextTokens?: (tokens: number) => void;
 };
 
 // Loaded once at startup — mind restarts on config changes
@@ -50,6 +51,8 @@ export async function consumeStream(
       callbacks.onSessionId?.(msg.session_id as string);
     }
     if (msg.type === "assistant") {
+      const inputTokens = msg.message.usage?.input_tokens;
+      if (inputTokens) callbacks.onContextTokens?.(inputTokens);
       for (const b of msg.message.content) {
         if (b.type === "thinking" && "thinking" in b && b.thinking) {
           const text = b.thinking as string;

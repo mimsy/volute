@@ -38,6 +38,7 @@ export function createMind(options: {
   maxThinkingTokens?: number;
   sessionsDir: string;
   compactionMessage?: string;
+  maxContextTokens?: number;
   onIdentityReload?: () => Promise<void>;
 }): { resolve: HandlerResolver; waitForCommits: () => Promise<void> } {
   const autoCommit = createAutoCommitHook(options.cwd);
@@ -52,6 +53,21 @@ export function createMind(options: {
   const today = new Date().toLocaleDateString("en-CA");
   const compactionMessage =
     options.compactionMessage ?? prompts.compaction_warning.replace("${date}", today);
+  const compactionInstructions = prompts.compaction_instructions;
+  const maxContextTokens = options.maxContextTokens;
+
+  if (compactionInstructions && !maxContextTokens) {
+    log(
+      "mind",
+      "compaction_instructions set but maxContextTokens is not — instructions won't be used",
+    );
+  }
+  if (maxContextTokens) {
+    log("mind", `compaction threshold: ${maxContextTokens} tokens`);
+  }
+
+  // Per-session compaction state
+  const compactionTriggered = new Map<string, boolean>();
 
   // --- Event broadcasting ---
 
@@ -121,8 +137,42 @@ export function createMind(options: {
         },
         broadcast: (event: VoluteEvent) => broadcastToSession(session, event),
         onTurnEnd: () => {
+          // Reset compaction trigger after turn completes (context may have dropped after compaction)
+          compactionTriggered.set(session.name, false);
           if (identityReload.needsReload()) options.onIdentityReload?.();
         },
+        onContextTokens: maxContextTokens
+          ? (tokens: number) => {
+              if (tokens >= maxContextTokens && !compactionTriggered.get(session.name)) {
+                compactionTriggered.set(session.name, true);
+                log(
+                  "mind",
+                  `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — triggering compaction`,
+                );
+                // Push compaction warning, then /compact with instructions
+                session.messageIds.push(undefined);
+                session.channel.push({
+                  type: "user",
+                  session_id: "",
+                  message: {
+                    role: "user",
+                    content: [{ type: "text", text: compactionMessage }],
+                  },
+                  parent_tool_use_id: null,
+                });
+                session.messageIds.push(undefined);
+                session.channel.push({
+                  type: "user",
+                  session_id: "",
+                  message: {
+                    role: "user",
+                    content: [{ type: "text", text: `/compact ${compactionInstructions}` }],
+                  },
+                  parent_tool_use_id: null,
+                });
+              }
+            }
+          : undefined,
       };
       try {
         const q = createStream(session, savedSessionId);
