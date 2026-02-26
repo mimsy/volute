@@ -3,6 +3,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { toSDKContent } from "./lib/content.js";
 import { createAutoCommitHook } from "./lib/hooks/auto-commit.js";
 import { createIdentityReloadHook } from "./lib/hooks/identity-reload.js";
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports -- used as value
 import { createPreCompactHook } from "./lib/hooks/pre-compact.js";
 import { createReplyInstructionsHook } from "./lib/hooks/reply-instructions.js";
 import { createSessionContextHook } from "./lib/hooks/session-context.js";
@@ -79,20 +80,12 @@ export function createMind(options: {
 
   // --- SDK stream management ---
 
-  function createStream(session: Session, resume?: string) {
-    const preCompact = createPreCompactHook(() => {
-      session.messageIds.push(undefined);
-      session.channel.push({
-        type: "user",
-        session_id: "",
-        message: {
-          role: "user",
-          content: [{ type: "text", text: compactionMessage }],
-        },
-        parent_tool_use_id: null,
-      });
-    });
-
+  function createStream(
+    session: Session,
+    streamAbort: AbortController,
+    preCompactHook: HookCallback,
+    resume?: string,
+  ) {
     const sessionContext = createSessionContextHook({
       currentSession: session.name,
       sessionsDir: options.sessionsDir,
@@ -109,31 +102,57 @@ export function createMind(options: {
         allowDangerouslySkipPermissions: true,
         settingSources: ["project"],
         cwd: options.cwd,
-        abortController: options.abortController,
+        abortController: streamAbort,
         model: options.model,
         maxThinkingTokens: options.maxThinkingTokens,
         resume,
         hooks: {
           PostToolUse: postToolUseHooks,
-          PreCompact: [{ hooks: [preCompact.hook] }],
+          PreCompact: [{ hooks: [preCompactHook] }],
           UserPromptSubmit: [{ hooks: [sessionContext.hook, replyInstructions.hook] }],
         },
       },
     });
   }
 
+  /** Sentinel error used to signal that the stream was aborted for compaction */
+  class CompactionAbort extends Error {}
+
   function startSession(session: Session, savedSessionId?: string) {
     (async () => {
       log("mind", `session "${session.name}": stream consumer started`);
+      let currentSessionId = savedSessionId;
+      let streamAbort = new AbortController();
+
+      const preCompact = createPreCompactHook(() => {
+        session.messageIds.push(undefined);
+        session.channel.push({
+          type: "user",
+          session_id: "",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: compactionMessage }],
+          },
+          parent_tool_use_id: null,
+        });
+      });
+
       const callbacks = {
         onSessionId: (id: string) => {
+          currentSessionId = id;
           if (!session.name.startsWith("new-")) sessionStore.save(session.name, id);
         },
         broadcast: (event: VoluteEvent) => broadcastToSession(session, event),
         onTurnEnd: () => {
-          // Reset compaction trigger after turn completes (context may have dropped after compaction)
+          const wasCompacting = compactionTriggered.get(session.name);
           compactionTriggered.set(session.name, false);
-          if (identityReload.needsReload()) options.onIdentityReload?.();
+          if (wasCompacting) {
+            // Mind just finished saving state — abort the stream so we can /compact
+            log("mind", `session "${session.name}": aborting stream for compaction`);
+            streamAbort.abort(new CompactionAbort());
+          } else if (identityReload.needsReload()) {
+            options.onIdentityReload?.();
+          }
         },
         onContextTokens: maxContextTokens
           ? (tokens: number) => {
@@ -143,7 +162,6 @@ export function createMind(options: {
                   "mind",
                   `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — triggering compaction`,
                 );
-                // Push compaction warning, then /compact with instructions
                 session.messageIds.push(undefined);
                 session.channel.push({
                   type: "user",
@@ -154,44 +172,84 @@ export function createMind(options: {
                   },
                   parent_tool_use_id: null,
                 });
-                session.messageIds.push(undefined);
-                session.channel.push({
-                  type: "user",
-                  session_id: "",
-                  message: {
-                    role: "user",
-                    content: [{ type: "text", text: `/compact ${compactionInstructions}` }],
-                  },
-                  parent_tool_use_id: null,
-                });
               }
             }
           : undefined,
       };
-      try {
-        const q = createStream(session, savedSessionId);
+
+      async function runCompact(sessionId: string) {
+        log("mind", `session "${session.name}": compacting with custom instructions`);
+        const compactAbort = new AbortController();
+        // Forward mind-level abort to the compact query
+        options.abortController.signal.addEventListener("abort", () => compactAbort.abort(), {
+          once: true,
+        });
+        const compactQuery = query({
+          prompt: `/compact ${compactionInstructions}`,
+          options: {
+            systemPrompt: options.systemPrompt,
+            permissionMode: "bypassPermissions",
+            allowDangerouslySkipPermissions: true,
+            settingSources: ["project"],
+            cwd: options.cwd,
+            abortController: compactAbort,
+            model: options.model,
+            resume: sessionId,
+          },
+        });
+        for await (const msg of compactQuery) {
+          if ("session_id" in msg && msg.session_id) {
+            currentSessionId = msg.session_id as string;
+            if (!session.name.startsWith("new-")) {
+              sessionStore.save(session.name, currentSessionId);
+            }
+          }
+        }
+        log("mind", `session "${session.name}": compaction complete`);
+      }
+
+      async function runStream(resume?: string) {
+        const q = createStream(session, streamAbort, preCompact.hook, resume);
         session.currentQuery = q;
         await consumeStream(q, session, callbacks);
-        // Stream ended — broadcast done if no result was emitted
         if (session.currentMessageId !== undefined) {
           session.messageChannels.delete(session.currentMessageId);
           broadcastToSession(session, { type: "done" });
           session.currentMessageId = undefined;
         }
+      }
+
+      try {
+        // eslint-disable-next-line no-constant-condition -- abort breaks the loop
+        while (true) {
+          try {
+            await runStream(currentSessionId);
+            break; // stream ended normally
+          } catch (err) {
+            if (
+              streamAbort.signal.aborted &&
+              streamAbort.signal.reason instanceof CompactionAbort &&
+              currentSessionId
+            ) {
+              // Stream was aborted for compaction — run /compact then resume
+              await runCompact(currentSessionId);
+              streamAbort = new AbortController();
+              session.channel = createMessageChannel();
+              continue; // restart the stream loop
+            }
+            throw err; // rethrow non-compaction errors
+          }
+        }
       } catch (err) {
         session.messageChannels.clear();
-        if (savedSessionId) {
+        if (currentSessionId) {
           log("mind", `session "${session.name}": resume failed, starting fresh:`, err);
           sessionStore.delete(session.name);
+          currentSessionId = undefined;
+          streamAbort = new AbortController();
+          session.channel = createMessageChannel();
           try {
-            const q = createStream(session);
-            session.currentQuery = q;
-            await consumeStream(q, session, callbacks);
-            if (session.currentMessageId !== undefined) {
-              session.messageChannels.delete(session.currentMessageId);
-              broadcastToSession(session, { type: "done" });
-              session.currentMessageId = undefined;
-            }
+            await runStream();
           } catch (retryErr) {
             log("mind", `session "${session.name}": stream consumer error:`, retryErr);
             broadcastToSession(session, { type: "done" });

@@ -7,7 +7,7 @@ export function createPreCompactHook(onCompact: () => void) {
   const hook: HookCallback = async (input) => {
     const { trigger, custom_instructions } = input as PreCompactHookInput;
 
-    // Manual compaction with custom instructions = our threshold-triggered /compact — allow through
+    // Manual compaction with custom instructions — allow through
     if (trigger === "manual" && custom_instructions) {
       log("mind", "allowing manual compaction with custom instructions");
       return {};
