@@ -144,7 +144,11 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
             if (msg.role === "assistant" && msg.usage) {
               inputTokens += msg.usage.input ?? 0;
               outputTokens += msg.usage.output ?? 0;
-              if (msg.usage.input) lastInputTokens = msg.usage.input;
+              const contextTokens =
+                (msg.usage.input ?? 0) +
+                (msg.usage.cache_creation ?? 0) +
+                (msg.usage.cache_read ?? 0);
+              if (contextTokens) lastInputTokens = contextTokens;
             }
           }
           if (inputTokens > 0 || outputTokens > 0) {

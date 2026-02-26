@@ -51,8 +51,16 @@ export async function consumeStream(
       callbacks.onSessionId?.(msg.session_id as string);
     }
     if (msg.type === "assistant") {
-      const inputTokens = msg.message.usage?.input_tokens;
-      if (inputTokens) callbacks.onContextTokens?.(inputTokens);
+      const usage = msg.message.usage as {
+        input_tokens?: number;
+        cache_creation_input_tokens?: number;
+        cache_read_input_tokens?: number;
+      };
+      const contextTokens =
+        (usage?.input_tokens ?? 0) +
+        (usage?.cache_creation_input_tokens ?? 0) +
+        (usage?.cache_read_input_tokens ?? 0);
+      if (contextTokens) callbacks.onContextTokens?.(contextTokens);
       for (const b of msg.message.content) {
         if (b.type === "thinking" && "thinking" in b && b.thinking) {
           const text = b.thinking as string;
