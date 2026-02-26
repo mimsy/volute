@@ -93,13 +93,13 @@ import {
 } from "../../lib/template.js";
 import { computeTemplateHash } from "../../lib/template-hash.js";
 import { getTypingMap, publishTypingForChannels } from "../../lib/typing.js";
+import { cleanupVariant } from "../../lib/variant-cleanup.js";
 import {
   addVariant,
   checkHealth,
   findVariant,
   readVariants,
   removeAllVariants,
-  removeVariant,
   validateBranchName,
 } from "../../lib/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
@@ -1158,18 +1158,7 @@ const app = new Hono<AuthEnv>()
 
           // Merge, cleanup worktree/branch, reinstall
           await gitExec(["merge", variant.branch], { cwd: projectRoot });
-          if (existsSync(variant.path)) {
-            try {
-              await gitExec(["worktree", "remove", "--force", variant.path], {
-                cwd: projectRoot,
-              });
-            } catch {}
-          }
-          try {
-            await gitExec(["branch", "-D", variant.branch], { cwd: projectRoot });
-          } catch {}
-          removeVariant(baseName, mergeVariantName);
-          chownMindDir(projectRoot, baseName);
+          await cleanupVariant(baseName, mergeVariantName, projectRoot, variant.path);
           try {
             await npmInstallAsMind(projectRoot, baseName);
           } catch (e) {
@@ -1310,13 +1299,7 @@ const app = new Hono<AuthEnv>()
       }
 
       try {
-        // Stop the variant if running
-        try {
-          await getMindManager().stopMind(`${mindName}@${UPGRADE_VARIANT}`);
-        } catch {}
-
         // Abort merge if mid-merge
-        // Worktrees use a .git file pointing to the main repo's worktrees dir
         try {
           const gitDirContent = readFileSync(resolve(worktreeDir, ".git"), "utf-8").trim();
           const gitDir = gitDirContent.replace("gitdir: ", "");
@@ -1325,31 +1308,7 @@ const app = new Hono<AuthEnv>()
           }
         } catch {}
 
-        // Remove worktree and branch
-        try {
-          await gitExec(["worktree", "remove", "--force", worktreeDir], { cwd: dir });
-        } catch {
-          rmSync(worktreeDir, { recursive: true, force: true });
-          await gitExec(["worktree", "prune"], { cwd: dir });
-        }
-        try {
-          await gitExec(["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
-        } catch {}
-
-        // Remove variant metadata
-        try {
-          removeVariant(mindName, UPGRADE_VARIANT);
-        } catch {}
-
-        // Fix ownership
-        try {
-          chownMindDir(dir, mindName);
-        } catch (chownErr) {
-          log.error(
-            `failed to fix ownership during upgrade abort for ${mindName}`,
-            log.errorData(chownErr),
-          );
-        }
+        await cleanupVariant(mindName, UPGRADE_VARIANT, dir, worktreeDir, { stop: true });
 
         return c.json({ ok: true });
       } catch (err) {
@@ -1414,23 +1373,7 @@ const app = new Hono<AuthEnv>()
           port: variantPort,
         });
       } catch (err) {
-        try {
-          removeVariant(mindName, UPGRADE_VARIANT);
-        } catch {}
-        try {
-          await gitExec(["worktree", "remove", "--force", worktreeDir], { cwd: dir });
-        } catch {}
-        try {
-          await gitExec(["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
-        } catch {}
-        try {
-          chownMindDir(dir, mindName);
-        } catch (chownErr) {
-          log.error(
-            `failed to fix ownership during upgrade cleanup for ${mindName}`,
-            log.errorData(chownErr),
-          );
-        }
+        await cleanupVariant(mindName, UPGRADE_VARIANT, dir, worktreeDir);
         return c.json(
           { error: err instanceof Error ? err.message : "Failed to continue upgrade" },
           500,
@@ -1538,23 +1481,7 @@ const app = new Hono<AuthEnv>()
         port: variantPort,
       });
     } catch (err) {
-      try {
-        removeVariant(mindName, UPGRADE_VARIANT);
-      } catch {}
-      try {
-        await gitExec(["worktree", "remove", "--force", worktreeDir], { cwd: dir });
-      } catch {}
-      try {
-        await gitExec(["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
-      } catch {}
-      try {
-        chownMindDir(dir, mindName);
-      } catch (chownErr) {
-        log.error(
-          `failed to fix ownership during upgrade cleanup for ${mindName}`,
-          log.errorData(chownErr),
-        );
-      }
+      await cleanupVariant(mindName, UPGRADE_VARIANT, dir, worktreeDir);
       return c.json(
         { error: err instanceof Error ? err.message : "Failed to complete upgrade" },
         500,
