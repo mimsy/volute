@@ -86,6 +86,10 @@ export class DeliveryManager {
 
     const route = resolveRoute(config, meta);
 
+    dlog.debug(
+      `route for ${mindName} ch=${payload.channel}: dest=${route.destination} matched=${route.matched}`,
+    );
+
     // File destination — not handled by delivery manager
     if (route.destination === "file") {
       return { routed: true, session: route.path, destination: "file", mode: "immediate" };
@@ -93,6 +97,7 @@ export class DeliveryManager {
 
     // Gating: unmatched channels with gateUnmatched enabled
     if (!route.matched && config.gateUnmatched !== false) {
+      dlog.debug(`gating unmatched channel ${payload.channel} for ${mindName}`);
       await this.gateMessage(mindName, route.session, payload);
       return { routed: true, session: route.session, destination: "mind", mode: "gated" };
     }
@@ -103,6 +108,7 @@ export class DeliveryManager {
       const escaped = baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const pattern = new RegExp(`\\b${escaped}\\b`, "i");
       if (!pattern.test(text)) {
+        dlog.debug(`mention-filtered message on ${payload.channel} for ${mindName}`);
         return { routed: false, reason: "mention-filtered" };
       }
     }
@@ -117,6 +123,7 @@ export class DeliveryManager {
     const sessionConfig = resolveDeliveryMode(config, sessionName);
 
     if (sessionConfig.delivery.mode === "batch") {
+      dlog.debug(`enqueueing batch message for ${mindName}/${sessionName}`);
       this.enqueueBatch(mindName, sessionName, payload, sessionConfig);
       return { routed: true, session: sessionName, destination: "mind", mode: "batch" };
     }

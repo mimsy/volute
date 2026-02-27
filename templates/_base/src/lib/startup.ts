@@ -18,6 +18,7 @@ export function parseArgs(): { port: number } {
 
 export function loadConfig(): {
   model?: string;
+  logLevel?: "error" | "warn" | "info" | "debug";
   compactionMessage?: string;
   compaction?: { maxContextTokens?: number };
 } {

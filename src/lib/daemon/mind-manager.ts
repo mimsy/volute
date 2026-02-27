@@ -2,6 +2,7 @@ import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:chil
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
+import { getDb } from "../db.js";
 import { loadMergedEnv } from "../env.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../isolation.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../json-state.js";
@@ -9,6 +10,7 @@ import log from "../logger.js";
 import { getPrompt } from "../prompts.js";
 import { findMind, mindDir, setMindRunning, stateDir, voluteHome } from "../registry.js";
 import { RotatingLog } from "../rotating-log.js";
+import { mindHistory } from "../schema.js";
 import { findVariant, setVariantRunning } from "../variants.js";
 import { RestartTracker } from "./restart-tracker.js";
 
@@ -242,12 +244,27 @@ export class MindManager {
     if (context.justification) parts.push(`Why: ${context.justification}`);
     if (context.memory) parts.push(`Context: ${context.memory}`);
 
+    const content = parts.join("\n");
+
+    // Persist system message to mind_history
+    try {
+      const db = await getDb();
+      await db.insert(mindHistory).values({
+        mind: name,
+        type: "inbound",
+        channel: "system",
+        content,
+      });
+    } catch (err) {
+      mlog.error(`failed to persist pending context for ${name}`, log.errorData(err));
+    }
+
     try {
       await fetch(`http://127.0.0.1:${tracked.port}/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          content: [{ type: "text", text: parts.join("\n") }],
+          content: [{ type: "text", text: content }],
           channel: "system",
         }),
       });

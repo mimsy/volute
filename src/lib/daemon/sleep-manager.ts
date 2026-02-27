@@ -17,7 +17,7 @@ import { type ActivityEvent, subscribe } from "../events/activity-events.js";
 import log from "../logger.js";
 import { getPrompt } from "../prompts.js";
 import { findMind, mindDir, readRegistry, voluteHome } from "../registry.js";
-import { deliveryQueue } from "../schema.js";
+import { deliveryQueue, mindHistory } from "../schema.js";
 import { readVoluteConfig, type SleepConfig } from "../volute-config.js";
 import { getMindManager } from "./mind-manager.js";
 import { sleepMind, wakeMind } from "./mind-service.js";
@@ -165,6 +165,19 @@ export class SleepManager {
       const queuedInfo = "";
       const preSleepMsg = await getPrompt("pre_sleep", { wakeTime, queuedInfo });
 
+      // Persist pre-sleep message to mind_history
+      try {
+        const db = await getDb();
+        await db.insert(mindHistory).values({
+          mind: name,
+          type: "inbound",
+          channel: "system:sleep",
+          content: preSleepMsg,
+        });
+      } catch (err) {
+        slog.error(`failed to persist pre-sleep message for ${name}`, log.errorData(err));
+      }
+
       try {
         await fetch(`http://127.0.0.1:${entry.port}/message`, {
           method: "POST",
@@ -252,6 +265,19 @@ export class SleepManager {
           duration,
           queuedSummary,
         });
+      }
+
+      // Persist wake summary to mind_history
+      try {
+        const db = await getDb();
+        await db.insert(mindHistory).values({
+          mind: name,
+          type: "inbound",
+          channel: "system:sleep",
+          content: summaryText,
+        });
+      } catch (err) {
+        slog.error(`failed to persist wake summary for ${name}`, log.errorData(err));
       }
 
       try {

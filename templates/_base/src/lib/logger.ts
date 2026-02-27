@@ -1,7 +1,16 @@
 import { daemonEmit } from "./daemon-client.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
 
-const DEBUG = process.env.VOLUTE_DEBUG === "1";
+type LogLevel = "debug" | "info" | "warn" | "error";
+
+const LEVELS: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
+let minLevel = LEVELS.info;
+
+// VOLUTE_DEBUG=1 overrides to debug level
+if (process.env.VOLUTE_DEBUG === "1") {
+  minLevel = LEVELS.debug;
+}
+
 // Loaded once at startup — mind restarts on config changes
 const preset = loadTransparencyPreset();
 
@@ -12,53 +21,89 @@ function truncate(str: string, maxLen = 200): string {
   return str.length > maxLen ? `${str.slice(0, maxLen)}...` : str;
 }
 
-export function log(category: string, ...args: unknown[]) {
+/** Whether debug-level output is active (disables truncation). */
+export function isDebug(): boolean {
+  return minLevel <= LEVELS.debug;
+}
+
+/** Set the minimum log level. */
+export function setLevel(level: LogLevel): void {
+  if (!(level in LEVELS)) {
+    console.error(`[logger] unknown log level "${level}", defaulting to info`);
+    minLevel = LEVELS.info;
+    return;
+  }
+  minLevel = LEVELS[level];
+}
+
+function shouldTruncate(): boolean {
+  return minLevel > LEVELS.debug;
+}
+
+function emit(category: string, args: unknown[]): void {
+  if (!EMIT_CATEGORIES.has(category)) return;
+  const message = args
+    .map((a) => (a instanceof Error ? a.message : typeof a === "string" ? a : JSON.stringify(a)))
+    .join(" ");
+  const filtered = filterEvent(preset, {
+    type: "log",
+    content: message,
+    metadata: { category },
+  });
+  if (filtered) daemonEmit(filtered).catch(() => {});
+}
+
+function write(level: LogLevel, category: string, ...args: unknown[]): void {
+  if (LEVELS[level] < minLevel) return;
   const ts = new Date().toLocaleString();
   try {
-    console.error(`[${ts}] [${category}]`, ...args);
-  } catch {
-    // EPIPE — parent closed pipes (detached mode). Ignore.
+    console.error(`[${ts}] [${level}] [${category}]`, ...args);
+  } catch (err: any) {
+    if (err?.code !== "EPIPE") throw err;
   }
-  if (EMIT_CATEGORIES.has(category)) {
-    const message = args
-      .map((a) => (a instanceof Error ? a.message : typeof a === "string" ? a : JSON.stringify(a)))
-      .join(" ");
-    const filtered = filterEvent(preset, {
-      type: "log",
-      content: message,
-      metadata: { category },
-    });
-    if (filtered) daemonEmit(filtered);
-  }
+  emit(category, args);
+}
+
+export function log(category: string, ...args: unknown[]) {
+  write("info", category, ...args);
 }
 
 export function debug(category: string, ...args: unknown[]) {
-  if (!DEBUG) return;
-  log(category, ...args);
+  write("debug", category, ...args);
+}
+
+export function warn(category: string, ...args: unknown[]) {
+  write("warn", category, ...args);
+}
+
+export function error(category: string, ...args: unknown[]) {
+  write("error", category, ...args);
 }
 
 export function logThinking(thinking: string) {
-  log("thinking", DEBUG ? thinking : truncate(thinking));
+  log("thinking", shouldTruncate() ? truncate(thinking) : thinking);
 }
 
 export function logToolUse(name: string, input: unknown) {
-  const inputStr = DEBUG ? JSON.stringify(input, null, 2) : truncate(JSON.stringify(input), 100);
+  const inputStr = shouldTruncate()
+    ? truncate(JSON.stringify(input), 100)
+    : JSON.stringify(input, null, 2);
   log("tool", `${name}: ${inputStr}`);
 }
 
 export function logToolResult(name: string, output: string, isError?: boolean) {
   const prefix = isError ? "error" : "result";
-  log("tool", `${name} ${prefix}: ${DEBUG ? output : truncate(output)}`);
+  log("tool", `${name} ${prefix}: ${shouldTruncate() ? truncate(output) : output}`);
 }
 
 export function logText(text: string) {
-  log("text", DEBUG ? text : truncate(text));
+  log("text", shouldTruncate() ? truncate(text) : text);
 }
 
 export function logMessage(direction: "in" | "out", content: string, channel?: string) {
   const arrow = direction === "in" ? "<<" : ">>";
   const channelStr = channel ? ` [${channel}]` : "";
-  log("msg", `${arrow}${channelStr}`, DEBUG ? content : truncate(content));
+  log("msg", `${arrow}${channelStr}`, shouldTruncate() ? truncate(content) : content);
 }
 
 // Prevent EPIPE on stderr from crashing the process (detached variant mode)

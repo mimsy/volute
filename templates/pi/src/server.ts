@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { createMind } from "./agent.js";
 import { createFileHandlerResolver } from "./lib/file-handler.js";
-import { log } from "./lib/logger.js";
+import { log, setLevel } from "./lib/logger.js";
 import { createRouter } from "./lib/router.js";
 import {
   handleStartupContext,
@@ -15,6 +15,7 @@ import { createVoluteServer } from "./lib/volute-server.js";
 
 const { port } = parseArgs();
 const config = loadConfig();
+if (config.logLevel) setLevel(config.logLevel);
 if (config.model) log("server", `using model: ${config.model}`);
 if (config.thinkingLevel) log("server", `thinking level: ${config.thinkingLevel}`);
 
