@@ -270,7 +270,9 @@ export class MindManager {
           mlog.info(`${name} is sleeping — skipping crash recovery`);
           return;
         }
-      } catch {}
+      } catch (err) {
+        mlog.warn(`failed to check sleep state for ${name}`, log.errorData(err));
+      }
 
       // Clear activity tracking and publish crash as mind_stopped
       import("../events/mind-activity-tracker.js")

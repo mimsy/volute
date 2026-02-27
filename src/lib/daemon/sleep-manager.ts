@@ -11,7 +11,7 @@ import {
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { CronExpressionParser } from "cron-parser";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { type ActivityEvent, subscribe } from "../events/activity-events.js";
 import log from "../logger.js";
@@ -63,8 +63,8 @@ function formatDuration(from: Date, to: Date): string {
   return `${minutes}m`;
 }
 
-function matchesGlob(pattern: string, value: string): boolean {
-  const re = new RegExp(`^${pattern.replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
+export function matchesGlob(pattern: string, value: string): boolean {
+  const re = new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`);
   return re.test(value);
 }
 
@@ -72,7 +72,7 @@ export class SleepManager {
   private states = new Map<string, SleepState>();
   private interval: ReturnType<typeof setInterval> | null = null;
   private unsubActivity: (() => void) | null = null;
-  private returnToSleepTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private transitioning = new Set<string>();
 
   private get statePath(): string {
     return resolve(voluteHome(), "sleep-state.json");
@@ -90,8 +90,6 @@ export class SleepManager {
     this.interval = null;
     if (this.unsubActivity) this.unsubActivity();
     this.unsubActivity = null;
-    for (const timer of this.returnToSleepTimers.values()) clearTimeout(timer);
-    this.returnToSleepTimers.clear();
   }
 
   // --- State persistence ---
@@ -117,14 +115,17 @@ export class SleepManager {
     try {
       writeFileSync(this.statePath, `${JSON.stringify(data, null, 2)}\n`);
     } catch (err) {
-      slog.warn("failed to save sleep state", log.errorData(err));
+      slog.error("failed to save sleep state", log.errorData(err));
     }
   }
 
   // --- Public API ---
 
   isSleeping(name: string): boolean {
-    return this.states.get(name)?.sleeping ?? false;
+    const state = this.states.get(name);
+    if (!state?.sleeping) return false;
+    if (state.wokenByTrigger) return false;
+    return true;
   }
 
   getState(name: string): SleepState {
@@ -143,53 +144,60 @@ export class SleepManager {
    */
   async initiateSleep(name: string, opts?: { voluntaryWakeAt?: string }): Promise<void> {
     if (this.isSleeping(name)) return;
-
-    const manager = getMindManager();
-    if (!manager.isRunning(name)) {
-      // Mind not running — just mark as sleeping
-      this.markSleeping(name, opts);
-      return;
-    }
-
-    const entry = findMind(name);
-    if (!entry) return;
-
-    // Send pre-sleep message
-    const sleepConfig = this.getSleepConfig(name);
-    const wakeTime = opts?.voluntaryWakeAt ?? this.getNextWakeTime(sleepConfig) ?? "scheduled time";
-    const queuedInfo = "";
-    const preSleepMsg = await getPrompt("pre_sleep", { wakeTime, queuedInfo });
+    if (this.transitioning.has(name)) return;
+    this.transitioning.add(name);
 
     try {
-      await fetch(`http://127.0.0.1:${entry.port}/message`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content: [{ type: "text", text: preSleepMsg }],
-          channel: "system:sleep",
-        }),
-      });
-    } catch (err) {
-      slog.warn(`failed to send pre-sleep message to ${name}`, log.errorData(err));
+      const manager = getMindManager();
+      if (!manager.isRunning(name)) {
+        // Mind not running — just mark as sleeping
+        this.markSleeping(name, opts);
+        return;
+      }
+
+      const entry = findMind(name);
+      if (!entry) return;
+
+      // Send pre-sleep message
+      const sleepConfig = this.getSleepConfig(name);
+      const wakeTime =
+        opts?.voluntaryWakeAt ?? this.getNextWakeTime(sleepConfig) ?? "scheduled time";
+      const queuedInfo = "";
+      const preSleepMsg = await getPrompt("pre_sleep", { wakeTime, queuedInfo });
+
+      try {
+        await fetch(`http://127.0.0.1:${entry.port}/message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content: [{ type: "text", text: preSleepMsg }],
+            channel: "system:sleep",
+          }),
+        });
+      } catch (err) {
+        slog.warn(`failed to send pre-sleep message to ${name}`, log.errorData(err));
+      }
+
+      // Wait for mind to finish processing (timeout 120s)
+      await this.waitForIdle(name, 120_000);
+
+      // Wait a beat for hooks (identity-reload, auto-commit) to settle
+      await new Promise((r) => setTimeout(r, 3000));
+
+      // Stop the mind process (not connectors) before archiving
+      await sleepMind(name);
+
+      // Kill any orphan process still on the port (e.g. from identity-reload hook restart)
+      await this.killOrphanOnPort(entry.port);
+
+      // Archive sessions after process is stopped
+      await this.archiveSessions(name);
+
+      this.markSleeping(name, opts);
+      slog.info(`${name} is now sleeping`);
+    } finally {
+      this.transitioning.delete(name);
     }
-
-    // Wait for mind to finish processing (timeout 120s)
-    await this.waitForIdle(name, 120_000);
-
-    // Wait a beat for hooks (identity-reload, auto-commit) to settle
-    await new Promise((r) => setTimeout(r, 3000));
-
-    // Archive sessions
-    await this.archiveSessions(name);
-
-    // Stop the mind process (not connectors)
-    await sleepMind(name);
-
-    // Kill any orphan process still on the port (e.g. from identity-reload hook restart)
-    await this.killOrphanOnPort(entry.port);
-
-    this.markSleeping(name, opts);
-    slog.info(`${name} is now sleeping`);
   }
 
   /**
@@ -198,81 +206,82 @@ export class SleepManager {
   async initiateWake(name: string, opts?: { trigger?: { channel: string } }): Promise<void> {
     const state = this.states.get(name);
     if (!state?.sleeping) return;
-
-    const sleepingSince = state.sleepingSince ? new Date(state.sleepingSince) : new Date();
-    const now = new Date();
-    const duration = formatDuration(sleepingSince, now);
-    const currentDate = formatCurrentDate();
-    const sleepTime = sleepingSince.toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-    });
-
-    // Build queued summary
-    const queuedSummary = await this.buildQueuedSummary(name);
-
-    // Start the mind process
-    try {
-      await wakeMind(name);
-    } catch (err) {
-      slog.error(`failed to wake ${name}`, log.errorData(err));
-      return;
-    }
-
-    // Wait for health check
-    const entry = findMind(name);
-    if (!entry) return;
-
-    // Deliver wake summary
-    let summaryText: string;
-    if (opts?.trigger) {
-      state.wokenByTrigger = true;
-      summaryText = await getPrompt("wake_trigger_summary", {
-        currentDate,
-        triggerChannel: opts.trigger.channel,
-        sleepTime,
-        duration,
-        queuedSummary,
-      });
-    } else {
-      summaryText = await getPrompt("wake_summary", {
-        currentDate,
-        sleepTime,
-        duration,
-        queuedSummary,
-      });
-    }
+    if (this.transitioning.has(name)) return;
+    this.transitioning.add(name);
 
     try {
-      await fetch(`http://127.0.0.1:${entry.port}/message`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content: [{ type: "text", text: summaryText }],
-          channel: "system:sleep",
-        }),
+      const sleepingSince = state.sleepingSince ? new Date(state.sleepingSince) : new Date();
+      const now = new Date();
+      const duration = formatDuration(sleepingSince, now);
+      const currentDate = formatCurrentDate();
+      const sleepTime = sleepingSince.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
       });
-    } catch (err) {
-      slog.warn(`failed to deliver wake summary to ${name}`, log.errorData(err));
-    }
 
-    // Flush queued messages
-    const flushed = await this.flushQueuedMessages(name);
-    if (flushed > 0) {
-      slog.info(`flushed ${flushed} queued message(s) for ${name}`);
-    }
+      // Build queued summary
+      const queuedSummary = await this.buildQueuedSummary(name);
 
-    // If trigger wake, set up return-to-sleep on idle
-    if (opts?.trigger) {
-      this.setupReturnToSleep(name);
-    }
+      // Start the mind process
+      try {
+        await wakeMind(name);
+      } catch (err) {
+        slog.error(`failed to wake ${name}`, log.errorData(err));
+        return;
+      }
 
-    // Mark as awake
-    if (!opts?.trigger) {
-      this.markAwake(name);
-    }
+      // Wait for health check
+      const entry = findMind(name);
+      if (!entry) return;
 
-    slog.info(`${name} is now awake${opts?.trigger ? " (trigger wake)" : ""}`);
+      // Deliver wake summary
+      let summaryText: string;
+      if (opts?.trigger) {
+        state.wokenByTrigger = true;
+        summaryText = await getPrompt("wake_trigger_summary", {
+          currentDate,
+          triggerChannel: opts.trigger.channel,
+          sleepTime,
+          duration,
+          queuedSummary,
+        });
+      } else {
+        summaryText = await getPrompt("wake_summary", {
+          currentDate,
+          sleepTime,
+          duration,
+          queuedSummary,
+        });
+      }
+
+      try {
+        await fetch(`http://127.0.0.1:${entry.port}/message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content: [{ type: "text", text: summaryText }],
+            channel: "system:sleep",
+          }),
+        });
+      } catch (err) {
+        slog.warn(`failed to deliver wake summary to ${name}`, log.errorData(err));
+      }
+
+      // Flush queued messages
+      const flushed = await this.flushQueuedMessages(name);
+      if (flushed > 0) {
+        slog.info(`flushed ${flushed} queued message(s) for ${name}`);
+      }
+
+      // Mark as awake
+      if (!opts?.trigger) {
+        this.markAwake(name);
+      }
+
+      slog.info(`${name} is now awake${opts?.trigger ? " (trigger wake)" : ""}`);
+    } finally {
+      this.transitioning.delete(name);
+    }
   }
 
   /**
@@ -330,24 +339,20 @@ export class SleepManager {
     name: string,
     payload: { channel: string; sender?: string | null; content: unknown },
   ): Promise<void> {
-    try {
-      const db = await getDb();
-      await db.insert(deliveryQueue).values({
-        mind: name,
-        session: "sleep",
-        channel: payload.channel,
-        sender: payload.sender ?? null,
-        status: "sleep-queued",
-        payload: JSON.stringify(payload),
-      });
+    const db = await getDb();
+    await db.insert(deliveryQueue).values({
+      mind: name,
+      session: "sleep",
+      channel: payload.channel,
+      sender: payload.sender ?? null,
+      status: "sleep-queued",
+      payload: JSON.stringify(payload),
+    });
 
-      const state = this.states.get(name);
-      if (state) {
-        state.queuedMessageCount++;
-        this.saveState();
-      }
-    } catch (err) {
-      slog.warn(`failed to queue sleep message for ${name}`, log.errorData(err));
+    const state = this.states.get(name);
+    if (state) {
+      state.queuedMessageCount++;
+      this.saveState();
     }
   }
 
@@ -368,24 +373,27 @@ export class SleepManager {
       // Import deliverMessage lazily to avoid circular deps
       const { deliverMessage } = await import("../delivery/message-delivery.js");
 
+      const delivered: number[] = [];
       for (const row of rows) {
         try {
-          const payload = JSON.parse(row.payload);
-          await deliverMessage(name, payload);
+          await deliverMessage(name, JSON.parse(row.payload));
+          delivered.push(row.id);
         } catch (err) {
           slog.warn(`failed to flush queued message ${row.id} for ${name}`, log.errorData(err));
         }
       }
 
-      // Delete flushed messages
-      await db
-        .delete(deliveryQueue)
-        .where(and(eq(deliveryQueue.mind, name), eq(deliveryQueue.status, "sleep-queued")));
+      // Delete only successfully delivered messages
+      if (delivered.length > 0) {
+        await db.delete(deliveryQueue).where(inArray(deliveryQueue.id, delivered));
+      }
 
       const state = this.states.get(name);
-      if (state) state.queuedMessageCount = 0;
+      if (state) {
+        state.queuedMessageCount = Math.max(0, state.queuedMessageCount - delivered.length);
+      }
 
-      return rows.length;
+      return delivered.length;
     } catch (err) {
       slog.warn(`failed to flush queued messages for ${name}`, log.errorData(err));
       return 0;
@@ -411,12 +419,6 @@ export class SleepManager {
   private markAwake(name: string): void {
     this.states.delete(name);
     this.saveState();
-    // Cancel any return-to-sleep timer
-    const timer = this.returnToSleepTimers.get(name);
-    if (timer) {
-      clearTimeout(timer);
-      this.returnToSleepTimers.delete(name);
-    }
   }
 
   private getNextWakeTime(config: SleepConfig | null): string | null {
@@ -424,7 +426,8 @@ export class SleepManager {
     try {
       const interval = CronExpressionParser.parse(config.schedule.wake);
       return interval.next().toDate().toISOString();
-    } catch {
+    } catch (err) {
+      slog.warn(`invalid wake cron "${config.schedule.wake}"`, log.errorData(err));
       return null;
     }
   }
@@ -483,7 +486,8 @@ export class SleepManager {
       const prev = interval.prev().toDate();
       const prevMinute = Math.floor(prev.getTime() / 60_000);
       return prevMinute === epochMinute;
-    } catch {
+    } catch (err) {
+      slog.warn(`invalid sleep cron "${cronExpr}"`, log.errorData(err));
       return false;
     }
   }
@@ -517,7 +521,7 @@ export class SleepManager {
       mkdirSync(archiveDir, { recursive: true });
 
       for (const file of readdirSync(sessionsDir)) {
-        if (file === "archive") continue;
+        if (file === "archive" || !file.endsWith(".json")) continue;
         const src = resolve(sessionsDir, file);
         const base = file.replace(/\.json$/, "");
         const dest = resolve(archiveDir, `${base}-${timestamp}.json`);
@@ -570,7 +574,7 @@ export class SleepManager {
       return `${rows.length} message${rows.length === 1 ? "" : "s"} while you slept (${parts.join(", ")}). Ask if you want them delivered.`;
     } catch (err) {
       slog.warn(`failed to build queued summary for ${name}`, log.errorData(err));
-      return "";
+      return "No messages while you slept.";
     }
   }
 
@@ -596,7 +600,11 @@ export class SleepManager {
         if (pid > 0) {
           try {
             process.kill(pid, "SIGTERM");
-          } catch {}
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
+              slog.warn(`failed to kill orphan pid ${pid}`, log.errorData(err));
+            }
+          }
         }
       }
     } catch {
@@ -625,34 +633,29 @@ export class SleepManager {
             } catch {}
           }
         }
-      } catch {}
+      } catch (err) {
+        slog.warn(`failed to kill orphan on port ${port} via /proc`, log.errorData(err));
+      }
     }
 
     // Wait for process to exit
     await new Promise((r) => setTimeout(r, 1000));
   }
 
-  private setupReturnToSleep(name: string): void {
-    // Cancel any existing timer
-    const existing = this.returnToSleepTimers.get(name);
-    if (existing) clearTimeout(existing);
-
-    // We'll monitor activity events; on mind_idle after trigger wake, go back to sleep
-    // The idle timeout in mind-activity-tracker.ts is 2 minutes, so we wait for that
-  }
-
   private onActivityEvent(event: ActivityEvent & { id: number; created_at: string }): void {
     const state = this.states.get(event.mind);
     if (!state?.sleeping || !state.wokenByTrigger) return;
+    if (this.transitioning.has(event.mind)) return;
 
     if (event.type === "mind_idle") {
       // Mind went idle after trigger wake — return to sleep
       slog.info(`${event.mind} going back to sleep after trigger wake`);
       state.wokenByTrigger = false;
+      this.transitioning.add(event.mind);
 
-      // Archive session and stop (no pre-sleep ritual — session is fresh)
-      this.archiveSessions(event.mind)
-        .then(() => sleepMind(event.mind))
+      // Stop first, then archive (no pre-sleep ritual — session is fresh)
+      sleepMind(event.mind)
+        .then(() => this.archiveSessions(event.mind))
         .then(() => {
           state.sleeping = true;
           state.sleepingSince = new Date().toISOString();
@@ -663,6 +666,9 @@ export class SleepManager {
         })
         .catch((err) => {
           slog.error(`failed to return ${event.mind} to sleep`, log.errorData(err));
+        })
+        .finally(() => {
+          this.transitioning.delete(event.mind);
         });
     }
   }

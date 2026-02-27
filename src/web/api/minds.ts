@@ -1257,6 +1257,13 @@ const app = new Hono<AuthEnv>()
     const body = await c.req.json().catch(() => ({}));
     const wakeAt = (body as { wakeAt?: string }).wakeAt;
 
+    if (wakeAt) {
+      const wakeDate = new Date(wakeAt);
+      if (isNaN(wakeDate.getTime()) || wakeDate <= new Date()) {
+        return c.json({ error: "wakeAt must be a valid future ISO date" }, 400);
+      }
+    }
+
     sm.initiateSleep(name, wakeAt ? { voluntaryWakeAt: wakeAt } : undefined).catch((err) =>
       log.error(`failed to initiate sleep for ${name}`, log.errorData(err)),
     );
@@ -1600,7 +1607,9 @@ const app = new Hono<AuthEnv>()
         }
         return c.json({ error: "Invalid JSON" }, 400);
       }
-    } catch {}
+    } catch (err) {
+      log.error(`failed to check sleep state for ${baseName}`, log.errorData(err));
+    }
 
     if (!getMindManager().isRunning(name)) {
       return c.json({ error: "Mind is not running" }, 409);
