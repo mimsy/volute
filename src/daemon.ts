@@ -35,6 +35,11 @@ if (!process.env.VOLUTE_HOME) {
   process.env.VOLUTE_HOME = resolve(homedir(), ".volute");
 }
 
+// Allow explicit timezone override — propagates to all child processes (minds, connectors)
+if (process.env.VOLUTE_TIMEZONE && !process.env.TZ) {
+  process.env.TZ = process.env.VOLUTE_TIMEZONE;
+}
+
 export async function startDaemon(opts: {
   port: number;
   hostname: string;
