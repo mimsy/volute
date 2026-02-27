@@ -56,6 +56,12 @@ export async function run(args: string[]) {
     case "sprout":
       await import("./sprout.js").then((m) => m.run(args.slice(1)));
       break;
+    case "sleep":
+      await import("./mind-sleep.js").then((m) => m.run(args.slice(1)));
+      break;
+    case "wake":
+      await import("./mind-wake.js").then((m) => m.run(args.slice(1)));
+      break;
     case "--help":
     case "-h":
     case undefined:
@@ -89,6 +95,8 @@ function printUsage() {
   volute mind connect <type> [--mind <name>]
   volute mind disconnect <type> [--mind <name>]
   volute mind sprout
+  volute mind sleep [name] [--wake-at <time>]
+  volute mind wake [name]
   volute mind upgrade [name] [--template <name>] [--continue]
   volute mind import <path> [--name <name>] [--session <path>] [--template <name>]
   volute mind export <name> [--include-env] [--include-identity] [--include-connectors] [--include-history] [--include-sessions] [--all] [--output <path>]

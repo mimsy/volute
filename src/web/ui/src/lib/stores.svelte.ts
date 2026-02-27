@@ -101,7 +101,12 @@ function handleSSEMessage(line: string) {
     data.activity = [item, ...data.activity].slice(0, 50);
     // Track real-time active/idle state
     if (item.type === "mind_active") activeMinds.add(item.mind);
-    if (item.type === "mind_idle" || item.type === "mind_stopped" || item.type === "mind_done")
+    if (
+      item.type === "mind_idle" ||
+      item.type === "mind_stopped" ||
+      item.type === "mind_done" ||
+      item.type === "mind_sleeping"
+    )
       activeMinds.delete(item.mind);
 
     // Refresh minds on status changes
@@ -109,7 +114,9 @@ function handleSSEMessage(line: string) {
       item.type === "mind_started" ||
       item.type === "mind_stopped" ||
       item.type === "mind_active" ||
-      item.type === "mind_idle"
+      item.type === "mind_idle" ||
+      item.type === "mind_sleeping" ||
+      item.type === "mind_waking"
     ) {
       fetchMinds()
         .then((m) => {

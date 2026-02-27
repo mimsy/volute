@@ -1,7 +1,7 @@
 FROM node:24-slim
 
-# git needed for mind git init + variants
-RUN apt-get update && apt-get install -y --no-install-recommends git \
+# git needed for mind git init + variants; procps/lsof for process management
+RUN apt-get update && apt-get install -y --no-install-recommends git procps lsof \
     && rm -rf /var/lib/apt/lists/* \
     && git config --system user.name "Volute" \
     && git config --system user.email "volute@localhost"

@@ -3,6 +3,8 @@ services:
     build: .
     ports:
       - "4200:4200"
+    environment:
+      - TZ=${TZ:-UTC}
     volumes:
       - volute-data:/data
       - volute-minds:/minds
