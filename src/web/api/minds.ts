@@ -1259,7 +1259,7 @@ const app = new Hono<AuthEnv>()
 
     if (wakeAt) {
       const wakeDate = new Date(wakeAt);
-      if (isNaN(wakeDate.getTime()) || wakeDate <= new Date()) {
+      if (Number.isNaN(wakeDate.getTime()) || wakeDate <= new Date()) {
         return c.json({ error: "wakeAt must be a valid future ISO date" }, 400);
       }
     }

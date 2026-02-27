@@ -474,7 +474,7 @@ describe("SleepManager.getNextWakeTime", () => {
     assert.ok(result !== null, "expected non-null result");
     // Should be a valid ISO date
     const date = new Date(result!);
-    assert.ok(!isNaN(date.getTime()), "expected valid date");
+    assert.ok(!Number.isNaN(date.getTime()), "expected valid date");
   });
 
   it("returns null for invalid cron", () => {
