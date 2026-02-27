@@ -9,6 +9,8 @@ export type ActivityEvent = {
     | "mind_active"
     | "mind_idle"
     | "mind_done"
+    | "mind_sleeping"
+    | "mind_waking"
     | "page_updated";
   mind: string;
   summary: string;

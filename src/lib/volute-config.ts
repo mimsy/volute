@@ -9,6 +9,19 @@ export type Schedule = {
   enabled: boolean;
 };
 
+export type WakeTriggerConfig = {
+  mentions?: boolean;
+  dms?: boolean;
+  channels?: string[];
+  senders?: string[];
+};
+
+export type SleepConfig = {
+  enabled?: boolean;
+  schedule?: { sleep: string; wake: string };
+  wakeTriggers?: WakeTriggerConfig;
+};
+
 export type VoluteConfig = {
   model?: string;
   maxThinkingTokens?: number;
@@ -22,6 +35,7 @@ export type VoluteConfig = {
   displayName?: string;
   description?: string;
   avatar?: string; // relative path from home/, e.g. "avatar.png"
+  sleep?: SleepConfig;
   [key: string]: unknown;
 };
 

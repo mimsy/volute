@@ -16,7 +16,7 @@ export type Mind = {
   name: string;
   port: number;
   created: string;
-  status: "running" | "stopped" | "starting";
+  status: "running" | "stopped" | "starting" | "sleeping";
   stage?: "seed" | "sprouted";
   template?: string;
   channels: Channel[];
@@ -42,6 +42,8 @@ export type ActivityItem = {
     | "mind_active"
     | "mind_idle"
     | "mind_done"
+    | "mind_sleeping"
+    | "mind_waking"
     | "page_updated";
   mind: string;
   summary: string;

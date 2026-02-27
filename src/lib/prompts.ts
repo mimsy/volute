@@ -22,6 +22,9 @@ export const PROMPT_KEYS = [
   "compaction_instructions",
   "reply_instructions",
   "channel_invite",
+  "pre_sleep",
+  "wake_summary",
+  "wake_trigger_summary",
 ] as const;
 
 export type PromptKey = (typeof PROMPT_KEYS)[number];
@@ -98,6 +101,27 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
       "batchRecommendation",
     ],
     category: "mind",
+  },
+  pre_sleep: {
+    content:
+      "It's time to sleep. Save anything important to memory or your journal before resting.\nYou'll wake at ${wakeTime}. ${queuedInfo}",
+    description: "Pre-sleep message sent before stopping the mind",
+    variables: ["wakeTime", "queuedInfo"],
+    category: "system",
+  },
+  wake_summary: {
+    content:
+      "Good morning — it's ${currentDate}. You slept from ${sleepTime} to now (${duration}).\n${queuedSummary}",
+    description: "Wake-up summary after scheduled sleep",
+    variables: ["currentDate", "sleepTime", "duration", "queuedSummary"],
+    category: "system",
+  },
+  wake_trigger_summary: {
+    content:
+      "You were woken at ${currentDate} by a message on ${triggerChannel}.\nYou've been sleeping since ${sleepTime} (${duration}). ${queuedSummary}\nYou'll go back to sleep after handling this.",
+    description: "Wake-up summary when woken by a trigger message",
+    variables: ["currentDate", "triggerChannel", "sleepTime", "duration", "queuedSummary"],
+    category: "system",
   },
 };
 

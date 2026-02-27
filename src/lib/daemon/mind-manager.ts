@@ -263,6 +263,15 @@ export class MindManager {
 
       mlog.error(`mind ${name} exited with code ${code}`);
 
+      // If the mind is sleeping, don't attempt crash recovery
+      try {
+        const { getSleepManagerIfReady } = await import("./sleep-manager.js");
+        if (getSleepManagerIfReady()?.isSleeping(name)) {
+          mlog.info(`${name} is sleeping — skipping crash recovery`);
+          return;
+        }
+      } catch {}
+
       // Clear activity tracking and publish crash as mind_stopped
       import("../events/mind-activity-tracker.js")
         .then(({ markIdle }) => markIdle(name))

@@ -8,6 +8,7 @@ import { initMailPoller } from "./lib/daemon/mail-poller.js";
 import { initMindManager } from "./lib/daemon/mind-manager.js";
 import { startMindFull } from "./lib/daemon/mind-service.js";
 import { initScheduler } from "./lib/daemon/scheduler.js";
+import { initSleepManager } from "./lib/daemon/sleep-manager.js";
 import { initTokenBudget } from "./lib/daemon/token-budget.js";
 import { initDeliveryManager } from "./lib/delivery/delivery-manager.js";
 import { stopAll as stopAllActivityTrackers } from "./lib/events/mind-activity-tracker.js";
@@ -15,7 +16,13 @@ import log from "./lib/logger.js";
 import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
 import { migrateDotVoluteDir, migrateMindState } from "./lib/migrate-state.js";
 import { stopAllWatchers } from "./lib/pages-watcher.js";
-import { initRegistryCache, readRegistry, setMindRunning, voluteHome } from "./lib/registry.js";
+import {
+  initRegistryCache,
+  mindDir,
+  readRegistry,
+  setMindRunning,
+  voluteHome,
+} from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
 import { ensureSharedRepo } from "./lib/shared.js";
 import { syncBuiltinSkills } from "./lib/skills.js";
@@ -114,6 +121,8 @@ export async function startDaemon(opts: {
   mailPoller.start();
   const tokenBudget = initTokenBudget();
   tokenBudget.start();
+  const sleepManager = initSleepManager();
+  sleepManager.start();
   const unsubscribeWebhook = initWebhook();
 
   // Migrate .volute/ → .mind/ and system state for all registered minds
@@ -128,12 +137,31 @@ export async function startDaemon(opts: {
   }
 
   // Start all minds that were previously running (parallel, concurrency limit of 5)
+  // Skip sleeping minds — they only need connectors, not the mind process
   const runningEntries = registry.filter((e) => e.running);
   {
     const queue = [...runningEntries];
     const workers = Array.from({ length: Math.min(5, queue.length) }, async () => {
       while (queue.length > 0) {
         const entry = queue.shift()!;
+        if (sleepManager.isSleeping(entry.name)) {
+          // Sleeping mind: start connectors/schedules but not the process
+          try {
+            // We need connectors running but not the mind process
+            const dir = mindDir(entry.name);
+            const daemonPort = process.env.VOLUTE_DAEMON_PORT
+              ? parseInt(process.env.VOLUTE_DAEMON_PORT, 10)
+              : undefined;
+            await connectors.startConnectors(entry.name, dir, entry.port, daemonPort);
+            scheduler.loadSchedules(entry.name);
+          } catch (err) {
+            log.error(
+              `failed to start connectors for sleeping mind ${entry.name}`,
+              log.errorData(err),
+            );
+          }
+          continue;
+        }
         try {
           await startMindFull(entry.name);
         } catch (err) {
@@ -226,6 +254,8 @@ export async function startDaemon(opts: {
       safe("stopAllWatchers", stopAllWatchers);
       safe("stopAllActivityTrackers", stopAllActivityTrackers);
       safe("unsubscribeWebhook", unsubscribeWebhook);
+      safe("sleepManager.stop", () => sleepManager.stop());
+      safe("sleepManager.saveState", () => sleepManager.saveState());
       safe("scheduler.stop", () => scheduler.stop());
       safe("scheduler.saveState", () => scheduler.saveState());
       safe("mailPoller.stop", () => mailPoller.stop());

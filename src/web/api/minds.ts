@@ -114,9 +114,17 @@ type ChannelStatus = {
 
 async function getMindStatus(name: string, port: number) {
   const manager = getMindManager();
-  let status: "running" | "stopped" | "starting" = "stopped";
+  let status: "running" | "stopped" | "starting" | "sleeping" = "stopped";
 
-  if (manager.isRunning(name)) {
+  // Check sleep state first
+  try {
+    const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
+    if (getSleepManagerIfReady()?.isSleeping(name)) {
+      status = "sleeping";
+    }
+  } catch {}
+
+  if (status !== "sleeping" && manager.isRunning(name)) {
     const health = await checkHealth(port);
     status = health.ok ? "running" : "starting";
   }
@@ -1222,6 +1230,68 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: err instanceof Error ? err.message : "Failed to stop mind" }, 500);
     }
   })
+  // Get sleep state
+  .get("/:name/sleep", requireAdmin, async (c) => {
+    const name = c.req.param("name");
+    const entry = findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+
+    const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
+    const sm = getSleepManagerIfReady();
+    if (!sm) return c.json({ error: "Sleep manager not initialized" }, 503);
+
+    return c.json(sm.getState(name));
+  })
+  // Initiate sleep — admin only
+  .post("/:name/sleep", requireAdmin, async (c) => {
+    const name = c.req.param("name");
+    const entry = findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+
+    const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
+    const sm = getSleepManagerIfReady();
+    if (!sm) return c.json({ error: "Sleep manager not initialized" }, 503);
+
+    if (sm.isSleeping(name)) return c.json({ error: "Mind is already sleeping" }, 409);
+
+    const body = await c.req.json().catch(() => ({}));
+    const wakeAt = (body as { wakeAt?: string }).wakeAt;
+
+    sm.initiateSleep(name, wakeAt ? { voluntaryWakeAt: wakeAt } : undefined).catch((err) =>
+      log.error(`failed to initiate sleep for ${name}`, log.errorData(err)),
+    );
+
+    return c.json({ ok: true });
+  })
+  // Wake a sleeping mind — admin only
+  .post("/:name/wake", requireAdmin, async (c) => {
+    const name = c.req.param("name");
+    const entry = findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+
+    const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
+    const sm = getSleepManagerIfReady();
+    if (!sm) return c.json({ error: "Sleep manager not initialized" }, 503);
+
+    if (!sm.isSleeping(name)) return c.json({ error: "Mind is not sleeping" }, 409);
+
+    sm.initiateWake(name).catch((err) => log.error(`failed to wake ${name}`, log.errorData(err)));
+
+    return c.json({ ok: true });
+  })
+  // Flush queued sleep messages — admin only
+  .post("/:name/sleep/messages", requireAdmin, async (c) => {
+    const name = c.req.param("name");
+    const entry = findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+
+    const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
+    const sm = getSleepManagerIfReady();
+    if (!sm) return c.json({ error: "Sleep manager not initialized" }, 503);
+
+    const flushed = await sm.flushQueuedMessages(name);
+    return c.json({ ok: true, flushed });
+  })
   // Sprout a seed mind — admin only
   .post("/:name/sprout", requireAdmin, async (c) => {
     const name = c.req.param("name");
@@ -1500,6 +1570,37 @@ const app = new Hono<AuthEnv>()
       const variant = findVariant(baseName, variantName);
       if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
     }
+
+    // If the mind is sleeping, queue the message
+    try {
+      const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
+      const sm = getSleepManagerIfReady();
+      if (sm?.isSleeping(baseName)) {
+        const body = await c.req.text();
+        let parsed: Record<string, unknown> | null = null;
+        try {
+          parsed = JSON.parse(body);
+        } catch {}
+        if (parsed) {
+          const payload = {
+            channel: (parsed.channel as string) ?? "unknown",
+            sender: (parsed.sender as string) ?? null,
+            content: parsed.content,
+            isDM: parsed.isDM as boolean | undefined,
+          };
+          if (sm.checkWakeTrigger(baseName, payload)) {
+            await sm.queueSleepMessage(baseName, payload);
+            sm.initiateWake(baseName, { trigger: { channel: payload.channel } }).catch((err) =>
+              log.error(`failed to trigger-wake ${baseName}`, log.errorData(err)),
+            );
+            return c.json({ ok: true, queued: true, triggerWake: true });
+          }
+          await sm.queueSleepMessage(baseName, payload);
+          return c.json({ ok: true, queued: true });
+        }
+        return c.json({ error: "Invalid JSON" }, 400);
+      }
+    } catch {}
 
     if (!getMindManager().isRunning(name)) {
       return c.json({ error: "Mind is not running" }, 409);

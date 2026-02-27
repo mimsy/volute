@@ -55,6 +55,33 @@ export async function startMindFull(name: string): Promise<void> {
 /**
  * Stop a mind server and (for non-variant minds) connectors, schedules, and budget.
  */
+/**
+ * Put a mind to sleep: stop process only, leave connectors/schedules/budget running.
+ */
+export async function sleepMind(name: string): Promise<void> {
+  markIdle(name);
+  await getMindManager().stopMind(name);
+
+  publishActivity({
+    type: "mind_sleeping",
+    mind: name,
+    summary: `${name} is sleeping`,
+  }).catch((err) => log.error("failed to publish mind_sleeping activity", log.errorData(err)));
+}
+
+/**
+ * Wake a sleeping mind: start process only (connectors are already running).
+ */
+export async function wakeMind(name: string): Promise<void> {
+  await getMindManager().startMind(name);
+
+  publishActivity({
+    type: "mind_waking",
+    mind: name,
+    summary: `${name} is waking`,
+  }).catch((err) => log.error("failed to publish mind_waking activity", log.errorData(err)));
+}
+
 export async function stopMindFull(name: string): Promise<void> {
   const [baseName, variantName] = name.split("@", 2);
 

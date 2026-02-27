@@ -1,3 +1,4 @@
+import { getSleepManagerIfReady } from "../daemon/sleep-manager.js";
 import { getDb } from "../db.js";
 import log from "../logger.js";
 import { findMind } from "../registry.js";
@@ -37,6 +38,20 @@ export async function deliverMessage(mindName: string, payload: DeliveryPayload)
       });
     } catch (err) {
       dlog.warn(`failed to persist message for ${baseName}`, log.errorData(err));
+    }
+
+    // Check if mind is sleeping — queue or trigger wake
+    const sleepManager = getSleepManagerIfReady();
+    if (sleepManager?.isSleeping(baseName)) {
+      if (sleepManager.checkWakeTrigger(baseName, payload)) {
+        await sleepManager.queueSleepMessage(baseName, payload);
+        sleepManager
+          .initiateWake(baseName, { trigger: { channel: payload.channel } })
+          .catch((err) => dlog.warn(`failed to trigger-wake ${baseName}`, log.errorData(err)));
+      } else {
+        await sleepManager.queueSleepMessage(baseName, payload);
+      }
+      return;
     }
 
     const manager = getDeliveryManager();

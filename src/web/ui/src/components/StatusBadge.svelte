@@ -8,6 +8,7 @@ const statusConfig: Record<
   active: { color: "var(--text-0)", bg: "var(--muted-bg)", iridescent: true, label: "active" },
   running: { color: "var(--text-0)", bg: "var(--muted-bg)", label: "awake" },
   starting: { color: "var(--yellow)", bg: "var(--yellow-bg)", label: "waking" },
+  sleeping: { color: "var(--blue)", bg: "var(--blue-bg)", label: "sleeping" },
   stopped: { color: "var(--text-2)", bg: "var(--muted-bg)", label: "asleep" },
   connected: { color: "var(--blue)", bg: "var(--blue-bg)", label: "connected" },
   disconnected: { color: "var(--text-2)", bg: "var(--muted-bg)", label: "disconnected" },
@@ -27,7 +28,7 @@ let config = $derived(statusConfig[status] ?? statusConfig.stopped);
     class="dot"
     class:iridescent={config.iridescent}
     style:background={config.iridescent ? undefined : config.color}
-    style:animation={status === "starting" ? "pulse 1.5s ease infinite" : "none"}
+    style:animation={status === "starting" ? "pulse 1.5s ease infinite" : status === "sleeping" ? "breathe 4s ease-in-out infinite" : "none"}
   ></span>
   {config.label}
 </span>
@@ -53,6 +54,11 @@ let config = $derived(statusConfig[status] ?? statusConfig.stopped);
 
   .dot.iridescent {
     animation: iridescent 3s ease-in-out infinite;
+  }
+
+  @keyframes breathe {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
   }
 
   @keyframes iridescent {
