@@ -256,7 +256,7 @@ export class MindManager {
         content,
       });
     } catch (err) {
-      mlog.warn(`failed to persist pending context for ${name}`, log.errorData(err));
+      mlog.error(`failed to persist pending context for ${name}`, log.errorData(err));
     }
 
     try {

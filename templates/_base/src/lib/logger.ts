@@ -28,7 +28,12 @@ export function isDebug(): boolean {
 
 /** Set the minimum log level. */
 export function setLevel(level: LogLevel): void {
-  minLevel = LEVELS[level] ?? LEVELS.info;
+  if (!(level in LEVELS)) {
+    console.error(`[logger] unknown log level "${level}", defaulting to info`);
+    minLevel = LEVELS.info;
+    return;
+  }
+  minLevel = LEVELS[level];
 }
 
 function shouldTruncate(): boolean {
@@ -45,16 +50,16 @@ function emit(category: string, args: unknown[]): void {
     content: message,
     metadata: { category },
   });
-  if (filtered) daemonEmit(filtered);
+  if (filtered) daemonEmit(filtered).catch(() => {});
 }
 
 function write(level: LogLevel, category: string, ...args: unknown[]): void {
   if (LEVELS[level] < minLevel) return;
   const ts = new Date().toLocaleString();
   try {
-    console.error(`[${ts}] [${category}]`, ...args);
-  } catch {
-    // EPIPE — parent closed pipes (detached mode). Ignore.
+    console.error(`[${ts}] [${level}] [${category}]`, ...args);
+  } catch (err: any) {
+    if (err?.code !== "EPIPE") throw err;
   }
   emit(category, args);
 }

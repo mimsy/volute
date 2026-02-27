@@ -175,7 +175,7 @@ export class SleepManager {
           content: preSleepMsg,
         });
       } catch (err) {
-        slog.warn(`failed to persist pre-sleep message for ${name}`, log.errorData(err));
+        slog.error(`failed to persist pre-sleep message for ${name}`, log.errorData(err));
       }
 
       try {
@@ -277,7 +277,7 @@ export class SleepManager {
           content: summaryText,
         });
       } catch (err) {
-        slog.warn(`failed to persist wake summary for ${name}`, log.errorData(err));
+        slog.error(`failed to persist wake summary for ${name}`, log.errorData(err));
       }
 
       try {
