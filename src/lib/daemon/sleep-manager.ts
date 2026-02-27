@@ -1,12 +1,15 @@
+import { execFile } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   writeFileSync,
 } from "node:fs";
 import { resolve } from "node:path";
+import { promisify } from "node:util";
 import { CronExpressionParser } from "cron-parser";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../db.js";
@@ -173,11 +176,17 @@ export class SleepManager {
     // Wait for mind to finish processing (timeout 120s)
     await this.waitForIdle(name, 120_000);
 
+    // Wait a beat for hooks (identity-reload, auto-commit) to settle
+    await new Promise((r) => setTimeout(r, 3000));
+
     // Archive sessions
     await this.archiveSessions(name);
 
     // Stop the mind process (not connectors)
     await sleepMind(name);
+
+    // Kill any orphan process still on the port (e.g. from identity-reload hook restart)
+    await this.killOrphanOnPort(entry.port);
 
     this.markSleeping(name, opts);
     slog.info(`${name} is now sleeping`);
@@ -245,6 +254,12 @@ export class SleepManager {
       });
     } catch (err) {
       slog.warn(`failed to deliver wake summary to ${name}`, log.errorData(err));
+    }
+
+    // Flush queued messages
+    const flushed = await this.flushQueuedMessages(name);
+    if (flushed > 0) {
+      slog.info(`flushed ${flushed} queued message(s) for ${name}`);
     }
 
     // If trigger wake, set up return-to-sleep on idle
@@ -327,7 +342,10 @@ export class SleepManager {
       });
 
       const state = this.states.get(name);
-      if (state) state.queuedMessageCount++;
+      if (state) {
+        state.queuedMessageCount++;
+        this.saveState();
+      }
     } catch (err) {
       slog.warn(`failed to queue sleep message for ${name}`, log.errorData(err));
     }
@@ -554,6 +572,64 @@ export class SleepManager {
       slog.warn(`failed to build queued summary for ${name}`, log.errorData(err));
       return "";
     }
+  }
+
+  /**
+   * Kill any process still listening on a port after stopMind.
+   * Handles the case where a hook (e.g. identity-reload) restarted the server.
+   */
+  private async killOrphanOnPort(port: number): Promise<void> {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      if (!res.ok) return;
+    } catch {
+      return; // Port not in use — good
+    }
+
+    // Something is still listening — try lsof, fall back to /proc
+    slog.warn(`orphan process found on port ${port} after sleep, killing`);
+    const execFileAsync = promisify(execFile);
+    try {
+      const { stdout } = await execFileAsync("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"]);
+      for (const line of stdout.trim().split("\n").filter(Boolean)) {
+        const pid = parseInt(line, 10);
+        if (pid > 0) {
+          try {
+            process.kill(pid, "SIGTERM");
+          } catch {}
+        }
+      }
+    } catch {
+      // lsof not available (e.g. Docker slim) — try /proc/net/tcp6
+      try {
+        const portHex = port.toString(16).toUpperCase().padStart(4, "0");
+        const tcp6 = readFileSync("/proc/net/tcp6", "utf-8");
+        for (const line of tcp6.split("\n")) {
+          if (!line.includes(`:${portHex} `)) continue;
+          const fields = line.trim().split(/\s+/);
+          if (fields[3] !== "0A") continue; // 0A = LISTEN
+          const inode = parseInt(fields[9], 10);
+          if (!inode) continue;
+          // Find PID owning this inode
+          for (const pidDir of readdirSync("/proc").filter((f) => /^\d+$/.test(f))) {
+            try {
+              const fds = readdirSync(`/proc/${pidDir}/fd`);
+              for (const fd of fds) {
+                try {
+                  const link = readlinkSync(`/proc/${pidDir}/fd/${fd}`);
+                  if (link.includes(`socket:[${inode}]`)) {
+                    process.kill(parseInt(pidDir, 10), "SIGTERM");
+                  }
+                } catch {}
+              }
+            } catch {}
+          }
+        }
+      } catch {}
+    }
+
+    // Wait for process to exit
+    await new Promise((r) => setTimeout(r, 1000));
   }
 
   private setupReturnToSleep(name: string): void {

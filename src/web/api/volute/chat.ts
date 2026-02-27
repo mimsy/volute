@@ -44,12 +44,16 @@ async function fanOutToMinds(opts: {
   const channelEntryType = opts.channelEntryType ?? (isDM ? "dm" : "group");
 
   const { getMindManager } = await import("../../../lib/daemon/mind-manager.js");
+  const { getSleepManagerIfReady } = await import("../../../lib/daemon/sleep-manager.js");
   const manager = getMindManager();
+  const sm = getSleepManagerIfReady();
 
-  const runningMinds = mindParticipants
+  // Include running minds AND sleeping minds (sleeping ones get routed through sleep queue)
+  const targetMinds = mindParticipants
     .map((ap) => {
       const key = opts.targetName ? opts.targetName(ap.username) : ap.username;
-      return manager.isRunning(key) ? ap.username : null;
+      if (manager.isRunning(key) || sm?.isSleeping(ap.username)) return ap.username;
+      return null;
     })
     .filter((n): n is string => n !== null && n !== opts.senderName);
 
@@ -78,8 +82,8 @@ async function fanOutToMinds(opts: {
     }
   }
 
-  // Fire-and-forget: deliver to all running minds
-  for (const mindName of runningMinds) {
+  // Fire-and-forget: deliver to all target minds (running or sleeping)
+  for (const mindName of targetMinds) {
     const target = opts.targetName ? opts.targetName(mindName) : mindName;
     const channel = slugForMind(mindName);
     const typingMap = getTypingMap();
