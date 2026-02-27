@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { createMind } from "./agent.js";
 import { daemonRestart } from "./lib/daemon-client.js";
 import { createFileHandlerResolver } from "./lib/file-handler.js";
-import { log } from "./lib/logger.js";
+import { log, setLevel } from "./lib/logger.js";
 import { createRouter } from "./lib/router.js";
 import {
   loadConfig,
@@ -16,6 +16,7 @@ import { createVoluteServer } from "./lib/volute-server.js";
 
 const { port } = parseArgs();
 const config = loadConfig();
+if (config.logLevel) setLevel(config.logLevel);
 if (config.model) log("server", `using model: ${config.model}`);
 if (config.maxThinkingTokens) log("server", `max thinking tokens: ${config.maxThinkingTokens}`);
 
