@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.22.0](https://github.com/mimsy/volute/compare/volute-v0.21.0...volute-v0.22.0) (2026-02-28)
+
+
+### Features
+
+* add general-purpose webhook system (VOLUTE_WEBHOOK_URL) ([#134](https://github.com/mimsy/volute/issues/134)) ([80dd1b6](https://github.com/mimsy/volute/commit/80dd1b6a420da0dd0b8a9a08c5b3fb5cd82e008e))
+* add sleep cycles for minds ([#147](https://github.com/mimsy/volute/issues/147)) ([f3ec2c0](https://github.com/mimsy/volute/commit/f3ec2c0ec3e40e4524e779156818cc1883521bcd))
+* cloud sync API and typed hono client migration ([#149](https://github.com/mimsy/volute/issues/149)) ([a0ce7e6](https://github.com/mimsy/volute/commit/a0ce7e6f3557274899fd937f40d57a83ce095bd2))
+* configurable compaction settings for minds ([#140](https://github.com/mimsy/volute/issues/140)) ([0fd626b](https://github.com/mimsy/volute/commit/0fd626b3f5a6bb3f9a73f2a5b84c7b72f567cf1b))
+* improve logging and system message history ([#148](https://github.com/mimsy/volute/issues/148)) ([5510f53](https://github.com/mimsy/volute/commit/5510f53e8aaae43a449d85871365a8e612f5f4d7))
+* UI refactor — v1 API, typed client, unified SSE, Chat breakup ([#150](https://github.com/mimsy/volute/issues/150)) ([c1cc4e4](https://github.com/mimsy/volute/commit/c1cc4e48e45ae657d0df3419ba9658e32b4627df))
+
+
+### Bug Fixes
+
+* upgrade --continue error handling and add --abort flag ([#141](https://github.com/mimsy/volute/issues/141)) ([9cd5434](https://github.com/mimsy/volute/commit/9cd54347edc133a44627b12059d0d9dadfe881a5))
+
 ## [0.21.0](https://github.com/mimsy/volute/compare/volute-v0.20.0...volute-v0.21.0) (2026-02-25)
 
 
