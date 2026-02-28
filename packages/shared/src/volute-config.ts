@@ -1,0 +1,61 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+
+export type Schedule = {
+  id: string;
+  cron: string;
+  message?: string;
+  script?: string;
+  enabled: boolean;
+};
+
+export type WakeTriggerConfig = {
+  mentions?: boolean;
+  dms?: boolean;
+  channels?: string[];
+  senders?: string[];
+};
+
+export type SleepConfig = {
+  enabled?: boolean;
+  schedule?: { sleep: string; wake: string };
+  wakeTriggers?: WakeTriggerConfig;
+};
+
+export type VoluteConfig = {
+  model?: string;
+  maxThinkingTokens?: number;
+  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  connectors?: string[];
+  schedules?: Schedule[];
+  channels?: Record<string, { showToolCalls?: boolean }>;
+  tokenBudget?: number;
+  tokenBudgetPeriodMinutes?: number;
+  identity?: { privateKey: string; publicKey: string };
+  displayName?: string;
+  description?: string;
+  avatar?: string; // relative path from home/, e.g. "avatar.png"
+  sleep?: SleepConfig;
+  [key: string]: unknown;
+};
+
+function readJson(path: string): VoluteConfig | null {
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, "utf-8"));
+  } catch (err) {
+    console.error(`[volute-config] failed to parse ${path}: ${err}`);
+    return null;
+  }
+}
+
+export function readVoluteConfig(mindDir: string): VoluteConfig | null {
+  const path = resolve(mindDir, "home/.config/volute.json");
+  return readJson(path);
+}
+
+export function writeVoluteConfig(mindDir: string, config: VoluteConfig) {
+  const path = resolve(mindDir, "home/.config/volute.json");
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+}

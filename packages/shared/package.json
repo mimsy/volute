@@ -1,0 +1,23 @@
+{
+  "name": "@volute/shared",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./registry": "./src/registry.ts",
+    "./variants": "./src/variants.ts",
+    "./env": "./src/env.ts",
+    "./exec": "./src/exec.ts",
+    "./isolation": "./src/isolation.ts",
+    "./parse-args": "./src/parse-args.ts",
+    "./json-state": "./src/json-state.ts",
+    "./connector-defs": "./src/connector-defs.ts",
+    "./volute-config": "./src/volute-config.ts",
+    "./systems-config": "./src/systems-config.ts",
+    "./update-check": "./src/update-check.ts",
+    "./archive": "./src/archive.ts"
+  },
+  "files": [
+    "src/"
+  ]
+}
