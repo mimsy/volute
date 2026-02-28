@@ -1,4 +1,4 @@
-import { parseArgs } from "../lib/parse-args.js";
+import { parseArgs } from "@volute/shared/parse-args";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {

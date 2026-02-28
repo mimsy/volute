@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { voluteHome } from "@volute/shared/registry";
 import { migrateAgentsToMinds } from "../src/lib/migrate-agents-to-minds.js";
-import { voluteHome } from "../src/lib/registry.js";
 
 describe("migrateAgentsToMinds", () => {
   let home: string;

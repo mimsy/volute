@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { gitExec } from "./exec.js";
-import { isIsolationEnabled, mindUserName } from "./isolation.js";
+import { gitExec } from "@volute/shared/exec";
+import { isIsolationEnabled, mindUserName } from "@volute/shared/isolation";
+import { voluteHome } from "@volute/shared/registry";
 import log from "./logger.js";
-import { voluteHome } from "./registry.js";
 
 /** Read the gitdir path from a worktree's .git file (e.g. "gitdir: /data/shared/.git/worktrees/shared"). */
 function readWorktreeGitDir(worktreePath: string): string | null {

@@ -1,12 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { voluteHome } from "@volute/shared/registry";
 import {
   type ChannelConversation,
   type ChannelUser,
   type ImageAttachment,
   resolveChannelId,
 } from "../channels.js";
-import { voluteHome } from "../registry.js";
 import { buildVoluteSlug } from "../slugify.js";
 
 function getDaemonConfig(): { url: string; token?: string } {

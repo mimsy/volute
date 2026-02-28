@@ -12,9 +12,9 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, resolve } from "node:path";
-import { mindEnvPath, readEnv, writeEnv } from "../lib/env.js";
-import { parseArgs } from "../lib/parse-args.js";
-import { readVoluteConfig, writeVoluteConfig } from "../lib/volute-config.js";
+import { mindEnvPath, readEnv, writeEnv } from "@volute/shared/env";
+import { parseArgs } from "@volute/shared/parse-args";
+import { readVoluteConfig, writeVoluteConfig } from "@volute/shared/volute-config";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -88,7 +88,7 @@ async function importArchive(archivePath: string, nameOverride?: string): Promis
     process.exit(1);
   }
 
-  const { extractArchive } = await import("../lib/archive.js");
+  const { extractArchive } = await import("@volute/shared/archive");
 
   // Extract to temp dir
   const tempDir = resolve(tmpdir(), `volute-import-${Date.now()}`);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { after, before, describe, it } from "node:test";
-import { findMind, mindDir, removeMind } from "../src/lib/registry.js";
+import { findMind, mindDir, removeMind } from "@volute/shared/registry";
 
 // Strip GIT_* env vars that hook runners (e.g. pre-push) inject, so that
 // spawned processes (like `volute create` which runs `git init`) don't

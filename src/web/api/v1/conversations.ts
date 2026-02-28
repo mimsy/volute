@@ -1,4 +1,5 @@
 import { zValidator } from "@hono/zod-validator";
+import { findMind } from "@volute/shared/registry";
 import { Hono } from "hono";
 import { z } from "zod";
 import { getOrCreateMindUser, getUserByUsername } from "../../../lib/auth.js";
@@ -11,7 +12,6 @@ import {
   isParticipantOrOwner,
   listConversationsWithParticipants,
 } from "../../../lib/events/conversations.js";
-import { findMind } from "../../../lib/registry.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
 
 const createSchema = z.object({

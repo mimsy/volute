@@ -1,9 +1,9 @@
 import { existsSync, rmSync } from "node:fs";
+import { gitExec } from "@volute/shared/exec";
+import { chownMindDir } from "@volute/shared/isolation";
+import { removeVariant } from "@volute/shared/variants";
 import { getMindManager } from "./daemon/mind-manager.js";
-import { gitExec } from "./exec.js";
-import { chownMindDir } from "./isolation.js";
 import log from "./logger.js";
-import { removeVariant } from "./variants.js";
 
 /**
  * Clean up a variant's git resources: stop process, remove worktree, delete branch,

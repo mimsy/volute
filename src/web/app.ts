@@ -1,9 +1,9 @@
+import { checkForUpdateCached, getCurrentVersion } from "@volute/shared/update-check";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
 import log from "../lib/logger.js";
-import { checkForUpdateCached, getCurrentVersion } from "../lib/update-check.js";
 import activityRoutes from "./api/activity.js";
 import auth from "./api/auth.js";
 import channels from "./api/channels.js";

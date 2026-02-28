@@ -1,9 +1,9 @@
 import { chmodSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { voluteHome } from "@volute/shared/registry";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
-import { voluteHome } from "./registry.js";
 import * as schema from "./schema.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

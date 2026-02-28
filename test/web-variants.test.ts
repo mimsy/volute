@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { readVariants, removeAllVariants } from "@volute/shared/variants";
 import { Hono } from "hono";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
 import { conversations, messages, sessions, users } from "../src/lib/schema.js";
-import { readVariants, removeAllVariants } from "../src/lib/variants.js";
 import { authMiddleware, createSession } from "../src/web/middleware/auth.js";
 
 let sessionId: string;

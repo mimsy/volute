@@ -1,7 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
+import { findMind, mindDir, voluteHome } from "@volute/shared/registry";
 import { Hono } from "hono";
-import { findMind, mindDir, voluteHome } from "../../lib/registry.js";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",

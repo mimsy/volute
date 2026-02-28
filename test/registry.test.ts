@@ -15,8 +15,8 @@ import {
   stateDir,
   validateMindName,
   voluteHome,
-} from "../src/lib/registry.js";
-import { addVariant, removeAllVariants } from "../src/lib/variants.js";
+} from "@volute/shared/registry";
+import { addVariant, removeAllVariants } from "@volute/shared/variants";
 
 const testMind = `registry-test-${Date.now()}`;
 

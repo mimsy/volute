@@ -1,10 +1,10 @@
+import { findMind } from "@volute/shared/registry";
+import { findVariant } from "@volute/shared/variants";
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import log from "../logger.js";
-import { findMind } from "../registry.js";
 import { deliveryQueue } from "../schema.js";
 import { getTypingMap, publishTypingForChannels } from "../typing.js";
-import { findVariant } from "../variants.js";
 import {
   type DeliveryPayload,
   extractTextContent,

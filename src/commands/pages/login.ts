@@ -1,6 +1,6 @@
-import { parseArgs } from "../../lib/parse-args.js";
+import { parseArgs } from "@volute/shared/parse-args";
+import { readSystemsConfig, writeSystemsConfig } from "@volute/shared/systems-config";
 import { promptLine } from "../../lib/prompt.js";
-import { readSystemsConfig, writeSystemsConfig } from "../../lib/systems-config.js";
 import { systemsFetch } from "../../lib/systems-fetch.js";
 
 const DEFAULT_API_URL = "https://volute.systems";

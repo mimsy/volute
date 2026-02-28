@@ -1,5 +1,5 @@
+import { parseArgs } from "@volute/shared/parse-args";
 import { daemonFetch } from "../../lib/daemon-client.js";
-import { parseArgs } from "../../lib/parse-args.js";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";
 
 export async function run(args: string[]) {

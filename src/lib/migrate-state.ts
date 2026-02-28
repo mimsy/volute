@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import { resolve } from "node:path";
-import { mindDir, stateDir } from "./registry.js";
+import { mindDir, stateDir } from "@volute/shared/registry";
 
 /** Rename legacy .volute/ → .mind/ within a mind directory. */
 export function migrateDotVoluteDir(name: string): void {

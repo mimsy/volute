@@ -1,10 +1,10 @@
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
-import { parseArgs } from "../../lib/parse-args.js";
-import { mindDir } from "../../lib/registry.js";
+import { parseArgs } from "@volute/shared/parse-args";
+import { mindDir } from "@volute/shared/registry";
+import { readSystemsConfig } from "@volute/shared/systems-config";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";
 import { sharedDir } from "../../lib/shared.js";
-import { readSystemsConfig } from "../../lib/systems-config.js";
 import { systemsFetch } from "../../lib/systems-fetch.js";
 
 export async function run(args: string[]) {

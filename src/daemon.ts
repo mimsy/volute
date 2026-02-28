@@ -3,6 +3,14 @@ import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { format } from "node:util";
+import {
+  initRegistryCache,
+  mindDir,
+  readRegistry,
+  setMindRunning,
+  voluteHome,
+} from "@volute/shared/registry";
+import { getAllRunningVariants, setVariantRunning } from "@volute/shared/variants";
 import { initConnectorManager } from "./lib/daemon/connector-manager.js";
 import { initMailPoller } from "./lib/daemon/mail-poller.js";
 import { initMindManager } from "./lib/daemon/mind-manager.js";
@@ -16,17 +24,9 @@ import log from "./lib/logger.js";
 import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
 import { migrateDotVoluteDir, migrateMindState } from "./lib/migrate-state.js";
 import { stopAllWatchers } from "./lib/pages-watcher.js";
-import {
-  initRegistryCache,
-  mindDir,
-  readRegistry,
-  setMindRunning,
-  voluteHome,
-} from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
 import { ensureSharedRepo } from "./lib/shared.js";
 import { syncBuiltinSkills } from "./lib/skills.js";
-import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
 import { initWebhook } from "./lib/webhook.js";
 import { cleanExpiredSessions } from "./web/middleware/auth.js";
 import { startServer } from "./web/server.js";

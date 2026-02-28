@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
-import { voluteHome } from "../lib/registry.js";
+import { voluteHome } from "@volute/shared/registry";
 import {
   getServiceMode,
   modeLabel,

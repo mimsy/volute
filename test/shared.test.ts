@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { gitExec } from "../src/lib/exec.js";
-import { voluteHome } from "../src/lib/registry.js";
+import { gitExec } from "@volute/shared/exec";
+import { voluteHome } from "@volute/shared/registry";
 import {
   addSharedWorktree,
   ensureSharedRepo,

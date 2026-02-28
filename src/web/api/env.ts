@@ -1,6 +1,6 @@
+import { loadMergedEnv, mindEnvPath, readEnv, sharedEnvPath, writeEnv } from "@volute/shared/env";
+import { findMind } from "@volute/shared/registry";
 import { Hono } from "hono";
-import { loadMergedEnv, mindEnvPath, readEnv, sharedEnvPath, writeEnv } from "../../lib/env.js";
-import { findMind } from "../../lib/registry.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 // Mind-scoped env routes (mounted at /api/minds)

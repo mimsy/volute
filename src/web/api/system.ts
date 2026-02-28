@@ -1,7 +1,7 @@
+import { readSystemsConfig } from "@volute/shared/systems-config";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { logBuffer } from "../../lib/log-buffer.js";
-import { readSystemsConfig } from "../../lib/systems-config.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 const app = new Hono<AuthEnv>()

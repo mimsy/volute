@@ -1,8 +1,8 @@
+import { loadMergedEnv } from "@volute/shared/env";
+import { findMind, mindDir } from "@volute/shared/registry";
 import { Hono } from "hono";
 import { writeChannelEntry } from "../../connectors/sdk.js";
 import { CHANNELS, getChannelDriver, type ImageAttachment } from "../../lib/channels.js";
-import { loadMergedEnv } from "../../lib/env.js";
-import { findMind, mindDir } from "../../lib/registry.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 function buildEnv(name: string): Record<string, string> {

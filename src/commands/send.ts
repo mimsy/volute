@@ -1,13 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { extname } from "node:path";
+import { parseArgs } from "@volute/shared/parse-args";
+import { findMind } from "@volute/shared/registry";
 import { getClient, urlOf } from "../lib/api-client.js";
 import type { ImageAttachment } from "../lib/channels.js";
 import { daemonFetch } from "../lib/daemon-client.js";
-import { parseArgs } from "../lib/parse-args.js";
 import { parseTarget } from "../lib/parse-target.js";
 import { readStdin } from "../lib/read-stdin.js";
-import { findMind } from "../lib/registry.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
 
 const IMAGE_MEDIA_TYPES: Record<string, string> = {

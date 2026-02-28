@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
-import { exec, execInherit, resolveVoluteBin } from "../lib/exec.js";
-import { voluteHome } from "../lib/registry.js";
+import { exec, execInherit, resolveVoluteBin } from "@volute/shared/exec";
+import { voluteHome } from "@volute/shared/registry";
+import { checkForUpdate } from "@volute/shared/update-check";
 import {
   getServiceMode,
   modeLabel,
@@ -9,7 +10,6 @@ import {
   readDaemonConfig,
   restartService,
 } from "../lib/service-mode.js";
-import { checkForUpdate } from "../lib/update-check.js";
 
 export async function run(_args: string[]) {
   const result = await checkForUpdate(true);

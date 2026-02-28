@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { createUser } from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
 import {
   addMind,
   findMind,
@@ -11,7 +9,9 @@ import {
   removeMind,
   setMindStage,
   voluteHome,
-} from "../src/lib/registry.js";
+} from "@volute/shared/registry";
+import { createUser } from "../src/lib/auth.js";
+import { getDb } from "../src/lib/db.js";
 import { sessions, users } from "../src/lib/schema.js";
 import { createSession } from "../src/web/middleware/auth.js";
 

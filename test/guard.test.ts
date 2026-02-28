@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { homedir } from "node:os";
 import { describe, it } from "node:test";
-import { voluteHome } from "../src/lib/registry.js";
+import { voluteHome } from "@volute/shared/registry";
 
 describe("voluteHome guard", () => {
   it("VOLUTE_HOME is set to a temp directory (not real home)", () => {

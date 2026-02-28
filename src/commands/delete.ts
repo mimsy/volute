@@ -1,4 +1,4 @@
-import { parseArgs } from "../lib/parse-args.js";
+import { parseArgs } from "@volute/shared/parse-args";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
 
 export async function run(args: string[]) {

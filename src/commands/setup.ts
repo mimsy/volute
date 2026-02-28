@@ -2,8 +2,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
-import { resolveVoluteBin } from "../lib/exec.js";
-import { ensureVoluteGroup } from "../lib/isolation.js";
+import { resolveVoluteBin } from "@volute/shared/exec";
+import { ensureVoluteGroup } from "@volute/shared/isolation";
 import { SYSTEM_SERVICE_PATH } from "../lib/service-mode.js";
 
 const SERVICE_NAME = "volute.service";

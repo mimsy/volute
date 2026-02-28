@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { findMind, mindDir } from "../lib/registry.js";
+import { findMind, mindDir } from "@volute/shared/registry";
 import { STANDARD_SKILLS } from "../lib/skills.js";
 
 const ORIENTATION_MARKER = "You don't have a soul yet";

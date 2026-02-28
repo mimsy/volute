@@ -7,7 +7,7 @@ import {
   type ConnectorDef,
   checkMissingEnvVars,
   getConnectorDef,
-} from "../src/lib/connector-defs.js";
+} from "@volute/shared/connector-defs";
 
 describe("connector-defs", () => {
   describe("getConnectorDef", () => {

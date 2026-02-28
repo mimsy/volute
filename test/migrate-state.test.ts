@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { addMind, mindDir, removeMind, stateDir } from "@volute/shared/registry";
 import { migrateDotVoluteDir, migrateMindState } from "../src/lib/migrate-state.js";
-import { addMind, mindDir, removeMind, stateDir } from "../src/lib/registry.js";
 
 const TEST_MIND = `migrate-test-${Date.now()}`;
 

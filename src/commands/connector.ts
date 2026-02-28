@@ -1,6 +1,6 @@
+import { parseArgs } from "@volute/shared/parse-args";
 import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
-import { parseArgs } from "../lib/parse-args.js";
 import { promptLine } from "../lib/prompt.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
 

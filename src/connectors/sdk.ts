@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { stateDir } from "../lib/registry.js";
+import { stateDir } from "@volute/shared/registry";
 import { slugify } from "../lib/slugify.js";
 
 export { slugify } from "../lib/slugify.js";

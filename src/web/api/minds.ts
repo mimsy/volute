@@ -9,6 +9,39 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
+import { type ExportManifest, isHomeOnlyArchive } from "@volute/shared/archive";
+import { exec, gitExec } from "@volute/shared/exec";
+import {
+  chownMindDir,
+  createMindUser,
+  deleteMindUser as deleteIsolationUser,
+  ensureVoluteGroup,
+  isIsolationEnabled,
+  wrapForIsolation,
+} from "@volute/shared/isolation";
+import {
+  addMind,
+  ensureVoluteHome,
+  findMind,
+  mindDir,
+  nextPort,
+  readRegistry,
+  removeMind,
+  setMindStage,
+  setMindTemplateHash,
+  stateDir,
+  validateMindName,
+} from "@volute/shared/registry";
+import { readSystemsConfig } from "@volute/shared/systems-config";
+import {
+  addVariant,
+  checkHealth,
+  findVariant,
+  readVariants,
+  removeAllVariants,
+  validateBranchName,
+} from "@volute/shared/variants";
+import { readVoluteConfig, writeVoluteConfig } from "@volute/shared/volute-config";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -18,7 +51,6 @@ import {
   importPiSession,
   parseNameFromIdentity,
 } from "../../commands/import.js";
-import { type ExportManifest, isHomeOnlyArchive } from "../../lib/archive.js";
 import { deleteMindUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { consolidateMemory } from "../../lib/consolidate.js";
@@ -41,7 +73,6 @@ import {
   publish as publishMindEvent,
   subscribe as subscribeMindEvent,
 } from "../../lib/events/mind-events.js";
-import { exec, gitExec } from "../../lib/exec.js";
 import {
   generateIdentity,
   getFingerprint,
@@ -50,14 +81,6 @@ import {
   publishPublicKey,
   signMessage,
 } from "../../lib/identity.js";
-import {
-  chownMindDir,
-  createMindUser,
-  deleteMindUser as deleteIsolationUser,
-  ensureVoluteGroup,
-  isIsolationEnabled,
-  wrapForIsolation,
-} from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
 import { getCachedRecentPages, getCachedSites } from "../../lib/pages-watcher.js";
 import {
@@ -66,23 +89,9 @@ import {
   getPromptIfCustom,
   substitute,
 } from "../../lib/prompts.js";
-import {
-  addMind,
-  ensureVoluteHome,
-  findMind,
-  mindDir,
-  nextPort,
-  readRegistry,
-  removeMind,
-  setMindStage,
-  setMindTemplateHash,
-  stateDir,
-  validateMindName,
-} from "../../lib/registry.js";
 import { conversations, mindHistory } from "../../lib/schema.js";
 import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
 import { installSkill, SEED_SKILLS, STANDARD_SKILLS } from "../../lib/skills.js";
-import { readSystemsConfig } from "../../lib/systems-config.js";
 import {
   applyInitFiles,
   composeTemplate,
@@ -94,15 +103,6 @@ import {
 import { computeTemplateHash } from "../../lib/template-hash.js";
 import { getTypingMap, publishTypingForChannels } from "../../lib/typing.js";
 import { cleanupVariant } from "../../lib/variant-cleanup.js";
-import {
-  addVariant,
-  checkHealth,
-  findVariant,
-  readVariants,
-  removeAllVariants,
-  validateBranchName,
-} from "../../lib/variants.js";
-import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
 import { fireWebhook } from "../../lib/webhook.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
