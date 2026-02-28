@@ -171,24 +171,9 @@ export function createExportArchive(options: ExportOptions): AdmZip {
   // Read version from package.json
   let voluteVersion = "unknown";
   try {
-    // Walk up from this file to find root package.json
-    // In built dist: dist/ → ../package.json
-    // In dev (packages/shared/src/): → ../../../package.json
-    const thisDir = import.meta.dirname;
-    const candidates = [
-      resolve(thisDir, "../package.json"),
-      resolve(thisDir, "../../package.json"),
-      resolve(thisDir, "../../../package.json"),
-    ];
-    for (const p of candidates) {
-      if (existsSync(p)) {
-        const pkg = JSON.parse(readFileSync(p, "utf-8"));
-        if (pkg.version && pkg.name === "volute") {
-          voluteVersion = pkg.version;
-          break;
-        }
-      }
-    }
+    const pkgPath = resolve(import.meta.dirname, "../../package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+    voluteVersion = pkg.version;
   } catch {
     // Non-critical: archive works without exact version
   }

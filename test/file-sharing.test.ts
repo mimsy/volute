@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { voluteHome } from "@volute/shared/registry";
 import {
   acceptPending,
   addTrust,
@@ -16,6 +15,7 @@ import {
   validateFilePath,
   writeFileSharingConfig,
 } from "../src/lib/file-sharing.js";
+import { voluteHome } from "../src/lib/registry.js";
 
 function makeMindDir(name: string): string {
   const dir = resolve(voluteHome(), "minds", name);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { isIsolationEnabled, mindUserName, wrapForIsolation } from "@volute/shared/isolation";
+import { isIsolationEnabled, mindUserName, wrapForIsolation } from "../src/lib/isolation.js";
 
 describe("isolation", () => {
   const originalEnv = process.env.VOLUTE_ISOLATION;

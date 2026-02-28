@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { exec } from "@volute/shared/exec";
+import { exec } from "../../src/lib/exec.js";
 
 /** Create a minimal mind git repo at the given directory (home/.claude/skills/, .gitkeep, git init+commit) */
 export async function createMindGitRepo(dir: string): Promise<void> {

@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { voluteHome } from "@volute/shared/registry";
 import { readGlobalConfig } from "../src/commands/up.js";
+import { voluteHome } from "../src/lib/registry.js";
 
 function configPath() {
   return resolve(voluteHome(), "config.json");

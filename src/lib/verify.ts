@@ -1,4 +1,4 @@
-import { checkHealth } from "@volute/shared/variants";
+import { checkHealth } from "./variants.js";
 
 /**
  * Verify a server by checking health and sending a test message.

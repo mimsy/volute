@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { voluteHome, writeRegistry } from "@volute/shared/registry";
+import { voluteHome, writeRegistry } from "../src/lib/registry.js";
 import { backfillTemplateHashes, notifyVersionUpdate } from "../src/lib/version-notify.js";
 
 const statePath = () => resolve(voluteHome(), "version-notify.json");

@@ -1,5 +1,5 @@
-import { findMind, mindDir } from "@volute/shared/registry";
 import { Hono } from "hono";
+import { findMind, mindDir } from "../../lib/registry.js";
 import { sharedLog, sharedMerge, sharedPull, sharedStatus } from "../../lib/shared.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 

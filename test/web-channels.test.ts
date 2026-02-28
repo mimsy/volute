@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { addMind, removeMind } from "@volute/shared/registry";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
+import { addMind, removeMind } from "../src/lib/registry.js";
 import { conversations, messages, sessions, users } from "../src/lib/schema.js";
 import { createSession } from "../src/web/middleware/auth.js";
 

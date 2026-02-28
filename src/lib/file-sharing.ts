@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, normalize, resolve } from "node:path";
-import { stateDir } from "@volute/shared/registry";
+import { stateDir } from "./registry.js";
 
 // --- Types ---
 

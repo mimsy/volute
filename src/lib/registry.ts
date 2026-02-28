@@ -41,7 +41,7 @@ export function voluteHome(): string {
   // tests from accidentally touching the real ~/.volute directory.
   // Built code (dist/) falls through to the homedir() default.
   const dir = dirname(fileURLToPath(import.meta.url));
-  if (!dir.includes("/dist")) {
+  if (dir.endsWith("/src/lib")) {
     throw new Error(
       "VOLUTE_HOME must be set when running from source. " +
         'For tests, run via "npm test" or add "--import ./test/setup.ts".',

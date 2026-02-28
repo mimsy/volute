@@ -35,9 +35,9 @@ function writeCache(latest: string): void {
 }
 
 export function getCurrentVersion(): string {
-  // Walk up from this file to find the root package.json (name: "volute")
-  // In built dist: dist/chunk-*.js → ../package.json
-  // In dev via tsx (packages/shared/src/): → ../../../package.json
+  // Walk up from this file to find package.json
+  // In built dist (flat with splitting): dist/chunk-*.js → ../package.json
+  // In dev via tsx: src/lib/update-check.ts → ../../package.json
   const thisDir = new URL(".", import.meta.url).pathname;
   const candidates = [
     resolve(thisDir, "../package.json"),
@@ -47,8 +47,7 @@ export function getCurrentVersion(): string {
   for (const p of candidates) {
     if (existsSync(p)) {
       try {
-        const pkg = JSON.parse(readFileSync(p, "utf-8"));
-        if (pkg.name === "volute" && pkg.version) return pkg.version;
+        return JSON.parse(readFileSync(p, "utf-8")).version;
       } catch {}
     }
   }

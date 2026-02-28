@@ -1,4 +1,4 @@
-import { deleteSystemsConfig } from "@volute/shared/systems-config";
+import { deleteSystemsConfig } from "../../lib/systems-config.js";
 
 export async function run() {
   if (deleteSystemsConfig()) {

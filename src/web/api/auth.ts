@@ -1,5 +1,4 @@
 import { zValidator } from "@hono/zod-validator";
-import { readRegistry } from "@volute/shared/registry";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { z } from "zod";
@@ -15,6 +14,7 @@ import {
   listUsersByType,
   verifyUser,
 } from "../../lib/auth.js";
+import { readRegistry } from "../../lib/registry.js";
 import {
   type AuthEnv,
   authMiddleware,

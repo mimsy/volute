@@ -2,16 +2,16 @@ import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:chil
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
-import { loadMergedEnv } from "@volute/shared/env";
-import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "@volute/shared/isolation";
-import { clearJsonMap, loadJsonMap, saveJsonMap } from "@volute/shared/json-state";
-import { findMind, mindDir, setMindRunning, stateDir, voluteHome } from "@volute/shared/registry";
-import { findVariant, setVariantRunning } from "@volute/shared/variants";
 import { getDb } from "../db.js";
+import { loadMergedEnv } from "../env.js";
+import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../isolation.js";
+import { clearJsonMap, loadJsonMap, saveJsonMap } from "../json-state.js";
 import log from "../logger.js";
 import { getPrompt } from "../prompts.js";
+import { findMind, mindDir, setMindRunning, stateDir, voluteHome } from "../registry.js";
 import { RotatingLog } from "../rotating-log.js";
 import { mindHistory } from "../schema.js";
+import { findVariant, setVariantRunning } from "../variants.js";
 import { RestartTracker } from "./restart-tracker.js";
 
 const mlog = log.child("minds");

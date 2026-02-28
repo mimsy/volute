@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { mkdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { addMind, mindDir, removeMind } from "@volute/shared/registry";
 import { generateIdentity, getFingerprint } from "../src/lib/identity.js";
+import { addMind, mindDir, removeMind } from "../src/lib/registry.js";
 
 const TEST_MIND = `keys-test-${Date.now()}`;
 

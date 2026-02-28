@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
-import { findMind, mindDir } from "@volute/shared/registry";
-import { readVoluteConfig } from "@volute/shared/volute-config";
 import { Hono } from "hono";
+import { findMind, mindDir } from "../../lib/registry.js";
+import { readVoluteConfig } from "../../lib/volute-config.js";
 
 const ALLOWED_FILES = new Set(["SOUL.md", "MEMORY.md", "CLAUDE.md", "VOLUTE.md"]);
 

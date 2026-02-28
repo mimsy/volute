@@ -10,15 +10,15 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
-import { findMind, mindDir, readRegistry, voluteHome } from "@volute/shared/registry";
-import { readVoluteConfig, type SleepConfig } from "@volute/shared/volute-config";
 import { CronExpressionParser } from "cron-parser";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { type ActivityEvent, subscribe } from "../events/activity-events.js";
 import log from "../logger.js";
 import { getPrompt } from "../prompts.js";
+import { findMind, mindDir, readRegistry, voluteHome } from "../registry.js";
 import { deliveryQueue, mindHistory } from "../schema.js";
+import { readVoluteConfig, type SleepConfig } from "../volute-config.js";
 import { getMindManager } from "./mind-manager.js";
 import { sleepMind, wakeMind } from "./mind-service.js";
 

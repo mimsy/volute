@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { addMind, mindDir, removeMind, stateDir } from "@volute/shared/registry";
 import { Hono } from "hono";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
@@ -11,6 +10,7 @@ import {
   readFileSharingConfig,
   writeFileSharingConfig,
 } from "../src/lib/file-sharing.js";
+import { addMind, mindDir, removeMind, stateDir } from "../src/lib/registry.js";
 import { sessions, users } from "../src/lib/schema.js";
 import fileSharing from "../src/web/api/file-sharing.js";
 import { authMiddleware, createSession } from "../src/web/middleware/auth.js";

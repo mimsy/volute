@@ -1,5 +1,5 @@
-import { checkForUpdate } from "@volute/shared/update-check";
 import { getDaemonUrl, getServiceMode, modeLabel, readDaemonConfig } from "../lib/service-mode.js";
+import { checkForUpdate } from "../lib/update-check.js";
 
 export async function run(_args: string[]) {
   const mode = getServiceMode();

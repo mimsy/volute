@@ -1,11 +1,11 @@
 import { resolve } from "node:path";
-import { exec } from "@volute/shared/exec";
-import { clearJsonMap, loadJsonMap, saveJsonMap } from "@volute/shared/json-state";
-import { mindDir, voluteHome } from "@volute/shared/registry";
-import { readVoluteConfig, type Schedule } from "@volute/shared/volute-config";
 import { CronExpressionParser } from "cron-parser";
 import { deliverMessage } from "../delivery/message-delivery.js";
+import { exec } from "../exec.js";
+import { clearJsonMap, loadJsonMap, saveJsonMap } from "../json-state.js";
 import log from "../logger.js";
+import { mindDir, voluteHome } from "../registry.js";
+import { readVoluteConfig, type Schedule } from "../volute-config.js";
 
 const slog = log.child("scheduler");
 

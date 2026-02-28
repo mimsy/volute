@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { mindEnvPath, readEnv, sharedEnvPath, writeEnv } from "@volute/shared/env";
-import { addMind, removeMind } from "@volute/shared/registry";
 import { approveUser, createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
+import { mindEnvPath, readEnv, sharedEnvPath, writeEnv } from "../src/lib/env.js";
+import { addMind, removeMind } from "../src/lib/registry.js";
 import { conversations, messages, sessions, users } from "../src/lib/schema.js";
 import { createSession, deleteSession } from "../src/web/middleware/auth.js";
 

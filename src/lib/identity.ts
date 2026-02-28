@@ -1,9 +1,9 @@
 import { createHash, generateKeyPairSync, sign, verify } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { readSystemsConfig } from "@volute/shared/systems-config";
-import { readVoluteConfig, writeVoluteConfig } from "@volute/shared/volute-config";
 import log from "./logger.js";
+import { readSystemsConfig } from "./systems-config.js";
+import { readVoluteConfig, writeVoluteConfig } from "./volute-config.js";
 
 /** Generate an Ed25519 keypair and write to .mind/identity/ */
 export function generateIdentity(mindDir: string): { publicKeyPem: string; privateKeyPem: string } {

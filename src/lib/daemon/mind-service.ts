@@ -1,9 +1,9 @@
-import { findMind, mindDir } from "@volute/shared/registry";
-import { readVoluteConfig } from "@volute/shared/volute-config";
 import { publish as publishActivity } from "../events/activity-events.js";
 import { markIdle } from "../events/mind-activity-tracker.js";
 import log from "../logger.js";
 import { startWatcher, stopWatcher } from "../pages-watcher.js";
+import { findMind, mindDir } from "../registry.js";
+import { readVoluteConfig } from "../volute-config.js";
 import { getConnectorManager } from "./connector-manager.js";
 import { ensureMailAddress } from "./mail-poller.js";
 import { getMindManager } from "./mind-manager.js";

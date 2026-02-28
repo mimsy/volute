@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { voluteHome } from "@volute/shared/registry";
+import { voluteHome } from "../src/lib/registry.js";
 import {
   checkForUpdate,
   checkForUpdateCached,
   getCurrentVersion,
   isNewer,
-} from "@volute/shared/update-check";
+} from "../src/lib/update-check.js";
 
 describe("isNewer", () => {
   it("detects newer major version", () => {

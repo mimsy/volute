@@ -1,8 +1,13 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { exec, gitExec } from "@volute/shared/exec";
-import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "@volute/shared/isolation";
-import { findMind, mindDir, nextPort } from "@volute/shared/registry";
+import { Hono } from "hono";
+import { getMindManager } from "../../lib/daemon/mind-manager.js";
+import { exec, gitExec } from "../../lib/exec.js";
+import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../../lib/isolation.js";
+import log from "../../lib/logger.js";
+import { findMind, mindDir, nextPort } from "../../lib/registry.js";
+import { spawnServer } from "../../lib/spawn-server.js";
+import { cleanupVariant } from "../../lib/variant-cleanup.js";
 import {
   addVariant,
   checkHealth,
@@ -10,12 +15,7 @@ import {
   readVariants,
   validateBranchName,
   writeVariants,
-} from "@volute/shared/variants";
-import { Hono } from "hono";
-import { getMindManager } from "../../lib/daemon/mind-manager.js";
-import log from "../../lib/logger.js";
-import { spawnServer } from "../../lib/spawn-server.js";
-import { cleanupVariant } from "../../lib/variant-cleanup.js";
+} from "../../lib/variants.js";
 import { verify } from "../../lib/verify.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
@@ -235,7 +235,7 @@ const app = new Hono<AuthEnv>()
     if (variantName === "upgrade") {
       try {
         const { computeTemplateHash } = await import("../../lib/template-hash.js");
-        const { setMindTemplateHash } = await import("@volute/shared/registry");
+        const { setMindTemplateHash } = await import("../../lib/registry.js");
         const tmpl = entry.template ?? "claude";
         setMindTemplateHash(mindName, computeTemplateHash(tmpl));
       } catch (err) {

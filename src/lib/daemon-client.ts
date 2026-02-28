@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { voluteHome } from "@volute/shared/registry";
+import { voluteHome } from "./registry.js";
 
 type DaemonConfig = { port: number; hostname?: string; token?: string };
 

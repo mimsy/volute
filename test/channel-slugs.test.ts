@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, it } from "node:test";
-import { stateDir } from "@volute/shared/registry";
 import {
   buildChannelSlug,
   readChannelMap,
@@ -10,6 +9,7 @@ import {
   writeChannelEntry,
 } from "../src/connectors/sdk.js";
 import { resolveChannelId as resolveChannelIdEnv } from "../src/lib/channels.js";
+import { stateDir } from "../src/lib/registry.js";
 import { buildVoluteSlug, slugify } from "../src/lib/slugify.js";
 
 // Test mind name — stateDir will resolve to VOLUTE_HOME/state/test-channel-mind

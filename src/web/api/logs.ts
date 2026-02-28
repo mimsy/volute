@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { findMind, stateDir } from "@volute/shared/registry";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { findMind, stateDir } from "../../lib/registry.js";
 
 const app = new Hono()
   .get("/:name/logs", async (c) => {

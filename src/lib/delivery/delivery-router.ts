@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { mindDir } from "@volute/shared/registry";
 import log from "../logger.js";
+import { mindDir } from "../registry.js";
 
 // --- Types ---
 

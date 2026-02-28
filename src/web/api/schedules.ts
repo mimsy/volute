@@ -1,9 +1,9 @@
-import { findMind, mindDir } from "@volute/shared/registry";
-import { readVoluteConfig, type Schedule, writeVoluteConfig } from "@volute/shared/volute-config";
 import { CronExpressionParser } from "cron-parser";
 import { Hono } from "hono";
 import { getScheduler } from "../../lib/daemon/scheduler.js";
 import log from "../../lib/logger.js";
+import { findMind, mindDir } from "../../lib/registry.js";
+import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../../lib/volute-config.js";
 import { fireWebhook } from "../../lib/webhook.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 

@@ -13,13 +13,13 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { after, afterEach, before, beforeEach, describe, it, mock } from "node:test";
-import { addMind, mindDir, removeMind, voluteHome } from "@volute/shared/registry";
+import { collectFiles } from "../src/commands/pages/publish.js";
+import { addMind, mindDir, removeMind, voluteHome } from "../src/lib/registry.js";
 import {
   deleteSystemsConfig,
   readSystemsConfig,
   writeSystemsConfig,
-} from "@volute/shared/systems-config";
-import { collectFiles } from "../src/commands/pages/publish.js";
+} from "../src/lib/systems-config.js";
 
 function configPath() {
   return resolve(voluteHome(), "systems.json");

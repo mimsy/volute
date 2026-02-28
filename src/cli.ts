@@ -124,7 +124,7 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
 
 // Non-blocking update check (prints to stderr so it doesn't interfere with piped output)
 if (command !== "update") {
-  import("@volute/shared/update-check")
+  import("./lib/update-check.js")
     .then((m) => m.checkForUpdate())
     .then((result) => {
       if (result.updateAvailable) {

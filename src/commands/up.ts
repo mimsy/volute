@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { parseArgs } from "@volute/shared/parse-args";
-import { voluteHome } from "@volute/shared/registry";
+import { parseArgs } from "../lib/parse-args.js";
+import { voluteHome } from "../lib/registry.js";
 import { getServiceMode, modeLabel, pollHealth, startService } from "../lib/service-mode.js";
 
 type GlobalConfig = { hostname?: string; port?: number };

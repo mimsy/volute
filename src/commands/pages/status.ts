@@ -1,6 +1,6 @@
-import { parseArgs } from "@volute/shared/parse-args";
-import { readSystemsConfig } from "@volute/shared/systems-config";
+import { parseArgs } from "../../lib/parse-args.js";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";
+import { readSystemsConfig } from "../../lib/systems-config.js";
 import { systemsFetch } from "../../lib/systems-fetch.js";
 
 export async function run(args: string[]) {

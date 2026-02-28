@@ -1,6 +1,6 @@
-import { mindDir, readRegistry } from "@volute/shared/registry";
 import { Hono } from "hono";
 import { getFingerprint, getPublicKey } from "../../lib/identity.js";
+import { mindDir, readRegistry } from "../../lib/registry.js";
 
 const app = new Hono()
   /** Look up a public key by fingerprint (used by minds for signature verification) */

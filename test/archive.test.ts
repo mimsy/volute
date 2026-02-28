@@ -2,15 +2,15 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import AdmZip from "adm-zip";
 import {
   addHistoryToArchive,
   createExportArchive,
   extractArchive,
   isHomeOnlyArchive,
   readManifest,
-} from "@volute/shared/archive";
-import { addMind, mindDir, removeMind, stateDir } from "@volute/shared/registry";
-import AdmZip from "adm-zip";
+} from "../src/lib/archive.js";
+import { addMind, mindDir, removeMind, stateDir } from "../src/lib/registry.js";
 
 const testMind = `archive-test-${Date.now()}`;
 

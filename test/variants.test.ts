@@ -11,7 +11,7 @@ import {
   type Variant,
   validateBranchName,
   writeVariants,
-} from "@volute/shared/variants";
+} from "../src/lib/variants.js";
 
 const testMind = `test-mind-${Date.now()}`;
 

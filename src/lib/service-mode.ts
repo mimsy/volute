@@ -2,8 +2,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { execInherit } from "@volute/shared/exec";
-import { voluteHome } from "@volute/shared/registry";
+import { execInherit } from "./exec.js";
+import { voluteHome } from "./registry.js";
 
 // --- Constants ---
 

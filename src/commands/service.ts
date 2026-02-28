@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
-import { resolveVoluteBin } from "@volute/shared/exec";
-import { parseArgs } from "@volute/shared/parse-args";
+import { resolveVoluteBin } from "../lib/exec.js";
+import { parseArgs } from "../lib/parse-args.js";
 import {
   LAUNCHD_PLIST_LABEL,
   LAUNCHD_PLIST_PATH,

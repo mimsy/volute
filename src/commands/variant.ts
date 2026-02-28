@@ -1,6 +1,6 @@
-import { parseArgs } from "@volute/shared/parse-args";
-import type { Variant } from "@volute/shared/variants";
+import { parseArgs } from "../lib/parse-args.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
+import type { Variant } from "../lib/variants.js";
 
 export async function run(args: string[]) {
   const subcommand = args[0];

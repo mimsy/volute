@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
-import { exec } from "@volute/shared/exec";
-import { voluteHome } from "@volute/shared/registry";
 import { getDb } from "../src/lib/db.js";
+import { exec } from "../src/lib/exec.js";
+import { voluteHome } from "../src/lib/registry.js";
 import { sharedSkills } from "../src/lib/schema.js";
 import {
   getSharedSkill,

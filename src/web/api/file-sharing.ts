@@ -1,6 +1,5 @@
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { findMind, mindDir } from "@volute/shared/registry";
 import { Hono } from "hono";
 import {
   acceptPending,
@@ -15,6 +14,7 @@ import {
   stageFile,
   validateFilePath,
 } from "../../lib/file-sharing.js";
+import { findMind, mindDir } from "../../lib/registry.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
 async function notifyMind(port: number, message: string, channel: string, sender: string) {

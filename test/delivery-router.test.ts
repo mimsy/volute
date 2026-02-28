@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { addMind, removeMind } from "@volute/shared/registry";
 import {
   clearConfigCache,
   getRoutingConfig,
@@ -10,6 +9,7 @@ import {
   resolveDeliveryMode,
   resolveRoute,
 } from "../src/lib/delivery/delivery-router.js";
+import { addMind, removeMind } from "../src/lib/registry.js";
 
 function createMindWithRoutes(config: RoutingConfig | object): string {
   const port = 4100 + Math.floor(Math.random() * 1000);

@@ -10,11 +10,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { exec, gitExec } from "@volute/shared/exec";
-import { voluteHome } from "@volute/shared/registry";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "./db.js";
+import { exec, gitExec } from "./exec.js";
 import log from "./logger.js";
+import { voluteHome } from "./registry.js";
 import { sharedSkills } from "./schema.js";
 
 const VALID_SKILL_ID = /^[a-zA-Z0-9_-]+$/;
