@@ -7,14 +7,14 @@ type WebhookEvent = {
   event: string;
   mind: string;
   data: Record<string, unknown>;
-  timestamp: string;
+  timestamp?: string;
 };
 
-function getWebhookUrl(): string | undefined {
+export function getWebhookUrl(): string | undefined {
   return process.env.VOLUTE_WEBHOOK_URL;
 }
 
-function getAuthHeaders(): Record<string, string> {
+export function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const secret = process.env.VOLUTE_WEBHOOK_SECRET;
   if (secret) headers.Authorization = `Bearer ${secret}`;
@@ -22,21 +22,26 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 export function fireWebhook(event: WebhookEvent): void {
-  const url = getWebhookUrl();
-  if (!url) return;
-  fetch(url, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify(event),
-  })
-    .then((res) => {
-      if (!res.ok) {
-        slog.warn(`webhook ${event.event} returned HTTP ${res.status}`);
-      }
+  try {
+    const url = getWebhookUrl();
+    if (!url) return;
+    const payload = { ...event, timestamp: event.timestamp ?? new Date().toISOString() };
+    fetch(url, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
     })
-    .catch((err) => {
-      slog.warn(`webhook delivery failed for ${event.event}`, log.errorData(err));
-    });
+      .then((res) => {
+        if (!res.ok) {
+          slog.warn(`webhook ${event.event} returned HTTP ${res.status}`);
+        }
+      })
+      .catch((err) => {
+        slog.warn(`webhook delivery failed for ${event.event}`, log.errorData(err));
+      });
+  } catch (err) {
+    slog.error(`webhook ${event.event} failed to serialize`, log.errorData(err));
+  }
 }
 
 /** Subscribe to ActivityEvents and forward them to the webhook URL. */

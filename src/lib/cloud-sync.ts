@@ -1,28 +1,13 @@
 import { deliverMessage } from "./delivery/message-delivery.js";
 import log from "./logger.js";
+import { getAuthHeaders, getWebhookUrl } from "./webhook.js";
 
 const slog = log.child("cloud-sync");
 
-type QueuedMessage = {
-  id: string;
-  mind: string;
-  channel: string;
-  sender: string | null;
-  content: unknown;
-  conversationId?: string;
-};
-
 function getQueueUrl(): string | undefined {
-  const webhookUrl = process.env.VOLUTE_WEBHOOK_URL;
-  if (!webhookUrl) return undefined;
-  return `${webhookUrl.replace(/\/$/, "")}/queue`;
-}
-
-function getAuthHeaders(): Record<string, string> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const secret = process.env.VOLUTE_WEBHOOK_SECRET;
-  if (secret) headers.Authorization = `Bearer ${secret}`;
-  return headers;
+  const base = getWebhookUrl();
+  if (!base) return undefined;
+  return `${base.replace(/\/$/, "")}/queue`;
 }
 
 export async function consumeQueuedMessages(): Promise<void> {
@@ -31,34 +16,46 @@ export async function consumeQueuedMessages(): Promise<void> {
 
   slog.info("checking cloud queue for pending messages");
 
-  let messages: QueuedMessage[];
+  let items: unknown[];
   try {
     const res = await fetch(queueUrl, { headers: getAuthHeaders() });
     if (!res.ok) {
       slog.warn(`cloud queue returned HTTP ${res.status}`);
       return;
     }
-    messages = (await res.json()) as QueuedMessage[];
+    const body = await res.json();
+    if (!Array.isArray(body) || body.length === 0) {
+      slog.info("no queued cloud messages");
+      return;
+    }
+    items = body;
   } catch (err) {
     slog.warn("failed to fetch cloud queue", log.errorData(err));
     return;
   }
 
-  if (!Array.isArray(messages) || messages.length === 0) {
-    slog.info("no queued cloud messages");
-    return;
-  }
-
-  slog.info(`processing ${messages.length} queued cloud message(s)`);
+  slog.info(`processing ${items.length} queued cloud message(s)`);
 
   const acknowledged: string[] = [];
-  for (const msg of messages) {
+  for (const raw of items) {
+    const msg = raw as Record<string, unknown>;
+    if (
+      !msg.id ||
+      typeof msg.id !== "string" ||
+      !msg.mind ||
+      typeof msg.mind !== "string" ||
+      !msg.channel ||
+      typeof msg.channel !== "string"
+    ) {
+      slog.warn("skipping malformed queued message", { msg: JSON.stringify(msg).slice(0, 200) });
+      continue;
+    }
     try {
       await deliverMessage(msg.mind, {
         channel: msg.channel,
-        sender: msg.sender,
+        sender: (msg.sender as string) ?? null,
         content: msg.content,
-        conversationId: msg.conversationId,
+        conversationId: msg.conversationId as string | undefined,
       });
       acknowledged.push(msg.id);
     } catch (err) {
@@ -74,12 +71,17 @@ export async function consumeQueuedMessages(): Promise<void> {
         body: JSON.stringify({ ids: acknowledged }),
       });
       if (!res.ok) {
-        slog.warn(`failed to acknowledge queued messages: HTTP ${res.status}`);
+        slog.error(
+          `failed to acknowledge ${acknowledged.length} queued messages (HTTP ${res.status}) — these will be re-delivered on next startup`,
+        );
       } else {
         slog.info(`acknowledged ${acknowledged.length} queued message(s)`);
       }
     } catch (err) {
-      slog.warn("failed to send queue acknowledgment", log.errorData(err));
+      slog.error(
+        `failed to acknowledge ${acknowledged.length} queued messages — these will be re-delivered on next startup`,
+        log.errorData(err),
+      );
     }
   }
 }

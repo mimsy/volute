@@ -806,7 +806,6 @@ const app = new Hono<AuthEnv>()
           template,
           description: body.description,
         },
-        timestamp: new Date().toISOString(),
       });
 
       return c.json({
@@ -1365,8 +1364,7 @@ const app = new Hono<AuthEnv>()
     fireWebhook({
       event: "mind_deleted",
       mind: name,
-      data: {},
-      timestamp: new Date().toISOString(),
+      data: { port: entry.port, stage: entry.stage, template: entry.template },
     });
 
     return c.json({ ok: true });

@@ -82,7 +82,6 @@ export async function createConversation(
     event: "conversation_created",
     mind: mindName ?? "",
     data: { id, mindName, channel, type, name, title: opts?.title ?? null },
-    timestamp: new Date().toISOString(),
   });
 
   return {
@@ -275,18 +274,24 @@ export async function addMessage(
     createdAt: msg.created_at,
   });
 
+  // Look up the mind that owns this conversation for the webhook
+  const conv = await db
+    .select({ mind_name: conversations.mind_name })
+    .from(conversations)
+    .where(eq(conversations.id, conversationId))
+    .get();
+
   fireWebhook({
     event: "message_created",
-    mind: "",
+    mind: conv?.mind_name ?? "",
     data: {
       conversationId,
       messageId: result.id,
       role,
       senderName,
-      content,
+      content: content.filter((b) => b.type !== "image"),
       createdAt: result.created_at,
     },
-    timestamp: new Date().toISOString(),
   });
 
   return msg;

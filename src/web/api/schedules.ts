@@ -23,7 +23,6 @@ function writeSchedules(name: string, schedules: Schedule[]): void {
     event: "schedule_changed",
     mind: name,
     data: { schedules },
-    timestamp: new Date().toISOString(),
   });
 }
 
