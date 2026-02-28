@@ -23,6 +23,9 @@ import skills from "./api/skills.js";
 import system from "./api/system.js";
 import typing from "./api/typing.js";
 import update from "./api/update.js";
+import v1Chat from "./api/v1/chat.js";
+import v1Conversations from "./api/v1/conversations.js";
+import v1Events from "./api/v1/events.js";
 import variants from "./api/variants.js";
 import voluteChannels from "./api/volute/channels.js";
 import chat, { unifiedChatApp } from "./api/volute/chat.js";
@@ -97,6 +100,9 @@ app.use("/api/env/*", authMiddleware);
 app.use("/api/prompts/*", authMiddleware);
 app.use("/api/skills/*", authMiddleware);
 
+// v1 API auth
+app.use("/api/v1/*", authMiddleware);
+
 // Mind pages (public, no auth)
 app.route("/pages", pages);
 
@@ -126,7 +132,11 @@ const routes = app
   .route("/api/skills", skills)
   .route("/api/conversations", userConversations)
   .route("/api/volute/channels", voluteChannels)
-  .route("/api/volute", unifiedChatApp);
+  .route("/api/volute", unifiedChatApp)
+  // v1 API routes
+  .route("/api/v1/conversations", v1Conversations)
+  .route("/api/v1/events", v1Events)
+  .route("/api/v1", v1Chat);
 
 export default app;
 export type AppType = typeof routes;

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { conversationParticipants, conversations, messages, users } from "../schema.js";
 import { fireWebhook } from "../webhook.js";
@@ -306,16 +306,47 @@ export async function getMessages(conversationId: string): Promise<Message[]> {
     .orderBy(messages.created_at)
     .all();
 
-  return rows.map((row) => {
-    let content: ContentBlock[];
-    try {
-      const parsed = JSON.parse(row.content);
-      content = Array.isArray(parsed) ? parsed : [{ type: "text", text: row.content }];
-    } catch {
-      content = [{ type: "text", text: row.content }];
-    }
-    return { ...row, content };
-  });
+  return rows.map(parseMessageRow);
+}
+
+export async function getMessagesPaginated(
+  conversationId: string,
+  opts?: { before?: number; limit?: number },
+): Promise<{ messages: Message[]; hasMore: boolean }> {
+  const db = await getDb();
+  const limit = Math.min(Math.max(opts?.limit ?? 50, 1), 100);
+
+  const conditions = [eq(messages.conversation_id, conversationId)];
+  if (opts?.before != null) {
+    conditions.push(lt(messages.id, opts.before));
+  }
+
+  const rows = await db
+    .select()
+    .from(messages)
+    .where(and(...conditions))
+    .orderBy(desc(messages.id))
+    .limit(limit + 1)
+    .all();
+
+  const hasMore = rows.length > limit;
+  const page = rows.slice(0, limit).reverse();
+
+  return {
+    messages: page.map(parseMessageRow),
+    hasMore,
+  };
+}
+
+function parseMessageRow(row: typeof messages.$inferSelect): Message {
+  let content: ContentBlock[];
+  try {
+    const parsed = JSON.parse(row.content);
+    content = Array.isArray(parsed) ? parsed : [{ type: "text", text: row.content }];
+  } catch {
+    content = [{ type: "text", text: row.content }];
+  }
+  return { ...row, content };
 }
 
 export type LastMessageSummary = {
