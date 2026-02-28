@@ -103,6 +103,7 @@ import {
   validateBranchName,
 } from "../../lib/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
+import { fireWebhook } from "../../lib/webhook.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 type ChannelStatus = {
@@ -795,6 +796,18 @@ const app = new Hono<AuthEnv>()
         log.warn(`failed to publish key for ${name}`, { error: (err as Error).message }),
       );
 
+      fireWebhook({
+        event: "mind_created",
+        mind: name,
+        data: {
+          name,
+          port,
+          stage: body.stage ?? "sprouted",
+          template,
+          description: body.description,
+        },
+      });
+
       return c.json({
         ok: true,
         name,
@@ -1347,6 +1360,12 @@ const app = new Hono<AuthEnv>()
       rmSync(dir, { recursive: true, force: true });
       deleteIsolationUser(name);
     }
+
+    fireWebhook({
+      event: "mind_deleted",
+      mind: name,
+      data: { port: entry.port, stage: entry.stage, template: entry.template },
+    });
 
     return c.json({ ok: true });
   })

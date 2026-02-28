@@ -1,7 +1,7 @@
 import { hc } from "hono/client";
 import type { AppType } from "../../../app.js";
 
-const client = hc<AppType>("/");
+export const client = hc<AppType>("/");
 
 export type Channel = {
   name: string;
@@ -200,8 +200,8 @@ export async function fetchHistory(
   if (opts?.channel) params.set("channel", opts.channel);
   if (opts?.session) params.set("session", opts.session);
   if (opts?.full) params.set("full", "true");
-  if (opts?.limit) params.set("limit", String(opts.limit));
-  if (opts?.offset) params.set("offset", String(opts.offset));
+  if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts?.offset !== undefined) params.set("offset", String(opts.offset));
   const qs = params.toString();
   const res = await fetch(`/api/minds/${encodeURIComponent(name)}/history${qs ? `?${qs}` : ""}`);
   if (!res.ok) throw new Error("Failed to fetch history");
@@ -209,15 +209,15 @@ export async function fetchHistory(
 }
 
 export async function fetchHistorySessions(name: string): Promise<HistorySession[]> {
-  const res = await fetch(`/api/minds/${encodeURIComponent(name)}/history/sessions`);
+  const res = await client.api.minds[":name"].history.sessions.$get({ param: { name } });
   if (!res.ok) throw new Error("Failed to fetch sessions");
-  return res.json();
+  return (await res.json()) as HistorySession[];
 }
 
 export async function fetchHistoryChannels(name: string): Promise<string[]> {
-  const res = await fetch(`/api/minds/${encodeURIComponent(name)}/history/channels`);
+  const res = await client.api.minds[":name"].history.channels.$get({ param: { name } });
   if (!res.ok) throw new Error("Failed to fetch channels");
-  return res.json();
+  return (await res.json()) as string[];
 }
 
 export async function deleteConversation(name: string, conversationId: string): Promise<void> {
@@ -251,8 +251,7 @@ export type AvailableUser = {
 };
 
 export async function fetchAvailableUsers(type?: string): Promise<AvailableUser[]> {
-  const params = type ? `?type=${type}` : "";
-  const res = await fetch(`/api/auth/users${params}`, { credentials: "include" });
+  const res = await client.api.auth.users.$get({ query: { type } });
   if (!res.ok) throw new Error("Failed to fetch users");
   return res.json();
 }
@@ -324,11 +323,12 @@ export function reportTyping(
   sender: string,
   active: boolean,
 ): void {
-  fetch(`/api/minds/${encodeURIComponent(mindName)}/typing`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ channel, sender, active }),
-  }).catch(() => {});
+  client.api.minds[":name"].typing
+    .$post({
+      param: { name: mindName },
+      json: { channel, sender, active },
+    })
+    .catch(() => {});
 }
 
 export async function restartDaemon(): Promise<void> {
@@ -338,7 +338,7 @@ export async function restartDaemon(): Promise<void> {
 
 export async function fetchSystemInfo(): Promise<{ system: string | null }> {
   try {
-    const res = await fetch("/api/system/info", { credentials: "include" });
+    const res = await client.api.system.info.$get();
     if (!res.ok) return { system: null };
     return await res.json();
   } catch {
@@ -386,18 +386,13 @@ export type Prompt = {
 };
 
 export async function fetchPrompts(): Promise<Prompt[]> {
-  const res = await fetch("/api/prompts", { credentials: "include" });
+  const res = await client.api.prompts.$get();
   if (!res.ok) throw new Error("Failed to fetch prompts");
   return res.json();
 }
 
 export async function updatePrompt(key: string, content: string): Promise<void> {
-  const res = await fetch(`/api/prompts/${encodeURIComponent(key)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
-    credentials: "include",
-  });
+  const res = await client.api.prompts[":key"].$put({ param: { key }, json: { content } });
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
     throw new Error(data.error || "Failed to update prompt");
@@ -405,10 +400,7 @@ export async function updatePrompt(key: string, content: string): Promise<void> 
 }
 
 export async function resetPrompt(key: string): Promise<void> {
-  const res = await fetch(`/api/prompts/${encodeURIComponent(key)}`, {
-    method: "DELETE",
-    credentials: "include",
-  });
+  const res = await client.api.prompts[":key"].$delete({ param: { key } });
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
     throw new Error(data.error || "Failed to reset prompt");
@@ -420,18 +412,13 @@ export async function resetPrompt(key: string): Promise<void> {
 export type ChannelInfo = Conversation & { participantCount: number; isMember: boolean };
 
 export async function fetchChannels(): Promise<ChannelInfo[]> {
-  const res = await fetch("/api/volute/channels", { credentials: "include" });
+  const res = await client.api.volute.channels.$get();
   if (!res.ok) throw new Error("Failed to fetch channels");
   return res.json();
 }
 
 export async function createVoluteChannel(name: string): Promise<Conversation> {
-  const res = await fetch("/api/volute/channels", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ name }),
-  });
+  const res = await client.api.volute.channels.$post({ json: { name } });
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
     throw new Error(data.error || "Failed to create channel");
@@ -440,11 +427,7 @@ export async function createVoluteChannel(name: string): Promise<Conversation> {
 }
 
 export async function joinVoluteChannel(name: string): Promise<{ conversationId: string }> {
-  const res = await fetch(`/api/volute/channels/${encodeURIComponent(name)}/join`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-  });
+  const res = await client.api.volute.channels[":name"].join.$post({ param: { name } });
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
     throw new Error(data.error || "Failed to join channel");
@@ -453,11 +436,7 @@ export async function joinVoluteChannel(name: string): Promise<{ conversationId:
 }
 
 export async function leaveVoluteChannel(name: string): Promise<void> {
-  const res = await fetch(`/api/volute/channels/${encodeURIComponent(name)}/leave`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-  });
+  const res = await client.api.volute.channels[":name"].leave.$post({ param: { name } });
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
     throw new Error(data.error || "Failed to leave channel");
@@ -465,11 +444,9 @@ export async function leaveVoluteChannel(name: string): Promise<void> {
 }
 
 export async function inviteToChannel(channelName: string, username: string): Promise<void> {
-  const res = await fetch(`/api/volute/channels/${encodeURIComponent(channelName)}/invite`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ username }),
+  const res = await client.api.volute.channels[":name"].invite.$post({
+    param: { name: channelName },
+    json: { username },
   });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -478,8 +455,8 @@ export async function inviteToChannel(channelName: string, username: string): Pr
 }
 
 export async function fetchChannelMembers(channelName: string): Promise<Participant[]> {
-  const res = await fetch(`/api/volute/channels/${encodeURIComponent(channelName)}/members`, {
-    credentials: "include",
+  const res = await client.api.volute.channels[":name"].members.$get({
+    param: { name: channelName },
   });
   if (!res.ok) throw new Error("Failed to fetch members");
   return res.json();
@@ -511,25 +488,21 @@ export type UpdateResult =
   | { status: "conflict"; conflictFiles: string[] };
 
 export async function fetchSharedSkills(): Promise<SharedSkill[]> {
-  const res = await fetch("/api/skills", { credentials: "include" });
+  const res = await client.api.skills.$get();
   if (!res.ok) throw new Error("Failed to fetch shared skills");
   return res.json();
 }
 
 export async function fetchMindSkills(mindName: string): Promise<MindSkillInfo[]> {
-  const res = await fetch(`/api/minds/${encodeURIComponent(mindName)}/skills`, {
-    credentials: "include",
-  });
+  const res = await client.api.minds[":name"].skills.$get({ param: { name: mindName } });
   if (!res.ok) throw new Error("Failed to fetch mind skills");
   return res.json();
 }
 
 export async function installMindSkill(mindName: string, skillId: string): Promise<void> {
-  const res = await fetch(`/api/minds/${encodeURIComponent(mindName)}/skills/install`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ skillId }),
+  const res = await client.api.minds[":name"].skills.install.$post({
+    param: { name: mindName },
+    json: { skillId },
   });
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
@@ -538,11 +511,9 @@ export async function installMindSkill(mindName: string, skillId: string): Promi
 }
 
 export async function updateMindSkill(mindName: string, skillId: string): Promise<UpdateResult> {
-  const res = await fetch(`/api/minds/${encodeURIComponent(mindName)}/skills/update`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ skillId }),
+  const res = await client.api.minds[":name"].skills.update.$post({
+    param: { name: mindName },
+    json: { skillId },
   });
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
@@ -552,11 +523,9 @@ export async function updateMindSkill(mindName: string, skillId: string): Promis
 }
 
 export async function publishMindSkill(mindName: string, skillId: string): Promise<void> {
-  const res = await fetch(`/api/minds/${encodeURIComponent(mindName)}/skills/publish`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ skillId }),
+  const res = await client.api.minds[":name"].skills.publish.$post({
+    param: { name: mindName },
+    json: { skillId },
   });
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
@@ -565,13 +534,9 @@ export async function publishMindSkill(mindName: string, skillId: string): Promi
 }
 
 export async function uninstallMindSkill(mindName: string, skillId: string): Promise<void> {
-  const res = await fetch(
-    `/api/minds/${encodeURIComponent(mindName)}/skills/${encodeURIComponent(skillId)}`,
-    {
-      method: "DELETE",
-      credentials: "include",
-    },
-  );
+  const res = await client.api.minds[":name"].skills[":skill"].$delete({
+    param: { name: mindName, skill: skillId },
+  });
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
     throw new Error(data.error || "Failed to uninstall skill");
@@ -579,10 +544,7 @@ export async function uninstallMindSkill(mindName: string, skillId: string): Pro
 }
 
 export async function removeSharedSkill(id: string): Promise<void> {
-  const res = await fetch(`/api/skills/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-    credentials: "include",
-  });
+  const res = await client.api.skills[":id"].$delete({ param: { id } });
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
     throw new Error(data.error || "Failed to remove skill");
@@ -590,13 +552,7 @@ export async function removeSharedSkill(id: string): Promise<void> {
 }
 
 export async function uploadSkillZip(file: File): Promise<SharedSkill> {
-  const form = new FormData();
-  form.append("file", file);
-  const res = await fetch("/api/skills/upload", {
-    method: "POST",
-    credentials: "include",
-    body: form,
-  });
+  const res = await client.api.skills.upload.$post({ form: { file } });
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
     throw new Error(data.error || "Failed to upload skill");
@@ -628,9 +584,7 @@ export type MindEnv = {
 };
 
 export async function fetchMindConfig(name: string): Promise<MindConfig> {
-  const res = await fetch(`/api/minds/${encodeURIComponent(name)}/config`, {
-    credentials: "include",
-  });
+  const res = await client.api.minds[":name"].config.$get({ param: { name } });
   if (!res.ok) throw new Error("Failed to fetch config");
   return res.json();
 }
@@ -644,11 +598,14 @@ export async function updateMindConfig(
     tokenBudgetPeriodMinutes?: number | null;
   },
 ): Promise<void> {
-  const res = await fetch(`/api/minds/${encodeURIComponent(name)}/config`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify(updates),
+  const res = await client.api.minds[":name"].config.$put({
+    param: { name },
+    json: updates as {
+      model?: string;
+      thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+      tokenBudget?: number | null;
+      tokenBudgetPeriodMinutes?: number | null;
+    },
   });
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
@@ -657,9 +614,7 @@ export async function updateMindConfig(
 }
 
 export async function fetchMindEnv(name: string): Promise<MindEnv> {
-  const res = await fetch(`/api/minds/${encodeURIComponent(name)}/env`, {
-    credentials: "include",
-  });
+  const res = await client.api.minds[":name"].env.$get({ param: { name } });
   if (!res.ok) throw new Error("Failed to fetch env");
   return res.json();
 }
@@ -668,7 +623,6 @@ export async function setMindEnvVar(name: string, key: string, value: string): P
   const res = await fetch(`/api/minds/${encodeURIComponent(name)}/env/${encodeURIComponent(key)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    credentials: "include",
     body: JSON.stringify({ value }),
   });
   if (!res.ok) {
@@ -678,10 +632,7 @@ export async function setMindEnvVar(name: string, key: string, value: string): P
 }
 
 export async function deleteMindEnvVar(name: string, key: string): Promise<void> {
-  const res = await fetch(`/api/minds/${encodeURIComponent(name)}/env/${encodeURIComponent(key)}`, {
-    method: "DELETE",
-    credentials: "include",
-  });
+  const res = await client.api.minds[":name"].env[":key"].$delete({ param: { name, key } });
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
     throw new Error(data.error || "Failed to delete env var");
@@ -689,10 +640,7 @@ export async function deleteMindEnvVar(name: string, key: string): Promise<void>
 }
 
 export async function deleteSharedEnvVar(key: string): Promise<void> {
-  const res = await fetch(`/api/env/${encodeURIComponent(key)}`, {
-    method: "DELETE",
-    credentials: "include",
-  });
+  const res = await client.api.env[":key"].$delete({ param: { key } });
   if (!res.ok) {
     const data = (await res.json()) as { error?: string };
     throw new Error(data.error || "Failed to delete env var");

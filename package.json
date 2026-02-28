@@ -21,6 +21,12 @@
   "bin": {
     "volute": "dist/cli.js"
   },
+  "exports": {
+    ".": "./dist/cli.js",
+    "./api": {
+      "types": "./dist/api.d.ts"
+    }
+  },
   "files": [
     "dist/",
     "drizzle/",

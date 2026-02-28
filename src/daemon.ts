@@ -197,6 +197,17 @@ export async function startDaemon(opts: {
     await Promise.all(workers);
   }
 
+  // Consume messages queued in the cloud while the machine was off (non-blocking)
+  import("./lib/cloud-sync.js")
+    .then(({ consumeQueuedMessages }) =>
+      consumeQueuedMessages().catch((err) => {
+        log.warn("failed to consume queued cloud messages", log.errorData(err));
+      }),
+    )
+    .catch((err) => {
+      log.warn("failed to load cloud-sync module", log.errorData(err));
+    });
+
   // Backfill template hashes + notify minds about version updates
   try {
     const { backfillTemplateHashes, notifyVersionUpdate } = await import("./lib/version-notify.js");

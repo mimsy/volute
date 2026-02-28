@@ -1,3 +1,5 @@
+import { client } from "./api.js";
+
 function createSSEStream(
   url: string,
   onLine: (line: string) => void,
@@ -73,18 +75,19 @@ export async function sendChat(
   conversationId?: string,
   images?: Array<{ media_type: string; data: string }>,
 ): Promise<{ conversationId: string }> {
-  const res = await fetch(`/api/minds/${name}/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+  const res = await client.api.minds[":name"].chat.$post({
+    param: { name },
+    json: {
       message: message || undefined,
       conversationId,
       images: images && images.length > 0 ? images : undefined,
-    }),
+    },
   });
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    const err = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
+      error?: string;
+    };
     throw new Error(err.error ?? `Chat request failed: ${res.status}`);
   }
 
@@ -97,18 +100,18 @@ export async function sendChatUnified(
   message: string,
   images?: Array<{ media_type: string; data: string }>,
 ): Promise<{ conversationId: string }> {
-  const res = await fetch("/api/volute/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+  const res = await client.api.volute.chat.$post({
+    json: {
       message: message || undefined,
       conversationId,
       images: images && images.length > 0 ? images : undefined,
-    }),
+    },
   });
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    const err = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
+      error?: string;
+    };
     throw new Error(err.error ?? `Chat request failed: ${res.status}`);
   }
 
