@@ -1,6 +1,6 @@
 <script lang="ts">
+import type { Mind } from "@volute/api";
 import type { Snippet } from "svelte";
-import type { Mind } from "../lib/api";
 import { getDisplayStatus } from "../lib/format";
 import StatusBadge from "./StatusBadge.svelte";
 

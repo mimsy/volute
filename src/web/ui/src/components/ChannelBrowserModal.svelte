@@ -1,13 +1,12 @@
 <script lang="ts">
+import type { ChannelInfo, Conversation } from "@volute/api";
 import { onMount } from "svelte";
 import {
-  type ChannelInfo,
-  type Conversation,
   createVoluteChannel,
   fetchChannels,
   joinVoluteChannel,
   leaveVoluteChannel,
-} from "../lib/api";
+} from "../lib/client";
 import Modal from "./Modal.svelte";
 
 let {

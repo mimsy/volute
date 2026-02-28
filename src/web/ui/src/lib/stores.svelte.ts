@@ -1,14 +1,15 @@
+import type {
+  ActivityItem,
+  ConversationWithParticipants,
+  Mind,
+  RecentPage,
+  Site,
+} from "@volute/api";
+import type { SSEEvent } from "@volute/api/events";
 import { SvelteSet } from "svelte/reactivity";
-import {
-  type ActivityItem,
-  type ConversationWithParticipants,
-  fetchMinds,
-  fetchSystemInfo,
-  type Mind,
-  type RecentPage,
-  type Site,
-} from "./api";
 import { type AuthUser, fetchMe, logout } from "./auth";
+import { fetchMinds, fetchSystemInfo } from "./client";
+import { connect, disconnect, subscribe } from "./connection.svelte";
 
 // --- Auth ---
 
@@ -67,28 +68,18 @@ export const data = $state({
 /** Minds that are currently processing (between mind_active and mind_idle SSE events). */
 export const activeMinds = new SvelteSet<string>();
 
-// --- Activity SSE ---
+// --- Unified SSE via connection.svelte.ts ---
 
-let sseController: AbortController | null = null;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-
-function handleSSEMessage(line: string) {
-  let parsed: any;
-  try {
-    parsed = JSON.parse(line);
-  } catch {
-    return;
-  }
-
-  if (parsed.event === "snapshot") {
-    data.conversations = parsed.conversations ?? [];
-    data.activity = parsed.activity ?? [];
-    data.sites = parsed.sites ?? [];
-    data.recentPages = parsed.recentPages ?? [];
+function handleSSEEvent(event: SSEEvent) {
+  if (event.event === "snapshot") {
+    data.conversations = event.conversations ?? [];
+    data.activity = event.activity ?? [];
+    data.sites = event.sites ?? [];
+    data.recentPages = event.recentPages ?? [];
     data.connectionOk = true;
     activeMinds.clear();
-    if (Array.isArray(parsed.activeMinds)) {
-      for (const name of parsed.activeMinds) activeMinds.add(name);
+    if (Array.isArray(event.activeMinds)) {
+      for (const name of event.activeMinds) activeMinds.add(name);
     }
     // Minds not in snapshot — fetch separately since they need health checks
     fetchMinds()
@@ -96,9 +87,9 @@ function handleSSEMessage(line: string) {
         data.minds = m;
       })
       .catch(() => {});
-  } else if (parsed.event === "activity") {
-    const { event: _, ...item } = parsed;
-    data.activity = [item, ...data.activity].slice(0, 50);
+  } else if (event.event === "activity") {
+    const { event: _, ...item } = event;
+    data.activity = [item as ActivityItem, ...data.activity].slice(0, 50);
     // Track real-time active/idle state
     if (item.type === "mind_active") activeMinds.add(item.mind);
     if (
@@ -124,107 +115,41 @@ function handleSSEMessage(line: string) {
         })
         .catch(() => {});
     }
-    // Refresh pages on page updates
-    if (item.type === "page_updated") {
-      // Pages are now in the activity stream; sites/recentPages
-      // will be refreshed on next snapshot (reconnect).
-      // For immediate updates we could fetch, but the activity
-      // timeline itself shows the update.
-    }
-  } else if (parsed.event === "conversation") {
-    const { event: _, conversationId, ...msgEvent } = parsed;
-    const conv = data.conversations.find((c) => c.id === conversationId);
-    if (conv && msgEvent.type === "message") {
+  } else if (event.event === "conversation") {
+    const conv = data.conversations.find((c) => c.id === event.conversationId);
+    if (conv && event.type === "message") {
       // Extract text from content blocks
       let text = "";
-      if (Array.isArray(msgEvent.content)) {
-        for (const block of msgEvent.content) {
+      if (Array.isArray(event.content)) {
+        for (const block of event.content) {
           if (block.type === "text") text += block.text;
         }
       }
       (conv as any).lastMessage = {
-        role: msgEvent.role,
-        senderName: msgEvent.senderName,
+        role: event.role,
+        senderName: event.senderName,
         text,
-        createdAt: msgEvent.createdAt,
+        createdAt: event.createdAt,
       };
-      (conv as any).updated_at = msgEvent.createdAt;
+      (conv as any).updated_at = event.createdAt;
       // Re-sort by triggering reactivity
       data.conversations = [...data.conversations];
     }
   }
 }
 
-function startSSE() {
-  sseController?.abort();
-  sseController = new AbortController();
-  const signal = sseController.signal;
-
-  fetch("/api/activity/events", { signal })
-    .then(async (res) => {
-      if (!res.ok) {
-        data.connectionOk = false;
-        scheduleReconnect();
-        return;
-      }
-      if (!res.body) {
-        data.connectionOk = false;
-        scheduleReconnect();
-        return;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const payload = line.slice(6);
-          if (payload) handleSSEMessage(payload);
-        }
-      }
-
-      // Stream ended — reconnect
-      if (!signal.aborted) {
-        data.connectionOk = false;
-        scheduleReconnect();
-      }
-    })
-    .catch((err) => {
-      if (err instanceof DOMException && err.name === "AbortError") return;
-      data.connectionOk = false;
-      scheduleReconnect();
-    });
-}
-
-function scheduleReconnect() {
-  if (reconnectTimer) return;
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    startSSE();
-  }, 5000);
-}
+let unsubscribeSSE: (() => void) | null = null;
 
 export function connectActivity() {
   disconnectActivity();
-  startSSE();
+  unsubscribeSSE = subscribe(handleSSEEvent);
+  connect();
 }
 
 export function disconnectActivity() {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
-  sseController?.abort();
-  sseController = null;
+  unsubscribeSSE?.();
+  unsubscribeSSE = null;
+  disconnect();
 }
 
 /** Force reconnect — call after creating a new conversation to pick up the new subscription. */

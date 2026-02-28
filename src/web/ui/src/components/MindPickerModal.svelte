@@ -1,12 +1,7 @@
 <script lang="ts">
+import type { AvailableUser, Conversation, Mind } from "@volute/api";
 import { onMount } from "svelte";
-import {
-  type AvailableUser,
-  type Conversation,
-  createConversationWithParticipants,
-  fetchAvailableUsers,
-  type Mind,
-} from "../lib/api";
+import { createConversation, fetchAvailableUsers } from "../lib/client";
 import { mindDotColor } from "../lib/format";
 import Modal from "./Modal.svelte";
 
@@ -100,7 +95,7 @@ async function handleCreate() {
   creating = true;
   error = "";
   try {
-    const conv = await createConversationWithParticipants(selected, title || undefined);
+    const conv = await createConversation(selected, title || undefined);
     onGroupCreated(conv);
   } catch (e) {
     error = e instanceof Error ? e.message : "Failed to create";

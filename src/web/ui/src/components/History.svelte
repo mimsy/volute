@@ -1,12 +1,7 @@
 <script lang="ts">
+import type { HistoryMessage, HistorySession } from "@volute/api";
 import { onMount } from "svelte";
-import {
-  fetchHistory,
-  fetchHistoryChannels,
-  fetchHistorySessions,
-  type HistoryMessage,
-  type HistorySession,
-} from "../lib/api";
+import { fetchHistory, fetchHistoryChannels, fetchHistorySessions } from "../lib/client";
 import HistoryEvent from "./HistoryEvent.svelte";
 import HistoryFilters, { type FilterState } from "./HistoryFilters.svelte";
 import SessionDivider from "./SessionDivider.svelte";

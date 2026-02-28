@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { HistoryMessage } from "../lib/api";
+import type { HistoryMessage } from "@volute/api";
 import { normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
 

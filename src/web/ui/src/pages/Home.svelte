@@ -1,12 +1,12 @@
 <script lang="ts">
-import StatusBadge from "../components/StatusBadge.svelte";
 import type {
   ActivityItem,
   ConversationWithParticipants,
   LastMessageSummary,
   Mind,
   RecentPage,
-} from "../lib/api";
+} from "@volute/api";
+import StatusBadge from "../components/StatusBadge.svelte";
 import {
   formatRelativeTime,
   getConversationLabel,

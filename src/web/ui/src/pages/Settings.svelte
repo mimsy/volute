@@ -1,6 +1,7 @@
 <script lang="ts">
+import type { Prompt } from "@volute/api";
 import { onMount } from "svelte";
-import { fetchPrompts, type Prompt, resetPrompt, updatePrompt } from "../lib/api";
+import { fetchPrompts, resetPrompt, updatePrompt } from "../lib/client";
 
 let prompts = $state<Prompt[]>([]);
 let loading = $state(true);

@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Mind } from "../lib/api";
+import type { Mind } from "@volute/api";
 import { getDisplayStatus, mindDotColor } from "../lib/format";
 import { activeMinds } from "../lib/stores.svelte";
 

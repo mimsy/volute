@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { HistorySession } from "../lib/api";
+import type { HistorySession } from "@volute/api";
 import { formatRelativeTime } from "../lib/format";
 
 export type FilterState = {

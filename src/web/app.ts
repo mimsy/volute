@@ -138,5 +138,22 @@ const routes = app
   .route("/api/v1/events", v1Events)
   .route("/api/v1", v1Chat);
 
+// v1 re-mounts of existing modules (not chained to preserve AppType)
+app.route("/api/v1/minds", minds);
+app.route("/api/v1/minds", typing);
+app.route("/api/v1/minds", variants);
+app.route("/api/v1/minds", files);
+app.route("/api/v1/minds", envRoutes);
+app.route("/api/v1/minds", mindSkills);
+app.route("/api/v1/minds", connectors);
+app.route("/api/v1/minds", schedules);
+app.route("/api/v1/minds", logs);
+app.route("/api/v1/system", system);
+app.route("/api/v1/system", update);
+app.route("/api/v1/prompts", prompts);
+app.route("/api/v1/skills", skills);
+app.route("/api/v1/env", sharedEnvApp);
+app.route("/api/v1/channels", voluteChannels);
+
 export default app;
 export type AppType = typeof routes;

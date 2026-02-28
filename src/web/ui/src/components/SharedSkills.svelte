@@ -1,6 +1,7 @@
 <script lang="ts">
+import type { SharedSkill } from "@volute/api";
 import { onMount } from "svelte";
-import { fetchSharedSkills, removeSharedSkill, type SharedSkill, uploadSkillZip } from "../lib/api";
+import { fetchSharedSkills, removeSharedSkill, uploadSkillZip } from "../lib/client";
 
 let skills = $state<SharedSkill[]>([]);
 let error = $state("");
