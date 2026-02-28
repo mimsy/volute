@@ -1,12 +1,12 @@
 <script lang="ts">
+import type { MindSkillInfo } from "@volute/api";
 import { onMount } from "svelte";
 import {
   fetchMindSkills,
-  type MindSkillInfo,
   publishMindSkill,
   uninstallMindSkill,
   updateMindSkill,
-} from "../lib/api";
+} from "../lib/client";
 import AddSkillModal from "./AddSkillModal.svelte";
 
 let { name }: { name: string } = $props();

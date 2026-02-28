@@ -5,7 +5,7 @@ import type {
   Mind,
   RecentPage,
   Site,
-} from "../lib/api";
+} from "@volute/api";
 import type { Selection } from "../lib/navigate";
 import Home from "../pages/Home.svelte";
 import PagesDashboard from "../pages/PagesDashboard.svelte";

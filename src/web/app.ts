@@ -23,6 +23,9 @@ import skills from "./api/skills.js";
 import system from "./api/system.js";
 import typing from "./api/typing.js";
 import update from "./api/update.js";
+import v1Chat from "./api/v1/chat.js";
+import v1Conversations from "./api/v1/conversations.js";
+import v1Events from "./api/v1/events.js";
 import variants from "./api/variants.js";
 import voluteChannels from "./api/volute/channels.js";
 import chat, { unifiedChatApp } from "./api/volute/chat.js";
@@ -97,6 +100,9 @@ app.use("/api/env/*", authMiddleware);
 app.use("/api/prompts/*", authMiddleware);
 app.use("/api/skills/*", authMiddleware);
 
+// v1 API auth
+app.use("/api/v1/*", authMiddleware);
+
 // Mind pages (public, no auth)
 app.route("/pages", pages);
 
@@ -126,7 +132,28 @@ const routes = app
   .route("/api/skills", skills)
   .route("/api/conversations", userConversations)
   .route("/api/volute/channels", voluteChannels)
-  .route("/api/volute", unifiedChatApp);
+  .route("/api/volute", unifiedChatApp)
+  // v1 API routes
+  .route("/api/v1/conversations", v1Conversations)
+  .route("/api/v1/events", v1Events)
+  .route("/api/v1", v1Chat);
+
+// v1 re-mounts of existing modules (not chained to preserve AppType)
+app.route("/api/v1/minds", minds);
+app.route("/api/v1/minds", typing);
+app.route("/api/v1/minds", variants);
+app.route("/api/v1/minds", files);
+app.route("/api/v1/minds", envRoutes);
+app.route("/api/v1/minds", mindSkills);
+app.route("/api/v1/minds", connectors);
+app.route("/api/v1/minds", schedules);
+app.route("/api/v1/minds", logs);
+app.route("/api/v1/system", system);
+app.route("/api/v1/system", update);
+app.route("/api/v1/prompts", prompts);
+app.route("/api/v1/skills", skills);
+app.route("/api/v1/env", sharedEnvApp);
+app.route("/api/v1/channels", voluteChannels);
 
 export default app;
 export type AppType = typeof routes;

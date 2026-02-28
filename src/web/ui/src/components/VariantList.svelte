@@ -1,5 +1,6 @@
 <script lang="ts">
-import { fetchVariants, type Variant } from "../lib/api";
+import type { Variant } from "@volute/api";
+import { fetchVariants } from "../lib/client";
 import StatusBadge from "./StatusBadge.svelte";
 
 let { name }: { name: string } = $props();

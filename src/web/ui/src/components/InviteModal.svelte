@@ -1,5 +1,5 @@
 <script lang="ts">
-import { inviteToChannel } from "../lib/api";
+import { inviteToChannel } from "../lib/client";
 import Modal from "./Modal.svelte";
 
 let {

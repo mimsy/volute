@@ -1,12 +1,7 @@
 <script lang="ts">
+import type { SharedSkill } from "@volute/api";
 import { onMount } from "svelte";
-import {
-  createSeedMind,
-  fetchPrompts,
-  fetchSharedSkills,
-  type SharedSkill,
-  startMind,
-} from "../lib/api";
+import { createSeedMind, fetchPrompts, fetchSharedSkills, startMind } from "../lib/client";
 import Modal from "./Modal.svelte";
 
 const SEED_DEFAULTS = ["orientation", "memory"];

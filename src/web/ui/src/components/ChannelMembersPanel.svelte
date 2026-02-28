@@ -1,5 +1,6 @@
 <script lang="ts">
-import { type ConversationWithParticipants, inviteToChannel, type Mind } from "../lib/api";
+import type { ConversationWithParticipants, Mind } from "@volute/api";
+import { inviteToChannel } from "../lib/client";
 import { getDisplayStatus, mindDotColor } from "../lib/format";
 import { activeMinds, reconnectActivity } from "../lib/stores.svelte";
 import StatusBadge from "./StatusBadge.svelte";

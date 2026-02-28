@@ -1,4 +1,5 @@
 <script lang="ts">
+import type { Conversation, Mind } from "@volute/api";
 import { onMount } from "svelte";
 import AdminModal from "./components/AdminModal.svelte";
 import ChannelBrowserModal from "./components/ChannelBrowserModal.svelte";
@@ -12,8 +13,8 @@ import Sidebar from "./components/Sidebar.svelte";
 import StatusBar from "./components/StatusBar.svelte";
 import UpdateBanner from "./components/UpdateBanner.svelte";
 import UserSettingsModal from "./components/UserSettingsModal.svelte";
-import { type Conversation, deleteConversationById, type Mind, restartDaemon } from "./lib/api";
 import { type AuthUser } from "./lib/auth";
+import { deleteConversation, restartDaemon } from "./lib/client";
 import { navigate, parseSelection, type Selection, selectionToPath } from "./lib/navigate";
 import {
   auth,
@@ -142,7 +143,7 @@ function handleSelectConversation(id: string) {
 
 async function handleDeleteConversation(id: string) {
   try {
-    await deleteConversationById(id);
+    await deleteConversation(id);
   } catch (err) {
     console.error("Failed to delete conversation:", err);
     return;

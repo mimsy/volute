@@ -1,5 +1,3 @@
-import { client } from "./api.js";
-
 function createSSEStream(
   url: string,
   onLine: (line: string) => void,
@@ -67,54 +65,4 @@ export function createSystemLogStream(
   onError?: (msg: string) => void,
 ) {
   return createSSEStream("/api/system/logs", onLine, onError);
-}
-
-export async function sendChat(
-  name: string,
-  message: string,
-  conversationId?: string,
-  images?: Array<{ media_type: string; data: string }>,
-): Promise<{ conversationId: string }> {
-  const res = await client.api.minds[":name"].chat.$post({
-    param: { name },
-    json: {
-      message: message || undefined,
-      conversationId,
-      images: images && images.length > 0 ? images : undefined,
-    },
-  });
-
-  if (!res.ok) {
-    const err = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
-      error?: string;
-    };
-    throw new Error(err.error ?? `Chat request failed: ${res.status}`);
-  }
-
-  const data = (await res.json()) as { ok: boolean; conversationId: string };
-  return { conversationId: data.conversationId };
-}
-
-export async function sendChatUnified(
-  conversationId: string,
-  message: string,
-  images?: Array<{ media_type: string; data: string }>,
-): Promise<{ conversationId: string }> {
-  const res = await client.api.volute.chat.$post({
-    json: {
-      message: message || undefined,
-      conversationId,
-      images: images && images.length > 0 ? images : undefined,
-    },
-  });
-
-  if (!res.ok) {
-    const err = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
-      error?: string;
-    };
-    throw new Error(err.error ?? `Chat request failed: ${res.status}`);
-  }
-
-  const data = (await res.json()) as { ok: boolean; conversationId: string };
-  return { conversationId: data.conversationId };
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { ConversationWithParticipants, Mind, Site } from "../lib/api";
+import type { ConversationWithParticipants, Mind, Site } from "@volute/api";
 import { mindDotColor } from "../lib/format";
 import { activeMinds } from "../lib/stores.svelte";
 import ConversationList from "./ConversationList.svelte";

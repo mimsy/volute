@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Mind } from "../lib/api";
+import type { Mind } from "@volute/api";
 import { formatRelativeTime, getDisplayStatus } from "../lib/format";
 import { data } from "../lib/stores.svelte";
 import History from "./History.svelte";

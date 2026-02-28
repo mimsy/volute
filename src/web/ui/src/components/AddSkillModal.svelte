@@ -1,6 +1,7 @@
 <script lang="ts">
+import type { SharedSkill } from "@volute/api";
 import { onMount } from "svelte";
-import { fetchSharedSkills, installMindSkill, type SharedSkill } from "../lib/api";
+import { fetchSharedSkills, installMindSkill } from "../lib/client";
 import Modal from "./Modal.svelte";
 
 let {

@@ -1,6 +1,6 @@
 <script lang="ts">
+import type { Site } from "@volute/api";
 import PageThumbnail from "../components/PageThumbnail.svelte";
-import type { Site } from "../lib/api";
 import { formatRelativeTime } from "../lib/format";
 
 let {

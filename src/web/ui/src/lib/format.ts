@@ -1,4 +1,4 @@
-import type { Mind } from "./api";
+import type { Mind } from "@volute/api";
 
 export function mindDotColor(mind: Mind): string {
   const s = getDisplayStatus(mind);

@@ -1,4 +1,5 @@
 <script lang="ts">
+import type { Mind, MindConfig, MindEnv } from "@volute/api";
 import { onMount } from "svelte";
 import {
   deleteMindEnvVar,
@@ -6,14 +7,11 @@ import {
   fetchMindConfig,
   fetchMindEnv,
   fetchMinds,
-  type Mind,
-  type MindConfig,
-  type MindEnv,
   setMindEnvVar,
   startMind,
   stopMind,
   updateMindConfig,
-} from "../lib/api";
+} from "../lib/client";
 import { getDisplayStatus } from "../lib/format";
 import { data } from "../lib/stores.svelte";
 import StatusBadge from "./StatusBadge.svelte";

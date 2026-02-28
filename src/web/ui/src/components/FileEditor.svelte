@@ -1,5 +1,5 @@
 <script lang="ts">
-import { fetchFile, fetchFiles } from "../lib/api";
+import { fetchFile, fetchFiles } from "../lib/client";
 
 let { name }: { name: string } = $props();
 
