@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { conversationParticipants, conversations, messages, users } from "../schema.js";
+import { fireWebhook } from "../webhook.js";
 import { publish } from "./conversation-events.js";
 
 export type ContentBlock =
@@ -75,6 +76,13 @@ export async function createConversation(
         })),
       );
     }
+  });
+
+  fireWebhook({
+    event: "conversation_created",
+    mind: mindName ?? "",
+    data: { id, mindName, channel, type, name, title: opts?.title ?? null },
+    timestamp: new Date().toISOString(),
   });
 
   return {
@@ -265,6 +273,20 @@ export async function addMessage(
     senderName: msg.sender_name,
     content: msg.content,
     createdAt: msg.created_at,
+  });
+
+  fireWebhook({
+    event: "message_created",
+    mind: "",
+    data: {
+      conversationId,
+      messageId: result.id,
+      role,
+      senderName,
+      content,
+      createdAt: result.created_at,
+    },
+    timestamp: new Date().toISOString(),
   });
 
   return msg;
