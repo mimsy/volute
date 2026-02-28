@@ -1,6 +1,13 @@
 // SSE event types for the unified event stream
 
-import type { ActivityEventType, ContentBlock, ConversationWithParticipants } from "./types.js";
+import type {
+  ActivityEventType,
+  ActivityItem,
+  ContentBlock,
+  ConversationWithParticipants,
+  RecentPage,
+  Site,
+} from "./types.js";
 
 /** Conversation-scoped events (messages, typing) */
 export type ConversationEvent =
@@ -29,20 +36,9 @@ export type SSEEvent = SSESnapshotEvent | SSEActivityEvent | SSEConversationEven
 export type SSESnapshotEvent = {
   event: "snapshot";
   conversations: ConversationWithParticipants[];
-  activity: Array<{
-    id: number;
-    type: ActivityEventType;
-    mind: string;
-    summary: string;
-    metadata: Record<string, unknown> | null;
-    created_at: string;
-  }>;
-  sites: Array<{
-    name: string;
-    label: string;
-    pages: Array<{ file: string; modified: string; url: string }>;
-  }>;
-  recentPages: Array<{ mind: string; file: string; modified: string; url: string }>;
+  activity: ActivityItem[];
+  sites: Site[];
+  recentPages: RecentPage[];
   activeMinds: string[];
 };
 

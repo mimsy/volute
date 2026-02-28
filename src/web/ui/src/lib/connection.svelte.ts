@@ -12,6 +12,8 @@ let reconnectDelay = 1000;
 const MAX_RECONNECT_DELAY = 30000;
 const handlers = new Set<EventHandler>();
 
+export const connectionState = $state({ connected: false });
+
 export function subscribe(handler: EventHandler): () => void {
   handlers.add(handler);
   return () => handlers.delete(handler);
@@ -66,6 +68,7 @@ function startSSE() {
 
       // Connection succeeded — reset backoff
       reconnectDelay = 1000;
+      connectionState.connected = true;
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -91,7 +94,9 @@ function startSSE() {
               const parsed = JSON.parse(event.data) as SSEEvent;
               dispatch(parsed);
             } catch {
-              // Ignore malformed events (e.g. keepalive pings)
+              if (event.data.trim()) {
+                console.warn("[connection] malformed SSE event:", event.data.slice(0, 200));
+              }
             }
           }
         }
@@ -109,6 +114,7 @@ function startSSE() {
 }
 
 function scheduleReconnect() {
+  connectionState.connected = false;
   if (reconnectTimer) return;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;

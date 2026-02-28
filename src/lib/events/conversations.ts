@@ -1,43 +1,18 @@
 import { randomUUID } from "node:crypto";
+import type {
+  ContentBlock,
+  Conversation,
+  LastMessageSummary,
+  Message,
+  Participant,
+} from "@volute/api";
 import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { conversationParticipants, conversations, messages, users } from "../schema.js";
 import { fireWebhook } from "../webhook.js";
 import { publish } from "./conversation-events.js";
 
-export type ContentBlock =
-  | { type: "text"; text: string }
-  | { type: "tool_use"; name: string; input: unknown }
-  | { type: "tool_result"; output: string; is_error?: boolean }
-  | { type: "image"; media_type: string; data: string };
-
-export type Conversation = {
-  id: string;
-  mind_name: string | null;
-  channel: string;
-  type: "dm" | "group" | "channel";
-  name: string | null;
-  user_id: number | null;
-  title: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-export type Participant = {
-  userId: number;
-  username: string;
-  userType: "brain" | "mind";
-  role: "owner" | "member";
-};
-
-export type Message = {
-  id: number;
-  conversation_id: string;
-  role: string;
-  sender_name: string | null;
-  content: ContentBlock[];
-  created_at: string;
-};
+export type { ContentBlock, Conversation, LastMessageSummary, Message, Participant };
 
 export async function createConversation(
   mindName: string | null,
@@ -256,10 +231,10 @@ export async function addMessage(
     }
   }
 
-  const msg = {
+  const msg: Message = {
     id: result.id,
     conversation_id: conversationId,
-    role,
+    role: role as Message["role"],
     sender_name: senderName,
     content,
     created_at: result.created_at,
@@ -346,15 +321,8 @@ function parseMessageRow(row: typeof messages.$inferSelect): Message {
   } catch {
     content = [{ type: "text", text: row.content }];
   }
-  return { ...row, content };
+  return { ...row, role: row.role as Message["role"], content };
 }
-
-export type LastMessageSummary = {
-  role: string;
-  senderName: string | null;
-  text: string;
-  createdAt: string;
-};
 
 export async function listConversationsWithParticipants(
   userId: number,
@@ -421,7 +389,7 @@ export async function listConversationsWithParticipants(
         text = m.content;
       }
       byLastMsg.set(m.conversation_id, {
-        role: m.role,
+        role: m.role as Message["role"],
         senderName: m.sender_name,
         text,
         createdAt: m.created_at,

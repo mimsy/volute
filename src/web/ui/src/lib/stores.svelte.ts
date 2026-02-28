@@ -9,7 +9,7 @@ import type { SSEEvent } from "@volute/api/events";
 import { SvelteSet } from "svelte/reactivity";
 import { type AuthUser, fetchMe, logout } from "./auth";
 import { fetchMinds, fetchSystemInfo } from "./client";
-import { connect, disconnect, subscribe } from "./connection.svelte";
+import { connect, connectionState, disconnect, subscribe } from "./connection.svelte";
 
 // --- Auth ---
 
@@ -63,6 +63,13 @@ export const data = $state({
   connectionOk: true,
 });
 
+// Sync SSE connection state to data.connectionOk
+$effect.root(() => {
+  $effect(() => {
+    data.connectionOk = connectionState.connected;
+  });
+});
+
 // --- Real-time mind activity ---
 
 /** Minds that are currently processing (between mind_active and mind_idle SSE events). */
@@ -76,7 +83,6 @@ function handleSSEEvent(event: SSEEvent) {
     data.activity = event.activity ?? [];
     data.sites = event.sites ?? [];
     data.recentPages = event.recentPages ?? [];
-    data.connectionOk = true;
     activeMinds.clear();
     if (Array.isArray(event.activeMinds)) {
       for (const name of event.activeMinds) activeMinds.add(name);
@@ -86,7 +92,9 @@ function handleSSEEvent(event: SSEEvent) {
       .then((m) => {
         data.minds = m;
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.warn("[stores] failed to refresh minds:", err);
+      });
   } else if (event.event === "activity") {
     const { event: _, ...item } = event;
     data.activity = [item as ActivityItem, ...data.activity].slice(0, 50);
@@ -113,7 +121,9 @@ function handleSSEEvent(event: SSEEvent) {
         .then((m) => {
           data.minds = m;
         })
-        .catch(() => {});
+        .catch((err) => {
+          console.warn("[stores] failed to refresh minds:", err);
+        });
     }
   } else if (event.event === "conversation") {
     const conv = data.conversations.find((c) => c.id === event.conversationId);

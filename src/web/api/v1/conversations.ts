@@ -33,19 +33,22 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Conversation not found" }, 404);
     }
 
-    const before = c.req.query("before");
-    const limit = c.req.query("limit");
+    const beforeStr = c.req.query("before");
+    const limitStr = c.req.query("limit");
 
     // If no cursor params, return all messages (backwards compat)
-    if (!before && !limit) {
+    if (!beforeStr && !limitStr) {
       const msgs = await getMessages(id);
       return c.json({ items: msgs, hasMore: false });
     }
 
-    const result = await getMessagesPaginated(id, {
-      before: before ? Number(before) : undefined,
-      limit: limit ? Number(limit) : undefined,
-    });
+    const before = beforeStr ? parseInt(beforeStr, 10) : undefined;
+    const limit = limitStr ? parseInt(limitStr, 10) : undefined;
+    if ((before !== undefined && isNaN(before)) || (limit !== undefined && isNaN(limit))) {
+      return c.json({ error: "Invalid cursor params: before and limit must be integers" }, 400);
+    }
+
+    const result = await getMessagesPaginated(id, { before, limit });
     return c.json({ items: result.messages, hasMore: result.hasMore });
   })
   .get("/:id/participants", async (c) => {

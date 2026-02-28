@@ -92,7 +92,9 @@ async function fanOutToMinds(opts: {
       participantCount: participants.length,
       isDM,
       ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
-    }).catch(() => {});
+    }).catch((err) => {
+      log.warn("[v1-chat] delivery failed", log.errorData(err));
+    });
   }
 }
 
@@ -197,13 +199,13 @@ const app = new Hono<AuthEnv>()
     return streamSSE(c, async (stream) => {
       const unsubscribe = subscribe(conversationId, (event) => {
         stream.writeSSE({ data: JSON.stringify(event) }).catch((err) => {
-          if (!stream.aborted) console.error("[v1-chat] SSE write error:", err);
+          if (!stream.aborted) log.error("[v1-chat] SSE write error:", log.errorData(err));
         });
       });
 
       const keepAlive = setInterval(() => {
         stream.writeSSE({ data: "" }).catch((err) => {
-          if (!stream.aborted) console.error("[v1-chat] SSE ping error:", err);
+          if (!stream.aborted) log.error("[v1-chat] SSE ping error:", log.errorData(err));
         });
       }, 15000);
 

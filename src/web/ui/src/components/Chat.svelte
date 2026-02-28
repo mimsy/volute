@@ -36,6 +36,7 @@ let {
 
 type ChatEntry = {
   id: number;
+  serverId?: number;
   role: "user" | "assistant";
   blocks: ContentBlock[];
   senderName?: string;
@@ -65,7 +66,8 @@ function normalizeContent(content: ContentBlock[] | string): ContentBlock[] {
 function messagesToEntries(msgs: Message[]): ChatEntry[] {
   return msgs.map((m) => ({
     id: nextEntryId++,
-    role: m.role as "user" | "assistant",
+    serverId: m.id,
+    role: m.role,
     blocks: normalizeContent(m.content),
     senderName: m.sender_name ?? undefined,
     createdAt: m.created_at,
@@ -95,27 +97,13 @@ async function loadMessages(convId: string, forceScroll?: boolean) {
 
 async function loadOlderMessages() {
   if (!currentConvId || loadingOlder || !hasMore) return;
-  const oldestId = entries[0]?.id;
-  // Find the original message ID (from the server) for the cursor
-  // We need the server-side message ID, not our local entry ID
-  // The first entry's blocks correspond to the first server message
-  // We need to re-fetch with a before cursor based on the server message IDs
-  // Since our entries don't store server IDs, we use the count-based approach:
-  // Re-fetch with before= the oldest message's server ID
-  // Actually, we should track server IDs. Let me use the entry approach:
-  // Load the current messages page first, get its oldest server ID
+  const cursor = entries[0]?.serverId;
+  if (!cursor) return;
+
   loadingOlder = true;
   try {
-    // Fetch the current oldest messages to find the cursor
-    const currentResult = await fetchConversationMessages(currentConvId, { limit: 50 });
-    const serverOldestId = currentResult.items[0]?.id;
-    if (!serverOldestId) {
-      loadingOlder = false;
-      return;
-    }
-
     const result = await fetchConversationMessages(currentConvId, {
-      before: serverOldestId,
+      before: cursor,
       limit: 50,
     });
 
@@ -128,7 +116,7 @@ async function loadOlderMessages() {
       hasMore = false;
     }
   } catch (e) {
-    console.error("Failed to load older messages:", e);
+    loadError = e instanceof Error ? e.message : "Failed to load older messages";
   }
   loadingOlder = false;
 }

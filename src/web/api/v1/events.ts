@@ -59,25 +59,20 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
       const sites = getCachedSites();
       const recentPages = getCachedRecentPages();
 
-      const snapshotId = bufferEvent({
-        event: "snapshot",
+      const snapshotData = {
+        event: "snapshot" as const,
         activity: recentActivity,
         conversations,
         sites,
         recentPages,
         activeMinds: getActiveMinds(),
-      });
+      };
+
+      const snapshotId = bufferEvent(snapshotData);
 
       await stream.writeSSE({
         id: String(snapshotId),
-        data: JSON.stringify({
-          event: "snapshot",
-          activity: recentActivity,
-          conversations,
-          sites,
-          recentPages,
-          activeMinds: getActiveMinds(),
-        }),
+        data: JSON.stringify(snapshotData),
       });
 
       // Subscribe to activity events

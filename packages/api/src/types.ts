@@ -1,4 +1,6 @@
-// Entity types shared between frontend and backend
+// Entity types shared between frontend and backend.
+// Entity types use snake_case fields to match database columns.
+// SSE event types in events.ts use camelCase because they're constructed in JS.
 
 export type ContentBlock =
   | { type: "text"; text: string }
@@ -45,21 +47,21 @@ export type Conversation = {
 export type Participant = {
   userId: number;
   username: string;
-  userType: string;
-  role: string;
+  userType: "brain" | "mind";
+  role: "owner" | "member";
 };
 
 export type Message = {
   id: number;
   conversation_id: string;
-  role: string;
+  role: "user" | "assistant";
   sender_name: string | null;
   content: ContentBlock[];
   created_at: string;
 };
 
 export type LastMessageSummary = {
-  role: string;
+  role: "user" | "assistant";
   senderName: string | null;
   text: string;
   createdAt: string;
@@ -95,7 +97,7 @@ export type Variant = {
   path: string;
   port: number;
   created: string;
-  status: string;
+  status: "running" | "dead" | "no-server";
 };
 
 export type RecentPage = {
