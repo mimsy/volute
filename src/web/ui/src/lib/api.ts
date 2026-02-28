@@ -196,14 +196,14 @@ export async function fetchHistory(
   name: string,
   opts?: { channel?: string; session?: string; full?: boolean; limit?: number; offset?: number },
 ): Promise<HistoryMessage[]> {
-  // Route uses manual c.req.query() — build typed URL then add query params
-  const url = client.api.minds[":name"].history.$url({ param: { name } });
-  if (opts?.channel) url.searchParams.set("channel", opts.channel);
-  if (opts?.session) url.searchParams.set("session", opts.session);
-  if (opts?.full) url.searchParams.set("full", "true");
-  if (opts?.limit !== undefined) url.searchParams.set("limit", String(opts.limit));
-  if (opts?.offset !== undefined) url.searchParams.set("offset", String(opts.offset));
-  const res = await fetch(url);
+  const params = new URLSearchParams();
+  if (opts?.channel) params.set("channel", opts.channel);
+  if (opts?.session) params.set("session", opts.session);
+  if (opts?.full) params.set("full", "true");
+  if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts?.offset !== undefined) params.set("offset", String(opts.offset));
+  const qs = params.toString();
+  const res = await fetch(`/api/minds/${encodeURIComponent(name)}/history${qs ? `?${qs}` : ""}`);
   if (!res.ok) throw new Error("Failed to fetch history");
   return res.json();
 }
@@ -620,9 +620,7 @@ export async function fetchMindEnv(name: string): Promise<MindEnv> {
 }
 
 export async function setMindEnvVar(name: string, key: string, value: string): Promise<void> {
-  // Route uses manual c.req.json() — build typed URL then send body manually
-  const url = client.api.minds[":name"].env[":key"].$url({ param: { name, key } });
-  const res = await fetch(url, {
+  const res = await fetch(`/api/minds/${encodeURIComponent(name)}/env/${encodeURIComponent(key)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ value }),
