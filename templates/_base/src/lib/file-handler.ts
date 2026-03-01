@@ -9,9 +9,12 @@ import type {
   VoluteContentPart,
 } from "./types.js";
 
-function extractText(content: VoluteContentPart[] | string | unknown): string {
+function extractText(content: unknown): string {
   if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return JSON.stringify(content);
+  if (!Array.isArray(content)) {
+    log("file", `extractText received unexpected ${typeof content} instead of VoluteContentPart[]`);
+    return JSON.stringify(content);
+  }
   return content
     .filter((p): p is { type: "text"; text: string } => p.type === "text")
     .map((p) => p.text)

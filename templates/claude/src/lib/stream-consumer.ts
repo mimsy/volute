@@ -1,6 +1,6 @@
 import type { query } from "@anthropic-ai/claude-agent-sdk";
 import { daemonEmit, type EventType } from "./daemon-client.js";
-import { log, logText, logThinking, logToolUse } from "./logger.js";
+import { log, logText, logThinking, logToolUse, warn } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
 import type { VoluteEvent } from "./types.js";
 
@@ -82,6 +82,15 @@ export async function consumeStream(
         session.messageChannels.delete(session.currentMessageId);
       }
       log("mind", `session "${session.name}": turn done`);
+      // Log any error messages from the result
+      const resultMsg = msg as Record<string, unknown>;
+      if (Array.isArray(resultMsg.messages)) {
+        for (const m of resultMsg.messages) {
+          if (m && typeof m === "object" && "errorMessage" in m && m.errorMessage) {
+            warn("mind", `session "${session.name}": agent error: ${m.errorMessage}`);
+          }
+        }
+      }
       const result = msg as { usage?: { input_tokens?: number; output_tokens?: number } };
       if (result.usage) {
         const usage = {

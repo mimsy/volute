@@ -1,6 +1,6 @@
 import { commitFileChange } from "./auto-commit.js";
 import { daemonEmit, type EventType } from "./daemon-client.js";
-import { log, logText, logThinking, logToolResult, logToolUse } from "./logger.js";
+import { log, logText, logThinking, logToolResult, logToolUse, warn } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
 import type { VoluteEvent } from "./types.js";
 
@@ -139,7 +139,7 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         if (event.messages) {
           for (const msg of event.messages as any[]) {
             if (msg.errorMessage) {
-              log("mind", `session "${session.name}": agent error: ${msg.errorMessage}`);
+              warn("mind", `session "${session.name}": agent error: ${msg.errorMessage}`);
             }
           }
         }
