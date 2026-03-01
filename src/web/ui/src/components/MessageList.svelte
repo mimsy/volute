@@ -1,14 +1,7 @@
 <script lang="ts">
-import type { ContentBlock, Mind } from "@volute/api";
+import type { Mind } from "@volute/api";
+import type { ChatEntry } from "../lib/types";
 import MessageEntry from "./MessageEntry.svelte";
-
-type ChatEntry = {
-  id: number;
-  role: "user" | "assistant";
-  blocks: ContentBlock[];
-  senderName?: string;
-  createdAt?: string;
-};
 
 let {
   entries,

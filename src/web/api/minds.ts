@@ -1984,27 +1984,34 @@ const app = new Hono<AuthEnv>()
         };
 
         // Keep-alive ping every 15s to prevent silent connection drops
+        let unsubscribe: (() => void) | undefined;
         const pingInterval = setInterval(() => {
           try {
             controller.enqueue(encoder.encode(": ping\n\n"));
           } catch {
             clearInterval(pingInterval);
+            unsubscribe?.();
           }
         }, 15000);
 
-        const unsubscribe = subscribeMindEvent(baseName, (event) => {
+        unsubscribe = subscribeMindEvent(baseName, (event) => {
           // Apply filters
           if (typeFilter && !typeFilter.includes(event.type)) return;
           if (sessionFilter && event.session !== sessionFilter) return;
           if (channelFilter && event.channel !== channelFilter) return;
 
-          send(JSON.stringify(event));
+          try {
+            send(JSON.stringify(event));
+          } catch {
+            clearInterval(pingInterval);
+            unsubscribe?.();
+          }
         });
 
         // Clean up on close
         c.req.raw.signal.addEventListener("abort", () => {
           clearInterval(pingInterval);
-          unsubscribe();
+          unsubscribe?.();
           try {
             controller.close();
           } catch {

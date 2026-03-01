@@ -8,6 +8,7 @@ import {
   sendChatUnified,
 } from "../lib/client";
 import { subscribe } from "../lib/connection.svelte";
+import type { ChatEntry } from "../lib/types";
 import MessageInput from "./MessageInput.svelte";
 import MessageList from "./MessageList.svelte";
 import TypingIndicator from "./TypingIndicator.svelte";
@@ -33,15 +34,6 @@ let {
   minds?: Mind[];
   onOpenMind?: (mind: Mind) => void;
 } = $props();
-
-type ChatEntry = {
-  id: number;
-  serverId?: number;
-  role: "user" | "assistant";
-  blocks: ContentBlock[];
-  senderName?: string;
-  createdAt?: string;
-};
 
 let nextEntryId = 0;
 let entries = $state<ChatEntry[]>([]);

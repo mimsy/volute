@@ -104,8 +104,8 @@ async function loadMeta() {
     channels = ch;
     sessions = sess;
     sessionMap = new Map(sess.map((s) => [s.session, s]));
-  } catch {
-    // Non-critical
+  } catch (err) {
+    console.warn("[History] failed to load filter metadata:", err);
   }
 }
 
@@ -128,7 +128,8 @@ $effect(() => {
   }
 });
 
-// SSE live mode — always on
+// SSE live mode — always on.
+// Reads filters.channel/session inside connectSSE(), so Svelte re-runs on filter changes.
 $effect(() => {
   connectSSE();
   return () => disconnectSSE();
@@ -144,47 +145,51 @@ function connectSSE() {
 
   const es = new EventSource(url);
   es.onmessage = (e) => {
+    let data: Record<string, unknown>;
     try {
-      const data = JSON.parse(e.data);
-      const event: HistoryMessage = {
-        id: nextSseId--,
-        mind: name,
-        channel: data.channel ?? "",
-        session: data.session ?? null,
-        sender: null,
-        message_id: data.messageId ?? null,
-        type: data.type,
-        content: data.content ?? "",
-        metadata: data.metadata ? JSON.stringify(data.metadata) : null,
-        created_at: data.createdAt ?? new Date().toISOString(),
-      };
-      messages = [...messages, event];
-
-      // Update session map if new session
-      if (event.session && !sessionMap.has(event.session)) {
-        const newSess: HistorySession = {
-          session: event.session,
-          started_at: event.created_at,
-          event_count: 1,
-          message_count: ["inbound", "outbound"].includes(event.type) ? 1 : 0,
-          tool_count: event.type === "tool_use" ? 1 : 0,
-        };
-        sessionMap = new Map([...sessionMap, [event.session, newSess]]);
-        sessions = [newSess, ...sessions];
-      }
-
-      // Auto-scroll if user is near bottom
-      if (!userScrolledUp) {
-        requestAnimationFrame(() => {
-          scrollContainer?.scrollTo({ top: scrollContainer.scrollHeight, behavior: "smooth" });
-        });
-      }
+      data = JSON.parse(e.data);
     } catch {
-      // Ignore unparseable events
+      return;
+    }
+
+    const event: HistoryMessage = {
+      id: nextSseId--,
+      mind: name,
+      channel: (data.channel as string) ?? "",
+      session: (data.session as string) ?? null,
+      sender: null,
+      message_id: (data.messageId as string) ?? null,
+      type: data.type as string,
+      content: (data.content as string) ?? "",
+      metadata: data.metadata ? JSON.stringify(data.metadata) : null,
+      created_at: (data.createdAt as string) ?? new Date().toISOString(),
+    };
+    messages = [...messages, event];
+
+    // Update session map if new session
+    if (event.session && !sessionMap.has(event.session)) {
+      const newSess: HistorySession = {
+        session: event.session,
+        started_at: event.created_at,
+        event_count: 1,
+        message_count: ["inbound", "outbound"].includes(event.type) ? 1 : 0,
+        tool_count: event.type === "tool_use" ? 1 : 0,
+      };
+      sessionMap = new Map([...sessionMap, [event.session, newSess]]);
+      sessions = [newSess, ...sessions];
+    }
+
+    // Auto-scroll if user is near bottom
+    if (!userScrolledUp) {
+      requestAnimationFrame(() => {
+        scrollContainer?.scrollTo({ top: scrollContainer.scrollHeight, behavior: "smooth" });
+      });
     }
   };
   es.onerror = () => {
-    // Will auto-reconnect
+    if (es.readyState === EventSource.CLOSED) {
+      console.warn("[History] SSE connection closed by server");
+    }
   };
   eventSource = es;
 }

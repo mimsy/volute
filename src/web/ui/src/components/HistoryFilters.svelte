@@ -38,7 +38,6 @@ let {
 let open = $state(false);
 let channelOpen = $state(false);
 let sessionOpen = $state(false);
-let typesOpen = $state(false);
 
 let hasActiveFilters = $derived(
   filters.channel !== "" || filters.session !== "" || filters.types.size !== ALL_TYPES.size,
@@ -47,7 +46,6 @@ let hasActiveFilters = $derived(
 function closeAll() {
   channelOpen = false;
   sessionOpen = false;
-  typesOpen = false;
 }
 
 function selectChannel(value: string) {

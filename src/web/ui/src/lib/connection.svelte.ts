@@ -52,6 +52,13 @@ function parseSSE(text: string): Array<{ id?: string; data: string }> {
   return events;
 }
 
+function clearStaleTimer() {
+  if (staleTimer) {
+    clearTimeout(staleTimer);
+    staleTimer = null;
+  }
+}
+
 function startSSE() {
   controller?.abort();
   controller = new AbortController();
@@ -80,6 +87,7 @@ function startSSE() {
         if (staleTimer) clearTimeout(staleTimer);
         staleTimer = setTimeout(() => {
           staleTimer = null;
+          controller?.abort();
           scheduleReconnect();
         }, STALE_TIMEOUT);
       }
@@ -105,9 +113,13 @@ function startSSE() {
             try {
               const parsed = JSON.parse(event.data) as SSEEvent;
               dispatch(parsed);
-            } catch {
+            } catch (err) {
               if (event.data.trim()) {
-                console.warn("[connection] malformed SSE event:", event.data.slice(0, 200));
+                console.warn(
+                  "[connection] failed to process SSE event:",
+                  event.data.slice(0, 200),
+                  err,
+                );
               }
             }
           }
@@ -115,19 +127,13 @@ function startSSE() {
       }
 
       // Stream ended — clean up stale timer and reconnect
-      if (staleTimer) {
-        clearTimeout(staleTimer);
-        staleTimer = null;
-      }
+      clearStaleTimer();
       if (!signal.aborted) {
         scheduleReconnect();
       }
     })
     .catch((err) => {
-      if (staleTimer) {
-        clearTimeout(staleTimer);
-        staleTimer = null;
-      }
+      clearStaleTimer();
       if (err instanceof DOMException && err.name === "AbortError") return;
       scheduleReconnect();
     });
@@ -156,10 +162,7 @@ export function disconnect() {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
-  if (staleTimer) {
-    clearTimeout(staleTimer);
-    staleTimer = null;
-  }
+  clearStaleTimer();
   controller?.abort();
   controller = null;
 }
