@@ -213,12 +213,14 @@ function handleFilterChange(next: FilterState) {
 </script>
 
 <div class="history">
-  <HistoryFilters
-    {channels}
-    {sessions}
-    {filters}
-    onchange={handleFilterChange}
-  />
+  <div class="filter-float">
+    <HistoryFilters
+      {channels}
+      {sessions}
+      {filters}
+      onchange={handleFilterChange}
+    />
+  </div>
 
   <div class="timeline" bind:this={scrollContainer} onscroll={handleScroll}>
     {#if hasMore}
@@ -272,15 +274,21 @@ function handleFilterChange(next: FilterState) {
   .history {
     display: flex;
     flex-direction: column;
-    height: 60vh;
+    height: 100%;
     overflow: hidden;
     position: relative;
+  }
+
+  .filter-float {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    z-index: 10;
   }
 
   .timeline {
     flex: 1;
     overflow: auto;
-    padding-top: 8px;
   }
 
   .timeline-rail {

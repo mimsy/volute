@@ -43,7 +43,7 @@ function formatCreated(dateStr: string): string {
     </div>
     <TabBar tabs={[...TABS]} active={tab} onchange={(t) => (tab = t as Tab)} />
   </div>
-  <div class="panel-body">
+  <div class="panel-body" class:panel-body-flex={tab === "Info"}>
     {#if tab === "Info"}
       <div class="profile-section">
         <span class="profile-display-name">{mind.displayName ?? mind.name}</span>
@@ -61,7 +61,7 @@ function formatCreated(dateStr: string): string {
         <span class="profile-meta">@{mind.name} &middot; since {formatCreated(mind.created)}</span>
       </div>
 
-      <div class="detail-section history-section">
+      <div class="history-section">
         <History name={mind.name} />
       </div>
     {:else if tab === "Settings"}
@@ -154,6 +154,13 @@ function formatCreated(dateStr: string): string {
     flex: 1;
     overflow: auto;
     padding: 16px;
+    min-height: 0;
+  }
+
+  .panel-body-flex {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
 
   .detail-section {
@@ -248,9 +255,12 @@ function formatCreated(dateStr: string): string {
   }
 
   .history-section {
+    flex: 1;
+    min-height: 0;
     margin-left: -16px;
     margin-right: -16px;
     padding-left: 16px;
     padding-right: 16px;
+    border-top: 1px solid var(--border);
   }
 </style>
