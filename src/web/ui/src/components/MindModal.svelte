@@ -11,7 +11,7 @@ import VariantList from "./VariantList.svelte";
 
 let { mind: initialMind, onClose }: { mind: Mind; onClose?: () => void } = $props();
 
-const TABS = ["Info", "History", "Settings"] as const;
+const TABS = ["Info", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 
 let mind = $derived(data.minds.find((m) => m.name === initialMind.name) ?? initialMind);
@@ -60,8 +60,10 @@ function formatCreated(dateStr: string): string {
         {/if}
         <span class="profile-meta">@{mind.name} &middot; since {formatCreated(mind.created)}</span>
       </div>
-    {:else if tab === "History"}
-      <History name={mind.name} />
+
+      <div class="detail-section history-section">
+        <History name={mind.name} />
+      </div>
     {:else if tab === "Settings"}
       <MindInfo {mind} />
 
@@ -243,5 +245,12 @@ function formatCreated(dateStr: string): string {
     font-size: 11px;
     color: var(--text-2);
     margin-top: 4px;
+  }
+
+  .history-section {
+    margin-left: -16px;
+    margin-right: -16px;
+    padding-left: 16px;
+    padding-right: 16px;
   }
 </style>

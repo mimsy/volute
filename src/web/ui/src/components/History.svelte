@@ -272,7 +272,7 @@ function handleFilterChange(next: FilterState) {
   .history {
     display: flex;
     flex-direction: column;
-    height: 100%;
+    height: 60vh;
     overflow: hidden;
     position: relative;
   }
