@@ -8,6 +8,7 @@ import {
   sendChatUnified,
 } from "../lib/client";
 import { subscribe } from "../lib/connection.svelte";
+import type { ChatEntry } from "../lib/types";
 import MessageInput from "./MessageInput.svelte";
 import MessageList from "./MessageList.svelte";
 import TypingIndicator from "./TypingIndicator.svelte";
@@ -33,15 +34,6 @@ let {
   minds?: Mind[];
   onOpenMind?: (mind: Mind) => void;
 } = $props();
-
-type ChatEntry = {
-  id: number;
-  serverId?: number;
-  role: "user" | "assistant";
-  blocks: ContentBlock[];
-  senderName?: string;
-  createdAt?: string;
-};
 
 let nextEntryId = 0;
 let entries = $state<ChatEntry[]>([]);
@@ -159,6 +151,9 @@ $effect(() => {
     if (event.conversationId !== conversationId) return;
 
     if (event.type === "message") {
+      // Skip user messages from ourselves — already added optimistically in handleSend
+      if (event.role === "user" && event.senderName === username) return;
+
       // Append new message directly from SSE (no re-fetch needed)
       const newEntry: ChatEntry = {
         id: nextEntryId++,
@@ -200,7 +195,13 @@ async function handleSend(message: string, images: Array<{ media_type: string; d
 
   entries = [
     ...entries,
-    { id: nextEntryId++, role: "user", blocks: userBlocks, senderName: username },
+    {
+      id: nextEntryId++,
+      role: "user",
+      blocks: userBlocks,
+      senderName: username,
+      createdAt: new Date().toISOString(),
+    },
   ];
   sending = true;
   messageList?.scrollToBottom(true);
@@ -280,7 +281,7 @@ async function handleSend(message: string, images: Array<{ media_type: string; d
     display: flex;
     flex-direction: column;
     height: 100%;
-    padding: 0 16px;
+    padding: 0;
   }
 
   .orientation-bar {

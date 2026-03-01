@@ -7,9 +7,11 @@ type EventHandler = (event: SSEEvent) => void;
 
 let controller: AbortController | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let staleTimer: ReturnType<typeof setTimeout> | null = null;
 let lastEventId = "";
 let reconnectDelay = 1000;
 const MAX_RECONNECT_DELAY = 30000;
+const STALE_TIMEOUT = 30000;
 const handlers = new Set<EventHandler>();
 
 export const connectionState = $state({ connected: false });
@@ -50,6 +52,13 @@ function parseSSE(text: string): Array<{ id?: string; data: string }> {
   return events;
 }
 
+function clearStaleTimer() {
+  if (staleTimer) {
+    clearTimeout(staleTimer);
+    staleTimer = null;
+  }
+}
+
 function startSSE() {
   controller?.abort();
   controller = new AbortController();
@@ -74,10 +83,21 @@ function startSSE() {
       const decoder = new TextDecoder();
       let buffer = "";
 
+      function resetStaleTimer() {
+        if (staleTimer) clearTimeout(staleTimer);
+        staleTimer = setTimeout(() => {
+          staleTimer = null;
+          controller?.abort();
+          scheduleReconnect();
+        }, STALE_TIMEOUT);
+      }
+      resetStaleTimer();
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
+        resetStaleTimer();
         buffer += decoder.decode(value, { stream: true });
 
         // Process complete SSE events (separated by double newline)
@@ -93,21 +113,27 @@ function startSSE() {
             try {
               const parsed = JSON.parse(event.data) as SSEEvent;
               dispatch(parsed);
-            } catch {
+            } catch (err) {
               if (event.data.trim()) {
-                console.warn("[connection] malformed SSE event:", event.data.slice(0, 200));
+                console.warn(
+                  "[connection] failed to process SSE event:",
+                  event.data.slice(0, 200),
+                  err,
+                );
               }
             }
           }
         }
       }
 
-      // Stream ended — reconnect
+      // Stream ended — clean up stale timer and reconnect
+      clearStaleTimer();
       if (!signal.aborted) {
         scheduleReconnect();
       }
     })
     .catch((err) => {
+      clearStaleTimer();
       if (err instanceof DOMException && err.name === "AbortError") return;
       scheduleReconnect();
     });
@@ -136,6 +162,7 @@ export function disconnect() {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
+  clearStaleTimer();
   controller?.abort();
   controller = null;
 }

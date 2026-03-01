@@ -1,14 +1,7 @@
 <script lang="ts">
-import type { ContentBlock, Mind } from "@volute/api";
+import type { Mind } from "@volute/api";
+import type { ChatEntry } from "../lib/types";
 import MessageEntry from "./MessageEntry.svelte";
-
-type ChatEntry = {
-  id: number;
-  role: "user" | "assistant";
-  blocks: ContentBlock[];
-  senderName?: string;
-  createdAt?: string;
-};
 
 let {
   entries,
@@ -76,16 +69,19 @@ function toggleTool(key: number) {
 }
 
 export function scrollToBottom(force?: boolean) {
+  // Double-rAF ensures DOM is fully rendered before measuring scroll height
   requestAnimationFrame(() => {
-    if (!scrollEl) return;
-    if (force) {
-      scrollEl.scrollTop = scrollEl.scrollHeight;
-      return;
-    }
-    const isNearBottom = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 100;
-    if (isNearBottom) {
-      scrollEl.scrollTop = scrollEl.scrollHeight;
-    }
+    requestAnimationFrame(() => {
+      if (!scrollEl) return;
+      if (force) {
+        scrollEl.scrollTop = scrollEl.scrollHeight;
+        return;
+      }
+      const isNearBottom = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 100;
+      if (isNearBottom) {
+        scrollEl.scrollTop = scrollEl.scrollHeight;
+      }
+    });
   });
 }
 
@@ -145,7 +141,7 @@ function handleScroll() {
   .messages {
     flex: 1;
     overflow: auto;
-    padding: 16px 0;
+    padding: 16px;
   }
 
   .empty {

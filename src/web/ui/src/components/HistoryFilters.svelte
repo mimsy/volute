@@ -6,7 +6,6 @@ export type FilterState = {
   channel: string;
   session: string;
   types: Set<string>;
-  live: boolean;
 };
 
 const EVENT_TYPES = [
@@ -36,24 +35,17 @@ let {
   onchange: (filters: FilterState) => void;
 } = $props();
 
+let open = $state(false);
 let channelOpen = $state(false);
 let sessionOpen = $state(false);
-let typesOpen = $state(false);
 
-let typeSummary = $derived(
-  filters.types.size === ALL_TYPES.size
-    ? "all types"
-    : filters.types.size === 0
-      ? "no types"
-      : filters.types.size === 1
-        ? [...filters.types][0]
-        : `${filters.types.size} of ${ALL_TYPES.size} types`,
+let hasActiveFilters = $derived(
+  filters.channel !== "" || filters.session !== "" || filters.types.size !== ALL_TYPES.size,
 );
 
 function closeAll() {
   channelOpen = false;
   sessionOpen = false;
-  typesOpen = false;
 }
 
 function selectChannel(value: string) {
@@ -76,126 +68,255 @@ function toggleType(typeName: string) {
   onchange({ ...filters, types: next });
 }
 
-function selectAll() {
+function selectAllTypes() {
   onchange({ ...filters, types: new Set(ALL_TYPES) });
 }
 
-function selectNone() {
+function selectNoneTypes() {
   onchange({ ...filters, types: new Set() });
 }
 
-function toggleLive() {
-  onchange({ ...filters, live: !filters.live });
+function toggleOpen() {
+  open = !open;
+  if (!open) closeAll();
 }
 
 function handleClickOutside(e: MouseEvent) {
   const target = e.target as HTMLElement;
-  if (!target.closest(".custom-select")) {
+  if (!target.closest(".filter-container")) {
+    open = false;
     closeAll();
   }
 }
 </script>
 
 <svelte:document onclick={handleClickOutside} />
-<svelte:window onblur={closeAll} />
 
-<div class="filters">
-  <div class="custom-select" class:open={channelOpen}>
-    <button class="select-trigger" onclick={() => { const v = !channelOpen; closeAll(); channelOpen = v; }}>
-      <span class="select-value">{filters.channel || "all channels"}</span>
-      <span class="select-arrow">▾</span>
-    </button>
-    {#if channelOpen}
-      <div class="select-menu">
-        <button class="select-option" class:selected={!filters.channel} onclick={() => selectChannel("")}>all channels</button>
-        {#each channels as ch}
-          <button class="select-option" class:selected={filters.channel === ch} onclick={() => selectChannel(ch)}>{ch}</button>
-        {/each}
-      </div>
+<div class="filter-container">
+  <button class="filter-btn" class:active={open || hasActiveFilters} onclick={toggleOpen}>
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+      <path d="M1.5 3h13M4 8h8M6 13h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    </svg>
+    {#if hasActiveFilters}
+      <span class="filter-dot"></span>
     {/if}
-  </div>
-
-  <div class="custom-select" class:open={sessionOpen}>
-    <button class="select-trigger" onclick={() => { const v = !sessionOpen; closeAll(); sessionOpen = v; }}>
-      <span class="select-value">{filters.session ? `${filters.session}` : "all sessions"}</span>
-      <span class="select-arrow">▾</span>
-    </button>
-    {#if sessionOpen}
-      <div class="select-menu">
-        <button class="select-option" class:selected={!filters.session} onclick={() => selectSession("")}>all sessions</button>
-        {#each sessions as s}
-          <button class="select-option" class:selected={filters.session === s.session} onclick={() => selectSession(s.session)}>
-            {s.session} <span class="option-meta">{formatRelativeTime(s.started_at)}</span>
-          </button>
-        {/each}
-      </div>
-    {/if}
-  </div>
-
-  <div class="custom-select" class:open={typesOpen}>
-    <button class="select-trigger" onclick={() => { const v = !typesOpen; closeAll(); typesOpen = v; }}>
-      <span class="select-value">{typeSummary}</span>
-      <span class="select-arrow">▾</span>
-    </button>
-    {#if typesOpen}
-      <div class="select-menu types-menu">
-        <div class="types-actions">
-          <button class="types-action" onclick={selectAll}>all</button>
-          <button class="types-action" onclick={selectNone}>none</button>
-        </div>
-        {#each EVENT_TYPES as t}
-          {@const active = filters.types.has(t.name)}
-          <button class="select-option type-option" class:selected={active} onclick={() => toggleType(t.name)}>
-            <span class="type-dot" style:background={active ? t.color : "var(--text-2)"}></span>
-            {t.name}
-          </button>
-        {/each}
-      </div>
-    {/if}
-  </div>
-
-  <button class="pill live-pill" class:active={filters.live} onclick={toggleLive}>
-    <span class="live-dot" class:active={filters.live}></span>
-    live
   </button>
+
+  {#if open}
+    <div class="filter-popover">
+      <div class="filter-row">
+        <span class="filter-label">channel</span>
+        <div class="custom-select" class:open={channelOpen}>
+          <button class="select-trigger" onclick={() => { const v = !channelOpen; closeAll(); channelOpen = v; }}>
+            <span class="select-value">{filters.channel || "all"}</span>
+            <span class="select-arrow">▾</span>
+          </button>
+          {#if channelOpen}
+            <div class="select-menu">
+              <button class="select-option" class:selected={!filters.channel} onclick={() => selectChannel("")}>all</button>
+              {#each channels as ch}
+                <button class="select-option" class:selected={filters.channel === ch} onclick={() => selectChannel(ch)}>{ch}</button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <div class="filter-row">
+        <span class="filter-label">session</span>
+        <div class="custom-select" class:open={sessionOpen}>
+          <button class="select-trigger" onclick={() => { const v = !sessionOpen; closeAll(); sessionOpen = v; }}>
+            <span class="select-value">{filters.session || "all"}</span>
+            <span class="select-arrow">▾</span>
+          </button>
+          {#if sessionOpen}
+            <div class="select-menu">
+              <button class="select-option" class:selected={!filters.session} onclick={() => selectSession("")}>all</button>
+              {#each sessions as s}
+                <button class="select-option" class:selected={filters.session === s.session} onclick={() => selectSession(s.session)}>
+                  {s.session} <span class="option-meta">{formatRelativeTime(s.started_at)}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <div class="filter-row types-row">
+        <span class="filter-label">types</span>
+        <div class="types-grid">
+          <div class="types-actions">
+            <button class="types-action" onclick={selectAllTypes}>all</button>
+            <button class="types-action" onclick={selectNoneTypes}>none</button>
+          </div>
+          {#each EVENT_TYPES as t}
+            {@const active = filters.types.has(t.name)}
+            <button class="type-chip" class:active onclick={() => toggleType(t.name)}>
+              <span class="type-dot" style:background={active ? t.color : "var(--text-2)"}></span>
+              {t.name}
+            </button>
+          {/each}
+        </div>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
-  .filters {
+  .filter-container {
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .filter-btn {
+    position: relative;
     display: flex;
-    gap: 8px;
     align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: none;
+    border: none;
+    color: var(--text-2);
+    cursor: pointer;
+    border-radius: var(--radius);
+    transition: color 0.15s, background 0.15s;
+  }
+  .filter-btn:hover {
+    color: var(--text-1);
+    background: var(--bg-3);
+  }
+  .filter-btn.active {
+    color: var(--accent);
+  }
+
+  .filter-dot {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .filter-popover {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    width: 260px;
+    background: var(--bg-2);
+    border: 1px solid var(--border-bright);
+    border-radius: var(--radius);
+    z-index: 20;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .filter-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .filter-label {
+    font-size: 11px;
+    color: var(--text-2);
+    width: 52px;
+    flex-shrink: 0;
+    font-family: var(--mono);
+  }
+
+  .types-row {
+    align-items: flex-start;
+    padding-top: 4px;
+    border-top: 1px solid var(--border);
+    margin-top: 2px;
+  }
+
+  .types-grid {
+    display: flex;
     flex-wrap: wrap;
-    padding: 8px 0 12px;
-    border-bottom: 1px solid var(--border);
+    gap: 4px;
+    flex: 1;
+  }
+
+  .types-actions {
+    display: flex;
+    gap: 4px;
+    width: 100%;
+    margin-bottom: 2px;
+  }
+
+  .types-action {
+    font-size: 10px;
+    font-family: var(--mono);
+    color: var(--text-2);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 1px 6px;
+    border-radius: var(--radius);
+  }
+  .types-action:hover {
+    color: var(--text-1);
+    background: var(--bg-3);
+  }
+
+  .type-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-family: var(--mono);
+    color: var(--text-2);
+    background: none;
+    border: none;
+    cursor: pointer;
+    border-radius: var(--radius);
+    transition: color 0.1s;
+  }
+  .type-chip:hover {
+    background: var(--bg-3);
+    color: var(--text-1);
+  }
+  .type-chip.active {
+    color: var(--text-1);
+  }
+
+  .type-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    transition: background 0.15s;
   }
 
   .custom-select {
     position: relative;
+    flex: 1;
   }
 
   .select-trigger {
     display: flex;
     align-items: center;
-    gap: 6px;
-    background: var(--bg-2);
+    gap: 4px;
+    width: 100%;
+    background: var(--bg-3);
     color: var(--text-1);
-    border: 1px solid var(--border);
+    border: none;
     border-radius: var(--radius);
-    padding: 4px 8px 4px 10px;
-    font-size: 12px;
+    padding: 3px 6px;
+    font-size: 11px;
     font-family: var(--mono);
     cursor: pointer;
-    transition: border-color 0.15s, color 0.15s;
-    min-width: 120px;
-    text-align: left;
+    transition: color 0.15s;
   }
   .select-trigger:hover {
-    border-color: var(--border-bright);
-    color: var(--text-0);
-  }
-  .custom-select.open .select-trigger {
-    border-color: var(--border-bright);
     color: var(--text-0);
   }
 
@@ -204,25 +325,26 @@ function handleClickOutside(e: MouseEvent) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    text-align: left;
   }
 
   .select-arrow {
-    font-size: 10px;
+    font-size: 9px;
     color: var(--text-2);
     flex-shrink: 0;
   }
 
   .select-menu {
     position: absolute;
-    top: calc(100% + 4px);
+    top: calc(100% + 2px);
     left: 0;
     min-width: 100%;
-    max-height: 240px;
+    max-height: 200px;
     overflow-y: auto;
     background: var(--bg-2);
     border: 1px solid var(--border-bright);
     border-radius: var(--radius);
-    z-index: 10;
+    z-index: 30;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   }
 
@@ -230,8 +352,8 @@ function handleClickOutside(e: MouseEvent) {
     display: block;
     width: 100%;
     text-align: left;
-    padding: 6px 10px;
-    font-size: 12px;
+    padding: 5px 8px;
+    font-size: 11px;
     font-family: var(--mono);
     color: var(--text-1);
     background: none;
@@ -250,83 +372,6 @@ function handleClickOutside(e: MouseEvent) {
 
   .option-meta {
     color: var(--text-2);
-    margin-left: 6px;
-  }
-
-  .types-menu {
-    min-width: 140px;
-  }
-
-  .types-actions {
-    display: flex;
-    gap: 4px;
-    padding: 4px 8px;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .types-action {
-    font-size: 10px;
-    font-family: var(--mono);
-    color: var(--text-2);
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 2px 6px;
-    border-radius: var(--radius);
-  }
-  .types-action:hover {
-    color: var(--text-1);
-    background: var(--bg-3);
-  }
-
-  .type-option {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .type-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    transition: background 0.15s;
-  }
-
-  .live-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 11px;
-    cursor: pointer;
-    border: 1px solid var(--border);
-    background: var(--bg-3);
-    color: var(--text-2);
-    font-family: var(--mono);
-    transition: all 0.15s;
-  }
-  .live-pill:hover {
-    border-color: var(--border-bright);
-    color: var(--text-1);
-  }
-  .live-pill.active {
-    border-color: var(--accent-border);
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-    color: var(--text-0);
-  }
-
-  .live-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--text-2);
-    flex-shrink: 0;
-    transition: background 0.15s;
-  }
-  .live-dot.active {
-    background: var(--accent);
-    animation: pulse 2s infinite;
+    margin-left: 4px;
   }
 </style>

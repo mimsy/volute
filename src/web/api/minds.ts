@@ -34,6 +34,7 @@ import { getTokenBudget } from "../../lib/daemon/token-budget.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
 import { extractTextContent } from "../../lib/delivery/delivery-router.js";
+import { recordInbound } from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import { addMessage } from "../../lib/events/conversations.js";
 import { onMindEvent } from "../../lib/events/mind-activity-tracker.js";
@@ -1644,22 +1645,11 @@ const app = new Hono<AuthEnv>()
 
     const channel = (parsed?.channel as string) ?? "unknown";
 
-    // Record inbound message
-    const db = await getDb();
+    // Record inbound message (persist + publish to live event stream)
     if (parsed) {
-      try {
-        const sender = (parsed.sender as string) ?? null;
-        const content = extractTextContent(parsed.content);
-        await db.insert(mindHistory).values({
-          mind: baseName,
-          type: "inbound",
-          channel,
-          sender,
-          content,
-        });
-      } catch (err) {
-        log.error(`failed to persist inbound message for ${baseName}`, log.errorData(err));
-      }
+      const sender = (parsed.sender as string) ?? null;
+      const content = extractTextContent(parsed.content);
+      await recordInbound(baseName, channel, sender, content);
     }
 
     // Check token budget before forwarding
@@ -1726,6 +1716,7 @@ const app = new Hono<AuthEnv>()
     const seedEntry = findMind(baseName);
     if (seedEntry?.stage === "seed") {
       try {
+        const db = await getDb();
         const countResult = await db
           .select({ count: sql<number>`count(*)` })
           .from(mindHistory)
@@ -1992,18 +1983,35 @@ const app = new Hono<AuthEnv>()
           controller.enqueue(encoder.encode(`data: ${data}\n\n`));
         };
 
-        const unsubscribe = subscribeMindEvent(baseName, (event) => {
+        // Keep-alive ping every 15s to prevent silent connection drops
+        let unsubscribe: (() => void) | undefined;
+        const pingInterval = setInterval(() => {
+          try {
+            controller.enqueue(encoder.encode(": ping\n\n"));
+          } catch {
+            clearInterval(pingInterval);
+            unsubscribe?.();
+          }
+        }, 15000);
+
+        unsubscribe = subscribeMindEvent(baseName, (event) => {
           // Apply filters
           if (typeFilter && !typeFilter.includes(event.type)) return;
           if (sessionFilter && event.session !== sessionFilter) return;
           if (channelFilter && event.channel !== channelFilter) return;
 
-          send(JSON.stringify(event));
+          try {
+            send(JSON.stringify(event));
+          } catch {
+            clearInterval(pingInterval);
+            unsubscribe?.();
+          }
         });
 
         // Clean up on close
         c.req.raw.signal.addEventListener("abort", () => {
-          unsubscribe();
+          clearInterval(pingInterval);
+          unsubscribe?.();
           try {
             controller.close();
           } catch {

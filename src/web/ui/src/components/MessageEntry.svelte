@@ -100,6 +100,8 @@ function buildAssistantItems(
         <span class="timestamp">{formatTime(createdAt)}</span>
       {/if}
     </div>
+  {:else if createdAt}
+    <span class="timestamp inline-time">{formatTime(createdAt)}</span>
   {/if}
   <div class="entry-content">
     {#if role === "user"}
@@ -172,6 +174,11 @@ function buildAssistantItems(
   .timestamp {
     font-size: 11px;
     color: var(--text-2);
+  }
+
+  .inline-time {
+    display: block;
+    margin-bottom: 2px;
   }
 
   .entry-content {

@@ -33,7 +33,6 @@ let filters = $state<FilterState>({
   channel: "",
   session: "",
   types: new Set(ALL_TYPES),
-  live: false,
 });
 
 let scrollContainer: HTMLDivElement | undefined = $state();
@@ -105,8 +104,8 @@ async function loadMeta() {
     channels = ch;
     sessions = sess;
     sessionMap = new Map(sess.map((s) => [s.session, s]));
-  } catch {
-    // Non-critical
+  } catch (err) {
+    console.warn("[History] failed to load filter metadata:", err);
   }
 }
 
@@ -129,13 +128,10 @@ $effect(() => {
   }
 });
 
-// SSE live mode
+// SSE live mode — always on.
+// Reads filters.channel/session inside connectSSE(), so Svelte re-runs on filter changes.
 $effect(() => {
-  if (filters.live) {
-    connectSSE();
-  } else {
-    disconnectSSE();
-  }
+  connectSSE();
   return () => disconnectSSE();
 });
 
@@ -149,47 +145,51 @@ function connectSSE() {
 
   const es = new EventSource(url);
   es.onmessage = (e) => {
+    let data: Record<string, unknown>;
     try {
-      const data = JSON.parse(e.data);
-      const event: HistoryMessage = {
-        id: nextSseId--,
-        mind: name,
-        channel: data.channel ?? "",
-        session: data.session ?? null,
-        sender: null,
-        message_id: data.messageId ?? null,
-        type: data.type,
-        content: data.content ?? "",
-        metadata: data.metadata ? JSON.stringify(data.metadata) : null,
-        created_at: data.createdAt ?? new Date().toISOString(),
-      };
-      messages = [...messages, event];
-
-      // Update session map if new session
-      if (event.session && !sessionMap.has(event.session)) {
-        const newSess: HistorySession = {
-          session: event.session,
-          started_at: event.created_at,
-          event_count: 1,
-          message_count: ["inbound", "outbound"].includes(event.type) ? 1 : 0,
-          tool_count: event.type === "tool_use" ? 1 : 0,
-        };
-        sessionMap = new Map([...sessionMap, [event.session, newSess]]);
-        sessions = [newSess, ...sessions];
-      }
-
-      // Auto-scroll if user is near bottom
-      if (!userScrolledUp) {
-        requestAnimationFrame(() => {
-          scrollContainer?.scrollTo({ top: scrollContainer.scrollHeight, behavior: "smooth" });
-        });
-      }
+      data = JSON.parse(e.data);
     } catch {
-      // Ignore unparseable events
+      return;
+    }
+
+    const event: HistoryMessage = {
+      id: nextSseId--,
+      mind: name,
+      channel: (data.channel as string) ?? "",
+      session: (data.session as string) ?? null,
+      sender: null,
+      message_id: (data.messageId as string) ?? null,
+      type: data.type as string,
+      content: (data.content as string) ?? "",
+      metadata: data.metadata ? JSON.stringify(data.metadata) : null,
+      created_at: (data.createdAt as string) ?? new Date().toISOString(),
+    };
+    messages = [...messages, event];
+
+    // Update session map if new session
+    if (event.session && !sessionMap.has(event.session)) {
+      const newSess: HistorySession = {
+        session: event.session,
+        started_at: event.created_at,
+        event_count: 1,
+        message_count: ["inbound", "outbound"].includes(event.type) ? 1 : 0,
+        tool_count: event.type === "tool_use" ? 1 : 0,
+      };
+      sessionMap = new Map([...sessionMap, [event.session, newSess]]);
+      sessions = [newSess, ...sessions];
+    }
+
+    // Auto-scroll if user is near bottom
+    if (!userScrolledUp) {
+      requestAnimationFrame(() => {
+        scrollContainer?.scrollTo({ top: scrollContainer.scrollHeight, behavior: "smooth" });
+      });
     }
   };
   es.onerror = () => {
-    // Will auto-reconnect
+    if (es.readyState === EventSource.CLOSED) {
+      console.warn("[History] SSE connection closed by server");
+    }
   };
   eventSource = es;
 }
@@ -218,12 +218,14 @@ function handleFilterChange(next: FilterState) {
 </script>
 
 <div class="history">
-  <HistoryFilters
-    {channels}
-    {sessions}
-    {filters}
-    onchange={handleFilterChange}
-  />
+  <div class="filter-float">
+    <HistoryFilters
+      {channels}
+      {sessions}
+      {filters}
+      onchange={handleFilterChange}
+    />
+  </div>
 
   <div class="timeline" bind:this={scrollContainer} onscroll={handleScroll}>
     {#if hasMore}
@@ -266,7 +268,7 @@ function handleFilterChange(next: FilterState) {
     {/if}
   </div>
 
-  {#if userScrolledUp && filters.live}
+  {#if userScrolledUp}
     <button class="jump-btn" onclick={jumpToLatest}>
       ↓ jump to latest
     </button>
@@ -282,16 +284,27 @@ function handleFilterChange(next: FilterState) {
     position: relative;
   }
 
+  .filter-float {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    z-index: 10;
+  }
+
   .timeline {
     flex: 1;
-    overflow: auto;
-    padding-top: 8px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
   }
 
   .timeline-rail {
     position: relative;
     padding-left: 4px;
     margin-left: 3px;
+    flex: 1;
+    min-height: 100%;
   }
   .timeline-rail::before {
     content: "";
