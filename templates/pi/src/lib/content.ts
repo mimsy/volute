@@ -1,6 +1,5 @@
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { warn } from "./logger.js";
-import type { VoluteContentPart } from "./types.js";
 
 export function extractText(content: unknown): string {
   if (typeof content === "string") return content;
