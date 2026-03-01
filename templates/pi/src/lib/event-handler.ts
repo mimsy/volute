@@ -135,6 +135,14 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
           session.messageChannels.delete(session.currentMessageId);
         }
         log("mind", `session "${session.name}": turn done`);
+        // Log any error messages from the agent
+        if (event.messages) {
+          for (const msg of event.messages as any[]) {
+            if (msg.errorMessage) {
+              log("mind", `session "${session.name}": agent error: ${msg.errorMessage}`);
+            }
+          }
+        }
         // Sum usage from assistant messages. The last assistant message's input tokens
         // approximate current context size (it includes the full conversation up to that point).
         if (event.messages) {
