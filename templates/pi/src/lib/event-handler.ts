@@ -1,6 +1,6 @@
 import { commitFileChange } from "./auto-commit.js";
 import { daemonEmit, type EventType } from "./daemon-client.js";
-import { log, logText, logThinking, logToolResult, logToolUse } from "./logger.js";
+import { log, logText, logThinking, logToolResult, logToolUse, warn } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
 import type { VoluteEvent } from "./types.js";
 
@@ -135,6 +135,14 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
           session.messageChannels.delete(session.currentMessageId);
         }
         log("mind", `session "${session.name}": turn done`);
+        // Log any error messages from the agent
+        if (event.messages) {
+          for (const msg of event.messages as any[]) {
+            if (msg.errorMessage) {
+              warn("mind", `session "${session.name}": agent error: ${msg.errorMessage}`);
+            }
+          }
+        }
         // Sum usage from assistant messages. The last assistant message's input tokens
         // approximate current context size (it includes the full conversation up to that point).
         if (event.messages) {
