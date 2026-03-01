@@ -34,6 +34,7 @@ import { getTokenBudget } from "../../lib/daemon/token-budget.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
 import { extractTextContent } from "../../lib/delivery/delivery-router.js";
+import { recordInbound } from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import { addMessage } from "../../lib/events/conversations.js";
 import { onMindEvent } from "../../lib/events/mind-activity-tracker.js";
@@ -1644,30 +1645,11 @@ const app = new Hono<AuthEnv>()
 
     const channel = (parsed?.channel as string) ?? "unknown";
 
-    // Record inbound message
-    const db = await getDb();
+    // Record inbound message (persist + publish to live event stream)
     if (parsed) {
-      try {
-        const sender = (parsed.sender as string) ?? null;
-        const content = extractTextContent(parsed.content);
-        await db.insert(mindHistory).values({
-          mind: baseName,
-          type: "inbound",
-          channel,
-          sender,
-          content,
-        });
-
-        // Publish to mind event stream so live History sees inbound messages
-        publishMindEvent(baseName, {
-          mind: baseName,
-          type: "inbound",
-          channel,
-          content,
-        });
-      } catch (err) {
-        log.error(`failed to persist inbound message for ${baseName}`, log.errorData(err));
-      }
+      const sender = (parsed.sender as string) ?? null;
+      const content = extractTextContent(parsed.content);
+      await recordInbound(baseName, channel, sender, content);
     }
 
     // Check token budget before forwarding
@@ -1734,6 +1716,7 @@ const app = new Hono<AuthEnv>()
     const seedEntry = findMind(baseName);
     if (seedEntry?.stage === "seed") {
       try {
+        const db = await getDb();
         const countResult = await db
           .select({ count: sql<number>`count(*)` })
           .from(mindHistory)

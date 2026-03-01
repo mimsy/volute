@@ -13,6 +13,37 @@ const dlog = log.child("delivery");
 export { type DeliveryPayload, extractTextContent } from "./delivery-router.js";
 
 /**
+ * Record an inbound message: persist to mind_history and publish to the live event stream.
+ * Both the connector `/message` endpoint and `deliverMessage()` use this to avoid drift.
+ */
+export async function recordInbound(
+  mind: string,
+  channel: string,
+  sender: string | null,
+  content: string | null,
+): Promise<void> {
+  try {
+    const db = await getDb();
+    await db.insert(mindHistory).values({
+      mind,
+      type: "inbound",
+      channel,
+      sender,
+      content,
+    });
+  } catch (err) {
+    dlog.warn(`failed to persist inbound for ${mind}`, log.errorData(err));
+  }
+
+  publishMindEvent(mind, {
+    mind,
+    type: "inbound",
+    channel,
+    content: content ?? undefined,
+  });
+}
+
+/**
  * Deliver a message to a mind via the delivery manager (routes, batches, gates).
  * Fire-and-forget — logs errors but does not throw.
  */
@@ -26,28 +57,7 @@ export async function deliverMessage(mindName: string, payload: DeliveryPayload)
     }
 
     const textContent = extractTextContent(payload.content);
-
-    // Persist inbound message
-    try {
-      const db = await getDb();
-      await db.insert(mindHistory).values({
-        mind: baseName,
-        type: "inbound",
-        channel: payload.channel,
-        sender: payload.sender ?? null,
-        content: textContent,
-      });
-    } catch (err) {
-      dlog.warn(`failed to persist message for ${baseName}`, log.errorData(err));
-    }
-
-    // Publish to mind event stream so live History sees inbound messages
-    publishMindEvent(baseName, {
-      mind: baseName,
-      type: "inbound",
-      channel: payload.channel,
-      content: textContent,
-    });
+    await recordInbound(baseName, payload.channel, payload.sender ?? null, textContent);
 
     // Check if mind is sleeping — queue or trigger wake
     const sleepManager = getSleepManagerIfReady();
