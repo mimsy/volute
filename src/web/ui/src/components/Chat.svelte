@@ -203,7 +203,13 @@ async function handleSend(message: string, images: Array<{ media_type: string; d
 
   entries = [
     ...entries,
-    { id: nextEntryId++, role: "user", blocks: userBlocks, senderName: username },
+    {
+      id: nextEntryId++,
+      role: "user",
+      blocks: userBlocks,
+      senderName: username,
+      createdAt: new Date().toISOString(),
+    },
   ];
   sending = true;
   messageList?.scrollToBottom(true);
@@ -283,7 +289,7 @@ async function handleSend(message: string, images: Array<{ media_type: string; d
     display: flex;
     flex-direction: column;
     height: 100%;
-    padding: 0 16px;
+    padding: 0;
   }
 
   .orientation-bar {

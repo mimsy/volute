@@ -178,7 +178,7 @@ $effect(() => {
 
   .input-area {
     border-top: 1px solid var(--border);
-    padding: 12px 0 0;
+    padding: 12px 16px 16px;
     display: flex;
     gap: 8px;
   }

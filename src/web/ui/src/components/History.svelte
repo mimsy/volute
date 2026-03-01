@@ -299,6 +299,7 @@ function handleFilterChange(next: FilterState) {
     padding-left: 4px;
     margin-left: 3px;
     flex: 1;
+    min-height: 100%;
   }
   .timeline-rail::before {
     content: "";
