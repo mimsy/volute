@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.23.0](https://github.com/mimsy/volute/compare/volute-v0.22.0...volute-v0.23.0) (2026-03-01)
+
+
+### Features
+
+* live UI — SSE reliability, History redesign, chat polish ([#151](https://github.com/mimsy/volute/issues/151)) ([1ab329f](https://github.com/mimsy/volute/commit/1ab329f0d69fd8cc885aaa1ba41a1e29db351c93))
+
+
+### Bug Fixes
+
+* improve error visibility in pi and claude templates ([#153](https://github.com/mimsy/volute/issues/153)) ([51321a2](https://github.com/mimsy/volute/commit/51321a23bbb1f533377df4dbc3e93c96f7deeda7))
+
 ## [0.22.0](https://github.com/mimsy/volute/compare/volute-v0.21.0...volute-v0.22.0) (2026-02-28)
 
 
