@@ -1657,6 +1657,14 @@ const app = new Hono<AuthEnv>()
           sender,
           content,
         });
+
+        // Publish to mind event stream so live History sees inbound messages
+        publishMindEvent(baseName, {
+          mind: baseName,
+          type: "inbound",
+          channel,
+          content,
+        });
       } catch (err) {
         log.error(`failed to persist inbound message for ${baseName}`, log.errorData(err));
       }

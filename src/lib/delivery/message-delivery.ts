@@ -1,5 +1,6 @@
 import { getSleepManagerIfReady } from "../daemon/sleep-manager.js";
 import { getDb } from "../db.js";
+import { publish as publishMindEvent } from "../events/mind-events.js";
 import log from "../logger.js";
 import { findMind } from "../registry.js";
 import { mindHistory } from "../schema.js";
@@ -39,6 +40,14 @@ export async function deliverMessage(mindName: string, payload: DeliveryPayload)
     } catch (err) {
       dlog.warn(`failed to persist message for ${baseName}`, log.errorData(err));
     }
+
+    // Publish to mind event stream so live History sees inbound messages
+    publishMindEvent(baseName, {
+      mind: baseName,
+      type: "inbound",
+      channel: payload.channel,
+      content: textContent,
+    });
 
     // Check if mind is sleeping — queue or trigger wake
     const sleepManager = getSleepManagerIfReady();

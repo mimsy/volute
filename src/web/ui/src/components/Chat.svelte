@@ -159,6 +159,9 @@ $effect(() => {
     if (event.conversationId !== conversationId) return;
 
     if (event.type === "message") {
+      // Skip user messages from ourselves — already added optimistically in handleSend
+      if (event.role === "user" && event.senderName === username) return;
+
       // Append new message directly from SSE (no re-fetch needed)
       const newEntry: ChatEntry = {
         id: nextEntryId++,
