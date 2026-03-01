@@ -65,37 +65,39 @@ function formatCreated(dateStr: string): string {
         <History name={mind.name} />
       </div>
     {:else if tab === "Settings"}
-      <MindInfo {mind} />
+      <div class="settings-content">
+        <MindInfo {mind} />
 
-      <div class="detail-section">
-        <MindSkills name={mind.name} />
-      </div>
+        <div class="detail-section">
+          <MindSkills name={mind.name} />
+        </div>
 
-      <div class="detail-section">
-        <div class="section-title">Connections</div>
-        {#if connectedChannels.length === 0}
-          <div class="connections-empty">No active connections.</div>
-        {:else}
-          <div class="connections-list">
-            {#each connectedChannels as channel}
-              <div class="connection-row">
-                <span class="connection-name">{channel.displayName}</span>
-                <StatusBadge status="connected" />
-                {#if channel.username}
-                  <span class="connection-bot">{channel.username}</span>
-                {/if}
-                {#if channel.connectedAt}
-                  <span class="connection-time">{formatRelativeTime(channel.connectedAt)}</span>
-                {/if}
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
+        <div class="detail-section">
+          <div class="section-title">Connections</div>
+          {#if connectedChannels.length === 0}
+            <div class="connections-empty">No active connections.</div>
+          {:else}
+            <div class="connections-list">
+              {#each connectedChannels as channel}
+                <div class="connection-row">
+                  <span class="connection-name">{channel.displayName}</span>
+                  <StatusBadge status="connected" />
+                  {#if channel.username}
+                    <span class="connection-bot">{channel.username}</span>
+                  {/if}
+                  {#if channel.connectedAt}
+                    <span class="connection-time">{formatRelativeTime(channel.connectedAt)}</span>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
 
-      <div class="detail-section">
-        <div class="section-title">Variants</div>
-        <VariantList name={mind.name} />
+        <div class="detail-section">
+          <div class="section-title">Variants</div>
+          <VariantList name={mind.name} />
+        </div>
       </div>
     {/if}
   </div>
@@ -153,8 +155,11 @@ function formatCreated(dateStr: string): string {
   .panel-body {
     flex: 1;
     overflow: auto;
-    padding: 16px;
     min-height: 0;
+  }
+
+  .settings-content {
+    padding: 16px;
   }
 
   .panel-body-flex {
@@ -222,8 +227,8 @@ function formatCreated(dateStr: string): string {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 16px;
-    padding: 16px 0;
+    gap: 4px;
+    padding: 0 16px 16px;
   }
 
   .profile-avatar {
@@ -257,10 +262,7 @@ function formatCreated(dateStr: string): string {
   .history-section {
     flex: 1;
     min-height: 0;
-    margin-left: -16px;
-    margin-right: -16px;
-    padding-left: 16px;
-    padding-right: 16px;
+    padding: 0 16px;
     border-top: 1px solid var(--border);
   }
 </style>
