@@ -1992,6 +1992,15 @@ const app = new Hono<AuthEnv>()
           controller.enqueue(encoder.encode(`data: ${data}\n\n`));
         };
 
+        // Keep-alive ping every 15s to prevent silent connection drops
+        const pingInterval = setInterval(() => {
+          try {
+            controller.enqueue(encoder.encode(": ping\n\n"));
+          } catch {
+            clearInterval(pingInterval);
+          }
+        }, 15000);
+
         const unsubscribe = subscribeMindEvent(baseName, (event) => {
           // Apply filters
           if (typeFilter && !typeFilter.includes(event.type)) return;
@@ -2003,6 +2012,7 @@ const app = new Hono<AuthEnv>()
 
         // Clean up on close
         c.req.raw.signal.addEventListener("abort", () => {
+          clearInterval(pingInterval);
           unsubscribe();
           try {
             controller.close();

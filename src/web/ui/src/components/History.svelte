@@ -33,7 +33,6 @@ let filters = $state<FilterState>({
   channel: "",
   session: "",
   types: new Set(ALL_TYPES),
-  live: false,
 });
 
 let scrollContainer: HTMLDivElement | undefined = $state();
@@ -129,13 +128,9 @@ $effect(() => {
   }
 });
 
-// SSE live mode
+// SSE live mode — always on
 $effect(() => {
-  if (filters.live) {
-    connectSSE();
-  } else {
-    disconnectSSE();
-  }
+  connectSSE();
   return () => disconnectSSE();
 });
 
@@ -266,7 +261,7 @@ function handleFilterChange(next: FilterState) {
     {/if}
   </div>
 
-  {#if userScrolledUp && filters.live}
+  {#if userScrolledUp}
     <button class="jump-btn" onclick={jumpToLatest}>
       ↓ jump to latest
     </button>

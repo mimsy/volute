@@ -6,7 +6,6 @@ export type FilterState = {
   channel: string;
   session: string;
   types: Set<string>;
-  live: boolean;
 };
 
 const EVENT_TYPES = [
@@ -84,10 +83,6 @@ function selectNone() {
   onchange({ ...filters, types: new Set() });
 }
 
-function toggleLive() {
-  onchange({ ...filters, live: !filters.live });
-}
-
 function handleClickOutside(e: MouseEvent) {
   const target = e.target as HTMLElement;
   if (!target.closest(".custom-select")) {
@@ -154,10 +149,7 @@ function handleClickOutside(e: MouseEvent) {
     {/if}
   </div>
 
-  <button class="pill live-pill" class:active={filters.live} onclick={toggleLive}>
-    <span class="live-dot" class:active={filters.live}></span>
-    live
-  </button>
+
 </div>
 
 <style>
@@ -293,40 +285,4 @@ function handleClickOutside(e: MouseEvent) {
     transition: background 0.15s;
   }
 
-  .live-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 11px;
-    cursor: pointer;
-    border: 1px solid var(--border);
-    background: var(--bg-3);
-    color: var(--text-2);
-    font-family: var(--mono);
-    transition: all 0.15s;
-  }
-  .live-pill:hover {
-    border-color: var(--border-bright);
-    color: var(--text-1);
-  }
-  .live-pill.active {
-    border-color: var(--accent-border);
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-    color: var(--text-0);
-  }
-
-  .live-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--text-2);
-    flex-shrink: 0;
-    transition: background 0.15s;
-  }
-  .live-dot.active {
-    background: var(--accent);
-    animation: pulse 2s infinite;
-  }
 </style>

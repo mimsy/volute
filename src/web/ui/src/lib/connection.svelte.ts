@@ -7,9 +7,11 @@ type EventHandler = (event: SSEEvent) => void;
 
 let controller: AbortController | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let staleTimer: ReturnType<typeof setTimeout> | null = null;
 let lastEventId = "";
 let reconnectDelay = 1000;
 const MAX_RECONNECT_DELAY = 30000;
+const STALE_TIMEOUT = 30000;
 const handlers = new Set<EventHandler>();
 
 export const connectionState = $state({ connected: false });
@@ -74,10 +76,20 @@ function startSSE() {
       const decoder = new TextDecoder();
       let buffer = "";
 
+      function resetStaleTimer() {
+        if (staleTimer) clearTimeout(staleTimer);
+        staleTimer = setTimeout(() => {
+          staleTimer = null;
+          scheduleReconnect();
+        }, STALE_TIMEOUT);
+      }
+      resetStaleTimer();
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
+        resetStaleTimer();
         buffer += decoder.decode(value, { stream: true });
 
         // Process complete SSE events (separated by double newline)
@@ -102,12 +114,20 @@ function startSSE() {
         }
       }
 
-      // Stream ended — reconnect
+      // Stream ended — clean up stale timer and reconnect
+      if (staleTimer) {
+        clearTimeout(staleTimer);
+        staleTimer = null;
+      }
       if (!signal.aborted) {
         scheduleReconnect();
       }
     })
     .catch((err) => {
+      if (staleTimer) {
+        clearTimeout(staleTimer);
+        staleTimer = null;
+      }
       if (err instanceof DOMException && err.name === "AbortError") return;
       scheduleReconnect();
     });
@@ -135,6 +155,10 @@ export function disconnect() {
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
+  }
+  if (staleTimer) {
+    clearTimeout(staleTimer);
+    staleTimer = null;
   }
   controller?.abort();
   controller = null;
