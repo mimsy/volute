@@ -288,13 +288,17 @@ function handleFilterChange(next: FilterState) {
 
   .timeline {
     flex: 1;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
   }
 
   .timeline-rail {
     position: relative;
     padding-left: 4px;
     margin-left: 3px;
+    flex: 1;
   }
   .timeline-rail::before {
     content: "";
