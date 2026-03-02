@@ -16,6 +16,7 @@ export type RoutingRule = {
   isDM?: boolean; // match on isDM metadata
   participants?: number; // match on participant count (e.g. 2 = DM)
   mode?: "all" | "mention"; // "mention" = only process if mind name appears in message
+  batch?: number | BatchConfig; // batch delivery config (used by daemon delivery manager)
 };
 
 export type SessionConfig = {
@@ -77,7 +78,7 @@ function globMatch(pattern: string, value: string): boolean {
 }
 
 const GLOB_MATCH_KEYS = new Set(["channel", "sender"]);
-const NON_MATCH_KEYS = new Set(["session", "destination", "path", "mode"]);
+const NON_MATCH_KEYS = new Set(["session", "destination", "path", "mode", "batch"]);
 
 type MatchMeta = { channel?: string; sender?: string; isDM?: boolean; participantCount?: number };
 

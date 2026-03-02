@@ -122,8 +122,8 @@ export class DeliveryManager {
       sessionName = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     }
 
-    // Resolve delivery mode for this session
-    const sessionConfig = resolveDeliveryMode(config, sessionName);
+    // Resolve delivery mode for this session (pass matched rule for rule-level batch config)
+    const sessionConfig = resolveDeliveryMode(config, sessionName, route.rule);
 
     if (sessionConfig.delivery.mode === "batch") {
       dlog.debug(`enqueueing batch message for ${mindName}/${sessionName}`);

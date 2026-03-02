@@ -14,6 +14,7 @@ export type RoutingRule = {
   isDM?: boolean;
   participants?: number;
   mode?: "all" | "mention";
+  batch?: number | BatchConfig;
 };
 
 export type BatchConfig = {
@@ -42,7 +43,13 @@ export type RoutingConfig = {
 };
 
 export type ResolvedRoute =
-  | { destination: "mind"; session: string; matched: boolean; mode?: "all" | "mention" }
+  | {
+      destination: "mind";
+      session: string;
+      matched: boolean;
+      mode?: "all" | "mention";
+      rule?: RoutingRule;
+    }
   | { destination: "file"; path: string; matched: boolean };
 
 export type ResolvedDeliveryMode =
@@ -171,7 +178,7 @@ function globMatch(pattern: string, value: string): boolean {
 // --- Rule matching ---
 
 const GLOB_MATCH_KEYS = new Set(["channel", "sender"]);
-const NON_MATCH_KEYS = new Set(["session", "destination", "path", "mode"]);
+const NON_MATCH_KEYS = new Set(["session", "destination", "path", "mode", "batch"]);
 
 function ruleMatches(rule: RoutingRule, meta: MatchMeta): boolean {
   for (const [key, pattern] of Object.entries(rule)) {
@@ -230,6 +237,7 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
         session: sanitizeSessionName(expandTemplate(rule.session ?? fallback, meta)),
         matched: true,
         mode: rule.mode,
+        rule,
       };
     }
   }
@@ -250,13 +258,30 @@ function normalizeBatchConfig(batch: number | BatchConfig): BatchConfig {
 export function resolveDeliveryMode(
   config: RoutingConfig,
   sessionName: string,
+  rule?: RoutingRule,
 ): ResolvedSessionConfig {
+  // Rule-level batch config takes priority when no sessions config exists
+  const ruleBatch = rule?.batch;
   const defaults: ResolvedSessionConfig = {
     delivery: { mode: "immediate" },
     interrupt: true,
   };
 
-  if (!config.sessions) return defaults;
+  if (!config.sessions) {
+    if (ruleBatch != null) {
+      const batch = normalizeBatchConfig(ruleBatch);
+      return {
+        delivery: {
+          mode: "batch",
+          debounce: batch.debounce ?? DEFAULT_BATCH_DEBOUNCE,
+          maxWait: batch.maxWait ?? DEFAULT_BATCH_MAX_WAIT,
+          triggers: batch.triggers,
+        },
+        interrupt: true,
+      };
+    }
+    return defaults;
+  }
 
   for (const [pattern, sessionConfig] of Object.entries(config.sessions)) {
     if (globMatch(pattern, sessionName)) {
@@ -305,6 +330,20 @@ export function resolveDeliveryMode(
         instructions: sessionConfig.instructions,
       };
     }
+  }
+
+  // No session-level config matched — fall back to rule-level batch
+  if (ruleBatch != null) {
+    const batch = normalizeBatchConfig(ruleBatch);
+    return {
+      delivery: {
+        mode: "batch",
+        debounce: batch.debounce ?? DEFAULT_BATCH_DEBOUNCE,
+        maxWait: batch.maxWait ?? DEFAULT_BATCH_MAX_WAIT,
+        triggers: batch.triggers,
+      },
+      interrupt: true,
+    };
   }
 
   return defaults;
