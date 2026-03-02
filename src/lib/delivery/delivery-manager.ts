@@ -1,5 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
+import { getParticipants } from "../events/conversations.js";
 import log from "../logger.js";
 import { findMind } from "../registry.js";
 import { deliveryQueue } from "../schema.js";
@@ -10,6 +11,7 @@ import {
   extractTextContent,
   getRoutingConfig,
   type MatchMeta,
+  type ParticipantProfile,
   type ResolvedDeliveryMode,
   type ResolvedSessionConfig,
   resolveDeliveryMode,
@@ -28,6 +30,7 @@ type SessionState = {
   lastDeliverySenders: Set<string>;
   lastDeliveryChannels: Set<string>;
   lastInterruptAt: number;
+  seenChannelProfiles: Set<string>;
 };
 
 // --- Batch buffer ---
@@ -328,8 +331,11 @@ export class DeliveryManager {
       typingMap.set(`volute:${payload.conversationId}`, baseName, { persistent: true });
     }
 
+    // Enrich with participant profiles on first encounter per channel
+    const enrichedPayload = await this.enrichWithProfiles(baseName, session, payload);
+
     const body = JSON.stringify({
-      ...payload,
+      ...enrichedPayload,
       session,
       interrupt: sessionConfig.interrupt,
       instructions: sessionConfig.instructions,
@@ -362,9 +368,20 @@ export class DeliveryManager {
     }
     const { baseName, port } = resolved;
 
+    // Enrich first message per new channel with participant profiles
+    const enrichedMessages = await Promise.all(
+      messages.map(async (msg, i) => {
+        // Only enrich the first message per unique channel in the batch
+        const isFirst = messages.findIndex((m) => m.channel === msg.channel) === i;
+        if (!isFirst) return msg;
+        const enrichedPayload = await this.enrichWithProfiles(baseName, session, msg.payload);
+        return { ...msg, payload: enrichedPayload };
+      }),
+    );
+
     // Group messages by channel
     const channels: Record<string, DeliveryPayload[]> = {};
-    for (const msg of messages) {
+    for (const msg of enrichedMessages) {
       const ch = msg.channel ?? "unknown";
       if (!channels[ch]) channels[ch] = [];
       channels[ch].push(msg.payload);
@@ -683,6 +700,35 @@ export class DeliveryManager {
     }
   }
 
+  private async enrichWithProfiles(
+    mindName: string,
+    session: string,
+    payload: DeliveryPayload,
+  ): Promise<DeliveryPayload> {
+    if (!payload.conversationId || !payload.channel) return payload;
+    const mindSessions = this.sessionStates.get(mindName);
+    const state = mindSessions?.get(session);
+    if (!state) return payload;
+
+    const channelKey = payload.channel;
+    if (state.seenChannelProfiles.has(channelKey)) return payload;
+    state.seenChannelProfiles.add(channelKey);
+
+    try {
+      const participants = await getParticipants(payload.conversationId);
+      const profiles: ParticipantProfile[] = participants.map((p) => ({
+        username: p.username,
+        userType: p.userType,
+        displayName: p.displayName,
+        description: p.description,
+      }));
+      return { ...payload, participantProfiles: profiles };
+    } catch (err) {
+      dlog.warn(`failed to fetch participant profiles for ${mindName}`, log.errorData(err));
+      return payload;
+    }
+  }
+
   private incrementActive(
     mind: string,
     session: string,
@@ -700,6 +746,7 @@ export class DeliveryManager {
       lastDeliverySenders: new Set<string>(),
       lastDeliveryChannels: new Set<string>(),
       lastInterruptAt: 0,
+      seenChannelProfiles: new Set<string>(),
     };
     state.activeCount++;
     state.lastDeliveredAt = Date.now();

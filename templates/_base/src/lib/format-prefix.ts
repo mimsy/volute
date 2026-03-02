@@ -1,4 +1,4 @@
-import type { ChannelMeta } from "./types.js";
+import type { ChannelMeta, ParticipantProfile } from "./types.js";
 
 function derivePlatform(channel: string): string {
   const name = channel.split(":")[0];
@@ -20,7 +20,23 @@ export function formatPrefix(meta: ChannelMeta | undefined, time: string): strin
   // Include session name if not the default
   const sessionPart =
     meta.sessionName && meta.sessionName !== "main" ? ` — session: ${meta.sessionName}` : "";
-  return parts.length > 0 ? `[${parts.join(": ")}${sessionPart} — ${time}]\n` : "";
+  let prefix = parts.length > 0 ? `[${parts.join(": ")}${sessionPart} — ${time}]\n` : "";
+
+  // Append participant profiles on first encounter per channel
+  if (meta.participantProfiles && meta.participantProfiles.length > 0) {
+    prefix += formatParticipantProfiles(meta.participantProfiles);
+  }
+
+  return prefix;
+}
+
+function formatParticipantProfiles(profiles: ParticipantProfile[]): string {
+  const lines = profiles.map((p) => {
+    const display = p.displayName ? ` (${p.displayName})` : "";
+    const desc = p.description ? ` — ${p.description}` : "";
+    return `  ${p.username}${display} [${p.userType}]${desc}`;
+  });
+  return `[Participants:\n${lines.join("\n")}]\n`;
 }
 
 export function formatTypingSuffix(typing: string[] | undefined): string {

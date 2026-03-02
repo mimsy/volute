@@ -8,7 +8,21 @@ export type User = {
   username: string;
   role: "admin" | "user" | "pending" | "mind";
   user_type: "brain" | "mind";
+  display_name: string | null;
+  description: string | null;
+  avatar: string | null;
   created_at: string;
+};
+
+const userSelectFields = {
+  id: users.id,
+  username: users.username,
+  role: users.role,
+  user_type: users.user_type,
+  display_name: users.display_name,
+  description: users.description,
+  avatar: users.avatar,
+  created_at: users.created_at,
 };
 
 export async function createUser(username: string, password: string): Promise<User> {
@@ -25,13 +39,7 @@ export async function createUser(username: string, password: string): Promise<Us
   const [result] = await db
     .insert(users)
     .values({ username, password_hash: hash, role })
-    .returning({
-      id: users.id,
-      username: users.username,
-      role: users.role,
-      user_type: users.user_type,
-      created_at: users.created_at,
-    });
+    .returning(userSelectFields);
 
   return result as User;
 }
@@ -48,30 +56,14 @@ export async function verifyUser(username: string, password: string): Promise<Us
 
 export async function getUser(id: number): Promise<User | null> {
   const db = await getDb();
-  const row = await db
-    .select({
-      id: users.id,
-      username: users.username,
-      role: users.role,
-      user_type: users.user_type,
-      created_at: users.created_at,
-    })
-    .from(users)
-    .where(eq(users.id, id))
-    .get();
+  const row = await db.select(userSelectFields).from(users).where(eq(users.id, id)).get();
   return (row as User) ?? null;
 }
 
 export async function getUserByUsername(username: string): Promise<User | null> {
   const db = await getDb();
   const row = await db
-    .select({
-      id: users.id,
-      username: users.username,
-      role: users.role,
-      user_type: users.user_type,
-      created_at: users.created_at,
-    })
+    .select(userSelectFields)
     .from(users)
     .where(eq(users.username, username))
     .get();
@@ -80,29 +72,13 @@ export async function getUserByUsername(username: string): Promise<User | null> 
 
 export async function listUsers(): Promise<User[]> {
   const db = await getDb();
-  return db
-    .select({
-      id: users.id,
-      username: users.username,
-      role: users.role,
-      user_type: users.user_type,
-      created_at: users.created_at,
-    })
-    .from(users)
-    .orderBy(users.created_at)
-    .all() as Promise<User[]>;
+  return db.select(userSelectFields).from(users).orderBy(users.created_at).all() as Promise<User[]>;
 }
 
 export async function listPendingUsers(): Promise<User[]> {
   const db = await getDb();
   return db
-    .select({
-      id: users.id,
-      username: users.username,
-      role: users.role,
-      user_type: users.user_type,
-      created_at: users.created_at,
-    })
+    .select(userSelectFields)
     .from(users)
     .where(eq(users.role, "pending"))
     .orderBy(users.created_at)
@@ -112,13 +88,7 @@ export async function listPendingUsers(): Promise<User[]> {
 export async function listUsersByType(userType: "brain" | "mind"): Promise<User[]> {
   const db = await getDb();
   return db
-    .select({
-      id: users.id,
-      username: users.username,
-      role: users.role,
-      user_type: users.user_type,
-      created_at: users.created_at,
-    })
+    .select(userSelectFields)
     .from(users)
     .where(eq(users.user_type, userType))
     .orderBy(users.created_at)
@@ -128,13 +98,7 @@ export async function listUsersByType(userType: "brain" | "mind"): Promise<User[
 export async function getOrCreateMindUser(mindName: string): Promise<User> {
   const db = await getDb();
   const existing = await db
-    .select({
-      id: users.id,
-      username: users.username,
-      role: users.role,
-      user_type: users.user_type,
-      created_at: users.created_at,
-    })
+    .select(userSelectFields)
     .from(users)
     .where(and(eq(users.username, mindName), eq(users.user_type, "mind")))
     .get();
@@ -149,25 +113,13 @@ export async function getOrCreateMindUser(mindName: string): Promise<User> {
         role: "mind",
         user_type: "mind",
       })
-      .returning({
-        id: users.id,
-        username: users.username,
-        role: users.role,
-        user_type: users.user_type,
-        created_at: users.created_at,
-      });
+      .returning(userSelectFields);
     return result as User;
   } catch (err: unknown) {
     // Handle race condition: another request may have inserted concurrently
     if (err instanceof Error && err.message.includes("UNIQUE constraint")) {
       const retried = await db
-        .select({
-          id: users.id,
-          username: users.username,
-          role: users.role,
-          user_type: users.user_type,
-          created_at: users.created_at,
-        })
+        .select(userSelectFields)
         .from(users)
         .where(and(eq(users.username, mindName), eq(users.user_type, "mind")))
         .get();
@@ -202,4 +154,28 @@ export async function approveUser(id: number): Promise<void> {
     .update(users)
     .set({ role: "user" })
     .where(and(eq(users.id, id), eq(users.role, "pending")));
+}
+
+export async function updateUserProfile(
+  userId: number,
+  profile: { display_name?: string | null; description?: string | null; avatar?: string | null },
+): Promise<void> {
+  const db = await getDb();
+  await db.update(users).set(profile).where(eq(users.id, userId));
+}
+
+export async function syncMindProfile(
+  mindName: string,
+  config: { displayName?: string; description?: string; avatar?: string },
+): Promise<void> {
+  const user = await getOrCreateMindUser(mindName);
+  const db = await getDb();
+  await db
+    .update(users)
+    .set({
+      display_name: config.displayName ?? null,
+      description: config.description ?? null,
+      avatar: config.avatar ?? null,
+    })
+    .where(eq(users.id, user.id));
 }

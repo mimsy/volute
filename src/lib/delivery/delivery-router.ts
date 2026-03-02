@@ -64,6 +64,13 @@ export type MatchMeta = {
 
 // --- Delivery payload ---
 
+export type ParticipantProfile = {
+  username: string;
+  userType: "brain" | "mind";
+  displayName?: string | null;
+  description?: string | null;
+};
+
 export interface DeliveryPayload {
   channel: string;
   sender: string | null;
@@ -74,6 +81,7 @@ export interface DeliveryPayload {
   isDM?: boolean;
   participants?: string[];
   participantCount?: number;
+  participantProfiles?: ParticipantProfile[];
 }
 
 export function extractTextContent(content: unknown): string {

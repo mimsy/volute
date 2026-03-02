@@ -2,6 +2,9 @@ export type AuthUser = {
   id: number;
   username: string;
   role: "admin" | "user" | "pending" | "mind";
+  display_name?: string | null;
+  description?: string | null;
+  avatar?: string | null;
 };
 
 async function authGet<T>(path: string): Promise<T> {
@@ -59,4 +62,36 @@ export function changePassword(currentPassword: string, newPassword: string): Pr
 export async function approveUser(id: number): Promise<void> {
   const res = await fetch(`/api/auth/users/${id}/approve`, { method: "POST" });
   if (!res.ok) throw new Error("Failed to approve user");
+}
+
+export async function updateProfile(profile: {
+  display_name?: string | null;
+  description?: string | null;
+}): Promise<void> {
+  const res = await fetch("/api/auth/profile", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(profile),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || "Failed to update profile");
+  }
+}
+
+export async function uploadAvatar(file: File): Promise<string> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch("/api/auth/avatar", { method: "POST", body: form });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || "Failed to upload avatar");
+  }
+  const data = (await res.json()) as { avatar: string };
+  return data.avatar;
+}
+
+export async function deleteAvatar(): Promise<void> {
+  const res = await fetch("/api/auth/avatar", { method: "DELETE" });
+  if (!res.ok) throw new Error("Failed to delete avatar");
 }

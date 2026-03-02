@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { extname, resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
@@ -12,15 +14,17 @@ import {
   listPendingUsers,
   listUsers,
   listUsersByType,
+  updateUserProfile,
   verifyUser,
 } from "../../lib/auth.js";
-import { readRegistry } from "../../lib/registry.js";
+import { readRegistry, voluteHome } from "../../lib/registry.js";
 import {
   type AuthEnv,
   authMiddleware,
   createSession,
   deleteSession,
   getSessionUserId,
+  invalidateSessionCache,
 } from "../middleware/auth.js";
 
 const credentialsSchema = z.object({
@@ -33,6 +37,25 @@ const changePasswordSchema = z.object({
   newPassword: z.string().min(1),
 });
 
+const profileSchema = z.object({
+  display_name: z.string().max(100).nullable().optional(),
+  description: z.string().max(500).nullable().optional(),
+});
+
+const AVATAR_MIME: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
+
+const MAX_AVATAR_SIZE = 2 * 1024 * 1024; // 2MB
+
+function avatarsDir(): string {
+  return resolve(voluteHome(), "avatars");
+}
+
 const authenticated = new Hono<AuthEnv>()
   .use(authMiddleware)
   .post("/change-password", zValidator("json", changePasswordSchema), async (c) => {
@@ -40,6 +63,59 @@ const authenticated = new Hono<AuthEnv>()
     const { currentPassword, newPassword } = c.req.valid("json");
     const ok = await changePassword(user.id, currentPassword, newPassword);
     if (!ok) return c.json({ error: "Current password is incorrect" }, 400);
+    return c.json({ ok: true });
+  })
+  .put("/profile", zValidator("json", profileSchema), async (c) => {
+    const user = c.get("user");
+    const body = c.req.valid("json");
+    await updateUserProfile(user.id, body);
+    // Invalidate session cache so updated profile is picked up
+    const sessionId = getCookie(c, "volute_session");
+    if (sessionId) invalidateSessionCache(sessionId);
+    return c.json({ ok: true });
+  })
+  .post("/avatar", async (c) => {
+    const user = c.get("user");
+    const body = await c.req.parseBody();
+    const file = body.file;
+    if (!(file instanceof File)) {
+      return c.json({ error: "No file uploaded" }, 400);
+    }
+    if (file.size > MAX_AVATAR_SIZE) {
+      return c.json({ error: "File too large (max 2MB)" }, 400);
+    }
+    const ext = extname(file.name).toLowerCase();
+    if (!AVATAR_MIME[ext]) {
+      return c.json({ error: "Invalid file type (png, jpg, gif, webp only)" }, 400);
+    }
+
+    const dir = avatarsDir();
+    mkdirSync(dir, { recursive: true });
+
+    // Delete old avatar if exists
+    if (user.avatar) {
+      const oldPath = resolve(dir, user.avatar);
+      rmSync(oldPath, { force: true });
+    }
+
+    const filename = `avatar-${user.id}${ext}`;
+    const buffer = Buffer.from(await file.arrayBuffer());
+    writeFileSync(resolve(dir, filename), buffer);
+
+    await updateUserProfile(user.id, { avatar: filename });
+    const sessionId = getCookie(c, "volute_session");
+    if (sessionId) invalidateSessionCache(sessionId);
+    return c.json({ ok: true, avatar: filename });
+  })
+  .delete("/avatar", async (c) => {
+    const user = c.get("user");
+    if (user.avatar) {
+      const path = resolve(avatarsDir(), user.avatar);
+      rmSync(path, { force: true });
+    }
+    await updateUserProfile(user.id, { avatar: null });
+    const sessionId = getCookie(c, "volute_session");
+    if (sessionId) invalidateSessionCache(sessionId);
     return c.json({ ok: true });
   });
 
@@ -123,7 +199,36 @@ const app = new Hono()
     const user = await getUser(userId);
     if (!user) return c.json({ error: "Not logged in" }, 401);
 
-    return c.json({ id: user.id, username: user.username, role: user.role });
+    return c.json({
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      display_name: user.display_name,
+      description: user.description,
+      avatar: user.avatar,
+    });
+  })
+  // Serve avatar images (public, unauthenticated)
+  .get("/avatars/:filename", async (c) => {
+    const filename = c.req.param("filename");
+    // Path traversal guard
+    if (filename.includes("/") || filename.includes("\\") || filename.includes("..")) {
+      return c.json({ error: "Invalid filename" }, 400);
+    }
+    const dir = avatarsDir();
+    const filePath = resolve(dir, filename);
+    if (!filePath.startsWith(`${dir}/`)) return c.json({ error: "Invalid path" }, 400);
+    if (!existsSync(filePath)) return c.json({ error: "Not found" }, 404);
+
+    const ext = extname(filename).toLowerCase();
+    const mime = AVATAR_MIME[ext];
+    if (!mime) return c.json({ error: "Invalid file type" }, 400);
+
+    const data = readFileSync(filePath);
+    return c.body(data, 200, {
+      "Content-Type": mime,
+      "Cache-Control": "public, max-age=3600",
+    });
   })
   .route("/", admin)
   .route("/", authenticated);

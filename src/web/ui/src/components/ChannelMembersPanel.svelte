@@ -130,10 +130,15 @@ function handleInputBlur() {
       {/each}
     {/if}
     {#if userParticipants.length > 0}
-      <div class="section-title">Users</div>
+      <div class="section-title">Brains</div>
       {#each userParticipants as participant}
         <div class="member-row">
-          <span class="member-name">{participant.username}</span>
+          <span class="member-name">
+            {participant.username}
+            {#if participant.displayName}
+              <span class="display-name">({participant.displayName})</span>
+            {/if}
+          </span>
         </div>
       {/each}
     {/if}
@@ -290,6 +295,12 @@ function handleInputBlur() {
     white-space: nowrap;
     font-weight: 500;
     color: var(--text-0);
+  }
+
+  .display-name {
+    font-weight: 400;
+    color: var(--text-2);
+    font-size: 12px;
   }
 
   .status-dot {

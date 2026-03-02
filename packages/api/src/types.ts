@@ -49,6 +49,8 @@ export type Participant = {
   username: string;
   userType: "brain" | "mind";
   role: "owner" | "member";
+  displayName?: string | null;
+  description?: string | null;
 };
 
 export type Message = {
@@ -124,6 +126,9 @@ export type AvailableUser = {
   username: string;
   role: string;
   user_type: string;
+  display_name?: string | null;
+  description?: string | null;
+  avatar?: string | null;
 };
 
 export type Prompt = {
