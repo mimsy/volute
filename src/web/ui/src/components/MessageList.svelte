@@ -23,6 +23,7 @@ let {
 
 let scrollEl: HTMLDivElement;
 let openTools = $state<Set<number>>(new Set());
+let wasAtBottom = true;
 
 let mindsByName = $derived(new Map(minds.map((m) => [m.name, m])));
 
@@ -89,8 +90,22 @@ export function resetToolState() {
   openTools = new Set();
 }
 
+// Keep scroll pinned to bottom when the container resizes (e.g. side panel opens)
+$effect(() => {
+  if (!scrollEl) return;
+  const ro = new ResizeObserver(() => {
+    if (wasAtBottom) {
+      scrollEl.scrollTop = scrollEl.scrollHeight;
+    }
+  });
+  ro.observe(scrollEl);
+  return () => ro.disconnect();
+});
+
 function handleScroll() {
-  if (!scrollEl || !hasMore || loadingOlder || !onLoadOlder) return;
+  if (!scrollEl) return;
+  wasAtBottom = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 100;
+  if (!hasMore || loadingOlder || !onLoadOlder) return;
   if (scrollEl.scrollTop < 100) {
     onLoadOlder();
   }
