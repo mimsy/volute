@@ -134,7 +134,7 @@ export type AvailableUser = {
 
 export type ParticipantProfile = Pick<
   Participant,
-  "username" | "userType" | "displayName" | "description" | "avatar"
+  "username" | "userType" | "displayName" | "description"
 >;
 
 export type Prompt = {

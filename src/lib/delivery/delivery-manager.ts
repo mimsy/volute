@@ -1,11 +1,14 @@
+import { readFile } from "node:fs/promises";
+import { extname, resolve } from "node:path";
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { getParticipants } from "../events/conversations.js";
 import log from "../logger.js";
-import { findMind } from "../registry.js";
+import { findMind, mindDir, voluteHome } from "../registry.js";
 import { deliveryQueue } from "../schema.js";
 import { getTypingMap, publishTypingForChannels } from "../typing.js";
 import { findVariant } from "../variants.js";
+import { readVoluteConfig } from "../volute-config.js";
 import {
   type DeliveryPayload,
   extractTextContent,
@@ -720,18 +723,70 @@ export class DeliveryManager {
         userType: p.userType,
         displayName: p.displayName,
         description: p.description,
-        avatar: p.avatar
-          ? p.userType === "mind"
-            ? `/api/files/${p.username}/avatar`
-            : `/api/auth/avatars/${p.avatar}`
-          : null,
       }));
+
+      // Read avatar images and prepend as image blocks
+      const avatarBlocks = await this.loadAvatarBlocks(participants);
+
       state.seenChannelProfiles.add(channelKey);
-      return { ...payload, participantProfiles: profiles };
+      const enriched: DeliveryPayload = { ...payload, participantProfiles: profiles };
+      if (avatarBlocks.length > 0) {
+        const existing = Array.isArray(payload.content) ? payload.content : [];
+        enriched.content = [...avatarBlocks, ...existing];
+      }
+      return enriched;
     } catch (err) {
       dlog.warn(`failed to fetch participant profiles for ${mindName}`, log.errorData(err));
       return payload;
     }
+  }
+
+  private async loadAvatarBlocks(
+    participants: { username: string; userType: string; avatar?: string | null }[],
+  ): Promise<
+    ({ type: "text"; text: string } | { type: "image"; media_type: string; data: string })[]
+  > {
+    const blocks: (
+      | { type: "text"; text: string }
+      | { type: "image"; media_type: string; data: string }
+    )[] = [];
+
+    for (const p of participants) {
+      if (!p.avatar) continue;
+
+      try {
+        let filePath: string;
+        if (p.userType === "mind") {
+          const dir = mindDir(p.username);
+          const config = readVoluteConfig(dir);
+          if (!config?.avatar) continue;
+          filePath = resolve(dir, "home", config.avatar);
+        } else {
+          filePath = resolve(voluteHome(), "avatars", p.avatar);
+        }
+
+        const ext = extname(filePath).toLowerCase();
+        const mimeMap: Record<string, string> = {
+          ".png": "image/png",
+          ".jpg": "image/jpeg",
+          ".jpeg": "image/jpeg",
+          ".gif": "image/gif",
+          ".webp": "image/webp",
+        };
+        const mediaType = mimeMap[ext];
+        if (!mediaType) continue;
+
+        const data = await readFile(filePath);
+        blocks.push(
+          { type: "text", text: `[Avatar for ${p.username}]` },
+          { type: "image", media_type: mediaType, data: data.toString("base64") },
+        );
+      } catch {
+        // Skip avatars that can't be read
+      }
+    }
+
+    return blocks;
   }
 
   private incrementActive(

@@ -7,7 +7,6 @@ export type ParticipantProfile = {
   userType: "brain" | "mind";
   displayName?: string | null;
   description?: string | null;
-  avatar?: string | null;
 };
 
 export type ChannelMeta = {

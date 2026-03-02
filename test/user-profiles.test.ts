@@ -160,42 +160,6 @@ describe("format-prefix participant profiles", () => {
     assert.ok(result.includes("mystery [mind] — an introspective mind"));
   });
 
-  it("renders avatar URL in participant block when present", () => {
-    const result = formatPrefix(
-      {
-        channel: "volute:test",
-        sender: "alice",
-        participantProfiles: [
-          {
-            username: "alice",
-            userType: "brain",
-            displayName: "Alice",
-            description: null,
-            avatar: "/api/auth/avatars/avatar-5.png",
-          },
-          {
-            username: "deep-mind",
-            userType: "mind",
-            displayName: null,
-            description: null,
-            avatar: "/api/files/deep-mind/avatar",
-          },
-          {
-            username: "no-avatar",
-            userType: "brain",
-            displayName: null,
-            description: null,
-            avatar: null,
-          },
-        ],
-      },
-      "12:00",
-    );
-    assert.ok(result.includes("alice (Alice) [brain] [avatar: /api/auth/avatars/avatar-5.png]"));
-    assert.ok(result.includes("deep-mind [mind] [avatar: /api/files/deep-mind/avatar]"));
-    assert.ok(!result.includes("no-avatar [brain] [avatar:"));
-  });
-
   it("omits participant block when no profiles", () => {
     const result = formatPrefix({ channel: "volute:test", sender: "alice" }, "12:00");
     assert.ok(!result.includes("[Participants:"));
