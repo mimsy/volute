@@ -93,5 +93,8 @@ export async function uploadAvatar(file: File): Promise<string> {
 
 export async function deleteAvatar(): Promise<void> {
   const res = await fetch("/api/auth/avatar", { method: "DELETE" });
-  if (!res.ok) throw new Error("Failed to delete avatar");
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || "Failed to delete avatar");
+  }
 }

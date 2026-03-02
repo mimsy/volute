@@ -92,15 +92,15 @@ const authenticated = new Hono<AuthEnv>()
     const dir = avatarsDir();
     mkdirSync(dir, { recursive: true });
 
-    // Delete old avatar if exists
-    if (user.avatar) {
-      const oldPath = resolve(dir, user.avatar);
-      rmSync(oldPath, { force: true });
-    }
-
     const filename = `avatar-${user.id}${ext}`;
     const buffer = Buffer.from(await file.arrayBuffer());
     writeFileSync(resolve(dir, filename), buffer);
+
+    // Delete old avatar after writing new one (safe if same filename)
+    if (user.avatar && user.avatar !== filename) {
+      const oldPath = resolve(dir, user.avatar);
+      rmSync(oldPath, { force: true });
+    }
 
     await updateUserProfile(user.id, { avatar: filename });
     const sessionId = getCookie(c, "volute_session");
@@ -228,6 +228,7 @@ const app = new Hono()
     return c.body(data, 200, {
       "Content-Type": mime,
       "Cache-Control": "public, max-age=3600",
+      "X-Content-Type-Options": "nosniff",
     });
   })
   .route("/", admin)

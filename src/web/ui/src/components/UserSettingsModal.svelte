@@ -1,12 +1,5 @@
 <script lang="ts">
-import {
-  type AuthUser,
-  changePassword,
-  deleteAvatar,
-  fetchMe,
-  updateProfile,
-  uploadAvatar,
-} from "../lib/auth";
+import { changePassword, deleteAvatar, fetchMe, updateProfile, uploadAvatar } from "../lib/auth";
 import Modal from "./Modal.svelte";
 
 let { onClose }: { onClose: () => void } = $props();

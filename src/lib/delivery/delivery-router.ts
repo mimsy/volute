@@ -64,12 +64,8 @@ export type MatchMeta = {
 
 // --- Delivery payload ---
 
-export type ParticipantProfile = {
-  username: string;
-  userType: "brain" | "mind";
-  displayName?: string | null;
-  description?: string | null;
-};
+import type { ParticipantProfile } from "@volute/api";
+export type { ParticipantProfile };
 
 export interface DeliveryPayload {
   channel: string;

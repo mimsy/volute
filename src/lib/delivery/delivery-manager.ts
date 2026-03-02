@@ -712,7 +712,6 @@ export class DeliveryManager {
 
     const channelKey = payload.channel;
     if (state.seenChannelProfiles.has(channelKey)) return payload;
-    state.seenChannelProfiles.add(channelKey);
 
     try {
       const participants = await getParticipants(payload.conversationId);
@@ -722,6 +721,7 @@ export class DeliveryManager {
         displayName: p.displayName,
         description: p.description,
       }));
+      state.seenChannelProfiles.add(channelKey);
       return { ...payload, participantProfiles: profiles };
     } catch (err) {
       dlog.warn(`failed to fetch participant profiles for ${mindName}`, log.errorData(err));

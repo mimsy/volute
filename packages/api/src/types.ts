@@ -124,12 +124,17 @@ export type FileContent = {
 export type AvailableUser = {
   id: number;
   username: string;
-  role: string;
-  user_type: string;
+  role: "admin" | "user" | "pending" | "mind";
+  user_type: "brain" | "mind";
   display_name?: string | null;
   description?: string | null;
   avatar?: string | null;
 };
+
+export type ParticipantProfile = Pick<
+  Participant,
+  "username" | "userType" | "displayName" | "description"
+>;
 
 export type Prompt = {
   key: string;

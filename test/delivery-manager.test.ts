@@ -227,6 +227,7 @@ describe("DeliveryManager", () => {
         lastDeliverySenders: new Set(senders),
         lastDeliveryChannels: new Set(channels),
         lastInterruptAt: 0,
+        seenChannelProfiles: new Set<string>(),
       });
     }
 
@@ -316,6 +317,7 @@ describe("DeliveryManager", () => {
         lastDeliverySenders: new Set(["alice"]),
         lastDeliveryChannels: new Set(["group:chat"]),
         lastInterruptAt: Date.now(), // just interrupted
+        seenChannelProfiles: new Set<string>(),
       });
 
       // Deliver from new sender — debounce should prevent interrupt
@@ -349,6 +351,7 @@ describe("DeliveryManager", () => {
         lastDeliverySenders: new Set(["alice"]),
         lastDeliveryChannels: new Set(["group:chat"]),
         lastInterruptAt: 0,
+        seenChannelProfiles: new Set<string>(),
       });
 
       // Deliver from new sender — maxWait expired so no interrupt
@@ -400,6 +403,7 @@ describe("DeliveryManager", () => {
         lastDeliverySenders: new Set(["alice"]),
         lastDeliveryChannels: new Set(["group:chat"]),
         lastInterruptAt: 0,
+        seenChannelProfiles: new Set<string>(),
       });
 
       // Deliver from new sender — session is idle so no interrupt
