@@ -137,6 +137,7 @@ export async function getParticipants(conversationId: string): Promise<Participa
       role: conversationParticipants.role,
       displayName: users.display_name,
       description: users.description,
+      avatar: users.avatar,
     })
     .from(conversationParticipants)
     .innerJoin(users, eq(conversationParticipants.user_id, users.id))
@@ -342,6 +343,7 @@ export async function listConversationsWithParticipants(
       role: conversationParticipants.role,
       displayName: users.display_name,
       description: users.description,
+      avatar: users.avatar,
     })
     .from(conversationParticipants)
     .innerJoin(users, eq(conversationParticipants.user_id, users.id))
@@ -360,6 +362,7 @@ export async function listConversationsWithParticipants(
       role: r.role as "owner" | "member",
       displayName: r.displayName,
       description: r.description,
+      avatar: r.avatar,
     });
   }
 

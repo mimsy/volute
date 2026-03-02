@@ -51,6 +51,7 @@ export type Participant = {
   role: "owner" | "member";
   displayName?: string | null;
   description?: string | null;
+  avatar?: string | null;
 };
 
 export type Message = {
@@ -133,7 +134,7 @@ export type AvailableUser = {
 
 export type ParticipantProfile = Pick<
   Participant,
-  "username" | "userType" | "displayName" | "description"
+  "username" | "userType" | "displayName" | "description" | "avatar"
 >;
 
 export type Prompt = {

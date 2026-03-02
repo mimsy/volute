@@ -93,16 +93,18 @@ describe("participant profiles in conversations", () => {
   beforeEach(cleanup);
   afterEach(cleanup);
 
-  it("getParticipants returns displayName and description", async () => {
+  it("getParticipants returns displayName, description, and avatar", async () => {
     const brain = await createUser("brain-profile", "pass");
     await updateUserProfile(brain.id, {
       display_name: "Alice",
       description: "researcher",
+      avatar: "avatar-5.png",
     });
     const mind = await getOrCreateMindUser("mind-profile");
     await syncMindProfile("mind-profile", {
       displayName: "Deep Thinker",
       description: "introspective",
+      avatar: "avatar.png",
     });
 
     const conv = await createConversation("mind-profile", "volute", {
@@ -117,11 +119,13 @@ describe("participant profiles in conversations", () => {
       assert.ok(brainP);
       assert.equal(brainP.displayName, "Alice");
       assert.equal(brainP.description, "researcher");
+      assert.equal(brainP.avatar, "avatar-5.png");
 
       const mindP = participants.find((p) => p.username === "mind-profile");
       assert.ok(mindP);
       assert.equal(mindP.displayName, "Deep Thinker");
       assert.equal(mindP.description, "introspective");
+      assert.equal(mindP.avatar, "avatar.png");
     } finally {
       await deleteConversation(conv.id);
     }
@@ -154,6 +158,42 @@ describe("format-prefix participant profiles", () => {
     assert.ok(result.includes("[Participants:"));
     assert.ok(result.includes("alice (Alice Chen) [brain] — researcher"));
     assert.ok(result.includes("mystery [mind] — an introspective mind"));
+  });
+
+  it("renders avatar URL in participant block when present", () => {
+    const result = formatPrefix(
+      {
+        channel: "volute:test",
+        sender: "alice",
+        participantProfiles: [
+          {
+            username: "alice",
+            userType: "brain",
+            displayName: "Alice",
+            description: null,
+            avatar: "/api/auth/avatars/avatar-5.png",
+          },
+          {
+            username: "deep-mind",
+            userType: "mind",
+            displayName: null,
+            description: null,
+            avatar: "/api/files/deep-mind/avatar",
+          },
+          {
+            username: "no-avatar",
+            userType: "brain",
+            displayName: null,
+            description: null,
+            avatar: null,
+          },
+        ],
+      },
+      "12:00",
+    );
+    assert.ok(result.includes("alice (Alice) [brain] [avatar: /api/auth/avatars/avatar-5.png]"));
+    assert.ok(result.includes("deep-mind [mind] [avatar: /api/files/deep-mind/avatar]"));
+    assert.ok(!result.includes("no-avatar [brain] [avatar:"));
   });
 
   it("omits participant block when no profiles", () => {

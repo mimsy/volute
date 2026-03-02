@@ -720,6 +720,11 @@ export class DeliveryManager {
         userType: p.userType,
         displayName: p.displayName,
         description: p.description,
+        avatar: p.avatar
+          ? p.userType === "mind"
+            ? `/api/files/${p.username}/avatar`
+            : `/api/auth/avatars/${p.avatar}`
+          : null,
       }));
       state.seenChannelProfiles.add(channelKey);
       return { ...payload, participantProfiles: profiles };

@@ -34,7 +34,8 @@ function formatParticipantProfiles(profiles: ParticipantProfile[]): string {
   const lines = profiles.map((p) => {
     const display = p.displayName ? ` (${p.displayName})` : "";
     const desc = p.description ? ` — ${p.description}` : "";
-    return `  ${p.username}${display} [${p.userType}]${desc}`;
+    const avatar = p.avatar ? ` [avatar: ${p.avatar}]` : "";
+    return `  ${p.username}${display} [${p.userType}]${desc}${avatar}`;
   });
   return `[Participants:\n${lines.join("\n")}]\n`;
 }
