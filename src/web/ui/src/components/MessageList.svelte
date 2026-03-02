@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Mind } from "@volute/api";
+import type { Mind, Participant } from "@volute/api";
 import type { ChatEntry } from "../lib/types";
 import MessageEntry from "./MessageEntry.svelte";
 
@@ -10,6 +10,7 @@ let {
   loadingOlder = false,
   onLoadOlder,
   minds = [],
+  participants = [],
   onOpenMind,
 }: {
   entries: ChatEntry[];
@@ -18,6 +19,7 @@ let {
   loadingOlder?: boolean;
   onLoadOlder?: () => void;
   minds?: Mind[];
+  participants?: Participant[];
   onOpenMind?: (mind: Mind) => void;
 } = $props();
 
@@ -146,6 +148,7 @@ function handleScroll() {
         {openTools}
         onToggleTool={toggleTool}
         {mindsByName}
+        {participants}
         {onOpenMind}
       />
     {/if}

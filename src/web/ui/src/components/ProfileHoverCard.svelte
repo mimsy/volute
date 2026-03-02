@@ -1,22 +1,32 @@
 <script lang="ts">
-import type { Mind } from "@volute/api";
 import type { Snippet } from "svelte";
-import { getDisplayStatus } from "../lib/format";
 import StatusBadge from "./StatusBadge.svelte";
 
+export type HoverProfile = {
+  name: string;
+  displayName?: string | null;
+  description?: string | null;
+  avatarUrl?: string | null;
+  userType: "brain" | "mind";
+  status?: string;
+  created?: string;
+};
+
 let {
-  mind,
+  profile,
   children,
 }: {
-  mind: Mind;
+  profile: HoverProfile;
   children: Snippet;
 } = $props();
 
 let showCard = $state(false);
 let cardX = $state(0);
 let cardY = $state(0);
+let flipped = $state(false);
 let hoverTimer: ReturnType<typeof setTimeout> | undefined;
 let wrapperEl: HTMLSpanElement;
+let cardEl = $state<HTMLDivElement | undefined>();
 
 function formatCreated(dateStr: string): string {
   try {
@@ -31,8 +41,25 @@ function handleMouseEnter() {
   hoverTimer = setTimeout(() => {
     const rect = wrapperEl.getBoundingClientRect();
     cardX = rect.left;
-    cardY = rect.top - 6;
+    cardY = rect.top;
+    flipped = false;
     showCard = true;
+
+    // After render, check if clipped at top and flip below if needed
+    requestAnimationFrame(() => {
+      if (!cardEl) return;
+      const cardRect = cardEl.getBoundingClientRect();
+
+      // Clamp left so card doesn't overflow right edge
+      if (cardRect.right > window.innerWidth - 8) {
+        cardX = window.innerWidth - 8 - cardRect.width;
+      }
+
+      // If clipped at top, flip below the trigger
+      if (cardRect.top < 8) {
+        flipped = true;
+      }
+    });
   }, 300);
 }
 
@@ -42,6 +69,7 @@ function handleMouseLeave() {
 }
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <span
   class="hover-wrapper"
   bind:this={wrapperEl}
@@ -52,23 +80,34 @@ function handleMouseLeave() {
 </span>
 
 {#if showCard}
-  <div class="hover-card" style:left="{cardX}px" style:bottom="{window.innerHeight - cardY}px">
-    {#if mind.avatar}
+  <div
+    class="hover-card"
+    bind:this={cardEl}
+    style:left="{cardX}px"
+    style:top="{cardY}px"
+    style:transform={flipped ? "translateY(calc(100% + 8px))" : "translateY(-100%) translateY(-8px)"}
+    style:transform-origin={flipped ? "top left" : "bottom left"}
+  >
+    {#if profile.avatarUrl}
       <img
-        src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
+        src={profile.avatarUrl}
         alt=""
         class="avatar"
       />
     {/if}
     <div class="info">
       <span class="name-row">
-        <span class="display-name">{mind.displayName ?? mind.name}</span>
-        <StatusBadge status={getDisplayStatus(mind)} />
+        <span class="display-name">{profile.displayName ?? profile.name}</span>
+        {#if profile.userType === "mind" && profile.status}
+          <StatusBadge status={profile.status} />
+        {:else if profile.userType === "brain"}
+          <span class="type-label">brain</span>
+        {/if}
       </span>
-      {#if mind.description}
-        <span class="description">{mind.description}</span>
+      {#if profile.description}
+        <span class="description">{profile.description}</span>
       {/if}
-      <span class="meta">@{mind.name}{#if mind.created} &middot; since {formatCreated(mind.created)}{/if}</span>
+      <span class="meta">@{profile.name}{#if profile.created} &middot; since {formatCreated(profile.created)}{/if}</span>
     </div>
   </div>
 {/if}
@@ -119,6 +158,17 @@ function handleMouseLeave() {
     font-size: 13px;
     font-weight: 600;
     color: var(--text-0);
+  }
+
+  .type-label {
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-2);
+    background: var(--muted-bg);
+    padding: 1px 6px;
+    border-radius: var(--radius);
   }
 
   .description {

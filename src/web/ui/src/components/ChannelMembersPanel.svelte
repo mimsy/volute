@@ -3,6 +3,7 @@ import type { ConversationWithParticipants, Mind } from "@volute/api";
 import { inviteToChannel } from "../lib/client";
 import { getDisplayStatus, mindDotColor } from "../lib/format";
 import { activeMinds, reconnectActivity } from "../lib/stores.svelte";
+import ProfileHoverCard from "./ProfileHoverCard.svelte";
 import StatusBadge from "./StatusBadge.svelte";
 
 let {
@@ -132,14 +133,35 @@ function handleInputBlur() {
     {#if userParticipants.length > 0}
       <div class="section-title">Brains</div>
       {#each userParticipants as participant}
-        <div class="member-row">
-          <span class="member-name">
-            {participant.username}
-            {#if participant.displayName}
-              <span class="display-name">({participant.displayName})</span>
-            {/if}
-          </span>
-        </div>
+        <ProfileHoverCard profile={{
+          name: participant.username,
+          displayName: participant.displayName,
+          description: participant.description,
+          avatarUrl: participant.avatar ? `/api/auth/avatars/${encodeURIComponent(participant.avatar)}` : null,
+          userType: "brain",
+        }}>
+          {#snippet children()}
+            <div class="member-row">
+              {#if participant.avatar}
+                <img
+                  src={`/api/auth/avatars/${encodeURIComponent(participant.avatar)}`}
+                  alt=""
+                  class="member-avatar"
+                />
+              {:else}
+                <span class="avatar-placeholder"></span>
+              {/if}
+              <span class="member-info">
+                <span class="member-name">
+                  {participant.displayName ?? participant.username}
+                </span>
+                {#if participant.description}
+                  <span class="member-desc">{participant.description}</span>
+                {/if}
+              </span>
+            </div>
+          {/snippet}
+        </ProfileHoverCard>
       {/each}
     {/if}
   </div>
@@ -297,10 +319,33 @@ function handleInputBlur() {
     color: var(--text-0);
   }
 
-  .display-name {
-    font-weight: 400;
+  .member-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: var(--radius);
+    object-fit: cover;
+    flex-shrink: 0;
+  }
+
+  .avatar-placeholder {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+  }
+
+  .member-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .member-desc {
+    font-size: 11px;
     color: var(--text-2);
-    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .status-dot {

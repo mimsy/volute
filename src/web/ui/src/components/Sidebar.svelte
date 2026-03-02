@@ -1,9 +1,9 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind, Site } from "@volute/api";
-import { mindDotColor } from "../lib/format";
+import { getDisplayStatus, mindDotColor } from "../lib/format";
 import { activeMinds } from "../lib/stores.svelte";
 import ConversationList from "./ConversationList.svelte";
-import MindHoverCard from "./MindHoverCard.svelte";
+import ProfileHoverCard from "./ProfileHoverCard.svelte";
 
 let {
   minds,
@@ -128,7 +128,15 @@ function toggleSection(section: Section) {
               class:active={dmId === activeConversationId}
               onclick={() => onSelectMind(mind.name)}
             >
-              <MindHoverCard {mind}>
+              <ProfileHoverCard profile={{
+                name: mind.name,
+                displayName: mind.displayName,
+                description: mind.description,
+                avatarUrl: mind.avatar ? `/api/minds/${encodeURIComponent(mind.name)}/avatar` : null,
+                userType: "mind",
+                status: getDisplayStatus(mind),
+                created: mind.created,
+              }}>
                 {#snippet children()}
                   <span
                     class="status-dot"
@@ -137,7 +145,7 @@ function toggleSection(section: Section) {
                   ></span>
                   <span class="mind-item-name">{mind.displayName ?? mind.name}</span>
                 {/snippet}
-              </MindHoverCard>
+              </ProfileHoverCard>
             </button>
           {/each}
         </div>

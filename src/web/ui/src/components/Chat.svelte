@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { ContentBlock, Message, Mind } from "@volute/api";
+import type { ContentBlock, Message, Mind, Participant } from "@volute/api";
 import {
   fetchChannelMembers,
   fetchConversationMessages,
@@ -22,6 +22,7 @@ let {
   convType = "dm",
   channelName = "",
   minds = [],
+  participants = [],
   onOpenMind,
 }: {
   name: string;
@@ -32,6 +33,7 @@ let {
   convType?: string;
   channelName?: string;
   minds?: Mind[];
+  participants?: Participant[];
   onOpenMind?: (mind: Mind) => void;
 } = $props();
 
@@ -262,6 +264,7 @@ async function handleSend(message: string, images: Array<{ media_type: string; d
     {loadingOlder}
     onLoadOlder={loadOlderMessages}
     {minds}
+    {participants}
     {onOpenMind}
   />
 

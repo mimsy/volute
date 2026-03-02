@@ -71,6 +71,12 @@ let chatChannelName = $derived.by(() => {
   const conv = conversations.find((c) => c.id === selection.conversationId);
   return conv?.type === "channel" ? (conv.name ?? "") : "";
 });
+
+let chatParticipants = $derived.by(() => {
+  if (selection.kind !== "conversation") return [];
+  const conv = conversations.find((c) => c.id === selection.conversationId);
+  return conv?.participants ?? [];
+});
 </script>
 
 <div class="main-frame">
@@ -112,6 +118,7 @@ let chatChannelName = $derived.by(() => {
         convType={chatConvType}
         channelName={chatChannelName}
         {minds}
+        participants={chatParticipants}
         {onOpenMind}
       />
     </div>
