@@ -199,11 +199,15 @@ const app = new Hono<AuthEnv>()
     await addMessage(conversationId, "user", senderName, contentBlocks);
 
     // Fan out to all running mind participants
+    const isDM = conv?.type === "dm";
     await fanOutToMinds({
       conversationId: conversationId!,
       contentBlocks,
       senderName,
       convTitle,
+      isDM,
+      channelEntryType: conv?.type === "channel" ? "group" : isDM ? "dm" : "group",
+      slugExtra: conv ? { convType: conv.type, convName: conv.name } : undefined,
       targetName: (username) => (username === baseName ? name : username),
     });
 
