@@ -167,11 +167,19 @@ export async function countAdmins(): Promise<number> {
 
 export async function setUserRole(id: number, role: "admin" | "user"): Promise<void> {
   const db = await getDb();
+  const target = await db.select({ id: users.id }).from(users).where(eq(users.id, id)).get();
+  if (!target) throw new Error("User not found");
   await db.update(users).set({ role }).where(eq(users.id, id));
 }
 
 export async function deleteUser(id: number): Promise<void> {
   const db = await getDb();
+  const target = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.id, id), eq(users.user_type, "brain")))
+    .get();
+  if (!target) throw new Error("User not found");
   await db.delete(users).where(and(eq(users.id, id), eq(users.user_type, "brain")));
 }
 
@@ -180,6 +188,8 @@ export async function updateUserProfile(
   profile: { display_name?: string | null; description?: string | null; avatar?: string | null },
 ): Promise<void> {
   const db = await getDb();
+  const target = await db.select({ id: users.id }).from(users).where(eq(users.id, userId)).get();
+  if (!target) throw new Error("User not found");
   await db.update(users).set(profile).where(eq(users.id, userId));
 }
 

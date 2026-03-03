@@ -29,11 +29,15 @@ $effect(() => {
 });
 
 async function loadProfile() {
-  const me = await fetchMe();
-  if (me) {
-    displayName = me.display_name ?? "";
-    description = me.description ?? "";
-    avatarUrl = me.avatar ? `/api/auth/avatars/${me.avatar}` : null;
+  try {
+    const me = await fetchMe();
+    if (me) {
+      displayName = me.display_name ?? "";
+      description = me.description ?? "";
+      avatarUrl = me.avatar ? `/api/auth/avatars/${me.avatar}` : null;
+    }
+  } catch {
+    profileError = "Failed to load profile";
   }
 }
 

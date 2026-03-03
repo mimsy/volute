@@ -149,6 +149,7 @@ const admin = new Hono<AuthEnv>()
     const user = c.get("user");
     if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
     const id = parseInt(c.req.param("id"), 10);
+    if (Number.isNaN(id)) return c.json({ error: "Invalid user ID" }, 400);
     await approveUser(id);
     return c.json({ ok: true });
   })
@@ -159,6 +160,7 @@ const admin = new Hono<AuthEnv>()
       const user = c.get("user");
       if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
       const id = parseInt(c.req.param("id"), 10);
+      if (Number.isNaN(id)) return c.json({ error: "Invalid user ID" }, 400);
       const { role } = c.req.valid("json");
       if (role !== "admin") {
         const adminCount = await countAdmins();
@@ -177,6 +179,7 @@ const admin = new Hono<AuthEnv>()
     const user = c.get("user");
     if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
     const id = parseInt(c.req.param("id"), 10);
+    if (Number.isNaN(id)) return c.json({ error: "Invalid user ID" }, 400);
     const body = c.req.valid("json");
     await updateUserProfile(id, body);
     return c.json({ ok: true });
@@ -185,6 +188,7 @@ const admin = new Hono<AuthEnv>()
     const user = c.get("user");
     if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
     const id = parseInt(c.req.param("id"), 10);
+    if (Number.isNaN(id)) return c.json({ error: "Invalid user ID" }, 400);
     if (id === user.id) return c.json({ error: "Cannot delete yourself" }, 400);
     const target = await getUser(id);
     if (!target) return c.json({ error: "User not found" }, 404);

@@ -36,10 +36,9 @@ function refresh() {
   fetchUsers()
     .then((u) => {
       users = u;
-      error = "";
     })
     .catch(() => {
-      error = "Failed to load users";
+      if (!error) error = "Failed to load users";
     });
 }
 
@@ -112,9 +111,12 @@ async function handleDelete(user: AuthUser) {
       try {
         await deleteMind(user.username, true);
         data.minds = data.minds.filter((m) => m.name !== user.username);
-      } catch {
-        // Mind may already be gone from registry — just delete the account
-        await deleteUser(user.id);
+      } catch (mindErr) {
+        if (mindErr instanceof Error && mindErr.message.includes("not found")) {
+          await deleteUser(user.id);
+        } else {
+          throw mindErr;
+        }
       }
     } else {
       await deleteUser(user.id);

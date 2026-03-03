@@ -1,5 +1,6 @@
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import type { ParticipantProfile } from "@volute/api";
 import log from "../logger.js";
 import { mindDir } from "../registry.js";
 
@@ -71,7 +72,6 @@ export type MatchMeta = {
 
 // --- Delivery payload ---
 
-import type { ParticipantProfile } from "@volute/api";
 export type { ParticipantProfile };
 
 export interface DeliveryPayload {

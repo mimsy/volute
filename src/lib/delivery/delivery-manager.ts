@@ -731,7 +731,11 @@ export class DeliveryManager {
       state.seenChannelProfiles.add(channelKey);
       const enriched: DeliveryPayload = { ...payload, participantProfiles: profiles };
       if (avatarBlocks.length > 0) {
-        const existing = Array.isArray(payload.content) ? payload.content : [];
+        const existing = Array.isArray(payload.content)
+          ? payload.content
+          : typeof payload.content === "string"
+            ? [{ type: "text" as const, text: payload.content }]
+            : [];
         enriched.content = [...avatarBlocks, ...existing];
       }
       return enriched;
@@ -781,8 +785,11 @@ export class DeliveryManager {
           { type: "text", text: `[Avatar for ${p.username}]` },
           { type: "image", media_type: mediaType, data: data.toString("base64") },
         );
-      } catch {
-        // Skip avatars that can't be read
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT") {
+          dlog.warn(`failed to load avatar for ${p.username}`, log.errorData(err));
+        }
       }
     }
 
