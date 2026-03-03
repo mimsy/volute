@@ -1,10 +1,5 @@
 <script lang="ts">
-import type { Mind } from "@volute/api";
-import { getDisplayStatus, mindDotColor } from "../lib/format";
-import { activeMinds } from "../lib/stores.svelte";
-
 let {
-  minds,
   username,
   systemName,
   connectionOk = true,
@@ -13,10 +8,7 @@ let {
   onRestart,
   onLogout,
   onUserSettings,
-  onOpenMind,
-  onSeed,
 }: {
-  minds: Mind[];
   username: string;
   systemName: string | null;
   connectionOk?: boolean;
@@ -25,38 +17,19 @@ let {
   onRestart: () => void;
   onLogout: () => void;
   onUserSettings: () => void;
-  onOpenMind: (mind: Mind) => void;
-  onSeed: () => void;
 } = $props();
-
-let awakeCount = $derived(
-  minds.filter((m) => {
-    const s = getDisplayStatus(m);
-    return s === "running" || s === "active";
-  }).length,
-);
-let activeCount = $derived(minds.filter((m) => getDisplayStatus(m) === "active").length);
 
 let showSystemMenu = $state(false);
 let showUserMenu = $state(false);
-let showMindsMenu = $state(false);
 
 function toggleSystemMenu() {
   showSystemMenu = !showSystemMenu;
   showUserMenu = false;
-  showMindsMenu = false;
 }
 
 function toggleUserMenu() {
   showUserMenu = !showUserMenu;
   showSystemMenu = false;
-  showMindsMenu = false;
-}
-
-function toggleMindsMenu() {
-  showMindsMenu = !showMindsMenu;
-  showSystemMenu = false;
-  showUserMenu = false;
 }
 
 function handleClickOutside(e: MouseEvent) {
@@ -64,13 +37,12 @@ function handleClickOutside(e: MouseEvent) {
   if (!target.closest(".menu-anchor")) {
     showSystemMenu = false;
     showUserMenu = false;
-    showMindsMenu = false;
   }
 }
 </script>
 
 <svelte:document onclick={handleClickOutside} />
-<svelte:window onblur={() => { showSystemMenu = false; showUserMenu = false; showMindsMenu = false; }} />
+<svelte:window onblur={() => { showSystemMenu = false; showUserMenu = false; }} />
 
 <div class="status-bar">
   <div class="status-left">
@@ -105,43 +77,6 @@ function handleClickOutside(e: MouseEvent) {
               Settings
             </button>
           {/if}
-        </div>
-      {/if}
-    </div>
-    <span class="sep">|</span>
-    <div class="menu-anchor">
-      <button class="status-btn" onclick={toggleMindsMenu}>
-        {minds.length} minds, {awakeCount} awake, {activeCount} active
-      </button>
-      {#if showMindsMenu}
-        <div class="dropdown minds-dropdown">
-          {#each minds as mind (mind.name)}
-            <button
-              class="dropdown-item mind-item"
-              onclick={() => {
-                showMindsMenu = false;
-                onOpenMind(mind);
-              }}
-            >
-              <span
-                class="mind-dot"
-                class:iridescent={activeMinds.has(mind.name)}
-                style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
-                style:box-shadow={!activeMinds.has(mind.name) && (getDisplayStatus(mind) === "running" || getDisplayStatus(mind) === "active") ? `0 0 6px ${mindDotColor(mind)}` : undefined}
-              ></span>
-              {mind.name}
-            </button>
-          {/each}
-          <div class="dropdown-divider"></div>
-          <button
-            class="dropdown-item seed-item"
-            onclick={() => {
-              showMindsMenu = false;
-              onSeed();
-            }}
-          >
-            Plant a Seed
-          </button>
         </div>
       {/if}
     </div>
@@ -211,10 +146,6 @@ function handleClickOutside(e: MouseEvent) {
     background: var(--red);
   }
 
-  .sep {
-    color: var(--border);
-  }
-
   .menu-anchor {
     position: relative;
   }
@@ -271,46 +202,5 @@ function handleClickOutside(e: MouseEvent) {
   .dropdown-item:hover {
     background: var(--bg-3);
     color: var(--text-0);
-  }
-
-  .minds-dropdown {
-    min-width: 160px;
-  }
-
-  .mind-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .mind-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  .mind-dot.iridescent {
-    animation: iridescent 3s ease-in-out infinite;
-  }
-
-  @keyframes iridescent {
-    0%   { background: #4ade80; }
-    16%  { background: #60a5fa; }
-    33%  { background: #c084fc; }
-    50%  { background: #f472b6; }
-    66%  { background: #fbbf24; }
-    83%  { background: #34d399; }
-    100% { background: #4ade80; }
-  }
-
-  .dropdown-divider {
-    height: 1px;
-    background: var(--border);
-    margin: 4px 0;
-  }
-
-  .seed-item {
-    color: var(--accent);
   }
 </style>

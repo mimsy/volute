@@ -334,7 +334,6 @@ function handleResizeEnd() {
       {/if}
     </div>
     <StatusBar
-      minds={data.minds}
       username={auth.user.username}
       systemName={auth.systemName}
       connectionOk={data.connectionOk}
@@ -343,8 +342,6 @@ function handleResizeEnd() {
       onRestart={() => restartDaemon()}
       onLogout={handleLogout}
       onUserSettings={() => (activeModal = "userSettings")}
-      onOpenMind={handleOpenMindModal}
-      onSeed={() => (activeModal = "seed")}
     />
   </div>
 
