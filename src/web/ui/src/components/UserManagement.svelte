@@ -30,9 +30,6 @@ let confirmingDeleteId = $state<number | null>(null);
 let deletingId = $state<number | null>(null);
 
 let mindsByName = $derived(new Map(minds.map((m) => [m.name, m])));
-
-let brainUsers = $derived(users.filter((u) => u.user_type !== "mind"));
-let mindUsers = $derived(users.filter((u) => u.user_type === "mind"));
 let adminCount = $derived(users.filter((u) => u.role === "admin").length);
 
 function refresh() {
@@ -61,6 +58,15 @@ function toggleExpand(user: AuthUser) {
     editDescription = user.description ?? "";
     confirmingDeleteId = null;
   }
+}
+
+function statusDotStyle(user: AuthUser): string | undefined {
+  if (user.user_type === "mind") {
+    if (activeMinds.has(user.username)) return undefined; // iridescent handles it
+    const mind = mindsByName.get(user.username);
+    return mind ? mindDotColor(mind) : "var(--text-2)";
+  }
+  return onlineBrains.has(user.username) ? "var(--text-0)" : "var(--text-2)";
 }
 
 async function handleApprove(e: Event, id: number) {
@@ -99,35 +105,24 @@ async function handleSaveProfile(user: AuthUser) {
   }
 }
 
-async function handleDeleteBrain(user: AuthUser) {
+async function handleDelete(user: AuthUser) {
   deletingId = user.id;
   try {
-    await deleteUser(user.id);
-    expandedId = null;
-    confirmingDeleteId = null;
-    refresh();
-  } catch (err) {
-    error = err instanceof Error ? err.message : "Failed to delete user";
-  } finally {
-    deletingId = null;
-  }
-}
-
-async function handleDeleteMind(user: AuthUser) {
-  deletingId = user.id;
-  try {
-    try {
-      await deleteMind(user.username, true);
-      data.minds = data.minds.filter((m) => m.name !== user.username);
-    } catch {
-      // Mind may already be gone from registry — just delete the account
+    if (user.user_type === "mind") {
+      try {
+        await deleteMind(user.username, true);
+        data.minds = data.minds.filter((m) => m.name !== user.username);
+      } catch {
+        await deleteUser(user.id);
+      }
+    } else {
       await deleteUser(user.id);
     }
     expandedId = null;
     confirmingDeleteId = null;
     refresh();
   } catch (err) {
-    error = err instanceof Error ? err.message : "Failed to delete mind";
+    error = err instanceof Error ? err.message : "Failed to delete";
   } finally {
     deletingId = null;
   }
@@ -142,188 +137,111 @@ function isProfileDirty(user: AuthUser): boolean {
 </script>
 
 <div class="container">
-  {#if brainUsers.length > 0}
-    <div class="section-title">Brains</div>
-    <div class="user-list">
-      {#each brainUsers as u (u.id)}
-        <div class="user-card" class:expanded={expandedId === u.id}>
-          <div class="user-row" role="button" tabindex="0" onclick={() => toggleExpand(u)} onkeydown={(e) => e.key === 'Enter' && toggleExpand(u)}>
-            <span
-              class="status-dot"
-              style:background={onlineBrains.has(u.username) ? "var(--text-0)" : "var(--text-2)"}
-            ></span>
-            <div class="user-info">
-              <span class="display-name">{u.display_name || u.username}</span>
-              {#if u.display_name}
-                <span class="username">@{u.username}</span>
-              {/if}
+  <div class="user-list">
+    {#each users as u (u.id)}
+      <div class="user-card" class:expanded={expandedId === u.id}>
+        <div class="user-row" role="button" tabindex="0" onclick={() => toggleExpand(u)} onkeydown={(e) => e.key === 'Enter' && toggleExpand(u)}>
+          <span
+            class="status-dot"
+            class:iridescent={u.user_type === "mind" && activeMinds.has(u.username)}
+            style:background={statusDotStyle(u)}
+          ></span>
+          <div class="user-info">
+            <span class="display-name">{u.display_name || u.username}</span>
+            {#if u.display_name}
+              <span class="username">@{u.username}</span>
+            {/if}
+            {#if u.user_type === "mind"}
+              <svg class="type-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="10" height="8" rx="2" />
+                <line x1="6" y1="14" x2="10" y2="14" />
+                <line x1="8" y1="11" x2="8" y2="14" />
+                <circle cx="6" cy="7" r="0.8" fill="currentColor" stroke="none" />
+                <circle cx="10" cy="7" r="0.8" fill="currentColor" stroke="none" />
+              </svg>
+            {:else}
+              <svg class="type-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M8 2C5.8 2 4 3.6 4 5.5c0 .6.2 1.2.5 1.7C3.5 8 3 9.2 3 10.5c0 1.9 2.2 3.5 5 3.5s5-1.6 5-3.5c0-1.3-.5-2.5-1.5-3.3.3-.5.5-1.1.5-1.7C12 3.6 10.2 2 8 2z" />
+                <path d="M6.5 7.5c-.4 0-.7-.5-.7-1s.3-1 .7-1 .7.5.7 1-.3 1-.7 1z" fill="currentColor" stroke="none" />
+                <path d="M9.5 7.5c-.4 0-.7-.5-.7-1s.3-1 .7-1 .7.5.7 1-.3 1-.7 1z" fill="currentColor" stroke="none" />
+              </svg>
+            {/if}
+          </div>
+          <div class="row-actions">
+            {#if u.role === "admin"}
+              <span class="role admin">admin</span>
+            {/if}
+            {#if u.role === "pending"}
+              <span class="role pending">pending</span>
+              <button class="approve-btn" onclick={(e) => handleApprove(e, u.id)}>approve</button>
+            {/if}
+            <span class="expand-icon" class:open={expandedId === u.id}>&#x25B8;</span>
+          </div>
+        </div>
+
+        {#if expandedId === u.id}
+          <div class="detail-panel" transition:slide={{ duration: 150 }}>
+            <div class="field">
+              <label for="dn-{u.id}">Display name</label>
+              <input
+                id="dn-{u.id}"
+                type="text"
+                bind:value={editDisplayName}
+                placeholder={u.username}
+              />
             </div>
-            <div class="row-actions">
-              {#if u.role === "admin"}
-                <span class="role admin">admin</span>
-              {/if}
-              {#if u.role === "pending"}
-                <span class="role pending">pending</span>
-                <button class="approve-btn" onclick={(e) => handleApprove(e, u.id)}>approve</button>
-              {/if}
-              <span class="expand-icon" class:open={expandedId === u.id}>&#x25B8;</span>
+            <div class="field">
+              <label for="desc-{u.id}">Description</label>
+              <input
+                id="desc-{u.id}"
+                type="text"
+                bind:value={editDescription}
+                placeholder="Optional description"
+              />
+            </div>
+            {#if error}
+              <div class="error">{error}</div>
+            {/if}
+            <div class="detail-actions">
+              <div class="left-actions">
+                {#if u.role === "admin"}
+                  <button
+                    class="action-btn"
+                    disabled={adminCount <= 1}
+                    onclick={(e) => handleToggleAdmin(e, u)}
+                  >remove admin</button>
+                {:else if u.role !== "pending"}
+                  <button class="action-btn" onclick={(e) => handleToggleAdmin(e, u)}>make admin</button>
+                {/if}
+                {#if confirmingDeleteId === u.id}
+                  <span class="confirm-prompt">
+                    {u.user_type === "mind" ? "delete mind + data?" : "delete account?"}
+                    <button
+                      class="confirm-yes"
+                      disabled={deletingId === u.id}
+                      onclick={() => handleDelete(u)}
+                    >{deletingId === u.id ? "..." : "yes"}</button>
+                    <button class="confirm-no" onclick={() => (confirmingDeleteId = null)}>no</button>
+                  </span>
+                {:else}
+                  <button
+                    class="action-btn danger"
+                    disabled={u.user_type === "brain" && u.role === "admin" && adminCount <= 1}
+                    onclick={() => (confirmingDeleteId = u.id)}
+                  >delete</button>
+                {/if}
+              </div>
+              <button
+                class="save-btn"
+                disabled={!isProfileDirty(u) || saving}
+                onclick={() => handleSaveProfile(u)}
+              >{saving ? "saving..." : "save"}</button>
             </div>
           </div>
-
-          {#if expandedId === u.id}
-            <div class="detail-panel" transition:slide={{ duration: 150 }}>
-              <div class="field">
-                <label for="dn-{u.id}">Display name</label>
-                <input
-                  id="dn-{u.id}"
-                  type="text"
-                  bind:value={editDisplayName}
-                  placeholder={u.username}
-                />
-              </div>
-              <div class="field">
-                <label for="desc-{u.id}">Description</label>
-                <input
-                  id="desc-{u.id}"
-                  type="text"
-                  bind:value={editDescription}
-                  placeholder="Optional description"
-                />
-              </div>
-              {#if error}
-                <div class="error">{error}</div>
-              {/if}
-              <div class="detail-actions">
-                <div class="left-actions">
-                  {#if u.role === "admin"}
-                    <button
-                      class="action-btn"
-                      disabled={adminCount <= 1}
-                      onclick={(e) => handleToggleAdmin(e, u)}
-                    >remove admin</button>
-                  {:else if u.role === "user"}
-                    <button class="action-btn" onclick={(e) => handleToggleAdmin(e, u)}>make admin</button>
-                  {/if}
-                  {#if confirmingDeleteId === u.id}
-                    <span class="confirm-prompt">
-                      delete account?
-                      <button
-                        class="confirm-yes"
-                        disabled={deletingId === u.id}
-                        onclick={() => handleDeleteBrain(u)}
-                      >{deletingId === u.id ? "..." : "yes"}</button>
-                      <button class="confirm-no" onclick={() => (confirmingDeleteId = null)}>no</button>
-                    </span>
-                  {:else}
-                    <button
-                      class="action-btn danger"
-                      disabled={u.role === "admin" && adminCount <= 1}
-                      onclick={() => (confirmingDeleteId = u.id)}
-                    >delete</button>
-                  {/if}
-                </div>
-                <button
-                  class="save-btn"
-                  disabled={!isProfileDirty(u) || saving}
-                  onclick={() => handleSaveProfile(u)}
-                >{saving ? "saving..." : "save"}</button>
-              </div>
-            </div>
-          {/if}
-        </div>
-      {/each}
-    </div>
-  {/if}
-
-  {#if mindUsers.length > 0}
-    <div class="section-title">Minds</div>
-    <div class="user-list">
-      {#each mindUsers as u (u.id)}
-        {@const mind = mindsByName.get(u.username)}
-        <div class="user-card" class:expanded={expandedId === u.id}>
-          <div class="user-row" role="button" tabindex="0" onclick={() => toggleExpand(u)} onkeydown={(e) => e.key === 'Enter' && toggleExpand(u)}>
-            <span
-              class="status-dot"
-              class:iridescent={activeMinds.has(u.username)}
-              style:background={activeMinds.has(u.username) ? undefined : (mind ? mindDotColor(mind) : "var(--text-2)")}
-            ></span>
-            <div class="user-info">
-              <span class="display-name">{u.display_name || u.username}</span>
-              {#if u.display_name}
-                <span class="username">@{u.username}</span>
-              {/if}
-            </div>
-            <div class="row-actions">
-              {#if u.role === "admin"}
-                <span class="role admin">admin</span>
-              {/if}
-              <span class="expand-icon" class:open={expandedId === u.id}>&#x25B8;</span>
-            </div>
-          </div>
-
-          {#if expandedId === u.id}
-            <div class="detail-panel" transition:slide={{ duration: 150 }}>
-              <div class="field">
-                <label for="dn-{u.id}">Display name</label>
-                <input
-                  id="dn-{u.id}"
-                  type="text"
-                  bind:value={editDisplayName}
-                  placeholder={u.username}
-                />
-              </div>
-              <div class="field">
-                <label for="desc-{u.id}">Description</label>
-                <input
-                  id="desc-{u.id}"
-                  type="text"
-                  bind:value={editDescription}
-                  placeholder="Optional description"
-                />
-              </div>
-              {#if error}
-                <div class="error">{error}</div>
-              {/if}
-              <div class="detail-actions">
-                <div class="left-actions">
-                  {#if u.role === "admin"}
-                    <button
-                      class="action-btn"
-                      disabled={adminCount <= 1}
-                      onclick={(e) => handleToggleAdmin(e, u)}
-                    >remove admin</button>
-                  {:else}
-                    <button class="action-btn" onclick={(e) => handleToggleAdmin(e, u)}>make admin</button>
-                  {/if}
-                  {#if confirmingDeleteId === u.id}
-                    <span class="confirm-prompt">
-                      delete mind + data?
-                      <button
-                        class="confirm-yes"
-                        disabled={deletingId === u.id}
-                        onclick={() => handleDeleteMind(u)}
-                      >{deletingId === u.id ? "..." : "yes"}</button>
-                      <button class="confirm-no" onclick={() => (confirmingDeleteId = null)}>no</button>
-                    </span>
-                  {:else}
-                    <button
-                      class="action-btn danger"
-                      onclick={() => (confirmingDeleteId = u.id)}
-                    >delete</button>
-                  {/if}
-                </div>
-                <button
-                  class="save-btn"
-                  disabled={!isProfileDirty(u) || saving}
-                  onclick={() => handleSaveProfile(u)}
-                >{saving ? "saving..." : "save"}</button>
-              </div>
-            </div>
-          {/if}
-        </div>
-      {/each}
-    </div>
-  {/if}
+        {/if}
+      </div>
+    {/each}
+  </div>
 
   {#if users.length === 0}
     <div class="empty">No users yet.</div>
@@ -334,19 +252,6 @@ function isProfileDirty(user: AuthUser): boolean {
   .container {
     max-width: 600px;
     animation: fadeIn 0.2s ease both;
-  }
-
-  .section-title {
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-2);
-    padding: 12px 0 6px;
-  }
-
-  .section-title:first-child {
-    padding-top: 0;
   }
 
   .user-list {
@@ -403,7 +308,7 @@ function isProfileDirty(user: AuthUser): boolean {
     flex: 1;
     min-width: 0;
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 6px;
   }
 
@@ -418,6 +323,13 @@ function isProfileDirty(user: AuthUser): boolean {
 
   .username {
     font-size: 11px;
+    color: var(--text-2);
+    flex-shrink: 0;
+  }
+
+  .type-icon {
+    width: 13px;
+    height: 13px;
     color: var(--text-2);
     flex-shrink: 0;
   }
