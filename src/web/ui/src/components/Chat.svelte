@@ -24,6 +24,7 @@ let {
   minds = [],
   participants = [],
   onOpenMind,
+  onTypingNames,
 }: {
   name: string;
   username?: string;
@@ -35,6 +36,7 @@ let {
   minds?: Mind[];
   participants?: Participant[];
   onOpenMind?: (mind: Mind) => void;
+  onTypingNames?: (names: string[]) => void;
 } = $props();
 
 let nextEntryId = 0;
@@ -48,6 +50,11 @@ let memberCount = $state(0);
 let currentConvId: string | null = null;
 let typingSafetyTimer = 0;
 let messageList: MessageList;
+
+// Notify parent of typing names changes
+$effect(() => {
+  onTypingNames?.(typingNames);
+});
 
 // Per-conversation message cache
 const messageCache = new Map<string, { entries: ChatEntry[]; hasMore: boolean }>();

@@ -1,6 +1,5 @@
 <script lang="ts">
 import type { ContentBlock, Mind, Participant } from "@volute/api";
-import { getDisplayStatus } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
 import ProfileHoverCard, { type HoverProfile } from "./ProfileHoverCard.svelte";
 import ToolBlock from "./ToolBlock.svelte";
@@ -49,7 +48,6 @@ function profileForSender(name: string): HoverProfile | null {
       description: mind.description,
       avatarUrl: mind.avatar ? `/api/minds/${encodeURIComponent(mind.name)}/avatar` : null,
       userType: "mind",
-      status: getDisplayStatus(mind),
       created: mind.created,
     };
   }

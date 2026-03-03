@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind, Site } from "@volute/api";
-import { getDisplayStatus, mindDotColor } from "../lib/format";
+import { mindDotColor } from "../lib/format";
 import { activeMinds } from "../lib/stores.svelte";
 import ConversationList from "./ConversationList.svelte";
 import ProfileHoverCard from "./ProfileHoverCard.svelte";
@@ -134,7 +134,6 @@ function toggleSection(section: Section) {
                 description: mind.description,
                 avatarUrl: mind.avatar ? `/api/minds/${encodeURIComponent(mind.name)}/avatar` : null,
                 userType: "mind",
-                status: getDisplayStatus(mind),
                 created: mind.created,
               }}>
                 {#snippet children()}

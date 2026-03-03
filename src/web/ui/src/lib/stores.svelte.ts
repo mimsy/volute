@@ -75,6 +75,9 @@ $effect.root(() => {
 /** Minds that are currently processing (between mind_active and mind_idle SSE events). */
 export const activeMinds = new SvelteSet<string>();
 
+/** Brains (human users) currently connected via SSE. */
+export const onlineBrains = new SvelteSet<string>();
+
 // --- Unified SSE via connection.svelte.ts ---
 
 function handleSSEEvent(event: SSEEvent) {
@@ -86,6 +89,10 @@ function handleSSEEvent(event: SSEEvent) {
     activeMinds.clear();
     if (Array.isArray(event.activeMinds)) {
       for (const name of event.activeMinds) activeMinds.add(name);
+    }
+    onlineBrains.clear();
+    if (Array.isArray(event.onlineBrains)) {
+      for (const name of event.onlineBrains) onlineBrains.add(name);
     }
     // Minds not in snapshot — fetch separately since they need health checks
     fetchMinds()
@@ -107,6 +114,10 @@ function handleSSEEvent(event: SSEEvent) {
       item.type === "mind_sleeping"
     )
       activeMinds.delete(item.mind);
+
+    // Track brain online/offline
+    if (item.type === "brain_online") onlineBrains.add(item.mind);
+    if (item.type === "brain_offline") onlineBrains.delete(item.mind);
 
     // Refresh minds on status changes
     if (

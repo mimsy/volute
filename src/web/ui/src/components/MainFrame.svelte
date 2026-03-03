@@ -26,6 +26,7 @@ let {
   onSelectSite,
   onSelectPages,
   onSelectConversation,
+  onTypingNames,
 }: {
   selection: Selection;
   minds: Mind[];
@@ -40,6 +41,7 @@ let {
   onSelectSite: (name: string) => void;
   onSelectPages: () => void;
   onSelectConversation: (id: string) => void;
+  onTypingNames?: (names: string[]) => void;
 } = $props();
 
 let selectedSite = $derived(
@@ -120,6 +122,7 @@ let chatParticipants = $derived.by(() => {
         {minds}
         participants={chatParticipants}
         {onOpenMind}
+        {onTypingNames}
       />
     </div>
   {:else}

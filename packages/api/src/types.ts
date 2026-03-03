@@ -92,7 +92,9 @@ export type ActivityEventType =
   | "mind_done"
   | "mind_sleeping"
   | "mind_waking"
-  | "page_updated";
+  | "page_updated"
+  | "brain_online"
+  | "brain_offline";
 
 export type Variant = {
   name: string;

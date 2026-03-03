@@ -43,6 +43,9 @@ let selectedModalMind = $state<Mind | null>(null);
 // Resize state
 let resizing = $state(false);
 
+// Typing state for channel members panel
+let typingNames = $state<string[]>([]);
+
 // Derived
 let activeConversationId = $derived(
   selection.kind === "conversation" ? (selection.conversationId ?? null) : null,
@@ -306,6 +309,7 @@ function handleResizeEnd() {
           onSelectPage={handleSelectPage}
           onSelectSite={handleSelectSite}
           onSelectPages={handleSelectPages}
+          onTypingNames={(names) => { typingNames = names; }}
         />
       </div>
       {#if rightPanelMind}
@@ -324,6 +328,7 @@ function handleResizeEnd() {
         <ChannelMembersPanel
           conversation={activeConv}
           minds={data.minds}
+          {typingNames}
           onOpenMind={handleOpenMindModal}
         />
       {/if}

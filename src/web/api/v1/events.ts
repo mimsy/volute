@@ -3,6 +3,11 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { getDb } from "../../../lib/db.js";
 import { subscribe as subscribeActivity } from "../../../lib/events/activity-events.js";
+import {
+  addConnection,
+  getOnlineBrains,
+  removeConnection,
+} from "../../../lib/events/brain-presence.js";
 import { subscribe as subscribeConversation } from "../../../lib/events/conversation-events.js";
 import { listConversationsWithParticipants } from "../../../lib/events/conversations.js";
 import { bufferEvent, getEventsSince } from "../../../lib/events/event-sequencer.js";
@@ -19,6 +24,10 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
 
   return streamSSE(c, async (stream) => {
     const cleanups: (() => void)[] = [];
+    if (user.user_type === "brain") {
+      addConnection(user.username);
+      cleanups.push(() => removeConnection(user.username));
+    }
 
     try {
       // If reconnecting with a valid sinceId, replay buffered events
@@ -66,6 +75,7 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
         sites,
         recentPages,
         activeMinds: getActiveMinds(),
+        onlineBrains: getOnlineBrains(),
       };
 
       const snapshotId = bufferEvent(snapshotData);

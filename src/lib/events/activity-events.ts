@@ -11,7 +11,9 @@ export type ActivityEvent = {
     | "mind_done"
     | "mind_sleeping"
     | "mind_waking"
-    | "page_updated";
+    | "page_updated"
+    | "brain_online"
+    | "brain_offline";
   mind: string;
   summary: string;
   metadata?: Record<string, unknown>;

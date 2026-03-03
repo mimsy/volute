@@ -1,6 +1,5 @@
 <script lang="ts">
 import type { Snippet } from "svelte";
-import StatusBadge from "./StatusBadge.svelte";
 
 export type HoverProfile = {
   name: string;
@@ -8,7 +7,6 @@ export type HoverProfile = {
   description?: string | null;
   avatarUrl?: string | null;
   userType: "brain" | "mind";
-  status?: string;
   created?: string;
 };
 
@@ -104,11 +102,7 @@ function handleMouseLeave() {
     <div class="info">
       <span class="name-row">
         <span class="display-name">{profile.displayName ?? profile.name}</span>
-        {#if profile.userType === "mind" && profile.status}
-          <StatusBadge status={profile.status} />
-        {:else if profile.userType === "brain"}
-          <span class="type-label">brain</span>
-        {/if}
+        <span class="type-label">{profile.userType}</span>
       </span>
       {#if profile.description}
         <span class="description">{profile.description}</span>
