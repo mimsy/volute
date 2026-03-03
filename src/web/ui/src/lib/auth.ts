@@ -78,6 +78,29 @@ export async function setUserRole(id: number, role: "admin" | "user"): Promise<v
   }
 }
 
+export async function updateUserProfile(
+  id: number,
+  profile: { display_name?: string | null; description?: string | null },
+): Promise<void> {
+  const res = await fetch(`/api/auth/users/${id}/profile`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(profile),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || "Failed to update profile");
+  }
+}
+
+export async function deleteUser(id: number): Promise<void> {
+  const res = await fetch(`/api/auth/users/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || "Failed to delete user");
+  }
+}
+
 export async function updateProfile(profile: {
   display_name?: string | null;
   description?: string | null;

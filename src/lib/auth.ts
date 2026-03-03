@@ -167,10 +167,12 @@ export async function countAdmins(): Promise<number> {
 
 export async function setUserRole(id: number, role: "admin" | "user"): Promise<void> {
   const db = await getDb();
-  await db
-    .update(users)
-    .set({ role })
-    .where(and(eq(users.id, id), eq(users.user_type, "brain")));
+  await db.update(users).set({ role }).where(eq(users.id, id));
+}
+
+export async function deleteUser(id: number): Promise<void> {
+  const db = await getDb();
+  await db.delete(users).where(and(eq(users.id, id), eq(users.user_type, "brain")));
 }
 
 export async function updateUserProfile(

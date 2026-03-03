@@ -9,6 +9,7 @@ import {
   changePassword,
   countAdmins,
   createUser,
+  deleteUser,
   getOrCreateMindUser,
   getUser,
   getUserByUsername,
@@ -171,7 +172,32 @@ const admin = new Hono<AuthEnv>()
       await setUserRole(id, role);
       return c.json({ ok: true });
     },
-  );
+  )
+  .put("/users/:id/profile", zValidator("json", profileSchema), async (c) => {
+    const user = c.get("user");
+    if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
+    const id = parseInt(c.req.param("id"), 10);
+    const body = c.req.valid("json");
+    await updateUserProfile(id, body);
+    return c.json({ ok: true });
+  })
+  .delete("/users/:id", async (c) => {
+    const user = c.get("user");
+    if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
+    const id = parseInt(c.req.param("id"), 10);
+    if (id === user.id) return c.json({ error: "Cannot delete yourself" }, 400);
+    const target = await getUser(id);
+    if (!target) return c.json({ error: "User not found" }, 404);
+    if (target.role === "admin") {
+      const adminCount = await countAdmins();
+      if (adminCount <= 1) return c.json({ error: "Cannot delete the last admin" }, 400);
+    }
+    if (target.user_type === "mind") {
+      return c.json({ error: "Use the mind deletion API to delete minds" }, 400);
+    }
+    await deleteUser(id);
+    return c.json({ ok: true });
+  });
 
 const app = new Hono()
   .post("/register", zValidator("json", credentialsSchema), async (c) => {
