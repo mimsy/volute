@@ -140,12 +140,7 @@ function isBrainIridescent(username: string): boolean {
                   class:iridescent={activeMinds.has(mind.name)}
                   style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
                 ></span>
-                <span class="member-info">
-                  <span class="member-name">{participant.displayName ?? participant.username}</span>
-                  {#if participant.description}
-                    <span class="member-desc">{participant.description}</span>
-                  {/if}
-                </span>
+                <span class="member-name">{participant.displayName ?? participant.username}</span>
               </button>
             {/snippet}
           </ProfileHoverCard>
@@ -174,13 +169,8 @@ function isBrainIridescent(username: string): boolean {
                 class:iridescent={isBrainIridescent(participant.username)}
                 style:background={brainDotColor(participant.username)}
               ></span>
-              <span class="member-info">
-                <span class="member-name">
-                  {participant.displayName ?? participant.username}
-                </span>
-                {#if participant.description}
-                  <span class="member-desc">{participant.description}</span>
-                {/if}
+              <span class="member-name">
+                {participant.displayName ?? participant.username}
               </span>
             </div>
           {/snippet}
@@ -339,21 +329,6 @@ function isBrainIridescent(username: string): boolean {
     white-space: nowrap;
     font-weight: 500;
     color: var(--text-0);
-  }
-
-  .member-info {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    flex: 1;
-  }
-
-  .member-desc {
-    font-size: 11px;
-    color: var(--text-2);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .status-dot {
