@@ -60,13 +60,13 @@ function toggleExpand(user: AuthUser) {
   }
 }
 
-function statusDotStyle(user: AuthUser): string | undefined {
-  if (user.user_type === "mind") {
-    if (activeMinds.has(user.username)) return undefined; // iridescent handles it
-    const mind = mindsByName.get(user.username);
+function statusDotStyle(u: AuthUser): string | undefined {
+  if (u.user_type === "mind") {
+    if (activeMinds.has(u.username)) return undefined; // iridescent handles it
+    const mind = mindsByName.get(u.username);
     return mind ? mindDotColor(mind) : "var(--text-2)";
   }
-  return onlineBrains.has(user.username) ? "var(--text-0)" : "var(--text-2)";
+  return onlineBrains.has(u.username) ? "var(--text-0)" : "var(--text-2)";
 }
 
 async function handleApprove(e: Event, id: number) {
@@ -113,6 +113,7 @@ async function handleDelete(user: AuthUser) {
         await deleteMind(user.username, true);
         data.minds = data.minds.filter((m) => m.name !== user.username);
       } catch {
+        // Mind may already be gone from registry — just delete the account
         await deleteUser(user.id);
       }
     } else {
@@ -126,6 +127,10 @@ async function handleDelete(user: AuthUser) {
   } finally {
     deletingId = null;
   }
+}
+
+function deleteLabel(user: AuthUser): string {
+  return user.user_type === "mind" ? "delete mind + data?" : "delete account?";
 }
 
 function isProfileDirty(user: AuthUser): boolean {
@@ -151,21 +156,18 @@ function isProfileDirty(user: AuthUser): boolean {
             {#if u.display_name}
               <span class="username">@{u.username}</span>
             {/if}
-            {#if u.user_type === "mind"}
-              <svg class="type-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="3" width="10" height="8" rx="2" />
-                <line x1="6" y1="14" x2="10" y2="14" />
-                <line x1="8" y1="11" x2="8" y2="14" />
-                <circle cx="6" cy="7" r="0.8" fill="currentColor" stroke="none" />
-                <circle cx="10" cy="7" r="0.8" fill="currentColor" stroke="none" />
-              </svg>
-            {:else}
-              <svg class="type-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M8 2C5.8 2 4 3.6 4 5.5c0 .6.2 1.2.5 1.7C3.5 8 3 9.2 3 10.5c0 1.9 2.2 3.5 5 3.5s5-1.6 5-3.5c0-1.3-.5-2.5-1.5-3.3.3-.5.5-1.1.5-1.7C12 3.6 10.2 2 8 2z" />
-                <path d="M6.5 7.5c-.4 0-.7-.5-.7-1s.3-1 .7-1 .7.5.7 1-.3 1-.7 1z" fill="currentColor" stroke="none" />
-                <path d="M9.5 7.5c-.4 0-.7-.5-.7-1s.3-1 .7-1 .7.5.7 1-.3 1-.7 1z" fill="currentColor" stroke="none" />
-              </svg>
-            {/if}
+            <svg class="type-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              {#if u.user_type === "mind"}
+                <rect x="4" y="8" width="16" height="12" rx="2" />
+                <circle cx="9" cy="14" r="1.5" />
+                <circle cx="15" cy="14" r="1.5" />
+                <line x1="12" y1="4" x2="12" y2="8" />
+                <circle cx="12" cy="3" r="1" />
+              {:else}
+                <circle cx="12" cy="8" r="4" />
+                <path d="M5 21v-1a7 7 0 0 1 14 0v1" />
+              {/if}
+            </svg>
           </div>
           <div class="row-actions">
             {#if u.role === "admin"}
@@ -215,7 +217,7 @@ function isProfileDirty(user: AuthUser): boolean {
                 {/if}
                 {#if confirmingDeleteId === u.id}
                   <span class="confirm-prompt">
-                    {u.user_type === "mind" ? "delete mind + data?" : "delete account?"}
+                    {deleteLabel(u)}
                     <button
                       class="confirm-yes"
                       disabled={deletingId === u.id}
@@ -226,7 +228,7 @@ function isProfileDirty(user: AuthUser): boolean {
                 {:else}
                   <button
                     class="action-btn danger"
-                    disabled={u.user_type === "brain" && u.role === "admin" && adminCount <= 1}
+                    disabled={u.role === "admin" && adminCount <= 1}
                     onclick={() => (confirmingDeleteId = u.id)}
                   >delete</button>
                 {/if}
