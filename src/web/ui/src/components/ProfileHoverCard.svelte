@@ -21,9 +21,7 @@ let {
 } = $props();
 
 let showCard = $state(false);
-let cardX = $state(0);
-let cardY = $state(0);
-let flipped = $state(false);
+let cardStyle = $state("");
 let hoverTimer: ReturnType<typeof setTimeout> | undefined;
 let wrapperEl: HTMLSpanElement;
 let cardEl = $state<HTMLDivElement | undefined>();
@@ -40,25 +38,36 @@ function formatCreated(dateStr: string): string {
 function handleMouseEnter() {
   hoverTimer = setTimeout(() => {
     const rect = wrapperEl.getBoundingClientRect();
-    cardX = rect.left;
-    cardY = rect.top;
-    flipped = false;
+    // Render hidden at a known CSS position to measure containing-block offset
+    // (ancestors with transform/animation make position:fixed relative to them, not viewport)
+    cardStyle = `left:0;top:0;visibility:hidden`;
     showCard = true;
 
-    // After render, check if clipped at top and flip below if needed
     requestAnimationFrame(() => {
       if (!cardEl) return;
-      const cardRect = cardEl.getBoundingClientRect();
+      const probe = cardEl.getBoundingClientRect();
+      // Offset between CSS (0,0) and actual viewport position = containing block origin
+      const ox = probe.left;
+      const oy = probe.top;
+      const cw = cardEl.offsetWidth;
+      const ch = cardEl.offsetHeight;
 
-      // Clamp left so card doesn't overflow right edge
-      if (cardRect.right > window.innerWidth - 8) {
-        cardX = window.innerWidth - 8 - cardRect.width;
+      // Place above trigger: card bottom at rect.top - 8
+      let top = rect.top - 8 - ch;
+      let left = rect.left;
+
+      // If clipped at top, flip below
+      if (top < 8) {
+        top = rect.bottom + 8;
       }
 
-      // If clipped at top, flip below the trigger
-      if (cardRect.top < 8) {
-        flipped = true;
+      // Clamp right edge
+      if (left + cw > window.innerWidth - 8) {
+        left = window.innerWidth - 8 - cw;
       }
+
+      // Convert viewport coords to CSS coords (subtract containing-block offset)
+      cardStyle = `left:${left - ox}px;top:${top - oy}px`;
     });
   }, 300);
 }
@@ -83,10 +92,7 @@ function handleMouseLeave() {
   <div
     class="hover-card"
     bind:this={cardEl}
-    style:left="{cardX}px"
-    style:top="{cardY}px"
-    style:transform={flipped ? "translateY(calc(100% + 8px))" : "translateY(-100%) translateY(-8px)"}
-    style:transform-origin={flipped ? "top left" : "bottom left"}
+    style={cardStyle}
   >
     {#if profile.avatarUrl}
       <img
