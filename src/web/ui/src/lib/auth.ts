@@ -2,9 +2,11 @@ export type AuthUser = {
   id: number;
   username: string;
   role: "admin" | "user" | "pending" | "mind";
+  user_type?: "brain" | "mind";
   display_name?: string | null;
   description?: string | null;
   avatar?: string | null;
+  created_at?: string;
 };
 
 async function authGet<T>(path: string): Promise<T> {
@@ -62,6 +64,18 @@ export function changePassword(currentPassword: string, newPassword: string): Pr
 export async function approveUser(id: number): Promise<void> {
   const res = await fetch(`/api/auth/users/${id}/approve`, { method: "POST" });
   if (!res.ok) throw new Error("Failed to approve user");
+}
+
+export async function setUserRole(id: number, role: "admin" | "user"): Promise<void> {
+  const res = await fetch(`/api/auth/users/${id}/role`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role }),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || "Failed to change role");
+  }
 }
 
 export async function updateProfile(profile: {

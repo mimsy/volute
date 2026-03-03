@@ -358,7 +358,7 @@ function handleResizeEnd() {
     <SeedModal onClose={() => (activeModal = null)} onCreated={handleSeedCreated} />
   {/if}
   {#if activeModal === "admin"}
-    <AdminModal onClose={() => (activeModal = null)} />
+    <AdminModal onClose={() => (activeModal = null)} minds={data.minds} />
   {/if}
   {#if activeModal === "userSettings"}
     <UserSettingsModal onClose={() => (activeModal = null)} />

@@ -1,4 +1,5 @@
 <script lang="ts">
+import type { Mind } from "@volute/api";
 import Settings from "../pages/Settings.svelte";
 import Modal from "./Modal.svelte";
 import SharedSkills from "./SharedSkills.svelte";
@@ -6,7 +7,7 @@ import SystemLogs from "./SystemLogs.svelte";
 import TabBar from "./TabBar.svelte";
 import UserManagement from "./UserManagement.svelte";
 
-let { onClose }: { onClose: () => void } = $props();
+let { onClose, minds }: { onClose: () => void; minds: Mind[] } = $props();
 
 const TABS = ["Settings", "Skills", "System Logs", "Users"] as const;
 type Tab = (typeof TABS)[number];
@@ -27,7 +28,7 @@ let tab = $state<Tab>("Settings");
     {:else if tab === "System Logs"}
       <SystemLogs />
     {:else if tab === "Users"}
-      <UserManagement />
+      <UserManagement {minds} />
     {/if}
   </div>
 </Modal>

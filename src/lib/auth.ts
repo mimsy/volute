@@ -156,6 +156,23 @@ export async function approveUser(id: number): Promise<void> {
     .where(and(eq(users.id, id), eq(users.role, "pending")));
 }
 
+export async function countAdmins(): Promise<number> {
+  const db = await getDb();
+  const [{ value }] = await db
+    .select({ value: count() })
+    .from(users)
+    .where(eq(users.role, "admin"));
+  return value;
+}
+
+export async function setUserRole(id: number, role: "admin" | "user"): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(users)
+    .set({ role })
+    .where(and(eq(users.id, id), eq(users.user_type, "brain")));
+}
+
 export async function updateUserProfile(
   userId: number,
   profile: { display_name?: string | null; description?: string | null; avatar?: string | null },

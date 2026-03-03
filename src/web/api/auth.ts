@@ -7,6 +7,7 @@ import { z } from "zod";
 import {
   approveUser,
   changePassword,
+  countAdmins,
   createUser,
   getOrCreateMindUser,
   getUser,
@@ -14,6 +15,7 @@ import {
   listPendingUsers,
   listUsers,
   listUsersByType,
+  setUserRole,
   updateUserProfile,
   verifyUser,
 } from "../../lib/auth.js";
@@ -148,7 +150,28 @@ const admin = new Hono<AuthEnv>()
     const id = parseInt(c.req.param("id"), 10);
     await approveUser(id);
     return c.json({ ok: true });
-  });
+  })
+  .post(
+    "/users/:id/role",
+    zValidator("json", z.object({ role: z.enum(["admin", "user"]) })),
+    async (c) => {
+      const user = c.get("user");
+      if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
+      const id = parseInt(c.req.param("id"), 10);
+      const { role } = c.req.valid("json");
+      if (role !== "admin") {
+        const adminCount = await countAdmins();
+        if (adminCount <= 1) {
+          const target = await getUser(id);
+          if (target?.role === "admin") {
+            return c.json({ error: "Cannot remove the last admin" }, 400);
+          }
+        }
+      }
+      await setUserRole(id, role);
+      return c.json({ ok: true });
+    },
+  );
 
 const app = new Hono()
   .post("/register", zValidator("json", credentialsSchema), async (c) => {
