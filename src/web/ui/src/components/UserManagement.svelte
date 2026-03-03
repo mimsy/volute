@@ -164,9 +164,11 @@ function isProfileDirty(user: AuthUser): boolean {
                 <line x1="12" y1="4" x2="12" y2="8" />
                 <circle cx="12" cy="3" r="1" />
               {:else}
-                <path d="M7 11a5 5 0 1 1 10 0c0 2-1 4-2 5v2h-6v-2c-1-1-2-3-2-5z" />
-                <path d="M7 10c-.6 0-1 .7-1 1.5S6.4 13 7 13" />
-                <path d="M17 10c.6 0 1 .7 1 1.5s-.4 1.5-1 1.5" />
+                <path d="M5 11a7 7 0 1 1 14 0c0 3-1.5 5-3 6v3H8v-3c-1.5-1-3-3-3-6z" />
+                <path d="M5 10c-.6 0-1 .8-1 1.8S4.4 13.5 5 13.5" />
+                <path d="M19 10c.6 0 1 .8 1 1.8s-.4 1.7-1 1.7" />
+                <circle cx="9.5" cy="10.5" r="1" fill="currentColor" stroke="none" />
+                <circle cx="14.5" cy="10.5" r="1" fill="currentColor" stroke="none" />
               {/if}
             </svg>
           </div>
