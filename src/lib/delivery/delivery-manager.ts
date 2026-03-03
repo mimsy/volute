@@ -1,15 +1,20 @@
+import { readFile } from "node:fs/promises";
+import { extname, resolve } from "node:path";
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
+import { getParticipants } from "../events/conversations.js";
 import log from "../logger.js";
-import { findMind } from "../registry.js";
+import { findMind, mindDir, voluteHome } from "../registry.js";
 import { deliveryQueue } from "../schema.js";
 import { getTypingMap, publishTypingForChannels } from "../typing.js";
 import { findVariant } from "../variants.js";
+import { readVoluteConfig } from "../volute-config.js";
 import {
   type DeliveryPayload,
   extractTextContent,
   getRoutingConfig,
   type MatchMeta,
+  type ParticipantProfile,
   type ResolvedDeliveryMode,
   type ResolvedSessionConfig,
   resolveDeliveryMode,
@@ -28,6 +33,7 @@ type SessionState = {
   lastDeliverySenders: Set<string>;
   lastDeliveryChannels: Set<string>;
   lastInterruptAt: number;
+  seenChannelProfiles: Set<string>;
 };
 
 // --- Batch buffer ---
@@ -119,8 +125,8 @@ export class DeliveryManager {
       sessionName = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     }
 
-    // Resolve delivery mode for this session
-    const sessionConfig = resolveDeliveryMode(config, sessionName);
+    // Resolve delivery mode for this session (pass matched rule for rule-level batch config)
+    const sessionConfig = resolveDeliveryMode(config, sessionName, route.rule);
 
     if (sessionConfig.delivery.mode === "batch") {
       dlog.debug(`enqueueing batch message for ${mindName}/${sessionName}`);
@@ -328,8 +334,11 @@ export class DeliveryManager {
       typingMap.set(`volute:${payload.conversationId}`, baseName, { persistent: true });
     }
 
+    // Enrich with participant profiles on first encounter per channel
+    const enrichedPayload = await this.enrichWithProfiles(baseName, session, payload);
+
     const body = JSON.stringify({
-      ...payload,
+      ...enrichedPayload,
       session,
       interrupt: sessionConfig.interrupt,
       instructions: sessionConfig.instructions,
@@ -362,9 +371,20 @@ export class DeliveryManager {
     }
     const { baseName, port } = resolved;
 
+    // Enrich first message per new channel with participant profiles
+    const enrichedMessages = await Promise.all(
+      messages.map(async (msg, i) => {
+        // Only enrich the first message per unique channel in the batch
+        const isFirst = messages.findIndex((m) => m.channel === msg.channel) === i;
+        if (!isFirst) return msg;
+        const enrichedPayload = await this.enrichWithProfiles(baseName, session, msg.payload);
+        return { ...msg, payload: enrichedPayload };
+      }),
+    );
+
     // Group messages by channel
     const channels: Record<string, DeliveryPayload[]> = {};
-    for (const msg of messages) {
+    for (const msg of enrichedMessages) {
       const ch = msg.channel ?? "unknown";
       if (!channels[ch]) channels[ch] = [];
       channels[ch].push(msg.payload);
@@ -683,6 +703,99 @@ export class DeliveryManager {
     }
   }
 
+  private async enrichWithProfiles(
+    mindName: string,
+    session: string,
+    payload: DeliveryPayload,
+  ): Promise<DeliveryPayload> {
+    if (!payload.conversationId || !payload.channel) return payload;
+    const mindSessions = this.sessionStates.get(mindName);
+    const state = mindSessions?.get(session);
+    if (!state) return payload;
+
+    const channelKey = payload.channel;
+    if (state.seenChannelProfiles.has(channelKey)) return payload;
+
+    try {
+      const participants = await getParticipants(payload.conversationId);
+      const profiles: ParticipantProfile[] = participants.map((p) => ({
+        username: p.username,
+        userType: p.userType,
+        displayName: p.displayName,
+        description: p.description,
+      }));
+
+      // Read avatar images and prepend as image blocks
+      const avatarBlocks = await this.loadAvatarBlocks(participants);
+
+      state.seenChannelProfiles.add(channelKey);
+      const enriched: DeliveryPayload = { ...payload, participantProfiles: profiles };
+      if (avatarBlocks.length > 0) {
+        const existing = Array.isArray(payload.content)
+          ? payload.content
+          : typeof payload.content === "string"
+            ? [{ type: "text" as const, text: payload.content }]
+            : [];
+        enriched.content = [...avatarBlocks, ...existing];
+      }
+      return enriched;
+    } catch (err) {
+      dlog.warn(`failed to fetch participant profiles for ${mindName}`, log.errorData(err));
+      return payload;
+    }
+  }
+
+  private async loadAvatarBlocks(
+    participants: { username: string; userType: string; avatar?: string | null }[],
+  ): Promise<
+    ({ type: "text"; text: string } | { type: "image"; media_type: string; data: string })[]
+  > {
+    const blocks: (
+      | { type: "text"; text: string }
+      | { type: "image"; media_type: string; data: string }
+    )[] = [];
+
+    for (const p of participants) {
+      if (!p.avatar) continue;
+
+      try {
+        let filePath: string;
+        if (p.userType === "mind") {
+          const dir = mindDir(p.username);
+          const config = readVoluteConfig(dir);
+          if (!config?.avatar) continue;
+          filePath = resolve(dir, "home", config.avatar);
+        } else {
+          filePath = resolve(voluteHome(), "avatars", p.avatar);
+        }
+
+        const ext = extname(filePath).toLowerCase();
+        const mimeMap: Record<string, string> = {
+          ".png": "image/png",
+          ".jpg": "image/jpeg",
+          ".jpeg": "image/jpeg",
+          ".gif": "image/gif",
+          ".webp": "image/webp",
+        };
+        const mediaType = mimeMap[ext];
+        if (!mediaType) continue;
+
+        const data = await readFile(filePath);
+        blocks.push(
+          { type: "text", text: `[Avatar for ${p.username}]` },
+          { type: "image", media_type: mediaType, data: data.toString("base64") },
+        );
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT") {
+          dlog.warn(`failed to load avatar for ${p.username}`, log.errorData(err));
+        }
+      }
+    }
+
+    return blocks;
+  }
+
   private incrementActive(
     mind: string,
     session: string,
@@ -700,6 +813,7 @@ export class DeliveryManager {
       lastDeliverySenders: new Set<string>(),
       lastDeliveryChannels: new Set<string>(),
       lastInterruptAt: 0,
+      seenChannelProfiles: new Set<string>(),
     };
     state.activeCount++;
     state.lastDeliveredAt = Date.now();

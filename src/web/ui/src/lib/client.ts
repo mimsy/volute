@@ -86,6 +86,10 @@ export function stopMind(name: string): Promise<void> {
   return post(`${V1}/minds/${enc(name)}/stop`);
 }
 
+export function deleteMind(name: string, force = false): Promise<void> {
+  return del(`${V1}/minds/${enc(name)}${force ? "?force=true" : ""}`);
+}
+
 export function createSeedMind(
   name: string,
   opts?: {

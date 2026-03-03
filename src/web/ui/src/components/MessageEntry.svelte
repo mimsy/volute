@@ -1,7 +1,7 @@
 <script lang="ts">
-import type { ContentBlock, Mind } from "@volute/api";
+import type { ContentBlock, Mind, Participant } from "@volute/api";
 import { renderMarkdown } from "../lib/markdown";
-import MindHoverCard from "./MindHoverCard.svelte";
+import ProfileHoverCard, { type HoverProfile } from "./ProfileHoverCard.svelte";
 import ToolBlock from "./ToolBlock.svelte";
 
 type ToolInfo = {
@@ -22,6 +22,7 @@ let {
   openTools,
   onToggleTool,
   mindsByName,
+  participants = [],
   onOpenMind,
 }: {
   role: "user" | "assistant";
@@ -34,8 +35,34 @@ let {
   openTools: Set<number>;
   onToggleTool: (key: number) => void;
   mindsByName: Map<string, Mind>;
+  participants?: Participant[];
   onOpenMind?: (mind: Mind) => void;
 } = $props();
+
+function profileForSender(name: string): HoverProfile | null {
+  const mind = mindsByName.get(name);
+  if (mind) {
+    return {
+      name: mind.name,
+      displayName: mind.displayName,
+      description: mind.description,
+      avatarUrl: mind.avatar ? `/api/minds/${encodeURIComponent(mind.name)}/avatar` : null,
+      userType: "mind",
+      created: mind.created,
+    };
+  }
+  const p = participants.find((pp) => pp.username === name);
+  if (p) {
+    return {
+      name: p.username,
+      displayName: p.displayName,
+      description: p.description,
+      avatarUrl: p.avatar ? `/api/auth/avatars/${encodeURIComponent(p.avatar)}` : null,
+      userType: p.userType,
+    };
+  }
+  return null;
+}
 
 function formatTime(dateStr?: string): string {
   if (!dateStr) return "";
@@ -86,15 +113,24 @@ function buildAssistantItems(
 <div class="entry" class:new-sender={showHeader}>
   {#if showHeader}
     <div class="entry-header">
-      {#if senderName && mindsByName.has(senderName) && onOpenMind}
-        {@const senderMind = mindsByName.get(senderName)!}
-        <MindHoverCard mind={senderMind}>
-          {#snippet children()}
-            <button class="sender sender-link" style:color={senderColor} onclick={() => onOpenMind(senderMind)}>{senderMind.displayName ?? senderName}</button>
-          {/snippet}
-        </MindHoverCard>
+      {#if senderName}
+        {@const profile = profileForSender(senderName)}
+        {@const senderMind = mindsByName.get(senderName)}
+        {#if profile}
+          <ProfileHoverCard {profile}>
+            {#snippet children()}
+              {#if senderMind && onOpenMind}
+                <button class="sender sender-link" style:color={senderColor} onclick={() => onOpenMind(senderMind)}>{profile.displayName ?? senderName}</button>
+              {:else}
+                <span class="sender" style:color={senderColor}>{profile.displayName ?? senderName}</span>
+              {/if}
+            {/snippet}
+          </ProfileHoverCard>
+        {:else}
+          <span class="sender" style:color={senderColor}>{senderName}</span>
+        {/if}
       {:else}
-        <span class="sender" style:color={senderColor}>{senderName || (role === "user" ? "you" : "mind")}</span>
+        <span class="sender" style:color={senderColor}>{role === "user" ? "you" : "mind"}</span>
       {/if}
       {#if createdAt}
         <span class="timestamp">{formatTime(createdAt)}</span>

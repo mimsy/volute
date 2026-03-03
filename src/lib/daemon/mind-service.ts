@@ -1,3 +1,4 @@
+import { syncMindProfile } from "../auth.js";
 import { publish as publishActivity } from "../events/activity-events.js";
 import { markIdle } from "../events/mind-activity-tracker.js";
 import log from "../logger.js";
@@ -41,6 +42,18 @@ export async function startMindFull(name: string): Promise<void> {
     log.error(`failed to ensure mail address for ${baseName}`, log.errorData(err)),
   );
   const config = readVoluteConfig(dir);
+
+  // Sync mind profile from volute.json into the users table
+  if (config) {
+    syncMindProfile(baseName, {
+      displayName: config.displayName,
+      description: config.description,
+      avatar: config.avatar,
+    }).catch((err: unknown) =>
+      log.error(`failed to sync profile for ${baseName}`, log.errorData(err)),
+    );
+  }
+
   if (config?.tokenBudget) {
     getTokenBudget().setBudget(
       baseName,

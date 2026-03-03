@@ -49,6 +49,9 @@ export type Participant = {
   username: string;
   userType: "brain" | "mind";
   role: "owner" | "member";
+  displayName?: string | null;
+  description?: string | null;
+  avatar?: string | null;
 };
 
 export type Message = {
@@ -89,7 +92,9 @@ export type ActivityEventType =
   | "mind_done"
   | "mind_sleeping"
   | "mind_waking"
-  | "page_updated";
+  | "page_updated"
+  | "brain_online"
+  | "brain_offline";
 
 export type Variant = {
   name: string;
@@ -122,9 +127,17 @@ export type FileContent = {
 export type AvailableUser = {
   id: number;
   username: string;
-  role: string;
-  user_type: string;
+  role: "admin" | "user" | "pending" | "mind";
+  user_type: "brain" | "mind";
+  display_name?: string | null;
+  description?: string | null;
+  avatar?: string | null;
 };
+
+export type ParticipantProfile = Pick<
+  Participant,
+  "username" | "userType" | "displayName" | "description"
+>;
 
 export type Prompt = {
   key: string;

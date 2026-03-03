@@ -40,6 +40,7 @@ export type SSESnapshotEvent = {
   sites: Site[];
   recentPages: RecentPage[];
   activeMinds: string[];
+  onlineBrains: string[];
 };
 
 export type SSEActivityEvent = {

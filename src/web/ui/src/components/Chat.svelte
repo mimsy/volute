@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { ContentBlock, Message, Mind } from "@volute/api";
+import type { ContentBlock, Message, Mind, Participant } from "@volute/api";
 import {
   fetchChannelMembers,
   fetchConversationMessages,
@@ -22,7 +22,9 @@ let {
   convType = "dm",
   channelName = "",
   minds = [],
+  participants = [],
   onOpenMind,
+  onTypingNames,
 }: {
   name: string;
   username?: string;
@@ -32,7 +34,9 @@ let {
   convType?: string;
   channelName?: string;
   minds?: Mind[];
+  participants?: Participant[];
   onOpenMind?: (mind: Mind) => void;
+  onTypingNames?: (names: string[]) => void;
 } = $props();
 
 let nextEntryId = 0;
@@ -46,6 +50,11 @@ let memberCount = $state(0);
 let currentConvId: string | null = null;
 let typingSafetyTimer = 0;
 let messageList: MessageList;
+
+// Notify parent of typing names changes
+$effect(() => {
+  onTypingNames?.(typingNames);
+});
 
 // Per-conversation message cache
 const messageCache = new Map<string, { entries: ChatEntry[]; hasMore: boolean }>();
@@ -262,6 +271,7 @@ async function handleSend(message: string, images: Array<{ media_type: string; d
     {loadingOlder}
     onLoadOlder={loadOlderMessages}
     {minds}
+    {participants}
     {onOpenMind}
   />
 

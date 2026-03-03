@@ -1,21 +1,25 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
 import { inviteToChannel } from "../lib/client";
-import { getDisplayStatus, mindDotColor } from "../lib/format";
-import { activeMinds, reconnectActivity } from "../lib/stores.svelte";
-import StatusBadge from "./StatusBadge.svelte";
+import { mindDotColor } from "../lib/format";
+import { activeMinds, onlineBrains, reconnectActivity } from "../lib/stores.svelte";
+import ProfileHoverCard from "./ProfileHoverCard.svelte";
 
 let {
   conversation,
   minds,
+  typingNames = [],
   onOpenMind,
 }: {
   conversation: ConversationWithParticipants;
   minds: Mind[];
+  typingNames?: string[];
   onOpenMind: (mind: Mind) => void;
 } = $props();
 
 let mindsByName = $derived(new Map(minds.map((m) => [m.name, m])));
+
+let typingSet = $derived(new Set(typingNames));
 
 let mindParticipants = $derived(
   conversation.participants
@@ -68,6 +72,16 @@ function handleInputBlur() {
     showSuggestions = false;
   }, 150);
 }
+
+function brainDotColor(username: string): string | undefined {
+  if (typingSet.has(username)) return undefined; // iridescent
+  if (onlineBrains.has(username)) return "var(--text-0)";
+  return "var(--text-2)";
+}
+
+function isBrainIridescent(username: string): boolean {
+  return typingSet.has(username);
+}
 </script>
 
 <div class="members-panel">
@@ -97,7 +111,6 @@ function handleInputBlur() {
                     style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
                   ></span>
                   <span class="suggestion-name">{mind.name}</span>
-                  <StatusBadge status={getDisplayStatus(mind)} />
                 </button>
               {/each}
             </div>
@@ -112,15 +125,25 @@ function handleInputBlur() {
       <div class="section-title">Minds</div>
       {#each mindParticipants as { participant, mind }}
         {#if mind}
-          <button class="member-row clickable" onclick={() => onOpenMind(mind)}>
-            <span
-              class="status-dot"
-              class:iridescent={activeMinds.has(mind.name)}
-              style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
-            ></span>
-            <span class="member-name">{participant.username}</span>
-            <StatusBadge status={getDisplayStatus(mind)} />
-          </button>
+          <ProfileHoverCard profile={{
+            name: mind.name,
+            displayName: mind.displayName,
+            description: mind.description,
+            avatarUrl: mind.avatar ? `/api/minds/${encodeURIComponent(mind.name)}/avatar` : null,
+            userType: "mind",
+            created: mind.created,
+          }}>
+            {#snippet children()}
+              <button class="member-row clickable" onclick={() => onOpenMind(mind)}>
+                <span
+                  class="status-dot"
+                  class:iridescent={activeMinds.has(mind.name)}
+                  style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
+                ></span>
+                <span class="member-name">{participant.displayName ?? participant.username}</span>
+              </button>
+            {/snippet}
+          </ProfileHoverCard>
         {:else}
           <div class="member-row">
             <span class="status-dot" style:background="var(--text-2)"></span>
@@ -130,11 +153,28 @@ function handleInputBlur() {
       {/each}
     {/if}
     {#if userParticipants.length > 0}
-      <div class="section-title">Users</div>
+      <div class="section-title">Brains</div>
       {#each userParticipants as participant}
-        <div class="member-row">
-          <span class="member-name">{participant.username}</span>
-        </div>
+        <ProfileHoverCard profile={{
+          name: participant.username,
+          displayName: participant.displayName,
+          description: participant.description,
+          avatarUrl: participant.avatar ? `/api/auth/avatars/${encodeURIComponent(participant.avatar)}` : null,
+          userType: "brain",
+        }}>
+          {#snippet children()}
+            <div class="member-row">
+              <span
+                class="status-dot"
+                class:iridescent={isBrainIridescent(participant.username)}
+                style:background={brainDotColor(participant.username)}
+              ></span>
+              <span class="member-name">
+                {participant.displayName ?? participant.username}
+              </span>
+            </div>
+          {/snippet}
+        </ProfileHoverCard>
       {/each}
     {/if}
   </div>
@@ -284,7 +324,6 @@ function handleInputBlur() {
   }
 
   .member-name {
-    flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

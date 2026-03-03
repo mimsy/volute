@@ -43,6 +43,9 @@ let selectedModalMind = $state<Mind | null>(null);
 // Resize state
 let resizing = $state(false);
 
+// Typing state for channel members panel
+let typingNames = $state<string[]>([]);
+
 // Derived
 let activeConversationId = $derived(
   selection.kind === "conversation" ? (selection.conversationId ?? null) : null,
@@ -306,6 +309,7 @@ function handleResizeEnd() {
           onSelectPage={handleSelectPage}
           onSelectSite={handleSelectSite}
           onSelectPages={handleSelectPages}
+          onTypingNames={(names) => { typingNames = names; }}
         />
       </div>
       {#if rightPanelMind}
@@ -324,12 +328,12 @@ function handleResizeEnd() {
         <ChannelMembersPanel
           conversation={activeConv}
           minds={data.minds}
+          {typingNames}
           onOpenMind={handleOpenMindModal}
         />
       {/if}
     </div>
     <StatusBar
-      minds={data.minds}
       username={auth.user.username}
       systemName={auth.systemName}
       connectionOk={data.connectionOk}
@@ -338,8 +342,6 @@ function handleResizeEnd() {
       onRestart={() => restartDaemon()}
       onLogout={handleLogout}
       onUserSettings={() => (activeModal = "userSettings")}
-      onOpenMind={handleOpenMindModal}
-      onSeed={() => (activeModal = "seed")}
     />
   </div>
 
@@ -356,7 +358,7 @@ function handleResizeEnd() {
     <SeedModal onClose={() => (activeModal = null)} onCreated={handleSeedCreated} />
   {/if}
   {#if activeModal === "admin"}
-    <AdminModal onClose={() => (activeModal = null)} />
+    <AdminModal onClose={() => (activeModal = null)} minds={data.minds} />
   {/if}
   {#if activeModal === "userSettings"}
     <UserSettingsModal onClose={() => (activeModal = null)} />
