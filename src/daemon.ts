@@ -44,6 +44,7 @@ export async function startDaemon(opts: {
   port: number;
   hostname: string;
   foreground: boolean;
+  tailscale?: boolean;
 }): Promise<void> {
   const { port, hostname } = opts;
   const myPid = String(process.pid);
@@ -89,17 +90,21 @@ export async function startDaemon(opts: {
   // Use existing token if set (for testing), otherwise generate one
   const token = process.env.VOLUTE_DAEMON_TOKEN || randomBytes(32).toString("hex");
 
-  // Set token, port, and hostname in environment so internal code can build correct URLs
-  process.env.VOLUTE_DAEMON_TOKEN = token;
-  process.env.VOLUTE_DAEMON_PORT = String(port);
-  process.env.VOLUTE_DAEMON_HOSTNAME = hostname;
+  // Tailscale HTTPS setup
+  let tls: { key: Buffer; cert: Buffer } | undefined;
+  if (opts.tailscale) {
+    const { getTailscaleTls } = await import("./lib/tailscale.js");
+    const tlsConfig = await getTailscaleTls();
+    tls = { key: tlsConfig.key, cert: tlsConfig.cert };
+    log.info("Tailscale HTTPS enabled", { hostname: tlsConfig.hostname });
+  }
 
   // Start web server — must succeed before writing PID/config files,
   // otherwise a failed startup (e.g. EADDRINUSE) would overwrite files
   // belonging to a running daemon.
-  let server: Awaited<ReturnType<typeof startServer>>;
+  let result: Awaited<ReturnType<typeof startServer>>;
   try {
-    server = await startServer({ port, hostname });
+    result = await startServer({ port, hostname: "0.0.0.0", tls });
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
     if (e.code === "EADDRINUSE") {
@@ -108,12 +113,21 @@ export async function startDaemon(opts: {
     }
     throw err;
   }
+  const { server, internalPort } = result;
+
+  // Internal communication always uses HTTP on localhost
+  // When TLS is enabled, minds/CLI talk to the secondary HTTP port
+  const daemonPort = internalPort ?? port;
+  process.env.VOLUTE_DAEMON_TOKEN = token;
+  process.env.VOLUTE_DAEMON_PORT = String(daemonPort);
+  process.env.VOLUTE_DAEMON_HOSTNAME = hostname;
 
   // Server is listening — safe to write PID and config
   writeFileSync(DAEMON_PID_PATH, myPid, { mode: 0o644 });
-  writeFileSync(DAEMON_JSON_PATH, `${JSON.stringify({ port, hostname, token }, null, 2)}\n`, {
-    mode: 0o644,
-  });
+  const daemonConfig: Record<string, unknown> = { port, hostname, token };
+  if (internalPort) daemonConfig.internalPort = internalPort;
+  if (tls) daemonConfig.tls = true;
+  writeFileSync(DAEMON_JSON_PATH, `${JSON.stringify(daemonConfig, null, 2)}\n`, { mode: 0o644 });
 
   // Start delivery manager, mind manager, connector manager, and scheduler
   const delivery = initDeliveryManager();
@@ -299,6 +313,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   let port = 4200;
   let hostname = "127.0.0.1";
   let foreground = false;
+  let tailscale = false;
 
   for (let i = 2; i < process.argv.length; i++) {
     if (process.argv[i] === "--port" && process.argv[i + 1]) {
@@ -309,8 +324,10 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
       i++;
     } else if (process.argv[i] === "--foreground") {
       foreground = true;
+    } else if (process.argv[i] === "--tailscale") {
+      tailscale = true;
     }
   }
 
-  startDaemon({ port, hostname, foreground });
+  startDaemon({ port, hostname, foreground, tailscale });
 }

@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
+import { createServer as createHttpsServer } from "node:https";
 import { dirname, extname, resolve } from "node:path";
 import type { ServerType } from "@hono/node-server";
 import { serve } from "@hono/node-server";
@@ -19,10 +20,12 @@ const MIME_TYPES: Record<string, string> = {
 export async function startServer({
   port,
   hostname = "127.0.0.1",
+  tls,
 }: {
   port: number;
   hostname?: string;
-}): Promise<ServerType> {
+  tls?: { key: Buffer; cert: Buffer };
+}): Promise<{ server: ServerType; internalPort?: number }> {
   // Find built frontend assets
   let assetsDir = "";
   let searchDir = dirname(new URL(import.meta.url).pathname);
@@ -62,12 +65,50 @@ export async function startServer({
     });
   }
 
+  // When TLS is enabled, HTTPS is the primary listener on the user-facing port.
+  // A secondary HTTP listener on localhost handles internal CLI/mind communication.
+  if (tls) {
+    const server = serve({
+      fetch: app.fetch,
+      port,
+      hostname,
+      createServer: createHttpsServer,
+      serverOptions: { key: tls.key, cert: tls.cert },
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.on("listening", () => {
+        log.info("Volute UI running (https)", { hostname, port });
+        resolve();
+      });
+      server.on("error", (err: NodeJS.ErrnoException) => {
+        reject(err);
+      });
+    });
+
+    const internalPort = port + 1;
+    const internalServer = serve({ fetch: app.fetch, port: internalPort, hostname: "127.0.0.1" });
+    await new Promise<void>((resolve, reject) => {
+      internalServer.on("listening", () => {
+        log.info("Volute API running (http, internal)", {
+          hostname: "127.0.0.1",
+          port: internalPort,
+        });
+        resolve();
+      });
+      internalServer.on("error", (err: NodeJS.ErrnoException) => {
+        reject(err);
+      });
+    });
+
+    return { server, internalPort };
+  }
+
+  // No TLS: single HTTP listener
   const server = serve({ fetch: app.fetch, port, hostname });
 
-  // Wait for the server to start listening (or fail with EADDRINUSE)
   await new Promise<void>((resolve, reject) => {
     server.on("listening", () => {
-      log.info("Volute UI running", { hostname, port });
+      log.info("Volute API running (http)", { hostname, port });
       resolve();
     });
     server.on("error", (err: NodeJS.ErrnoException) => {
@@ -75,5 +116,5 @@ export async function startServer({
     });
   });
 
-  return server;
+  return { server };
 }

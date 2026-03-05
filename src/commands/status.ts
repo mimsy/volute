@@ -5,8 +5,10 @@ export async function run(_args: string[]) {
   const mode = getServiceMode();
   console.log(`Mode: ${modeLabel(mode)}`);
 
-  const { hostname, port, token } = readDaemonConfig();
-  const baseUrl = getDaemonUrl(hostname, port);
+  const { hostname, port, internalPort, token } = readDaemonConfig();
+  // Use internal HTTP port for API calls, user-facing port for display
+  const apiPort = internalPort ?? port;
+  const baseUrl = getDaemonUrl("127.0.0.1", apiPort);
 
   // Check health
   let running = false;
