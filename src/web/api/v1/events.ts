@@ -9,7 +9,10 @@ import {
   removeConnection,
 } from "../../../lib/events/brain-presence.js";
 import { subscribe as subscribeConversation } from "../../../lib/events/conversation-events.js";
-import { listConversationsWithParticipants } from "../../../lib/events/conversations.js";
+import {
+  getUnreadCounts,
+  listConversationsWithParticipants,
+} from "../../../lib/events/conversations.js";
 import { bufferEvent, getEventsSince } from "../../../lib/events/event-sequencer.js";
 import { getActiveMinds } from "../../../lib/events/mind-activity-tracker.js";
 import log from "../../../lib/logger.js";
@@ -61,6 +64,13 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
       let conversations: any[] = [];
       try {
         conversations = await listConversationsWithParticipants(user.id);
+        if (conversations.length > 0) {
+          const convIds = conversations.map((c: any) => c.id);
+          const unreads = await getUnreadCounts(user.id, convIds);
+          for (const conv of conversations) {
+            conv.unreadCount = unreads[conv.id] ?? 0;
+          }
+        }
       } catch (err) {
         log.error("[v1-events] failed to fetch conversations", log.errorData(err));
       }

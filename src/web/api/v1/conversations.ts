@@ -10,6 +10,7 @@ import {
   getParticipants,
   isParticipantOrOwner,
   listConversationsWithParticipants,
+  markConversationRead,
 } from "../../../lib/events/conversations.js";
 import { findMind } from "../../../lib/registry.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
@@ -95,6 +96,16 @@ const app = new Hono<AuthEnv>()
     });
 
     return c.json(conv, 201);
+  })
+  .post("/:id/read", async (c) => {
+    const id = c.req.param("id");
+    const user = c.get("user");
+    if (user.id === 0) return c.json({ ok: true });
+    if (!(await isParticipantOrOwner(id, user.id))) {
+      return c.json({ error: "Conversation not found" }, 404);
+    }
+    await markConversationRead(user.id, id);
+    return c.json({ ok: true });
   })
   .delete("/:id", async (c) => {
     const id = c.req.param("id");

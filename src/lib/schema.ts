@@ -131,6 +131,22 @@ export const activity = sqliteTable(
   ],
 );
 
+export const conversationReads = sqliteTable(
+  "conversation_reads",
+  {
+    user_id: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    conversation_id: text("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    last_read_message_id: integer("last_read_message_id").notNull().default(0),
+  },
+  (table) => [
+    uniqueIndex("idx_conversation_reads_unique").on(table.user_id, table.conversation_id),
+  ],
+);
+
 export const messages = sqliteTable(
   "messages",
   {
