@@ -135,8 +135,8 @@ export async function run(_args: string[]) {
       console.error(`Failed to stop service: ${err instanceof Error ? err.message : err}`);
       process.exit(1);
     }
-    const { hostname, port } = readDaemonConfig();
-    if (await pollHealthDown(hostname, port)) {
+    const config = readDaemonConfig();
+    if (await pollHealthDown("127.0.0.1", config.internalPort ?? config.port)) {
       console.log("Daemon stopped.");
     } else {
       console.error("Service stopped but daemon may still be responding.");

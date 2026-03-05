@@ -23,6 +23,7 @@ export async function run(args: string[]) {
     port: { type: "number" },
     host: { type: "string" },
     foreground: { type: "boolean" },
+    tailscale: { type: "boolean" },
   });
 
   const mode = getServiceMode();
@@ -68,6 +69,22 @@ export async function run(args: string[]) {
   // For health polling, use localhost when binding to all interfaces
   const pollHost = hostname === "0.0.0.0" || hostname === "::" ? "localhost" : hostname;
 
+  // Resolve Tailscale hostname for display (certs are fetched by the daemon process)
+  let tailscaleHostname: string | undefined;
+  if (flags.tailscale) {
+    try {
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const execFileAsync = promisify(execFile);
+      const { stdout } = await execFileAsync("tailscale", ["status", "--json"]);
+      const status = JSON.parse(stdout);
+      tailscaleHostname = status.Self?.DNSName?.replace(/\.$/, "");
+    } catch (err) {
+      console.error(`Tailscale setup failed: ${err instanceof Error ? err.message : err}`);
+      process.exit(1);
+    }
+  }
+
   // Check if port is already responding (catches orphaned daemons with missing PID files)
   try {
     const res = await fetch(`http://${pollHost}:${port}/api/health`);
@@ -86,7 +103,7 @@ export async function run(args: string[]) {
 
   if (flags.foreground) {
     const { startDaemon } = await import("../daemon.js");
-    await startDaemon({ port, hostname, foreground: true });
+    await startDaemon({ port, hostname, foreground: true, tailscale: flags.tailscale });
     return;
   }
 
@@ -102,18 +119,19 @@ export async function run(args: string[]) {
   const logFile = resolve(home, "daemon.log");
   const logFd = openSync(logFile, "a");
 
-  const child = spawn(
-    process.execPath,
-    [daemonModule, "--port", String(port), "--host", hostname],
-    {
-      stdio: ["ignore", "ignore", logFd],
-      detached: true,
-    },
-  );
+  const daemonArgs = [daemonModule, "--port", String(port), "--host", hostname];
+  if (flags.tailscale) daemonArgs.push("--tailscale");
+
+  const child = spawn(process.execPath, daemonArgs, {
+    stdio: ["ignore", "ignore", logFd],
+    detached: true,
+  });
   child.unref();
 
-  // Poll health endpoint to confirm startup
-  const url = `http://${pollHost}:${port}/api/health`;
+  // Poll health endpoint to confirm startup (always HTTP on localhost)
+  // When TLS is enabled, the internal HTTP listener is on port + 1
+  const pollPort = flags.tailscale ? port + 1 : port;
+  const url = `http://localhost:${pollPort}/api/health`;
   const maxWait = 30_000;
   const start = Date.now();
 
@@ -121,7 +139,11 @@ export async function run(args: string[]) {
     try {
       const res = await fetch(url);
       if (res.ok) {
-        console.log(`Volute daemon running on ${hostname}:${port} (pid ${child.pid})`);
+        const displayHost = tailscaleHostname ?? hostname;
+        const displayProto = flags.tailscale ? "https" : "http";
+        console.log(
+          `Volute daemon running on ${displayProto}://${displayHost}:${port} (pid ${child.pid})`,
+        );
         console.log(`Logs: ${logFile}`);
         return;
       }

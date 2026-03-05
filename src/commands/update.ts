@@ -55,8 +55,8 @@ export async function run(_args: string[]) {
       process.exit(1);
     }
     {
-      const { hostname, port } = readDaemonConfig();
-      if (await pollHealth(hostname, port)) {
+      const config = readDaemonConfig();
+      if (await pollHealth("127.0.0.1", config.internalPort ?? config.port)) {
         console.log(`\nUpdated to volute v${result.latest}`);
       } else {
         console.error("Service restarted but daemon did not become healthy.");
@@ -82,8 +82,8 @@ export async function run(_args: string[]) {
       process.exit(1);
     }
     {
-      const { hostname, port } = readDaemonConfig();
-      if (await pollHealth(hostname, port)) {
+      const config = readDaemonConfig();
+      if (await pollHealth("127.0.0.1", config.internalPort ?? config.port)) {
         console.log(`\nUpdated to volute v${result.latest}`);
       } else {
         console.error("Service restarted but daemon did not become healthy.");
