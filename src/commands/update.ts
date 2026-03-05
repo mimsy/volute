@@ -99,7 +99,7 @@ export async function run(_args: string[]) {
   const configPath = resolve(home, "daemon.json");
 
   let daemonWasRunning = false;
-  let daemonPort = 4200;
+  let daemonPort = 1618;
   let daemonHost = "127.0.0.1";
 
   if (existsSync(pidPath)) {
@@ -117,7 +117,7 @@ export async function run(_args: string[]) {
   if (daemonWasRunning && existsSync(configPath)) {
     try {
       const config = JSON.parse(readFileSync(configPath, "utf-8"));
-      daemonPort = config.port ?? 4200;
+      daemonPort = config.port ?? 1618;
       daemonHost = config.hostname || "127.0.0.1";
     } catch {
       console.error("Warning: could not read daemon config, using default port/host");

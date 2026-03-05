@@ -20,7 +20,7 @@ RUN ln -s /opt/volute/dist/cli.js /usr/local/bin/volute
 ENV VOLUTE_HOME=/data
 ENV VOLUTE_MINDS_DIR=/minds
 ENV VOLUTE_ISOLATION=user
-EXPOSE 4200
+EXPOSE 1618
 VOLUME /data
 VOLUME /minds
 

@@ -108,7 +108,7 @@ Templates have a `.init/` directory containing identity and config files. On `vo
 
 ### Web dashboard
 
-The daemon serves a Hono web server (default port 4200) with a Svelte frontend.
+The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 
 - **Backend** (`src/web/`): Hono API routes for auth, minds, chat, conversations, logs, variants, files, connectors, schedules, channels, env, keys, pages, prompts, skills, file-sharing
 - **Frontend** (`src/web/ui/`): Svelte SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs)
@@ -157,7 +157,7 @@ The daemon serves a Hono web server (default port 4200) with a Svelte frontend.
 | `volute auth logout` | Remove stored credentials |
 | `volute pages publish [--mind <name>] [--system]` | Publish pages (mind's or --system for shared/pages/) |
 | `volute pages status [--mind <name>] [--system]` | Show publish status (mind's or --system) |
-| `volute up [--port N] [--foreground]` | Start the daemon (default: 4200) |
+| `volute up [--port N] [--foreground]` | Start the daemon (default: 1618) |
 | `volute down` | Stop the daemon |
 | `volute restart [--port N]` | Restart the daemon |
 | `volute service install [--port N] [--host H]` | Install as user-level auto-start service |
@@ -330,7 +330,7 @@ Mind-scoped commands (`send`, `history`, `variant`, `schedule`, `channel`, `file
 
 ```sh
 docker build -t volute .
-docker run -d -p 4200:4200 -v volute-data:/data -v volute-minds:/minds volute
+docker run -d -p 1618:1618 -v volute-data:/data -v volute-minds:/minds volute
 ```
 
 Or with docker-compose: `docker compose up -d`. The container runs with `VOLUTE_ISOLATION=user` enabled, so each mind gets its own Linux user inside the container.

@@ -37,7 +37,7 @@ export async function run(args: string[]) {
     }
     const config = readGlobalConfig();
     const h = flags.host ?? config.hostname ?? "127.0.0.1";
-    const p = flags.port ?? config.port ?? 4200;
+    const p = flags.port ?? config.port ?? 1618;
     if (await pollHealth(h, p)) {
       console.log(`Volute daemon running on ${h}:${p}`);
     } else {
@@ -49,7 +49,7 @@ export async function run(args: string[]) {
 
   // Read defaults from config file, CLI flags override
   const config = readGlobalConfig();
-  const port = flags.port ?? config.port ?? 4200;
+  const port = flags.port ?? config.port ?? 1618;
   const hostname = flags.host ?? config.hostname ?? "127.0.0.1";
   const home = voluteHome();
   const pidPath = resolve(home, "daemon.pid");

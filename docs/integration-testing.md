@@ -74,7 +74,7 @@ Start a container:
 
 ```sh
 docker run -d --name volute-test \
-  -p 14200:4200 \
+  -p 11618:1618 \
   -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" \
   volute-test
 ```

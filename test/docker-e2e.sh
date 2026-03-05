@@ -27,7 +27,7 @@ fi
 
 CONTAINER="volute-e2e-$$"
 IMAGE="volute-e2e-$$"
-HOST_PORT=14200
+HOST_PORT=11618
 PASS=0
 FAIL=0
 TOKEN=""
@@ -75,7 +75,7 @@ api() {
   shift 2
   curl -sf -X "$method" \
     -H "Authorization: Bearer $TOKEN" \
-    -H "Origin: http://127.0.0.1:4200" \
+    -H "Origin: http://127.0.0.1:1618" \
     -H "Content-Type: application/json" \
     "http://localhost:$HOST_PORT/api$path" "$@"
 }
@@ -86,7 +86,7 @@ api_raw() {
   shift 2
   curl -s -X "$method" \
     -H "Authorization: Bearer $TOKEN" \
-    -H "Origin: http://127.0.0.1:4200" \
+    -H "Origin: http://127.0.0.1:1618" \
     -H "Content-Type: application/json" \
     "http://localhost:$HOST_PORT/api$path" "$@"
 }
@@ -121,7 +121,7 @@ docker build -t "$IMAGE" . >/dev/null 2>&1
 pass "Docker image built"
 
 docker run -d --name "$CONTAINER" \
-  -p "$HOST_PORT:4200" \
+  -p "$HOST_PORT:1618" \
   -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" \
   "$IMAGE" >/dev/null
 pass "Container started"

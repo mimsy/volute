@@ -26,12 +26,12 @@ export async function stopDaemon(): Promise<StopResult> {
   if (!existsSync(pidPath)) {
     // Check if a daemon is running without a PID file (orphan)
     const configPath = resolve(home, "daemon.json");
-    let port = 4200;
+    let port = 1618;
     let hostname = "localhost";
     if (existsSync(configPath)) {
       try {
         const config = JSON.parse(readFileSync(configPath, "utf-8"));
-        port = config.port ?? 4200;
+        port = config.port ?? 1618;
         hostname = config.hostname || "localhost";
       } catch {}
     }
