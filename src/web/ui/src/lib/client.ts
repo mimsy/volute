@@ -135,6 +135,10 @@ export function deleteConversation(conversationId: string): Promise<void> {
   return del(`${V1}/conversations/${enc(conversationId)}`);
 }
 
+export function markAsRead(conversationId: string): Promise<void> {
+  return post(`${V1}/conversations/${enc(conversationId)}/read`);
+}
+
 // --- Chat ---
 
 export function sendChat(

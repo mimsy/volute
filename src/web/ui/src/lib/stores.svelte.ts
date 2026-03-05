@@ -6,10 +6,11 @@ import type {
   Site,
 } from "@volute/api";
 import type { SSEEvent } from "@volute/api/events";
-import { SvelteSet } from "svelte/reactivity";
+import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import { type AuthUser, fetchMe, logout } from "./auth";
-import { fetchMinds, fetchSystemInfo } from "./client";
+import { fetchMinds, fetchSystemInfo, markAsRead } from "./client";
 import { connect, connectionState, disconnect, subscribe } from "./connection.svelte";
+import { showNotification } from "./notifications";
 
 // --- Auth ---
 
@@ -78,6 +79,20 @@ export const activeMinds = new SvelteSet<string>();
 /** Brains (human users) currently connected via SSE. */
 export const onlineBrains = new SvelteSet<string>();
 
+// --- Unread tracking ---
+
+export const unreadCounts = new SvelteMap<string, number>();
+
+const unreadState = $state({ activeConversationId: null as string | null });
+
+export function setActiveConversation(id: string | null) {
+  unreadState.activeConversationId = id;
+  if (id) {
+    unreadCounts.set(id, 0);
+    markAsRead(id).catch((err) => console.warn("[stores] markAsRead failed:", err));
+  }
+}
+
 // --- Unified SSE via connection.svelte.ts ---
 
 function handleSSEEvent(event: SSEEvent) {
@@ -93,6 +108,11 @@ function handleSSEEvent(event: SSEEvent) {
     onlineBrains.clear();
     if (Array.isArray(event.onlineBrains)) {
       for (const name of event.onlineBrains) onlineBrains.add(name);
+    }
+    // Populate unread counts from snapshot
+    unreadCounts.clear();
+    for (const conv of data.conversations) {
+      if (conv.unreadCount) unreadCounts.set(conv.id, conv.unreadCount);
     }
     // Minds not in snapshot — fetch separately since they need health checks
     fetchMinds()
@@ -153,6 +173,42 @@ function handleSSEEvent(event: SSEEvent) {
         createdAt: event.createdAt,
       };
       (conv as any).updated_at = event.createdAt;
+
+      // Unread tracking + notifications
+      const isFromSelf = event.senderName === auth.user?.username;
+      const isActive = event.conversationId === unreadState.activeConversationId;
+      if (!isFromSelf && !isActive) {
+        const current = unreadCounts.get(event.conversationId) ?? 0;
+        unreadCounts.set(event.conversationId, current + 1);
+
+        // Browser notifications
+        const senderLabel = event.senderName ?? "Someone";
+        const isDm = conv.type === "dm" || conv.type === "group";
+        if (isDm) {
+          showNotification(senderLabel, text.slice(0, 200));
+        } else if (conv.type === "channel") {
+          // Notify on @mention
+          const me = auth.user?.username ?? "";
+          const displayName = auth.user?.display_name ?? "";
+          const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const mentionPattern = new RegExp(
+            `@(${esc(me)}${displayName ? `|${esc(displayName)}` : ""})`,
+            "i",
+          );
+          if (mentionPattern.test(text)) {
+            showNotification(
+              `${senderLabel} in #${conv.name ?? conv.title ?? "channel"}`,
+              text.slice(0, 200),
+            );
+          }
+        }
+      } else if (!isFromSelf && isActive) {
+        // Keep read cursor current for active conversation
+        markAsRead(event.conversationId).catch((err) =>
+          console.warn("[stores] markAsRead failed:", err),
+        );
+      }
+
       // Re-sort by triggering reactivity
       data.conversations = [...data.conversations];
     }

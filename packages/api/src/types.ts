@@ -73,6 +73,7 @@ export type LastMessageSummary = {
 export type ConversationWithParticipants = Conversation & {
   participants: Participant[];
   lastMessage?: LastMessageSummary;
+  unreadCount?: number;
 };
 
 export type ActivityItem = {

@@ -1,7 +1,7 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind, Site } from "@volute/api";
 import { mindDotColor } from "../lib/format";
-import { activeMinds } from "../lib/stores.svelte";
+import { activeMinds, unreadCounts } from "../lib/stores.svelte";
 import ConversationList from "./ConversationList.svelte";
 import ProfileHoverCard from "./ProfileHoverCard.svelte";
 
@@ -123,6 +123,7 @@ function toggleSection(section: Section) {
         <div class="mind-list">
           {#each sortedMinds as mind}
             {@const dmId = mindDmMap.get(mind.name)}
+            {@const mindUnread = dmId ? (unreadCounts.get(dmId) ?? 0) : 0}
             <button
               class="mind-item"
               class:active={dmId === activeConversationId}
@@ -143,6 +144,9 @@ function toggleSection(section: Section) {
                     style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
                   ></span>
                   <span class="mind-item-name">{mind.displayName ?? mind.name}</span>
+                  {#if mindUnread > 0}
+                    <span class="unread-dot"></span>
+                  {/if}
                 {/snippet}
               </ProfileHoverCard>
             </button>
@@ -339,6 +343,14 @@ function toggleSection(section: Section) {
     text-overflow: ellipsis;
     white-space: nowrap;
     font-weight: 500;
+  }
+
+  .unread-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
   }
 
   .status-dot {

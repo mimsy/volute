@@ -9,9 +9,12 @@ import {
   createConversation,
   deleteConversation,
   getMessagesPaginated,
+  getUnreadCounts,
+  markConversationRead,
 } from "../src/lib/events/conversations.js";
 import {
   conversationParticipants,
+  conversationReads,
   conversations,
   messages,
   sessions,
@@ -143,6 +146,7 @@ function createApp() {
 async function cleanup() {
   const db = await getDb();
   await db.delete(sessions);
+  await db.delete(conversationReads);
   await db.delete(messages);
   await db.delete(conversationParticipants);
   await db.delete(conversations);
@@ -266,6 +270,159 @@ describe("v1 conversations HTTP routes", () => {
     assert.equal(res.status, 404);
 
     await deleteSession(cookie2);
+    await deleteConversation(conv.id);
+  });
+
+  it("POST /:id/read — marks conversation as read", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const conv = await createConversation("test-mind", "volute", {
+      participantIds: [userId],
+    });
+    await addMessage(conv.id, "user", "v1-admin", [{ type: "text", text: "Hello" }]);
+    await addMessage(conv.id, "assistant", "test-mind", [{ type: "text", text: "Hi" }]);
+
+    const res = await app.request(`/api/v1/conversations/${conv.id}/read`, {
+      method: "POST",
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+
+    // Unread count should be 0 after marking read
+    const counts = await getUnreadCounts(userId, [conv.id]);
+    assert.equal(counts[conv.id] ?? 0, 0);
+
+    await deleteConversation(conv.id);
+  });
+
+  it("POST /:id/read — 404 for non-participant", async () => {
+    await setupAuth();
+    const app = createApp();
+
+    const conv = await createConversation("test-mind", "volute", {
+      participantIds: [userId],
+    });
+
+    const user2 = await createUser("outsider2", "pass");
+    await approveUser(user2.id);
+    const cookie2 = await createSession(user2.id);
+
+    const res = await app.request(`/api/v1/conversations/${conv.id}/read`, {
+      method: "POST",
+      headers: { Cookie: `volute_session=${cookie2}` },
+    });
+    assert.equal(res.status, 404);
+
+    await deleteSession(cookie2);
+    await deleteConversation(conv.id);
+  });
+});
+
+// --- Unread tracking tests ---
+
+describe("unread tracking", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  it("getUnreadCounts returns correct counts for unread messages", async () => {
+    const user = await createUser("unread-test", "pass");
+    const conv = await createConversation("test-mind", "volute", {
+      participantIds: [user.id],
+    });
+
+    await addMessage(conv.id, "user", "unread-test", [{ type: "text", text: "Hello" }]);
+    await addMessage(conv.id, "assistant", "test-mind", [{ type: "text", text: "Hi" }]);
+    await addMessage(conv.id, "assistant", "test-mind", [{ type: "text", text: "How are you?" }]);
+
+    const counts = await getUnreadCounts(user.id, [conv.id]);
+    assert.equal(counts[conv.id], 3);
+
+    await deleteConversation(conv.id);
+  });
+
+  it("getUnreadCounts returns 0 after markConversationRead", async () => {
+    const user = await createUser("mark-read-test", "pass");
+    const conv = await createConversation("test-mind", "volute", {
+      participantIds: [user.id],
+    });
+
+    await addMessage(conv.id, "user", "mark-read-test", [{ type: "text", text: "Hello" }]);
+    await addMessage(conv.id, "assistant", "test-mind", [{ type: "text", text: "Hi" }]);
+
+    await markConversationRead(user.id, conv.id);
+
+    const counts = await getUnreadCounts(user.id, [conv.id]);
+    assert.equal(counts[conv.id] ?? 0, 0);
+
+    await deleteConversation(conv.id);
+  });
+
+  it("new messages after markConversationRead show as unread", async () => {
+    const user = await createUser("new-after-read", "pass");
+    const conv = await createConversation("test-mind", "volute", {
+      participantIds: [user.id],
+    });
+
+    await addMessage(conv.id, "user", "new-after-read", [{ type: "text", text: "Hello" }]);
+    await markConversationRead(user.id, conv.id);
+
+    // New message after mark read
+    await addMessage(conv.id, "assistant", "test-mind", [{ type: "text", text: "Hi" }]);
+
+    const counts = await getUnreadCounts(user.id, [conv.id]);
+    assert.equal(counts[conv.id], 1);
+
+    await deleteConversation(conv.id);
+  });
+
+  it("getUnreadCounts handles empty conversation list", async () => {
+    const counts = await getUnreadCounts(999, []);
+    assert.deepEqual(counts, {});
+  });
+
+  it("getUnreadCounts handles multiple conversations", async () => {
+    const user = await createUser("multi-conv", "pass");
+    const conv1 = await createConversation("test-mind", "volute", {
+      participantIds: [user.id],
+    });
+    const conv2 = await createConversation("test-mind", "volute-2", {
+      participantIds: [user.id],
+    });
+
+    await addMessage(conv1.id, "assistant", "test-mind", [{ type: "text", text: "msg1" }]);
+    await addMessage(conv2.id, "assistant", "test-mind", [{ type: "text", text: "msg2" }]);
+    await addMessage(conv2.id, "assistant", "test-mind", [{ type: "text", text: "msg3" }]);
+
+    const counts = await getUnreadCounts(user.id, [conv1.id, conv2.id]);
+    assert.equal(counts[conv1.id], 1);
+    assert.equal(counts[conv2.id], 2);
+
+    await deleteConversation(conv1.id);
+    await deleteConversation(conv2.id);
+  });
+
+  it("markConversationRead is per-user — does not affect other users", async () => {
+    const userA = await createUser("user-a", "pass");
+    const userB = await createUser("user-b", "pass");
+    const conv = await createConversation("test-mind", "volute", {
+      participantIds: [userA.id, userB.id],
+    });
+
+    await addMessage(conv.id, "assistant", "test-mind", [{ type: "text", text: "Hello" }]);
+    await addMessage(conv.id, "assistant", "test-mind", [{ type: "text", text: "World" }]);
+
+    // User A marks as read
+    await markConversationRead(userA.id, conv.id);
+
+    // User A should have 0 unread, User B should still have 2
+    const countsA = await getUnreadCounts(userA.id, [conv.id]);
+    const countsB = await getUnreadCounts(userB.id, [conv.id]);
+    assert.equal(countsA[conv.id] ?? 0, 0);
+    assert.equal(countsB[conv.id], 2);
+
     await deleteConversation(conv.id);
   });
 });

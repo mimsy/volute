@@ -1,7 +1,7 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
 import { getConversationLabel, mindDotColor } from "../lib/format";
-import { activeMinds } from "../lib/stores.svelte";
+import { activeMinds, unreadCounts } from "../lib/stores.svelte";
 
 let {
   conversations,
@@ -88,6 +88,7 @@ $effect(() => {
       </div>
     {/if}
     {#each channels as conv (conv.id)}
+      {@const unread = unreadCounts.get(conv.id) ?? 0}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="conv-item"
@@ -96,10 +97,12 @@ $effect(() => {
         onkeydown={() => {}}
       >
         <div class="conv-item-header">
-          <div class="conv-item-label" class:active={conv.id === activeId}>
+          <div class="conv-item-label" class:active={conv.id === activeId} class:unread={unread > 0}>
             <span class="conv-label-text">{getConversationLabel(conv.participants ?? [], conv.title, username, conv)}</span>
           </div>
-          {#if conv.id === activeId}
+          {#if unread > 0}
+            <span class="unread-badge">{unread}</span>
+          {:else if conv.id === activeId}
             <button class="delete-btn" onclick={(e) => { e.stopPropagation(); onDelete(conv.id); }}>x</button>
           {/if}
         </div>
@@ -117,6 +120,7 @@ $effect(() => {
       {@const isSeed = minds.find((m) => m.name === conv.mind_name)?.stage === "seed"}
       {@const dmInfo = getDmInfo(conv)}
       {@const isGroup = (conv.participants?.length ?? 0) > 2}
+      {@const unread = unreadCounts.get(conv.id) ?? 0}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="conv-item"
@@ -125,7 +129,7 @@ $effect(() => {
         onkeydown={() => {}}
       >
         <div class="conv-item-header">
-          <div class="conv-item-label" class:active={conv.id === activeId}>
+          <div class="conv-item-label" class:active={conv.id === activeId} class:unread={unread > 0}>
             {#if dmInfo.isMindDm && dmInfo.mind}
               <button
                 class="status-dot"
@@ -149,6 +153,9 @@ $effect(() => {
             class:visible={conv.id === activeId || conv.id === menuConvId}
             onclick={(e) => openMenu(e, conv.id)}
           >...</button>
+          {#if unread > 0}
+            <span class="unread-badge">{unread}</span>
+          {/if}
         </div>
         {#if isGroup}
           <div class="member-count">{conv.participants?.length} members</div>
@@ -248,6 +255,26 @@ $effect(() => {
 
   .conv-item-label.active {
     color: var(--text-0);
+  }
+
+  .conv-item-label.unread {
+    font-weight: 600;
+    color: var(--text-0);
+  }
+
+  .unread-badge {
+    background: var(--accent);
+    color: var(--bg-0);
+    font-size: 10px;
+    font-weight: 600;
+    min-width: 16px;
+    height: 16px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+    flex-shrink: 0;
   }
 
   .conv-label-text {

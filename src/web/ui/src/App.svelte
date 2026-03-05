@@ -16,6 +16,7 @@ import UserSettingsModal from "./components/UserSettingsModal.svelte";
 import { type AuthUser } from "./lib/auth";
 import { deleteConversation, restartDaemon } from "./lib/client";
 import { navigate, parseSelection, type Selection, selectionToPath } from "./lib/navigate";
+import { requestNotificationPermission } from "./lib/notifications";
 import {
   auth,
   checkAuth,
@@ -28,6 +29,7 @@ import {
   hideConversation,
   reconnectActivity,
   saveSidebarWidth,
+  setActiveConversation,
   sidebar,
   unhideConversation,
 } from "./lib/stores.svelte";
@@ -50,6 +52,11 @@ let typingNames = $state<string[]>([]);
 let activeConversationId = $derived(
   selection.kind === "conversation" ? (selection.conversationId ?? null) : null,
 );
+
+// Sync active conversation for unread tracking
+$effect(() => {
+  setActiveConversation(activeConversationId);
+});
 
 // Right panel: auto-show mind details for DMs, channel members for channels
 let activeConv = $derived.by(() => {
@@ -86,6 +93,12 @@ $effect(() => {
   if (!auth.user) return;
   connectActivity();
   return () => disconnectActivity();
+});
+
+// Request notification permission after login
+$effect(() => {
+  if (!auth.user) return;
+  requestNotificationPermission();
 });
 
 // Track whether selection change came from popstate (to avoid pushing duplicate history)
@@ -138,6 +151,7 @@ function handleOpenMindModal(mind: Mind) {
 
 function handleSelectConversation(id: string) {
   selection = { kind: "conversation", conversationId: id };
+  setActiveConversation(id);
   if (activeModal === "mind") {
     activeModal = null;
     selectedModalMind = null;
@@ -159,6 +173,7 @@ async function handleDeleteConversation(id: string) {
 
 function handleConversationId(id: string) {
   selection = { kind: "conversation", conversationId: id };
+  setActiveConversation(id);
   reconnectActivity();
 }
 

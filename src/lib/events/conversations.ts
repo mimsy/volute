@@ -8,7 +8,13 @@ import type {
 } from "@volute/api";
 import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
-import { conversationParticipants, conversations, messages, users } from "../schema.js";
+import {
+  conversationParticipants,
+  conversationReads,
+  conversations,
+  messages,
+  users,
+} from "../schema.js";
 import { fireWebhook } from "../webhook.js";
 import { publish } from "./conversation-events.js";
 
@@ -485,4 +491,60 @@ export async function joinChannel(conversationId: string, userId: number): Promi
 
 export async function leaveChannel(conversationId: string, userId: number): Promise<void> {
   await removeParticipant(conversationId, userId);
+}
+
+// --- Unread tracking ---
+
+export async function getUnreadCounts(
+  userId: number,
+  conversationIds: string[],
+): Promise<Record<string, number>> {
+  if (conversationIds.length === 0) return {};
+  const db = await getDb();
+  const rows = await db
+    .select({
+      conversationId: messages.conversation_id,
+      count: sql<number>`COUNT(*)`,
+    })
+    .from(messages)
+    .leftJoin(
+      conversationReads,
+      and(
+        eq(conversationReads.conversation_id, messages.conversation_id),
+        eq(conversationReads.user_id, userId),
+      ),
+    )
+    .where(
+      and(
+        inArray(messages.conversation_id, conversationIds),
+        sql`${messages.id} > COALESCE(${conversationReads.last_read_message_id}, 0)`,
+      ),
+    )
+    .groupBy(messages.conversation_id);
+
+  const result: Record<string, number> = {};
+  for (const row of rows) {
+    result[row.conversationId] = row.count;
+  }
+  return result;
+}
+
+export async function markConversationRead(userId: number, conversationId: string): Promise<void> {
+  const db = await getDb();
+  const maxRow = await db
+    .select({ maxId: sql<number>`MAX(${messages.id})` })
+    .from(messages)
+    .where(eq(messages.conversation_id, conversationId))
+    .get();
+
+  const maxId = maxRow?.maxId ?? 0;
+  if (maxId === 0) return;
+
+  await db
+    .insert(conversationReads)
+    .values({ user_id: userId, conversation_id: conversationId, last_read_message_id: maxId })
+    .onConflictDoUpdate({
+      target: [conversationReads.user_id, conversationReads.conversation_id],
+      set: { last_read_message_id: maxId },
+    });
 }

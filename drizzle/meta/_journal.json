@@ -99,6 +99,13 @@
       "when": 1772200000000,
       "tag": "0013_user_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1772300000000,
+      "tag": "0014_conversation_reads",
+      "breakpoints": true
     }
   ]
 }
