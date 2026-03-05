@@ -39,15 +39,15 @@ describe("getServiceMode", () => {
 
 describe("getDaemonUrl", () => {
   it("builds URL from hostname and port", () => {
-    assert.equal(getDaemonUrl("127.0.0.1", 4200), "http://127.0.0.1:4200");
+    assert.equal(getDaemonUrl("127.0.0.1", 1618), "http://127.0.0.1:1618");
   });
 
   it("maps 0.0.0.0 to localhost", () => {
-    assert.equal(getDaemonUrl("0.0.0.0", 4200), "http://localhost:4200");
+    assert.equal(getDaemonUrl("0.0.0.0", 1618), "http://localhost:1618");
   });
 
   it("maps :: to localhost", () => {
-    assert.equal(getDaemonUrl("::", 4200), "http://localhost:4200");
+    assert.equal(getDaemonUrl("::", 1618), "http://localhost:1618");
   });
 
   it("uses custom port", () => {
@@ -55,7 +55,7 @@ describe("getDaemonUrl", () => {
   });
 
   it("handles IPv6 literal", () => {
-    assert.equal(getDaemonUrl("::1", 4200), "http://[::1]:4200");
+    assert.equal(getDaemonUrl("::1", 1618), "http://[::1]:1618");
   });
 });
 

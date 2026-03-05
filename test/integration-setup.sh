@@ -95,7 +95,7 @@ ENV_ARGS=(-e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
 
 echo "Starting container on port $HOST_PORT..."
 if ! docker run -d --name "$CONTAINER" \
-  -p "$HOST_PORT:4200" \
+  -p "$HOST_PORT:1618" \
   "${ENV_ARGS[@]}" \
   "$IMAGE" >/dev/null; then
   echo "Error: failed to start container (port $HOST_PORT may be in use)" >&2
@@ -145,7 +145,7 @@ fi
 echo "Creating test user account..."
 REGISTER_RESP=$(curl -sf -X POST \
   -H "Content-Type: application/json" \
-  -H "Origin: http://127.0.0.1:4200" \
+  -H "Origin: http://127.0.0.1:1618" \
   -d '{"username":"tester","password":"tester"}' \
   "http://localhost:$HOST_PORT/api/auth/register" 2>&1) || true
 
@@ -159,7 +159,7 @@ fi
 # (the container runs as root, and @target DMs resolve the OS username as sender)
 ROOT_REGISTER_RESP=$(curl -sf -X POST \
   -H "Content-Type: application/json" \
-  -H "Origin: http://127.0.0.1:4200" \
+  -H "Origin: http://127.0.0.1:1618" \
   -d '{"username":"root","password":"root"}' \
   "http://localhost:$HOST_PORT/api/auth/register" 2>&1) || true
 
@@ -168,7 +168,7 @@ if [[ -n "$ROOT_USER_ID" ]]; then
   # Get admin session cookie to approve the pending root user
   SESSION_COOKIE=$(curl -sf -X POST \
     -H "Content-Type: application/json" \
-    -H "Origin: http://127.0.0.1:4200" \
+    -H "Origin: http://127.0.0.1:1618" \
     -c - \
     -d '{"username":"tester","password":"tester"}' \
     "http://localhost:$HOST_PORT/api/auth/login" 2>/dev/null | grep volute_session | awk '{print $NF}')
@@ -176,7 +176,7 @@ if [[ -n "$ROOT_USER_ID" ]]; then
   if [[ -n "$SESSION_COOKIE" ]]; then
     curl -sf -X POST \
       -H "Cookie: volute_session=$SESSION_COOKIE" \
-      -H "Origin: http://127.0.0.1:4200" \
+      -H "Origin: http://127.0.0.1:1618" \
       "http://localhost:$HOST_PORT/api/auth/users/$ROOT_USER_ID/approve" >/dev/null 2>&1 || true
   fi
   echo "  User 'root' created (for CLI inside container)"

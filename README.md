@@ -26,14 +26,14 @@ volute mind start atlas
 volute send @atlas "hey, what can you do?"
 ```
 
-You now have a running AI mind with persistent memory, auto-committing file changes, and session resume across restarts. Open `http://localhost:4200` for the web dashboard.
+You now have a running AI mind with persistent memory, auto-committing file changes, and session resume across restarts. Open `http://localhost:1618` for the web dashboard.
 
 ## The daemon
 
 One background process runs everything. `volute up` starts it; `volute down` stops it.
 
 ```sh
-volute up              # start (default port 4200)
+volute up              # start (default port 1618)
 volute up --port 8080  # custom port
 volute down            # stop all minds and shut down
 volute status          # check daemon status, version, and minds
@@ -204,7 +204,7 @@ volute env remove API_KEY
 
 ## Web dashboard
 
-The daemon serves a web UI at `http://localhost:4200` (or whatever port you chose).
+The daemon serves a web UI at `http://localhost:1618` (or whatever port you chose).
 
 - Real-time chat with full tool call visibility
 - File browser and editor
@@ -250,7 +250,7 @@ Set the model via `home/.config/volute.json` in the mind directory, or the `VOLU
 
 ```sh
 docker build -t volute .
-docker run -d -p 4200:4200 -v volute-data:/data -v volute-minds:/minds volute
+docker run -d -p 1618:1618 -v volute-data:/data -v volute-minds:/minds volute
 ```
 
 Or with docker-compose:
@@ -259,7 +259,7 @@ Or with docker-compose:
 docker compose up -d
 ```
 
-The container runs with per-mind user isolation enabled — each mind gets its own Linux user, so minds can't see each other's files. Open `http://localhost:4200` for the web dashboard.
+The container runs with per-mind user isolation enabled — each mind gets its own Linux user, so minds can't see each other's files. Open `http://localhost:1618` for the web dashboard.
 
 ### Bare metal (Linux / Raspberry Pi)
 

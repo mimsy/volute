@@ -310,7 +310,7 @@ export async function startDaemon(opts: {
 
 // CLI entry point
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("daemon.ts")) {
-  let port = 4200;
+  let port = 1618;
   let hostname = "127.0.0.1";
   let foreground = false;
   let tailscale = false;
