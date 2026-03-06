@@ -398,7 +398,8 @@ function toggleSection(section: Section) {
   }
 
   @media (max-width: 767px) {
-    .mind-item {
+    .mind-item,
+    .site-item {
       padding: 10px 12px 10px 26px;
       font-size: 13px;
     }
@@ -410,11 +411,6 @@ function toggleSection(section: Section) {
     .status-dot {
       width: 8px;
       height: 8px;
-    }
-
-    .site-item {
-      padding: 10px 12px 10px 26px;
-      font-size: 13px;
     }
   }
 </style>

@@ -28,6 +28,7 @@ let {
   onSelectConversation,
   onTypingNames,
   onToggleSidebar,
+  onOpenRightPanel,
 }: {
   selection: Selection;
   minds: Mind[];
@@ -44,6 +45,7 @@ let {
   onSelectConversation: (id: string) => void;
   onTypingNames?: (names: string[]) => void;
   onToggleSidebar?: () => void;
+  onOpenRightPanel?: () => void;
 } = $props();
 
 let selectedSite = $derived(
@@ -87,6 +89,9 @@ let chatParticipants = $derived.by(() => {
   <div class="mobile-header">
     <button class="hamburger-btn" onclick={onToggleSidebar}>&#9776;</button>
     <span class="mobile-title">Volute</span>
+    {#if onOpenRightPanel}
+      <button class="info-btn" onclick={onOpenRightPanel}>&#9432;</button>
+    {/if}
   </div>
   {#if selection.kind === "page"}
     <div class="breadcrumbs">
@@ -212,6 +217,7 @@ let chatParticipants = $derived.by(() => {
 
   .hamburger-btn {
     background: none;
+    border: none;
     color: var(--text-1);
     font-size: 18px;
     padding: 4px 8px;
@@ -227,13 +233,32 @@ let chatParticipants = $derived.by(() => {
     font-size: 13px;
     font-weight: 600;
     color: var(--text-1);
+    flex: 1;
   }
 
-  @media (max-width: 767px) {
+  .info-btn {
+    background: none;
+    border: none;
+    color: var(--text-2);
+    font-size: 18px;
+    padding: 4px 8px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .info-btn:hover {
+    background: var(--bg-2);
+    color: var(--text-1);
+  }
+
+  @media (max-width: 1024px) {
     .mobile-header {
       display: flex;
     }
+  }
 
+  @media (max-width: 767px) {
     .frame-content.padded {
       padding: 16px;
     }

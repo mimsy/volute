@@ -51,6 +51,9 @@ let resizing = $state(false);
 // Typing state for channel members panel
 let typingNames = $state<string[]>([]);
 
+// Right panel: hidden on mobile unless explicitly opened
+let rightPanelOpen = $state(false);
+
 // Derived
 let activeConversationId = $derived(
   selection.kind === "conversation" ? (selection.conversationId ?? null) : null,
@@ -59,6 +62,7 @@ let activeConversationId = $derived(
 // Sync active conversation for unread tracking
 $effect(() => {
   setActiveConversation(activeConversationId);
+  rightPanelOpen = false;
 });
 
 // Right panel: auto-show mind details for DMs, channel members for channels
@@ -147,9 +151,30 @@ $effect(() => {
 });
 
 // Actions
+// Whether right panel has something to show
+let hasRightPanel = $derived(
+  !!rightPanelMind || activeConv?.type === "channel" || activeConv?.type === "group",
+);
+
+// Show right panel on desktop always, on mobile/tablet only when explicitly opened
+let showRightPanel = $derived(hasRightPanel);
+
+function openRightPanel() {
+  rightPanelOpen = true;
+}
+
+function closeRightPanel() {
+  if (rightPanelIsManual) {
+    activeModal = null;
+    selectedModalMind = null;
+  }
+  rightPanelOpen = false;
+}
+
 function handleOpenMindModal(mind: Mind) {
   selectedModalMind = mind;
   activeModal = "mind";
+  rightPanelOpen = true;
 }
 
 function handleSelectConversation(id: string) {
@@ -311,7 +336,7 @@ function handleResizeEnd() {
       </div>
       {#if layout.sidebarOpen}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="sidebar-backdrop" onclick={closeSidebar} onkeydown={() => {}}></div>
+        <div class="sidebar-backdrop" onclick={closeSidebar}></div>
       {/if}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
@@ -338,27 +363,31 @@ function handleResizeEnd() {
           onSelectPages={handleSelectPages}
           onTypingNames={(names) => { typingNames = names; }}
           onToggleSidebar={toggleSidebar}
+          onOpenRightPanel={hasRightPanel ? openRightPanel : undefined}
         />
       </div>
-      {#if rightPanelMind}
-        {#key rightPanelMind.name}
-          <MindModal
-            mind={rightPanelMind}
-            onClose={rightPanelIsManual
-              ? () => {
-                  activeModal = null;
-                  selectedModalMind = null;
-                }
-              : undefined}
-          />
-        {/key}
-      {:else if activeConv?.type === "channel" || activeConv?.type === "group"}
-        <ChannelMembersPanel
-          conversation={activeConv}
-          minds={data.minds}
-          {typingNames}
-          onOpenMind={handleOpenMindModal}
-        />
+      {#if showRightPanel}
+        {#if rightPanelOpen}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="right-panel-backdrop" onclick={closeRightPanel}></div>
+        {/if}
+        <div class="right-panel" class:right-panel-open={rightPanelOpen}>
+          {#if rightPanelMind}
+            {#key rightPanelMind.name}
+              <MindModal
+                mind={rightPanelMind}
+                onClose={closeRightPanel}
+              />
+            {/key}
+          {:else if activeConv?.type === "channel" || activeConv?.type === "group"}
+            <ChannelMembersPanel
+              conversation={activeConv}
+              minds={data.minds}
+              {typingNames}
+              onOpenMind={handleOpenMindModal}
+            />
+          {/if}
+        </div>
       {/if}
     </div>
     <StatusBar
@@ -443,8 +472,36 @@ function handleResizeEnd() {
     min-width: 0;
   }
 
+  .right-panel-backdrop {
+    display: none;
+  }
+
   .sidebar-backdrop {
     display: none;
+  }
+
+  /* Right panel: hide on small screens, show on toggle */
+  @media (max-width: 1024px) {
+    .right-panel {
+      display: none;
+    }
+
+    .right-panel.right-panel-open {
+      display: block;
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 40;
+    }
+
+    .right-panel-backdrop {
+      display: block;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 39;
+    }
   }
 
   /* Mobile */
