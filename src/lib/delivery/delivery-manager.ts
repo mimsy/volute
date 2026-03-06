@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
@@ -763,8 +763,26 @@ export class DeliveryManager {
         if (p.userType === "mind") {
           const dir = mindDir(p.username);
           const config = readVoluteConfig(dir);
-          if (!config?.avatar) continue;
-          filePath = resolve(dir, "home", config.avatar);
+          if (!config?.profile?.avatar) continue;
+          filePath = resolve(dir, "home", config.profile.avatar);
+          const homeDir = resolve(dir, "home");
+          if (!filePath.startsWith(`${homeDir}/`)) {
+            dlog.warn(`avatar path for ${p.username} escapes home directory, skipping`);
+            continue;
+          }
+          try {
+            const realHome = await realpath(homeDir);
+            const realAvatar = await realpath(filePath);
+            if (!realAvatar.startsWith(`${realHome}/`)) {
+              dlog.warn(
+                `avatar symlink for ${p.username} resolves outside home directory, skipping`,
+              );
+              continue;
+            }
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+            throw err;
+          }
         } else {
           filePath = resolve(voluteHome(), "avatars", p.avatar);
         }

@@ -13,7 +13,8 @@ export type ActivityEvent = {
     | "mind_waking"
     | "page_updated"
     | "brain_online"
-    | "brain_offline";
+    | "brain_offline"
+    | "profile_updated";
   mind: string;
   summary: string;
   metadata?: Record<string, unknown>;

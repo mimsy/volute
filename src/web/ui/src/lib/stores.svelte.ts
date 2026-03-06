@@ -146,7 +146,8 @@ function handleSSEEvent(event: SSEEvent) {
       item.type === "mind_active" ||
       item.type === "mind_idle" ||
       item.type === "mind_sleeping" ||
-      item.type === "mind_waking"
+      item.type === "mind_waking" ||
+      item.type === "profile_updated"
     ) {
       fetchMinds()
         .then((m) => {

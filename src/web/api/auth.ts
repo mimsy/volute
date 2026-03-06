@@ -20,6 +20,7 @@ import {
   updateUserProfile,
   verifyUser,
 } from "../../lib/auth.js";
+import { broadcast } from "../../lib/events/activity-events.js";
 import { readRegistry, voluteHome } from "../../lib/registry.js";
 import {
   type AuthEnv,
@@ -75,6 +76,11 @@ const authenticated = new Hono<AuthEnv>()
     // Invalidate session cache so updated profile is picked up
     const sessionId = getCookie(c, "volute_session");
     if (sessionId) invalidateSessionCache(sessionId);
+    broadcast({
+      type: "profile_updated",
+      mind: user.username,
+      summary: `${user.username} profile updated`,
+    });
     return c.json({ ok: true });
   })
   .post("/avatar", async (c) => {
@@ -108,6 +114,11 @@ const authenticated = new Hono<AuthEnv>()
     await updateUserProfile(user.id, { avatar: filename });
     const sessionId = getCookie(c, "volute_session");
     if (sessionId) invalidateSessionCache(sessionId);
+    broadcast({
+      type: "profile_updated",
+      mind: user.username,
+      summary: `${user.username} avatar updated`,
+    });
     return c.json({ ok: true, avatar: filename });
   })
   .delete("/avatar", async (c) => {
@@ -119,6 +130,11 @@ const authenticated = new Hono<AuthEnv>()
     await updateUserProfile(user.id, { avatar: null });
     const sessionId = getCookie(c, "volute_session");
     if (sessionId) invalidateSessionCache(sessionId);
+    broadcast({
+      type: "profile_updated",
+      mind: user.username,
+      summary: `${user.username} avatar removed`,
+    });
     return c.json({ ok: true });
   });
 
@@ -182,6 +198,14 @@ const admin = new Hono<AuthEnv>()
     if (Number.isNaN(id)) return c.json({ error: "Invalid user ID" }, 400);
     const body = c.req.valid("json");
     await updateUserProfile(id, body);
+    const updatedUser = await getUser(id);
+    if (updatedUser) {
+      broadcast({
+        type: "profile_updated",
+        mind: updatedUser.username,
+        summary: `${updatedUser.username} profile updated`,
+      });
+    }
     return c.json({ ok: true });
   })
   .delete("/users/:id", async (c) => {

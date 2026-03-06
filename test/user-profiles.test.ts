@@ -8,6 +8,7 @@ import {
   updateUserProfile,
 } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
+import { subscribe } from "../src/lib/events/activity-events.js";
 import {
   createConversation,
   deleteConversation,
@@ -79,6 +80,32 @@ describe("user profiles", () => {
     const mind = await getOrCreateMindUser("sync-clear");
     assert.equal(mind.display_name, null);
     assert.equal(mind.description, null);
+  });
+
+  it("syncMindProfile broadcasts profile_updated when profile changes", async () => {
+    const events: any[] = [];
+    const unsub = subscribe((e) => events.push(e));
+    try {
+      await syncMindProfile("broadcast-test", { displayName: "New Name" });
+      assert.equal(events.length, 1);
+      assert.equal(events[0].type, "profile_updated");
+      assert.equal(events[0].mind, "broadcast-test");
+    } finally {
+      unsub();
+    }
+  });
+
+  it("syncMindProfile skips broadcast when profile unchanged", async () => {
+    await syncMindProfile("no-broadcast", { displayName: "Same", description: "desc" });
+    const events: any[] = [];
+    const unsub = subscribe((e) => events.push(e));
+    try {
+      // Sync again with same values
+      await syncMindProfile("no-broadcast", { displayName: "Same", description: "desc" });
+      assert.equal(events.length, 0);
+    } finally {
+      unsub();
+    }
   });
 
   it("getUser returns new profile fields", async () => {

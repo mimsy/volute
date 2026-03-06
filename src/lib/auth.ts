@@ -1,7 +1,9 @@
 import { compareSync, hashSync } from "bcryptjs";
 import { and, count, eq } from "drizzle-orm";
 import { getDb } from "./db.js";
+import { broadcast } from "./events/activity-events.js";
 import { users } from "./schema.js";
+import type { MindProfile } from "./volute-config.js";
 
 export type User = {
   id: number;
@@ -193,18 +195,19 @@ export async function updateUserProfile(
   await db.update(users).set(profile).where(eq(users.id, userId));
 }
 
-export async function syncMindProfile(
-  mindName: string,
-  config: { displayName?: string; description?: string; avatar?: string },
-): Promise<void> {
+export async function syncMindProfile(mindName: string, config: MindProfile): Promise<void> {
   const user = await getOrCreateMindUser(mindName);
+  const newProfile = {
+    display_name: config.displayName ?? null,
+    description: config.description ?? null,
+    avatar: config.avatar ?? null,
+  };
+  const changed =
+    user.display_name !== newProfile.display_name ||
+    user.description !== newProfile.description ||
+    user.avatar !== newProfile.avatar;
+  if (!changed) return;
   const db = await getDb();
-  await db
-    .update(users)
-    .set({
-      display_name: config.displayName ?? null,
-      description: config.description ?? null,
-      avatar: config.avatar ?? null,
-    })
-    .where(eq(users.id, user.id));
+  await db.update(users).set(newProfile).where(eq(users.id, user.id));
+  broadcast({ type: "profile_updated", mind: mindName, summary: `${mindName} profile updated` });
 }

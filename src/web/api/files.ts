@@ -26,14 +26,14 @@ const app = new Hono()
 
     const dir = mindDir(name);
     const config = readVoluteConfig(dir);
-    if (!config?.avatar) return c.json({ error: "No avatar configured" }, 404);
+    if (!config?.profile?.avatar) return c.json({ error: "No avatar configured" }, 404);
 
-    const ext = extname(config.avatar).toLowerCase();
+    const ext = extname(config.profile.avatar).toLowerCase();
     const mime = AVATAR_MIME[ext];
     if (!mime) return c.json({ error: "Invalid avatar extension" }, 400);
 
     const homeDir = resolve(dir, "home");
-    const avatarPath = resolve(homeDir, config.avatar);
+    const avatarPath = resolve(homeDir, config.profile.avatar);
     if (!avatarPath.startsWith(`${homeDir}/`)) return c.json({ error: "Invalid avatar path" }, 400);
 
     // Resolve symlinks and re-check containment

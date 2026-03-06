@@ -95,7 +95,8 @@ export type ActivityEventType =
   | "mind_waking"
   | "page_updated"
   | "brain_online"
-  | "brain_offline";
+  | "brain_offline"
+  | "profile_updated";
 
 export type Variant = {
   name: string;
