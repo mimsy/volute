@@ -226,6 +226,7 @@ let contextLabel = $derived.by(() => {
   }
 
   .hamburger-btn {
+    display: none;
     background: none;
     border: none;
     color: var(--text-1);
@@ -272,6 +273,10 @@ let contextLabel = $derived.by(() => {
   }
 
   @media (max-width: 767px) {
+    .hamburger-btn {
+      display: block;
+    }
+
     .frame-content.padded {
       padding: 16px;
     }
