@@ -265,4 +265,16 @@ function formatCreated(dateStr: string): string {
     padding: 0 16px;
     border-top: 1px solid var(--border);
   }
+
+  @media (max-width: 1024px) {
+    .mind-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 40;
+      width: min(480px, 100vw);
+      box-shadow: -4px 0 16px rgba(0, 0, 0, 0.3);
+    }
+  }
 </style>

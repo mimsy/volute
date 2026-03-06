@@ -398,4 +398,18 @@ $effect(() => {
     background: var(--bg-2);
     color: var(--text-0);
   }
+
+  @media (max-width: 767px) {
+    .conv-item {
+      padding: 10px 12px;
+    }
+
+    .menu-btn {
+      opacity: 1;
+    }
+
+    .context-item {
+      padding: 10px 16px;
+    }
+  }
 </style>

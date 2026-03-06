@@ -227,4 +227,14 @@ $effect(() => {
     background: var(--accent-dim);
     color: var(--accent);
   }
+
+  @media (max-width: 767px) {
+    .chat-input {
+      font-size: 16px;
+    }
+
+    .input-area {
+      padding-bottom: max(16px, env(safe-area-inset-bottom));
+    }
+  }
 </style>

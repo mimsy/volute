@@ -351,4 +351,16 @@ function isBrainIridescent(username: string): boolean {
     83%  { background: #34d399; }
     100% { background: #4ade80; }
   }
+
+  @media (max-width: 1024px) {
+    .members-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 40;
+      width: min(280px, 100vw);
+      box-shadow: -4px 0 16px rgba(0, 0, 0, 0.3);
+    }
+  }
 </style>

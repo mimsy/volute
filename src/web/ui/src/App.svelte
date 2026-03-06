@@ -20,6 +20,7 @@ import { requestNotificationPermission } from "./lib/notifications";
 import {
   auth,
   checkAuth,
+  closeSidebar,
   connectActivity,
   data,
   disconnectActivity,
@@ -27,10 +28,12 @@ import {
   handleLogout,
   hiddenConversationIds,
   hideConversation,
+  layout,
   reconnectActivity,
   saveSidebarWidth,
   setActiveConversation,
   sidebar,
+  toggleSidebar,
   unhideConversation,
 } from "./lib/stores.svelte";
 
@@ -152,6 +155,7 @@ function handleOpenMindModal(mind: Mind) {
 function handleSelectConversation(id: string) {
   selection = { kind: "conversation", conversationId: id };
   setActiveConversation(id);
+  closeSidebar();
   if (activeModal === "mind") {
     activeModal = null;
     selectedModalMind = null;
@@ -180,6 +184,7 @@ function handleConversationId(id: string) {
 function handleNewChatCreated(name: string) {
   activeModal = null;
   selectedModalMind = null;
+  closeSidebar();
   // Check for existing 2-person DM with this user
   const existing = data.conversations.find((c) => {
     if (c.type === "channel") return false;
@@ -201,6 +206,7 @@ function handleNewChatCreated(name: string) {
 function handleNewGroupCreated(conv: Conversation) {
   activeModal = null;
   selectedModalMind = null;
+  closeSidebar();
   reconnectActivity();
   selection = { kind: "conversation", conversationId: conv.id };
 }
@@ -208,6 +214,7 @@ function handleNewGroupCreated(conv: Conversation) {
 function handleChannelJoined(conv: Conversation) {
   activeModal = null;
   selectedModalMind = null;
+  closeSidebar();
   reconnectActivity();
   selection = { kind: "conversation", conversationId: conv.id };
 }
@@ -215,6 +222,7 @@ function handleChannelJoined(conv: Conversation) {
 function handleSeedCreated(mindName: string) {
   activeModal = null;
   selectedModalMind = null;
+  closeSidebar();
   selection = { kind: "conversation", mindName };
 }
 
@@ -281,7 +289,7 @@ function handleResizeEnd() {
       <UpdateBanner />
     {/if}
     <div class="shell-body">
-      <div class="sidebar" style:width="{sidebar.width}px">
+      <div class="sidebar" class:sidebar-open={layout.sidebarOpen} style:width="{sidebar.width}px">
         <Sidebar
           minds={data.minds}
           conversations={data.conversations.filter((c) => !hiddenConversationIds.has(c.id))}
@@ -301,6 +309,10 @@ function handleResizeEnd() {
           onHome={() => (selection = { kind: "home" })}
         />
       </div>
+      {#if layout.sidebarOpen}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="sidebar-backdrop" onclick={closeSidebar} onkeydown={() => {}}></div>
+      {/if}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="resize-handle"
@@ -325,6 +337,7 @@ function handleResizeEnd() {
           onSelectSite={handleSelectSite}
           onSelectPages={handleSelectPages}
           onTypingNames={(names) => { typingNames = names; }}
+          onToggleSidebar={toggleSidebar}
         />
       </div>
       {#if rightPanelMind}
@@ -428,5 +441,50 @@ function handleResizeEnd() {
     flex: 1;
     overflow: hidden;
     min-width: 0;
+  }
+
+  .sidebar-backdrop {
+    display: none;
+  }
+
+  /* Mobile */
+  @media (max-width: 767px) {
+    .sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 50;
+      width: 280px !important;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+
+    .sidebar.sidebar-open {
+      transform: translateX(0);
+    }
+
+    .sidebar-backdrop {
+      display: block;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 49;
+    }
+
+    .resize-handle {
+      display: none;
+    }
+  }
+
+  /* Tablet */
+  @media (min-width: 768px) and (max-width: 1024px) {
+    .sidebar {
+      width: 200px !important;
+    }
+
+    .resize-handle {
+      display: none;
+    }
   }
 </style>
