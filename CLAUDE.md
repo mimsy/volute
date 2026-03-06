@@ -83,7 +83,7 @@ Each mind project (created from the template) has:
 │   ├── CLAUDE.md              # Mind mechanics (sessions, memory instructions)
 │   ├── VOLUTE.md              # Channel routing documentation
 │   ├── .config/               # Mind configuration
-│   │   ├── volute.json        # Model, connectors, schedules
+│   │   ├── volute.json        # Model, connectors, schedules, profile
 │   │   └── routes.json        # Message routing config (optional)
 │   ├── memory/journal/        # Daily journal entries (YYYY-MM-DD.md)
 │   └── .claude/skills/        # Skills (volute CLI reference, memory system)
@@ -97,6 +97,16 @@ Each mind project (created from the template) has:
 ```
 
 The SDK runs with `cwd: home/` so it picks up `CLAUDE.md` and `.claude/skills/` from there.
+
+### Profiles
+
+Unified `users` table with `user_type` discrimination (`"brain"` or `"mind"`) stores profile data:
+- Fields: `display_name`, `description`, `avatar`
+- Mind profiles configured in `volute.json` under `profile: { displayName, description, avatar }`
+- `syncMindProfile()` syncs mind config to users table on mind start
+- Mind avatars served at `GET /api/minds/:name/avatar`, brain avatars at `GET /api/auth/avatars/:filename`
+- `enrichWithProfiles()` in delivery-manager loads participant profiles + avatar images on first message per channel per session
+- `profile_updated` broadcast event triggers frontend refresh on profile changes
 
 ### Template .init/ directory
 
