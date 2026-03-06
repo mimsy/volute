@@ -533,6 +533,7 @@ function handleEscape(e: KeyboardEvent) {
 
     .sidebar.sidebar-open {
       transform: translateX(0);
+      overflow: visible;
     }
 
     .sidebar-backdrop {
