@@ -23,7 +23,7 @@ const VALID_SKILL_ID = /^[a-zA-Z0-9_-]+$/;
 export const SEED_SKILLS = ["orientation", "memory"];
 
 /** Skills installed for fully sprouted minds */
-export const STANDARD_SKILLS = ["volute-mind", "memory", "sessions", "resonance"];
+export const STANDARD_SKILLS = ["volute-mind", "memory", "sessions"];
 
 function validateSkillId(id: string): void {
   if (!id || !VALID_SKILL_ID.test(id)) {
@@ -37,16 +37,27 @@ export function sharedSkillsDir(): string {
   return resolve(voluteHome(), "skills");
 }
 
-export function parseSkillMd(content: string): { name: string; description: string } {
+export function parseSkillMd(content: string): {
+  name: string;
+  description: string;
+  npmDependencies: string[];
+} {
   const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return { name: "", description: "" };
+  if (!match) return { name: "", description: "", npmDependencies: [] };
   const frontmatter = match[1];
 
   const nameMatch = frontmatter.match(/^name:\s*(.+)$/m);
   const descMatch = frontmatter.match(/^description:\s*(.+)$/m);
+  const depsMatch = frontmatter.match(/^\s*npm-dependencies:\s*(.+)$/m);
   return {
     name: nameMatch?.[1].trim() ?? "",
     description: descMatch?.[1].trim() ?? "",
+    npmDependencies: depsMatch
+      ? depsMatch[1]
+          .trim()
+          .split(/[\s,]+/)
+          .filter(Boolean)
+      : [],
   };
 }
 
@@ -159,7 +170,16 @@ export function readUpstream(skillDir: string): UpstreamInfo | null {
   }
 }
 
-export async function installSkill(_mindName: string, dir: string, skillId: string): Promise<void> {
+export type InstallResult = {
+  installNotes: string | null;
+  npmInstalled: string[];
+};
+
+export async function installSkill(
+  _mindName: string,
+  dir: string,
+  skillId: string,
+): Promise<InstallResult> {
   validateSkillId(skillId);
   const shared = await getSharedSkill(skillId);
   if (!shared) throw new Error(`Shared skill not found: ${skillId}`);
@@ -173,9 +193,31 @@ export async function installSkill(_mindName: string, dir: string, skillId: stri
   mkdirSync(destDir, { recursive: true });
   cpSync(sourceDir, destDir, { recursive: true });
 
+  // Install npm dependencies if declared in SKILL.md frontmatter
+  const npmInstalled: string[] = [];
+  const skillMdPath = join(sourceDir, "SKILL.md");
+  if (existsSync(skillMdPath)) {
+    const { npmDependencies } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
+    if (npmDependencies.length > 0) {
+      await exec("npm", ["install", ...npmDependencies], { cwd: dir });
+      npmInstalled.push(...npmDependencies);
+    }
+  }
+
+  // Read install notes if present
+  let installNotes: string | null = null;
+  const installMdPath = join(destDir, "references", "INSTALL.md");
+  if (existsSync(installMdPath)) {
+    installNotes = readFileSync(installMdPath, "utf-8");
+  }
+
   // Write upstream tracking file
   // We need to commit first, then get the hash, then write upstream and amend
   await gitExec(["add", join("home", ".claude", "skills", skillId)], { cwd: dir });
+  // Also commit package.json/package-lock.json changes from npm install
+  if (npmInstalled.length > 0) {
+    await gitExec(["add", "package.json", "package-lock.json"], { cwd: dir });
+  }
   await gitExec(["commit", "-m", `Install shared skill: ${skillId}`], { cwd: dir });
   const commitHash = (await gitExec(["rev-parse", "HEAD"], { cwd: dir })).trim();
 
@@ -189,6 +231,8 @@ export async function installSkill(_mindName: string, dir: string, skillId: stri
     cwd: dir,
   });
   await gitExec(["commit", "--amend", "--no-edit"], { cwd: dir });
+
+  return { installNotes, npmInstalled };
 }
 
 export async function uninstallSkill(

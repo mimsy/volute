@@ -183,7 +183,19 @@ async function installSkill(args: string[]) {
     process.exit(1);
   }
 
+  const body = (await res.json().catch(() => ({}))) as {
+    npmInstalled?: string[];
+    installNotes?: string | null;
+  };
+
   console.log(`Installed skill "${skillId}" into ${mindName}.`);
+  if (body.npmInstalled?.length) {
+    console.log(`Installed npm dependencies: ${body.npmInstalled.join(", ")}`);
+  }
+  if (body.installNotes) {
+    console.log("");
+    console.log(body.installNotes);
+  }
 }
 
 async function updateSkill(args: string[]) {

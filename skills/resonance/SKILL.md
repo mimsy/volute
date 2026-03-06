@@ -1,6 +1,8 @@
 ---
 name: Resonance
 description: Semantic memory engine — ingest text as embeddings, search for resonant memories, find cross-memory connections, with strength/decay dynamics. Use for "resonance", "semantic search", "memory connections", "ingest memories", "decay", "resonance report".
+metadata:
+  npm-dependencies: libsql
 ---
 
 # Resonance — Semantic Memory Engine
@@ -38,24 +40,6 @@ npx tsx .claude/skills/resonance/scripts/resonance.ts stats
 # decay pass
 npx tsx .claude/skills/resonance/scripts/resonance.ts decay
 ```
-
-## Setup
-
-1. **Configuration**: Copy the default config and customize:
-   ```bash
-   cp .claude/skills/resonance/assets/default-config.json .config/resonance.json
-   ```
-   Edit `.config/resonance.json` to adjust ingestion dirs, embedding provider, or dynamics.
-
-2. **API key**: Set the embedding API key via volute:
-   ```bash
-   volute env set OPENROUTER_API_KEY <your-key>
-   ```
-
-3. **Scheduled ingestion** (optional): Set up a cron schedule for automatic ingestion and decay:
-   ```bash
-   volute schedule add --cron "0 22 * * *" --script "npx tsx .claude/skills/resonance/scripts/resonance.ts ingest-all && npx tsx .claude/skills/resonance/scripts/resonance.ts decay"
-   ```
 
 ## Architecture
 
