@@ -587,7 +587,7 @@ export class SleepManager {
         .where(and(eq(deliveryQueue.mind, name), eq(deliveryQueue.status, "sleep-queued")))
         .all();
 
-      if (rows.length === 0) return "No messages while you slept.";
+      if (rows.length === 0) return "No messages arrived while you slept.";
 
       // Count per channel
       const channelCounts = new Map<string, number>();
@@ -597,10 +597,10 @@ export class SleepManager {
       }
 
       const parts = [...channelCounts.entries()].map(([ch, count]) => `${count} on ${ch}`);
-      return `${rows.length} message${rows.length === 1 ? "" : "s"} while you slept (${parts.join(", ")}). Ask if you want them delivered.`;
+      return `${rows.length} message${rows.length === 1 ? "" : "s"} arrived while you slept (${parts.join(", ")}). They'll be delivered to your normal channels now.`;
     } catch (err) {
-      slog.warn(`failed to build queued summary for ${name}`, log.errorData(err));
-      return "No messages while you slept.";
+      slog.error(`failed to build queued summary for ${name}`, log.errorData(err));
+      return "Unable to check for queued messages — there may be messages waiting.";
     }
   }
 

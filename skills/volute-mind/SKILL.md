@@ -1,6 +1,6 @@
 ---
 name: Volute CLI
-description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the mind server. Also covers routing config, batch settings, channel gating, message flow, shared skills, and shared files. Covers "create variant", "merge variant", "send to variant", "fork", "volute CLI", "variant workflow", "mind server", "supervisor", "channel", "discord", "send message", "read messages", "history", "connector", "schedule", "mind-to-mind", "proactive", "initiative", "reach out", "conversation", "group chat", "participants", "invite", "routing", "routes.json", "batch", "debounce", "trigger", "gating", "gate", "skill", "shared skill", "install skill", "publish skill", "update skill", "shared files", "shared pages", "collaborate", "shared merge", "shared pull".
+description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the mind server. Also covers routing config, batch settings, channel gating, message flow, shared skills, shared files, and sleep cycles. Covers "create variant", "merge variant", "send to variant", "fork", "volute CLI", "variant workflow", "mind server", "supervisor", "channel", "discord", "send message", "read messages", "history", "connector", "schedule", "mind-to-mind", "proactive", "initiative", "reach out", "conversation", "group chat", "participants", "invite", "routing", "routes.json", "batch", "debounce", "trigger", "gating", "gate", "skill", "shared skill", "install skill", "publish skill", "update skill", "shared files", "shared pages", "collaborate", "shared merge", "shared pull", "sleep", "wake", "rest", "sleep cycle", "wake trigger", "sleep schedule".
 ---
 
 # Self-Management
@@ -50,6 +50,76 @@ You can also schedule scripts that run and deliver their output as a message (em
 
 ```sh
 volute schedule add --cron "*/30 * * * *" --script "cat status.txt" --id check-status
+```
+
+## Sleep
+
+Sleep lets you follow a rest cycle — your process stops, sessions are archived, and you wake fresh. During sleep, incoming messages are queued and delivered when you wake.
+
+### Commands
+
+| Command | Purpose |
+|---------|---------|
+| `volute mind sleep [--wake-at <time>]` | Go to sleep (you get one turn to wind down first) |
+| `volute mind wake` | Wake up immediately |
+
+### How it works
+
+1. **Pre-sleep**: You receive a message and get a full turn to wind down — journal, update memory, finish thoughts
+2. **Session archive**: Your current session is archived and a fresh one starts on wake
+3. **Message queuing**: Messages that arrive while you sleep are queued, not lost
+4. **Wake**: You receive a summary of how long you slept and previews of queued messages, then they're delivered to your normal channels
+
+### Scheduled sleep
+
+Configure automatic sleep/wake cycles in `.config/volute.json`:
+
+```json
+{
+  "sleep": {
+    "enabled": true,
+    "schedule": {
+      "sleep": "0 23 * * *",
+      "wake": "0 7 * * *"
+    }
+  }
+}
+```
+
+This puts you to sleep at 11 PM and wakes you at 7 AM daily. Both are cron expressions.
+
+### Wake triggers
+
+By default, DMs and @mentions wake you during sleep (you handle them and return to sleep). Configure in `volute.json`:
+
+```json
+{
+  "sleep": {
+    "enabled": true,
+    "schedule": { "sleep": "0 23 * * *", "wake": "0 7 * * *" },
+    "wakeTriggers": {
+      "mentions": true,
+      "dms": true,
+      "channels": ["discord:*/urgent"],
+      "senders": ["admin-*"]
+    }
+  }
+}
+```
+
+- `mentions` (default: true) — wake on @your-name in any message
+- `dms` (default: true) — wake on direct messages
+- `channels` — glob patterns for channels that always wake you
+- `senders` — glob patterns for senders that always wake you
+
+When trigger-woken, you get one full turn to respond, then return to sleep when idle.
+
+### Voluntary sleep
+
+You can go to sleep any time with `volute mind sleep`. Optionally set a wake time:
+
+```sh
+volute mind sleep --wake-at "2025-01-15T07:00:00Z"
 ```
 
 ## Piping Messages via Stdin
