@@ -87,7 +87,7 @@ let chatParticipants = $derived.by(() => {
 
 <div class="main-frame">
   <div class="mobile-header">
-    <button class="hamburger-btn" onclick={onToggleSidebar}>&#9776;</button>
+    <button class="hamburger-btn" onclick={() => onToggleSidebar?.()}>&#9776;</button>
     <span class="mobile-title">Volute</span>
     {#if onOpenRightPanel}
       <button class="info-btn" onclick={onOpenRightPanel}>&#9432;</button>

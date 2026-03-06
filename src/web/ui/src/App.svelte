@@ -298,7 +298,21 @@ function handleResizeEnd() {
   document.body.style.cursor = "";
   saveSidebarWidth();
 }
+
+function handleEscape(e: KeyboardEvent) {
+  if (e.key !== "Escape") return;
+  if (rightPanelOpen) {
+    closeRightPanel();
+    return;
+  }
+  if (layout.sidebarOpen) {
+    closeSidebar();
+    return;
+  }
+}
 </script>
+
+<svelte:window onkeydown={handleEscape} />
 
 {#if !auth.checked}
   <div class="app">
