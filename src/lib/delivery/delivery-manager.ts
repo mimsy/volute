@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
@@ -765,6 +765,16 @@ export class DeliveryManager {
           const config = readVoluteConfig(dir);
           if (!config?.profile?.avatar) continue;
           filePath = resolve(dir, "home", config.profile.avatar);
+          const homeDir = resolve(dir, "home");
+          if (!filePath.startsWith(`${homeDir}/`)) continue;
+          try {
+            const realHome = await realpath(homeDir);
+            const realAvatar = await realpath(filePath);
+            if (!realAvatar.startsWith(`${realHome}/`)) continue;
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+            throw err;
+          }
         } else {
           filePath = resolve(voluteHome(), "avatars", p.avatar);
         }
