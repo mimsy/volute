@@ -161,9 +161,9 @@ async function getMindStatus(name: string, port: number) {
   return {
     status,
     channels,
-    displayName: config?.displayName,
-    description: config?.description,
-    avatar: config?.avatar,
+    displayName: config?.profile?.displayName,
+    description: config?.profile?.description,
+    avatar: config?.profile?.avatar,
   };
 }
 
@@ -692,7 +692,7 @@ const app = new Hono<AuthEnv>()
       if (body.description) {
         const seedConfig = readVoluteConfig(dest);
         if (!seedConfig) throw new Error("Failed to read volute.json after identity generation");
-        seedConfig.description = body.description;
+        seedConfig.profile = { ...seedConfig.profile, description: body.description };
         writeVoluteConfig(dest, seedConfig);
       }
 

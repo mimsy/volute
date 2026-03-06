@@ -763,8 +763,8 @@ export class DeliveryManager {
         if (p.userType === "mind") {
           const dir = mindDir(p.username);
           const config = readVoluteConfig(dir);
-          if (!config?.avatar) continue;
-          filePath = resolve(dir, "home", config.avatar);
+          if (!config?.profile?.avatar) continue;
+          filePath = resolve(dir, "home", config.profile.avatar);
         } else {
           filePath = resolve(voluteHome(), "avatars", p.avatar);
         }

@@ -22,6 +22,12 @@ export type SleepConfig = {
   wakeTriggers?: WakeTriggerConfig;
 };
 
+export type MindProfile = {
+  displayName?: string;
+  description?: string;
+  avatar?: string; // relative path from home/, e.g. "avatar.png"
+};
+
 export type VoluteConfig = {
   model?: string;
   maxThinkingTokens?: number;
@@ -32,9 +38,7 @@ export type VoluteConfig = {
   tokenBudget?: number;
   tokenBudgetPeriodMinutes?: number;
   identity?: { privateKey: string; publicKey: string };
-  displayName?: string;
-  description?: string;
-  avatar?: string; // relative path from home/, e.g. "avatar.png"
+  profile?: MindProfile;
   sleep?: SleepConfig;
   [key: string]: unknown;
 };

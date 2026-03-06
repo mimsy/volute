@@ -45,11 +45,7 @@ export async function startMindFull(name: string): Promise<void> {
 
   // Sync mind profile from volute.json into the users table
   if (config) {
-    syncMindProfile(baseName, {
-      displayName: config.displayName,
-      description: config.description,
-      avatar: config.avatar,
-    }).catch((err: unknown) =>
+    syncMindProfile(baseName, config.profile ?? {}).catch((err: unknown) =>
       log.error(`failed to sync profile for ${baseName}`, log.errorData(err)),
     );
   }
