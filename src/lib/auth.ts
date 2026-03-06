@@ -1,6 +1,7 @@
 import { compareSync, hashSync } from "bcryptjs";
 import { and, count, eq } from "drizzle-orm";
 import { getDb } from "./db.js";
+import { broadcast } from "./events/activity-events.js";
 import { users } from "./schema.js";
 
 export type User = {
@@ -207,4 +208,5 @@ export async function syncMindProfile(
       avatar: config.avatar ?? null,
     })
     .where(eq(users.id, user.id));
+  broadcast({ type: "profile_updated", mind: mindName, summary: `${mindName} profile updated` });
 }
