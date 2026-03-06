@@ -83,14 +83,24 @@ let chatParticipants = $derived.by(() => {
   const conv = conversations.find((c) => c.id === selection.conversationId);
   return conv?.participants ?? [];
 });
+
+let contextLabel = $derived.by(() => {
+  if (selection.kind !== "conversation") return "";
+  if (chatChannelName) return `#${chatChannelName}`;
+  const mind = chatMind ?? (chatMindName ? minds.find((m) => m.name === chatMindName) : undefined);
+  if (mind) return mind.displayName ?? mind.name;
+  if (chatMindName) return chatMindName;
+  return "";
+});
 </script>
 
 <div class="main-frame">
   <div class="mobile-header">
     <button class="hamburger-btn" onclick={() => onToggleSidebar?.()}>&#9776;</button>
-    <span class="mobile-title">Volute</span>
-    {#if onOpenRightPanel}
-      <button class="info-btn" onclick={onOpenRightPanel}>&#9432;</button>
+    {#if contextLabel && onOpenRightPanel}
+      <button class="context-label-btn" onclick={onOpenRightPanel}>{contextLabel}</button>
+    {:else}
+      <span class="mobile-title">Volute</span>
     {/if}
   </div>
   {#if selection.kind === "page"}
@@ -236,20 +246,23 @@ let chatParticipants = $derived.by(() => {
     flex: 1;
   }
 
-  .info-btn {
+  .context-label-btn {
+    flex: 1;
     background: none;
     border: none;
-    color: var(--text-2);
-    font-size: 18px;
-    padding: 4px 8px;
-    border-radius: var(--radius);
+    color: var(--text-0);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 4px 0;
+    text-align: left;
     cursor: pointer;
-    flex-shrink: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .info-btn:hover {
-    background: var(--bg-2);
-    color: var(--text-1);
+  .context-label-btn:hover {
+    color: var(--accent);
   }
 
   @media (max-width: 1024px) {
