@@ -265,4 +265,10 @@ function formatCreated(dateStr: string): string {
     padding: 0 16px;
     border-top: 1px solid var(--border);
   }
+
+  @media (max-width: 1024px) {
+    .mind-panel {
+      width: min(480px, 100vw);
+    }
+  }
 </style>

@@ -326,4 +326,10 @@ async function handleSend(message: string, images: Array<{ media_type: string; d
     color: var(--text-2);
     flex: 1;
   }
+
+  @media (max-width: 1024px) {
+    .channel-header {
+      display: none;
+    }
+  }
 </style>

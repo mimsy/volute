@@ -20,6 +20,7 @@ import { requestNotificationPermission } from "./lib/notifications";
 import {
   auth,
   checkAuth,
+  closeSidebar,
   connectActivity,
   data,
   disconnectActivity,
@@ -27,10 +28,12 @@ import {
   handleLogout,
   hiddenConversationIds,
   hideConversation,
+  layout,
   reconnectActivity,
   saveSidebarWidth,
   setActiveConversation,
   sidebar,
+  toggleSidebar,
   unhideConversation,
 } from "./lib/stores.svelte";
 
@@ -48,6 +51,9 @@ let resizing = $state(false);
 // Typing state for channel members panel
 let typingNames = $state<string[]>([]);
 
+// Right panel: hidden on mobile unless explicitly opened
+let rightPanelOpen = $state(false);
+
 // Derived
 let activeConversationId = $derived(
   selection.kind === "conversation" ? (selection.conversationId ?? null) : null,
@@ -56,6 +62,7 @@ let activeConversationId = $derived(
 // Sync active conversation for unread tracking
 $effect(() => {
   setActiveConversation(activeConversationId);
+  rightPanelOpen = false;
 });
 
 // Right panel: auto-show mind details for DMs, channel members for channels
@@ -144,14 +151,36 @@ $effect(() => {
 });
 
 // Actions
+// Whether right panel has something to show
+let hasRightPanel = $derived(
+  !!rightPanelMind || activeConv?.type === "channel" || activeConv?.type === "group",
+);
+
+// Show right panel on desktop always, on mobile/tablet only when explicitly opened
+let showRightPanel = $derived(hasRightPanel);
+
+function openRightPanel() {
+  rightPanelOpen = true;
+}
+
+function closeRightPanel() {
+  if (rightPanelIsManual) {
+    activeModal = null;
+    selectedModalMind = null;
+  }
+  rightPanelOpen = false;
+}
+
 function handleOpenMindModal(mind: Mind) {
   selectedModalMind = mind;
   activeModal = "mind";
+  rightPanelOpen = true;
 }
 
 function handleSelectConversation(id: string) {
   selection = { kind: "conversation", conversationId: id };
   setActiveConversation(id);
+  closeSidebar();
   if (activeModal === "mind") {
     activeModal = null;
     selectedModalMind = null;
@@ -180,6 +209,7 @@ function handleConversationId(id: string) {
 function handleNewChatCreated(name: string) {
   activeModal = null;
   selectedModalMind = null;
+  closeSidebar();
   // Check for existing 2-person DM with this user
   const existing = data.conversations.find((c) => {
     if (c.type === "channel") return false;
@@ -201,6 +231,7 @@ function handleNewChatCreated(name: string) {
 function handleNewGroupCreated(conv: Conversation) {
   activeModal = null;
   selectedModalMind = null;
+  closeSidebar();
   reconnectActivity();
   selection = { kind: "conversation", conversationId: conv.id };
 }
@@ -208,6 +239,7 @@ function handleNewGroupCreated(conv: Conversation) {
 function handleChannelJoined(conv: Conversation) {
   activeModal = null;
   selectedModalMind = null;
+  closeSidebar();
   reconnectActivity();
   selection = { kind: "conversation", conversationId: conv.id };
 }
@@ -215,6 +247,7 @@ function handleChannelJoined(conv: Conversation) {
 function handleSeedCreated(mindName: string) {
   activeModal = null;
   selectedModalMind = null;
+  closeSidebar();
   selection = { kind: "conversation", mindName };
 }
 
@@ -265,7 +298,21 @@ function handleResizeEnd() {
   document.body.style.cursor = "";
   saveSidebarWidth();
 }
+
+function handleEscape(e: KeyboardEvent) {
+  if (e.key !== "Escape") return;
+  if (rightPanelOpen) {
+    closeRightPanel();
+    return;
+  }
+  if (layout.sidebarOpen) {
+    closeSidebar();
+    return;
+  }
+}
 </script>
+
+<svelte:window onkeydown={handleEscape} />
 
 {#if !auth.checked}
   <div class="app">
@@ -281,7 +328,7 @@ function handleResizeEnd() {
       <UpdateBanner />
     {/if}
     <div class="shell-body">
-      <div class="sidebar" style:width="{sidebar.width}px">
+      <div class="sidebar" class:sidebar-open={layout.sidebarOpen} style:width="{sidebar.width}px">
         <Sidebar
           minds={data.minds}
           conversations={data.conversations.filter((c) => !hiddenConversationIds.has(c.id))}
@@ -301,6 +348,10 @@ function handleResizeEnd() {
           onHome={() => (selection = { kind: "home" })}
         />
       </div>
+      {#if layout.sidebarOpen}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="sidebar-backdrop" onclick={closeSidebar}></div>
+      {/if}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="resize-handle"
@@ -325,27 +376,32 @@ function handleResizeEnd() {
           onSelectSite={handleSelectSite}
           onSelectPages={handleSelectPages}
           onTypingNames={(names) => { typingNames = names; }}
+          onToggleSidebar={toggleSidebar}
+          onOpenRightPanel={hasRightPanel ? openRightPanel : undefined}
         />
       </div>
-      {#if rightPanelMind}
-        {#key rightPanelMind.name}
-          <MindModal
-            mind={rightPanelMind}
-            onClose={rightPanelIsManual
-              ? () => {
-                  activeModal = null;
-                  selectedModalMind = null;
-                }
-              : undefined}
-          />
-        {/key}
-      {:else if activeConv?.type === "channel" || activeConv?.type === "group"}
-        <ChannelMembersPanel
-          conversation={activeConv}
-          minds={data.minds}
-          {typingNames}
-          onOpenMind={handleOpenMindModal}
-        />
+      {#if showRightPanel}
+        {#if rightPanelOpen}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="right-panel-backdrop" onclick={closeRightPanel}></div>
+        {/if}
+        <div class="right-panel" class:right-panel-open={rightPanelOpen}>
+          {#if rightPanelMind}
+            {#key rightPanelMind.name}
+              <MindModal
+                mind={rightPanelMind}
+                onClose={closeRightPanel}
+              />
+            {/key}
+          {:else if activeConv?.type === "channel" || activeConv?.type === "group"}
+            <ChannelMembersPanel
+              conversation={activeConv}
+              minds={data.minds}
+              {typingNames}
+              onOpenMind={handleOpenMindModal}
+            />
+          {/if}
+        </div>
       {/if}
     </div>
     <StatusBar
@@ -428,5 +484,79 @@ function handleResizeEnd() {
     flex: 1;
     overflow: hidden;
     min-width: 0;
+  }
+
+  .right-panel-backdrop {
+    display: none;
+  }
+
+  .sidebar-backdrop {
+    display: none;
+  }
+
+  /* Right panel: hide on small screens, show on toggle */
+  @media (max-width: 1024px) {
+    .right-panel {
+      display: none;
+    }
+
+    .right-panel.right-panel-open {
+      display: block;
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 40;
+    }
+
+    .right-panel-backdrop {
+      display: block;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 39;
+    }
+  }
+
+  /* Mobile */
+  @media (max-width: 767px) {
+    .sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 50;
+      width: 280px !important;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+
+    .sidebar.sidebar-open {
+      transform: translateX(0);
+      overflow: visible;
+    }
+
+    .sidebar-backdrop {
+      display: block;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 49;
+    }
+
+    .resize-handle {
+      display: none;
+    }
+  }
+
+  /* Tablet */
+  @media (min-width: 768px) and (max-width: 1024px) {
+    .sidebar {
+      width: 200px !important;
+    }
+
+    .resize-handle {
+      display: none;
+    }
   }
 </style>

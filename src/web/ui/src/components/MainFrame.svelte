@@ -27,6 +27,8 @@ let {
   onSelectPages,
   onSelectConversation,
   onTypingNames,
+  onToggleSidebar,
+  onOpenRightPanel,
 }: {
   selection: Selection;
   minds: Mind[];
@@ -42,6 +44,8 @@ let {
   onSelectPages: () => void;
   onSelectConversation: (id: string) => void;
   onTypingNames?: (names: string[]) => void;
+  onToggleSidebar?: () => void;
+  onOpenRightPanel?: () => void;
 } = $props();
 
 let selectedSite = $derived(
@@ -79,9 +83,26 @@ let chatParticipants = $derived.by(() => {
   const conv = conversations.find((c) => c.id === selection.conversationId);
   return conv?.participants ?? [];
 });
+
+let contextLabel = $derived.by(() => {
+  if (selection.kind !== "conversation") return "";
+  if (chatChannelName) return `#${chatChannelName}`;
+  const mind = chatMind ?? (chatMindName ? minds.find((m) => m.name === chatMindName) : undefined);
+  if (mind) return mind.displayName ?? mind.name;
+  if (chatMindName) return chatMindName;
+  return "";
+});
 </script>
 
 <div class="main-frame">
+  <div class="mobile-header">
+    <button class="hamburger-btn" onclick={() => onToggleSidebar?.()}>&#9776;</button>
+    {#if contextLabel && onOpenRightPanel}
+      <button class="context-label-btn" onclick={onOpenRightPanel}>{contextLabel}</button>
+    {:else}
+      <span class="mobile-title">Volute</span>
+    {/if}
+  </div>
   {#if selection.kind === "page"}
     <div class="breadcrumbs">
       <button class="breadcrumb-link" onclick={onSelectPages}>Pages</button>
@@ -192,5 +213,72 @@ let chatParticipants = $derived.by(() => {
     height: 100%;
     border: none;
     background: white;
+  }
+
+  .mobile-header {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    background: var(--bg-1);
+  }
+
+  .hamburger-btn {
+    display: none;
+    background: none;
+    border: none;
+    color: var(--text-1);
+    font-size: 18px;
+    padding: 4px 8px;
+    border-radius: var(--radius);
+    cursor: pointer;
+  }
+
+  .hamburger-btn:hover {
+    background: var(--bg-2);
+  }
+
+  .mobile-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-1);
+    flex: 1;
+  }
+
+  .context-label-btn {
+    flex: 1;
+    background: none;
+    border: none;
+    color: var(--text-0);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 4px 0;
+    text-align: left;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .context-label-btn:hover {
+    color: var(--accent);
+  }
+
+  @media (max-width: 1024px) {
+    .mobile-header {
+      display: flex;
+    }
+  }
+
+  @media (max-width: 767px) {
+    .hamburger-btn {
+      display: block;
+    }
+
+    .frame-content.padded {
+      padding: 16px;
+    }
   }
 </style>

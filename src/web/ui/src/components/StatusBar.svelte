@@ -203,4 +203,18 @@ function handleClickOutside(e: MouseEvent) {
     background: var(--bg-3);
     color: var(--text-0);
   }
+
+  @media (max-width: 767px) {
+    .status-bar {
+      height: 36px;
+    }
+
+    .status-btn {
+      padding: 6px 8px;
+    }
+
+    .dropdown-item {
+      padding: 10px 16px;
+    }
+  }
 </style>

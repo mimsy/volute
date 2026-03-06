@@ -262,6 +262,18 @@ export function unhideConversation(id: string) {
   persistHidden();
 }
 
+// --- Layout (mobile sidebar) ---
+
+export const layout = $state({ sidebarOpen: false });
+
+export function toggleSidebar() {
+  layout.sidebarOpen = !layout.sidebarOpen;
+}
+
+export function closeSidebar() {
+  layout.sidebarOpen = false;
+}
+
 // --- Sidebar width ---
 
 function loadSidebarWidth(): number {

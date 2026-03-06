@@ -98,4 +98,11 @@ function handleKeydown(e: KeyboardEvent) {
   .close-btn:hover {
     color: var(--text-0);
   }
+
+  @media (max-width: 767px) {
+    .modal.full {
+      width: 95vw;
+      height: 85vh;
+    }
+  }
 </style>

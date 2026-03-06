@@ -396,4 +396,21 @@ function toggleSection(section: Section) {
   .site-item:hover {
     background: var(--bg-2);
   }
+
+  @media (max-width: 767px) {
+    .mind-item,
+    .site-item {
+      padding: 10px 12px 10px 26px;
+      font-size: 13px;
+    }
+
+    .section-toggle {
+      padding: 8px 12px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+    }
+  }
 </style>

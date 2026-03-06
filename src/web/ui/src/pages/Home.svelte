@@ -337,4 +337,14 @@ function handleActivityClick(item: ActivityItem) {
     font-size: 10px;
     flex-shrink: 0;
   }
+
+  @media (max-width: 767px) {
+    .home {
+      max-width: 100%;
+    }
+
+    .home-mind-card {
+      min-width: 120px;
+    }
+  }
 </style>
