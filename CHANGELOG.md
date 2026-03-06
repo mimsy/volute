@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.24.0](https://github.com/mimsy/volute/compare/volute-v0.23.0...volute-v0.24.0) (2026-03-06)
+
+
+### Features
+
+* add --tailscale flag for HTTPS via Tailscale certs ([#158](https://github.com/mimsy/volute/issues/158)) ([920a63f](https://github.com/mimsy/volute/commit/920a63f0908bedd36b9d36ea96e414e74ba7d17d))
+* add unread tracking, visual indicators, and browser notifications ([#157](https://github.com/mimsy/volute/issues/157)) ([d05b3aa](https://github.com/mimsy/volute/commit/d05b3aaedac3918a048a6d87ac6baf2df75be98b))
+* add user profiles, presence tracking, and admin management ([#155](https://github.com/mimsy/volute/issues/155)) ([82a78af](https://github.com/mimsy/volute/commit/82a78af10f288ee967efe1ea3aa16dae1ad0cf5e))
+
 ## [0.23.0](https://github.com/mimsy/volute/compare/volute-v0.22.0...volute-v0.23.0) (2026-03-01)
 
 
