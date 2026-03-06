@@ -766,11 +766,19 @@ export class DeliveryManager {
           if (!config?.profile?.avatar) continue;
           filePath = resolve(dir, "home", config.profile.avatar);
           const homeDir = resolve(dir, "home");
-          if (!filePath.startsWith(`${homeDir}/`)) continue;
+          if (!filePath.startsWith(`${homeDir}/`)) {
+            dlog.warn(`avatar path for ${p.username} escapes home directory, skipping`);
+            continue;
+          }
           try {
             const realHome = await realpath(homeDir);
             const realAvatar = await realpath(filePath);
-            if (!realAvatar.startsWith(`${realHome}/`)) continue;
+            if (!realAvatar.startsWith(`${realHome}/`)) {
+              dlog.warn(
+                `avatar symlink for ${p.username} resolves outside home directory, skipping`,
+              );
+              continue;
+            }
           } catch (err) {
             if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
             throw err;
