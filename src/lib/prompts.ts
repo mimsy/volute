@@ -104,21 +104,21 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
   },
   pre_sleep: {
     content:
-      "It's time to sleep. Save anything important to memory or your journal before resting.\nYou'll wake at ${wakeTime}. ${queuedInfo}",
+      "Time to rest. You have this turn to wind down however feels right — reflect on your day, update your journal or memory, finish any threads of thought, or simply settle.\n\nYour current session will be archived and a fresh one will begin when you wake. Anything in session context that isn't saved to files will be lost.\n\nYou'll wake at ${wakeTime}. ${queuedInfo}",
     description: "Pre-sleep message sent before stopping the mind",
     variables: ["wakeTime", "queuedInfo"],
     category: "system",
   },
   wake_summary: {
     content:
-      "Good morning — it's ${currentDate}. You slept from ${sleepTime} to now (${duration}).\n${queuedSummary}",
+      "Good morning — it's ${currentDate}. You slept from ${sleepTime} to now (${duration}).\n\n${queuedSummary}",
     description: "Wake-up summary after scheduled sleep",
     variables: ["currentDate", "sleepTime", "duration", "queuedSummary"],
     category: "system",
   },
   wake_trigger_summary: {
     content:
-      "You were woken at ${currentDate} by a message on ${triggerChannel}.\nYou've been sleeping since ${sleepTime} (${duration}). ${queuedSummary}\nYou'll go back to sleep after handling this.",
+      "You were woken during sleep by a message on ${triggerChannel}. It's ${currentDate} — you've been asleep since ${sleepTime} (${duration}).\n\nYou have this full turn to respond and handle anything else. You'll return to sleep when you go idle.\n\n${queuedSummary}",
     description: "Wake-up summary when woken by a trigger message",
     variables: ["currentDate", "triggerChannel", "sleepTime", "duration", "queuedSummary"],
     category: "system",

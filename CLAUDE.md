@@ -34,6 +34,7 @@ A single daemon process (`volute up`) manages all minds, connectors, and schedul
 - **MindManager** (`src/lib/mind-manager.ts`) — Spawns/stops mind server processes, crash recovery
 - **ConnectorManager** (`src/lib/connector-manager.ts`) — Manages connector processes (Discord, etc.) per mind
 - **Scheduler** (`src/lib/scheduler.ts`) — Cron-based scheduled messages and scripts for minds
+- **SleepManager** (`src/lib/daemon/sleep-manager.ts`) — Sleep/wake cycles: cron-based scheduling, pre-sleep ritual, session archival, message queuing, wake triggers, trigger-wake with return-to-sleep
 - **MailPoller** (`src/lib/mail-poller.ts`) — System-wide email polling via volute.systems API (auto-activates when a systems account exists)
 - **DaemonClient** (`src/lib/daemon-client.ts`) — CLI commands talk to the daemon via HTTP API
 
@@ -129,6 +130,8 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute mind logs <name> [--follow] [-n N]` | Tail mind logs |
 | `volute mind restart <name>` | Restart a mind |
 | `volute mind upgrade <name>` | Upgrade mind to latest template |
+| `volute mind sleep <name> [--wake-at <time>]` | Put a mind to sleep (pre-sleep ritual, session archive, stop process) |
+| `volute mind wake <name>` | Wake a sleeping mind |
 | `volute mind import <path> [--name <name>] [--session <path>]` | Import an OpenClaw workspace |
 | `volute send <target> "<msg>" [--mind]` | Send a message (DM, channel, cross-platform) |
 | `volute history [--mind] [--channel <ch>] [--limit N]` | View message history |
@@ -234,6 +237,7 @@ Mind-scoped commands (`send`, `history`, `variant`, `schedule`, `channel`, `file
 | `mail-poller.ts` | Daemon-integrated mail polling (system-wide, uses volute.systems API) |
 | `token-budget.ts` | Per-mind token budget enforcement |
 | `restart-tracker.ts` | Tracks mind restart state |
+| `sleep-manager.ts` | Sleep/wake cycles, cron scheduling, message queuing, wake triggers |
 | `mind-service.ts` | Mind service management utilities |
 
 ### src/lib/delivery/
