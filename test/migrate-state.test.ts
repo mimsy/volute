@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { migrateDotVoluteDir, migrateMindState } from "../src/lib/migrate-state.js";
+import {
+  migrateDotVoluteDir,
+  migrateMindState,
+  migratePagesDirToPublic,
+} from "../src/lib/migrate-state.js";
 import { addMind, mindDir, removeMind, stateDir } from "../src/lib/registry.js";
 
 const TEST_MIND = `migrate-test-${Date.now()}`;
@@ -131,5 +135,60 @@ describe("migrateDotVoluteDir", () => {
 
     assert.ok(!existsSync(resolve(dir, ".volute")));
     assert.ok(!existsSync(resolve(dir, ".mind")));
+  });
+});
+
+const PAGES_MIND = `pages-migrate-test-${Date.now()}`;
+
+describe("migratePagesDirToPublic", () => {
+  beforeEach(() => {
+    addMind(PAGES_MIND, 4997);
+  });
+
+  afterEach(() => {
+    const dir = mindDir(PAGES_MIND);
+    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+    removeMind(PAGES_MIND);
+  });
+
+  it("moves home/pages/ to home/public/pages/", () => {
+    const dir = mindDir(PAGES_MIND);
+    const oldPages = resolve(dir, "home", "pages");
+    mkdirSync(oldPages, { recursive: true });
+    writeFileSync(resolve(oldPages, "index.html"), "<h1>Hello</h1>");
+
+    migratePagesDirToPublic(PAGES_MIND);
+
+    assert.ok(!existsSync(oldPages));
+    const newPages = resolve(dir, "home", "public", "pages");
+    assert.ok(existsSync(newPages));
+    assert.equal(readFileSync(resolve(newPages, "index.html"), "utf-8"), "<h1>Hello</h1>");
+  });
+
+  it("no-ops when home/public/pages/ already exists", () => {
+    const dir = mindDir(PAGES_MIND);
+    const oldPages = resolve(dir, "home", "pages");
+    const newPages = resolve(dir, "home", "public", "pages");
+    mkdirSync(oldPages, { recursive: true });
+    mkdirSync(newPages, { recursive: true });
+    writeFileSync(resolve(oldPages, "old.html"), "old");
+    writeFileSync(resolve(newPages, "new.html"), "new");
+
+    migratePagesDirToPublic(PAGES_MIND);
+
+    // Both dirs still exist — old was not moved over new
+    assert.ok(existsSync(oldPages));
+    assert.ok(existsSync(newPages));
+    assert.equal(readFileSync(resolve(newPages, "new.html"), "utf-8"), "new");
+  });
+
+  it("no-ops when no pages directory exists", () => {
+    const dir = mindDir(PAGES_MIND);
+    mkdirSync(resolve(dir, "home"), { recursive: true });
+
+    migratePagesDirToPublic(PAGES_MIND);
+
+    assert.ok(!existsSync(resolve(dir, "home", "pages")));
+    assert.ok(!existsSync(resolve(dir, "home", "public", "pages")));
   });
 });

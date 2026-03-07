@@ -6,6 +6,7 @@ type Entry = { name: string; type: "file" | "directory" };
 let entries = $state<Entry[]>([]);
 let loading = $state(true);
 let error = $state("");
+let fileError = $state("");
 let selectedFile = $state<string | null>(null);
 let fileContent = $state<string | null>(null);
 let fileLoading = $state(false);
@@ -30,7 +31,7 @@ const IMAGE_TYPES = new Set([
   "image/webp",
 ]);
 
-let currentDir = $derived(path.length > 0 ? path.join("/") + "/" : "");
+let currentDir = $derived(path.length > 0 ? `${path.join("/")}/` : "");
 
 async function loadDir() {
   loading = true;
@@ -62,10 +63,14 @@ async function selectFile(entry: Entry) {
     return;
   }
 
+  // Revoke previous object URL to prevent memory leak
+  if (fileContent && isImage) URL.revokeObjectURL(fileContent);
+
   selectedFile = entry.name;
   fileLoading = true;
   fileContent = null;
   fileMime = "";
+  fileError = "";
 
   try {
     const filePath = currentDir + entry.name;
@@ -83,8 +88,9 @@ async function selectFile(entry: Entry) {
     } else {
       fileContent = null;
     }
-  } catch {
+  } catch (e) {
     fileContent = null;
+    fileError = e instanceof Error ? e.message : "Failed to load file";
   } finally {
     fileLoading = false;
   }
@@ -101,6 +107,12 @@ function navigateToRoot() {
 let baseMime = $derived(fileMime.split(";")[0].trim());
 let isImage = $derived(IMAGE_TYPES.has(baseMime));
 let isText = $derived(TEXT_TYPES.has(baseMime));
+
+$effect(() => {
+  return () => {
+    if (fileContent && isImage) URL.revokeObjectURL(fileContent);
+  };
+});
 
 let sortedEntries = $derived(
   [...entries].sort((a, b) => {
@@ -158,6 +170,8 @@ let sortedEntries = $derived(
           </div>
           {#if fileLoading}
             <div class="preview-empty">Loading...</div>
+          {:else if fileError}
+            <div class="preview-empty error-text">{fileError}</div>
           {:else if isImage && fileContent}
             <div class="preview-image">
               <img src={fileContent} alt={selectedFile} />

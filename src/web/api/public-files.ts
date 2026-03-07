@@ -1,12 +1,19 @@
+import type { Dirent, Stats } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { Hono } from "hono";
 import { findMind, mindDir, voluteHome } from "../../lib/registry.js";
 
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+
 function resolvePublicRoot(name: string): string | null {
   if (name === "_system") return resolve(voluteHome(), "shared");
   if (!findMind(name)) return null;
   return resolve(mindDir(name), "home", "public");
+}
+
+function hasDotSegment(relativePath: string): boolean {
+  return relativePath.split("/").some((seg) => seg.startsWith("."));
 }
 
 const MIME_TYPES: Record<string, string> = {
@@ -25,10 +32,17 @@ const MIME_TYPES: Record<string, string> = {
   ".txt": "text/plain",
   ".xml": "application/xml",
   ".md": "text/markdown",
+  ".webp": "image/webp",
 };
 
 async function listDir(dirPath: string) {
-  const entries = await readdir(dirPath, { withFileTypes: true }).catch(() => []);
+  let entries: Dirent[];
+  try {
+    entries = await readdir(dirPath, { withFileTypes: true });
+  } catch (err: any) {
+    if (err?.code === "ENOENT") return [];
+    throw err;
+  }
   return entries
     .filter((e) => !e.name.startsWith("."))
     .map((e) => ({
@@ -53,26 +67,44 @@ const app = new Hono()
     if (!publicRoot) return c.text("Not found", 404);
 
     const wildcard = c.req.path.replace(`/public/${name}`, "") || "/";
-    const requestedPath = resolve(publicRoot, wildcard.slice(1));
+    const relativePath = wildcard.slice(1);
+    const requestedPath = resolve(publicRoot, relativePath);
 
     // Path traversal guard
     if (!requestedPath.startsWith(publicRoot)) return c.text("Forbidden", 403);
 
-    const fileStat = await stat(requestedPath).catch(() => null);
+    // Block dotfiles and dot-directories
+    if (hasDotSegment(relativePath)) return c.text("Forbidden", 403);
+
+    let fileStat: Stats;
+    try {
+      fileStat = await stat(requestedPath);
+    } catch (err: any) {
+      if (err?.code === "ENOENT") return c.text("Not found", 404);
+      if (err?.code === "EACCES") return c.text("Forbidden", 403);
+      return c.text("Internal server error", 500);
+    }
 
     // Directory → return JSON listing if path ends with /
-    if (fileStat?.isDirectory()) {
+    if (fileStat.isDirectory()) {
       if (wildcard.endsWith("/")) {
         return c.json(await listDir(requestedPath));
       }
       return c.text("Not found", 404);
     }
 
-    if (fileStat?.isFile()) {
+    if (fileStat.isFile()) {
+      if (fileStat.size > MAX_FILE_SIZE) return c.text("File too large", 413);
       const ext = extname(requestedPath);
       const mime = MIME_TYPES[ext] || "application/octet-stream";
-      const body = await readFile(requestedPath);
-      return c.body(body, 200, { "Content-Type": mime });
+      try {
+        const body = await readFile(requestedPath);
+        return c.body(body, 200, { "Content-Type": mime });
+      } catch (err: any) {
+        if (err?.code === "ENOENT") return c.text("Not found", 404);
+        if (err?.code === "EACCES") return c.text("Forbidden", 403);
+        return c.text("Failed to read file", 500);
+      }
     }
 
     return c.text("Not found", 404);
