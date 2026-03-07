@@ -110,7 +110,7 @@ function toggleSection(section: Section) {
 <div class="sidebar-inner">
   <button class="sidebar-header" onclick={onHome}>
     <img src="/favicon.png" alt="" class="sidebar-logo" />
-    <span class="sidebar-title">Volute</span>
+    <span class="sidebar-title">volute</span>
   </button>
   <div class="sections">
     <!-- Minds -->
@@ -259,9 +259,9 @@ function toggleSection(section: Section) {
   }
 
   .sidebar-title {
-    font-family: "Cormorant Garamond", Georgia, serif;
-    font-size: 20px;
-    font-weight: 500;
+    font-family: var(--display);
+    font-size: 18px;
+    font-weight: 300;
     color: var(--text-1);
     letter-spacing: 0.04em;
     transition: color 0.15s;
@@ -300,10 +300,10 @@ function toggleSection(section: Section) {
     padding: 6px 12px;
     background: none;
     color: var(--text-2);
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    font-family: var(--display);
+    font-size: 14px;
+    font-weight: 300;
+    letter-spacing: 0.02em;
     text-align: left;
   }
 

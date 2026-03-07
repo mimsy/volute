@@ -73,8 +73,9 @@ let { mind }: { mind: Mind } = $props();
   }
 
   .name {
-    font-size: 15px;
-    font-weight: 600;
+    font-family: var(--display);
+    font-size: 17px;
+    font-weight: 400;
     color: var(--text-0);
   }
 

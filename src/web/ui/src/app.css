@@ -27,6 +27,7 @@
   --timeline-rail: #333;
   --mono: "Fira Code", "SF Mono", monospace;
   --sans: "Fira Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --display: "Averia Serif Libre", Georgia, serif;
   --radius: 6px;
   --radius-lg: 10px;
 }

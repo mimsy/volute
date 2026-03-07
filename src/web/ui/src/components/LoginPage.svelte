@@ -52,7 +52,8 @@ async function handleSubmit(e: Event) {
   <div class="container">
     <div class="card">
       <div class="branding">
-        <div class="logo"><span class="accent">&gt;</span> volute</div>
+        <img src="/favicon.png" alt="" class="login-spiral" />
+        <div class="logo">volute</div>
         <div class="subtitle">
           {mode === "login" ? "Sign in to continue" : "Create an account"}
         </div>
@@ -115,14 +116,21 @@ async function handleSubmit(e: Event) {
     text-align: center;
   }
 
-  .logo {
-    font-size: 18px;
-    font-weight: 600;
-    margin-bottom: 4px;
+  .login-spiral {
+    width: 40px;
+    height: 40px;
+    filter: invert(1);
+    opacity: 0.5;
+    margin-bottom: 8px;
   }
 
-  .accent {
-    color: var(--accent);
+  .logo {
+    font-family: var(--display);
+    font-size: 24px;
+    font-weight: 300;
+    margin-bottom: 4px;
+    color: var(--text-1);
+    letter-spacing: 0.04em;
   }
 
   .subtitle {

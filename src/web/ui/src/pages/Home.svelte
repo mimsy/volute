@@ -94,7 +94,7 @@ function handleActivityClick(item: ActivityItem) {
   <!-- Minds -->
   <div class="section">
     <div class="section-header">
-      <span class="section-title">minds</span>
+      <span class="section-title">Minds</span>
     </div>
     {#if minds.length === 0}
       <div class="empty-hint">
@@ -132,7 +132,7 @@ function handleActivityClick(item: ActivityItem) {
   {#if timelineItems.length > 0}
     <div class="section">
       <div class="section-header">
-        <span class="section-title">activity</span>
+        <span class="section-title">Activity</span>
       </div>
       <div class="timeline">
         {#each timelineItems as entry (`${entry.kind}-${entry.item.id}`)}
@@ -178,13 +178,13 @@ function handleActivityClick(item: ActivityItem) {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
     margin-bottom: 8px;
   }
 
   .section-title {
+    font-family: var(--display);
+    font-size: 15px;
+    font-weight: 300;
     color: var(--text-2);
   }
 

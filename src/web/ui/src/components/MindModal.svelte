@@ -141,8 +141,9 @@ function formatCreated(dateStr: string): string {
   }
 
   .mind-name {
-    font-size: 14px;
-    font-weight: 600;
+    font-family: var(--display);
+    font-size: 18px;
+    font-weight: 400;
     color: var(--text-0);
   }
 
@@ -249,8 +250,9 @@ function formatCreated(dateStr: string): string {
   }
 
   .profile-display-name {
-    font-size: 18px;
-    font-weight: 600;
+    font-family: var(--display);
+    font-size: 22px;
+    font-weight: 400;
     color: var(--text-0);
   }
 
