@@ -15,31 +15,23 @@ Not an archive — a memory. Stores text chunks as vector embeddings, finds what
 - **When writing**: After writing something significant, search for echoes: `resonance search "the theme you're exploring"`.
 - **After writing journals/notes**: Run `resonance ingest <file>` to add new content.
 - **Periodically**: Run `resonance ingest-all` to catch any new files.
-- **Nightly**: Run `resonance decay` to let unused memories drift.
+- **Nightly**: Decay runs automatically if the nightly schedule was set up during install.
 
 ## Commands
 
 ```bash
-# ingest a single file
-npx tsx .claude/skills/resonance/scripts/resonance.ts ingest memory/journal/2026-03-06.md
-
-# ingest all configured memory files
-npx tsx .claude/skills/resonance/scripts/resonance.ts ingest-all
-
-# search — find resonant memories
-npx tsx .claude/skills/resonance/scripts/resonance.ts search "what does it feel like to wake up"
-npx tsx .claude/skills/resonance/scripts/resonance.ts search "creativity and constraint" --limit 10
-
-# resonance report — find cross-memory connections
-npx tsx .claude/skills/resonance/scripts/resonance.ts report
-npx tsx .claude/skills/resonance/scripts/resonance.ts report --against memory/reading/notes.md
-
-# statistics
-npx tsx .claude/skills/resonance/scripts/resonance.ts stats
-
-# decay pass
-npx tsx .claude/skills/resonance/scripts/resonance.ts decay
+npx tsx .claude/skills/resonance/scripts/resonance.ts <command>
 ```
+
+| Command | Description |
+|---------|-------------|
+| `install` | First-time setup: verifies API key, copies config, creates schedule, runs initial ingestion |
+| `ingest <file>` | Ingest a single file |
+| `ingest-all` | Ingest all configured memory files |
+| `search "query" [--limit N]` | Find resonant memories (default 5 results) |
+| `report [--against <file>]` | Find cross-memory connections (defaults to today's journal) |
+| `stats` | Database statistics |
+| `decay` | Run decay pass (reduces strength of unrecalled memories) |
 
 ## Architecture
 
@@ -59,7 +51,7 @@ npx tsx .claude/skills/resonance/scripts/resonance.ts decay
 
 ## Configuration
 
-The default config lives at `.claude/skills/resonance/assets/default-config.json`. Override by creating `.config/resonance.json` — fields are merged with defaults.
+The default config is copied to `.config/resonance.json` during install. Edit it to customize. Fields are merged with built-in defaults.
 
 | Section | Field | Default | Description |
 |---------|-------|---------|-------------|

@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+
 /**
  * resonance.ts — semantic memory engine
  *
@@ -14,8 +15,9 @@
  *   resonance decay                      # run decay pass
  */
 
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 
 // --- types ---
@@ -108,6 +110,103 @@ function getApiKey(config: ResonanceConfig): string {
   const key = process.env[config.embedding.apiKeyEnvVar];
   if (!key) throw new Error(`${config.embedding.apiKeyEnvVar} not set`);
   return key;
+}
+
+function getSkillDir(): string {
+  return resolve(new URL(".", import.meta.url).pathname, "..");
+}
+
+function isInstalled(): boolean {
+  const mindDir = process.env.VOLUTE_MIND_DIR;
+  if (!mindDir) return false;
+  return existsSync(join(mindDir, ".mind", "resonance.db"));
+}
+
+function requireInstalled(): void {
+  if (!isInstalled()) {
+    console.error(
+      "resonance is not set up yet. run: npx tsx .claude/skills/resonance/scripts/resonance.ts install",
+    );
+    process.exit(1);
+  }
+}
+
+async function runInstall(config: ResonanceConfig): Promise<void> {
+  const mindDir = process.env.VOLUTE_MIND_DIR;
+  if (!mindDir) {
+    console.error("VOLUTE_MIND_DIR not set — are you running inside a mind?");
+    process.exit(1);
+  }
+
+  // 1. Check API key
+  const apiKeyVar = config.embedding.apiKeyEnvVar;
+  const apiKey = process.env[apiKeyVar];
+  if (!apiKey) {
+    console.error(`${apiKeyVar} is not set. resonance needs an embedding API key.`);
+    console.error(`set it with: volute env set ${apiKeyVar} <your-key>`);
+    process.exit(1);
+  }
+
+  // 2. Verify the key works
+  console.log("verifying embedding API key...");
+  try {
+    await embed(["test"], apiKey, config);
+  } catch (e) {
+    console.error(`embedding API test failed: ${e instanceof Error ? e.message : e}`);
+    console.error("check your API key and try again.");
+    process.exit(1);
+  }
+  console.log("API key verified.");
+
+  // 3. Copy default config if none exists
+  const configPath = join(mindDir, "home", ".config", "resonance.json");
+  if (!existsSync(configPath)) {
+    const defaultConfig = join(getSkillDir(), "assets", "default-config.json");
+    mkdirSync(join(mindDir, "home", ".config"), { recursive: true });
+    copyFileSync(defaultConfig, configPath);
+    console.log("created .config/resonance.json (edit to customize).");
+  } else {
+    console.log(".config/resonance.json already exists, keeping it.");
+  }
+
+  // 4. Initialize DB
+  const db = initDb(getDbPath());
+  db.close();
+  console.log("initialized resonance database.");
+
+  // 5. Set up nightly schedule
+  const scriptPath = ".claude/skills/resonance/scripts/resonance.ts";
+  const script = `npx tsx ${scriptPath} ingest-all && npx tsx ${scriptPath} decay`;
+  try {
+    execFileSync(
+      "volute",
+      ["schedule", "add", "--cron", "0 22 * * *", "--script", script, "--id", "resonance-nightly"],
+      { stdio: "pipe" },
+    );
+    console.log('added nightly schedule "resonance-nightly" (10pm: ingest-all + decay).');
+  } catch {
+    console.log("note: could not add schedule automatically. you can add it manually:");
+    console.log(
+      `  volute schedule add --cron "0 22 * * *" --script "${script}" --id resonance-nightly`,
+    );
+  }
+
+  // 6. Run initial ingestion
+  console.log("\nrunning initial ingestion...");
+  const db2 = initDb(getDbPath());
+  try {
+    const results = await ingestAll(db2, apiKey, config);
+    let total = 0;
+    for (const [path, count] of Object.entries(results)) {
+      if (count > 0) console.log(`  ${basename(path)}: ${count} chunks`);
+      total += count;
+    }
+    console.log(`ingested ${total} chunks.`);
+  } finally {
+    db2.close();
+  }
+
+  console.log("\nresonance is ready.");
 }
 
 // --- database ---
@@ -668,11 +767,18 @@ async function main() {
   const cmd = args[0];
 
   if (!cmd) {
-    console.log("Usage: resonance <ingest|ingest-all|search|report|stats|decay> [args]");
+    console.log("Usage: resonance <install|ingest|ingest-all|search|report|stats|decay> [args]");
     process.exit(0);
   }
 
   const config = loadConfig();
+
+  if (cmd === "install") {
+    await runInstall(config);
+    return;
+  }
+
+  requireInstalled();
   const db = initDb(getDbPath());
 
   try {
