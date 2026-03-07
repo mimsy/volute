@@ -57,6 +57,24 @@ function showSenderHeader(i: number): boolean {
   return false;
 }
 
+function getDateStr(dateStr?: string): string {
+  if (!dateStr) return "";
+  try {
+    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
+    return d.toLocaleDateString();
+  } catch {
+    return "";
+  }
+}
+
+function showDate(i: number): boolean {
+  const cur = entries[i];
+  if (!cur.createdAt) return false;
+  if (i === 0) return true;
+  const prev = entries[i - 1];
+  return getDateStr(cur.createdAt) !== getDateStr(prev.createdAt);
+}
+
 function getSenderColor(entry: ChatEntry): string {
   if (entry.role === "user") {
     return entry.senderName ? (colorMap.get(entry.senderName) ?? "var(--blue)") : "var(--blue)";
@@ -72,18 +90,13 @@ function toggleTool(key: number) {
 }
 
 export function scrollToBottom(force?: boolean) {
-  // Double-rAF ensures DOM is fully rendered before measuring scroll height
+  // Capture scroll state now, before DOM updates shift the position
+  const shouldScroll = force || wasAtBottom;
+  // Double-rAF ensures DOM is fully rendered before scrolling
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      if (!scrollEl) return;
-      if (force) {
-        scrollEl.scrollTop = scrollEl.scrollHeight;
-        return;
-      }
-      const isNearBottom = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 100;
-      if (isNearBottom) {
-        scrollEl.scrollTop = scrollEl.scrollHeight;
-      }
+      if (!scrollEl || !shouldScroll) return;
+      scrollEl.scrollTop = scrollEl.scrollHeight;
     });
   });
 }
@@ -143,6 +156,7 @@ function handleScroll() {
         senderName={entry.senderName}
         createdAt={entry.createdAt}
         showHeader={showSenderHeader(i)}
+        showDate={showDate(i)}
         senderColor={getSenderColor(entry)}
         entryIndex={i}
         {openTools}

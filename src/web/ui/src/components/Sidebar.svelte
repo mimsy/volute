@@ -277,7 +277,7 @@ function toggleSection(section: Section) {
     padding: 6px 12px;
     background: none;
     color: var(--text-2);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -318,7 +318,7 @@ function toggleSection(section: Section) {
     gap: 8px;
     width: 100%;
     padding: 6px 12px 6px 26px;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-1);
     transition: background 0.1s;
     cursor: pointer;
@@ -383,7 +383,7 @@ function toggleSection(section: Section) {
     display: block;
     width: 100%;
     padding: 6px 12px 6px 26px;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-1);
     border-radius: var(--radius);
     transition: background 0.1s;

@@ -198,6 +198,7 @@ function formatArgs(args: unknown): string {
   }
 
   .event-body {
+    font-family: var(--mono);
     font-size: 13px;
     line-height: 1.6;
   }

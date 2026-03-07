@@ -215,7 +215,7 @@ $effect(() => {
   }
 
   .conv-item {
-    padding: 6px 12px;
+    padding: 6px 12px 6px 26px;
     margin: 0 4px;
     cursor: pointer;
     border-radius: var(--radius);
@@ -246,7 +246,7 @@ $effect(() => {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-1);
     display: flex;
     align-items: center;
@@ -401,7 +401,7 @@ $effect(() => {
 
   @media (max-width: 767px) {
     .conv-item {
-      padding: 10px 12px;
+      padding: 10px 12px 10px 26px;
     }
 
     .menu-btn {

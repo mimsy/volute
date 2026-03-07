@@ -620,7 +620,7 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
   }
 
   .env-key {
-    font-family: monospace;
+    font-family: var(--mono);
     font-size: 12px;
     color: var(--text-0);
     flex-shrink: 0;
@@ -645,7 +645,7 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-family: monospace;
+    font-family: var(--mono);
     font-size: 12px;
     color: var(--text-1);
   }
@@ -661,7 +661,7 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
     padding: 4px 8px;
     font-size: 12px;
     color: var(--text-0);
-    font-family: monospace;
+    font-family: var(--mono);
   }
 
   .env-input.key {

@@ -176,7 +176,7 @@ let contextLabel = $derived.by(() => {
     align-items: center;
     gap: 6px;
     padding: 8px 16px;
-    font-family: var(--font-mono, monospace);
+    font-family: inherit;
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
