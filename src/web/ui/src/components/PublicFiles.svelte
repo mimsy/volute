@@ -203,14 +203,15 @@ let sortedEntries = $derived(
 
   .browser {
     display: flex;
+    flex-direction: column;
     flex: 1;
     min-height: 0;
   }
 
   .file-list {
-    width: 200px;
     flex-shrink: 0;
-    border-right: 1px solid var(--border);
+    max-height: 40%;
+    border-bottom: 1px solid var(--border);
     overflow: auto;
     display: flex;
     flex-direction: column;
