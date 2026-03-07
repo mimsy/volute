@@ -4,22 +4,36 @@ import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
 import log from "../lib/logger.js";
 import { checkForUpdateCached, getCurrentVersion } from "../lib/update-check.js";
+import activityRoutes from "./api/activity.js";
+import auth from "./api/auth.js";
+import channels from "./api/channels.js";
+import connectors from "./api/connectors.js";
+import envRoutes, { sharedEnvApp } from "./api/env.js";
+import fileSharing from "./api/file-sharing.js";
+import files from "./api/files.js";
+import keys from "./api/keys.js";
+import logs from "./api/logs.js";
+import mindSkills from "./api/mind-skills.js";
+import minds from "./api/minds.js";
+import pages from "./api/pages.js";
+import prompts from "./api/prompts.js";
+import schedules from "./api/schedules.js";
+import shared from "./api/shared.js";
+import skills from "./api/skills.js";
+import system from "./api/system.js";
+import typing from "./api/typing.js";
+import update from "./api/update.js";
+import v1Chat from "./api/v1/chat.js";
+import v1Conversations from "./api/v1/conversations.js";
+import v1Events from "./api/v1/events.js";
+import variants from "./api/variants.js";
+import voluteChannels from "./api/volute/channels.js";
+import chat, { unifiedChatApp } from "./api/volute/chat.js";
+import conversations from "./api/volute/conversations.js";
+import userConversations from "./api/volute/user-conversations.js";
 import { authMiddleware } from "./middleware/auth.js";
-import agents from "./routes/agents.js";
-import auth from "./routes/auth.js";
-import channels from "./routes/channels.js";
-import connectors from "./routes/connectors.js";
-import envRoutes, { sharedEnvApp } from "./routes/env.js";
-import files from "./routes/files.js";
-import logs from "./routes/logs.js";
-import schedules from "./routes/schedules.js";
-import system from "./routes/system.js";
-import typing from "./routes/typing.js";
-import update from "./routes/update.js";
-import variants from "./routes/variants.js";
-import chat from "./routes/volute/chat.js";
-import conversations from "./routes/volute/conversations.js";
-import userConversations from "./routes/volute/user-conversations.js";
+
+const httpLog = log.child("http");
 
 const app = new Hono();
 
@@ -28,10 +42,10 @@ app.onError((err, c) => {
   if (err instanceof HTTPException) {
     return err.getResponse();
   }
-  log.error("Unhandled error", {
+  log.error("unhandled error", {
     path: c.req.path,
     method: c.req.method,
-    error: err.message,
+    error: err.stack ?? err.message,
   });
   return c.json({ error: "Internal server error" }, 500);
 });
@@ -45,12 +59,12 @@ app.use("*", async (c, next) => {
   const start = Date.now();
   await next();
   const duration = Date.now() - start;
-  log.info("request", {
-    method: c.req.method,
-    path: c.req.path,
-    status: c.res.status,
-    duration,
-  });
+  const data = { method: c.req.method, path: c.req.path, status: c.res.status, duration };
+  if (c.res.status >= 400) {
+    httpLog.warn("request error", data);
+  } else {
+    httpLog.debug("request", data);
+  }
 });
 
 // Daemon health (unauthenticated)
@@ -61,7 +75,7 @@ app.get("/api/health", (c) => {
     version = getCurrentVersion();
     cached = checkForUpdateCached();
   } catch (err) {
-    log.error("Health check error", { error: (err as Error).message });
+    log.warn("health check error", { error: (err as Error).message });
   }
   return c.json({
     ok: true,
@@ -77,29 +91,69 @@ app.use("/api/*", bodyLimit({ maxSize: 10 * 1024 * 1024 }));
 app.use("/api/*", csrf());
 
 // Protected API routes
-app.use("/api/agents/*", authMiddleware);
+app.use("/api/activity/*", authMiddleware);
+app.use("/api/minds/*", authMiddleware);
 app.use("/api/conversations/*", authMiddleware);
+app.use("/api/volute/*", authMiddleware);
 app.use("/api/system/*", authMiddleware);
 app.use("/api/env/*", authMiddleware);
+app.use("/api/prompts/*", authMiddleware);
+app.use("/api/skills/*", authMiddleware);
+
+// v1 API auth
+app.use("/api/v1/*", authMiddleware);
+
+// Mind pages (public, no auth)
+app.route("/pages", pages);
 
 // Chain route registrations to capture types
 const routes = app
+  .route("/api/activity", activityRoutes)
+  .route("/api/keys", keys)
   .route("/api/auth", auth)
   .route("/api/system", system)
   .route("/api/system", update)
-  .route("/api/agents", agents)
-  .route("/api/agents", chat)
-  .route("/api/agents", connectors)
-  .route("/api/agents", schedules)
-  .route("/api/agents", logs)
-  .route("/api/agents", typing)
-  .route("/api/agents", variants)
-  .route("/api/agents", files)
-  .route("/api/agents", channels)
-  .route("/api/agents", envRoutes)
-  .route("/api/agents", conversations)
+  .route("/api/minds", minds)
+  .route("/api/minds", chat)
+  .route("/api/minds", connectors)
+  .route("/api/minds", schedules)
+  .route("/api/minds", logs)
+  .route("/api/minds", typing)
+  .route("/api/minds", variants)
+  .route("/api/minds", fileSharing)
+  .route("/api/minds", files)
+  .route("/api/minds", channels)
+  .route("/api/minds", shared)
+  .route("/api/minds", envRoutes)
+  .route("/api/minds", mindSkills)
+  .route("/api/minds", conversations)
   .route("/api/env", sharedEnvApp)
-  .route("/api/conversations", userConversations);
+  .route("/api/prompts", prompts)
+  .route("/api/skills", skills)
+  .route("/api/conversations", userConversations)
+  .route("/api/volute/channels", voluteChannels)
+  .route("/api/volute", unifiedChatApp)
+  // v1 API routes
+  .route("/api/v1/conversations", v1Conversations)
+  .route("/api/v1/events", v1Events)
+  .route("/api/v1", v1Chat);
+
+// v1 re-mounts of existing modules (not chained to preserve AppType)
+app.route("/api/v1/minds", minds);
+app.route("/api/v1/minds", typing);
+app.route("/api/v1/minds", variants);
+app.route("/api/v1/minds", files);
+app.route("/api/v1/minds", envRoutes);
+app.route("/api/v1/minds", mindSkills);
+app.route("/api/v1/minds", connectors);
+app.route("/api/v1/minds", schedules);
+app.route("/api/v1/minds", logs);
+app.route("/api/v1/system", system);
+app.route("/api/v1/system", update);
+app.route("/api/v1/prompts", prompts);
+app.route("/api/v1/skills", skills);
+app.route("/api/v1/env", sharedEnvApp);
+app.route("/api/v1/channels", voluteChannels);
 
 export default app;
 export type AppType = typeof routes;

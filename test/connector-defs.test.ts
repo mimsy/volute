@@ -54,7 +54,7 @@ describe("connector-defs", () => {
         displayName: "Custom",
         description: "A custom connector",
         envVars: [
-          { name: "CUSTOM_TOKEN", required: true, description: "Custom token", scope: "agent" },
+          { name: "CUSTOM_TOKEN", required: true, description: "Custom token", scope: "mind" },
         ],
       };
       writeFileSync(join(tmpDir, "connector.json"), JSON.stringify(customDef));
@@ -83,7 +83,7 @@ describe("connector-defs", () => {
         displayName: "Test",
         description: "test",
         envVars: [
-          { name: "FOO", required: true, description: "foo", scope: "agent" },
+          { name: "FOO", required: true, description: "foo", scope: "mind" },
           { name: "BAR", required: false, description: "bar", scope: "any" },
         ],
       };
@@ -96,8 +96,8 @@ describe("connector-defs", () => {
         displayName: "Test",
         description: "test",
         envVars: [
-          { name: "FOO", required: true, description: "foo", scope: "agent" },
-          { name: "BAR", required: true, description: "bar", scope: "agent" },
+          { name: "FOO", required: true, description: "foo", scope: "mind" },
+          { name: "BAR", required: true, description: "bar", scope: "mind" },
           { name: "BAZ", required: false, description: "baz", scope: "any" },
         ],
       };
@@ -111,8 +111,8 @@ describe("connector-defs", () => {
         displayName: "Test",
         description: "test",
         envVars: [
-          { name: "A", required: true, description: "a", scope: "agent" },
-          { name: "B", required: true, description: "b", scope: "agent" },
+          { name: "A", required: true, description: "a", scope: "mind" },
+          { name: "B", required: true, description: "b", scope: "mind" },
         ],
       };
       const missing = checkMissingEnvVars(def, {});
@@ -123,7 +123,7 @@ describe("connector-defs", () => {
       const def: ConnectorDef = {
         displayName: "Test",
         description: "test",
-        envVars: [{ name: "TOKEN", required: true, description: "token", scope: "agent" }],
+        envVars: [{ name: "TOKEN", required: true, description: "token", scope: "mind" }],
       };
       const missing = checkMissingEnvVars(def, { TOKEN: "" });
       assert.equal(missing.length, 1);

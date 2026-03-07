@@ -4,6 +4,36 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { findVariant, readVariants } from "./variants.js";
 
+// In-memory registry cache for the daemon process.
+// When active, reads come from memory and writes flush to disk.
+// CLI processes (daemon not running) continue reading from file.
+let registryCache: MindEntry[] | null = null;
+
+export function initRegistryCache(): void {
+  registryCache = readRegistryFromDisk();
+}
+
+export function getRegistryCache(): MindEntry[] | null {
+  return registryCache;
+}
+
+function readRegistryFromDisk(): MindEntry[] {
+  const registryPath = resolve(voluteHome(), "minds.json");
+  if (!existsSync(registryPath)) return [];
+  try {
+    const entries = JSON.parse(readFileSync(registryPath, "utf-8")) as Array<
+      Omit<MindEntry, "running"> & { running?: boolean }
+    >;
+    return entries.map((e) => ({
+      ...e,
+      running: e.running ?? false,
+      stage: e.stage ?? "sprouted",
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export function voluteHome(): string {
   if (process.env.VOLUTE_HOME) return process.env.VOLUTE_HOME;
 
@@ -21,67 +51,67 @@ export function voluteHome(): string {
   return resolve(homedir(), ".volute");
 }
 
-export type AgentEntry = {
+export type MindEntry = {
   name: string;
   port: number;
   created: string;
   running: boolean;
+  stage?: "seed" | "sprouted";
+  template?: string;
+  templateHash?: string;
 };
 
 export function ensureVoluteHome() {
-  const agentsBase = process.env.VOLUTE_AGENTS_DIR ?? resolve(voluteHome(), "agents");
-  mkdirSync(agentsBase, { recursive: true });
+  const mindsBase = process.env.VOLUTE_MINDS_DIR ?? resolve(voluteHome(), "minds");
+  mkdirSync(mindsBase, { recursive: true });
 }
 
-export function readRegistry(): AgentEntry[] {
-  const registryPath = resolve(voluteHome(), "agents.json");
-  if (!existsSync(registryPath)) return [];
-  try {
-    const entries = JSON.parse(readFileSync(registryPath, "utf-8")) as Array<
-      Omit<AgentEntry, "running"> & { running?: boolean }
-    >;
-    return entries.map((e) => ({ ...e, running: e.running ?? false }));
-  } catch {
-    return [];
-  }
+export function readRegistry(): MindEntry[] {
+  if (registryCache) return registryCache;
+  return readRegistryFromDisk();
 }
 
-export function writeRegistry(entries: AgentEntry[]) {
+export function writeRegistry(entries: MindEntry[]) {
+  if (registryCache) registryCache = entries;
   ensureVoluteHome();
-  const registryPath = resolve(voluteHome(), "agents.json");
+  const registryPath = resolve(voluteHome(), "minds.json");
   const tmpPath = `${registryPath}.tmp`;
   writeFileSync(tmpPath, `${JSON.stringify(entries, null, 2)}\n`);
   renameSync(tmpPath, registryPath);
 }
 
-const AGENT_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
-const AGENT_NAME_MAX = 64;
+const MIND_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+const MIND_NAME_MAX = 64;
 
-export function validateAgentName(name: string): string | null {
-  if (!name) return "Agent name is required";
-  if (name.length > AGENT_NAME_MAX)
-    return `Agent name must be at most ${AGENT_NAME_MAX} characters`;
-  if (!AGENT_NAME_RE.test(name)) {
-    return "Agent name must start with alphanumeric and contain only alphanumeric, dots, dashes, or underscores";
+export function validateMindName(name: string): string | null {
+  if (!name) return "Mind name is required";
+  if (name.length > MIND_NAME_MAX) return `Mind name must be at most ${MIND_NAME_MAX} characters`;
+  if (!MIND_NAME_RE.test(name)) {
+    return "Mind name must start with alphanumeric and contain only alphanumeric, dots, dashes, or underscores";
   }
   return null;
 }
 
-export function addAgent(name: string, port: number) {
-  const err = validateAgentName(name);
+export function addMind(
+  name: string,
+  port: number,
+  stage?: "seed" | "sprouted",
+  template?: string,
+) {
+  const err = validateMindName(name);
   if (err) throw new Error(err);
   const entries = readRegistry();
   const filtered = entries.filter((e) => e.name !== name);
-  filtered.push({ name, port, created: new Date().toISOString(), running: false });
+  filtered.push({ name, port, created: new Date().toISOString(), running: false, stage, template });
   writeRegistry(filtered);
 }
 
-export function removeAgent(name: string) {
+export function removeMind(name: string) {
   const entries = readRegistry();
   writeRegistry(entries.filter((e) => e.name !== name));
 }
 
-export function setAgentRunning(name: string, running: boolean) {
+export function setMindRunning(name: string, running: boolean) {
   const entries = readRegistry();
   const entry = entries.find((e) => e.name === name);
   if (entry) {
@@ -90,15 +120,33 @@ export function setAgentRunning(name: string, running: boolean) {
   }
 }
 
-export function findAgent(name: string): AgentEntry | undefined {
+export function setMindStage(name: string, stage: "seed" | "sprouted") {
+  const entries = readRegistry();
+  const entry = entries.find((e) => e.name === name);
+  if (entry) {
+    entry.stage = stage;
+    writeRegistry(entries);
+  }
+}
+
+export function setMindTemplateHash(name: string, hash: string) {
+  const entries = readRegistry();
+  const entry = entries.find((e) => e.name === name);
+  if (entry) {
+    entry.templateHash = hash;
+    writeRegistry(entries);
+  }
+}
+
+export function findMind(name: string): MindEntry | undefined {
   return readRegistry().find((e) => e.name === name);
 }
 
-export function agentDir(name: string): string {
-  if (process.env.VOLUTE_AGENTS_DIR) {
-    return resolve(process.env.VOLUTE_AGENTS_DIR, name);
+export function mindDir(name: string): string {
+  if (process.env.VOLUTE_MINDS_DIR) {
+    return resolve(process.env.VOLUTE_MINDS_DIR, name);
   }
-  return resolve(voluteHome(), "agents", name);
+  return resolve(voluteHome(), "minds", name);
 }
 
 export function stateDir(name: string): string {
@@ -114,7 +162,8 @@ export function nextPort(): number {
       if (v.port) usedPorts.add(v.port);
     }
   }
-  let port = 4100;
+  const basePort = parseInt(process.env.VOLUTE_BASE_PORT || "4100", 10);
+  let port = basePort;
   while (usedPorts.has(port)) port++;
   if (port > 65535) throw new Error("No available ports — all ports 4100-65535 are allocated");
   return port;
@@ -128,23 +177,23 @@ export function daemonLoopback(): string {
   return host;
 }
 
-export function resolveAgent(name: string): { entry: AgentEntry; dir: string } {
+export function resolveMind(name: string): { entry: MindEntry; dir: string } {
   // Parse name@variant syntax
   const [baseName, variantName] = name.split("@", 2);
 
-  const entry = findAgent(baseName);
+  const entry = findMind(baseName);
   if (!entry) {
-    throw new Error(`Unknown agent: ${baseName}`);
+    throw new Error(`Unknown mind: ${baseName}`);
   }
-  const dir = agentDir(baseName);
+  const dir = mindDir(baseName);
   if (!existsSync(dir)) {
-    throw new Error(`Agent directory missing: ${dir}`);
+    throw new Error(`Mind directory missing: ${dir}`);
   }
 
   if (variantName) {
     const variant = findVariant(baseName, variantName);
     if (!variant) {
-      throw new Error(`Unknown variant: ${variantName} (agent: ${baseName})`);
+      throw new Error(`Unknown variant: ${variantName} (mind: ${baseName})`);
     }
     return { entry: { ...entry, port: variant.port }, dir: variant.path };
   }

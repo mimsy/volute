@@ -17,8 +17,8 @@ if (command === "--version" || command === "-v") {
 }
 
 switch (command) {
-  case "agent":
-    await import("./commands/agent.js").then((m) => m.run(args));
+  case "mind":
+    await import("./commands/mind.js").then((m) => m.run(args));
     break;
   case "send":
     await import("./commands/send.js").then((m) => m.run(args));
@@ -29,14 +29,20 @@ switch (command) {
   case "variant":
     await import("./commands/variant.js").then((m) => m.run(args));
     break;
-  case "connector":
-    await import("./commands/connector.js").then((m) => m.run(args));
-    break;
   case "channel":
     await import("./commands/channel.js").then((m) => m.run(args));
     break;
   case "schedule":
     await import("./commands/schedule.js").then((m) => m.run(args));
+    break;
+  case "skill":
+    await import("./commands/skill.js").then((m) => m.run(args));
+    break;
+  case "shared":
+    await import("./commands/shared.js").then((m) => m.run(args));
+    break;
+  case "file":
+    await import("./commands/file.js").then((m) => m.run(args));
     break;
   case "env":
     await import("./commands/env.js").then((m) => m.run(args));
@@ -50,9 +56,6 @@ switch (command) {
   case "restart":
     await import("./commands/daemon-restart.js").then((m) => m.run(args));
     break;
-  case "setup":
-    await import("./commands/setup.js").then((m) => m.run(args));
-    break;
   case "service":
     await import("./commands/service.js").then((m) => m.run(args));
     break;
@@ -62,64 +65,57 @@ switch (command) {
   case "status":
     await import("./commands/status.js").then((m) => m.run(args));
     break;
+  case "pages":
+    await import("./commands/pages.js").then((m) => m.run(args));
+    break;
+  case "auth":
+    await import("./commands/auth.js").then((m) => m.run(args));
+    break;
   case "--help":
   case "-h":
   case undefined:
-    console.log(`volute — create and manage AI agents
+    console.log(`volute — create and manage AI minds
 
-Commands:
-  volute agent create <name>              Create a new agent
-  volute agent start <name>               Start an agent (daemonized)
-  volute agent stop <name>                Stop an agent
-  volute agent restart <name>             Restart an agent
-  volute agent delete <name> [--force]    Delete an agent (--force removes files)
-  volute agent list                       List all agents
-  volute agent status <name>              Check agent status
-  volute agent logs <name> [--follow]     Tail agent logs
-  volute agent upgrade <name>             Upgrade agent to latest template
-  volute agent import <path>              Import an OpenClaw workspace
+Common:
+  send <target> "<msg>"            Send a message
+  history [--channel <ch>]         View activity history
+  status                           Show system status
 
-  volute send <target> "<msg>"             Send a message (agent DM, channel, etc.)
-  volute history [--agent <name>]          View message history
+Mind:
+  mind create <name>               Create a new mind
+  mind seed <name>                 Plant a seed mind (orientation mode)
+  mind start/stop/restart [name]   Control a mind
+  mind list                        List all minds
+  mind status [name]               Check a mind's status
+  mind connect/disconnect <type>   Manage connectors
+  mind logs [name] [--follow]      Tail mind logs
+  mind sprout                      Complete orientation
+  mind upgrade/import/export       Lifecycle operations
 
-  volute variant create <name>            Create a variant (worktree + server)
-  volute variant list                     List variants for an agent
-  volute variant merge <name>             Merge a variant back
-  volute variant delete <name>            Delete a variant
+Configuration:
+  channel   Read, list, and manage channels
+  variant   Create and merge experimental variants
+  schedule  Manage cron schedules
+  skill     Browse and install skills
+  env       Manage environment variables
+  file      Mind-to-mind file sharing
+  shared    Collaborative shared repository
+  pages     Publish web pages
 
-  volute connector connect <type>         Enable a connector for an agent
-  volute connector disconnect <type>      Disable a connector for an agent
-
-  volute channel read <uri>               Read recent messages from a channel
-  volute channel list [<platform>]        List conversations on a platform
-  volute channel users <platform>         List users on a platform
-  volute channel create <platform> ...    Create a conversation on a platform
-
-  volute schedule list                    List schedules for an agent
-  volute schedule add ...                 Add a cron schedule
-  volute schedule remove ...              Remove a schedule
-
-  volute env <set|get|list|remove>        Manage environment variables
-
-  volute up [--port N]                    Start the daemon (default: 4200)
-  volute down                             Stop the daemon
-  volute restart [--port N]               Restart the daemon
-
-  volute service install [--port N]       Install as system service (auto-start)
-  volute service uninstall                Remove system service
-  volute service status                   Check service status
-  volute setup [--port N] [--host H]      Install system service with user isolation
-  volute setup uninstall [--force]        Remove system service + isolation
-
-  volute update                           Update to latest version
-  volute status                           Show daemon status and agents
+System:
+  up / down / restart              Daemon control
+  update                           Update volute
+  service install/uninstall        Auto-start service
+  auth register/login/logout       volute.systems account
 
 Options:
-  --version, -v                           Show version number
-  --help, -h                              Show this help message
+  --version, -v                    Show version number
+  --help, -h                       Show this help message
 
-Agent-scoped commands (send, history, variant, connector, schedule, channel)
-use --agent <name> or VOLUTE_AGENT env var to identify the agent.`);
+Run 'volute <command> --help' for details.
+
+Mind-scoped commands (send, history, variant, schedule, channel, file, skill, shared, pages)
+use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
   default:
     console.error(`Unknown command: ${command}\nRun 'volute --help' for usage.`);

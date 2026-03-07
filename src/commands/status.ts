@@ -5,8 +5,10 @@ export async function run(_args: string[]) {
   const mode = getServiceMode();
   console.log(`Mode: ${modeLabel(mode)}`);
 
-  const { hostname, port, token } = readDaemonConfig();
-  const baseUrl = getDaemonUrl(hostname, port);
+  const { hostname, port, internalPort, token } = readDaemonConfig();
+  // Use internal HTTP port for API calls, user-facing port for display
+  const apiPort = internalPort ?? port;
+  const baseUrl = getDaemonUrl("127.0.0.1", apiPort);
 
   // Check health
   let running = false;
@@ -38,26 +40,31 @@ export async function run(_args: string[]) {
     console.log(`Update available: ${update.current} → ${update.latest}`);
   }
 
-  // List agents
+  // List minds
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   headers.Origin = baseUrl;
 
   try {
-    const res = await fetch(`${baseUrl}/api/agents`, { headers });
+    const res = await fetch(`${baseUrl}/api/minds`, { headers });
     if (res.ok) {
-      const agents = (await res.json()) as Array<{ name: string; running: boolean }>;
-      if (agents.length > 0) {
-        console.log(`\nAgents (${agents.length}):`);
-        for (const agent of agents) {
-          const status = agent.running ? "running" : "stopped";
-          console.log(`  ${agent.name}: ${status}`);
+      const minds = (await res.json()) as Array<{
+        name: string;
+        running: boolean;
+        stage?: string;
+      }>;
+      if (minds.length > 0) {
+        console.log(`\nMinds (${minds.length}):`);
+        for (const mind of minds) {
+          const status = mind.running ? "running" : "stopped";
+          const label = mind.stage === "seed" ? " (seed)" : "";
+          console.log(`  ${mind.name}: ${status}${label}`);
         }
       } else {
-        console.log("\nNo agents configured.");
+        console.log("\nNo minds configured.");
       }
     }
   } catch {
-    // Couldn't fetch agents — not critical
+    // Couldn't fetch minds — not critical
   }
 }

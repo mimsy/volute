@@ -1,5 +1,10 @@
 import { splitMessage, writeChannelEntry } from "../../connectors/sdk.js";
-import { type ChannelConversation, type ChannelUser, resolveChannelId } from "../channels.js";
+import {
+  type ChannelConversation,
+  type ChannelUser,
+  type ImageAttachment,
+  resolveChannelId,
+} from "../channels.js";
 import { slugify } from "../slugify.js";
 
 const SLACK_MAX_LENGTH = 4000;
@@ -58,9 +63,52 @@ export async function send(
   env: Record<string, string>,
   channelSlug: string,
   message: string,
+  images?: ImageAttachment[],
 ): Promise<void> {
   const token = requireToken(env);
   const channelId = resolveChannelId(env, channelSlug);
+
+  if (images?.length) {
+    for (const img of images) {
+      const ext = img.media_type.split("/")[1] || "png";
+      const filename = `image.${ext}`;
+      const binary = Buffer.from(img.data, "base64");
+
+      // Step 1: Get upload URL
+      const uploadData = (await slackApi(token, "files.getUploadURLExternal", {
+        filename,
+        length: binary.length,
+      })) as { upload_url: string; file_id: string };
+
+      // Step 2: Upload binary to presigned URL
+      const uploadRes = await fetch(uploadData.upload_url, {
+        method: "POST",
+        body: binary,
+      });
+      if (!uploadRes.ok) {
+        throw new Error(`Slack file upload failed: ${uploadRes.status} ${uploadRes.statusText}`);
+      }
+
+      // Step 3: Complete upload and share to channel
+      await slackApi(token, "files.completeUploadExternal", {
+        files: [{ id: uploadData.file_id }],
+        channel_id: channelId,
+      });
+    }
+
+    // Send text message separately if non-empty
+    if (message) {
+      const chunks = splitMessage(message, SLACK_MAX_LENGTH);
+      for (const chunk of chunks) {
+        await slackApi(token, "chat.postMessage", {
+          channel: channelId,
+          text: chunk,
+        });
+      }
+    }
+    return;
+  }
+
   const chunks = splitMessage(message, SLACK_MAX_LENGTH);
   for (let i = 0; i < chunks.length; i++) {
     try {
@@ -173,7 +221,7 @@ export async function createConversation(
     ids.push(user.id);
   }
 
-  const agentName = env.VOLUTE_AGENT;
+  const mindName = env.VOLUTE_MIND;
 
   if (name) {
     // Create named private channel and invite participants
@@ -195,8 +243,8 @@ export async function createConversation(
     const teamName = authData.team ?? "workspace";
     const slug = `slack:${slugify(teamName)}/${slugify(name)}`;
 
-    if (agentName) {
-      writeChannelEntry(agentName, slug, {
+    if (mindName) {
+      writeChannelEntry(mindName, slug, {
         platformId: channelId,
         platform: "slack",
         name,
@@ -218,8 +266,8 @@ export async function createConversation(
       ? `slack:@${slugify(participants[0])}`
       : `slack:@${participants.map(slugify).sort().join(",")}`;
 
-  if (agentName) {
-    writeChannelEntry(agentName, slug, {
+  if (mindName) {
+    writeChannelEntry(mindName, slug, {
       platformId,
       platform: "slack",
       name: participants.join(", "),

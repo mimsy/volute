@@ -1,19 +1,24 @@
 import { execFile as execFileCb, execFileSync, spawn } from "node:child_process";
+import { wrapForIsolation } from "./isolation.js";
 
 /** Promise wrapper around child_process.execFile. Returns stdout as a string. */
 export function exec(
   cmd: string,
   args: string[],
-  options?: { cwd?: string; uid?: number; gid?: number; env?: NodeJS.ProcessEnv },
+  options?: { cwd?: string; mindName?: string; env?: NodeJS.ProcessEnv },
 ): Promise<string> {
+  const [wrappedCmd, wrappedArgs] = options?.mindName
+    ? wrapForIsolation(cmd, args, options.mindName)
+    : [cmd, args];
   return new Promise((resolve, reject) => {
     execFileCb(
-      cmd,
-      args,
-      { cwd: options?.cwd, uid: options?.uid, gid: options?.gid, env: options?.env },
+      wrappedCmd,
+      wrappedArgs,
+      { cwd: options?.cwd, env: options?.env },
       (err, stdout, stderr) => {
         if (err) {
-          (err as Error & { stderr?: string }).stderr = stderr;
+          (err as Error & { stderr?: string; stdout?: string }).stderr = stderr;
+          (err as Error & { stderr?: string; stdout?: string }).stdout = stdout;
           reject(err);
         } else {
           resolve(stdout);
@@ -24,17 +29,17 @@ export function exec(
 }
 
 /**
- * Run a git command, adding `-c safe.directory=<cwd>` when isolation is enabled
- * so the root-owned daemon can operate on agent-owned repositories.
+ * Run a git command, adding `-c safe.directory=*` when isolation is enabled
+ * so the root-owned daemon can operate on mind-owned repositories and their worktrees.
+ * Git identity comes from per-repo config (configureGitIdentity) or system config
+ * (install.sh / setup.ts / Dockerfile).
  */
 export function gitExec(
   args: string[],
-  options: { cwd: string; uid?: number; gid?: number; env?: NodeJS.ProcessEnv },
+  options: { cwd: string; mindName?: string; env?: NodeJS.ProcessEnv },
 ): Promise<string> {
   const fullArgs =
-    process.env.VOLUTE_ISOLATION === "user"
-      ? ["-c", `safe.directory=${options.cwd}`, ...args]
-      : args;
+    process.env.VOLUTE_ISOLATION === "user" ? ["-c", "safe.directory=*", ...args] : args;
   return exec("git", fullArgs, options);
 }
 
@@ -51,13 +56,14 @@ export function resolveVoluteBin(): string {
 export function execInherit(
   cmd: string,
   args: string[],
-  options?: { cwd?: string; uid?: number; gid?: number; env?: NodeJS.ProcessEnv },
+  options?: { cwd?: string; mindName?: string; env?: NodeJS.ProcessEnv },
 ): Promise<void> {
+  const [wrappedCmd, wrappedArgs] = options?.mindName
+    ? wrapForIsolation(cmd, args, options.mindName)
+    : [cmd, args];
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, {
+    const child = spawn(wrappedCmd, wrappedArgs, {
       cwd: options?.cwd,
-      uid: options?.uid,
-      gid: options?.gid,
       env: options?.env,
       stdio: "inherit",
     });

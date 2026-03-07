@@ -7,14 +7,14 @@ import { composeTemplate, findTemplatesRoot } from "../src/lib/template.js";
 describe("template composition", () => {
   const templatesRoot = findTemplatesRoot();
 
-  it("composes agent-sdk template with all expected files", () => {
-    const { composedDir, manifest } = composeTemplate(templatesRoot, "agent-sdk");
+  it("composes claude template with all expected files", () => {
+    const { composedDir, manifest } = composeTemplate(templatesRoot, "claude");
     try {
       // Base files
       assert.ok(existsSync(resolve(composedDir, ".gitignore")));
       assert.ok(existsSync(resolve(composedDir, "biome.json.tmpl")));
       assert.ok(existsSync(resolve(composedDir, "tsconfig.json")));
-      assert.ok(existsSync(resolve(composedDir, "home/.config/volute.json.tmpl")));
+      assert.ok(existsSync(resolve(composedDir, "home/.config/config.json.tmpl")));
 
       // Base shared source
       assert.ok(existsSync(resolve(composedDir, "src/lib/types.ts")));
@@ -48,11 +48,8 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, ".init/.config/scripts/session-reader.ts")));
       assert.ok(existsSync(resolve(composedDir, ".init/.claude/settings.json")));
 
-      // Skills mapped to skillsDir
-      assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "volute-agent/SKILL.md")));
-      assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "memory/SKILL.md")));
-      assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "sessions/SKILL.md")));
-      assert.ok(!existsSync(resolve(composedDir, "_skills")), "_skills should be removed");
+      // Skills no longer bundled in template (managed via shared pool)
+      assert.ok(!existsSync(resolve(composedDir, "_skills")), "_skills should not exist");
 
       // Manifest should be removed from composed output
       assert.ok(!existsSync(resolve(composedDir, "volute-template.json")));
@@ -66,7 +63,7 @@ describe("template composition", () => {
       // Manifest shape
       assert.deepEqual(Object.keys(manifest.rename).sort(), [
         "biome.json.tmpl",
-        "home/.config/volute.json.tmpl",
+        "home/.config/config.json.tmpl",
         "package.json.tmpl",
       ]);
       assert.ok(manifest.substitute.includes("package.json"));
@@ -77,7 +74,7 @@ describe("template composition", () => {
   });
 
   it("composes pi template with all expected files", () => {
-    const { composedDir, manifest } = composeTemplate(templatesRoot, "pi");
+    const { composedDir } = composeTemplate(templatesRoot, "pi");
     try {
       // Base files
       assert.ok(existsSync(resolve(composedDir, ".gitignore")));
@@ -102,7 +99,7 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, "src/agent.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/session-context-extension.ts")));
 
-      // No agent-sdk-specific files
+      // No claude-template-specific files
       assert.ok(!existsSync(resolve(composedDir, "src/lib/message-channel.ts")));
       assert.ok(!existsSync(resolve(composedDir, "src/lib/hooks")));
       assert.ok(!existsSync(resolve(composedDir, "src/lib/agent-sessions.ts")));
@@ -110,17 +107,15 @@ describe("template composition", () => {
       // Init files
       assert.ok(existsSync(resolve(composedDir, ".init/SOUL.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/MEMORY.md")));
-      assert.ok(existsSync(resolve(composedDir, ".init/AGENTS.md")));
+      assert.ok(existsSync(resolve(composedDir, ".init/MINDS.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/.config/routes.json")));
       assert.ok(existsSync(resolve(composedDir, ".init/.config/scripts/session-reader.ts")));
 
-      // Pi overrides home/.config/volute.json.tmpl with provider-prefixed model
-      assert.ok(existsSync(resolve(composedDir, "home/.config/volute.json.tmpl")));
+      // Pi overrides home/.config/config.json.tmpl with its own default model
+      assert.ok(existsSync(resolve(composedDir, "home/.config/config.json.tmpl")));
 
-      // Skills mapped to skillsDir
-      assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "volute-agent/SKILL.md")));
-      assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "memory/SKILL.md")));
-      assert.ok(existsSync(resolve(composedDir, manifest.skillsDir, "sessions/SKILL.md")));
+      // Skills no longer bundled in template (managed via shared pool)
+      assert.ok(!existsSync(resolve(composedDir, "_skills")), "_skills should not exist");
     } finally {
       rmSync(composedDir, { recursive: true, force: true });
     }

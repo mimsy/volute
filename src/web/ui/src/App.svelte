@@ -1,0 +1,562 @@
+<script lang="ts">
+import type { Conversation, Mind } from "@volute/api";
+import { onMount } from "svelte";
+import AdminModal from "./components/AdminModal.svelte";
+import ChannelBrowserModal from "./components/ChannelBrowserModal.svelte";
+import ChannelMembersPanel from "./components/ChannelMembersPanel.svelte";
+import LoginPage from "./components/LoginPage.svelte";
+import MainFrame from "./components/MainFrame.svelte";
+import MindModal from "./components/MindModal.svelte";
+import MindPickerModal from "./components/MindPickerModal.svelte";
+import SeedModal from "./components/SeedModal.svelte";
+import Sidebar from "./components/Sidebar.svelte";
+import StatusBar from "./components/StatusBar.svelte";
+import UpdateBanner from "./components/UpdateBanner.svelte";
+import UserSettingsModal from "./components/UserSettingsModal.svelte";
+import { type AuthUser } from "./lib/auth";
+import { deleteConversation, restartDaemon } from "./lib/client";
+import { navigate, parseSelection, type Selection, selectionToPath } from "./lib/navigate";
+import { requestNotificationPermission } from "./lib/notifications";
+import {
+  auth,
+  checkAuth,
+  closeSidebar,
+  connectActivity,
+  data,
+  disconnectActivity,
+  handleAuth,
+  handleLogout,
+  hiddenConversationIds,
+  hideConversation,
+  layout,
+  reconnectActivity,
+  saveSidebarWidth,
+  setActiveConversation,
+  sidebar,
+  toggleSidebar,
+  unhideConversation,
+} from "./lib/stores.svelte";
+
+// Selection state
+let selection = $state<Selection>(parseSelection());
+
+// Modals
+type ModalType = "newChat" | "channelBrowser" | "seed" | "admin" | "userSettings" | "mind" | null;
+let activeModal = $state<ModalType>(null);
+let selectedModalMind = $state<Mind | null>(null);
+
+// Resize state
+let resizing = $state(false);
+
+// Typing state for channel members panel
+let typingNames = $state<string[]>([]);
+
+// Right panel: hidden on mobile unless explicitly opened
+let rightPanelOpen = $state(false);
+
+// Derived
+let activeConversationId = $derived(
+  selection.kind === "conversation" ? (selection.conversationId ?? null) : null,
+);
+
+// Sync active conversation for unread tracking
+$effect(() => {
+  setActiveConversation(activeConversationId);
+  rightPanelOpen = false;
+});
+
+// Right panel: auto-show mind details for DMs, channel members for channels
+let activeConv = $derived.by(() => {
+  const sel = selection;
+  if (sel.kind !== "conversation") return undefined;
+  if (!sel.conversationId) return undefined;
+  return data.conversations.find((c) => c.id === sel.conversationId);
+});
+
+let contextMindName = $derived.by(() => {
+  if (selection.kind !== "conversation") return "";
+  if (selection.mindName) return selection.mindName;
+  if (!activeConv || activeConv.type === "channel" || activeConv.type === "group") return "";
+  return activeConv.mind_name ?? "";
+});
+
+let contextMind = $derived(
+  contextMindName ? data.minds.find((m) => m.name === contextMindName) : undefined,
+);
+
+let rightPanelMind = $derived(
+  activeModal === "mind" && selectedModalMind ? selectedModalMind : (contextMind ?? undefined),
+);
+
+let rightPanelIsManual = $derived(!!(activeModal === "mind" && selectedModalMind));
+
+// Auth — one-time fetch on mount
+onMount(() => {
+  checkAuth();
+});
+
+// Data polling
+$effect(() => {
+  if (!auth.user) return;
+  connectActivity();
+  return () => disconnectActivity();
+});
+
+// Request notification permission after login
+$effect(() => {
+  if (!auth.user) return;
+  requestNotificationPermission();
+});
+
+// Track whether selection change came from popstate (to avoid pushing duplicate history)
+let fromPopstate = $state(false);
+
+// URL sync: popstate → selection
+$effect(() => {
+  const handler = () => {
+    fromPopstate = true;
+    selection = parseSelection();
+  };
+  window.addEventListener("popstate", handler);
+  // Intercept internal link clicks for SPA navigation
+  const handleClick = (e: MouseEvent) => {
+    const link = (e.target as Element).closest("a");
+    if (!link) return;
+    const href = link.getAttribute("href");
+    if (!href || href.startsWith("http") || href.startsWith("//") || link.target === "_blank")
+      return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+    e.preventDefault();
+    navigate(href);
+  };
+  document.addEventListener("click", handleClick);
+  return () => {
+    window.removeEventListener("popstate", handler);
+    document.removeEventListener("click", handleClick);
+  };
+});
+
+// Selection → URL sync
+$effect(() => {
+  const expected = selectionToPath(selection);
+  const current = window.location.pathname + window.location.search;
+  if (current !== expected) {
+    if (fromPopstate) {
+      window.history.replaceState(null, "", expected);
+    } else {
+      window.history.pushState(null, "", expected);
+    }
+  }
+  fromPopstate = false;
+});
+
+// Actions
+// Whether right panel has something to show
+let hasRightPanel = $derived(
+  !!rightPanelMind || activeConv?.type === "channel" || activeConv?.type === "group",
+);
+
+// Show right panel on desktop always, on mobile/tablet only when explicitly opened
+let showRightPanel = $derived(hasRightPanel);
+
+function openRightPanel() {
+  rightPanelOpen = true;
+}
+
+function closeRightPanel() {
+  if (rightPanelIsManual) {
+    activeModal = null;
+    selectedModalMind = null;
+  }
+  rightPanelOpen = false;
+}
+
+function handleOpenMindModal(mind: Mind) {
+  selectedModalMind = mind;
+  activeModal = "mind";
+  rightPanelOpen = true;
+}
+
+function handleSelectConversation(id: string) {
+  selection = { kind: "conversation", conversationId: id };
+  setActiveConversation(id);
+  closeSidebar();
+  if (activeModal === "mind") {
+    activeModal = null;
+    selectedModalMind = null;
+  }
+}
+
+async function handleDeleteConversation(id: string) {
+  try {
+    await deleteConversation(id);
+  } catch (err) {
+    console.error("Failed to delete conversation:", err);
+    return;
+  }
+  reconnectActivity();
+  if (activeConversationId === id) {
+    selection = { kind: "home" };
+  }
+}
+
+function handleConversationId(id: string) {
+  selection = { kind: "conversation", conversationId: id };
+  setActiveConversation(id);
+  reconnectActivity();
+}
+
+function handleNewChatCreated(name: string) {
+  activeModal = null;
+  selectedModalMind = null;
+  closeSidebar();
+  // Check for existing 2-person DM with this user
+  const existing = data.conversations.find((c) => {
+    if (c.type === "channel") return false;
+    const parts = c.participants ?? [];
+    if (parts.length !== 2) return false;
+    return parts.some((p) => p.username === name);
+  });
+  if (existing) {
+    // Unhide if it was hidden
+    if (hiddenConversationIds.has(existing.id)) {
+      unhideConversation(existing.id);
+    }
+    selection = { kind: "conversation", conversationId: existing.id };
+  } else {
+    selection = { kind: "conversation", mindName: name };
+  }
+}
+
+function handleNewGroupCreated(conv: Conversation) {
+  activeModal = null;
+  selectedModalMind = null;
+  closeSidebar();
+  reconnectActivity();
+  selection = { kind: "conversation", conversationId: conv.id };
+}
+
+function handleChannelJoined(conv: Conversation) {
+  activeModal = null;
+  selectedModalMind = null;
+  closeSidebar();
+  reconnectActivity();
+  selection = { kind: "conversation", conversationId: conv.id };
+}
+
+function handleSeedCreated(mindName: string) {
+  activeModal = null;
+  selectedModalMind = null;
+  closeSidebar();
+  selection = { kind: "conversation", mindName };
+}
+
+function handleSelectPage(mind: string, path: string) {
+  selection = { kind: "page", mind, path };
+}
+
+function handleSelectSite(name: string) {
+  selection = { kind: "site", name };
+}
+
+function handleSelectPages() {
+  selection = { kind: "pages" };
+}
+
+function onAuth(u: AuthUser) {
+  handleAuth(u);
+}
+
+function handleHideConversation(id: string) {
+  hideConversation(id);
+  if (activeConversationId === id) {
+    selection = { kind: "home" };
+  }
+}
+
+// Resize
+function handleResizeStart(e: PointerEvent) {
+  resizing = true;
+  const target = e.currentTarget as HTMLElement;
+  target.setPointerCapture(e.pointerId);
+  document.body.style.userSelect = "none";
+  document.body.style.cursor = "col-resize";
+}
+
+function handleResizeMove(e: PointerEvent) {
+  if (!resizing) return;
+  const shellBody = (e.currentTarget as HTMLElement).parentElement;
+  if (!shellBody) return;
+  const rect = shellBody.getBoundingClientRect();
+  sidebar.width = Math.max(180, Math.min(400, e.clientX - rect.left));
+}
+
+function handleResizeEnd() {
+  if (!resizing) return;
+  resizing = false;
+  document.body.style.userSelect = "";
+  document.body.style.cursor = "";
+  saveSidebarWidth();
+}
+
+function handleEscape(e: KeyboardEvent) {
+  if (e.key !== "Escape") return;
+  if (rightPanelOpen) {
+    closeRightPanel();
+    return;
+  }
+  if (layout.sidebarOpen) {
+    closeSidebar();
+    return;
+  }
+}
+</script>
+
+<svelte:window onkeydown={handleEscape} />
+
+{#if !auth.checked}
+  <div class="app">
+    <div class="loading">Loading...</div>
+  </div>
+{:else if !auth.user}
+  <div class="app full-height">
+    <LoginPage {onAuth} />
+  </div>
+{:else}
+  <div class="shell">
+    {#if auth.user.role === "admin"}
+      <UpdateBanner />
+    {/if}
+    <div class="shell-body">
+      <div class="sidebar" class:sidebar-open={layout.sidebarOpen} style:width="{sidebar.width}px">
+        <Sidebar
+          minds={data.minds}
+          conversations={data.conversations.filter((c) => !hiddenConversationIds.has(c.id))}
+          sites={data.sites}
+          {activeConversationId}
+          username={auth.user.username}
+          onSelectConversation={handleSelectConversation}
+          onDeleteConversation={handleDeleteConversation}
+          onNewChat={() => (activeModal = "newChat")}
+          onBrowseChannels={() => (activeModal = "channelBrowser")}
+          onOpenMind={handleOpenMindModal}
+          onSelectMind={handleNewChatCreated}
+          onSeed={() => (activeModal = "seed")}
+          onSelectSite={handleSelectSite}
+          onSelectPages={handleSelectPages}
+          onHideConversation={handleHideConversation}
+          onHome={() => (selection = { kind: "home" })}
+        />
+      </div>
+      {#if layout.sidebarOpen}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="sidebar-backdrop" onclick={closeSidebar}></div>
+      {/if}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="resize-handle"
+        onpointerdown={handleResizeStart}
+        onpointermove={handleResizeMove}
+        onpointerup={handleResizeEnd}
+        onpointercancel={handleResizeEnd}
+      ></div>
+      <div class="main-frame">
+        <MainFrame
+          {selection}
+          minds={data.minds}
+          conversations={data.conversations}
+          recentPages={data.recentPages}
+          sites={data.sites}
+          activity={data.activity}
+          username={auth.user.username}
+          onConversationId={handleConversationId}
+          onSelectConversation={handleSelectConversation}
+          onOpenMind={handleOpenMindModal}
+          onSelectPage={handleSelectPage}
+          onSelectSite={handleSelectSite}
+          onSelectPages={handleSelectPages}
+          onTypingNames={(names) => { typingNames = names; }}
+          onToggleSidebar={toggleSidebar}
+          onOpenRightPanel={hasRightPanel ? openRightPanel : undefined}
+        />
+      </div>
+      {#if showRightPanel}
+        {#if rightPanelOpen}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="right-panel-backdrop" onclick={closeRightPanel}></div>
+        {/if}
+        <div class="right-panel" class:right-panel-open={rightPanelOpen}>
+          {#if rightPanelMind}
+            {#key rightPanelMind.name}
+              <MindModal
+                mind={rightPanelMind}
+                onClose={closeRightPanel}
+              />
+            {/key}
+          {:else if activeConv?.type === "channel" || activeConv?.type === "group"}
+            <ChannelMembersPanel
+              conversation={activeConv}
+              minds={data.minds}
+              {typingNames}
+              onOpenMind={handleOpenMindModal}
+            />
+          {/if}
+        </div>
+      {/if}
+    </div>
+    <StatusBar
+      username={auth.user.username}
+      systemName={auth.systemName}
+      connectionOk={data.connectionOk}
+      isAdmin={auth.user.role === "admin"}
+      onAdminClick={() => (activeModal = "admin")}
+      onRestart={() => restartDaemon()}
+      onLogout={handleLogout}
+      onUserSettings={() => (activeModal = "userSettings")}
+    />
+  </div>
+
+  {#if activeModal === "newChat"}
+    <MindPickerModal minds={data.minds} onClose={() => (activeModal = null)} onPick={handleNewChatCreated} onGroupCreated={handleNewGroupCreated} />
+  {/if}
+  {#if activeModal === "channelBrowser"}
+    <ChannelBrowserModal
+      onClose={() => (activeModal = null)}
+      onJoined={handleChannelJoined}
+    />
+  {/if}
+  {#if activeModal === "seed"}
+    <SeedModal onClose={() => (activeModal = null)} onCreated={handleSeedCreated} />
+  {/if}
+  {#if activeModal === "admin"}
+    <AdminModal onClose={() => (activeModal = null)} minds={data.minds} />
+  {/if}
+  {#if activeModal === "userSettings"}
+    <UserSettingsModal onClose={() => (activeModal = null)} />
+  {/if}
+{/if}
+
+<style>
+  .loading {
+    color: var(--text-2);
+    padding: 24px;
+    text-align: center;
+  }
+
+  .full-height {
+    height: 100%;
+  }
+
+  .shell {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .shell-body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    background: var(--bg-1);
+    overflow: hidden;
+  }
+
+  .resize-handle {
+    width: 4px;
+    cursor: col-resize;
+    flex-shrink: 0;
+    background: transparent;
+    transition: background 0.15s;
+  }
+
+  .resize-handle:hover {
+    background: var(--border);
+  }
+
+  .main-frame {
+    flex: 1;
+    overflow: hidden;
+    min-width: 0;
+  }
+
+  .right-panel-backdrop {
+    display: none;
+  }
+
+  .sidebar-backdrop {
+    display: none;
+  }
+
+  /* Right panel: hide on small screens, show on toggle */
+  @media (max-width: 1024px) {
+    .right-panel {
+      display: none;
+    }
+
+    .right-panel.right-panel-open {
+      display: block;
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 40;
+    }
+
+    .right-panel-backdrop {
+      display: block;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 39;
+    }
+  }
+
+  /* Mobile */
+  @media (max-width: 767px) {
+    .sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 50;
+      width: 280px !important;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+
+    .sidebar.sidebar-open {
+      transform: translateX(0);
+      overflow: visible;
+    }
+
+    .sidebar-backdrop {
+      display: block;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 49;
+    }
+
+    .resize-handle {
+      display: none;
+    }
+  }
+
+  /* Tablet */
+  @media (min-width: 768px) and (max-width: 1024px) {
+    .sidebar {
+      width: 200px !important;
+    }
+
+    .resize-handle {
+      display: none;
+    }
+  }
+</style>

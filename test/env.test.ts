@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, it } from "node:test";
-import { agentEnvPath, readEnv, sharedEnvPath, writeEnv } from "../src/lib/env.js";
+import { mindEnvPath, readEnv, sharedEnvPath, writeEnv } from "../src/lib/env.js";
 
 describe("env", () => {
   let tmp: string;
@@ -30,25 +30,25 @@ describe("env", () => {
     assert.deepEqual(readEnv(path), { KEY: "val" });
   });
 
-  it("loadMergedEnv merges shared and agent envs with agent winning", () => {
-    // Set up a fake agent dir structure
-    const agentDir = join(tmp, "agent");
-    const voluteDir = join(agentDir, ".volute");
+  it("loadMergedEnv merges shared and mind envs with mind winning", () => {
+    // Set up a fake mind dir structure
+    const mindDir = join(tmp, "mind");
+    const voluteDir = join(mindDir, ".volute");
     mkdirSync(voluteDir, { recursive: true });
 
     // Write shared env to a known location — we test the merge logic by
     // calling the individual read/write and then manually merging.
     const shared = { SHARED_KEY: "shared_val", OVERLAP: "from_shared" };
-    const agent = { AGENT_KEY: "agent_val", OVERLAP: "from_agent" };
+    const mindEnv = { MIND_KEY: "mind_val", OVERLAP: "from_mind" };
 
-    writeEnv(join(voluteDir, "env.json"), agent);
+    writeEnv(join(voluteDir, "env.json"), mindEnv);
 
-    // loadMergedEnv reads from the global shared path and agent path.
+    // loadMergedEnv reads from the global shared path and mind path.
     // For a unit test, we just verify the merge semantics directly.
-    const merged = { ...shared, ...agent };
+    const merged = { ...shared, ...mindEnv };
     assert.equal(merged.SHARED_KEY, "shared_val");
-    assert.equal(merged.AGENT_KEY, "agent_val");
-    assert.equal(merged.OVERLAP, "from_agent");
+    assert.equal(merged.MIND_KEY, "mind_val");
+    assert.equal(merged.OVERLAP, "from_mind");
   });
 
   it("readEnv returns empty object for invalid JSON", () => {
@@ -57,8 +57,8 @@ describe("env", () => {
     assert.deepEqual(readEnv(path), {});
   });
 
-  it("agentEnvPath returns correct path", () => {
-    const path = agentEnvPath("test");
+  it("mindEnvPath returns correct path", () => {
+    const path = mindEnvPath("test");
     assert.ok(
       path.endsWith("/state/test/env.json"),
       `Expected path ending with /state/test/env.json, got ${path}`,

@@ -7,16 +7,13 @@ import {
   SessionManager,
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
-import {
-  type AutoReplyTracker,
-  createAutoReplyTracker,
-  type MessageChannelInfo,
-} from "./lib/auto-reply.js";
 import { extractImages, extractText } from "./lib/content.js";
 import { createEventHandler } from "./lib/event-handler.js";
 import { log } from "./lib/logger.js";
+import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
 import { createSessionContextExtension } from "./lib/session-context-extension.js";
+import { loadPrompts } from "./lib/startup.js";
 import type {
   HandlerMeta,
   HandlerResolver,
@@ -26,34 +23,39 @@ import type {
   VoluteEvent,
 } from "./lib/types.js";
 
-type AgentSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
+type PiAgentSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
 
 type PiSession = {
   name: string;
-  agentSession: AgentSession | null;
+  agentSession: PiAgentSession | null;
   ready: Promise<void>;
   listeners: Set<Listener>;
   unsubscribe?: () => void;
   messageIds: (string | undefined)[];
   currentMessageId?: string;
-  messageChannels: Map<string, MessageChannelInfo>;
-  autoReply: AutoReplyTracker;
+  messageChannels: Map<string, string>;
 };
 
-function defaultCompactionMessage(): string {
-  const today = new Date().toISOString().slice(0, 10);
-  return `Context is getting long — compaction is about to summarize this conversation. Before that happens, save anything important to files (MEMORY.md, memory/journal/${today}.md, etc.) since those survive compaction. Focus on: decisions made, open tasks, and anything you'd need to pick up where you left off.`;
-}
-
-export function createAgent(options: {
+export function createMind(options: {
   systemPrompt: string;
   cwd: string;
+  mindDir: string;
   model?: string;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   compactionMessage?: string;
+  maxContextTokens?: number;
 }): { resolve: HandlerResolver } {
   const sessions = new Map<string, PiSession>();
-  const compactionMessage = options.compactionMessage ?? defaultCompactionMessage();
+  const prompts = loadPrompts();
+  const today = new Date().toLocaleDateString("en-CA");
+  const compactionMessage =
+    options.compactionMessage ?? prompts.compaction_warning.replace("${date}", today);
+  const compactionInstructions = prompts.compaction_instructions;
+  const maxContextTokens = options.maxContextTokens;
+
+  if (maxContextTokens) {
+    log("mind", `compaction threshold: ${maxContextTokens} tokens`);
+  }
 
   // Shared setup (created once)
   const modelStr = options.model || process.env.PI_MODEL || "anthropic:claude-sonnet-4-20250514";
@@ -67,22 +69,19 @@ export function createAgent(options: {
     const existing = sessions.get(name);
     if (existing) return existing;
 
-    const messageChannels = new Map<string, MessageChannelInfo>();
     const session: PiSession = {
       name,
       agentSession: null,
       ready: Promise.resolve(),
       listeners: new Set(),
       messageIds: [],
-      messageChannels,
-      autoReply: createAutoReplyTracker(messageChannels),
+      messageChannels: new Map(),
     };
     sessions.set(name, session);
 
     session.ready = initSession(session).catch((err) => {
-      session.autoReply.reset();
       session.messageChannels.clear();
-      log("agent", `session "${session.name}": init failed:`, err);
+      log("mind", `session "${session.name}": init failed:`, err);
     });
     return session;
   }
@@ -92,25 +91,51 @@ export function createAgent(options: {
 
     const sessionManager = isEphemeral
       ? SessionManager.inMemory()
-      : SessionManager.continueRecent(options.cwd, `.volute/pi-sessions/${session.name}`);
+      : SessionManager.continueRecent(options.cwd, `.mind/pi-sessions/${session.name}`);
 
-    log("agent", `session "${session.name}": ${isEphemeral ? "ephemeral" : "persistent"}`);
+    log("mind", `session "${session.name}": ${isEphemeral ? "ephemeral" : "persistent"}`);
 
+    // Compaction state machine:
+    // 1. onContextTokens sets compactionTriggered=true and sends warning
+    // 2. onTurnEnd (after warning turn): compactionTriggered -> compactOnNextTurnEnd
+    // 3. onTurnEnd (after mind's save turn): compactOnNextTurnEnd -> call compact()
     let compactBlocked = false;
+    let manualCompactPending = false;
+    let compactionTriggered = false;
+    let compactOnNextTurnEnd = false;
+    let compactionInProgress = false;
+
+    function resetCompactionState() {
+      compactionTriggered = false;
+      compactOnNextTurnEnd = false;
+      compactionInProgress = false;
+    }
+
     const preCompactExtension: ExtensionFactory = (pi) => {
       pi.on("session_before_compact", () => {
+        // Our programmatic compact() call (triggered by token threshold) — allow through
+        if (manualCompactPending) {
+          manualCompactPending = false;
+          log(
+            "mind",
+            `session "${session.name}": allowing manual compaction with custom instructions`,
+          );
+          return;
+        }
+
+        // Auto-compaction: two-pass block (first pass warns mind, second pass allows)
         if (!compactBlocked) {
           compactBlocked = true;
           log(
-            "agent",
-            `session "${session.name}": blocking compaction — asking agent to update daily log`,
+            "mind",
+            `session "${session.name}": blocking compaction — asking mind to update daily log`,
           );
           session.messageIds.push(undefined);
           session.agentSession?.prompt(compactionMessage, { streamingBehavior: "followUp" });
           return { cancel: true };
         }
         compactBlocked = false;
-        log("agent", `session "${session.name}": allowing compaction`);
+        log("mind", `session "${session.name}": allowing compaction`);
       });
     };
 
@@ -120,14 +145,20 @@ export function createAgent(options: {
 
     const sessionContextExtension = createSessionContextExtension({
       currentSession: session.name,
-      cwd: options.cwd,
+      mindDir: options.mindDir,
     });
+
+    const replyInstructionsExtension = createReplyInstructionsExtension(session.messageChannels);
 
     const resourceLoader = new DefaultResourceLoader({
       cwd: options.cwd,
       settingsManager,
       systemPrompt: options.systemPrompt,
-      extensionFactories: [preCompactExtension, sessionContextExtension],
+      extensionFactories: [
+        preCompactExtension,
+        sessionContextExtension,
+        replyInstructionsExtension,
+      ],
     });
     await resourceLoader.reload();
 
@@ -148,10 +179,64 @@ export function createAgent(options: {
       createEventHandler(session, {
         cwd: options.cwd,
         broadcast: (event) => broadcast(session, event),
+        onContextTokens: maxContextTokens
+          ? (tokens: number) => {
+              if (tokens >= maxContextTokens && !compactionTriggered && !compactionInProgress) {
+                if (!session.agentSession) {
+                  log(
+                    "mind",
+                    `session "${session.name}": compaction threshold hit but session not ready`,
+                  );
+                  return;
+                }
+                compactionTriggered = true;
+                log(
+                  "mind",
+                  `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — triggering compaction`,
+                );
+                // Send compaction warning; compaction will follow after the mind finishes its response turn
+                session.messageIds.push(undefined);
+                session.agentSession.prompt(compactionMessage, {
+                  streamingBehavior: "followUp",
+                });
+              }
+            }
+          : undefined,
+        onTurnEnd: maxContextTokens
+          ? () => {
+              try {
+                // Compact on the turn AFTER the warning was sent (so the mind gets a turn to save state)
+                if (compactOnNextTurnEnd) {
+                  compactOnNextTurnEnd = false;
+                  manualCompactPending = true;
+                  compactionInProgress = true;
+                  log("mind", `session "${session.name}": compacting with custom instructions`);
+                  Promise.resolve(session.agentSession?.compact(compactionInstructions))
+                    .catch((err) =>
+                      log("mind", `session "${session.name}": compact() failed:`, err),
+                    )
+                    .finally(() => {
+                      compactionInProgress = false;
+                    });
+                }
+                if (compactionTriggered) {
+                  compactionTriggered = false;
+                  compactOnNextTurnEnd = true;
+                }
+              } catch (err) {
+                log(
+                  "mind",
+                  `session "${session.name}": onTurnEnd error, resetting compaction state:`,
+                  err,
+                );
+                resetCompactionState();
+              }
+            }
+          : undefined,
       }),
     );
 
-    log("agent", `session "${session.name}": ready`);
+    log("mind", `session "${session.name}": ready`);
   }
 
   // --- Event broadcasting ---
@@ -163,7 +248,7 @@ export function createAgent(options: {
       try {
         listener(tagged);
       } catch (err) {
-        log("agent", "listener threw during broadcast:", err);
+        log("mind", "listener threw during broadcast:", err);
       }
     }
   }
@@ -171,7 +256,7 @@ export function createAgent(options: {
   function interruptSession(name: string) {
     const session = sessions.get(name);
     if (session?.currentMessageId !== undefined) {
-      log("agent", `session "${name}": interrupting current turn`);
+      log("mind", `session "${name}": interrupting current turn`);
       broadcast(session, { type: "done" });
       session.currentMessageId = undefined;
     }
@@ -190,12 +275,9 @@ export function createAgent(options: {
         };
         session.listeners.add(filteredListener);
 
-        // Track channel for auto-reply
+        // Track channel for reply instructions
         if (meta.channel) {
-          session.messageChannels.set(meta.messageId, {
-            channel: meta.channel,
-            autoReply: meta.autoReply,
-          });
+          session.messageChannels.set(meta.messageId, meta.channel);
         }
 
         // Track messageId (must be pushed before prompt)
@@ -208,18 +290,23 @@ export function createAgent(options: {
         // Fire-and-forget: await session ready then prompt
         (async () => {
           await session.ready;
-          if (session.agentSession!.isStreaming) {
+          if (!session.agentSession) {
+            log("mind", `session "${sessionName}": not initialized, dropping message`);
+            broadcast(session, { type: "done" });
+            return;
+          }
+          if (session.agentSession.isStreaming) {
             if (meta.interrupt) {
               interruptSession(sessionName);
-              session.agentSession!.prompt(text, { streamingBehavior: "steer", ...opts });
+              session.agentSession.prompt(text, { streamingBehavior: "steer", ...opts });
             } else {
-              session.agentSession!.prompt(text, { streamingBehavior: "followUp", ...opts });
+              session.agentSession.prompt(text, { streamingBehavior: "followUp", ...opts });
             }
           } else {
-            session.agentSession!.prompt(text, opts);
+            session.agentSession.prompt(text, opts);
           }
         })().catch((err) => {
-          log("agent", `session "${sessionName}": prompt failed:`, err);
+          log("mind", `session "${sessionName}": prompt failed:`, err);
           broadcast(session, { type: "done" });
         });
 

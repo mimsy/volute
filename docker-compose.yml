@@ -2,12 +2,15 @@ services:
   volute:
     build: .
     ports:
-      - "4200:4200"
+      - "1618:1618"
+    environment:
+      - TZ=${TZ:-UTC}
     volumes:
       - volute-data:/data
-      - volute-agents:/agents
+      - volute-minds:/minds
+      - ~/.claude:/data/.claude
     restart: unless-stopped
 
 volumes:
   volute-data:
-  volute-agents:
+  volute-minds:

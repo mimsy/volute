@@ -9,23 +9,23 @@ export type BatchConfig = {
 
 export type RoutingRule = {
   session?: string;
-  destination?: "agent" | "file";
+  destination?: "mind" | "file";
   path?: string; // file path for file destination
   channel?: string;
   sender?: string;
   isDM?: boolean; // match on isDM metadata
   participants?: number; // match on participant count (e.g. 2 = DM)
+  mode?: "all" | "mention"; // "mention" = only process if mind name appears in message
+  batch?: number | BatchConfig; // batch delivery config (used by daemon delivery manager)
 };
 
 export type SessionConfig = {
-  autoReply?: boolean;
   batch?: number | BatchConfig;
   interrupt?: boolean;
   instructions?: string;
 };
 
 export type ResolvedSessionConfig = {
-  autoReply: boolean;
   batch?: BatchConfig;
   interrupt: boolean;
   instructions?: string;
@@ -40,9 +40,10 @@ export type RoutingConfig = {
 
 export type ResolvedRoute =
   | {
-      destination: "agent";
+      destination: "mind";
       session: string;
       matched: boolean;
+      mode?: "all" | "mention";
     }
   | { destination: "file"; path: string; matched: boolean };
 
@@ -54,7 +55,10 @@ export function normalizeBatch(batch: number | BatchConfig): BatchConfig {
 
 export function loadRoutingConfig(configPath: string): RoutingConfig {
   try {
-    return JSON.parse(readFileSync(configPath, "utf-8"));
+    const parsed = JSON.parse(readFileSync(configPath, "utf-8"));
+    // Normalize flat arrays (e.g. [{channel, session}, ...]) to { rules: [...] }
+    if (Array.isArray(parsed)) return { rules: parsed };
+    return parsed;
   } catch (err: any) {
     if (err?.code !== "ENOENT") {
       log("routing", `failed to load ${configPath}:`, err);
@@ -74,7 +78,7 @@ function globMatch(pattern: string, value: string): boolean {
 }
 
 const GLOB_MATCH_KEYS = new Set(["channel", "sender"]);
-const NON_MATCH_KEYS = new Set(["session", "destination", "path"]);
+const NON_MATCH_KEYS = new Set(["session", "destination", "path", "mode", "batch"]);
 
 type MatchMeta = { channel?: string; sender?: string; isDM?: boolean; participantCount?: number };
 
@@ -118,7 +122,7 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
   const fallback = config.default ?? "main";
 
   if (!config.rules) {
-    return { destination: "agent", session: fallback, matched: false };
+    return { destination: "mind", session: fallback, matched: false };
   }
 
   for (const rule of config.rules) {
@@ -131,14 +135,15 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
         return { destination: "file", path: rule.path, matched: true };
       }
       return {
-        destination: "agent",
+        destination: "mind",
         session: sanitizeSessionName(expandTemplate(rule.session ?? fallback, meta)),
         matched: true,
+        mode: rule.mode,
       };
     }
   }
 
-  return { destination: "agent", session: fallback, matched: false };
+  return { destination: "mind", session: fallback, matched: false };
 }
 
 /**
@@ -149,18 +154,14 @@ export function resolveSessionConfig(
   config: RoutingConfig,
   sessionName: string,
 ): ResolvedSessionConfig {
-  const defaults: ResolvedSessionConfig = { autoReply: false, interrupt: true };
+  const defaults: ResolvedSessionConfig = { interrupt: true };
 
   if (!config.sessions) return defaults;
 
   for (const [pattern, sessionConfig] of Object.entries(config.sessions)) {
     if (globMatch(pattern, sessionName)) {
       const batch = sessionConfig.batch != null ? normalizeBatch(sessionConfig.batch) : undefined;
-      if (sessionConfig.autoReply && batch != null) {
-        log("routing", `autoReply is not supported with batch mode — autoReply will be ignored`);
-      }
       return {
-        autoReply: batch != null ? false : (sessionConfig.autoReply ?? false),
         batch,
         interrupt: sessionConfig.interrupt ?? true,
         instructions: sessionConfig.instructions,

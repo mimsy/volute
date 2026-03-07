@@ -1,0 +1,7 @@
+{
+  "id": "0011_rename_human_to_brain",
+  "prevId": "0010_delivery_queue",
+  "version": "6",
+  "dialect": "sqlite",
+  "tables": {}
+}

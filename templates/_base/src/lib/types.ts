@@ -2,6 +2,13 @@ export type VoluteContentPart =
   | { type: "text"; text: string }
   | { type: "image"; media_type: string; data: string };
 
+export type ParticipantProfile = {
+  username: string;
+  userType: "brain" | "mind";
+  displayName?: string | null;
+  description?: string | null;
+};
+
 export type ChannelMeta = {
   channel?: string;
   sender?: string;
@@ -12,14 +19,18 @@ export type ChannelMeta = {
   sessionName?: string;
   participants?: string[];
   participantCount?: number;
+  participantProfiles?: ParticipantProfile[];
   typing?: string[];
+  signature?: string;
+  signatureTimestamp?: string;
+  signerFingerprint?: string;
+  verified?: boolean;
 };
 
 /** ChannelMeta enriched by the router with dispatch info. */
 export type HandlerMeta = ChannelMeta & {
   messageId: string;
   interrupt?: boolean;
-  autoReply: boolean;
 };
 
 export type VoluteRequest = {

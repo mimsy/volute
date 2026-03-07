@@ -1,5 +1,6 @@
 export type LogEntry = {
   level: string;
+  cat?: string;
   msg: string;
   ts: string;
   data?: Record<string, unknown>;

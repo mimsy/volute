@@ -20,16 +20,19 @@
   },
   "overrides": [
     {
-      "includes": ["src/web/frontend/**"],
+      "includes": ["**/*.svelte"],
       "linter": {
         "rules": {
-          "a11y": {
-            "useButtonType": "off",
-            "useKeyWithClickEvents": "off",
-            "noStaticElementInteractions": "off"
-          },
-          "correctness": { "useExhaustiveDependencies": "warn" },
-          "suspicious": { "noAssignInExpressions": "off", "noArrayIndexKey": "off" }
+          "style": { "useConst": "off", "useImportType": "off" },
+          "correctness": { "noUnusedVariables": "off", "noUnusedImports": "off" }
+        }
+      }
+    },
+    {
+      "includes": ["src/web/ui/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": { "useConst": "off" }
         }
       }
     }

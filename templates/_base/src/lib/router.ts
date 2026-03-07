@@ -6,6 +6,7 @@ import {
   resolveRoute,
   resolveSessionConfig,
 } from "./routing.js";
+import { loadPrompts } from "./startup.js";
 import type { ChannelMeta, HandlerResolver, Listener, VoluteContentPart } from "./types.js";
 
 export type Router = {
@@ -14,6 +15,18 @@ export type Router = {
     meta: ChannelMeta,
     listener?: Listener,
   ): { messageId: string; unsubscribe: () => void };
+  /** Direct dispatch to a pre-routed session (daemon has already resolved the route). */
+  dispatch(
+    content: VoluteContentPart[],
+    session: string,
+    meta: ChannelMeta,
+    listener?: Listener,
+  ): { messageId: string; unsubscribe: () => void };
+  dispatchBatch(
+    batch: { channels: Record<string, any[]> },
+    session: string,
+    meta: ChannelMeta,
+  ): void;
   close(): void;
 };
 
@@ -115,43 +128,44 @@ function formatInviteNotification(
   messageText: string,
 ): string {
   const time = new Date().toLocaleString();
-  const lines = ["[Channel Invite]"];
-  if (meta.channel) lines.push(`Channel: ${meta.channel}`);
-  if (meta.sender) lines.push(`Sender: ${meta.sender}`);
-  if (meta.platform) lines.push(`Platform: ${meta.platform}`);
-  if (meta.serverName) lines.push(`Server: ${meta.serverName}`);
-  if (meta.channelName) lines.push(`Channel name: ${meta.channelName}`);
+  const prompts = loadPrompts();
+
+  const headerLines: string[] = [];
+  if (meta.channel) headerLines.push(`Channel: ${meta.channel}`);
+  if (meta.sender) headerLines.push(`Sender: ${meta.sender}`);
+  if (meta.platform) headerLines.push(`Platform: ${meta.platform}`);
+  if (meta.serverName) headerLines.push(`Server: ${meta.serverName}`);
+  if (meta.channelName) headerLines.push(`Channel name: ${meta.channelName}`);
   if (meta.participants && meta.participants.length > 0)
-    lines.push(`Participants: ${meta.participants.join(", ")}`);
-  lines.push("");
+    headerLines.push(`Participants: ${meta.participants.join(", ")}`);
+
   const preview = messageText.length > 200 ? `${messageText.slice(0, 200)}...` : messageText;
-  lines.push(`[${meta.sender ?? "unknown"} — ${time}]`);
-  lines.push(preview);
-  lines.push("");
-  lines.push(`Further messages will be saved to ${filePath}`);
-  lines.push("");
-  lines.push("To accept, add to .config/routes.json:");
   const suggestedSession = sanitizeChannelPath(meta.channel ?? "unknown");
+  const channel = meta.channel ?? "unknown";
   const otherCount = (meta.participantCount ?? 1) - 1;
-  if (otherCount > 1) {
-    lines.push(`  Rule: { "channel": "${meta.channel}", "session": "${suggestedSession}" }`);
-    lines.push(
-      `  Session config: "${suggestedSession}": { "batch": { "debounce": 20, "maxWait": 120 } }`,
-    );
-    lines.push(
-      `(batch recommended — ${otherCount} other participants may generate frequent messages)`,
-    );
-  } else {
-    lines.push(`  Rule: { "channel": "${meta.channel}", "session": "${suggestedSession}" }`);
-  }
-  lines.push(`To respond, use: volute send ${meta.channel ?? "unknown"} "your message"`);
-  lines.push(`To reject, delete ${filePath}`);
-  return lines.join("\n");
+  const batchRecommendation =
+    otherCount > 1
+      ? `  Session config: "${suggestedSession}": { "batch": { "debounce": 20, "maxWait": 120 } }\n(batch recommended — ${otherCount} other participants may generate frequent messages)\n`
+      : "";
+
+  const vars: Record<string, string> = {
+    headers: headerLines.join("\n"),
+    sender: meta.sender ?? "unknown",
+    time,
+    preview,
+    filePath,
+    channel,
+    suggestedSession,
+    batchRecommendation,
+  };
+  return prompts.channel_invite.replace(/\$\{(\w+)\}/g, (match, name) =>
+    name in vars ? vars[name] : match,
+  );
 }
 
 export function createRouter(options: {
   configPath?: string;
-  agentHandler: HandlerResolver;
+  mindHandler: HandlerResolver;
   fileHandler?: HandlerResolver;
 }): Router {
   const batchBuffers = new Map<string, BatchBuffer>();
@@ -209,15 +223,11 @@ export function createRouter(options: {
     content = prependInstructions(content, sessionConfig.instructions);
 
     const messageId = generateMessageId();
-    const handler = options.agentHandler(buffer.sessionName);
+    const handler = options.mindHandler(buffer.sessionName);
 
     // Batch flushes are fire-and-forget — no HTTP response is waiting, so listener is a noop
     try {
-      handler.handle(
-        content,
-        { sessionName: buffer.sessionName, messageId, autoReply: false },
-        () => {},
-      );
+      handler.handle(content, { sessionName: buffer.sessionName, messageId }, () => {});
     } catch (err) {
       log("router", `error flushing batch for session ${buffer.sessionName}:`, err);
       return;
@@ -247,6 +257,45 @@ export function createRouter(options: {
     if (config.debounce == null && config.maxWait == null) {
       flushBatch(key);
     }
+  }
+
+  /**
+   * Direct dispatch to a pre-routed session. The daemon delivery manager has already
+   * resolved the route and session — just format and send.
+   */
+  function dispatch(
+    content: VoluteContentPart[],
+    session: string,
+    meta: ChannelMeta,
+    listener?: Listener,
+  ): { messageId: string; unsubscribe: () => void } {
+    const text = content
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join(" ");
+    logMessage("in", text, meta.channel);
+
+    const messageId = generateMessageId();
+    const noop = () => {};
+    const safeListener = listener ?? noop;
+
+    // Apply formatting
+    const formatted = applyPrefix(content, { ...meta, sessionName: session });
+    const withTyping = appendTypingSuffix(formatted, meta.typing);
+
+    // Resolve session config for instructions
+    const config = options.configPath ? loadRoutingConfig(options.configPath) : {};
+    const sessionConfig = resolveSessionConfig(config, session);
+    const withInstructions = prependInstructions(withTyping, sessionConfig.instructions);
+
+    const handler = options.mindHandler(session);
+    const interrupt = (meta as any).interrupt ?? sessionConfig.interrupt;
+    const unsubscribe = handler.handle(
+      withInstructions,
+      { ...meta, sessionName: session, messageId, interrupt },
+      safeListener,
+    );
+    return { messageId, unsubscribe };
   }
 
   function route(
@@ -284,7 +333,7 @@ export function createRouter(options: {
       if (options.fileHandler) {
         const formatted = applyPrefix(content, meta);
         const fileHandler = options.fileHandler(filePath);
-        fileHandler.handle(formatted, { ...meta, messageId, autoReply: false }, noop);
+        fileHandler.handle(formatted, { ...meta, messageId }, noop);
       }
 
       // First message from this channel — send invite notification
@@ -292,14 +341,13 @@ export function createRouter(options: {
         pendingChannels.add(channelKey);
         const notification = formatInviteNotification(meta, filePath, text);
         const notifContent: VoluteContentPart[] = [{ type: "text", text: notification }];
-        const handler = options.agentHandler("main");
+        const handler = options.mindHandler("main");
         handler.handle(
           notifContent,
           {
             sessionName: "main",
             messageId: generateMessageId(),
             interrupt: true,
-            autoReply: false,
           },
           noop,
         );
@@ -309,16 +357,27 @@ export function createRouter(options: {
       return { messageId, unsubscribe: noop };
     }
 
+    // Mention-mode filtering: skip messages that don't mention this mind
+    if (resolved.destination === "mind" && resolved.mode === "mention") {
+      const mindName = process.env.VOLUTE_MIND;
+      if (mindName) {
+        const escaped = mindName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const pattern = new RegExp(`\\b${escaped}\\b`, "i");
+        if (!pattern.test(text)) {
+          queueMicrotask(() => safeListener({ type: "done", messageId }));
+          return { messageId, unsubscribe: noop };
+        }
+      } else {
+        log("router", "VOLUTE_MIND not set — mention filtering disabled");
+      }
+    }
+
     // File destination
     if (resolved.destination === "file") {
       if (options.fileHandler) {
         const formatted = applyPrefix(content, meta);
         const handler = options.fileHandler(resolved.path);
-        const unsubscribe = handler.handle(
-          formatted,
-          { ...meta, messageId, autoReply: false },
-          safeListener,
-        );
+        const unsubscribe = handler.handle(formatted, { ...meta, messageId }, safeListener);
         return { messageId, unsubscribe };
       }
       // No file handler configured — emit done and discard
@@ -327,7 +386,7 @@ export function createRouter(options: {
       return { messageId, unsubscribe: noop };
     }
 
-    // Agent destination
+    // Mind destination
     let sessionName = resolved.session;
     if (sessionName === "$new") {
       sessionName = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -374,11 +433,11 @@ export function createRouter(options: {
       return { messageId, unsubscribe: noop };
     }
 
-    // Direct dispatch to agent
+    // Direct dispatch to mind
     const formatted = applyPrefix(content, { ...meta, sessionName });
     const withTyping = appendTypingSuffix(formatted, meta.typing);
     const withInstructions = prependInstructions(withTyping, sessionConfig.instructions);
-    const handler = options.agentHandler(sessionName);
+    const handler = options.mindHandler(sessionName);
     const unsubscribe = handler.handle(
       withInstructions,
       {
@@ -386,11 +445,81 @@ export function createRouter(options: {
         sessionName,
         messageId,
         interrupt: sessionConfig.interrupt,
-        autoReply: sessionConfig.autoReply,
       },
       safeListener,
     );
     return { messageId, unsubscribe };
+  }
+
+  /**
+   * Handle a pre-batched payload from the daemon delivery manager.
+   * Formats messages grouped by channel into a single SDK message.
+   */
+  function dispatchBatch(
+    batch: { channels: Record<string, any[]> },
+    session: string,
+    _meta: ChannelMeta,
+  ): void {
+    const allMessages: { channel: string; payload: any }[] = [];
+    for (const [channel, messages] of Object.entries(batch.channels)) {
+      for (const msg of messages) {
+        allMessages.push({ channel, payload: msg });
+      }
+    }
+
+    if (allMessages.length === 0) return;
+
+    // Build channel summary
+    const channelCounts = new Map<string, number>();
+    for (const msg of allMessages) {
+      channelCounts.set(msg.channel, (channelCounts.get(msg.channel) ?? 0) + 1);
+    }
+    const channelLabels = [...channelCounts.entries()].map(([ch, n]) => `${n} from ${ch}`);
+    const summary = channelLabels.join(", ");
+
+    const header = `[Batch: ${allMessages.length} message${allMessages.length === 1 ? "" : "s"} — ${summary}]`;
+    const multiChannel = channelCounts.size > 1;
+
+    const body = allMessages
+      .map((m) => {
+        const sender = m.payload.sender ?? "unknown";
+        const text =
+          typeof m.payload.content === "string"
+            ? m.payload.content
+            : Array.isArray(m.payload.content)
+              ? (m.payload.content as { type: string; text?: string }[])
+                  .filter((p) => p.type === "text" && p.text)
+                  .map((p) => p.text)
+                  .join("\n")
+              : JSON.stringify(m.payload.content);
+        const time = new Date().toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+        });
+        const prefix = multiChannel
+          ? `[${sender} in ${m.channel} — ${time}]`
+          : `[${sender} — ${time}]`;
+        return `${prefix}\n${text}`;
+      })
+      .join("\n\n");
+
+    const content: VoluteContentPart[] = [{ type: "text", text: `${header}\n\n${body}` }];
+
+    // Resolve session config for instructions
+    const config = options.configPath ? loadRoutingConfig(options.configPath) : {};
+    const sessionConfig = resolveSessionConfig(config, session);
+    const withInstructions = prependInstructions(content, sessionConfig.instructions);
+
+    const messageId = generateMessageId();
+    const handler = options.mindHandler(session);
+    const noop = () => {};
+
+    try {
+      handler.handle(withInstructions, { sessionName: session, messageId }, noop);
+      log("router", `dispatched batch for session ${session}: ${allMessages.length} messages`);
+    } catch (err) {
+      log("router", `error dispatching batch for session ${session}:`, err);
+    }
   }
 
   function close() {
@@ -402,5 +531,5 @@ export function createRouter(options: {
     batchBuffers.clear();
   }
 
-  return { route, close };
+  return { route, dispatch, dispatchBatch, close };
 }

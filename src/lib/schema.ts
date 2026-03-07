@@ -6,7 +6,10 @@ export const users = sqliteTable("users", {
   username: text("username").unique().notNull(),
   password_hash: text("password_hash").notNull(),
   role: text("role").notNull().default("pending"),
-  user_type: text("user_type").notNull().default("human"),
+  user_type: text("user_type").notNull().default("brain"),
+  display_name: text("display_name"),
+  description: text("description"),
+  avatar: text("avatar"),
   created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
 });
 
@@ -14,33 +17,41 @@ export const conversations = sqliteTable(
   "conversations",
   {
     id: text("id").primaryKey(),
-    agent_name: text("agent_name").notNull(),
+    mind_name: text("mind_name"),
     channel: text("channel").notNull(),
+    type: text("type").notNull().default("dm"),
+    name: text("name"),
     user_id: integer("user_id").references(() => users.id),
     title: text("title"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
     updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
   },
   (table) => [
-    index("idx_conversations_agent_name").on(table.agent_name),
+    index("idx_conversations_mind_name").on(table.mind_name),
     index("idx_conversations_user_id").on(table.user_id),
     index("idx_conversations_updated_at").on(table.updated_at),
+    uniqueIndex("idx_conversations_name").on(table.name),
   ],
 );
 
-export const agentMessages = sqliteTable(
-  "agent_messages",
+export const mindHistory = sqliteTable(
+  "mind_history",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    agent: text("agent").notNull(),
-    channel: text("channel").notNull(),
+    mind: text("mind").notNull(),
+    channel: text("channel"),
+    session: text("session"),
     sender: text("sender"),
-    content: text("content").notNull(),
+    message_id: text("message_id"),
+    type: text("type").notNull(),
+    content: text("content"),
+    metadata: text("metadata"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
   },
   (table) => [
-    index("idx_agent_messages_agent").on(table.agent),
-    index("idx_agent_messages_channel").on(table.agent, table.channel),
+    index("idx_mind_history_mind").on(table.mind),
+    index("idx_mind_history_mind_channel").on(table.mind, table.channel),
+    index("idx_mind_history_mind_type").on(table.mind, table.type),
   ],
 );
 
@@ -69,6 +80,72 @@ export const sessions = sqliteTable("sessions", {
     .notNull(),
   createdAt: integer("created_at").notNull(),
 });
+
+export const systemPrompts = sqliteTable("system_prompts", {
+  key: text("key").primaryKey(),
+  content: text("content").notNull(),
+  updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
+export const sharedSkills = sqliteTable("shared_skills", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  author: text("author").notNull(),
+  version: integer("version").notNull().default(1),
+  created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
+export const deliveryQueue = sqliteTable(
+  "delivery_queue",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    mind: text("mind").notNull(),
+    session: text("session").notNull(),
+    channel: text("channel"),
+    sender: text("sender"),
+    status: text("status").notNull().default("pending"),
+    payload: text("payload").notNull(),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    index("idx_delivery_queue_mind_session").on(table.mind, table.session),
+    index("idx_delivery_queue_mind_status").on(table.mind, table.status),
+  ],
+);
+
+export const activity = sqliteTable(
+  "activity",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    type: text("type").notNull(),
+    mind: text("mind").notNull(),
+    summary: text("summary").notNull(),
+    metadata: text("metadata"),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    index("idx_activity_created_at").on(table.created_at),
+    index("idx_activity_mind").on(table.mind),
+  ],
+);
+
+export const conversationReads = sqliteTable(
+  "conversation_reads",
+  {
+    user_id: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    conversation_id: text("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    last_read_message_id: integer("last_read_message_id").notNull().default(0),
+  },
+  (table) => [
+    uniqueIndex("idx_conversation_reads_unique").on(table.user_id, table.conversation_id),
+  ],
+);
 
 export const messages = sqliteTable(
   "messages",

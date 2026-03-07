@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, it } from "node:test";
+import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import {
   applyInitFiles,
   composeTemplate,
@@ -29,21 +29,21 @@ function setupGitRepo(dir: string) {
   git(["init", "-b", "main"], dir);
   git(["config", "user.email", "test@test.com"], dir);
   git(["config", "user.name", "Test"], dir);
-  writeFileSync(join(dir, "README.md"), "# Test Agent\n");
+  writeFileSync(join(dir, "README.md"), "# Test Mind\n");
   git(["add", "-A"], dir);
   git(["commit", "-m", "initial commit"], dir);
 }
 
 describe("template helpers", () => {
-  it("findTemplatesDir finds agent-sdk template", () => {
-    const dir = findTemplatesDir("agent-sdk");
-    assert.ok(dir.includes("templates/agent-sdk"));
+  it("findTemplatesDir finds claude template", () => {
+    const dir = findTemplatesDir("claude");
+    assert.ok(dir.includes("templates/claude"));
     assert.ok(existsSync(dir));
   });
 
   it("findTemplatesDir exits for unknown template", () => {
     // We can't easily test process.exit, so just verify the known template works
-    const dir = findTemplatesDir("agent-sdk");
+    const dir = findTemplatesDir("claude");
     assert.ok(existsSync(dir));
   });
 
@@ -52,9 +52,9 @@ describe("template helpers", () => {
     if (existsSync(dest)) rmSync(dest, { recursive: true });
 
     const templatesRoot = findTemplatesRoot();
-    const { composedDir, manifest } = composeTemplate(templatesRoot, "agent-sdk");
+    const { composedDir, manifest } = composeTemplate(templatesRoot, "claude");
     try {
-      copyTemplateToDir(composedDir, dest, "test-agent", manifest);
+      copyTemplateToDir(composedDir, dest, "test-mind", manifest);
     } finally {
       rmSync(composedDir, { recursive: true, force: true });
     }
@@ -65,7 +65,7 @@ describe("template helpers", () => {
 
     // Name substitution should have happened
     const pkg = readFileSync(join(dest, "package.json"), "utf-8");
-    assert.ok(pkg.includes("test-agent"));
+    assert.ok(pkg.includes("test-mind"));
     assert.ok(!pkg.includes("{{name}}"));
 
     rmSync(dest, { recursive: true });
@@ -102,16 +102,16 @@ describe("template helpers", () => {
     if (existsSync(dest)) rmSync(dest, { recursive: true });
 
     const templatesRoot = findTemplatesRoot();
-    const { composedDir, manifest } = composeTemplate(templatesRoot, "agent-sdk");
+    const { composedDir, manifest } = composeTemplate(templatesRoot, "claude");
     try {
-      copyTemplateToDir(composedDir, dest, "test-agent", manifest);
+      copyTemplateToDir(composedDir, dest, "test-mind", manifest);
     } finally {
       rmSync(composedDir, { recursive: true, force: true });
     }
 
     // .init/SOUL.md should have the name substituted
     const soul = readFileSync(join(dest, ".init", "SOUL.md"), "utf-8");
-    assert.ok(soul.includes("test-agent"));
+    assert.ok(soul.includes("test-mind"));
     assert.ok(!soul.includes("{{name}}"));
 
     // home/ should NOT have SOUL.md (it's in .init/)
@@ -140,19 +140,32 @@ describe("template helpers", () => {
 
 describe("upgrade git operations", () => {
   const repoDir = join(tmpDir, "upgrade-repo");
+  const baseRepoDir = join(tmpDir, "upgrade-repo-base");
+
+  before(() => {
+    if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true });
+    setupGitRepo(baseRepoDir);
+  });
 
   beforeEach(() => {
-    if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true });
-    setupGitRepo(repoDir);
+    // Clean up previous test state but preserve base repo
+    if (existsSync(repoDir)) rmSync(repoDir, { recursive: true });
+    for (const name of ["shared-history-repo", "real-conflict-repo"]) {
+      const d = join(tmpDir, name);
+      if (existsSync(d)) rmSync(d, { recursive: true });
+    }
+    cpSync(baseRepoDir, repoDir, { recursive: true });
   });
 
   afterEach(() => {
-    // Clean up worktrees before removing the directory
     try {
       git(["worktree", "prune"], repoDir);
     } catch {
       // ignore
     }
+  });
+
+  after(() => {
     if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true });
   });
 
@@ -287,7 +300,7 @@ describe("upgrade git operations", () => {
     git(["worktree", "remove", worktreeDir], repoDir);
   });
 
-  it("first upgrade is conflict-free when template branch created at agent creation", () => {
+  it("first upgrade is conflict-free when template branch created at mind creation", () => {
     // Simulate new creation flow: template branch created first, main branched from it
     const dir = join(tmpDir, "shared-history-repo");
     mkdirSync(dir, { recursive: true });
@@ -312,10 +325,10 @@ describe("upgrade git operations", () => {
     git(["add", "-A"], dir);
     git(["commit", "-m", "initial commit"], dir);
 
-    // Agent modifies identity files (normal agent activity)
+    // Mind modifies identity files (normal mind activity)
     writeFileSync(join(dir, "home", "MEMORY.md"), "updated memories");
     git(["add", "-A"], dir);
-    git(["commit", "-m", "agent changes"], dir);
+    git(["commit", "-m", "mind changes"], dir);
 
     // First upgrade: update template branch
     git(["checkout", "volute/template"], dir);
@@ -339,8 +352,8 @@ describe("upgrade git operations", () => {
     git(["worktree", "remove", worktreeDir], dir);
   });
 
-  it("first upgrade detects real conflicts when agent modified template files", () => {
-    // Same shared-history setup, but agent modifies a file that template also changes
+  it("first upgrade detects real conflicts when mind modified template files", () => {
+    // Same shared-history setup, but mind modifies a file that template also changes
     const dir = join(tmpDir, "real-conflict-repo");
     mkdirSync(dir, { recursive: true });
     git(["init"], dir);
@@ -358,10 +371,10 @@ describe("upgrade git operations", () => {
     git(["checkout", "-b", "main"], dir);
     git(["commit", "--allow-empty", "-m", "initial commit"], dir);
 
-    // Agent customizes a template file
-    writeFileSync(join(dir, "src", "server.ts"), "server v1 - agent customized");
+    // Mind customizes a template file
+    writeFileSync(join(dir, "src", "server.ts"), "server v1 - mind customized");
     git(["add", "-A"], dir);
-    git(["commit", "-m", "agent customization"], dir);
+    git(["commit", "-m", "mind customization"], dir);
 
     // Template update changes the same file
     git(["checkout", "volute/template"], dir);
@@ -387,19 +400,19 @@ describe("upgrade git operations", () => {
     git(["worktree", "remove", "--force", worktreeDir], dir);
   });
 
-  it("template merge preserves agent home/ files when .init/ approach is used", () => {
-    // Simulate an agent created with the .init/ approach:
+  it("template merge preserves mind home/ files when .init/ approach is used", () => {
+    // Simulate a mind created with the .init/ approach:
     // main branch has SOUL.md/MEMORY.md in home/ (from applyInitFiles at creation)
     // plus upgrade-safe files like VOLUTE.md
     mkdirSync(join(repoDir, "src"), { recursive: true });
     mkdirSync(join(repoDir, "home", "memory"), { recursive: true });
     writeFileSync(join(repoDir, "src", "server.ts"), "server v1");
-    writeFileSync(join(repoDir, "home", "SOUL.md"), "I am a unique agent");
+    writeFileSync(join(repoDir, "home", "SOUL.md"), "I am a unique mind");
     writeFileSync(join(repoDir, "home", "MEMORY.md"), "my memories");
     writeFileSync(join(repoDir, "home", "VOLUTE.md"), "volute info v1");
     writeFileSync(join(repoDir, "home", "memory", "2025-01-01.md"), "day log");
     git(["add", "-A"], repoDir);
-    git(["commit", "-m", "agent files"], repoDir);
+    git(["commit", "-m", "mind files"], repoDir);
 
     // Create orphan template branch with ONLY upgrade-safe files
     // (no .init/, no SOUL.md/MEMORY.md — just what the template home/ has)
@@ -430,11 +443,8 @@ describe("upgrade git operations", () => {
       git(["commit", "-m", "merge template"], worktreeDir);
     }
 
-    // Agent identity files should be preserved (they were never in the template branch)
-    assert.equal(
-      readFileSync(join(worktreeDir, "home", "SOUL.md"), "utf-8"),
-      "I am a unique agent",
-    );
+    // Mind identity files should be preserved (they were never in the template branch)
+    assert.equal(readFileSync(join(worktreeDir, "home", "SOUL.md"), "utf-8"), "I am a unique mind");
     assert.equal(readFileSync(join(worktreeDir, "home", "MEMORY.md"), "utf-8"), "my memories");
     assert.equal(
       readFileSync(join(worktreeDir, "home", "memory", "2025-01-01.md"), "utf-8"),
@@ -444,5 +454,108 @@ describe("upgrade git operations", () => {
     assert.equal(readFileSync(join(worktreeDir, "home", "VOLUTE.md"), "utf-8"), "volute info v2");
 
     git(["worktree", "remove", "--force", worktreeDir], repoDir);
+  });
+
+  it("continue succeeds when mind already committed the merge", () => {
+    // Create a file on main
+    writeFileSync(join(repoDir, "conflict.txt"), "main version");
+    git(["add", "-A"], repoDir);
+    git(["commit", "-m", "add conflict file"], repoDir);
+
+    // Create orphan template branch with conflicting file
+    git(["checkout", "--orphan", "volute/template"], repoDir);
+    git(["rm", "-rf", "--cached", "."], repoDir);
+    writeFileSync(join(repoDir, "conflict.txt"), "template version");
+    git(["add", "-A"], repoDir);
+    git(["commit", "-m", "template update"], repoDir);
+    git(["checkout", "main"], repoDir);
+
+    // Create worktree and start merge (will conflict)
+    const worktreeDir = join(repoDir, ".variants", "upgrade");
+    git(["worktree", "add", "-b", "upgrade", worktreeDir], repoDir);
+    try {
+      git(
+        ["merge", "volute/template", "--allow-unrelated-histories", "-m", "merge template"],
+        worktreeDir,
+      );
+    } catch {
+      // Expected conflict
+    }
+
+    // Mind resolves conflict and commits (simulating what a mind would do)
+    writeFileSync(join(worktreeDir, "conflict.txt"), "resolved version");
+    git(["add", "-A"], worktreeDir);
+    git(["commit", "-m", "resolve merge conflicts"], worktreeDir);
+
+    // Now simulate --continue: git add -A && git commit should fail with "nothing to commit"
+    // The API code checks both err.message and err.stderr for "nothing to commit"
+    git(["add", "-A"], worktreeDir);
+    let commitFailed = false;
+    try {
+      git(["commit", "-m", "merge template update"], worktreeDir);
+    } catch (e) {
+      commitFailed = true;
+      // Verify the error contains "nothing to commit" somewhere
+      // (execFileSync puts it in stdout, the async exec() puts it in stderr)
+      const err = e as { message: string; stdout?: string; stderr?: string };
+      const allOutput = `${err.message} ${err.stdout ?? ""} ${err.stderr ?? ""}`;
+      assert.ok(
+        allOutput.includes("nothing to commit"),
+        `Expected 'nothing to commit' somewhere in error, got: ${allOutput}`,
+      );
+    }
+
+    assert.ok(commitFailed, "Expected commit to fail when nothing to commit");
+
+    // The worktree should still be valid and have the resolved content
+    assert.equal(readFileSync(join(worktreeDir, "conflict.txt"), "utf-8"), "resolved version");
+
+    git(["worktree", "remove", "--force", worktreeDir], repoDir);
+  });
+
+  it("abort cleans up worktree and branch", () => {
+    // Create a file on main
+    writeFileSync(join(repoDir, "conflict.txt"), "main version");
+    git(["add", "-A"], repoDir);
+    git(["commit", "-m", "add conflict file"], repoDir);
+
+    // Create orphan template branch with conflicting file
+    git(["checkout", "--orphan", "volute/template"], repoDir);
+    git(["rm", "-rf", "--cached", "."], repoDir);
+    writeFileSync(join(repoDir, "conflict.txt"), "template version");
+    git(["add", "-A"], repoDir);
+    git(["commit", "-m", "template update"], repoDir);
+    git(["checkout", "main"], repoDir);
+
+    // Create worktree and start merge (will conflict)
+    const worktreeDir = join(repoDir, ".variants", "upgrade");
+    git(["worktree", "add", "-b", "upgrade", worktreeDir], repoDir);
+    try {
+      git(
+        ["merge", "volute/template", "--allow-unrelated-histories", "-m", "merge template"],
+        worktreeDir,
+      );
+    } catch {
+      // Expected conflict
+    }
+
+    // Verify mid-merge state: MERGE_HEAD exists in worktree git dir
+    const gitFileContent = readFileSync(join(worktreeDir, ".git"), "utf-8").trim();
+    const gitDir = gitFileContent.replace("gitdir: ", "");
+    assert.ok(existsSync(join(gitDir, "MERGE_HEAD")), "Expected MERGE_HEAD to exist mid-merge");
+
+    // Abort merge
+    git(["merge", "--abort"], worktreeDir);
+
+    // Remove worktree and branch (simulating what --abort API does)
+    git(["worktree", "remove", "--force", worktreeDir], repoDir);
+    git(["branch", "-D", "upgrade"], repoDir);
+
+    // Verify cleanup
+    assert.ok(!existsSync(worktreeDir), "Worktree directory should be removed");
+
+    // Verify branch is gone
+    const branches = git(["branch", "--list", "upgrade"], repoDir).trim();
+    assert.equal(branches, "", "Upgrade branch should be deleted");
   });
 });

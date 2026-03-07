@@ -89,16 +89,20 @@ async function install(port?: number, host?: string): Promise<void> {
     console.log("Service installed and loaded. Volute daemon will start on login.");
   } else if (platform === "linux") {
     if (existsSync(SYSTEM_SERVICE_PATH)) {
-      console.error("A system-level Volute service is already installed (via `volute setup`).");
+      console.error(
+        "A system-level Volute service is already installed (via `volute service install --system`).",
+      );
       console.error("Use `systemctl status volute` to check its status.");
-      console.error("To remove it first: sudo volute setup uninstall");
+      console.error("To remove it first: sudo volute service uninstall --system");
       process.exit(1);
     }
     if (process.getuid?.() === 0) {
       console.error(
         "Error: `volute service install` uses systemd user services, which don't work as root.",
       );
-      console.error("Use `volute setup` instead to install a system-level service.");
+      console.error(
+        "Use `volute service install --system` instead to install a system-level service.",
+      );
       process.exit(1);
     }
     const path = USER_SYSTEMD_UNIT;
@@ -163,7 +167,7 @@ async function status(): Promise<void> {
       console.log("Service installed but not currently loaded.");
     }
   } else if (platform === "linux") {
-    // Check for system-level service first (installed via `volute setup`)
+    // Check for system-level service first (installed via `volute service install --system`)
     if (existsSync(SYSTEM_SERVICE_PATH)) {
       try {
         const { stdout } = await execFileAsync("systemctl", ["status", "volute", "--no-pager"]);
@@ -209,25 +213,39 @@ export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
     port: { type: "number" },
     host: { type: "string" },
+    system: { type: "boolean" },
+    force: { type: "boolean" },
   });
 
   const subcommand = positional[0];
 
   switch (subcommand) {
     case "install":
-      await install(flags.port, flags.host);
+      if (flags.system) {
+        const setup = await import("./setup.js");
+        setup.install(flags.port, flags.host);
+      } else {
+        await install(flags.port, flags.host);
+      }
       break;
     case "uninstall":
-      await uninstall();
+      if (flags.system) {
+        const setup = await import("./setup.js");
+        setup.uninstall(!!flags.force);
+      } else {
+        await uninstall();
+      }
       break;
     case "status":
       await status();
       break;
     default:
       console.log(`Usage:
-  volute service install [--port N] [--host H]   Install as system service
-  volute service uninstall                        Remove system service
-  volute service status                           Check service status`);
+  volute service install [--port N] [--host H]          Install as user-level service
+  volute service install --system [--port N] [--host H] Install system service with user isolation
+  volute service uninstall                               Remove user-level service
+  volute service uninstall --system [--force]            Remove system service (--force removes data + users)
+  volute service status                                  Check service status`);
       if (subcommand) {
         console.error(`\nUnknown subcommand: ${subcommand}`);
         process.exit(1);

@@ -1,9 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { writeChannelEntry } from "../../connectors/sdk.js";
-import { type ChannelConversation, type ChannelUser, resolveChannelId } from "../channels.js";
+import {
+  type ChannelConversation,
+  type ChannelUser,
+  type ImageAttachment,
+  resolveChannelId,
+} from "../channels.js";
 import { voluteHome } from "../registry.js";
-import { slugify } from "../slugify.js";
+import { buildVoluteSlug } from "../slugify.js";
 
 function getDaemonConfig(): { url: string; token?: string } {
   const configPath = resolve(voluteHome(), "daemon.json");
@@ -30,8 +34,8 @@ export async function read(
   channelSlug: string,
   limit: number,
 ): Promise<string> {
-  const agentName = env.VOLUTE_AGENT;
-  if (!agentName) throw new Error("VOLUTE_AGENT not set");
+  const mindName = env.VOLUTE_MIND;
+  if (!mindName) throw new Error("VOLUTE_MIND not set");
   const conversationId = resolveChannelId(env, channelSlug);
 
   const { url, token } = getDaemonConfig();
@@ -39,7 +43,7 @@ export async function read(
   if (token) headers.Authorization = `Bearer ${token}`;
 
   const res = await fetch(
-    `${url}/api/agents/${encodeURIComponent(agentName)}/conversations/${encodeURIComponent(conversationId)}/messages`,
+    `${url}/api/minds/${encodeURIComponent(mindName)}/conversations/${encodeURIComponent(conversationId)}/messages`,
     { headers },
   );
   if (!res.ok) {
@@ -68,9 +72,10 @@ export async function send(
   env: Record<string, string>,
   channelSlug: string,
   message: string,
+  images?: ImageAttachment[],
 ): Promise<void> {
-  const agentName = env.VOLUTE_AGENT;
-  if (!agentName) throw new Error("VOLUTE_AGENT not set");
+  const mindName = env.VOLUTE_MIND;
+  if (!mindName) throw new Error("VOLUTE_MIND not set");
   const conversationId = resolveChannelId(env, channelSlug);
 
   const { url, token } = getDaemonConfig();
@@ -80,10 +85,15 @@ export async function send(
   };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`${url}/api/agents/${encodeURIComponent(agentName)}/chat`, {
+  const res = await fetch(`${url}/api/minds/${encodeURIComponent(mindName)}/chat`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ message, conversationId, sender: env.VOLUTE_SENDER ?? agentName }),
+    body: JSON.stringify({
+      message,
+      conversationId,
+      sender: env.VOLUTE_SENDER ?? mindName,
+      images,
+    }),
   });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -94,14 +104,14 @@ export async function send(
 export async function listConversations(
   env: Record<string, string>,
 ): Promise<ChannelConversation[]> {
-  const agentName = env.VOLUTE_AGENT;
-  if (!agentName) throw new Error("VOLUTE_AGENT not set");
+  const mindName = env.VOLUTE_MIND;
+  if (!mindName) throw new Error("VOLUTE_MIND not set");
 
   const { url, token } = getDaemonConfig();
   const headers: Record<string, string> = { Origin: url };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`${url}/api/agents/${encodeURIComponent(agentName)}/conversations`, {
+  const res = await fetch(`${url}/api/minds/${encodeURIComponent(mindName)}/conversations`, {
     headers,
   });
   if (!res.ok) {
@@ -110,32 +120,44 @@ export async function listConversations(
   const convs = (await res.json()) as {
     id: string;
     title: string | null;
+    type?: string;
+    name?: string | null;
     participants?: { userId: number }[];
   }[];
 
-  // Fetch participant counts
+  // Fetch participants for each conversation
   const results: ChannelConversation[] = [];
   for (const conv of convs) {
-    let participantCount: number | undefined;
+    let participants: { username: string }[] = [];
     try {
       const pRes = await fetch(
-        `${url}/api/agents/${encodeURIComponent(agentName)}/conversations/${encodeURIComponent(conv.id)}/participants`,
+        `${url}/api/minds/${encodeURIComponent(mindName)}/conversations/${encodeURIComponent(conv.id)}/participants`,
         { headers },
       );
       if (pRes.ok) {
-        const participants = (await pRes.json()) as unknown[];
-        participantCount = participants.length;
+        participants = (await pRes.json()) as { username: string }[];
+      } else {
+        console.error(`[volute] failed to fetch participants for ${conv.id}: HTTP ${pRes.status}`);
       }
     } catch (err) {
       console.error(`[volute] failed to fetch participants for ${conv.id}:`, err);
     }
-    const slug = conv.title ? `volute:${slugify(conv.title)}` : `volute:${conv.id}`;
+    const slug = buildVoluteSlug({
+      participants,
+      mindUsername: mindName,
+      convTitle: conv.title,
+      conversationId: conv.id,
+      convType: conv.type as "dm" | "group" | "channel" | undefined,
+      convName: conv.name,
+    });
+    const convType =
+      conv.type === "channel" ? "channel" : participants.length === 2 ? "dm" : "group";
     results.push({
       id: slug,
       platformId: conv.id,
-      name: conv.title ?? "(untitled)",
-      type: participantCount === 2 ? "dm" : "group",
-      participantCount,
+      name: conv.type === "channel" ? `#${conv.name}` : (conv.title ?? "(untitled)"),
+      type: convType,
+      participantCount: participants.length,
     });
   }
   return results;
@@ -167,8 +189,8 @@ export async function createConversation(
   participants: string[],
   name?: string,
 ): Promise<string> {
-  const agentName = env.VOLUTE_AGENT;
-  if (!agentName) throw new Error("VOLUTE_AGENT not set");
+  const mindName = env.VOLUTE_MIND;
+  if (!mindName) throw new Error("VOLUTE_MIND not set");
 
   const { url, token } = getDaemonConfig();
   const headers: Record<string, string> = {
@@ -177,7 +199,7 @@ export async function createConversation(
   };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`${url}/api/agents/${encodeURIComponent(agentName)}/conversations`, {
+  const res = await fetch(`${url}/api/minds/${encodeURIComponent(mindName)}/conversations`, {
     method: "POST",
     headers,
     body: JSON.stringify({ participantNames: participants, title: name }),
@@ -187,16 +209,7 @@ export async function createConversation(
     throw new Error(data.error ?? `Failed to create conversation: ${res.status}`);
   }
   const conv = (await res.json()) as { id: string };
-  const slug = name ? `volute:${slugify(name)}` : `volute:${conv.id}`;
-
-  if (agentName) {
-    writeChannelEntry(agentName, slug, {
-      platformId: conv.id,
-      platform: "volute",
-      name: name ?? participants.join(", "),
-      type: participants.length <= 1 ? "dm" : "group",
-    });
-  }
-
-  return slug;
+  // Return the conversation ID directly — resolveChannelId extracts it from the slug.
+  // Pretty @username slugs are generated dynamically by listConversations.
+  return `volute:${conv.id}`;
 }

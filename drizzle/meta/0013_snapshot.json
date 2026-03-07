@@ -1,0 +1,7 @@
+{
+  "id": "0013_user_profiles",
+  "prevId": "0012_activity",
+  "version": "6",
+  "dialect": "sqlite",
+  "tables": {}
+}

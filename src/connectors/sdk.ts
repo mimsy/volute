@@ -10,15 +10,15 @@ export type ContentPart =
   | { type: "image"; media_type: string; data: string };
 
 export interface ConnectorEnv {
-  agentPort: string;
-  agentName: string;
-  agentDir: string | undefined;
+  mindPort: string;
+  mindName: string;
+  mindDir: string | undefined;
   baseUrl: string;
   daemonUrl: string | undefined;
   daemonToken: string | undefined;
 }
 
-export interface AgentPayload {
+export interface MindPayload {
   content: ContentPart[];
   channel: string;
   sender: string;
@@ -30,35 +30,35 @@ export interface AgentPayload {
 }
 
 export function loadEnv(): ConnectorEnv {
-  const agentPort = process.env.VOLUTE_AGENT_PORT;
-  const agentName = process.env.VOLUTE_AGENT_NAME;
+  const mindPort = process.env.VOLUTE_MIND_PORT;
+  const mindName = process.env.VOLUTE_MIND_NAME;
 
-  if (!agentPort || !agentName) {
-    console.error("Missing required env vars: VOLUTE_AGENT_PORT, VOLUTE_AGENT_NAME");
+  if (!mindPort || !mindName) {
+    console.error("Missing required env vars: VOLUTE_MIND_PORT, VOLUTE_MIND_NAME");
     process.exit(1);
   }
 
-  const agentDir = process.env.VOLUTE_AGENT_DIR;
+  const mindDir = process.env.VOLUTE_MIND_DIR;
   const daemonUrl = process.env.VOLUTE_DAEMON_URL;
   const daemonToken = process.env.VOLUTE_DAEMON_TOKEN;
 
   const baseUrl = daemonUrl
-    ? `${daemonUrl}/api/agents/${encodeURIComponent(agentName)}`
-    : `http://127.0.0.1:${agentPort}`;
+    ? `${daemonUrl}/api/minds/${encodeURIComponent(mindName)}`
+    : `http://127.0.0.1:${mindPort}`;
 
-  return { agentPort, agentName, agentDir, baseUrl, daemonUrl, daemonToken };
+  return { mindPort, mindName, mindDir, baseUrl, daemonUrl, daemonToken };
 }
 
 export function loadFollowedChannels(env: ConnectorEnv, platform: string): string[] {
-  if (!env.agentDir) return [];
-  const configPath = resolve(env.agentDir, "home/.config/volute.json");
+  if (!env.mindDir) return [];
+  const configPath = resolve(env.mindDir, "home/.config/volute.json");
   if (!existsSync(configPath)) return [];
   try {
     const config = JSON.parse(readFileSync(configPath, "utf-8"));
     const platformConfig = config[platform];
     return platformConfig?.channels ?? platformConfig?.chats ?? [];
   } catch (err) {
-    console.warn(`Failed to load agent config: ${err}`);
+    console.warn(`Failed to load mind config: ${err}`);
     return [];
   }
 }
@@ -113,9 +113,9 @@ export function reportTyping(
   });
 }
 
-export async function sendToAgent(
+export async function sendToMind(
   env: ConnectorEnv,
-  payload: AgentPayload,
+  payload: MindPayload,
 ): Promise<{ ok: boolean; error?: string }> {
   const url = `${env.baseUrl}/message`;
 
@@ -128,8 +128,8 @@ export async function sendToAgent(
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      console.error(`Agent returned ${res.status}: ${body}`);
-      return { ok: false, error: `Agent returned ${res.status}` };
+      console.error(`Mind returned ${res.status}: ${body}`);
+      return { ok: false, error: `Mind returned ${res.status}` };
     }
 
     return { ok: true };
@@ -138,7 +138,7 @@ export async function sendToAgent(
     const isConnRefused =
       err instanceof TypeError &&
       (err.cause as NodeJS.ErrnoException | undefined)?.code === "ECONNREFUSED";
-    return { ok: false, error: isConnRefused ? "Agent is not running" : "Failed to reach agent" };
+    return { ok: false, error: isConnRefused ? "Mind is not running" : "Failed to reach mind" };
   }
 }
 
@@ -185,8 +185,8 @@ export function buildChannelSlug(platform: string, meta: ChannelSlugMeta): strin
   return `${platform}:unknown`;
 }
 
-export function readChannelMap(agentName: string): Record<string, ChannelEntry> {
-  const filePath = join(stateDir(agentName), "channels.json");
+export function readChannelMap(mindName: string): Record<string, ChannelEntry> {
+  const filePath = join(stateDir(mindName), "channels.json");
   if (!existsSync(filePath)) return {};
   try {
     return JSON.parse(readFileSync(filePath, "utf-8"));
@@ -196,17 +196,17 @@ export function readChannelMap(agentName: string): Record<string, ChannelEntry> 
   }
 }
 
-export function writeChannelEntry(agentName: string, slug: string, entry: ChannelEntry): void {
-  const dir = stateDir(agentName);
+export function writeChannelEntry(mindName: string, slug: string, entry: ChannelEntry): void {
+  const dir = stateDir(mindName);
   mkdirSync(dir, { recursive: true });
   const filePath = join(dir, "channels.json");
-  const map = readChannelMap(agentName);
+  const map = readChannelMap(mindName);
   map[slug] = entry;
   writeFileSync(filePath, JSON.stringify(map, null, 2) + "\n");
 }
 
-export function resolveChannelId(agentName: string, slug: string): string {
-  const map = readChannelMap(agentName);
+export function resolveChannelId(mindName: string, slug: string): string {
+  const map = readChannelMap(mindName);
   if (map[slug]) {
     return map[slug].platformId;
   }

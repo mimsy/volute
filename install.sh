@@ -131,6 +131,13 @@ main() {
   install_node
   install_git
 
+  # Set system-wide git identity for daemon commits if not already configured
+  if ! git config --system user.name >/dev/null 2>&1; then
+    git config --system user.name "Volute" && \
+    git config --system user.email "volute@localhost" || \
+      echo "Warning: failed to set system git config — git commits may fail."
+  fi
+
   # Verify system npm is available after Node.js install
   if [ ! -x "/usr/bin/npm" ]; then
     echo "Error: npm not found at /usr/bin/npm after Node.js installation."
@@ -143,8 +150,8 @@ main() {
   /usr/bin/npm install -g volute
 
   # Run setup (writes /etc/profile.d/volute.sh for CLI env vars)
-  echo "Running volute setup..."
-  /usr/bin/volute setup --host 0.0.0.0
+  echo "Running volute service install --system..."
+  /usr/bin/volute service install --system --host 0.0.0.0
 
   # Source the profile so env vars are available in this session
   # shellcheck disable=SC1091
@@ -155,8 +162,8 @@ main() {
   echo "  Run 'source /etc/profile.d/volute.sh' or start a new shell to use volute CLI commands."
   echo ""
   echo "  systemctl status volute      Check daemon status"
-  echo "  volute agent create <name>   Create a new agent"
-  echo "  volute agent start <name>    Start an agent"
+  echo "  volute mind create <name>    Create a new mind"
+  echo "  volute mind start <name>     Start a mind"
 }
 
 main "$@"

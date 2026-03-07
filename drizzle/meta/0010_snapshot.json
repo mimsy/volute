@@ -1,0 +1,7 @@
+{
+  "id": "0010_delivery_queue",
+  "prevId": "0009_shared_skills",
+  "version": "6",
+  "dialect": "sqlite",
+  "tables": {}
+}

@@ -2,14 +2,14 @@ pre-commit:
   parallel: true
   commands:
     lint-format:
-      glob: "*.{ts,tsx,json}"
+      glob: "*.{ts,tsx,svelte,json}"
       run: npx biome check --write {staged_files} && git add {staged_files}
     typecheck:
       run: npx tsc --noEmit
     typecheck-templates:
       run: npx tsc --noEmit -p templates/_base/tsconfig.json
     typecheck-frontend:
-      run: npx tsc --noEmit -p src/web/frontend/tsconfig.json
+      run: npx svelte-check --tsconfig src/web/ui/tsconfig.json
 
 pre-push:
   commands:

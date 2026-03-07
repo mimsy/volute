@@ -1,0 +1,7 @@
+{
+  "id": "0007_system_prompts",
+  "prevId": "0006_mind_history",
+  "version": "6",
+  "dialect": "sqlite",
+  "tables": {}
+}

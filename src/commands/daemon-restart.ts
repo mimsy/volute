@@ -19,8 +19,8 @@ export async function run(args: string[]) {
       console.error(`Failed to restart service: ${err instanceof Error ? err.message : err}`);
       process.exit(1);
     }
-    const { hostname, port } = readDaemonConfig();
-    if (await pollHealth(hostname, port)) {
+    const config = readDaemonConfig();
+    if (await pollHealth("127.0.0.1", config.internalPort ?? config.port)) {
       console.log("Daemon restarted.");
     } else {
       console.error("Service restarted but daemon did not become healthy within 30s.");

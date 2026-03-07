@@ -174,19 +174,25 @@ export async function restartService(mode: ManagedServiceMode): Promise<void> {
 }
 
 /** Read daemon.json for hostname, port, and token. Returns defaults if missing or corrupt. */
-export function readDaemonConfig(): { hostname: string; port: number; token?: string } {
+export function readDaemonConfig(): {
+  hostname: string;
+  port: number;
+  internalPort?: number;
+  token?: string;
+} {
   const configPath = resolve(voluteHome(), "daemon.json");
-  if (!existsSync(configPath)) return { hostname: "127.0.0.1", port: 4200 };
+  if (!existsSync(configPath)) return { hostname: "127.0.0.1", port: 1618 };
   try {
     const config = JSON.parse(readFileSync(configPath, "utf-8"));
     return {
       hostname: config.hostname || "127.0.0.1",
-      port: config.port ?? 4200,
+      port: config.port ?? 1618,
+      internalPort: config.internalPort,
       token: config.token,
     };
   } catch {
     console.error("Warning: could not read daemon config, using defaults.");
-    return { hostname: "127.0.0.1", port: 4200 };
+    return { hostname: "127.0.0.1", port: 1618 };
   }
 }
 

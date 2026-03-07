@@ -41,22 +41,22 @@ function setupTestDir() {
 }
 
 // Build a test app that mirrors the files route but uses our test directory
-function createApp(agentDir: string) {
+function createApp(mindDir: string) {
   const app = new Hono();
-  app.use("/api/agents/*", authMiddleware);
+  app.use("/api/minds/*", authMiddleware);
 
-  app.get("/api/agents/:name/files", async (c) => {
-    const homeDir = resolve(agentDir, "home");
+  app.get("/api/minds/:name/files", async (c) => {
+    const homeDir = resolve(mindDir, "home");
     if (!existsSync(homeDir)) return c.json({ error: "Home directory missing" }, 404);
     const allFiles = await readdir(homeDir);
     const files = allFiles.filter((f) => f.endsWith(".md") && ALLOWED_FILES.has(f));
     return c.json(files);
   });
 
-  app.get("/api/agents/:name/files/:filename", async (c) => {
+  app.get("/api/minds/:name/files/:filename", async (c) => {
     const filename = c.req.param("filename");
     if (!ALLOWED_FILES.has(filename)) return c.json({ error: "File not allowed" }, 403);
-    const filePath = resolve(agentDir, "home", filename);
+    const filePath = resolve(mindDir, "home", filename);
     if (!existsSync(filePath)) return c.json({ error: "File not found" }, 404);
     const content = await readFile(filePath, "utf-8");
     return c.json({ filename, content });
@@ -74,7 +74,7 @@ describe("web files routes", () => {
     const dir = setupTestDir();
     const app = createApp(dir);
 
-    const res = await app.request("/api/agents/test-agent/files", {
+    const res = await app.request("/api/minds/test-mind/files", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
@@ -90,7 +90,7 @@ describe("web files routes", () => {
     const dir = setupTestDir();
     const app = createApp(dir);
 
-    const res = await app.request("/api/agents/test-agent/files/SOUL.md", {
+    const res = await app.request("/api/minds/test-mind/files/SOUL.md", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
@@ -104,7 +104,7 @@ describe("web files routes", () => {
     const dir = setupTestDir();
     const app = createApp(dir);
 
-    const res = await app.request("/api/agents/test-agent/files/secret.txt", {
+    const res = await app.request("/api/minds/test-mind/files/secret.txt", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 403);

@@ -30,66 +30,66 @@ function writeAllVariants(all: Record<string, Variant[]>) {
   writeFileSync(variantsPath(), `${JSON.stringify(all, null, 2)}\n`);
 }
 
-export function readVariants(agentName: string): Variant[] {
-  return readAllVariants()[agentName] ?? [];
+export function readVariants(mindName: string): Variant[] {
+  return readAllVariants()[mindName] ?? [];
 }
 
-export function writeVariants(agentName: string, variants: Variant[]) {
+export function writeVariants(mindName: string, variants: Variant[]) {
   const all = readAllVariants();
   if (variants.length === 0) {
-    delete all[agentName];
+    delete all[mindName];
   } else {
-    all[agentName] = variants;
+    all[mindName] = variants;
   }
   writeAllVariants(all);
 }
 
-export function addVariant(agentName: string, variant: Variant) {
-  const variants = readVariants(agentName);
+export function addVariant(mindName: string, variant: Variant) {
+  const variants = readVariants(mindName);
   const filtered = variants.filter((v) => v.name !== variant.name);
   filtered.push(variant);
-  writeVariants(agentName, filtered);
+  writeVariants(mindName, filtered);
 }
 
-export function removeVariant(agentName: string, name: string) {
-  const variants = readVariants(agentName);
+export function removeVariant(mindName: string, name: string) {
+  const variants = readVariants(mindName);
   writeVariants(
-    agentName,
+    mindName,
     variants.filter((v) => v.name !== name),
   );
 }
 
-export function findVariant(agentName: string, name: string): Variant | undefined {
-  return readVariants(agentName).find((v) => v.name === name);
+export function findVariant(mindName: string, name: string): Variant | undefined {
+  return readVariants(mindName).find((v) => v.name === name);
 }
 
-export function setVariantRunning(agentName: string, variantName: string, running: boolean) {
+export function setVariantRunning(mindName: string, variantName: string, running: boolean) {
   const all = readAllVariants();
-  const variants = all[agentName] ?? [];
+  const variants = all[mindName] ?? [];
   const variant = variants.find((v) => v.name === variantName);
   if (variant) {
     variant.running = running;
-    all[agentName] = variants;
+    all[mindName] = variants;
     writeAllVariants(all);
   }
 }
 
-export function getAllRunningVariants(): Array<{ agentName: string; variant: Variant }> {
+export function getAllRunningVariants(): Array<{ mindName: string; variant: Variant }> {
   const all = readAllVariants();
-  const result: Array<{ agentName: string; variant: Variant }> = [];
-  for (const [agentName, variants] of Object.entries(all)) {
+  const result: Array<{ mindName: string; variant: Variant }> = [];
+  for (const [mindName, variants] of Object.entries(all)) {
     for (const variant of variants) {
       if (variant.running) {
-        result.push({ agentName, variant });
+        result.push({ mindName, variant });
       }
     }
   }
   return result;
 }
 
-export function removeAllVariants(agentName: string) {
+export function removeAllVariants(mindName: string) {
   const all = readAllVariants();
-  delete all[agentName];
+  delete all[mindName];
   writeAllVariants(all);
 }
 

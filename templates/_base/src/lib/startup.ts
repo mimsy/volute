@@ -16,12 +16,22 @@ export function parseArgs(): { port: number } {
   return { port };
 }
 
-export function loadConfig(): { model?: string; compactionMessage?: string } {
-  try {
-    return JSON.parse(readFileSync(resolve("home/.config/volute.json"), "utf-8"));
-  } catch {
-    return {};
+export function loadConfig(): {
+  model?: string;
+  logLevel?: "error" | "warn" | "info" | "debug";
+  compactionMessage?: string;
+  compaction?: { maxContextTokens?: number };
+} {
+  // Mind-own config lives in config.json; fall back to volute.json for older minds
+  for (const file of ["home/.config/config.json", "home/.config/volute.json"]) {
+    try {
+      return JSON.parse(readFileSync(resolve(file), "utf-8"));
+    } catch (err: any) {
+      if (err?.code === "ENOENT") continue;
+      log("startup", `failed to parse ${file}:`, err);
+    }
   }
+  return {};
 }
 
 function loadFile(path: string): string {
@@ -95,6 +105,52 @@ export async function handleStartupContext(sendMessage: (content: string) => voi
     }
   } catch (e) {
     log("server", "failed to run startup-context.sh:", e);
+  }
+}
+
+export type MindPrompts = {
+  compaction_warning: string;
+  compaction_instructions: string;
+  reply_instructions: string;
+  channel_invite: string;
+};
+
+const DEFAULT_PROMPTS: MindPrompts = {
+  compaction_warning:
+    "Context is getting long — compaction is about to summarize this conversation. Before that happens, save anything important to files (MEMORY.md, memory/journal/${date}.md, etc.) since those survive compaction. Focus on: decisions made, open tasks, and anything you'd need to pick up where you left off.",
+  compaction_instructions:
+    "Preserve your sense of who you are, what matters to you, what happened in this conversation, and the threads of thought and connection you'd want to return to.",
+  reply_instructions: 'To reply to this message, use: volute send ${channel} "your message"',
+  channel_invite: `[Channel Invite]
+\${headers}
+
+[\${sender} — \${time}]
+\${preview}
+
+Further messages will be saved to \${filePath}
+
+To accept, add to .config/routes.json:
+  Rule: { "channel": "\${channel}", "session": "\${suggestedSession}" }
+\${batchRecommendation}To respond, use: volute send \${channel} "your message"
+To reject, delete \${filePath}`,
+};
+
+export function loadPrompts(): MindPrompts {
+  try {
+    const raw = readFileSync(resolve("home/.config/prompts.json"), "utf-8");
+    const parsed = JSON.parse(raw);
+    const result = { ...DEFAULT_PROMPTS };
+    for (const key of Object.keys(DEFAULT_PROMPTS) as (keyof MindPrompts)[]) {
+      if (typeof parsed[key] === "string") {
+        result[key] = parsed[key];
+      }
+    }
+    return result;
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") {
+      log("startup", "failed to load prompts.json, using defaults:", err);
+    }
+    return DEFAULT_PROMPTS;
   }
 }
 

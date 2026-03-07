@@ -1,6 +1,6 @@
 {
-  "rules": [{ "channel": "volute:*", "isDM": false, "session": "${channel}" }],
+  "rules": [{ "channel": "volute:*", "isDM": false, "session": "group-${channel}" }],
   "sessions": {
-    "volute:*": { "batch": { "debounce": 20, "maxWait": 120, "triggers": ["@{{name}}"] } }
+    "group-*": { "batch": { "debounce": 20, "maxWait": 120, "triggers": ["@{{name}}"] } }
   }
 }

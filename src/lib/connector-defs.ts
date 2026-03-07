@@ -5,7 +5,7 @@ export type ConnectorEnvVar = {
   name: string;
   required: boolean;
   description: string;
-  scope: "agent" | "any";
+  scope: "mind" | "any";
 };
 
 export type ConnectorDef = {
@@ -23,13 +23,13 @@ const BUILTIN_DEFS: Record<string, ConnectorDef> = {
         name: "DISCORD_TOKEN",
         required: true,
         description: "Discord bot token",
-        scope: "agent",
+        scope: "mind",
       },
       {
         name: "DISCORD_GUILD_ID",
         required: false,
         description: "Discord server ID (optional, for slash commands)",
-        scope: "agent",
+        scope: "mind",
       },
     ],
   },
@@ -41,13 +41,13 @@ const BUILTIN_DEFS: Record<string, ConnectorDef> = {
         name: "SLACK_BOT_TOKEN",
         required: true,
         description: "Slack bot token (xoxb-...)",
-        scope: "agent",
+        scope: "mind",
       },
       {
         name: "SLACK_APP_TOKEN",
         required: true,
         description: "Slack app-level token (xapp-...) for Socket Mode",
-        scope: "agent",
+        scope: "mind",
       },
     ],
   },
@@ -59,7 +59,7 @@ const BUILTIN_DEFS: Record<string, ConnectorDef> = {
         name: "TELEGRAM_BOT_TOKEN",
         required: true,
         description: "Telegram bot token from BotFather",
-        scope: "agent",
+        scope: "mind",
       },
     ],
   },

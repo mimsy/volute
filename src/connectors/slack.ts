@@ -5,7 +5,7 @@ import {
   loadEnv,
   loadFollowedChannels,
   onShutdown,
-  sendToAgent,
+  sendToMind,
   writeChannelEntry,
 } from "./sdk.js";
 
@@ -114,7 +114,7 @@ app.message(async ({ message }) => {
       });
 
   try {
-    writeChannelEntry(env.agentName, channelKey, {
+    writeChannelEntry(env.mindName, channelKey, {
       platformId: message.channel,
       platform: "slack",
       name: channelName ? `#${channelName}` : undefined,
@@ -138,7 +138,7 @@ app.message(async ({ message }) => {
   };
 
   if (isFollowedChannel && !isMentioned) {
-    const result = await sendToAgent(env, payload);
+    const result = await sendToMind(env, payload);
     if (!result.ok)
       app.client.chat
         .postMessage({
@@ -151,7 +151,7 @@ app.message(async ({ message }) => {
     return;
   }
 
-  const result = await sendToAgent(env, payload);
+  const result = await sendToMind(env, payload);
   if (!result.ok)
     app.client.chat
       .postMessage({ channel: message.channel, text: result.error ?? "Failed to process message" })
@@ -173,7 +173,7 @@ async function start() {
     `Connected to Slack as bot user ${botUserId}${serverName ? ` in ${serverName}` : ""}`,
   );
 
-  console.log(`Bridging to agent: ${env.agentName} via ${env.baseUrl}/message`);
+  console.log(`Bridging to mind: ${env.mindName} via ${env.baseUrl}/message`);
 
   if (followedChannelNames.length > 0) {
     try {

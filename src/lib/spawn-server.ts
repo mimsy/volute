@@ -65,9 +65,9 @@ function spawnAttached(cwd: string, port: number): Promise<SpawnResult> {
  * by reading the log. The child survives parent exit and continues logging.
  */
 function spawnDetached(cwd: string, port: number, logDir?: string): Promise<SpawnResult> {
-  const logsDir = logDir ?? resolve(cwd, ".volute", "logs");
+  const logsDir = logDir ?? resolve(cwd, ".mind", "logs");
   mkdirSync(logsDir, { recursive: true });
-  const logPath = resolve(logsDir, "agent.log");
+  const logPath = resolve(logsDir, "mind.log");
   const logFd = openSync(logPath, "a");
 
   const child = spawn(tsxBin(cwd), ["src/server.ts", "--port", String(port)], {

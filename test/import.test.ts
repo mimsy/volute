@@ -29,7 +29,7 @@ describe("import: parseNameFromIdentity", () => {
   });
 
   it("normalizes spaces to hyphens", () => {
-    assert.equal(parseNameFromIdentity("- **Name:** My Cool Agent"), "my-cool-agent");
+    assert.equal(parseNameFromIdentity("- **Name:** My Cool Mind"), "my-cool-mind");
   });
 
   it("returns undefined for empty name field", () => {
@@ -54,7 +54,7 @@ describe("import: importPiSession", () => {
     rmSync(scratchDir, { recursive: true, force: true });
   });
 
-  it("copies session file to .volute/pi-sessions/main/", () => {
+  it("copies session file to .mind/pi-sessions/main/", () => {
     const sessionPath = resolve(scratchDir, "source-session.jsonl");
     writeJsonl(sessionPath, [
       {
@@ -75,14 +75,14 @@ describe("import: importPiSession", () => {
 
     importPiSession(sessionPath, scratchDir);
 
-    const destDir = resolve(scratchDir, ".volute/pi-sessions/main");
+    const destDir = resolve(scratchDir, ".mind/pi-sessions/main");
     assert.ok(existsSync(destDir));
     const files = readdirSync(destDir).filter((f) => f.endsWith(".jsonl"));
     assert.equal(files.length, 1);
     assert.equal(files[0], "source-session.jsonl");
   });
 
-  it("updates cwd in session header to agent home dir", () => {
+  it("updates cwd in session header to mind home dir", () => {
     const sessionPath = resolve(scratchDir, "session.jsonl");
     writeJsonl(sessionPath, [
       {
@@ -103,7 +103,7 @@ describe("import: importPiSession", () => {
 
     importPiSession(sessionPath, scratchDir);
 
-    const destPath = resolve(scratchDir, ".volute/pi-sessions/main/session.jsonl");
+    const destPath = resolve(scratchDir, ".mind/pi-sessions/main/session.jsonl");
     const lines = readFileSync(destPath, "utf-8").trim().split("\n");
     const header = JSON.parse(lines[0]);
     assert.equal(header.cwd, resolve(scratchDir, "home"));
@@ -148,7 +148,7 @@ describe("import: importPiSession", () => {
 
     importPiSession(sessionPath, scratchDir);
 
-    const destPath = resolve(scratchDir, ".volute/pi-sessions/main/session.jsonl");
+    const destPath = resolve(scratchDir, ".mind/pi-sessions/main/session.jsonl");
     const lines = readFileSync(destPath, "utf-8").trim().split("\n");
     assert.equal(lines.length, 4);
 
@@ -167,8 +167,8 @@ describe("import: findOpenClawSession", () => {
   const fakeAgentsDir = resolve(scratchDir, "agents");
   const workspaceDir = "/fake/workspace";
 
-  function makeSession(agentName: string, filename: string, cwd: string) {
-    const sessionsDir = resolve(fakeAgentsDir, agentName, "sessions");
+  function makeSession(mindName: string, filename: string, cwd: string) {
+    const sessionsDir = resolve(fakeAgentsDir, mindName, "sessions");
     mkdirSync(sessionsDir, { recursive: true });
     const sessionPath = resolve(sessionsDir, filename);
     writeJsonl(sessionPath, [
@@ -262,7 +262,7 @@ describe("import: findOpenClawSession", () => {
 describe("import: importOpenClawConnectors", () => {
   beforeEach(() => {
     mkdirSync(resolve(scratchDir, "home/.config"), { recursive: true });
-    mkdirSync(resolve(scratchDir, ".volute"), { recursive: true });
+    mkdirSync(resolve(scratchDir, ".mind"), { recursive: true });
   });
 
   afterEach(() => {
@@ -270,7 +270,7 @@ describe("import: importOpenClawConnectors", () => {
   });
 
   // Mirror of importOpenClawConnectors from import.ts
-  function importOpenClawConnectors(agentDirPath: string, configPath: string) {
+  function importOpenClawConnectors(dirPath: string, configPath: string) {
     if (!existsSync(configPath)) return;
 
     let config: {
@@ -292,8 +292,8 @@ describe("import: importOpenClawConnectors", () => {
     const discord = config.channels?.discord;
     if (!discord?.enabled || !discord.token) return;
 
-    // Write DISCORD_TOKEN to agent env
-    const envPath = resolve(agentDirPath, ".volute", "env.json");
+    // Write DISCORD_TOKEN to mind env
+    const envPath = resolve(dirPath, ".mind", "env.json");
     let env: Record<string, string> = {};
     if (existsSync(envPath)) {
       try {
@@ -316,7 +316,7 @@ describe("import: importOpenClawConnectors", () => {
     }
 
     // Enable discord connector in volute.json
-    const voluteConfigPath = resolve(agentDirPath, "home/.config/volute.json");
+    const voluteConfigPath = resolve(dirPath, "home/.config/volute.json");
     let voluteConfig: {
       model?: string;
       connectors?: string[];
@@ -351,7 +351,7 @@ describe("import: importOpenClawConnectors", () => {
 
     importOpenClawConnectors(scratchDir, configPath);
 
-    const env = JSON.parse(readFileSync(resolve(scratchDir, ".volute/env.json"), "utf-8"));
+    const env = JSON.parse(readFileSync(resolve(scratchDir, ".mind/env.json"), "utf-8"));
     assert.equal(env.DISCORD_TOKEN, "test-token-123");
 
     const config = JSON.parse(
@@ -372,7 +372,7 @@ describe("import: importOpenClawConnectors", () => {
 
     importOpenClawConnectors(scratchDir, configPath);
 
-    assert.ok(!existsSync(resolve(scratchDir, ".volute/env.json")));
+    assert.ok(!existsSync(resolve(scratchDir, ".mind/env.json")));
   });
 
   it("does nothing when discord has no token", () => {
@@ -381,16 +381,16 @@ describe("import: importOpenClawConnectors", () => {
 
     importOpenClawConnectors(scratchDir, configPath);
 
-    assert.ok(!existsSync(resolve(scratchDir, ".volute/env.json")));
+    assert.ok(!existsSync(resolve(scratchDir, ".mind/env.json")));
   });
 
   it("does nothing when config file does not exist", () => {
     importOpenClawConnectors(scratchDir, resolve(scratchDir, "nonexistent.json"));
-    assert.ok(!existsSync(resolve(scratchDir, ".volute/env.json")));
+    assert.ok(!existsSync(resolve(scratchDir, ".mind/env.json")));
   });
 
   it("preserves existing env vars", () => {
-    const envPath = resolve(scratchDir, ".volute/env.json");
+    const envPath = resolve(scratchDir, ".mind/env.json");
     writeFileSync(envPath, JSON.stringify({ EXISTING_VAR: "keep-me" }));
 
     const configPath = resolve(scratchDir, "openclaw.json");

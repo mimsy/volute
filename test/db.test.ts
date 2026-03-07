@@ -24,7 +24,7 @@ describe("database", () => {
     // Conversations table
     const convCols = Object.keys(conversations);
     assert.ok(convCols.includes("id"));
-    assert.ok(convCols.includes("agent_name"));
+    assert.ok(convCols.includes("mind_name"));
     assert.ok(convCols.includes("channel"));
     assert.ok(convCols.includes("user_id"));
     assert.ok(convCols.includes("title"));
