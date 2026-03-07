@@ -1142,7 +1142,7 @@ async function main() {
         const sourceShort = basename(r.sourceFile);
         const matchTag = searchMode === "hybrid" ? ` [${r.matchType}]` : "";
         console.log(
-          `\n--- ${i + 1}. ${sourceShort} (sim: ${r.similarity.toFixed(3)}, str: ${r.strength.toFixed(2)}, recalls: ${r.recallCount})${matchTag} ---`,
+          `\n--- ${i + 1}. [id:${r.id}] ${sourceShort} (sim: ${r.similarity.toFixed(3)}, str: ${r.strength.toFixed(2)}, recalls: ${r.recallCount})${matchTag} ---`,
         );
         console.log(r.content.slice(0, 300));
       }
