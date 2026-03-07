@@ -14,7 +14,11 @@ import { initDeliveryManager } from "./lib/delivery/delivery-manager.js";
 import { stopAll as stopAllActivityTrackers } from "./lib/events/mind-activity-tracker.js";
 import log from "./lib/logger.js";
 import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
-import { migrateDotVoluteDir, migrateMindState } from "./lib/migrate-state.js";
+import {
+  migrateDotVoluteDir,
+  migrateMindState,
+  migratePagesDirToPublic,
+} from "./lib/migrate-state.js";
 import { stopAllWatchers } from "./lib/pages-watcher.js";
 import {
   initRegistryCache,
@@ -147,11 +151,12 @@ export async function startDaemon(opts: {
   // Migrate .volute/ → .mind/ and system state for all registered minds
   const registry = readRegistry();
   for (const entry of registry) {
-    try {
-      migrateDotVoluteDir(entry.name);
-      migrateMindState(entry.name);
-    } catch (err) {
-      log.warn(`failed to migrate state for ${entry.name}`, log.errorData(err));
+    for (const migrate of [migrateDotVoluteDir, migrateMindState, migratePagesDirToPublic]) {
+      try {
+        migrate(entry.name);
+      } catch (err) {
+        log.warn(`failed to migrate state for ${entry.name}`, log.errorData(err));
+      }
     }
   }
 

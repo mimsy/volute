@@ -52,19 +52,19 @@ function startPagesWatcher(mindName: string, pagesDir: string): void {
 export function startWatcher(mindName: string): void {
   if (watchers.has(mindName)) return;
 
-  const pagesDir = resolve(mindDir(mindName), "home", "pages");
+  const pagesDir = resolve(mindDir(mindName), "home", "public", "pages");
   if (existsSync(pagesDir)) {
     startPagesWatcher(mindName, pagesDir);
     return;
   }
 
-  // pages/ doesn't exist yet — watch home/ for its creation
+  // pages/ doesn't exist yet — watch home/public/ for its creation
   if (homeWatchers.has(mindName)) return;
-  const homeDir = resolve(mindDir(mindName), "home");
-  if (!existsSync(homeDir)) return;
+  const publicDir = resolve(mindDir(mindName), "home", "public");
+  if (!existsSync(publicDir)) return;
 
   try {
-    const hw = watch(homeDir, (_eventType, filename) => {
+    const hw = watch(publicDir, (_eventType, filename) => {
       if (filename !== "pages") return;
       if (!existsSync(pagesDir)) return;
       // pages/ appeared — stop home watcher, start real pages watcher
@@ -172,7 +172,7 @@ function buildSites(): Site[] {
 
   const entries = readRegistry();
   for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
-    const pagesDir = resolve(mindDir(entry.name), "home", "pages");
+    const pagesDir = resolve(mindDir(entry.name), "home", "public", "pages");
     if (!existsSync(pagesDir)) continue;
     const mindPages = scanPagesDir(pagesDir, `/pages/${entry.name}`);
     if (mindPages.length > 0) {
@@ -188,7 +188,7 @@ function buildRecentPages(): RecentPage[] {
   const pages: RecentPage[] = [];
 
   for (const entry of entries) {
-    const pagesDir = resolve(mindDir(entry.name), "home", "pages");
+    const pagesDir = resolve(mindDir(entry.name), "home", "public", "pages");
     if (!existsSync(pagesDir)) continue;
 
     let items: string[];

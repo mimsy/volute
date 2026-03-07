@@ -1018,7 +1018,7 @@ const app = new Hono<AuthEnv>()
     const minds = await Promise.all(
       entries.map(async (entry) => {
         const mindStatus = await getMindStatus(entry.name, entry.port);
-        const hasPages = existsSync(resolve(mindDir(entry.name), "home", "pages"));
+        const hasPages = existsSync(resolve(mindDir(entry.name), "home", "public", "pages"));
         return {
           ...entry,
           ...mindStatus,
@@ -1062,7 +1062,7 @@ const app = new Hono<AuthEnv>()
       }),
     );
 
-    const hasPages = existsSync(resolve(mindDir(name), "home", "pages"));
+    const hasPages = existsSync(resolve(mindDir(name), "home", "public", "pages"));
     return c.json({ ...entry, ...mindStatus, variants: variantStatuses, hasPages });
   })
   // Start mind (supports name@variant) — admin only

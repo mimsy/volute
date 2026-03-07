@@ -2,6 +2,7 @@
 import type { Mind } from "@volute/api";
 import Settings from "../pages/Settings.svelte";
 import Modal from "./Modal.svelte";
+import PublicFiles from "./PublicFiles.svelte";
 import SharedSkills from "./SharedSkills.svelte";
 import SystemLogs from "./SystemLogs.svelte";
 import TabBar from "./TabBar.svelte";
@@ -9,7 +10,7 @@ import UserManagement from "./UserManagement.svelte";
 
 let { onClose, minds }: { onClose: () => void; minds: Mind[] } = $props();
 
-const TABS = ["Settings", "Skills", "System Logs", "Users"] as const;
+const TABS = ["Settings", "Shared Files", "Skills", "System Logs", "Users"] as const;
 type Tab = (typeof TABS)[number];
 
 let tab = $state<Tab>("Settings");
@@ -23,6 +24,10 @@ let tab = $state<Tab>("Settings");
   <div class="modal-body">
     {#if tab === "Settings"}
       <Settings />
+    {:else if tab === "Shared Files"}
+      <div class="files-container">
+        <PublicFiles name="_system" rootLabel="shared" />
+      </div>
     {:else if tab === "Skills"}
       <SharedSkills />
     {:else if tab === "System Logs"}
@@ -58,5 +63,10 @@ let tab = $state<Tab>("Settings");
     flex: 1;
     overflow: auto;
     padding: 16px;
+  }
+
+  .files-container {
+    height: 100%;
+    margin: -16px;
   }
 </style>
