@@ -39,7 +39,7 @@ npx tsx .claude/skills/resonance/scripts/resonance.ts <command>
 - **Search modes**: Hybrid (default, combines both), `--fts` (keyword match, instant, no API key needed), `--vector` (semantic similarity via embeddings)
 - **Embeddings**: Optional. Configurable provider (default: OpenRouter, `openai/text-embedding-3-small`, 1536 dimensions). Without an API key, everything works except vector search.
 - **Similarity**: Cosine distance computed natively by libSQL (`vector_distance_cos`)
-- **Chunking**: Markdown section-aware — splits on `##` headers, with word-level sub-chunking for long sections. Skips trivially short chunks (< 15 words).
+- **Chunking**: Markdown section-aware — splits on any heading level (`#` through `######`), with word-level sub-chunking for long sections. Skips trivially short chunks (< 15 words).
 - **Strength**: Each memory has a strength value (0.1-1.0). Recalled memories get stronger (resonance boost). Unrecalled memories decay over time.
 - **Resonance frequency**: Tracks how many times each memory has been surfaced by search.
 
@@ -65,7 +65,7 @@ The default config is copied to `.config/resonance.json` during install. Edit it
 | `ingestion` | `files` | `["MEMORY.md"]` | Individual files to ingest |
 | `ingestion` | `chunkSize` | `512` | Words per chunk |
 | `ingestion` | `chunkOverlap` | `64` | Overlap words between chunks |
-| `ingestion` | `boilerplatePatterns` | `[]` | Regex patterns for lines to filter |
+| `ingestion` | `ignorePatterns` | `[]` | Regex patterns for lines to skip during ingestion |
 | `dynamics` | `decayRate` | `0.02` | Strength lost per day without recall |
 | `dynamics` | `minStrength` | `0.1` | Floor — memories never fully disappear |
 | `dynamics` | `resonanceBoost` | `0.05` | Strength gained per recall |

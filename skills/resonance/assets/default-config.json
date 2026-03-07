@@ -11,7 +11,7 @@
     "files": ["MEMORY.md"],
     "chunkSize": 512,
     "chunkOverlap": 64,
-    "boilerplatePatterns": []
+    "ignorePatterns": []
   },
   "dynamics": {
     "decayRate": 0.02,

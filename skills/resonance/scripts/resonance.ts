@@ -42,7 +42,7 @@ interface ResonanceConfig {
     files: string[];
     chunkSize: number;
     chunkOverlap: number;
-    boilerplatePatterns: string[];
+    ignorePatterns: string[];
   };
   dynamics: {
     decayRate: number;
@@ -335,28 +335,28 @@ export function detectSourceType(sourceFile: string): string {
   return "other";
 }
 
-export function isBoilerplate(text: string, patterns: RegExp[]): boolean {
+export function isMostlyIgnored(text: string, patterns: RegExp[]): boolean {
   if (patterns.length === 0) return false;
   const lines = text.trim().split("\n");
   if (lines.length === 0) return true;
 
-  let boilerplateLines = 0;
+  let ignoredLines = 0;
   let contentLines = 0;
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     if (patterns.some((p) => p.test(trimmed))) {
-      boilerplateLines++;
+      ignoredLines++;
     } else {
       contentLines++;
     }
   }
-  const total = boilerplateLines + contentLines;
+  const total = ignoredLines + contentLines;
   if (total === 0) return true;
-  return boilerplateLines / total > 0.5;
+  return ignoredLines / total > 0.5;
 }
 
-export function stripBoilerplateLines(text: string, patterns: RegExp[]): string {
+export function stripIgnoredLines(text: string, patterns: RegExp[]): string {
   if (patterns.length === 0) return text;
   return text
     .split("\n")
@@ -409,23 +409,23 @@ export function chunkBySections(
   sourceFile: string,
   sourceType: string,
   config: ResonanceConfig,
-  boilerplateRe: RegExp[],
+  ignoreRe: RegExp[],
 ): Chunk[] {
-  const sections = text.split(/^(##\s+.+)$/m);
+  const sections = text.split(/^(#{1,6}\s+.+)$/m);
   const chunks: Chunk[] = [];
   let currentHeader = "";
 
   for (let i = 0; i < sections.length; i++) {
     let part = sections[i].trim();
-    if (part.startsWith("## ")) {
+    if (/^#{1,6}\s+/.test(part)) {
       currentHeader = part;
       continue;
     }
     if (!part) continue;
 
-    // Strip boilerplate lines if patterns configured
-    if (boilerplateRe.length > 0) {
-      part = stripBoilerplateLines(part, boilerplateRe);
+    // Strip ignored lines if patterns configured
+    if (ignoreRe.length > 0) {
+      part = stripIgnoredLines(part, ignoreRe);
       if (!part || part.split(/\s+/).length < 10) continue;
     }
 
@@ -465,11 +465,11 @@ export function chunkText(text: string, sourceFile: string, config: ResonanceCon
   if (!text) return [];
 
   const sourceType = detectSourceType(sourceFile);
-  const boilerplateRe = config.ingestion.boilerplatePatterns.map((p) => new RegExp(p, "m"));
+  const ignoreRe = config.ingestion.ignorePatterns.map((p) => new RegExp(p, "m"));
 
-  // Split on ## headers for all markdown files
-  if (text.includes("\n## ")) {
-    return chunkBySections(text, sourceFile, sourceType, config, boilerplateRe);
+  // Split on markdown headers for all markdown files
+  if (/\n#{1,6}\s+/.test(text)) {
+    return chunkBySections(text, sourceFile, sourceType, config, ignoreRe);
   }
 
   // Fallback: sliding window by words

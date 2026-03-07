@@ -11,10 +11,10 @@ import {
   chunkText,
   detectSourceType,
   initDb,
-  isBoilerplate,
+  isMostlyIgnored,
   loadConfig,
   searchFts,
-  stripBoilerplateLines,
+  stripIgnoredLines,
 } from "../skills/resonance/scripts/resonance.js";
 
 describe("resonance", () => {
@@ -40,42 +40,42 @@ describe("resonance", () => {
     });
   });
 
-  describe("isBoilerplate", () => {
+  describe("isMostlyIgnored", () => {
     it("returns false with no patterns", () => {
-      assert.equal(isBoilerplate("some text", []), false);
+      assert.equal(isMostlyIgnored("some text", []), false);
     });
 
     it("returns true when majority matches patterns", () => {
       const patterns = [/^- \*\*Camera:\*\*/];
       const text = "- **Camera:** front yard\n- **Camera:** back yard\none real line";
-      assert.equal(isBoilerplate(text, patterns), true);
+      assert.equal(isMostlyIgnored(text, patterns), true);
     });
 
     it("returns false when minority matches patterns", () => {
       const patterns = [/^- \*\*Camera:\*\*/];
       const text = "real line one\nreal line two\n- **Camera:** front yard";
-      assert.equal(isBoilerplate(text, patterns), false);
+      assert.equal(isMostlyIgnored(text, patterns), false);
     });
 
     it("returns false with no patterns", () => {
-      assert.equal(isBoilerplate("", []), false);
+      assert.equal(isMostlyIgnored("", []), false);
     });
 
     it("returns true for empty text with patterns", () => {
-      assert.equal(isBoilerplate("", [/test/]), true);
+      assert.equal(isMostlyIgnored("", [/test/]), true);
     });
   });
 
-  describe("stripBoilerplateLines", () => {
+  describe("stripIgnoredLines", () => {
     it("removes matching lines", () => {
       const patterns = [/^- \*\*Camera:\*\*/];
       const text = "real line\n- **Camera:** front yard\nanother real line";
-      assert.equal(stripBoilerplateLines(text, patterns), "real line\nanother real line");
+      assert.equal(stripIgnoredLines(text, patterns), "real line\nanother real line");
     });
 
     it("returns unchanged with no patterns", () => {
       const text = "line one\nline two";
-      assert.equal(stripBoilerplateLines(text, []), text);
+      assert.equal(stripIgnoredLines(text, []), text);
     });
   });
 
@@ -113,7 +113,7 @@ describe("resonance", () => {
         files: ["MEMORY.md"],
         chunkSize: 512,
         chunkOverlap: 64,
-        boilerplatePatterns: [],
+        ignorePatterns: [],
       },
       dynamics: { decayRate: 0.02, minStrength: 0.1, resonanceBoost: 0.05 },
     };
@@ -146,6 +146,23 @@ describe("resonance", () => {
       assert.equal(chunks[0].sourceType, "journal");
     });
 
+    it("splits on any heading level", () => {
+      const text = [
+        "# Top Level",
+        "",
+        Array.from({ length: 20 }, (_, i) => `intro${i}`).join(" "),
+        "",
+        "### Subsection",
+        "",
+        Array.from({ length: 20 }, (_, i) => `detail${i}`).join(" "),
+      ].join("\n");
+
+      const chunks = chunkText(text, "test.md", config);
+      assert(chunks.length >= 2);
+      assert(chunks.some((c) => c.content.includes("Top Level")));
+      assert(chunks.some((c) => c.content.includes("Subsection")));
+    });
+
     it("skips sections shorter than 15 words", () => {
       const text = [
         "## Short Section",
@@ -162,12 +179,12 @@ describe("resonance", () => {
       assert(chunks[0].content.includes("Long Section"));
     });
 
-    it("filters boilerplate when patterns configured", () => {
+    it("filters ignored lines when patterns configured", () => {
       const configWithPatterns = {
         ...config,
         ingestion: {
           ...config.ingestion,
-          boilerplatePatterns: ["^- \\*\\*Camera:\\*\\*"],
+          ignorePatterns: ["^- \\*\\*Camera:\\*\\*"],
         },
       };
 
@@ -184,7 +201,7 @@ describe("resonance", () => {
       ].join("\n");
 
       const chunks = chunkText(text, "memory/journal/test.md", configWithPatterns);
-      // Heartbeat section should be filtered (all boilerplate)
+      // Heartbeat section should be filtered (all ignored lines)
       assert(chunks.every((c) => !c.content.includes("Camera")));
       assert(chunks.some((c) => c.content.includes("meaningful")));
     });
