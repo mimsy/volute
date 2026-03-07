@@ -42,8 +42,15 @@ async function generate(args: string[]): Promise<void> {
     process.exit(1);
   }
 
+  if (!process.env.REPLICATE_API_TOKEN) {
+    console.error(
+      "REPLICATE_API_TOKEN not set. Run: volute env set REPLICATE_API_TOKEN <your-token>",
+    );
+    process.exit(1);
+  }
+
   const model = getFlag(args, "--model") || "prunaai/z-image-turbo";
-  const filename = getFlag(args, "--filename") || slugify(prompt);
+  const filename = getFlag(args, "--filename") || slugify(prompt) || `image-${Date.now()}`;
 
   const Replicate = replicateRequire("replicate").default;
   const replicate = new Replicate();
@@ -63,6 +70,13 @@ async function models(args: string[]): Promise<void> {
   const query = args[0];
   if (!query) {
     console.log('Usage: imagegen models "query"');
+    process.exit(1);
+  }
+
+  if (!process.env.REPLICATE_API_TOKEN) {
+    console.error(
+      "REPLICATE_API_TOKEN not set. Run: volute env set REPLICATE_API_TOKEN <your-token>",
+    );
     process.exit(1);
   }
 
