@@ -5,13 +5,14 @@ import { data } from "../lib/stores.svelte";
 import History from "./History.svelte";
 import MindInfo from "./MindInfo.svelte";
 import MindSkills from "./MindSkills.svelte";
+import PublicFiles from "./PublicFiles.svelte";
 import StatusBadge from "./StatusBadge.svelte";
 import TabBar from "./TabBar.svelte";
 import VariantList from "./VariantList.svelte";
 
 let { mind: initialMind, onClose }: { mind: Mind; onClose?: () => void } = $props();
 
-const TABS = ["Info", "Settings"] as const;
+const TABS = ["Info", "Files", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 
 let mind = $derived(data.minds.find((m) => m.name === initialMind.name) ?? initialMind);
@@ -43,7 +44,7 @@ function formatCreated(dateStr: string): string {
     </div>
     <TabBar tabs={[...TABS]} active={tab} onchange={(t) => (tab = t as Tab)} />
   </div>
-  <div class="panel-body" class:panel-body-flex={tab === "Info"}>
+  <div class="panel-body" class:panel-body-flex={tab === "Info" || tab === "Files"}>
     {#if tab === "Info"}
       <div class="profile-section">
         <span class="profile-display-name">{mind.displayName ?? mind.name}</span>
@@ -63,6 +64,10 @@ function formatCreated(dateStr: string): string {
 
       <div class="history-section">
         <History name={mind.name} />
+      </div>
+    {:else if tab === "Files"}
+      <div class="files-section">
+        <PublicFiles name={mind.name} />
       </div>
     {:else if tab === "Settings"}
       <div class="settings-content">
@@ -160,6 +165,11 @@ function formatCreated(dateStr: string): string {
 
   .settings-content {
     padding: 16px;
+  }
+
+  .files-section {
+    flex: 1;
+    min-height: 0;
   }
 
   .panel-body-flex {

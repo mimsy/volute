@@ -21,6 +21,16 @@ const MIME_TYPES: Record<string, string> = {
   ".md": "text/markdown",
 };
 
+async function listDir(dirPath: string) {
+  const entries = await readdir(dirPath, { withFileTypes: true }).catch(() => []);
+  return entries
+    .filter((e) => !e.name.startsWith("."))
+    .map((e) => ({
+      name: e.name,
+      type: e.isDirectory() ? ("directory" as const) : ("file" as const),
+    }));
+}
+
 const app = new Hono()
   // Directory listing: GET /public/:name/
   .get("/:name/", async (c) => {
@@ -28,18 +38,9 @@ const app = new Hono()
     if (!findMind(name)) return c.json({ error: "Not found" }, 404);
 
     const publicRoot = resolve(mindDir(name), "home", "public");
-    const entries = await readdir(publicRoot, { withFileTypes: true }).catch(() => []);
-
-    const items = entries
-      .filter((e) => !e.name.startsWith("."))
-      .map((e) => ({
-        name: e.name,
-        type: e.isDirectory() ? "directory" : "file",
-      }));
-
-    return c.json(items);
+    return c.json(await listDir(publicRoot));
   })
-  // File serving: GET /public/:name/*
+  // File serving or subdirectory listing: GET /public/:name/*
   .get("/:name/*", async (c) => {
     const name = c.req.param("name");
     if (!findMind(name)) return c.text("Not found", 404);
@@ -53,7 +54,13 @@ const app = new Hono()
 
     const fileStat = await stat(requestedPath).catch(() => null);
 
-    if (fileStat?.isDirectory()) return c.text("Not found", 404);
+    // Directory → return JSON listing if path ends with /
+    if (fileStat?.isDirectory()) {
+      if (wildcard.endsWith("/")) {
+        return c.json(await listDir(requestedPath));
+      }
+      return c.text("Not found", 404);
+    }
 
     if (fileStat?.isFile()) {
       const ext = extname(requestedPath);

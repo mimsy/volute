@@ -80,7 +80,20 @@ function createApp(mindBaseDir: string) {
 
     const fileStat = await stat(requestedPath).catch(() => null);
 
-    if (fileStat?.isDirectory()) return c.text("Not found", 404);
+    if (fileStat?.isDirectory()) {
+      if (wildcard.endsWith("/")) {
+        const { readdir: rd } = await import("node:fs/promises");
+        const dirEntries = await rd(requestedPath, { withFileTypes: true }).catch(() => []);
+        const items = dirEntries
+          .filter((e) => !e.name.startsWith("."))
+          .map((e) => ({
+            name: e.name,
+            type: e.isDirectory() ? "directory" : "file",
+          }));
+        return c.json(items);
+      }
+      return c.text("Not found", 404);
+    }
 
     if (fileStat?.isFile()) {
       const ext = extname(requestedPath);
@@ -139,13 +152,23 @@ describe("public files routes", () => {
     assert.equal(res.headers.get("content-type"), "text/html");
   });
 
-  it("returns 404 for directory requests (no index.html fallback)", async () => {
+  it("returns directory listing for subdirectory with trailing slash", async () => {
     const dir = setupTestDir();
     const app = createApp(dir);
 
     const res = await app.request("/public/test-mind/docs/");
-    // The directory listing route handles trailing slash on root,
-    // but subdirectory paths that match the wildcard route get 404
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body));
+    const names = body.map((e: { name: string }) => e.name);
+    assert.ok(names.includes("guide.md"));
+  });
+
+  it("returns 404 for directory without trailing slash", async () => {
+    const dir = setupTestDir();
+    const app = createApp(dir);
+
+    const res = await app.request("/public/test-mind/docs");
     assert.equal(res.status, 404);
   });
 
