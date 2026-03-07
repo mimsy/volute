@@ -52,17 +52,24 @@ async function generate(args: string[]): Promise<void> {
   const model = getFlag(args, "--model") || "prunaai/z-image-turbo";
   const filename = getFlag(args, "--filename") || slugify(prompt) || `image-${Date.now()}`;
 
-  const Replicate = replicateRequire("replicate").default;
+  const Replicate = replicateRequire("replicate");
   const replicate = new Replicate();
 
   console.log(`generating image with ${model}...`);
   const output = await replicate.run(model, { input: { prompt } });
 
+  // Output can be a single FileOutput or an array of them
+  const file = Array.isArray(output) ? output[0] : output;
+  if (!file) {
+    console.error(`error: model ${model} returned no output`);
+    process.exit(1);
+  }
+
   const imagesDir = join(getHomePath(), "images");
   mkdirSync(imagesDir, { recursive: true });
 
   const filePath = join(imagesDir, `${filename}.png`);
-  await writeFile(filePath, output[0]);
+  await writeFile(filePath, file);
   console.log(`saved: ${filePath}`);
 }
 
@@ -80,7 +87,7 @@ async function models(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const Replicate = replicateRequire("replicate").default;
+  const Replicate = replicateRequire("replicate");
   const replicate = new Replicate();
 
   const response = await replicate.models.search(query);
