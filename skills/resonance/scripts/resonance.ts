@@ -60,6 +60,8 @@ interface Chunk {
   metadata: Record<string, string>;
 }
 
+type SearchMode = "hybrid" | "fts" | "vector";
+
 interface SearchResult {
   id: number;
   content: string;
@@ -72,6 +74,7 @@ interface SearchResult {
   recallCount: number;
   createdAt: string;
   metadata: Record<string, string>;
+  matchType: "vector" | "fts" | "both";
 }
 
 // --- config ---
@@ -121,10 +124,8 @@ function getHomePath(): string {
   return join(mindDir, "home");
 }
 
-function getApiKey(config: ResonanceConfig): string {
-  const key = process.env[config.embedding.apiKeyEnvVar];
-  if (!key) throw new Error(`${config.embedding.apiKeyEnvVar} not set`);
-  return key;
+function getApiKey(config: ResonanceConfig): string | null {
+  return process.env[config.embedding.apiKeyEnvVar] || null;
 }
 
 function getSkillDir(): string {
@@ -153,27 +154,24 @@ async function runInstall(config: ResonanceConfig): Promise<void> {
     process.exit(1);
   }
 
-  // 1. Check API key
+  // 1. Check API key (optional — enables vector search)
   const apiKeyVar = config.embedding.apiKeyEnvVar;
-  const apiKey = process.env[apiKeyVar];
-  if (!apiKey) {
-    console.error(`${apiKeyVar} is not set. resonance needs an embedding API key.`);
-    console.error(`set it with: volute env set ${apiKeyVar} <your-key>`);
-    process.exit(1);
+  const apiKey = getApiKey(config);
+  if (apiKey) {
+    console.log("verifying embedding API key...");
+    try {
+      await embed(["test"], apiKey, config);
+      console.log("API key verified.");
+    } catch (e) {
+      console.error(`embedding API test failed: ${e instanceof Error ? e.message : e}`);
+      console.error("continuing without embeddings — full-text search will still work.");
+    }
+  } else {
+    console.log(`no ${apiKeyVar} set — installing with full-text search only.`);
+    console.log(`to enable vector search later: volute env set ${apiKeyVar} <your-key>`);
   }
 
-  // 2. Verify the key works
-  console.log("verifying embedding API key...");
-  try {
-    await embed(["test"], apiKey, config);
-  } catch (e) {
-    console.error(`embedding API test failed: ${e instanceof Error ? e.message : e}`);
-    console.error("check your API key and try again.");
-    process.exit(1);
-  }
-  console.log("API key verified.");
-
-  // 3. Copy default config if none exists
+  // 2. Copy default config if none exists
   const configPath = join(mindDir, "home", ".config", "resonance.json");
   if (!existsSync(configPath)) {
     const defaultConfig = join(getSkillDir(), "assets", "default-config.json");
@@ -184,12 +182,12 @@ async function runInstall(config: ResonanceConfig): Promise<void> {
     console.log(".config/resonance.json already exists, keeping it.");
   }
 
-  // 4. Initialize DB
+  // 3. Initialize DB
   const db = initDb(getDbPath(), config.embedding.dimensions);
   db.close();
   console.log("initialized resonance database.");
 
-  // 5. Set up nightly schedule
+  // 4. Set up nightly schedule
   const scriptPath = ".claude/skills/resonance/scripts/resonance.ts";
   const script = `npx tsx ${scriptPath} ingest-all && npx tsx ${scriptPath} decay`;
   try {
@@ -213,7 +211,7 @@ async function runInstall(config: ResonanceConfig): Promise<void> {
     );
   }
 
-  // 6. Run initial ingestion
+  // 5. Run initial ingestion
   console.log("\nrunning initial ingestion...");
   const db2 = initDb(getDbPath(), config.embedding.dimensions);
   try {
@@ -223,7 +221,7 @@ async function runInstall(config: ResonanceConfig): Promise<void> {
       if (count > 0) console.log(`  ${basename(path)}: ${count} chunks`);
       total += count;
     }
-    console.log(`ingested ${total} chunks.`);
+    console.log(`ingested ${total} chunks${apiKey ? "" : " (FTS only, no embeddings)"}.`);
   } finally {
     db2.close();
   }
@@ -259,6 +257,36 @@ export function initDb(dbPath: string, dimensions = 1536): Database {
   db.exec("CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(source_file)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_memories_strength ON memories(strength DESC)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_memories_hash ON memories(content_hash)");
+
+  // FTS5 full-text search index
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+      content, source_file,
+      content='memories', content_rowid='id'
+    )
+  `);
+  // Triggers to keep FTS in sync
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+      INSERT INTO memories_fts(rowid, content, source_file)
+      VALUES (new.id, new.content, new.source_file);
+    END
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+      INSERT INTO memories_fts(memories_fts, rowid, content, source_file)
+      VALUES ('delete', old.id, old.content, old.source_file);
+    END
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+      INSERT INTO memories_fts(memories_fts, rowid, content, source_file)
+      VALUES ('delete', old.id, old.content, old.source_file);
+      INSERT INTO memories_fts(rowid, content, source_file)
+      VALUES (new.id, new.content, new.source_file);
+    END
+  `);
+
   return db;
 }
 
@@ -465,7 +493,7 @@ function hashContent(content: string): string {
 async function ingestFile(
   db: Database,
   filePath: string,
-  apiKey: string,
+  apiKey: string | null,
   config: ResonanceConfig,
 ): Promise<number> {
   const text = readFileSync(filePath, "utf-8");
@@ -484,33 +512,54 @@ async function ingestFile(
 
   if (newChunks.length === 0) return 0;
 
-  const insertStmt = db.prepare(`
-    INSERT OR IGNORE INTO memories
-      (content, source_file, source_type, chunk_index, content_hash, embedding, metadata)
-    VALUES (?, ?, ?, ?, ?, vector(?), ?)
-  `);
+  if (apiKey) {
+    // Full ingestion with embeddings
+    const insertStmt = db.prepare(`
+      INSERT OR IGNORE INTO memories
+        (content, source_file, source_type, chunk_index, content_hash, embedding, metadata)
+      VALUES (?, ?, ?, ?, ?, vector(?), ?)
+    `);
 
-  const batchSize = 20;
-  for (let batchStart = 0; batchStart < newChunks.length; batchStart += batchSize) {
-    const batch = newChunks.slice(batchStart, batchStart + batchSize);
-    const texts = batch.map((c) => c.content.slice(0, 8000));
-    const embeddings = await embed(texts, apiKey, config);
+    const batchSize = 20;
+    for (let batchStart = 0; batchStart < newChunks.length; batchStart += batchSize) {
+      const batch = newChunks.slice(batchStart, batchStart + batchSize);
+      const texts = batch.map((c) => c.content.slice(0, 8000));
+      const embeddings = await embed(texts, apiKey, config);
 
-    for (let j = 0; j < batch.length; j++) {
-      const chunk = batch[j];
+      for (let j = 0; j < batch.length; j++) {
+        const chunk = batch[j];
+        insertStmt.run(
+          chunk.content,
+          chunk.sourceFile,
+          chunk.sourceType,
+          chunk.chunkIndex,
+          chunk.contentHash,
+          vecToJson(embeddings[j]),
+          JSON.stringify(chunk.metadata),
+        );
+      }
+
+      if (batchStart + batchSize < newChunks.length) {
+        await new Promise((r) => setTimeout(r, 500)); // rate limiting
+      }
+    }
+  } else {
+    // FTS-only ingestion (no embeddings)
+    const insertStmt = db.prepare(`
+      INSERT OR IGNORE INTO memories
+        (content, source_file, source_type, chunk_index, content_hash, metadata)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    for (const chunk of newChunks) {
       insertStmt.run(
         chunk.content,
         chunk.sourceFile,
         chunk.sourceType,
         chunk.chunkIndex,
         chunk.contentHash,
-        vecToJson(embeddings[j]),
         JSON.stringify(chunk.metadata),
       );
-    }
-
-    if (batchStart + batchSize < newChunks.length) {
-      await new Promise((r) => setTimeout(r, 500)); // rate limiting
     }
   }
 
@@ -519,7 +568,7 @@ async function ingestFile(
 
 async function ingestAll(
   db: Database,
-  apiKey: string,
+  apiKey: string | null,
   config: ResonanceConfig,
 ): Promise<Record<string, number>> {
   const home = getHomePath();
@@ -553,7 +602,64 @@ async function ingestAll(
   return results;
 }
 
-async function search(
+export function searchFts(
+  db: Database,
+  query: string,
+  limit = 5,
+  minStrength = 0.0,
+): SearchResult[] {
+  // FTS5 match query — quote the query to treat as phrase-like, with * for prefix matching
+  const ftsQuery = query
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => `"${w.replace(/"/g, "")}"`)
+    .join(" OR ");
+
+  const rows = db
+    .prepare(
+      `SELECT m.id, m.content, m.source_file, m.source_type,
+              m.strength, m.recall_count, m.created_at, m.metadata,
+              rank
+       FROM memories_fts f
+       JOIN memories m ON m.id = f.rowid
+       WHERE memories_fts MATCH ? AND m.strength >= ?
+       ORDER BY rank
+       LIMIT ?`,
+    )
+    .all(ftsQuery, minStrength, limit) as Array<{
+    id: number;
+    content: string;
+    source_file: string;
+    source_type: string;
+    strength: number;
+    recall_count: number;
+    created_at: string;
+    metadata: string;
+    rank: number;
+  }>;
+
+  // Normalize FTS rank to 0-1 similarity (rank is negative, closer to 0 = better)
+  const maxRank = rows.length > 0 ? Math.max(...rows.map((r) => Math.abs(r.rank))) : 1;
+  return rows.map((row) => {
+    const similarity = maxRank > 0 ? Math.abs(row.rank) / maxRank : 0;
+    return {
+      id: row.id,
+      content: row.content,
+      sourceFile: row.source_file,
+      sourceType: row.source_type,
+      distance: 1 - similarity,
+      similarity,
+      weightedSimilarity: similarity * (0.7 + 0.3 * row.strength),
+      strength: row.strength,
+      recallCount: row.recall_count,
+      createdAt: row.created_at,
+      metadata: row.metadata ? JSON.parse(row.metadata) : {},
+      matchType: "fts" as const,
+    };
+  });
+}
+
+async function searchVector(
   db: Database,
   query: string,
   apiKey: string,
@@ -587,7 +693,7 @@ async function search(
   }>;
 
   // Weight by strength — stronger memories surface more easily
-  const scored: SearchResult[] = rows.map((row) => {
+  return rows.map((row) => {
     const similarity = 1 - row.distance;
     const weightedSimilarity = similarity * (0.7 + 0.3 * row.strength);
     return {
@@ -602,23 +708,101 @@ async function search(
       recallCount: row.recall_count,
       createdAt: row.created_at,
       metadata: row.metadata ? JSON.parse(row.metadata) : {},
+      matchType: "vector" as const,
     };
   });
+}
 
-  scored.sort((a, b) => b.weightedSimilarity - a.weightedSimilarity);
-  const results = scored.slice(0, limit);
+async function search(
+  db: Database,
+  query: string,
+  apiKey: string | null,
+  config: ResonanceConfig,
+  limit = 5,
+  minStrength = 0.0,
+  mode: SearchMode = "hybrid",
+): Promise<SearchResult[]> {
+  let results: SearchResult[];
+
+  if (mode === "fts") {
+    results = searchFts(db, query, limit, minStrength);
+  } else if (mode === "vector") {
+    if (!apiKey) throw new Error("vector search requires an API key");
+    const vectorResults = await searchVector(db, query, apiKey, config, limit, minStrength);
+    vectorResults.sort((a, b) => b.weightedSimilarity - a.weightedSimilarity);
+    results = vectorResults.slice(0, limit);
+  } else {
+    // Hybrid: combine vector + FTS results
+    let vectorResults: SearchResult[] = [];
+    if (apiKey) {
+      try {
+        vectorResults = await searchVector(db, query, apiKey, config, limit, minStrength);
+      } catch {
+        // Fall back to FTS-only if vector search fails
+      }
+    }
+    const ftsResults = searchFts(db, query, limit, minStrength);
+
+    if (vectorResults.length === 0) {
+      results = ftsResults.slice(0, limit);
+    } else if (ftsResults.length === 0) {
+      vectorResults.sort((a, b) => b.weightedSimilarity - a.weightedSimilarity);
+      results = vectorResults.slice(0, limit);
+    } else {
+      // Merge: normalize scores across both sets, blend with weighting
+      const vectorWeight = 0.7;
+      const ftsWeight = 0.3;
+
+      // Normalize vector similarities to 0-1 within this result set
+      const maxVecSim = Math.max(...vectorResults.map((r) => r.weightedSimilarity));
+      const maxFtsSim = Math.max(...ftsResults.map((r) => r.weightedSimilarity));
+
+      const merged = new Map<number, SearchResult>();
+
+      for (const r of vectorResults) {
+        const normVec = maxVecSim > 0 ? r.weightedSimilarity / maxVecSim : 0;
+        merged.set(r.id, {
+          ...r,
+          weightedSimilarity: normVec * vectorWeight,
+          matchType: "vector",
+        });
+      }
+
+      for (const r of ftsResults) {
+        const normFts = maxFtsSim > 0 ? r.weightedSimilarity / maxFtsSim : 0;
+        const existing = merged.get(r.id);
+        if (existing) {
+          // Found in both — combine scores
+          existing.weightedSimilarity += normFts * ftsWeight;
+          existing.matchType = "both";
+        } else {
+          merged.set(r.id, {
+            ...r,
+            weightedSimilarity: normFts * ftsWeight,
+            matchType: "fts",
+          });
+        }
+      }
+
+      const combined = [...merged.values()];
+      combined.sort((a, b) => b.weightedSimilarity - a.weightedSimilarity);
+      results = combined.slice(0, limit);
+    }
+  }
 
   // Boost recalled memories
-  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
-  const updateStmt = db.prepare(
-    `UPDATE memories
-     SET recall_count = recall_count + 1,
-         last_recalled = ?,
-         strength = MIN(1.0, strength + ?)
-     WHERE id = ?`,
-  );
-  for (const r of results) {
-    updateStmt.run(now, config.dynamics.resonanceBoost, r.id);
+  if (results.length > 0) {
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+    const updateStmt = db.prepare(
+      `UPDATE memories
+       SET recall_count = recall_count + 1,
+           last_recalled = ?,
+           strength = MIN(1.0, strength + ?)
+       WHERE id = ?`,
+    );
+    for (const r of results) {
+      updateStmt.run(now, config.dynamics.resonanceBoost, r.id);
+    }
   }
 
   return results;
@@ -664,7 +848,7 @@ function runDecay(db: Database, config: ResonanceConfig): { decayed: number; tot
 
 async function resonanceReport(
   db: Database,
-  apiKey: string,
+  apiKey: string | null,
   config: ResonanceConfig,
   againstFile?: string,
 ): Promise<string> {
@@ -824,7 +1008,8 @@ async function main() {
         process.exit(1);
       }
       const count = await ingestFile(db, filePath, apiKey, config);
-      console.log(`ingested ${count} new chunks from ${basename(filePath)}`);
+      const mode = apiKey ? "" : " (FTS only, no embeddings)";
+      console.log(`ingested ${count} new chunks from ${basename(filePath)}${mode}`);
     } else if (cmd === "ingest-all") {
       const apiKey = getApiKey(config);
       const results = await ingestAll(db, apiKey, config);
@@ -833,10 +1018,11 @@ async function main() {
         if (count > 0) console.log(`  ${basename(path)}: ${count} chunks`);
         total += count;
       }
-      console.log(`\ntotal: ${total} new chunks ingested`);
+      const mode = apiKey ? "" : " (FTS only, no embeddings)";
+      console.log(`\ntotal: ${total} new chunks ingested${mode}`);
     } else if (cmd === "search") {
       if (!args[1]) {
-        console.log('Usage: resonance search "query" [--limit N]');
+        console.log('Usage: resonance search "query" [--limit N] [--fts] [--vector]');
         process.exit(1);
       }
       const apiKey = getApiKey(config);
@@ -846,7 +1032,11 @@ async function main() {
       if (limitIdx !== -1 && args[limitIdx + 1]) {
         limit = parseInt(args[limitIdx + 1], 10);
       }
-      const results = await search(db, query, apiKey, config, limit);
+      let searchMode: SearchMode = "hybrid";
+      if (args.includes("--fts")) searchMode = "fts";
+      else if (args.includes("--vector")) searchMode = "vector";
+
+      const results = await search(db, query, apiKey, config, limit, 0.0, searchMode);
       if (results.length === 0) {
         const total = (db.prepare("SELECT COUNT(*) as c FROM memories").get() as { c: number }).c;
         if (total === 0) {
@@ -858,8 +1048,9 @@ async function main() {
       for (let i = 0; i < results.length; i++) {
         const r = results[i];
         const sourceShort = basename(r.sourceFile);
+        const matchTag = searchMode === "hybrid" ? ` [${r.matchType}]` : "";
         console.log(
-          `\n--- ${i + 1}. ${sourceShort} (sim: ${r.similarity.toFixed(3)}, str: ${r.strength.toFixed(2)}, recalls: ${r.recallCount}) ---`,
+          `\n--- ${i + 1}. ${sourceShort} (sim: ${r.similarity.toFixed(3)}, str: ${r.strength.toFixed(2)}, recalls: ${r.recallCount})${matchTag} ---`,
         );
         console.log(r.content.slice(0, 300));
       }

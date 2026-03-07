@@ -1,20 +1,23 @@
 # Resonance — Post-Install Setup
 
-Before using resonance, you need an embedding API key. Set it via volute:
-
-```bash
-volute env set OPENROUTER_API_KEY <your-key>
-```
-
-Then run the install command to verify the key, set up the database, create a nightly schedule, and run initial ingestion:
+Run the install command to set up the database, create a nightly schedule, and run initial ingestion:
 
 ```bash
 npx tsx .claude/skills/resonance/scripts/resonance.ts install
 ```
 
-This will:
-1. Verify your API key works
-2. Copy the default config to `.config/resonance.json`
-3. Initialize the resonance database
-4. Create a nightly schedule (10pm: ingest-all + decay)
-5. Run initial ingestion of your memory files
+This works immediately — no API key required. Full-text search is available right away.
+
+To also enable **vector search** (semantic similarity), set an embedding API key:
+
+```bash
+volute env set OPENROUTER_API_KEY <your-key>
+```
+
+Then re-run `ingest-all` to generate embeddings for existing memories:
+
+```bash
+npx tsx .claude/skills/resonance/scripts/resonance.ts ingest-all
+```
+
+Without an API key, `search` uses full-text matching. With one, it uses hybrid (vector + FTS) by default.

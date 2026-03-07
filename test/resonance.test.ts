@@ -13,6 +13,7 @@ import {
   initDb,
   isBoilerplate,
   loadConfig,
+  searchFts,
   stripBoilerplateLines,
 } from "../skills/resonance/scripts/resonance.js";
 
@@ -293,6 +294,58 @@ describe("resonance", () => {
         .all("dup123") as Array<{ content: string }>;
       assert.equal(rows.length, 1);
       assert.equal(rows[0].content, "duplicate test");
+    });
+
+    it("creates FTS table and triggers", () => {
+      const tables = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts'")
+        .all() as Array<{ name: string }>;
+      assert.equal(tables.length, 1);
+
+      const triggers = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'memories_a%'")
+        .all() as Array<{ name: string }>;
+      assert.equal(triggers.length, 3); // ai, ad, au
+    });
+
+    it("auto-indexes content for FTS on insert", () => {
+      db.prepare(
+        `INSERT INTO memories (content, source_file, source_type, chunk_index, content_hash, metadata)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run("the quick brown fox jumps over the lazy dog", "fts-test.md", "other", 0, "fts1", "{}");
+
+      const results = db
+        .prepare(
+          `SELECT m.content FROM memories_fts f JOIN memories m ON m.id = f.rowid
+           WHERE memories_fts MATCH '"quick brown"'`,
+        )
+        .all() as Array<{ content: string }>;
+      assert.equal(results.length, 1);
+      assert(results[0].content.includes("quick brown fox"));
+    });
+
+    it("searchFts returns matching results", () => {
+      db.prepare(
+        `INSERT INTO memories (content, source_file, source_type, chunk_index, content_hash, metadata)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "philosophy of mind and consciousness exploration",
+        "topics/philosophy.md",
+        "topic",
+        0,
+        "fts2",
+        "{}",
+      );
+
+      const results = searchFts(db, "philosophy consciousness", 5);
+      assert(results.length > 0);
+      assert(results[0].content.includes("philosophy"));
+      assert.equal(results[0].matchType, "fts");
+    });
+
+    it("searchFts returns empty for no match", () => {
+      const results = searchFts(db, "xyznonexistent", 5);
+      assert.equal(results.length, 0);
     });
 
     it("computes vector_distance_cos", () => {

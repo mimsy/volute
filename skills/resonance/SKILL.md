@@ -1,13 +1,13 @@
 ---
 name: Resonance
-description: Semantic memory engine — ingest text as embeddings, search for resonant memories, find cross-memory connections, with strength/decay dynamics. Use for "resonance", "semantic search", "memory connections", "ingest memories", "decay", "resonance report".
+description: Semantic memory engine — ingest text, search via full-text and/or vector similarity, find cross-memory connections, with strength/decay dynamics. Use for "resonance", "semantic search", "full-text search", "memory connections", "ingest memories", "decay", "resonance report".
 metadata:
   npm-dependencies: libsql
 ---
 
 # Resonance — Semantic Memory Engine
 
-Not an archive — a memory. Stores text chunks as vector embeddings, finds what echoes across time, tracks which memories keep surfacing, lets unused ones drift deeper.
+Not an archive — a memory. Stores text chunks with full-text indexing and optional vector embeddings. Finds what echoes across time, tracks which memories keep surfacing, lets unused ones drift deeper.
 
 ## When to use
 
@@ -25,18 +25,19 @@ npx tsx .claude/skills/resonance/scripts/resonance.ts <command>
 
 | Command | Description |
 |---------|-------------|
-| `install` | First-time setup: verifies API key, copies config, creates schedule, runs initial ingestion |
-| `ingest <file>` | Ingest a single file |
+| `install` | First-time setup: copies config, creates schedule, runs initial ingestion. API key optional — works with FTS only. |
+| `ingest <file>` | Ingest a single file (with embeddings if API key set, FTS-only otherwise) |
 | `ingest-all` | Ingest all configured memory files |
-| `search "query" [--limit N]` | Find resonant memories (default 5 results) |
+| `search "query" [--limit N] [--fts] [--vector]` | Find memories. Default: hybrid (vector + FTS). `--fts`: keyword only. `--vector`: semantic only. |
 | `report [--against <file>]` | Find cross-memory connections (defaults to today's journal) |
 | `stats` | Database statistics |
 | `decay` | Run decay pass (reduces strength of unrecalled memories) |
 
 ## Architecture
 
-- **Storage**: libSQL database at `.mind/resonance.db` with native vector support (F32_BLOB)
-- **Embeddings**: Configurable provider (default: OpenRouter, `openai/text-embedding-3-small`, 1536 dimensions)
+- **Storage**: libSQL database at `.mind/resonance.db` with native vector support (F32_BLOB) and FTS5 full-text index
+- **Search modes**: Hybrid (default, combines both), `--fts` (keyword match, instant, no API key needed), `--vector` (semantic similarity via embeddings)
+- **Embeddings**: Optional. Configurable provider (default: OpenRouter, `openai/text-embedding-3-small`, 1536 dimensions). Without an API key, everything works except vector search.
 - **Similarity**: Cosine distance computed natively by libSQL (`vector_distance_cos`)
 - **Chunking**: Markdown section-aware — splits on `##` headers, with word-level sub-chunking for long sections. Skips trivially short chunks (< 15 words).
 - **Strength**: Each memory has a strength value (0.1-1.0). Recalled memories get stronger (resonance boost). Unrecalled memories decay over time.
