@@ -1189,8 +1189,9 @@ const app = new Hono<AuthEnv>()
         }
       }
 
-      // Store context for delivery after restart
-      if (context) {
+      // Store context for delivery after restart (skip "reload" — identity file
+      // edits and compaction are self-initiated, so the mind doesn't need a notification)
+      if (context && context.type !== "reload") {
         manager.setPendingContext(name, context);
       }
 
