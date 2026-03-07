@@ -42,19 +42,34 @@ function setupTestDir() {
 
   // Secret file outside public (in home/)
   writeFileSync(resolve(testDir, "home", "SOUL.md"), "secret soul");
+
+  // Shared directory (for _system)
+  const sharedDir = resolve(testDir, "shared");
+  mkdirSync(sharedDir, { recursive: true });
+  const sharedPagesDir = resolve(sharedDir, "pages");
+  mkdirSync(sharedPagesDir, { recursive: true });
+  writeFileSync(resolve(sharedPagesDir, "index.html"), "<h1>System</h1>");
+  writeFileSync(resolve(sharedDir, "info.txt"), "shared info");
+
   return testDir;
 }
 
 function createApp(mindBaseDir: string) {
   const app = new Hono();
 
+  function resolveRoot(name: string): string | null {
+    if (name === "_system") return resolve(mindBaseDir, "shared");
+    if (name === "test-mind") return resolve(mindBaseDir, "home", "public");
+    return null;
+  }
+
   // Directory listing
   app.get("/public/:name/", async (c) => {
     const name = c.req.param("name");
-    if (name !== "test-mind") return c.json({ error: "Not found" }, 404);
+    const publicRoot = resolveRoot(name);
+    if (!publicRoot) return c.json({ error: "Not found" }, 404);
 
     const { readdir } = await import("node:fs/promises");
-    const publicRoot = resolve(mindBaseDir, "home", "public");
     const entries = await readdir(publicRoot, { withFileTypes: true }).catch(() => []);
 
     const items = entries
@@ -70,9 +85,8 @@ function createApp(mindBaseDir: string) {
   // File serving
   app.get("/public/:name/*", async (c) => {
     const name = c.req.param("name");
-    if (name !== "test-mind") return c.text("Not found", 404);
-
-    const publicRoot = resolve(mindBaseDir, "home", "public");
+    const publicRoot = resolveRoot(name);
+    if (!publicRoot) return c.text("Not found", 404);
     const wildcard = c.req.path.replace(`/public/${name}`, "") || "/";
     const requestedPath = resolve(publicRoot, wildcard.slice(1));
 
@@ -230,5 +244,40 @@ describe("public files routes", () => {
     assert.equal(docsEntry.type, "directory");
     const readmeEntry = body.find((e: { name: string }) => e.name === "readme.txt");
     assert.equal(readmeEntry.type, "file");
+  });
+
+  it("serves _system shared files", async () => {
+    const dir = setupTestDir();
+    const app = createApp(dir);
+
+    const res = await app.request("/public/_system/info.txt");
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "text/plain");
+    const body = await res.text();
+    assert.equal(body, "shared info");
+  });
+
+  it("lists _system shared directory", async () => {
+    const dir = setupTestDir();
+    const app = createApp(dir);
+
+    const res = await app.request("/public/_system/");
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body));
+    const names = body.map((e: { name: string }) => e.name);
+    assert.ok(names.includes("pages"));
+    assert.ok(names.includes("info.txt"));
+  });
+
+  it("serves _system shared subdirectory files", async () => {
+    const dir = setupTestDir();
+    const app = createApp(dir);
+
+    const res = await app.request("/public/_system/pages/index.html");
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "text/html");
+    const body = await res.text();
+    assert.ok(body.includes("<h1>System</h1>"));
   });
 });

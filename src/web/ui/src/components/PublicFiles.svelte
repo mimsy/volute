@@ -1,5 +1,5 @@
 <script lang="ts">
-let { name }: { name: string } = $props();
+let { name, rootLabel }: { name: string; rootLabel?: string } = $props();
 
 type Entry = { name: string; type: "file" | "directory" };
 
@@ -119,7 +119,7 @@ let sortedEntries = $derived(
     <div class="browser">
       <div class="file-list">
         <div class="breadcrumb">
-          <button class="crumb" onclick={navigateToRoot}>public/</button>
+          <button class="crumb" onclick={navigateToRoot}>{rootLabel ?? "public"}/</button>
           {#each path as segment, i (i)}
             <button class="crumb" onclick={() => (path = path.slice(0, i + 1))}>{segment}/</button>
           {/each}

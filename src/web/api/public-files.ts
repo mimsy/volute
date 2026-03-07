@@ -1,7 +1,13 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { Hono } from "hono";
-import { findMind, mindDir } from "../../lib/registry.js";
+import { findMind, mindDir, voluteHome } from "../../lib/registry.js";
+
+function resolvePublicRoot(name: string): string | null {
+  if (name === "_system") return resolve(voluteHome(), "shared");
+  if (!findMind(name)) return null;
+  return resolve(mindDir(name), "home", "public");
+}
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",
@@ -35,17 +41,17 @@ const app = new Hono()
   // Directory listing: GET /public/:name/
   .get("/:name/", async (c) => {
     const name = c.req.param("name");
-    if (!findMind(name)) return c.json({ error: "Not found" }, 404);
+    const publicRoot = resolvePublicRoot(name);
+    if (!publicRoot) return c.json({ error: "Not found" }, 404);
 
-    const publicRoot = resolve(mindDir(name), "home", "public");
     return c.json(await listDir(publicRoot));
   })
   // File serving or subdirectory listing: GET /public/:name/*
   .get("/:name/*", async (c) => {
     const name = c.req.param("name");
-    if (!findMind(name)) return c.text("Not found", 404);
+    const publicRoot = resolvePublicRoot(name);
+    if (!publicRoot) return c.text("Not found", 404);
 
-    const publicRoot = resolve(mindDir(name), "home", "public");
     const wildcard = c.req.path.replace(`/public/${name}`, "") || "/";
     const requestedPath = resolve(publicRoot, wildcard.slice(1));
 
