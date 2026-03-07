@@ -28,7 +28,9 @@ npx tsx .claude/skills/resonance/scripts/resonance.ts <command>
 | `install` | First-time setup: copies config, creates schedule, runs initial ingestion. API key optional — works with FTS only. |
 | `ingest <file>` | Ingest a single file (with embeddings if API key set, FTS-only otherwise) |
 | `ingest-all` | Ingest all configured memory files |
-| `search "query" [--limit N] [--fts] [--vector]` | Find memories. Default: hybrid (vector + FTS). `--fts`: keyword only. `--vector`: semantic only. |
+| `search "query" [--limit N] [--fts] [--vector]` | Find memories. Default: hybrid (vector + FTS). `--fts`: keyword only. `--vector`: semantic only. Read-only — does not affect memory strength. |
+| `recall <id> [id2 ...]` | Explicitly boost memories that were genuinely useful. Increases strength and recall count. |
+| `random [--limit N] [--min-strength F] [--max-strength F]` | Pull random memories. Use for dreams, associative connections, or serendipitous rediscovery. |
 | `report [--against <file>]` | Find cross-memory connections (defaults to today's journal) |
 | `stats` | Database statistics |
 | `decay` | Run decay pass (reduces strength of unrecalled memories) |

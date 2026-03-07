@@ -10,6 +10,8 @@
  *   resonance ingest <file>              # ingest a file (splits into chunks)
  *   resonance ingest-all                 # ingest all configured memory files
  *   resonance search "query" [--limit N] # find resonant memories
+ *   resonance recall <id> [id2 ...]      # boost specific memories (explicit recall)
+ *   resonance random [--limit N]         # pull random memories (for dreams)
  *   resonance report [--against <file>]  # find cross-memory connections
  *   resonance stats                      # db statistics
  *   resonance decay                      # run decay pass
@@ -500,17 +502,29 @@ async function ingestFile(
   const chunks = chunkText(text, filePath, config);
   if (chunks.length === 0) return 0;
 
-  // Assign indices and hashes, filter already-ingested
-  const checkStmt = db.prepare("SELECT id FROM memories WHERE content_hash = ?");
-  const newChunks: Chunk[] = [];
+  // Assign indices and hashes
   for (let i = 0; i < chunks.length; i++) {
     chunks[i].chunkIndex = i;
     chunks[i].contentHash = hashContent(chunks[i].content);
-    const existing = checkStmt.get(chunks[i].contentHash) as { id: number } | undefined;
-    if (!existing) newChunks.push(chunks[i]);
   }
 
-  if (newChunks.length === 0) return 0;
+  // Check which chunks are new
+  const checkStmt = db.prepare("SELECT id FROM memories WHERE content_hash = ?");
+  const currentHashes = new Set(chunks.map((c) => c.contentHash));
+  const newChunks = chunks.filter((c) => !checkStmt.get(c.contentHash));
+
+  // Remove stale chunks from previous versions of this file
+  const staleRows = db
+    .prepare("SELECT id, content_hash FROM memories WHERE source_file = ?")
+    .all(filePath) as Array<{ id: number; content_hash: string }>;
+  const staleIds = staleRows.filter((r) => !currentHashes.has(r.content_hash)).map((r) => r.id);
+  if (staleIds.length > 0) {
+    db.prepare(`DELETE FROM memories WHERE id IN (${staleIds.map(() => "?").join(",")})`).run(
+      ...staleIds,
+    );
+  }
+
+  if (newChunks.length === 0) return -staleIds.length; // negative = only removals
 
   if (apiKey) {
     // Full ingestion with embeddings
@@ -526,17 +540,24 @@ async function ingestFile(
       const texts = batch.map((c) => c.content.slice(0, 8000));
       const embeddings = await embed(texts, apiKey, config);
 
-      for (let j = 0; j < batch.length; j++) {
-        const chunk = batch[j];
-        insertStmt.run(
-          chunk.content,
-          chunk.sourceFile,
-          chunk.sourceType,
-          chunk.chunkIndex,
-          chunk.contentHash,
-          vecToJson(embeddings[j]),
-          JSON.stringify(chunk.metadata),
-        );
+      db.exec("BEGIN");
+      try {
+        for (let j = 0; j < batch.length; j++) {
+          const chunk = batch[j];
+          insertStmt.run(
+            chunk.content,
+            chunk.sourceFile,
+            chunk.sourceType,
+            chunk.chunkIndex,
+            chunk.contentHash,
+            vecToJson(embeddings[j]),
+            JSON.stringify(chunk.metadata),
+          );
+        }
+        db.exec("COMMIT");
+      } catch (e) {
+        db.exec("ROLLBACK");
+        throw e;
       }
 
       if (batchStart + batchSize < newChunks.length) {
@@ -551,15 +572,22 @@ async function ingestFile(
       VALUES (?, ?, ?, ?, ?, ?)
     `);
 
-    for (const chunk of newChunks) {
-      insertStmt.run(
-        chunk.content,
-        chunk.sourceFile,
-        chunk.sourceType,
-        chunk.chunkIndex,
-        chunk.contentHash,
-        JSON.stringify(chunk.metadata),
-      );
+    db.exec("BEGIN");
+    try {
+      for (const chunk of newChunks) {
+        insertStmt.run(
+          chunk.content,
+          chunk.sourceFile,
+          chunk.sourceType,
+          chunk.chunkIndex,
+          chunk.contentHash,
+          JSON.stringify(chunk.metadata),
+        );
+      }
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      throw e;
     }
   }
 
@@ -608,12 +636,16 @@ export function searchFts(
   limit = 5,
   minStrength = 0.0,
 ): SearchResult[] {
-  // FTS5 match query — quote the query to treat as phrase-like, with * for prefix matching
+  // Sanitize and build FTS5 query — strip special syntax, quote each term
   const ftsQuery = query
     .split(/\s+/)
     .filter(Boolean)
-    .map((w) => `"${w.replace(/"/g, "")}"`)
+    .map((w) => w.replace(/["""()*^{}:]/g, "").replace(/\b(AND|OR|NOT|NEAR)\b/gi, ""))
+    .filter((w) => w.length > 0)
+    .map((w) => `"${w}"`)
     .join(" OR ");
+
+  if (!ftsQuery) return [];
 
   const rows = db
     .prepare(
@@ -638,10 +670,13 @@ export function searchFts(
     rank: number;
   }>;
 
-  // Normalize FTS rank to 0-1 similarity (rank is negative, closer to 0 = better)
-  const maxRank = rows.length > 0 ? Math.max(...rows.map((r) => Math.abs(r.rank))) : 1;
+  // BM25 rank is negative (closer to 0 = worse match). Convert to a positive score.
+  // Use a sigmoid-like mapping so scores stay bounded but don't inflate weak matches.
   return rows.map((row) => {
-    const similarity = maxRank > 0 ? Math.abs(row.rank) / maxRank : 0;
+    const rawScore = Math.abs(row.rank);
+    // Map raw BM25 score through a saturating curve: score / (score + 1)
+    // This gives 0.5 at rawScore=1, ~0.91 at rawScore=10, approaching 1.0 asymptotically
+    const similarity = rawScore / (rawScore + 1);
     return {
       id: row.id,
       content: row.content,
@@ -790,22 +825,22 @@ async function search(
     }
   }
 
-  // Boost recalled memories
-  if (results.length > 0) {
-    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
-    const updateStmt = db.prepare(
-      `UPDATE memories
-       SET recall_count = recall_count + 1,
-           last_recalled = ?,
-           strength = MIN(1.0, strength + ?)
-       WHERE id = ?`,
-    );
-    for (const r of results) {
-      updateStmt.run(now, config.dynamics.resonanceBoost, r.id);
-    }
-  }
-
   return results;
+}
+
+function recallMemories(db: Database, ids: number[], config: ResonanceConfig): void {
+  if (ids.length === 0) return;
+  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+  const updateStmt = db.prepare(
+    `UPDATE memories
+     SET recall_count = recall_count + 1,
+         last_recalled = ?,
+         strength = MIN(1.0, strength + ?)
+     WHERE id = ?`,
+  );
+  for (const id of ids) {
+    updateStmt.run(now, config.dynamics.resonanceBoost, id);
+  }
 }
 
 function runDecay(db: Database, config: ResonanceConfig): { decayed: number; total: number } {
@@ -844,6 +879,51 @@ function runDecay(db: Database, config: ResonanceConfig): { decayed: number; tot
   }
 
   return { decayed, total: rows.length };
+}
+
+interface RandomResult {
+  id: number;
+  content: string;
+  sourceFile: string;
+  sourceType: string;
+  strength: number;
+  recallCount: number;
+  createdAt: string;
+}
+
+function randomMemories(
+  db: Database,
+  limit = 5,
+  minStrength = 0.0,
+  maxStrength = 1.0,
+): RandomResult[] {
+  return (
+    db
+      .prepare(
+        `SELECT id, content, source_file, source_type, strength, recall_count, created_at
+       FROM memories
+       WHERE strength >= ? AND strength <= ?
+       ORDER BY RANDOM()
+       LIMIT ?`,
+      )
+      .all(minStrength, maxStrength, limit) as Array<{
+      id: number;
+      content: string;
+      source_file: string;
+      source_type: string;
+      strength: number;
+      recall_count: number;
+      created_at: string;
+    }>
+  ).map((row) => ({
+    id: row.id,
+    content: row.content,
+    sourceFile: row.source_file,
+    sourceType: row.source_type,
+    strength: row.strength,
+    recallCount: row.recall_count,
+    createdAt: row.created_at,
+  }));
 }
 
 async function resonanceReport(
@@ -981,7 +1061,9 @@ async function main() {
   const cmd = args[0];
 
   if (!cmd) {
-    console.log("Usage: resonance <install|ingest|ingest-all|search|report|stats|decay> [args]");
+    console.log(
+      "Usage: resonance <install|ingest|ingest-all|search|recall|random|report|stats|decay> [args]",
+    );
     process.exit(0);
   }
 
@@ -1009,17 +1091,27 @@ async function main() {
       }
       const count = await ingestFile(db, filePath, apiKey, config);
       const mode = apiKey ? "" : " (FTS only, no embeddings)";
-      console.log(`ingested ${count} new chunks from ${basename(filePath)}${mode}`);
+      if (count < 0) {
+        console.log(`removed ${-count} stale chunks from ${basename(filePath)}`);
+      } else {
+        console.log(`ingested ${count} new chunks from ${basename(filePath)}${mode}`);
+      }
     } else if (cmd === "ingest-all") {
       const apiKey = getApiKey(config);
       const results = await ingestAll(db, apiKey, config);
-      let total = 0;
+      let added = 0;
+      let removed = 0;
       for (const [path, count] of Object.entries(results)) {
-        if (count > 0) console.log(`  ${basename(path)}: ${count} chunks`);
-        total += count;
+        if (count > 0) console.log(`  ${basename(path)}: +${count} chunks`);
+        else if (count < 0) console.log(`  ${basename(path)}: ${count} stale chunks removed`);
+        if (count > 0) added += count;
+        else removed += -count;
       }
       const mode = apiKey ? "" : " (FTS only, no embeddings)";
-      console.log(`\ntotal: ${total} new chunks ingested${mode}`);
+      const parts: string[] = [];
+      if (added > 0) parts.push(`${added} new chunks ingested${mode}`);
+      if (removed > 0) parts.push(`${removed} stale chunks removed`);
+      console.log(`\n${parts.length > 0 ? parts.join(", ") : "no changes"}`);
     } else if (cmd === "search") {
       if (!args[1]) {
         console.log('Usage: resonance search "query" [--limit N] [--fts] [--vector]');
@@ -1051,6 +1143,47 @@ async function main() {
         const matchTag = searchMode === "hybrid" ? ` [${r.matchType}]` : "";
         console.log(
           `\n--- ${i + 1}. ${sourceShort} (sim: ${r.similarity.toFixed(3)}, str: ${r.strength.toFixed(2)}, recalls: ${r.recallCount})${matchTag} ---`,
+        );
+        console.log(r.content.slice(0, 300));
+      }
+    } else if (cmd === "recall") {
+      if (!args[1]) {
+        console.log("Usage: resonance recall <id> [id2 id3 ...]");
+        process.exit(1);
+      }
+      const ids = args
+        .slice(1)
+        .map((s) => parseInt(s, 10))
+        .filter((n) => !Number.isNaN(n));
+      recallMemories(db, ids, config);
+      console.log(
+        `recalled ${ids.length} memories (strength boosted by ${config.dynamics.resonanceBoost})`,
+      );
+    } else if (cmd === "random") {
+      let limit = 5;
+      let minStr = 0.0;
+      let maxStr = 1.0;
+      const limitIdx = args.indexOf("--limit");
+      if (limitIdx !== -1 && args[limitIdx + 1]) {
+        limit = parseInt(args[limitIdx + 1], 10);
+      }
+      const minIdx = args.indexOf("--min-strength");
+      if (minIdx !== -1 && args[minIdx + 1]) {
+        minStr = parseFloat(args[minIdx + 1]);
+      }
+      const maxIdx = args.indexOf("--max-strength");
+      if (maxIdx !== -1 && args[maxIdx + 1]) {
+        maxStr = parseFloat(args[maxIdx + 1]);
+      }
+      const results = randomMemories(db, limit, minStr, maxStr);
+      if (results.length === 0) {
+        console.log("no memories in the specified strength range.");
+      }
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        const sourceShort = basename(r.sourceFile);
+        console.log(
+          `\n--- ${i + 1}. [id:${r.id}] ${sourceShort} (str: ${r.strength.toFixed(2)}, recalls: ${r.recallCount}) ---`,
         );
         console.log(r.content.slice(0, 300));
       }
@@ -1105,8 +1238,9 @@ async function main() {
 
 // Only run CLI when executed directly (not when imported by tests)
 const isDirectRun =
-  (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) ||
-  process.argv[1]?.endsWith("/resonance.ts");
+  process.argv[1] !== undefined &&
+  (import.meta.url === `file://${process.argv[1]}` ||
+    import.meta.url === `file://${resolve(process.argv[1])}`);
 
 if (isDirectRun) {
   main().catch((err) => {

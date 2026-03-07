@@ -57,7 +57,7 @@ describe("resonance", () => {
       assert.equal(isMostlyIgnored(text, patterns), false);
     });
 
-    it("returns false with no patterns", () => {
+    it("returns false for empty text with no patterns", () => {
       assert.equal(isMostlyIgnored("", []), false);
     });
 
@@ -363,6 +363,42 @@ describe("resonance", () => {
     it("searchFts returns empty for no match", () => {
       const results = searchFts(db, "xyznonexistent", 5);
       assert.equal(results.length, 0);
+    });
+
+    it("removes stale FTS entries on delete", () => {
+      db.prepare(
+        `INSERT INTO memories (content, source_file, source_type, chunk_index, content_hash, metadata)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run("stale content to be removed", "stale-test.md", "other", 0, "stale1", "{}");
+
+      // Verify it's in FTS
+      let ftsResults = db
+        .prepare(
+          `SELECT m.content FROM memories_fts f JOIN memories m ON m.id = f.rowid
+           WHERE memories_fts MATCH '"stale content"'`,
+        )
+        .all() as Array<{ content: string }>;
+      assert.equal(ftsResults.length, 1);
+
+      // Delete it
+      db.prepare("DELETE FROM memories WHERE content_hash = ?").run("stale1");
+
+      // FTS should be cleaned up by trigger
+      ftsResults = db
+        .prepare(
+          `SELECT m.content FROM memories_fts f JOIN memories m ON m.id = f.rowid
+           WHERE memories_fts MATCH '"stale content"'`,
+        )
+        .all() as Array<{ content: string }>;
+      assert.equal(ftsResults.length, 0);
+    });
+
+    it("random query returns results", () => {
+      // We already have memories from prior tests
+      const results = db
+        .prepare("SELECT id, content FROM memories ORDER BY RANDOM() LIMIT 2")
+        .all() as Array<{ id: number; content: string }>;
+      assert(results.length > 0);
     });
 
     it("computes vector_distance_cos", () => {
