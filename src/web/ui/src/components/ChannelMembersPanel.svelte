@@ -236,7 +236,7 @@ function isBrainIridescent(username: string): boolean {
     padding: 6px 10px;
     color: var(--text-0);
     font-size: 12px;
-    font-family: var(--mono);
+    font-family: inherit;
     outline: none;
     box-sizing: border-box;
   }

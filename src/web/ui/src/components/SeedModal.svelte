@@ -206,7 +206,7 @@ async function handleSubmit() {
     color: var(--text-0);
     font-size: 13px;
     outline: none;
-    font-family: var(--mono);
+    font-family: inherit;
   }
 
   .select {
@@ -246,7 +246,7 @@ async function handleSubmit() {
     background: transparent;
     color: var(--text-2);
     font-size: 11px;
-    font-family: var(--mono);
+    font-family: inherit;
     border: none;
     cursor: pointer;
     padding: 0;
@@ -274,7 +274,7 @@ async function handleSubmit() {
   .hint {
     color: var(--text-2);
     font-size: 10px;
-    font-family: var(--mono);
+    font-family: inherit;
   }
 
   .skill-list {

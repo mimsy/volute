@@ -241,7 +241,7 @@ async function handleChangePassword(e: Event) {
     border-radius: var(--radius);
     color: var(--text-0);
     font-size: 12px;
-    font-family: var(--mono);
+    font-family: inherit;
     box-sizing: border-box;
     resize: vertical;
   }

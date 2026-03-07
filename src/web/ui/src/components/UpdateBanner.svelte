@@ -104,7 +104,7 @@ async function handleUpdate() {
     border-bottom: 1px solid var(--accent-dim);
     color: var(--accent);
     font-size: 12px;
-    font-family: var(--mono);
+    font-family: inherit;
     flex-shrink: 0;
   }
 
@@ -115,7 +115,7 @@ async function handleUpdate() {
     border-radius: var(--radius);
     padding: 2px 10px;
     font-size: 11px;
-    font-family: var(--mono);
+    font-family: inherit;
     cursor: pointer;
   }
 

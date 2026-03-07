@@ -301,7 +301,7 @@ async function handleReset(key: string) {
   }
 
   .btn {
-    font-family: var(--mono);
+    font-family: inherit;
     font-size: 11px;
     padding: 4px 10px;
     border-radius: var(--radius);

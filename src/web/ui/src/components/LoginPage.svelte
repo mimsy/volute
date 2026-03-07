@@ -137,7 +137,7 @@ async function handleSubmit(e: Event) {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     color: var(--text-0);
-    font-family: var(--mono);
+    font-family: inherit;
     font-size: 13px;
     outline: none;
   }
@@ -165,7 +165,7 @@ async function handleSubmit(e: Event) {
     border-radius: var(--radius);
     font-size: 13px;
     font-weight: 500;
-    font-family: var(--mono);
+    font-family: inherit;
     border: none;
     cursor: pointer;
   }
@@ -174,7 +174,7 @@ async function handleSubmit(e: Event) {
     background: transparent;
     color: var(--text-2);
     font-size: 12px;
-    font-family: var(--mono);
+    font-family: inherit;
     border: none;
     cursor: pointer;
     padding: 0;

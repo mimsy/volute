@@ -241,7 +241,7 @@ let buttonDisabled = $derived(
     color: var(--text-0);
     font-size: 12px;
     outline: none;
-    font-family: var(--mono);
+    font-family: inherit;
   }
 
   .hint {
@@ -320,7 +320,7 @@ let buttonDisabled = $derived(
     color: var(--text-0);
     font-size: 12px;
     padding: 2px 0;
-    font-family: var(--mono);
+    font-family: inherit;
   }
 
   .tag-text-input::placeholder {

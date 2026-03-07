@@ -243,7 +243,7 @@ let sortedEntries = $derived(
   .crumb {
     background: none;
     color: var(--accent);
-    font-family: var(--mono);
+    font-family: inherit;
     font-size: 11px;
     padding: 0;
     cursor: pointer;
