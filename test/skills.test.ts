@@ -63,6 +63,25 @@ describe("parseSkillMd", () => {
     assert.equal(result.name, "Only Name");
     assert.equal(result.description, "");
   });
+
+  it("parses npm-dependencies from metadata", () => {
+    const result = parseSkillMd(
+      "---\nname: test\ndescription: test\nmetadata:\n  npm-dependencies: libsql\n---\n",
+    );
+    assert.deepEqual(result.npmDependencies, ["libsql"]);
+  });
+
+  it("parses multiple npm-dependencies", () => {
+    const result = parseSkillMd(
+      "---\nname: test\ndescription: test\nmetadata:\n  npm-dependencies: libsql better-sqlite3\n---\n",
+    );
+    assert.deepEqual(result.npmDependencies, ["libsql", "better-sqlite3"]);
+  });
+
+  it("returns empty array when no npm-dependencies", () => {
+    const result = parseSkillMd("---\nname: test\ndescription: test\n---\n");
+    assert.deepEqual(result.npmDependencies, []);
+  });
 });
 
 describe("shared skill CRUD", () => {

@@ -1,0 +1,21 @@
+{
+  "embedding": {
+    "provider": "openrouter",
+    "url": "https://openrouter.ai/api/v1/embeddings",
+    "model": "openai/text-embedding-3-small",
+    "dimensions": 1536,
+    "apiKeyEnvVar": "OPENROUTER_API_KEY"
+  },
+  "ingestion": {
+    "dirs": ["memory/journal", "memory/reading", "memory/topics"],
+    "files": ["MEMORY.md"],
+    "chunkSize": 512,
+    "chunkOverlap": 64,
+    "ignorePatterns": []
+  },
+  "dynamics": {
+    "decayRate": 0.02,
+    "minStrength": 0.1,
+    "resonanceBoost": 0.05
+  }
+}

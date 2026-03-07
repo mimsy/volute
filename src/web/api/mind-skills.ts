@@ -34,13 +34,12 @@ const app = new Hono<AuthEnv>()
       const dir = mindDir(name);
 
       try {
-        await installSkill(name, dir, skillId);
+        const result = await installSkill(name, dir, skillId);
+        return c.json({ ok: true, ...result });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         return c.json({ error: msg }, 400);
       }
-
-      return c.json({ ok: true });
     },
   )
   .post(
