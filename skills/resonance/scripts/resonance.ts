@@ -85,6 +85,14 @@ export function loadConfig(): ResonanceConfig {
   if (!existsSync(overridePath)) return defaultConfig;
 
   const override = JSON.parse(readFileSync(overridePath, "utf-8"));
+  if (typeof override !== "object" || override === null) {
+    throw new Error("Invalid resonance.json: must be a JSON object");
+  }
+  for (const key of ["embedding", "ingestion", "dynamics"] as const) {
+    if (key in override && (typeof override[key] !== "object" || override[key] === null)) {
+      throw new Error(`Invalid resonance.json: "${key}" must be an object`);
+    }
+  }
   return {
     embedding: { ...defaultConfig.embedding, ...override.embedding },
     ingestion: { ...defaultConfig.ingestion, ...override.ingestion },
@@ -170,7 +178,7 @@ async function runInstall(config: ResonanceConfig): Promise<void> {
   }
 
   // 4. Initialize DB
-  const db = initDb(getDbPath());
+  const db = initDb(getDbPath(), config.embedding.dimensions);
   db.close();
   console.log("initialized resonance database.");
 
@@ -184,8 +192,10 @@ async function runInstall(config: ResonanceConfig): Promise<void> {
       { stdio: "pipe" },
     );
     console.log('added nightly schedule "resonance-nightly" (10pm: ingest-all + decay).');
-  } catch {
-    console.log("note: could not add schedule automatically. you can add it manually:");
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.log(`note: could not add schedule automatically: ${msg}`);
+    console.log("you can add it manually:");
     console.log(
       `  volute schedule add --cron "0 22 * * *" --script "${script}" --id resonance-nightly`,
     );
@@ -193,7 +203,7 @@ async function runInstall(config: ResonanceConfig): Promise<void> {
 
   // 6. Run initial ingestion
   console.log("\nrunning initial ingestion...");
-  const db2 = initDb(getDbPath());
+  const db2 = initDb(getDbPath(), config.embedding.dimensions);
   try {
     const results = await ingestAll(db2, apiKey, config);
     let total = 0;
@@ -213,7 +223,7 @@ async function runInstall(config: ResonanceConfig): Promise<void> {
 
 type Database = import("libsql").Database;
 
-export function initDb(dbPath: string): Database {
+export function initDb(dbPath: string, dimensions = 1536): Database {
   // Dynamic import to allow testing without libsql in some cases
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { DatabaseSync } = require("libsql");
@@ -227,7 +237,7 @@ export function initDb(dbPath: string): Database {
       source_type TEXT,
       chunk_index INTEGER DEFAULT 0,
       content_hash TEXT UNIQUE,
-      embedding F32_BLOB(${1536}),
+      embedding F32_BLOB(${dimensions}),
       strength REAL DEFAULT 1.0,
       recall_count INTEGER DEFAULT 0,
       last_recalled TEXT,
@@ -508,12 +518,17 @@ async function ingestAll(
     const filePath = join(home, file);
     if (existsSync(filePath)) {
       results[file] = await ingestFile(db, filePath, apiKey, config);
+    } else {
+      console.error(`  warning: configured file not found: ${file}`);
     }
   }
 
   for (const dir of config.ingestion.dirs) {
     const dirPath = join(home, dir);
-    if (!existsSync(dirPath)) continue;
+    if (!existsSync(dirPath)) {
+      console.error(`  warning: configured directory not found: ${dir}`);
+      continue;
+    }
     const files = readdirSync(dirPath)
       .filter((f) => f.endsWith(".md"))
       .sort();
@@ -644,6 +659,7 @@ async function resonanceReport(
 
   if (againstFile) {
     const filePath = resolve(againstFile);
+    if (!existsSync(filePath)) return `file not found: ${filePath}`;
     text = readFileSync(filePath, "utf-8");
     source = filePath;
   } else {
@@ -779,7 +795,7 @@ async function main() {
   }
 
   requireInstalled();
-  const db = initDb(getDbPath());
+  const db = initDb(getDbPath(), config.embedding.dimensions);
 
   try {
     if (cmd === "ingest") {

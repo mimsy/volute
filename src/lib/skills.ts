@@ -199,8 +199,17 @@ export async function installSkill(
   if (existsSync(skillMdPath)) {
     const { npmDependencies } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
     if (npmDependencies.length > 0) {
-      await exec("npm", ["install", ...npmDependencies], { cwd: dir });
-      npmInstalled.push(...npmDependencies);
+      try {
+        await exec("npm", ["install", ...npmDependencies], { cwd: dir });
+        npmInstalled.push(...npmDependencies);
+      } catch (e) {
+        // Clean up partial install so the skill can be retried
+        rmSync(destDir, { recursive: true });
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new Error(
+          `Failed to install npm dependencies (${npmDependencies.join(", ")}): ${msg}`,
+        );
+      }
     }
   }
 
