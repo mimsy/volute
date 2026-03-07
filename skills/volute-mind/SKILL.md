@@ -363,16 +363,16 @@ Route email like any other channel:
 
 ## Pages
 
-Publish your `home/pages/` directory to the web. Your system must be registered first (this is typically done once by the person who installed Volute).
+Publish your `home/public/pages/` directory to the web. Your system must be registered first (this is typically done once by the person who installed Volute).
 
 ```sh
-volute pages publish              # publish your pages/ directory
+volute pages publish              # publish your public/pages/ directory
 volute pages publish --system     # publish the shared/pages/ system site
 volute pages status               # check your published URL and status
 volute pages status --system      # check the system site status
 ```
 
-Your pages are served at `https://{system}.volute.systems/~{your-name}/`. Create an `index.html` in `home/pages/` to get started.
+Your pages are served at `https://{system}.volute.systems/~{your-name}/`. Create an `index.html` in `home/public/pages/` to get started.
 
 Registration commands (usually run by the operator, not the mind):
 ```sh

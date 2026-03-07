@@ -17,6 +17,7 @@ import mindSkills from "./api/mind-skills.js";
 import minds from "./api/minds.js";
 import pages from "./api/pages.js";
 import prompts from "./api/prompts.js";
+import publicFiles from "./api/public-files.js";
 import schedules from "./api/schedules.js";
 import shared from "./api/shared.js";
 import skills from "./api/skills.js";
@@ -103,8 +104,9 @@ app.use("/api/skills/*", authMiddleware);
 // v1 API auth
 app.use("/api/v1/*", authMiddleware);
 
-// Mind pages (public, no auth)
+// Public routes (no auth)
 app.route("/pages", pages);
+app.route("/public", publicFiles);
 
 // Chain route registrations to capture types
 const routes = app

@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import { resolve } from "node:path";
+import log from "./logger.js";
 import { mindDir, stateDir } from "./registry.js";
 
 /** Rename legacy .volute/ → .mind/ within a mind directory. */
@@ -11,6 +12,20 @@ export function migrateDotVoluteDir(name: string): void {
     renameSync(oldDir, newDir);
   } else if (existsSync(oldDir) && existsSync(newDir)) {
     console.warn(`[migrate] both .volute/ and .mind/ exist for ${name}, skipping rename`);
+  }
+}
+
+/** Migrate home/pages/ → home/public/pages/ for existing minds. */
+export function migratePagesDirToPublic(name: string): void {
+  const dir = mindDir(name);
+  const oldPagesDir = resolve(dir, "home", "pages");
+  const newPublicDir = resolve(dir, "home", "public");
+  const newPagesDir = resolve(newPublicDir, "pages");
+
+  if (existsSync(oldPagesDir) && !existsSync(newPagesDir)) {
+    mkdirSync(newPublicDir, { recursive: true });
+    renameSync(oldPagesDir, newPagesDir);
+    log.info(`migrated pages/ → public/pages/ for ${name}`);
   }
 }
 

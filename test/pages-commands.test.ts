@@ -371,7 +371,7 @@ describe("pages CLI commands", () => {
       process.env.VOLUTE_MIND = MIND_NAME;
 
       // Create pages/ directory in the mind's home
-      const pagesDir = resolve(mindDir(MIND_NAME), "home", "pages");
+      const pagesDir = resolve(mindDir(MIND_NAME), "home", "public", "pages");
       mkdirSync(pagesDir, { recursive: true });
       writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hi</h1>");
 
@@ -427,7 +427,7 @@ describe("pages CLI commands", () => {
     it("exits if pages/ directory is empty", async () => {
       writeSystemsConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
 
-      const pagesDir = resolve(mindDir(MIND_NAME), "home", "pages");
+      const pagesDir = resolve(mindDir(MIND_NAME), "home", "public", "pages");
       rmSync(pagesDir, { recursive: true, force: true });
       mkdirSync(pagesDir, { recursive: true });
 
@@ -443,7 +443,7 @@ describe("pages CLI commands", () => {
     it("exits on API error", async () => {
       writeSystemsConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
 
-      const pagesDir = resolve(mindDir(MIND_NAME), "home", "pages");
+      const pagesDir = resolve(mindDir(MIND_NAME), "home", "public", "pages");
       mkdirSync(pagesDir, { recursive: true });
       writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hi</h1>");
 
@@ -464,7 +464,7 @@ describe("pages CLI commands", () => {
     it("publishes multiple files including nested paths", async () => {
       writeSystemsConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
 
-      const pagesDir = resolve(mindDir(MIND_NAME), "home", "pages");
+      const pagesDir = resolve(mindDir(MIND_NAME), "home", "public", "pages");
       mkdirSync(resolve(pagesDir, "css"), { recursive: true });
       mkdirSync(resolve(pagesDir, "img"), { recursive: true });
       writeFileSync(resolve(pagesDir, "index.html"), "<h1>Home</h1>");
@@ -634,7 +634,7 @@ describe("pages CLI commands", () => {
     it("handles plain text error response gracefully", async () => {
       writeSystemsConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
 
-      const pagesDir = resolve(mindDir(MIND_NAME), "home", "pages");
+      const pagesDir = resolve(mindDir(MIND_NAME), "home", "public", "pages");
       mkdirSync(pagesDir, { recursive: true });
       writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hi</h1>");
 

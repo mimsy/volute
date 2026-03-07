@@ -28,7 +28,7 @@ function cleanup() {
 
 function setupTestDir() {
   testDir = resolve(tmpdir(), `volute-test-pages-${Date.now()}`);
-  const pagesDir = resolve(testDir, "home", "pages");
+  const pagesDir = resolve(testDir, "home", "public", "pages");
   mkdirSync(pagesDir, { recursive: true });
   writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hello</h1>");
   writeFileSync(resolve(pagesDir, "style.css"), "body { color: red; }");
@@ -57,7 +57,7 @@ function createApp(mindBaseDir: string) {
     // Simulate mind check — we only recognize "test-mind"
     if (name !== "test-mind") return c.text("Not found", 404);
 
-    const pagesRoot = resolve(mindBaseDir, "home", "pages");
+    const pagesRoot = resolve(mindBaseDir, "home", "public", "pages");
     const wildcard = c.req.path.replace(`/pages/${name}`, "") || "/";
     const requestedPath = resolve(pagesRoot, wildcard.slice(1));
 
@@ -170,7 +170,7 @@ describe("web pages routes", () => {
     const dir = setupTestDir();
 
     // Verify the resolve + startsWith guard works correctly
-    const pagesRoot = resolve(dir, "home", "pages");
+    const pagesRoot = resolve(dir, "home", "public", "pages");
     const attackPath = resolve(pagesRoot, "../../SOUL.md");
     assert.ok(!attackPath.startsWith(pagesRoot), "attack path should be outside pages root");
   });
