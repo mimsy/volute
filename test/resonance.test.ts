@@ -56,8 +56,12 @@ describe("resonance", () => {
       assert.equal(isBoilerplate(text, patterns), false);
     });
 
-    it("returns true for empty text", () => {
-      assert.equal(isBoilerplate("", []), true);
+    it("returns false with no patterns", () => {
+      assert.equal(isBoilerplate("", []), false);
+    });
+
+    it("returns true for empty text with patterns", () => {
+      assert.equal(isBoilerplate("", [/test/]), true);
     });
   });
 

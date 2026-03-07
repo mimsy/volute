@@ -15,10 +15,17 @@
  *   resonance decay                      # run decay pass
  */
 
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { basename, join, resolve } from "node:path";
+
+const libsqlRequire = createRequire(import.meta.url);
 
 // --- types ---
 
@@ -186,11 +193,16 @@ async function runInstall(config: ResonanceConfig): Promise<void> {
   const scriptPath = ".claude/skills/resonance/scripts/resonance.ts";
   const script = `npx tsx ${scriptPath} ingest-all && npx tsx ${scriptPath} decay`;
   try {
-    execFileSync(
-      "volute",
-      ["schedule", "add", "--cron", "0 22 * * *", "--script", script, "--id", "resonance-nightly"],
-      { stdio: "pipe" },
-    );
+    await execFileAsync("volute", [
+      "schedule",
+      "add",
+      "--cron",
+      "0 22 * * *",
+      "--script",
+      script,
+      "--id",
+      "resonance-nightly",
+    ]);
     console.log('added nightly schedule "resonance-nightly" (10pm: ingest-all + decay).');
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -224,10 +236,8 @@ async function runInstall(config: ResonanceConfig): Promise<void> {
 type Database = import("libsql").Database;
 
 export function initDb(dbPath: string, dimensions = 1536): Database {
-  // Dynamic import to allow testing without libsql in some cases
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { DatabaseSync } = require("libsql");
-  const db = new DatabaseSync(dbPath) as Database;
+  const Database = libsqlRequire("libsql");
+  const db = new Database(dbPath) as Database;
   db.exec("PRAGMA journal_mode=WAL");
   db.exec(`
     CREATE TABLE IF NOT EXISTS memories (
@@ -241,6 +251,7 @@ export function initDb(dbPath: string, dimensions = 1536): Database {
       strength REAL DEFAULT 1.0,
       recall_count INTEGER DEFAULT 0,
       last_recalled TEXT,
+      last_decayed TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       metadata TEXT
     )
@@ -615,24 +626,27 @@ async function search(
 
 function runDecay(db: Database, config: ResonanceConfig): { decayed: number; total: number } {
   const rows = db
-    .prepare("SELECT id, strength, last_recalled, created_at FROM memories")
+    .prepare("SELECT id, strength, last_recalled, last_decayed, created_at FROM memories")
     .all() as Array<{
     id: number;
     strength: number;
     last_recalled: string | null;
+    last_decayed: string | null;
     created_at: string;
   }>;
 
-  const now = Date.now();
-  const updateStmt = db.prepare("UPDATE memories SET strength = ? WHERE id = ?");
+  const now = new Date();
+  const nowIso = now.toISOString().slice(0, 19).replace("T", " ");
+  const updateStmt = db.prepare("UPDATE memories SET strength = ?, last_decayed = ? WHERE id = ?");
   let decayed = 0;
 
   for (const row of rows) {
-    const last = row.last_recalled || row.created_at;
-    if (!last) continue;
-    const lastMs = new Date(last).getTime();
-    if (Number.isNaN(lastMs)) continue;
-    const daysSince = Math.floor((now - lastMs) / (1000 * 60 * 60 * 24));
+    // Use last_decayed if available, otherwise fall back to last_recalled or created_at
+    const since = row.last_decayed || row.last_recalled || row.created_at;
+    if (!since) continue;
+    const sinceMs = new Date(since).getTime();
+    if (Number.isNaN(sinceMs)) continue;
+    const daysSince = Math.floor((now.getTime() - sinceMs) / (1000 * 60 * 60 * 24));
     if (daysSince <= 0) continue;
 
     const newStrength = Math.max(
@@ -640,7 +654,7 @@ function runDecay(db: Database, config: ResonanceConfig): { decayed: number; tot
       row.strength - config.dynamics.decayRate * daysSince,
     );
     if (newStrength !== row.strength) {
-      updateStmt.run(newStrength, row.id);
+      updateStmt.run(newStrength, nowIso, row.id);
       decayed++;
     }
   }
@@ -898,7 +912,14 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Only run CLI when executed directly (not when imported by tests)
+const isDirectRun =
+  (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) ||
+  process.argv[1]?.endsWith("/resonance.ts");
+
+if (isDirectRun) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
