@@ -711,6 +711,14 @@ async function main() {
         limit = parseInt(args[limitIdx + 1], 10);
       }
       const results = await search(db, query, apiKey, config, limit);
+      if (results.length === 0) {
+        const total = (db.prepare("SELECT COUNT(*) as c FROM memories").get() as { c: number }).c;
+        if (total === 0) {
+          console.log("no memories ingested yet. run ingest-all first.");
+        } else {
+          console.log("no resonant memories found for this query.");
+        }
+      }
       for (let i = 0; i < results.length; i++) {
         const r = results[i];
         const sourceShort = basename(r.sourceFile);
@@ -738,8 +746,12 @@ async function main() {
         weakest: Array<{ content: string; strength: number; source: string }>;
       };
       console.log(`total memories: ${stats.total_memories}`);
-      console.log(`by type: ${JSON.stringify(stats.by_type)}`);
-      console.log(`avg strength: ${stats.avg_strength}`);
+      if (stats.total_memories === 0) {
+        console.log("\nno memories yet. run ingest-all to populate from your memory files.");
+      } else {
+        console.log(`by type: ${JSON.stringify(stats.by_type)}`);
+        console.log(`avg strength: ${stats.avg_strength}`);
+      }
       if (stats.most_recalled.length > 0) {
         console.log("\nmost recalled:");
         for (const m of stats.most_recalled) {
