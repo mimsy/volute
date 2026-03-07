@@ -5,24 +5,25 @@ sidebar:
   order: 8
 ---
 
-The daemon is the single background process that manages all agents, connectors, and schedules.
+The daemon is the single background process that manages all minds, connectors, and schedules.
 
 ## up
 
 Start the daemon.
 
 ```sh
-volute up [--port <N>] [--foreground]
+volute up [--port <N>] [--foreground] [--tailscale]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--port` | Port to listen on (default: 4200) |
+| `--port` | Port to listen on (default: 1618) |
 | `--foreground` | Run in the foreground instead of daemonizing |
+| `--tailscale` | Enable Tailscale HTTPS with automatic TLS certificates |
 
 ## down
 
-Stop the daemon and all agents.
+Stop the daemon and all minds.
 
 ```sh
 volute down
@@ -38,7 +39,7 @@ volute restart [--port <N>]
 
 ## status
 
-Show daemon status, version, and running agents.
+Show daemon status, version, and running minds.
 
 ```sh
 volute status
@@ -68,22 +69,22 @@ Check service status.
 volute service status
 ```
 
-## setup
+## service install --system
 
 Install as a system-level service (Linux, requires root).
 
 ```sh
-sudo volute setup [--port <N>] [--host <H>]
+sudo volute service install --system [--port <N>] [--host <H>]
 ```
 
 Creates a systemd service at `/etc/systemd/system/volute.service` with data at `/var/lib/volute` and user isolation enabled.
 
-## setup uninstall
+## service uninstall --system
 
 Remove the system service.
 
 ```sh
-sudo volute setup uninstall [--force]
+sudo volute service uninstall --system [--force]
 ```
 
 | Flag | Description |

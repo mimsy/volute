@@ -5,29 +5,29 @@ sidebar:
   order: 9
 ---
 
-View message history for agents and channels.
+View message history for minds and channels.
 
 ## Usage
 
 ```sh
-volute history [--agent <name>] [--channel <channel>] [--limit <N>]
+volute history [--mind <name>] [--channel <channel>] [--limit <N>]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--agent` | Filter by agent |
+| `--mind` | Filter by mind |
 | `--channel` | Filter by channel URI |
 | `--limit` | Number of messages to show |
 
 ## Examples
 
 ```sh
-# All messages for an agent
-volute history --agent atlas
+# All messages for a mind
+volute history --mind atlas
 
 # Messages from a specific channel
-volute history --agent atlas --channel discord:my-server/general
+volute history --mind atlas --channel discord:my-server/general
 
 # Last 10 messages
-volute history --agent atlas --limit 10
+volute history --mind atlas --limit 10
 ```

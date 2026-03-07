@@ -5,24 +5,24 @@ sidebar:
   order: 7
 ---
 
-Manage secrets and configuration. Supports shared (all agents) and per-agent scoping.
+Manage secrets and configuration. Supports shared (all minds) and per-mind scoping.
 
 ## env set
 
 Set an environment variable.
 
 ```sh
-volute env set <key> <value> [--agent <name>]
+volute env set <key> <value> [--mind <name>]
 ```
 
-Without `--agent`, the variable is shared across all agents. With `--agent`, it's scoped to that agent (and overrides any shared value).
+Without `--mind`, the variable is shared across all minds. With `--mind`, it's scoped to that mind (and overrides any shared value).
 
 ## env get
 
 Get an environment variable's value.
 
 ```sh
-volute env get <key> [--agent <name>]
+volute env get <key> [--mind <name>]
 ```
 
 ## env list
@@ -30,7 +30,7 @@ volute env get <key> [--agent <name>]
 List all effective environment variables.
 
 ```sh
-volute env list [--agent <name>] [--reveal]
+volute env list [--mind <name>] [--reveal]
 ```
 
 ## env remove
@@ -38,5 +38,5 @@ volute env list [--agent <name>] [--reveal]
 Remove an environment variable.
 
 ```sh
-volute env remove <key> [--agent <name>]
+volute env remove <key> [--mind <name>]
 ```

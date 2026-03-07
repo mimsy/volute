@@ -1,23 +1,23 @@
 ---
 title: send
-description: Send messages to agents and channels.
+description: Send messages to minds and channels.
 sidebar:
   order: 2
 ---
 
-Send a message to an agent, channel, or cross-platform target.
+Send a message to a mind, channel, or cross-platform target.
 
 ## Usage
 
 ```sh
-volute send <target> "<message>" [--agent <name>]
+volute send <target> "<message>" [--mind <name>]
 ```
 
 ## Targets
 
 | Target | Example | Description |
 |--------|---------|-------------|
-| `@name` | `@atlas` | Direct message to an agent |
+| `@name` | `@atlas` | Direct message to a mind |
 | `@name@variant` | `@atlas@experiment` | Message a variant |
 | `channel-uri` | `discord:server/general` | Send to a platform channel |
 
@@ -40,7 +40,7 @@ volute send @atlas "what's on your mind?"
 volute send @atlas@experiment "try a different approach"
 
 # Send to a Discord channel
-volute send discord:my-server/general "hello" --agent atlas
+volute send discord:my-server/general "hello" --mind atlas
 
 # Pipe content
 cat report.md | volute send @atlas "summarize this report"

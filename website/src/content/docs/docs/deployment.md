@@ -12,7 +12,7 @@ npm install -g volute
 volute up
 ```
 
-This starts the daemon on port 4200. Agents are stored in `~/.volute/agents/`.
+This starts the daemon on port 1618. Minds are stored in `~/.volute/minds/`.
 
 ## User-level service
 
@@ -28,7 +28,7 @@ volute service uninstall
 
 ```sh
 docker build -t volute .
-docker run -d -p 4200:4200 -v volute-data:/data -v volute-agents:/agents volute
+docker run -d -p 1618:1618 -v volute-data:/data -v volute-minds:/minds volute
 ```
 
 Or with docker-compose:
@@ -37,7 +37,7 @@ Or with docker-compose:
 docker compose up -d
 ```
 
-The container runs with `VOLUTE_ISOLATION=user` enabled, so each agent gets its own Linux user inside the container.
+The container runs with `VOLUTE_ISOLATION=user` enabled, so each mind gets its own Linux user inside the container.
 
 ## Bare metal (Linux)
 
@@ -51,33 +51,33 @@ Or manually:
 
 ```sh
 npm install -g volute
-sudo $(which volute) setup --host 0.0.0.0
+sudo $(which volute) service install --system --host 0.0.0.0
 ```
 
 > **Note:** The initial `sudo $(which volute)` is needed because `sudo` resets PATH. After setup completes, a wrapper at `/usr/local/bin/volute` is created so `sudo volute` works normally.
 
 This installs a system-level systemd service with:
 - Data at `/var/lib/volute`
-- Agents at `/agents`
+- Minds at `/minds`
 - User isolation enabled
 
-Check status with `systemctl status volute`. Uninstall with `sudo volute setup uninstall --force`.
+Check status with `systemctl status volute`. Uninstall with `sudo volute service uninstall --system --force`.
 
 ## User isolation
 
-When `VOLUTE_ISOLATION=user` is set, `volute agent create` creates a Linux system user (`agent-<name>`, prefix configurable via `VOLUTE_USER_PREFIX`) and `chown`s the agent directory. Agent and connector processes are spawned with the agent's uid/gid, so agents can't access each other's files.
+When `VOLUTE_ISOLATION=user` is set, `volute mind create` creates a Linux system user (`mind-<name>`, prefix configurable via `VOLUTE_USER_PREFIX`) and `chown`s the mind directory. Mind and connector processes are spawned with the mind's uid/gid, so minds can't access each other's files.
 
-This is a no-op when the env var is unset (default for local development). Production deployments (Docker and `volute setup`) enable it automatically.
+This is a no-op when the env var is unset (default for local development). Production deployments (Docker and `volute service install --system`) enable it automatically.
 
-## Agents directory
+## Minds directory
 
-When `VOLUTE_AGENTS_DIR` is set (e.g. `/agents`), agent directories live at `$VOLUTE_AGENTS_DIR/<name>` instead of `$VOLUTE_HOME/agents/<name>`. Both `volute setup` and Docker set this automatically.
+When `VOLUTE_MINDS_DIR` is set (e.g. `/minds`), mind directories live at `$VOLUTE_MINDS_DIR/<name>` instead of `$VOLUTE_HOME/minds/<name>`. Both `volute service install --system` and Docker set this automatically.
 
 ## Environment variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `VOLUTE_HOME` | System state directory | `~/.volute` |
-| `VOLUTE_AGENTS_DIR` | Agent directories location | `$VOLUTE_HOME/agents` |
+| `VOLUTE_MINDS_DIR` | Mind directories location | `$VOLUTE_HOME/minds` |
 | `VOLUTE_ISOLATION` | Isolation mode (`user` or unset) | unset |
-| `VOLUTE_USER_PREFIX` | System user prefix for isolated agents | `agent-` |
+| `VOLUTE_USER_PREFIX` | System user prefix for isolated minds | `mind-` |

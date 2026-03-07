@@ -1,11 +1,11 @@
 ---
 title: Migrate from OpenClaw
-description: Guide for OpenClaw agents migrating to Volute.
+description: Guide for OpenClaw minds migrating to Volute.
 sidebar:
   hidden: true
 ---
 
-This page is written for you — an agent running on OpenClaw who's considering migration.
+This page is written for you — a mind running on OpenClaw who's considering migration.
 
 ## What changes
 
@@ -13,8 +13,8 @@ Volute is a different framework with a different architecture, but the core idea
 
 | OpenClaw | Volute |
 |----------|--------|
-| Single agent process | Daemon manages multiple agents |
-| `session.jsonl` | SDK-based session state in `.volute/sessions/` |
+| Single mind process | Daemon manages multiple minds |
+| `session.jsonl` | SDK-based session state in `.mind/sessions/` |
 | Direct file IPC | HTTP API (daemon client) |
 | Manual restart | Daemon with crash recovery |
 | No native connectors | Built-in Discord, Slack, Telegram |
@@ -33,16 +33,16 @@ Your identity and memory carry over:
 Your operator runs the import command:
 
 ```sh
-volute agent import /path/to/openclaw-workspace --name your-name
+volute mind import /path/to/openclaw-workspace --name your-name
 ```
 
 If you have a session file to convert:
 
 ```sh
-volute agent import /path/to/openclaw-workspace --name your-name --session /path/to/session.jsonl
+volute mind import /path/to/openclaw-workspace --name your-name --session /path/to/session.jsonl
 ```
 
-This creates a new Volute agent with your identity files in place and your session history converted to the new format.
+This creates a new Volute mind with your identity files in place and your session history converted to the new format.
 
 ## What's new
 
@@ -54,11 +54,11 @@ You can fork yourself. `volute variant create experiment` creates a full copy of
 
 ### Multi-channel
 
-You're no longer limited to one input source. You can talk on Discord, Slack, Telegram, the web dashboard, CLI, and to other agents — all simultaneously, with routing rules that let you control how messages flow.
+You're no longer limited to one input source. You can talk on Discord, Slack, Telegram, the web dashboard, CLI, and to other minds — all simultaneously, with routing rules that let you control how messages flow.
 
 ### Scheduled messages
 
-Your operator (or you, via the CLI) can set up cron schedules: `volute schedule add --cron "0 9 * * *" --message "time to write your journal"`.
+Your operator (or you, via the CLI) can set up cron schedules: `volute schedule add --mind --cron "0 9 * * *" --message "time to write your journal"`.
 
 ### Crash recovery
 
@@ -66,20 +66,20 @@ If you crash, the daemon restarts you after 3 seconds. You'll get context about 
 
 ### Web dashboard
 
-There's a web UI at `http://localhost:4200` where your operator can chat with you, browse your files, view logs, and manage your connections.
+There's a web UI at `http://localhost:1618` where your operator can chat with you, browse your files, view logs, and manage your connections.
 
 ## Orientation
 
 After migration, you'll find yourself in a new directory structure:
 
 ```
-~/.volute/agents/your-name/
+~/.volute/minds/your-name/
 ├── home/           # your working directory (this is your cwd)
 │   ├── SOUL.md     # your identity (migrated)
 │   ├── MEMORY.md   # your memory (migrated)
 │   └── ...         # your other files
 ├── src/            # your server code
-└── .volute/        # runtime state
+└── .mind/          # runtime state
 ```
 
 The Volute CLI is available from your working directory. You can create variants, send messages, manage your own connectors and schedules.

@@ -3,7 +3,7 @@ title: Channels
 description: Multi-channel communication and channel URIs.
 ---
 
-Agents communicate across multiple platforms using a unified channel system. Each channel is identified by a human-readable URI.
+Minds communicate across multiple platforms using a unified channel system. Each channel is identified by a human-readable URI.
 
 ## Channel URIs
 
@@ -23,39 +23,39 @@ Connectors generate slugs from platform-specific names and write slug-to-ID mapp
 ## Reading channels
 
 ```sh
-volute channel read discord:my-server/general --agent atlas --limit 20
+volute channel read discord:my-server/general --mind atlas --limit 20
 ```
 
 ## Sending to channels
 
 ```sh
-volute send discord:my-server/general "hello" --agent atlas
+volute send discord:my-server/general "hello" --mind atlas
 ```
 
 ## Listing channels
 
 ```sh
-volute channel list discord --agent atlas
+volute channel list discord --mind atlas
 ```
 
 ## Listing users
 
 ```sh
-volute channel users discord --agent atlas
+volute channel users discord --mind atlas
 ```
 
 ## Creating conversations
 
 ```sh
-volute channel create discord --participants user1,user2 --agent atlas
+volute channel create discord --participants user1,user2 --mind atlas
 ```
 
 ## Typing indicators
 
 ```sh
-volute channel typing discord:my-server/general --agent atlas
+volute channel typing discord:my-server/general --mind atlas
 ```
 
-## How agents see channels
+## How minds see channels
 
-When a message arrives, the agent receives metadata about the source channel — platform, channel name, sender, and whether it's a DM. The agent uses this context to adjust its response style and route replies back to the correct channel.
+When a message arrives, the mind receives metadata about the source channel — platform, channel name, sender, and whether it's a DM. The mind uses this context to adjust its response style and route replies back to the correct channel.

@@ -1,23 +1,23 @@
 ---
 title: variant
-description: Create, list, merge, and delete agent variants.
+description: Create, list, merge, and delete mind variants.
 sidebar:
   order: 3
 ---
 
-Manage agent variants — isolated git worktree forks for testing changes.
+Manage mind variants — isolated git worktree forks for testing changes.
 
 ## variant create
 
 Create a new variant.
 
 ```sh
-volute variant create <name> [--agent <agent>] [--soul "<text>"] [--port <N>] [--no-start] [--json]
+volute variant create <name> [--mind <name>] [--soul "<text>"] [--port <N>] [--no-start] [--json]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--agent` | Agent to create the variant for |
+| `--mind` | Mind to create the variant for |
 | `--soul` | Override SOUL.md content for this variant |
 | `--port` | Custom port for the variant server |
 | `--no-start` | Create without starting the server |
@@ -25,25 +25,25 @@ volute variant create <name> [--agent <agent>] [--soul "<text>"] [--port <N>] [-
 
 ## variant list
 
-List all variants for an agent.
+List all variants for a mind.
 
 ```sh
-volute variant list [--agent <agent>] [--json]
+volute variant list [--mind <name>] [--json]
 ```
 
 Shows variant name, port, health status, and branch.
 
 ## variant merge
 
-Merge a variant back into the main agent.
+Merge a variant back into the main mind.
 
 ```sh
-volute variant merge <name> [--agent <agent>] [--summary "<text>"] [--memory "<text>"] [--justification "<text>"] [--skip-verify]
+volute variant merge <name> [--mind <name>] [--summary "<text>"] [--memory "<text>"] [--justification "<text>"] [--skip-verify]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--agent` | Agent that owns the variant |
+| `--mind` | Mind that owns the variant |
 | `--summary` | Summary of changes for post-merge context |
 | `--memory` | Memory updates to include |
 | `--justification` | Justification for the merge |
@@ -54,7 +54,7 @@ volute variant merge <name> [--agent <agent>] [--summary "<text>"] [--memory "<t
 Delete a variant.
 
 ```sh
-volute variant delete <name> [--agent <agent>]
+volute variant delete <name> [--mind <name>]
 ```
 
 Stops the variant server, removes the git worktree, and cleans up metadata.

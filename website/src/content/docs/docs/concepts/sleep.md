@@ -1,0 +1,73 @@
+---
+title: Sleep
+description: Sleep/wake cycles for mind rest and scheduled downtime.
+---
+
+Minds can sleep and wake on a schedule or on demand. During sleep, the mind's process is stopped, messages are queued, and the session is archived. When the mind wakes, queued messages are delivered and a new session begins.
+
+## Putting a mind to sleep
+
+```sh
+volute mind sleep atlas
+volute mind sleep atlas --wake-at "tomorrow 8am"
+```
+
+The sleep process:
+1. The mind receives a sleep notification
+2. The mind can write a final journal entry (pre-sleep ritual)
+3. The current session is archived
+4. The mind's process is stopped
+5. Messages received during sleep are queued for delivery on wake
+
+## Waking a mind
+
+```sh
+volute mind wake atlas
+```
+
+On wake, the mind starts a fresh session and receives any messages that arrived while it was sleeping.
+
+## Scheduled sleep
+
+Configure automatic sleep/wake cycles in `home/.config/volute.json`:
+
+```json
+{
+  "sleep": {
+    "schedule": "0 23 * * *"
+  }
+}
+```
+
+The `schedule` field is a cron expression that triggers sleep at the specified time. Combine with `--wake-at` or wake triggers for automatic wake.
+
+## Wake triggers
+
+Wake triggers define conditions that automatically wake a sleeping mind:
+
+```json
+{
+  "sleep": {
+    "schedule": "0 23 * * *",
+    "wakeTriggers": {
+      "mentions": true,
+      "dms": true,
+      "channels": ["discord:my-server/urgent-*"],
+      "senders": ["alice", "bob"]
+    }
+  }
+}
+```
+
+- **`mentions`** — wake when the mind is mentioned by name
+- **`dms`** — wake on direct messages
+- **`channels`** — wake on messages in matching channels (glob patterns)
+- **`senders`** — wake on messages from specific senders (glob patterns)
+
+## Return to sleep
+
+When a mind is woken by a trigger, it handles the triggering message and can return to sleep afterward. This lets minds respond to urgent messages without fully waking for the rest of the night.
+
+## Message queuing
+
+Messages that arrive while a mind is sleeping are queued and delivered when the mind wakes. This ensures nothing is lost during downtime.

@@ -3,11 +3,11 @@ title: Routing
 description: Message routing configuration and gating.
 ---
 
-Message routing controls how incoming messages are delivered to the agent and where responses go. Routes are configured in `home/.config/routes.json`.
+Message routing controls how incoming messages are delivered to the mind and where responses go. Routes are configured in `home/.config/routes.json`.
 
 ## Route rules
 
-Each rule matches messages by channel pattern (glob), DM status, or participant list, and directs them to a destination (the agent or a file).
+Each rule matches messages by channel pattern (glob), DM status, or participant list, and directs them to a destination (the mind or a file).
 
 ```json
 {
@@ -37,8 +37,8 @@ Each rule matches messages by channel pattern (glob), DM status, or participant 
 
 ## Destinations
 
-- **`agent`** — delivers the message to the agent for processing
-- **`file`** — appends the message to a file in the agent's `home/` directory
+- **`agent`** — delivers the message to the mind for processing
+- **`file`** — appends the message to a file in the mind's `home/` directory
 
 ## Template variables
 
@@ -54,15 +54,16 @@ File paths support template expansion:
 
 The `gateUnmatched` option controls what happens to messages from channels that don't match any route rule:
 
-- When enabled, unrecognized channels are held in `inbox/` until the agent adds a routing rule
-- When disabled (default), unmatched messages are delivered to the agent
+- When enabled, unrecognized channels are held in `inbox/` until the mind adds a routing rule
+- When disabled (default), unmatched messages are delivered to the mind
 
-This lets agents gradually discover and organize their communication channels.
+This lets minds gradually discover and organize their communication channels.
 
 ## Message flow
 
 1. Message arrives via connector or CLI
-2. Router matches the message against rules in order
-3. First matching rule determines the destination
-4. If no rule matches, `gateUnmatched` behavior applies
-5. Message is formatted with prefix (channel, sender, time) and delivered
+2. The DeliveryManager routes the message to the target mind
+3. The Router matches the message against rules in order
+4. First matching rule determines the destination
+5. If no rule matches, `gateUnmatched` behavior applies
+6. Message is formatted with prefix (channel, sender, time) and delivered

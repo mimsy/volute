@@ -5,14 +5,18 @@ sidebar:
   order: 4
 ---
 
-Enable or disable connectors that bridge agents to external messaging platforms.
+Enable or disable connectors that bridge minds to external messaging platforms.
 
-## connector connect
+:::note
+The `connect` and `disconnect` commands have moved to `volute mind connect` and `volute mind disconnect`. See the [mind](/volute/docs/commands/mind/#mind-connect) command reference.
+:::
 
-Enable a connector for an agent.
+## mind connect
+
+Enable a connector for a mind.
 
 ```sh
-volute connector connect <type> [--agent <name>]
+volute mind connect <type> [--mind <name>]
 ```
 
 | Argument | Description |
@@ -21,10 +25,10 @@ volute connector connect <type> [--agent <name>]
 
 Make sure the required environment variables are set before connecting. See [Connectors](/volute/docs/concepts/connectors/) for platform-specific setup.
 
-## connector disconnect
+## mind disconnect
 
-Disable a connector for an agent.
+Disable a connector for a mind.
 
 ```sh
-volute connector disconnect <type> [--agent <name>]
+volute mind disconnect <type> [--mind <name>]
 ```
