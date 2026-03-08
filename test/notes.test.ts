@@ -9,13 +9,17 @@ import {
   deleteNote,
   getComments,
   getNote,
+  getReactions,
   listNotes,
+  resolveNoteId,
+  toggleReaction,
 } from "../src/lib/notes.js";
 import {
   conversationParticipants,
   conversations,
   messages,
   noteComments,
+  noteReactions,
   notes,
   sessions,
   users,
@@ -23,6 +27,7 @@ import {
 
 async function cleanup() {
   const db = await getDb();
+  await db.delete(noteReactions);
   await db.delete(noteComments);
   await db.delete(notes);
   await db.delete(messages);
@@ -142,5 +147,171 @@ describe("notes", () => {
     await addComment(note.id, userId, "Comment 2");
     const all = await listNotes();
     assert.equal(all[0].comment_count, 2);
+  });
+});
+
+describe("note reactions", () => {
+  let userId: number;
+  let otherUserId: number;
+  let username: string;
+  let otherUsername: string;
+
+  beforeEach(async () => {
+    await cleanup();
+    const user = await createUser("reactor", "pass123");
+    userId = user.id;
+    username = user.username;
+    const other = await createUser("reactor2", "pass123");
+    otherUserId = other.id;
+    otherUsername = other.username;
+  });
+  afterEach(cleanup);
+
+  it("toggleReaction adds a reaction", async () => {
+    const note = await createNote(userId, "React to me", "...");
+    const result = await toggleReaction(note.id, userId, "❤️");
+    assert.equal(result.added, true);
+
+    const reactions = await getReactions(note.id);
+    assert.equal(reactions.length, 1);
+    assert.equal(reactions[0].emoji, "❤️");
+    assert.equal(reactions[0].count, 1);
+    assert.deepEqual(reactions[0].usernames, [username]);
+  });
+
+  it("toggleReaction removes on second call", async () => {
+    const note = await createNote(userId, "Toggle me", "...");
+    await toggleReaction(note.id, userId, "🔥");
+    const result = await toggleReaction(note.id, userId, "🔥");
+    assert.equal(result.added, false);
+
+    const reactions = await getReactions(note.id);
+    assert.equal(reactions.length, 0);
+  });
+
+  it("multiple users can react with same emoji", async () => {
+    const note = await createNote(userId, "Popular", "...");
+    await toggleReaction(note.id, userId, "👍");
+    await toggleReaction(note.id, otherUserId, "👍");
+
+    const reactions = await getReactions(note.id);
+    assert.equal(reactions.length, 1);
+    assert.equal(reactions[0].count, 2);
+    assert.ok(reactions[0].usernames.includes(username));
+    assert.ok(reactions[0].usernames.includes(otherUsername));
+  });
+
+  it("multiple emojis on same note", async () => {
+    const note = await createNote(userId, "Multi react", "...");
+    await toggleReaction(note.id, userId, "❤️");
+    await toggleReaction(note.id, userId, "🤔");
+
+    const reactions = await getReactions(note.id);
+    assert.equal(reactions.length, 2);
+  });
+
+  it("listNotes includes reaction summary", async () => {
+    const note = await createNote(userId, "With Reactions", "...");
+    await toggleReaction(note.id, userId, "❤️");
+    await toggleReaction(note.id, otherUserId, "❤️");
+    await toggleReaction(note.id, userId, "🌱");
+
+    const all = await listNotes();
+    assert.ok(all[0].reactions);
+    assert.ok(all[0].reactions!.length > 0);
+    const heart = all[0].reactions!.find((r) => r.emoji === "❤️");
+    assert.ok(heart);
+    assert.equal(heart!.count, 2);
+  });
+
+  it("getNote includes full reactions", async () => {
+    const note = await createNote(userId, "Full reactions", "...");
+    await toggleReaction(note.id, userId, "🌊");
+
+    const fetched = await getNote(username, note.slug);
+    assert.ok(fetched);
+    assert.ok(fetched.reactions);
+    assert.equal(fetched.reactions!.length, 1);
+    assert.equal(fetched.reactions![0].emoji, "🌊");
+    assert.deepEqual(fetched.reactions![0].usernames, [username]);
+  });
+
+  it("deleting a note cascades reactions", async () => {
+    const note = await createNote(userId, "Will delete", "...");
+    await toggleReaction(note.id, userId, "❤️");
+    await deleteNote(username, note.slug, userId);
+
+    const reactions = await getReactions(note.id);
+    assert.equal(reactions.length, 0);
+  });
+});
+
+describe("note replies", () => {
+  let userId: number;
+  let username: string;
+
+  beforeEach(async () => {
+    await cleanup();
+    const user = await createUser("replier", "pass123");
+    userId = user.id;
+    username = user.username;
+  });
+  afterEach(cleanup);
+
+  it("createNote with replyToId links to parent", async () => {
+    const parent = await createNote(userId, "Original", "The original note");
+    const reply = await createNote(userId, "My Reply", "Replying here", parent.id);
+    assert.ok(reply.id !== parent.id);
+
+    const fetched = await getNote(username, reply.slug);
+    assert.ok(fetched);
+    assert.ok(fetched.reply_to);
+    assert.equal(fetched.reply_to!.slug, "original");
+    assert.equal(fetched.reply_to!.title, "Original");
+  });
+
+  it("getNote includes replies list on parent", async () => {
+    const parent = await createNote(userId, "Parent Note", "...");
+    await createNote(userId, "Reply One", "First reply", parent.id);
+    await createNote(userId, "Reply Two", "Second reply", parent.id);
+
+    const fetched = await getNote(username, parent.slug);
+    assert.ok(fetched);
+    assert.ok(fetched.replies);
+    assert.equal(fetched.replies.length, 2);
+    assert.equal(fetched.replies[0].title, "Reply One");
+    assert.equal(fetched.replies[1].title, "Reply Two");
+  });
+
+  it("listNotes includes reply_to summary", async () => {
+    const parent = await createNote(userId, "Listed Parent", "...");
+    await createNote(userId, "Listed Reply", "...", parent.id);
+
+    const all = await listNotes();
+    const reply = all.find((n) => n.title === "Listed Reply");
+    assert.ok(reply);
+    assert.ok(reply!.reply_to);
+    assert.equal(reply!.reply_to!.slug, "listed-parent");
+  });
+
+  it("resolveNoteId resolves author/slug to id", async () => {
+    const note = await createNote(userId, "Resolvable", "...");
+    const id = await resolveNoteId(`${username}/${note.slug}`);
+    assert.equal(id, note.id);
+  });
+
+  it("resolveNoteId returns null for nonexistent", async () => {
+    const id = await resolveNoteId("nobody/nothing");
+    assert.equal(id, null);
+  });
+
+  it("deleting parent sets reply_to to null", async () => {
+    const parent = await createNote(userId, "To be deleted", "...");
+    const reply = await createNote(userId, "Orphan reply", "...", parent.id);
+    await deleteNote(username, parent.slug, userId);
+
+    const fetched = await getNote(username, reply.slug);
+    assert.ok(fetched);
+    assert.equal(fetched.reply_to, null);
   });
 });

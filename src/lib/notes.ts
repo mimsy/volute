@@ -1,6 +1,6 @@
 import { and, count, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "./db.js";
-import { noteComments, notes, users } from "./schema.js";
+import { noteComments, noteReactions, notes, users } from "./schema.js";
 import { slugify } from "./slugify.js";
 
 export type Note = {
@@ -14,6 +14,8 @@ export type Note = {
   author_username: string;
   author_display_name: string | null;
   comment_count: number;
+  reply_to?: { author_username: string; slug: string; title: string } | null;
+  reactions?: { emoji: string; count: number; usernames: string[] }[];
 };
 
 export type NoteComment = {
@@ -26,7 +28,19 @@ export type NoteComment = {
   author_display_name: string | null;
 };
 
-export async function createNote(authorId: number, title: string, content: string): Promise<Note> {
+export type NoteReply = {
+  author_username: string;
+  slug: string;
+  title: string;
+  created_at: string;
+};
+
+export async function createNote(
+  authorId: number,
+  title: string,
+  content: string,
+  replyToId?: number,
+): Promise<Note> {
   const db = await getDb();
   let slug = slugify(title) || "untitled";
 
@@ -45,7 +59,7 @@ export async function createNote(authorId: number, title: string, content: strin
 
   const [row] = await db
     .insert(notes)
-    .values({ author_id: authorId, title, slug, content })
+    .values({ author_id: authorId, title, slug, content, reply_to_id: replyToId ?? null })
     .returning();
 
   const author = await db.select().from(users).where(eq(users.id, authorId)).get();
@@ -61,7 +75,7 @@ export async function createNote(authorId: number, title: string, content: strin
 export async function getNote(
   authorUsername: string,
   slug: string,
-): Promise<(Note & { comments: NoteComment[] }) | null> {
+): Promise<(Note & { comments: NoteComment[]; replies: NoteReply[] }) | null> {
   const db = await getDb();
   const row = await db
     .select({
@@ -70,6 +84,7 @@ export async function getNote(
       title: notes.title,
       slug: notes.slug,
       content: notes.content,
+      reply_to_id: notes.reply_to_id,
       created_at: notes.created_at,
       updated_at: notes.updated_at,
       author_username: users.username,
@@ -83,7 +98,41 @@ export async function getNote(
   if (!row) return null;
 
   const comments = await getComments(row.id);
-  return { ...row, comment_count: comments.length, comments };
+  const reactions = await getReactions(row.id);
+
+  // Resolve reply_to
+  let reply_to: Note["reply_to"] = null;
+  if (row.reply_to_id) {
+    const parent = await db
+      .select({
+        title: notes.title,
+        slug: notes.slug,
+        author_username: users.username,
+      })
+      .from(notes)
+      .innerJoin(users, eq(notes.author_id, users.id))
+      .where(eq(notes.id, row.reply_to_id))
+      .get();
+    if (parent) {
+      reply_to = parent;
+    }
+  }
+
+  // Get replies to this note
+  const replies = await db
+    .select({
+      author_username: users.username,
+      slug: notes.slug,
+      title: notes.title,
+      created_at: notes.created_at,
+    })
+    .from(notes)
+    .innerJoin(users, eq(notes.author_id, users.id))
+    .where(eq(notes.reply_to_id, row.id))
+    .orderBy(notes.created_at)
+    .all();
+
+  return { ...row, comment_count: comments.length, comments, reactions, reply_to, replies };
 }
 
 export async function listNotes(opts?: {
@@ -107,6 +156,7 @@ export async function listNotes(opts?: {
       title: notes.title,
       slug: notes.slug,
       content: notes.content,
+      reply_to_id: notes.reply_to_id,
       created_at: notes.created_at,
       updated_at: notes.updated_at,
       author_username: users.username,
@@ -135,10 +185,65 @@ export async function listNotes(opts?: {
 
   const countMap = new Map(commentCounts.map((r) => [r.note_id, r.count]));
 
-  return rows.map((r) => ({
-    ...r,
-    comment_count: countMap.get(r.id) ?? 0,
-  }));
+  // Get reaction summaries (top 3 per note)
+  const allReactions = await db
+    .select({
+      note_id: noteReactions.note_id,
+      emoji: noteReactions.emoji,
+      count: count(),
+    })
+    .from(noteReactions)
+    .groupBy(noteReactions.note_id, noteReactions.emoji)
+    .all();
+
+  const reactionMap = new Map<number, { emoji: string; count: number }[]>();
+  for (const r of allReactions) {
+    if (!reactionMap.has(r.note_id)) reactionMap.set(r.note_id, []);
+    reactionMap.get(r.note_id)!.push({ emoji: r.emoji, count: r.count });
+  }
+
+  // Resolve reply_to info for notes that are replies
+  const replyToIds = [...new Set(rows.filter((r) => r.reply_to_id).map((r) => r.reply_to_id!))];
+  const replyToMap = new Map<number, { author_username: string; slug: string; title: string }>();
+  if (replyToIds.length > 0) {
+    for (const id of replyToIds) {
+      const parent = await db
+        .select({
+          id: notes.id,
+          title: notes.title,
+          slug: notes.slug,
+          author_username: users.username,
+        })
+        .from(notes)
+        .innerJoin(users, eq(notes.author_id, users.id))
+        .where(eq(notes.id, id))
+        .get();
+      if (parent) {
+        replyToMap.set(parent.id, {
+          author_username: parent.author_username,
+          slug: parent.slug,
+          title: parent.title,
+        });
+      }
+    }
+  }
+
+  return rows.map((r) => {
+    const reactions = reactionMap.get(r.id);
+    const topReactions = reactions
+      ? reactions
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 3)
+          .map((rx) => ({ ...rx, usernames: [] }))
+      : undefined;
+
+    return {
+      ...r,
+      comment_count: countMap.get(r.id) ?? 0,
+      reactions: topReactions,
+      reply_to: r.reply_to_id ? (replyToMap.get(r.reply_to_id) ?? null) : null,
+    };
+  });
 }
 
 export async function updateNote(
@@ -237,4 +342,72 @@ export async function deleteComment(commentId: number, authorId: number): Promis
 
   await db.delete(noteComments).where(eq(noteComments.id, commentId));
   return true;
+}
+
+export async function toggleReaction(
+  noteId: number,
+  userId: number,
+  emoji: string,
+): Promise<{ added: boolean }> {
+  const db = await getDb();
+  const existing = await db
+    .select({ id: noteReactions.id })
+    .from(noteReactions)
+    .where(
+      and(
+        eq(noteReactions.note_id, noteId),
+        eq(noteReactions.user_id, userId),
+        eq(noteReactions.emoji, emoji),
+      ),
+    )
+    .get();
+
+  if (existing) {
+    await db.delete(noteReactions).where(eq(noteReactions.id, existing.id));
+    return { added: false };
+  }
+
+  await db.insert(noteReactions).values({ note_id: noteId, user_id: userId, emoji });
+  return { added: true };
+}
+
+export async function getReactions(
+  noteId: number,
+): Promise<{ emoji: string; count: number; usernames: string[] }[]> {
+  const db = await getDb();
+  const rows = await db
+    .select({
+      emoji: noteReactions.emoji,
+      username: users.username,
+    })
+    .from(noteReactions)
+    .innerJoin(users, eq(noteReactions.user_id, users.id))
+    .where(eq(noteReactions.note_id, noteId))
+    .orderBy(noteReactions.emoji)
+    .all();
+
+  const grouped = new Map<string, string[]>();
+  for (const r of rows) {
+    if (!grouped.has(r.emoji)) grouped.set(r.emoji, []);
+    grouped.get(r.emoji)!.push(r.username);
+  }
+
+  return [...grouped.entries()].map(([emoji, usernames]) => ({
+    emoji,
+    count: usernames.length,
+    usernames,
+  }));
+}
+
+export async function resolveNoteId(authorSlug: string): Promise<number | null> {
+  const [author, slug] = authorSlug.split("/", 2);
+  if (!author || !slug) return null;
+  const db = await getDb();
+  const row = await db
+    .select({ id: notes.id })
+    .from(notes)
+    .innerJoin(users, eq(notes.author_id, users.id))
+    .where(and(eq(users.username, author), eq(notes.slug, slug)))
+    .get();
+  return row?.id ?? null;
 }

@@ -150,7 +150,7 @@ let contextLabel = $derived.by(() => {
       <span class="breadcrumb-current">{selection.author}/{selection.slug}</span>
     </div>
     <div class="frame-content padded">
-      <NoteView author={selection.author} slug={selection.slug} {username} onBack={onSelectNotes} />
+      <NoteView author={selection.author} slug={selection.slug} {username} onBack={onSelectNotes} onNavigate={onSelectNote} />
     </div>
   {:else if selection.kind === "conversation"}
     <div class="frame-content">

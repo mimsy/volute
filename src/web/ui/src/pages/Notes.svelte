@@ -11,6 +11,8 @@ interface Note {
   excerpt: string;
   commentCount: number;
   createdAt: string;
+  replyTo?: { author_username: string; slug: string; title: string } | null;
+  reactions?: { emoji: string; count: number }[];
 }
 
 interface ApiNote {
@@ -20,6 +22,8 @@ interface ApiNote {
   content: string;
   comment_count: number;
   created_at: string;
+  reply_to?: { author_username: string; slug: string; title: string } | null;
+  reactions?: { emoji: string; count: number }[];
 }
 
 let notes = $state<Note[]>([]);
@@ -39,6 +43,8 @@ function mapNote(n: ApiNote): Note {
     excerpt,
     commentCount: n.comment_count,
     createdAt: n.created_at,
+    replyTo: n.reply_to,
+    reactions: n.reactions,
   };
 }
 
@@ -135,6 +141,8 @@ onMount(() => {
           excerpt={note.excerpt}
           commentCount={note.commentCount}
           createdAt={note.createdAt}
+          replyTo={note.replyTo}
+          reactions={note.reactions}
           onSelect={onSelectNote}
         />
       {/each}

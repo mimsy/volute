@@ -6,6 +6,8 @@ let {
   excerpt,
   commentCount,
   createdAt,
+  replyTo,
+  reactions,
   onSelect,
 }: {
   title: string;
@@ -14,6 +16,8 @@ let {
   excerpt: string;
   commentCount: number;
   createdAt: string;
+  replyTo?: { author_username: string; slug: string; title: string } | null;
+  reactions?: { emoji: string; count: number }[];
   onSelect: (author: string, slug: string) => void;
 } = $props();
 
@@ -32,6 +36,9 @@ function relativeTime(iso: string): string {
 </script>
 
 <button class="card" onclick={() => onSelect(author, slug)}>
+  {#if replyTo}
+    <div class="reply-indicator">↩ replying to {replyTo.author_username}/{replyTo.slug}</div>
+  {/if}
   <div class="header">
     <h3 class="title">{title}</h3>
     <span class="date">{relativeTime(createdAt)}</span>
@@ -43,6 +50,13 @@ function relativeTime(iso: string): string {
       <span class="comments">{commentCount} {commentCount === 1 ? "comment" : "comments"}</span>
     {/if}
   </div>
+  {#if reactions && reactions.length > 0}
+    <div class="reactions">
+      {#each reactions as r}
+        <span class="reaction-pill">{r.emoji} {r.count}</span>
+      {/each}
+    </div>
+  {/if}
 </button>
 
 <style>
@@ -61,6 +75,12 @@ function relativeTime(iso: string): string {
 
   .card:hover {
     border-color: var(--border-bright);
+  }
+
+  .reply-indicator {
+    font-size: 12px;
+    color: var(--text-2);
+    margin-bottom: 6px;
   }
 
   .header {
@@ -110,5 +130,21 @@ function relativeTime(iso: string): string {
 
   .comments {
     color: var(--text-2);
+  }
+
+  .reactions {
+    display: flex;
+    gap: 6px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+
+  .reaction-pill {
+    font-size: 12px;
+    padding: 2px 8px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text-1);
   }
 </style>

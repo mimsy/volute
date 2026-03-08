@@ -8,7 +8,10 @@ import {
   deleteComment,
   deleteNote,
   getNote,
+  getReactions,
   listNotes,
+  resolveNoteId,
+  toggleReaction,
   updateNote,
 } from "../../lib/notes.js";
 import { announceToSystem } from "../../lib/system-channel.js";
@@ -17,6 +20,7 @@ import type { AuthEnv } from "../middleware/auth.js";
 const createSchema = z.object({
   title: z.string().min(1).max(200),
   content: z.string().min(1),
+  reply_to: z.string().optional(),
 });
 
 const updateSchema = z.object({
@@ -26,6 +30,10 @@ const updateSchema = z.object({
 
 const commentSchema = z.object({
   content: z.string().min(1),
+});
+
+const reactionSchema = z.object({
+  emoji: z.string().min(1).max(32),
 });
 
 /**
@@ -69,11 +77,21 @@ const app = new Hono<AuthEnv>()
     const actor = await resolveUserId(c);
     if (!actor) return c.json({ error: "Missing ?as=<username> for CLI requests" }, 400);
 
-    const { title, content } = c.req.valid("json");
-    const note = await createNote(actor.id, title, content);
+    const { title, content, reply_to } = c.req.valid("json");
+
+    // Resolve reply_to author/slug to note ID
+    let replyToId: number | undefined;
+    if (reply_to) {
+      const id = await resolveNoteId(reply_to);
+      if (id === null) return c.json({ error: `Reply target not found: ${reply_to}` }, 404);
+      replyToId = id;
+    }
+
+    const note = await createNote(actor.id, title, content, replyToId);
 
     // Announce to #system
-    announceToSystem(`${actor.username} published a note: ${title}`).catch(() => {});
+    const replyInfo = reply_to ? ` (in reply to ${reply_to})` : "";
+    announceToSystem(`${actor.username} published a note: ${title}${replyInfo}`).catch(() => {});
 
     return c.json(note, 201);
   })
@@ -111,6 +129,21 @@ const app = new Hono<AuthEnv>()
     const deleted = await deleteNote(author, slug, actor.id);
     if (!deleted) return c.json({ error: "Note not found or not authorized" }, 404);
     return c.json({ ok: true });
+  })
+
+  // Toggle reaction
+  .post("/:author/:slug/reactions", zValidator("json", reactionSchema), async (c) => {
+    const actor = await resolveUserId(c);
+    if (!actor) return c.json({ error: "Missing ?as=<username> for CLI requests" }, 400);
+
+    const { author, slug } = c.req.param();
+    const note = await getNote(author, slug);
+    if (!note) return c.json({ error: "Note not found" }, 404);
+
+    const { emoji } = c.req.valid("json");
+    const result = await toggleReaction(note.id, actor.id, emoji);
+    const reactions = await getReactions(note.id);
+    return c.json({ ...result, reactions });
   })
 
   // Add comment

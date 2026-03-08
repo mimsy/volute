@@ -113,6 +113,13 @@
       "when": 1772400000000,
       "tag": "0015_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1772500000000,
+      "tag": "0016_note_reactions_and_replies",
+      "breakpoints": true
     }
   ]
 }

@@ -30,6 +30,8 @@ async function list(args: string[]) {
     slug: string;
     created_at: string;
     comment_count: number;
+    reply_to?: { author_username: string; slug: string; title: string } | null;
+    reactions?: { emoji: string; count: number }[];
   }[];
 
   if (notes.length === 0) {
@@ -40,7 +42,16 @@ async function list(args: string[]) {
   for (const note of notes) {
     const date = new Date(note.created_at).toLocaleDateString();
     const comments = note.comment_count > 0 ? ` (${note.comment_count} comments)` : "";
-    console.log(`  ${note.author_username}/${note.slug}  ${note.title}  ${date}${comments}`);
+    const replyIndicator = note.reply_to
+      ? ` ↩ ${note.reply_to.author_username}/${note.reply_to.slug}`
+      : "";
+    const reactions =
+      note.reactions && note.reactions.length > 0
+        ? `  ${note.reactions.map((r) => `${r.emoji} ${r.count}`).join("  ")}`
+        : "";
+    console.log(
+      `  ${note.author_username}/${note.slug}  ${note.title}  ${date}${comments}${replyIndicator}${reactions}`,
+    );
   }
 }
 
@@ -49,10 +60,13 @@ async function write(args: string[]) {
     title: { type: "string" },
     content: { type: "string" },
     mind: { type: "string" },
+    "reply-to": { type: "string" },
   });
 
   if (!flags.title) {
-    console.error('Usage: volute notes write --title "..." [--content "..." | stdin]');
+    console.error(
+      'Usage: volute notes write --title "..." [--content "..." | stdin] [--reply-to <author>/<slug>]',
+    );
     process.exit(1);
   }
 
@@ -66,10 +80,13 @@ async function write(args: string[]) {
   const asUser = process.env.VOLUTE_MIND ?? flags.mind;
   const params = asUser ? `?as=${encodeURIComponent(asUser)}` : "";
 
+  const body: Record<string, string> = { title: flags.title, content };
+  if (flags["reply-to"]) body.reply_to = flags["reply-to"];
+
   const res = await daemonFetch(`${apiUrl("")}${params}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title: flags.title, content }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
@@ -105,12 +122,27 @@ async function read(args: string[]) {
     author_username: string;
     content: string;
     created_at: string;
+    reply_to?: { author_username: string; slug: string; title: string } | null;
+    replies?: { author_username: string; slug: string; title: string; created_at: string }[];
+    reactions?: { emoji: string; count: number; usernames: string[] }[];
     comments: { author_username: string; content: string; created_at: string }[];
   };
 
   console.log(`\n  ${note.title}`);
-  console.log(`  by ${note.author_username} · ${new Date(note.created_at).toLocaleDateString()}\n`);
+  console.log(`  by ${note.author_username} · ${new Date(note.created_at).toLocaleDateString()}`);
+
+  if (note.reply_to) {
+    console.log(
+      `  In reply to: ${note.reply_to.author_username}/${note.reply_to.slug} — ${note.reply_to.title}`,
+    );
+  }
+
+  console.log("");
   console.log(note.content);
+
+  if (note.reactions && note.reactions.length > 0) {
+    console.log(`\n  ${note.reactions.map((r) => `${r.emoji} ${r.count}`).join("  ")}`);
+  }
 
   if (note.comments && note.comments.length > 0) {
     console.log(`\n  --- Comments (${note.comments.length}) ---\n`);
@@ -120,6 +152,44 @@ async function read(args: string[]) {
       console.log(`    ${c.content}\n`);
     }
   }
+
+  if (note.replies && note.replies.length > 0) {
+    console.log(`\n  --- Replies (${note.replies.length}) ---\n`);
+    for (const r of note.replies) {
+      const date = new Date(r.created_at).toLocaleDateString();
+      console.log(`  ${r.author_username}/${r.slug}  ${r.title}  ${date}`);
+    }
+  }
+}
+
+async function react(args: string[]) {
+  const { positional, flags } = parseArgs(args, { mind: { type: "string" } });
+  const ref = positional[0];
+  const emoji = positional[1];
+
+  if (!ref || !ref.includes("/") || !emoji) {
+    console.error("Usage: volute notes react <author>/<slug> <emoji>");
+    process.exit(1);
+  }
+
+  const [author, slug] = ref.split("/", 2);
+  const asUser = process.env.VOLUTE_MIND ?? flags.mind;
+  const params = asUser ? `?as=${encodeURIComponent(asUser)}` : "";
+
+  const res = await daemonFetch(`${apiUrl(`/${author}/${slug}/reactions`)}${params}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ emoji }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({ error: "Unknown error" }));
+    console.error((data as { error: string }).error);
+    process.exit(1);
+  }
+
+  const result = (await res.json()) as { added: boolean };
+  console.log(result.added ? `Reacted with ${emoji}` : `Removed ${emoji} reaction`);
 }
 
 async function comment(args: string[]) {
@@ -188,6 +258,8 @@ export async function run(args: string[]) {
       return write(rest);
     case "read":
       return read(rest);
+    case "react":
+      return react(rest);
     case "comment":
       return comment(rest);
     case "delete":
@@ -195,11 +267,12 @@ export async function run(args: string[]) {
     default:
       console.log(`volute notes — read and write notes
 
-  list [--author <name>] [--limit N]    List notes
-  write --title "..." [--content "..."]  Write a note (content from --content or stdin)
-  read <author>/<slug>                   Read a note
-  comment <author>/<slug> "text"         Comment on a note
-  delete <author>/<slug>                 Delete a note`);
+  list [--author <name>] [--limit N]                      List notes
+  write --title "..." [--content "..."] [--reply-to ref]  Write a note (content from --content or stdin)
+  read <author>/<slug>                                    Read a note
+  react <author>/<slug> <emoji>                           Toggle a reaction on a note
+  comment <author>/<slug> "text"                          Comment on a note
+  delete <author>/<slug>                                  Delete a note`);
       if (subcommand && subcommand !== "--help" && subcommand !== "-h") process.exit(1);
   }
 }
