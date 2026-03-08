@@ -110,7 +110,7 @@ function toggleSection(section: Section) {
 <div class="sidebar-inner">
   <button class="sidebar-header" onclick={onHome}>
     <span class="header-logo-wrap">
-      <img src="/favicon.png" alt="" class="sidebar-logo" />
+      <img src="/logo.png" alt="" class="sidebar-logo" />
       <span class="hover-dot"></span>
     </span>
     <span class="sidebar-title">volute</span>

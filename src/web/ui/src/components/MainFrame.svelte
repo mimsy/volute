@@ -97,7 +97,7 @@ let contextLabel = $derived.by(() => {
 <div class="main-frame">
   <div class="mobile-header">
     <button class="hamburger-btn" onclick={() => onToggleSidebar?.()}>&#9776;</button>
-    <img src="/favicon.png" alt="" class="mobile-logo" />
+    <img src="/logo.png" alt="" class="mobile-logo" />
     <span class="mobile-title">volute</span>
     {#if contextLabel && onOpenRightPanel}
       <button class="context-label-btn" onclick={onOpenRightPanel}>{contextLabel}</button>

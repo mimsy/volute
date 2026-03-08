@@ -54,7 +54,7 @@ async function handleSubmit(e: Event) {
       <div class="branding">
         <div class="logo-row">
           <span class="logo-wrap">
-            <img src="/favicon.png" alt="" class="login-spiral" />
+            <img src="/logo.png" alt="" class="login-spiral" />
             <span class="hover-dot"></span>
           </span>
           <span class="logo">volute</span>
