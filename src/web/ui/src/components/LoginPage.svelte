@@ -52,8 +52,13 @@ async function handleSubmit(e: Event) {
   <div class="container">
     <div class="card">
       <div class="branding">
-        <img src="/favicon.png" alt="" class="login-spiral" />
-        <div class="logo">volute</div>
+        <div class="logo-row">
+          <span class="logo-wrap">
+            <img src="/favicon.png" alt="" class="login-spiral" />
+            <span class="hover-dot"></span>
+          </span>
+          <span class="logo">volute</span>
+        </div>
         <div class="subtitle">
           {mode === "login" ? "Sign in to continue" : "Create an account"}
         </div>
@@ -116,26 +121,70 @@ async function handleSubmit(e: Event) {
     text-align: center;
   }
 
+  .logo-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+
+  .logo-wrap {
+    position: relative;
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
+  }
+
   .login-spiral {
-    width: 40px;
-    height: 40px;
+    width: 34px;
+    height: 34px;
     filter: invert(1);
-    opacity: 0.5;
-    margin-bottom: 8px;
+    transition: opacity 0.15s;
+  }
+
+  .hover-dot {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    opacity: 0;
+    transition: opacity 0.15s;
+    animation: iridescent 3s ease-in-out infinite;
+  }
+
+  .card:hover .login-spiral {
+    opacity: 0;
+  }
+
+  .card:hover .hover-dot {
+    opacity: 1;
   }
 
   .logo {
     font-family: var(--display);
-    font-size: 24px;
+    font-size: 31px;
     font-weight: 300;
-    margin-bottom: 4px;
-    color: var(--text-1);
+    color: var(--text-0);
     letter-spacing: 0.04em;
+    margin-top: -4px;
   }
 
   .subtitle {
     color: var(--text-2);
-    font-size: 12px;
+    font-size: 13px;
+  }
+
+  @keyframes iridescent {
+    0%   { background: #4ade80; }
+    16%  { background: #60a5fa; }
+    33%  { background: #c084fc; }
+    50%  { background: #f472b6; }
+    66%  { background: #fbbf24; }
+    83%  { background: #34d399; }
+    100% { background: #4ade80; }
   }
 
   .input {
@@ -146,7 +195,7 @@ async function handleSubmit(e: Event) {
     border-radius: var(--radius);
     color: var(--text-0);
     font-family: inherit;
-    font-size: 13px;
+    font-size: 14px;
     outline: none;
   }
 
@@ -160,7 +209,7 @@ async function handleSubmit(e: Event) {
 
   .error {
     color: var(--red);
-    font-size: 12px;
+    font-size: 13px;
     margin-top: 8px;
   }
 
@@ -171,7 +220,7 @@ async function handleSubmit(e: Event) {
     background: var(--accent-dim);
     color: var(--accent);
     border-radius: var(--radius);
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 500;
     font-family: inherit;
     border: none;
@@ -181,7 +230,7 @@ async function handleSubmit(e: Event) {
   .link-btn {
     background: transparent;
     color: var(--text-2);
-    font-size: 12px;
+    font-size: 13px;
     font-family: inherit;
     border: none;
     cursor: pointer;
