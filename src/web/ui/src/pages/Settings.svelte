@@ -60,33 +60,18 @@ onMount(() => {
   load();
 });
 
-async function handleSystemRegister() {
+async function handleSystemAction() {
   if (!systemInput.trim() || systemSaving) return;
   systemSaving = true;
   systemError = "";
   try {
-    const result = await systemRegister(systemInput.trim());
+    const fn = systemAction === "register" ? systemRegister : systemLogin;
+    const result = await fn(systemInput.trim());
     auth.systemName = result.system;
     systemAction = "none";
     systemInput = "";
   } catch (err) {
-    systemError = err instanceof Error ? err.message : "Registration failed";
-  } finally {
-    systemSaving = false;
-  }
-}
-
-async function handleSystemLogin() {
-  if (!systemInput.trim() || systemSaving) return;
-  systemSaving = true;
-  systemError = "";
-  try {
-    const result = await systemLogin(systemInput.trim());
-    auth.systemName = result.system;
-    systemAction = "none";
-    systemInput = "";
-  } catch (err) {
-    systemError = err instanceof Error ? err.message : "Login failed";
+    systemError = err instanceof Error ? err.message : `${systemAction} failed`;
   } finally {
     systemSaving = false;
   }
@@ -181,7 +166,7 @@ async function handleReset(key: string) {
             </button>
           </div>
         {:else}
-          <form class="system-form" onsubmit={(e) => { e.preventDefault(); systemAction === "register" ? handleSystemRegister() : handleSystemLogin(); }}>
+          <form class="system-form" onsubmit={(e) => { e.preventDefault(); handleSystemAction(); }}>
             <input
               type={systemAction === "login" ? "password" : "text"}
               bind:value={systemInput}

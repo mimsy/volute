@@ -50,13 +50,15 @@ let suggestions = $derived.by(() => {
   );
 });
 
-function openInvite() {
+async function openInvite() {
   showInvite = true;
   inviteQuery = "";
   inviteError = "";
-  fetchAvailableUsers().then((users) => {
-    allUsers = users;
-  });
+  try {
+    allUsers = await fetchAvailableUsers();
+  } catch (err) {
+    inviteError = err instanceof Error ? err.message : "Failed to load users";
+  }
 }
 
 function closeInvite() {
