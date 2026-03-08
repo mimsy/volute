@@ -108,7 +108,13 @@ function toggleSection(section: Section) {
 </script>
 
 <div class="sidebar-inner">
-  <button class="sidebar-header" onclick={onHome}>Volute</button>
+  <button class="sidebar-header" onclick={onHome}>
+    <span class="header-logo-wrap">
+      <img src="/logo.png" alt="" class="sidebar-logo" />
+      <span class="hover-dot"></span>
+    </span>
+    <span class="sidebar-title">volute</span>
+  </button>
   <div class="sections">
     <!-- Minds -->
     <div class="section">
@@ -237,19 +243,59 @@ function toggleSection(section: Section) {
   }
 
   .sidebar-header {
-    padding: 12px 12px 8px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-1);
-    letter-spacing: 0.02em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 12px;
     flex-shrink: 0;
     background: none;
-    text-align: left;
     cursor: pointer;
+    border-bottom: 1px solid var(--border);
   }
 
-  .sidebar-header:hover {
+  .header-logo-wrap {
+    position: relative;
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
+  }
+
+  .sidebar-logo {
+    width: 30px;
+    height: 30px;
+    filter: invert(1);
+    transition: opacity 0.15s;
+  }
+
+  .hover-dot {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    opacity: 0;
+    transition: opacity 0.15s;
+    animation: iridescent 3s ease-in-out infinite;
+  }
+
+  .sidebar-header:hover .sidebar-logo {
+    opacity: 0;
+  }
+
+  .sidebar-header:hover .hover-dot {
+    opacity: 1;
+  }
+
+  .sidebar-title {
+    font-family: var(--display);
+    font-size: 26px;
+    font-weight: 300;
     color: var(--text-0);
+    letter-spacing: 0.04em;
+    margin-top: -4px;
+    margin-left: -4px;
   }
 
   .sections {
@@ -277,10 +323,10 @@ function toggleSection(section: Section) {
     padding: 6px 12px;
     background: none;
     color: var(--text-2);
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    font-family: var(--display);
+    font-size: 16px;
+    font-weight: 300;
+    letter-spacing: 0.02em;
     text-align: left;
   }
 
@@ -296,7 +342,7 @@ function toggleSection(section: Section) {
   .section-add {
     background: none;
     color: var(--text-2);
-    font-size: 14px;
+    font-size: 15px;
     padding: 2px 6px;
     border-radius: var(--radius);
     flex-shrink: 0;
@@ -318,7 +364,7 @@ function toggleSection(section: Section) {
     gap: 8px;
     width: 100%;
     padding: 6px 12px 6px 26px;
-    font-size: 11px;
+    font-size: 14px;
     color: var(--text-1);
     transition: background 0.1s;
     cursor: pointer;
@@ -383,7 +429,7 @@ function toggleSection(section: Section) {
     display: block;
     width: 100%;
     padding: 6px 12px 6px 26px;
-    font-size: 11px;
+    font-size: 14px;
     color: var(--text-1);
     border-radius: var(--radius);
     transition: background 0.1s;
@@ -397,11 +443,17 @@ function toggleSection(section: Section) {
     background: var(--bg-2);
   }
 
+  @media (max-width: 1024px) {
+    .sidebar-header {
+      display: none;
+    }
+  }
+
   @media (max-width: 767px) {
     .mind-item,
     .site-item {
       padding: 10px 12px 10px 26px;
-      font-size: 13px;
+      font-size: 14px;
     }
 
     .section-toggle {

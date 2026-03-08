@@ -167,7 +167,7 @@ $effect(() => {
     border-radius: 50%;
     background: var(--bg-3);
     color: var(--text-1);
-    font-size: 11px;
+    font-size: 12px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -202,7 +202,7 @@ $effect(() => {
     padding: 10px 12px;
     color: var(--text-0);
     font-family: var(--mono);
-    font-size: 13px;
+    font-size: 14px;
     resize: none;
     outline: none;
     overflow: hidden;
@@ -218,7 +218,7 @@ $effect(() => {
     background: var(--bg-3);
     color: var(--text-2);
     border-radius: var(--radius);
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 500;
     transition: all 0.15s;
   }

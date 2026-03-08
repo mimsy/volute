@@ -290,3 +290,18 @@ export const sidebar = $state({ width: loadSidebarWidth() });
 export function saveSidebarWidth() {
   localStorage.setItem("volute:sidebar-width", String(sidebar.width));
 }
+
+function loadRightPanelWidth(): number {
+  try {
+    const stored = localStorage.getItem("volute:right-panel-width");
+    return stored ? Math.max(240, Math.min(600, Number(stored))) : 360;
+  } catch {
+    return 360;
+  }
+}
+
+export const rightPanel = $state({ width: loadRightPanelWidth() });
+
+export function saveRightPanelWidth() {
+  localStorage.setItem("volute:right-panel-width", String(rightPanel.width));
+}

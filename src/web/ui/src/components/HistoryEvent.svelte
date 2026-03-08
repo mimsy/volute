@@ -172,20 +172,20 @@ function formatArgs(args: unknown): string {
   }
 
   .time {
-    font-size: 10px;
+    font-size: 11px;
     color: var(--text-2);
     flex-shrink: 0;
   }
 
   .type-badge {
-    font-size: 10px;
+    font-size: 11px;
     padding: 1px 6px;
     border-radius: 12px;
     font-weight: 500;
   }
 
   .channel-tag {
-    font-size: 10px;
+    font-size: 11px;
     color: var(--text-2);
     background: var(--bg-3);
     padding: 1px 6px;
@@ -198,12 +198,13 @@ function formatArgs(args: unknown): string {
   }
 
   .event-body {
-    font-size: 13px;
+    font-family: var(--mono);
+    font-size: 14px;
     line-height: 1.6;
   }
 
   .sender {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
     margin-right: 8px;
@@ -222,7 +223,7 @@ function formatArgs(args: unknown): string {
   }
 
   .summary {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-1);
   }
   .summary.error {
@@ -236,7 +237,7 @@ function formatArgs(args: unknown): string {
   .detail,
   .detail-text {
     margin-top: 6px;
-    font-size: 11px;
+    font-size: 12px;
     background: var(--bg-3);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -259,17 +260,17 @@ function formatArgs(args: unknown): string {
   }
 
   .usage-line {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--purple);
   }
   .model {
     color: var(--text-2);
     margin-left: 6px;
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .session-id {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-1);
     font-weight: 600;
     margin-left: 4px;

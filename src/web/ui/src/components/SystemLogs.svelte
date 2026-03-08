@@ -195,13 +195,13 @@ function formatData(data: Record<string, unknown>): string {
 
   .title {
     color: var(--text-1);
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 500;
   }
 
   .count {
     color: var(--text-2);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .filter-bar {
@@ -229,7 +229,7 @@ function formatData(data: Record<string, unknown>): string {
   .pill {
     padding: 2px 8px;
     border-radius: 10px;
-    font-size: 10px;
+    font-size: 11px;
     font-family: var(--mono);
     cursor: pointer;
     border: 1px solid transparent;
@@ -280,7 +280,7 @@ function formatData(data: Record<string, unknown>): string {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
     flex-shrink: 0;
   }
@@ -290,7 +290,7 @@ function formatData(data: Record<string, unknown>): string {
     color: var(--accent);
     padding: 2px 10px;
     border-radius: var(--radius);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .log-output {
@@ -298,7 +298,7 @@ function formatData(data: Record<string, unknown>): string {
     overflow: auto;
     padding: 12px;
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.7;
     color: var(--text-1);
     background: var(--bg-0);

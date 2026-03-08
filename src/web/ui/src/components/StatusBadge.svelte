@@ -40,7 +40,7 @@ let config = $derived(statusConfig[status] ?? statusConfig.stopped);
     gap: 5px;
     padding: 2px 8px;
     border-radius: var(--radius);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 500;
     letter-spacing: 0.02em;
     text-transform: uppercase;

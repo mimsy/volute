@@ -159,13 +159,13 @@ async function handleUninstall(skillId: string) {
   .error {
     color: var(--red);
     padding: 8px 0;
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .empty {
     color: var(--text-2);
     padding: 12px 0;
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .section-header {
@@ -176,7 +176,7 @@ async function handleUninstall(skillId: string) {
   }
 
   .section-title {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -185,7 +185,7 @@ async function handleUninstall(skillId: string) {
 
   .add-btn {
     padding: 4px 12px;
-    font-size: 11px;
+    font-size: 12px;
     border-radius: var(--radius);
     background: var(--accent-dim);
     color: var(--accent);
@@ -220,7 +220,7 @@ async function handleUninstall(skillId: string) {
   }
 
   .skill-name {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 500;
     color: var(--text-0);
     display: flex;
@@ -229,7 +229,7 @@ async function handleUninstall(skillId: string) {
   }
 
   .skill-desc {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-1);
     margin-top: 2px;
     overflow: hidden;
@@ -238,13 +238,13 @@ async function handleUninstall(skillId: string) {
   }
 
   .skill-meta {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
     margin-top: 2px;
   }
 
   .update-badge {
-    font-size: 10px;
+    font-size: 11px;
     padding: 1px 6px;
     border-radius: 8px;
     background: var(--accent-dim);
@@ -269,7 +269,7 @@ async function handleUninstall(skillId: string) {
 
   .action-btn {
     padding: 4px 10px;
-    font-size: 11px;
+    font-size: 12px;
     border-radius: var(--radius);
     font-weight: 500;
   }
