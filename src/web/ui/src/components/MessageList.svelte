@@ -180,7 +180,7 @@ function handleScroll() {
     color: var(--text-2);
     text-align: center;
     padding: 40px;
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .error {
@@ -190,7 +190,7 @@ function handleScroll() {
   .loading-older {
     text-align: center;
     padding: 8px;
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-2);
   }
 
@@ -200,7 +200,7 @@ function handleScroll() {
   }
 
   .load-more-btn {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-2);
     background: none;
     border: 1px solid var(--border);
@@ -220,7 +220,7 @@ function handleScroll() {
     gap: 12px;
     margin: 20px 0;
     color: var(--text-2);
-    font-size: 11px;
+    font-size: 12px;
     letter-spacing: 0.03em;
   }
 

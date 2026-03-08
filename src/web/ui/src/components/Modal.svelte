@@ -83,7 +83,7 @@ function handleKeydown(e: KeyboardEvent) {
   }
 
   .title {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
     color: var(--text-0);
   }
@@ -91,7 +91,7 @@ function handleKeydown(e: KeyboardEvent) {
   .close-btn {
     background: none;
     color: var(--text-2);
-    font-size: 14px;
+    font-size: 15px;
     padding: 4px 8px;
   }
 

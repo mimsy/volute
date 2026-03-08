@@ -183,14 +183,14 @@ function handleActivityClick(item: ActivityItem) {
 
   .section-title {
     font-family: var(--display);
-    font-size: 15px;
+    font-size: 17px;
     font-weight: 300;
     color: var(--text-2);
   }
 
   .empty-hint {
     color: var(--text-2);
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .code-hint {
@@ -234,7 +234,7 @@ function handleActivityClick(item: ActivityItem) {
   .mind-name {
     color: var(--text-0);
     font-weight: 500;
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .seed-tag {
@@ -249,7 +249,7 @@ function handleActivityClick(item: ActivityItem) {
   }
 
   .channel-chip {
-    font-size: 10px;
+    font-size: 11px;
     padding: 1px 5px;
     border-radius: 3px;
     background: var(--accent-dim);
@@ -257,7 +257,7 @@ function handleActivityClick(item: ActivityItem) {
   }
 
   .mind-activity {
-    font-size: 10px;
+    font-size: 11px;
     color: var(--text-2);
   }
 
@@ -277,7 +277,7 @@ function handleActivityClick(item: ActivityItem) {
     cursor: pointer;
     text-align: left;
     color: inherit;
-    font-size: 12px;
+    font-size: 13px;
     transition: background 0.12s;
     width: 100%;
   }
@@ -334,7 +334,7 @@ function handleActivityClick(item: ActivityItem) {
 
   .timeline-time {
     color: var(--text-2);
-    font-size: 10px;
+    font-size: 11px;
     flex-shrink: 0;
   }
 

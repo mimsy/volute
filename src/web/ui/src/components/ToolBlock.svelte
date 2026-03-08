@@ -80,7 +80,7 @@ let summary = $derived(getToolSummary());
     border: 1px solid var(--border);
     border-radius: var(--radius);
     overflow: hidden;
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .tool-header {
@@ -90,7 +90,7 @@ let summary = $derived(getToolSummary());
     justify-content: space-between;
     padding: 6px 10px;
     background: var(--bg-3);
-    font-size: 12px;
+    font-size: 13px;
     font-family: var(--mono);
     text-align: left;
   }
@@ -110,7 +110,7 @@ let summary = $derived(getToolSummary());
 
   .tool-status {
     color: var(--accent);
-    font-size: 10px;
+    font-size: 11px;
     flex-shrink: 0;
     margin-left: 8px;
   }
@@ -133,7 +133,7 @@ let summary = $derived(getToolSummary());
     color: var(--text-1);
     white-space: pre-wrap;
     word-break: break-all;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.5;
   }
 

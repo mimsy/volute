@@ -445,7 +445,7 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
     color: var(--text-2);
     padding: 24px;
     text-align: center;
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .empty.small {
@@ -455,7 +455,7 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
   .error {
     color: var(--red);
     padding: 8px 0;
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .section {
@@ -463,7 +463,7 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
   }
 
   .section-title {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -487,7 +487,7 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
   .action-btn {
     padding: 4px 12px;
     border-radius: var(--radius);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 500;
     transition: opacity 0.15s;
   }
@@ -512,7 +512,7 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
   .setting-label {
     width: 100px;
     flex-shrink: 0;
-    font-size: 13px;
+    font-size: 14px;
     color: var(--text-1);
   }
 
@@ -528,7 +528,7 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 4px 8px;
-    font-size: 13px;
+    font-size: 14px;
     color: var(--text-0);
     flex: 1;
     font-family: inherit;
@@ -549,20 +549,20 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 4px 8px;
-    font-size: 13px;
+    font-size: 14px;
     color: var(--text-0);
     font-family: inherit;
   }
 
   .setting-hint {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-2);
     flex-shrink: 0;
   }
 
   .save-btn {
     padding: 4px 10px;
-    font-size: 11px;
+    font-size: 12px;
     border-radius: var(--radius);
     background: var(--accent-dim);
     color: var(--accent);
@@ -576,7 +576,7 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
 
   .cancel-btn {
     padding: 4px 10px;
-    font-size: 11px;
+    font-size: 12px;
     border-radius: var(--radius);
     background: var(--bg-3);
     color: var(--text-2);
@@ -586,7 +586,7 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
 
   .add-btn {
     padding: 4px 12px;
-    font-size: 11px;
+    font-size: 12px;
     border-radius: var(--radius);
     background: var(--accent-dim);
     color: var(--accent);
@@ -604,7 +604,7 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
     gap: 8px;
     padding: 6px 0;
     border-bottom: 1px solid var(--border);
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .env-row:last-child {
@@ -621,7 +621,7 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
 
   .env-key {
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-0);
     flex-shrink: 0;
     min-width: 100px;
@@ -632,7 +632,7 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
 
   .env-source {
     font-family: inherit;
-    font-size: 10px;
+    font-size: 11px;
     padding: 1px 4px;
     border-radius: 4px;
     background: var(--bg-3);
@@ -646,7 +646,7 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
     text-overflow: ellipsis;
     white-space: nowrap;
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-1);
   }
 
@@ -659,7 +659,7 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 4px 8px;
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-0);
     font-family: var(--mono);
   }
@@ -675,7 +675,7 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
 
   .icon-btn {
     padding: 2px 6px;
-    font-size: 10px;
+    font-size: 11px;
     border-radius: var(--radius);
     background: var(--bg-3);
     color: var(--text-2);

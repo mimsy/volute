@@ -67,13 +67,13 @@ $effect(() => {
   .variant-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .variant-table th {
     text-align: left;
     color: var(--text-2);
-    font-size: 11px;
+    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     padding: 8px 12px;

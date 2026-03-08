@@ -214,7 +214,7 @@ async function handleChangePassword(e: Event) {
   }
 
   .section-title {
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--text-1);
     margin: 0 0 12px;
@@ -227,7 +227,7 @@ async function handleChangePassword(e: Event) {
 
   .label {
     display: block;
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
     margin-bottom: 4px;
   }
@@ -240,7 +240,7 @@ async function handleChangePassword(e: Event) {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     color: var(--text-0);
-    font-size: 12px;
+    font-size: 13px;
     font-family: inherit;
     box-sizing: border-box;
     resize: vertical;
@@ -295,7 +295,7 @@ async function handleChangePassword(e: Event) {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     color: var(--text-1);
-    font-size: 11px;
+    font-size: 12px;
     cursor: pointer;
   }
 
@@ -309,7 +309,7 @@ async function handleChangePassword(e: Event) {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     color: var(--red);
-    font-size: 11px;
+    font-size: 12px;
     cursor: pointer;
   }
 
@@ -323,7 +323,7 @@ async function handleChangePassword(e: Event) {
     background: var(--accent-dim);
     color: var(--accent);
     border-radius: var(--radius);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 500;
   }
 
@@ -337,7 +337,7 @@ async function handleChangePassword(e: Event) {
   }
 
   .message {
-    font-size: 11px;
+    font-size: 12px;
     padding: 6px 10px;
     border-radius: var(--radius);
     margin-bottom: 10px;

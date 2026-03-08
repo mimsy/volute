@@ -26,7 +26,7 @@
   --accent-border: rgba(74, 222, 128, 0.2);
   --timeline-rail: #333;
   --mono: "Fira Code", "SF Mono", monospace;
-  --sans: "Fira Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --sans: "Averia Sans Libre", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --display: "Averia Serif Libre", Georgia, serif;
   --radius: 6px;
   --radius-lg: 10px;
@@ -45,7 +45,7 @@ body,
   background: var(--bg-0);
   color: var(--text-0);
   font-family: var(--sans);
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
 }
@@ -79,7 +79,7 @@ input,
 select,
 textarea,
 button {
-  font-family: var(--sans);
+  font-family: inherit;
 }
 
 button {
@@ -158,12 +158,12 @@ a:focus-visible {
   padding: 10px 12px;
   overflow-x: auto;
   margin: 8px 0;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
 }
 .markdown-body code {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 13px;
   background: var(--bg-3);
   padding: 1px 4px;
   border-radius: 3px;
@@ -201,7 +201,7 @@ a:focus-visible {
   font-size: 16px;
 }
 .markdown-body h3 {
-  font-size: 14px;
+  font-size: 15px;
 }
 .markdown-body blockquote {
   border-left: 3px solid var(--border-bright);
@@ -217,7 +217,7 @@ a:focus-visible {
 .markdown-body td {
   border: 1px solid var(--border);
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .markdown-body th {
   background: var(--bg-3);

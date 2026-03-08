@@ -68,7 +68,7 @@ function handleKeyDown(e: KeyboardEvent) {
 <style>
   .feedback {
     padding: 8px 16px;
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .feedback.error {
@@ -92,7 +92,7 @@ function handleKeyDown(e: KeyboardEvent) {
     border-radius: var(--radius);
     padding: 8px 10px;
     color: var(--text-0);
-    font-size: 12px;
+    font-size: 13px;
     font-family: inherit;
     outline: none;
   }
@@ -106,7 +106,7 @@ function handleKeyDown(e: KeyboardEvent) {
     background: var(--accent-dim);
     color: var(--accent);
     border-radius: var(--radius);
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 500;
   }
 
@@ -116,7 +116,7 @@ function handleKeyDown(e: KeyboardEvent) {
 
   .hint {
     padding: 0 16px 16px;
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
     margin: 0;
   }

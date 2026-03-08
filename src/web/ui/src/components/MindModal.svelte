@@ -142,7 +142,7 @@ function formatCreated(dateStr: string): string {
 
   .mind-name {
     font-family: var(--display);
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 400;
     color: var(--text-0);
   }
@@ -150,7 +150,7 @@ function formatCreated(dateStr: string): string {
   .close-btn {
     background: none;
     color: var(--text-2);
-    font-size: 14px;
+    font-size: 15px;
     padding: 4px 8px;
   }
 
@@ -186,7 +186,7 @@ function formatCreated(dateStr: string): string {
   }
 
   .section-title {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -197,7 +197,7 @@ function formatCreated(dateStr: string): string {
   .connections-empty {
     color: var(--text-2);
     padding: 12px 0;
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .connections-list {
@@ -211,7 +211,7 @@ function formatCreated(dateStr: string): string {
     gap: 8px;
     padding: 6px 0;
     border-bottom: 1px solid var(--border);
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .connection-row:last-child {
@@ -224,12 +224,12 @@ function formatCreated(dateStr: string): string {
   }
 
   .connection-bot {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-1);
   }
 
   .connection-time {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
     margin-left: auto;
   }
@@ -251,13 +251,13 @@ function formatCreated(dateStr: string): string {
 
   .profile-display-name {
     font-family: var(--display);
-    font-size: 22px;
+    font-size: 24px;
     font-weight: 400;
     color: var(--text-0);
   }
 
   .profile-description {
-    font-size: 13px;
+    font-size: 14px;
     color: var(--text-1);
     text-align: center;
     max-width: 320px;
@@ -266,7 +266,7 @@ function formatCreated(dateStr: string): string {
   }
 
   .profile-meta {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
     margin-top: 4px;
   }

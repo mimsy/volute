@@ -74,18 +74,18 @@ let { mind }: { mind: Mind } = $props();
 
   .name {
     font-family: var(--display);
-    font-size: 17px;
+    font-size: 19px;
     font-weight: 400;
     color: var(--text-0);
   }
 
   .username {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-2);
   }
 
   .description {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-1);
     margin: 0 0 8px;
     overflow: hidden;
@@ -101,7 +101,7 @@ let { mind }: { mind: Mind } = $props();
     border-radius: var(--radius);
     background: rgba(251, 191, 36, 0.08);
     color: var(--yellow);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 500;
     letter-spacing: 0.02em;
     text-transform: uppercase;
@@ -112,11 +112,11 @@ let { mind }: { mind: Mind } = $props();
     align-items: center;
     gap: 16px;
     color: var(--text-2);
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .channel-badge {
-    font-size: 10px;
+    font-size: 11px;
     padding: 2px 6px;
     border-radius: var(--radius);
     background: var(--accent-dim);

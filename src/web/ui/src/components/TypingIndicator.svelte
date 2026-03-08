@@ -13,7 +13,7 @@ let { names }: { names: string[] } = $props();
 <style>
   .typing {
     padding: 4px 0;
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-2);
     animation: pulse 1.5s ease infinite;
   }

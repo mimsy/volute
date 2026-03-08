@@ -196,7 +196,7 @@ function buildAssistantItems(
   }
 
   .sender {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
   }
 
@@ -205,7 +205,7 @@ function buildAssistantItems(
     border: none;
     padding: 0;
     font: inherit;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
   }
@@ -215,7 +215,7 @@ function buildAssistantItems(
   }
 
   .timestamp {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
   }
 
@@ -227,7 +227,7 @@ function buildAssistantItems(
   .entry-content {
     min-width: 0;
     font-family: var(--mono);
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .user-text {

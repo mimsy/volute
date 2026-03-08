@@ -320,14 +320,14 @@ function handleFilterChange(next: FilterState) {
     color: var(--red);
     text-align: center;
     padding: 40px;
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .empty {
     color: var(--text-2);
     text-align: center;
     padding: 40px;
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .load-older {
@@ -340,13 +340,13 @@ function handleFilterChange(next: FilterState) {
     background: var(--bg-3);
     color: var(--text-1);
     border-radius: var(--radius);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .loading-more {
     text-align: center;
     color: var(--text-2);
-    font-size: 12px;
+    font-size: 13px;
     padding: 12px;
     animation: pulse 1.5s infinite;
   }
@@ -360,7 +360,7 @@ function handleFilterChange(next: FilterState) {
     background: var(--accent-dim);
     color: var(--accent);
     border-radius: var(--radius);
-    font-size: 12px;
+    font-size: 13px;
     animation: fadeIn 0.2s ease both;
     z-index: 10;
   }

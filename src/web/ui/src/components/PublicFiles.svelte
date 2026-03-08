@@ -206,7 +206,7 @@ let sortedEntries = $derived(
 
   .empty {
     color: var(--text-2);
-    font-size: 12px;
+    font-size: 13px;
     padding: 24px;
     text-align: center;
   }
@@ -235,7 +235,7 @@ let sortedEntries = $derived(
     display: flex;
     flex-wrap: wrap;
     padding: 8px 10px;
-    font-size: 11px;
+    font-size: 12px;
     border-bottom: 1px solid var(--border);
     gap: 0;
   }
@@ -244,7 +244,7 @@ let sortedEntries = $derived(
     background: none;
     color: var(--accent);
     font-family: inherit;
-    font-size: 11px;
+    font-size: 12px;
     padding: 0;
     cursor: pointer;
   }
@@ -258,7 +258,7 @@ let sortedEntries = $derived(
     align-items: center;
     gap: 6px;
     padding: 5px 10px;
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-1);
     background: none;
     text-align: left;
@@ -281,7 +281,7 @@ let sortedEntries = $derived(
   }
 
   .file-icon {
-    font-size: 11px;
+    font-size: 12px;
     flex-shrink: 0;
   }
 
@@ -295,7 +295,7 @@ let sortedEntries = $derived(
 
   .empty-dir {
     color: var(--text-2);
-    font-size: 11px;
+    font-size: 12px;
     padding: 16px;
     text-align: center;
   }
@@ -314,7 +314,7 @@ let sortedEntries = $derived(
     justify-content: space-between;
     padding: 6px 12px;
     border-bottom: 1px solid var(--border);
-    font-size: 12px;
+    font-size: 13px;
     flex-shrink: 0;
   }
 
@@ -328,7 +328,7 @@ let sortedEntries = $derived(
 
   .preview-link {
     color: var(--accent);
-    font-size: 11px;
+    font-size: 12px;
     text-decoration: none;
     flex-shrink: 0;
     margin-left: 8px;
@@ -346,17 +346,17 @@ let sortedEntries = $derived(
     justify-content: center;
     gap: 8px;
     color: var(--text-2);
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .preview-mime {
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .download-link {
     color: var(--accent);
-    font-size: 12px;
+    font-size: 13px;
     text-decoration: none;
   }
 
@@ -370,7 +370,7 @@ let sortedEntries = $derived(
     padding: 12px;
     background: var(--bg-0);
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.6;
     color: var(--text-0);
     white-space: pre-wrap;

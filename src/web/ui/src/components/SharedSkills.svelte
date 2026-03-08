@@ -116,14 +116,14 @@ async function handleDelete(id: string) {
   .error {
     color: var(--red);
     padding: 8px 12px;
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .empty {
     color: var(--text-2);
     padding: 24px;
     text-align: center;
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .section-header {
@@ -134,7 +134,7 @@ async function handleDelete(id: string) {
   }
 
   .section-title {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -153,7 +153,7 @@ async function handleDelete(id: string) {
 
   .upload-btn {
     padding: 4px 12px;
-    font-size: 11px;
+    font-size: 12px;
     border-radius: var(--radius);
     background: var(--accent-dim);
     color: var(--accent);
@@ -192,13 +192,13 @@ async function handleDelete(id: string) {
   }
 
   .skill-name {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 500;
     color: var(--text-0);
   }
 
   .skill-desc {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-1);
     margin-top: 2px;
     overflow: hidden;
@@ -207,7 +207,7 @@ async function handleDelete(id: string) {
   }
 
   .skill-meta {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
     margin-top: 2px;
   }
@@ -220,7 +220,7 @@ async function handleDelete(id: string) {
 
   .action-btn {
     padding: 4px 10px;
-    font-size: 11px;
+    font-size: 12px;
     border-radius: var(--radius);
     font-weight: 500;
   }
