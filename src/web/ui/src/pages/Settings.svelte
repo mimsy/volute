@@ -1,7 +1,15 @@
 <script lang="ts">
 import type { Prompt } from "@volute/api";
 import { onMount } from "svelte";
-import { fetchPrompts, resetPrompt, updatePrompt } from "../lib/client";
+import {
+  fetchPrompts,
+  resetPrompt,
+  systemLogin,
+  systemLogout,
+  systemRegister,
+  updatePrompt,
+} from "../lib/client";
+import { auth } from "../lib/stores.svelte";
 
 let prompts = $state<Prompt[]>([]);
 let loading = $state(true);
@@ -9,6 +17,12 @@ let editingKey = $state<string | null>(null);
 let editContent = $state("");
 let saving = $state(false);
 let error = $state("");
+
+// System registration state
+let systemError = $state("");
+let systemAction = $state<"none" | "register" | "login">("none");
+let systemInput = $state("");
+let systemSaving = $state(false);
 
 const categoryMeta: Record<string, { label: string; subtitle: string }> = {
   creation: { label: "Creation Prompts", subtitle: "Used when creating new minds" },
@@ -45,6 +59,51 @@ async function load() {
 onMount(() => {
   load();
 });
+
+async function handleSystemRegister() {
+  if (!systemInput.trim() || systemSaving) return;
+  systemSaving = true;
+  systemError = "";
+  try {
+    const result = await systemRegister(systemInput.trim());
+    auth.systemName = result.system;
+    systemAction = "none";
+    systemInput = "";
+  } catch (err) {
+    systemError = err instanceof Error ? err.message : "Registration failed";
+  } finally {
+    systemSaving = false;
+  }
+}
+
+async function handleSystemLogin() {
+  if (!systemInput.trim() || systemSaving) return;
+  systemSaving = true;
+  systemError = "";
+  try {
+    const result = await systemLogin(systemInput.trim());
+    auth.systemName = result.system;
+    systemAction = "none";
+    systemInput = "";
+  } catch (err) {
+    systemError = err instanceof Error ? err.message : "Login failed";
+  } finally {
+    systemSaving = false;
+  }
+}
+
+async function handleSystemLogout() {
+  systemSaving = true;
+  systemError = "";
+  try {
+    await systemLogout();
+    auth.systemName = null;
+  } catch (err) {
+    systemError = err instanceof Error ? err.message : "Logout failed";
+  } finally {
+    systemSaving = false;
+  }
+}
 
 function startEdit(prompt: Prompt) {
   editingKey = prompt.key;
@@ -86,6 +145,65 @@ async function handleReset(key: string) {
 </script>
 
 <div class="settings">
+  <!-- System Registration -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">System</span>
+      <span class="section-subtitle">Registration with volute.systems for pages and email</span>
+    </div>
+
+    {#if auth.systemName}
+      <div class="system-card">
+        <div class="system-info">
+          <span class="system-label">Registered as</span>
+          <span class="system-name">{auth.systemName}</span>
+        </div>
+        <button
+          class="btn btn-reset"
+          onclick={handleSystemLogout}
+          disabled={systemSaving}
+        >
+          {systemSaving ? "..." : "Disconnect"}
+        </button>
+      </div>
+    {:else}
+      <div class="system-card">
+        <div class="system-info">
+          <span class="system-label">Not registered</span>
+        </div>
+        {#if systemAction === "none"}
+          <div class="system-actions">
+            <button class="btn btn-edit" onclick={() => { systemAction = "register"; systemInput = ""; systemError = ""; }}>
+              Register
+            </button>
+            <button class="btn btn-edit" onclick={() => { systemAction = "login"; systemInput = ""; systemError = ""; }}>
+              Login with key
+            </button>
+          </div>
+        {:else}
+          <form class="system-form" onsubmit={(e) => { e.preventDefault(); systemAction === "register" ? handleSystemRegister() : handleSystemLogin(); }}>
+            <input
+              type={systemAction === "login" ? "password" : "text"}
+              bind:value={systemInput}
+              placeholder={systemAction === "register" ? "System name" : "API key"}
+              class="system-input"
+            />
+            <button type="submit" class="btn btn-save" disabled={systemSaving || !systemInput.trim()}>
+              {systemSaving ? "..." : systemAction === "register" ? "Register" : "Login"}
+            </button>
+            <button type="button" class="btn btn-cancel" onclick={() => { systemAction = "none"; systemError = ""; }}>
+              Cancel
+            </button>
+          </form>
+        {/if}
+      </div>
+    {/if}
+    {#if systemError}
+      <div class="error">{systemError}</div>
+    {/if}
+  </div>
+
+  <!-- Prompts -->
   {#if error}
     <div class="error">{error}</div>
   {/if}
@@ -164,13 +282,13 @@ async function handleReset(key: string) {
 
   .error {
     color: var(--red);
-    font-size: 12px;
+    font-size: 13px;
     margin-bottom: 16px;
   }
 
   .loading {
     color: var(--text-2);
-    font-size: 12px;
+    font-size: 13px;
     padding: 40px 0;
     text-align: center;
   }
@@ -187,13 +305,13 @@ async function handleReset(key: string) {
   }
 
   .section-title {
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 600;
     color: var(--text-0);
   }
 
   .section-subtitle {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
   }
 
@@ -218,13 +336,13 @@ async function handleReset(key: string) {
 
   .prompt-key {
     font-family: var(--mono);
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
     color: var(--text-0);
   }
 
   .custom-badge {
-    font-size: 10px;
+    font-size: 11px;
     padding: 1px 6px;
     border-radius: 3px;
     background: var(--yellow-dim);
@@ -232,7 +350,7 @@ async function handleReset(key: string) {
   }
 
   .prompt-desc {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-2);
     margin-bottom: 8px;
     line-height: 1.5;
@@ -247,7 +365,7 @@ async function handleReset(key: string) {
 
   .var-tag {
     font-family: var(--mono);
-    font-size: 10px;
+    font-size: 11px;
     padding: 2px 6px;
     border-radius: 3px;
     background: var(--bg-3);
@@ -262,7 +380,7 @@ async function handleReset(key: string) {
     padding: 10px 12px;
     overflow-x: auto;
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.5;
     color: var(--text-1);
     white-space: pre-wrap;
@@ -283,7 +401,7 @@ async function handleReset(key: string) {
     border-radius: var(--radius);
     padding: 10px 12px;
     font-family: var(--mono);
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1.5;
     color: var(--text-0);
     resize: vertical;
@@ -302,7 +420,7 @@ async function handleReset(key: string) {
 
   .btn {
     font-family: inherit;
-    font-size: 11px;
+    font-size: 12px;
     padding: 4px 10px;
     border-radius: var(--radius);
     cursor: pointer;
@@ -354,5 +472,60 @@ async function handleReset(key: string) {
 
   .btn-reset:hover:not(:disabled) {
     border-color: var(--red);
+  }
+
+  .system-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 14px 16px;
+  }
+
+  .system-info {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex: 1;
+  }
+
+  .system-label {
+    font-size: 13px;
+    color: var(--text-2);
+  }
+
+  .system-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-0);
+  }
+
+  .system-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .system-form {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+  }
+
+  .system-input {
+    flex: 1;
+    padding: 6px 10px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-0);
+    font-size: 13px;
+    outline: none;
+  }
+
+  .system-input:focus {
+    border-color: var(--border-bright);
   }
 </style>
