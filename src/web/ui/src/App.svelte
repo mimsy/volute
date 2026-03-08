@@ -373,6 +373,7 @@ function handleEscape(e: KeyboardEvent) {
           onSeed={() => (activeModal = "seed")}
           onSelectSite={handleSelectSite}
           onSelectPages={handleSelectPages}
+          onSelectNotes={() => { selection = { kind: "notes" }; }}
           onHideConversation={handleHideConversation}
           onHome={() => (selection = { kind: "home" })}
         />
@@ -404,6 +405,8 @@ function handleEscape(e: KeyboardEvent) {
           onSelectPage={handleSelectPage}
           onSelectSite={handleSelectSite}
           onSelectPages={handleSelectPages}
+          onSelectNotes={() => { selection = { kind: "notes" }; }}
+          onSelectNote={(author: string, slug: string) => { selection = { kind: "note", author, slug }; }}
           onTypingNames={(names) => { typingNames = names; }}
           onToggleSidebar={toggleSidebar}
           onOpenRightPanel={hasRightPanel ? openRightPanel : undefined}

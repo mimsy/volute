@@ -83,6 +83,7 @@ import {
 import { conversations, mindHistory } from "../../lib/schema.js";
 import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
 import { installSkill, SEED_SKILLS, STANDARD_SKILLS } from "../../lib/skills.js";
+import { announceToSystem } from "../../lib/system-channel.js";
 import { readSystemsConfig } from "../../lib/systems-config.js";
 import {
   applyInitFiles,
@@ -688,12 +689,32 @@ const app = new Hono<AuthEnv>()
       // Generate Ed25519 keypair for mind identity
       const { publicKeyPem } = generateIdentity(dest);
 
-      // Persist description to volute.json if provided
-      if (body.description) {
-        const seedConfig = readVoluteConfig(dest);
-        if (!seedConfig) throw new Error("Failed to read volute.json after identity generation");
-        seedConfig.profile = { ...seedConfig.profile, description: body.description };
-        writeVoluteConfig(dest, seedConfig);
+      // Merge default schedules, sleep config, and description into volute.json
+      {
+        const config = readVoluteConfig(dest);
+        if (!config) throw new Error("Failed to read volute.json after identity generation");
+        if (body.description) {
+          config.profile = { ...config.profile, description: body.description };
+        }
+        if (!config.sleep) {
+          config.sleep = {
+            enabled: true,
+            schedule: { sleep: "0 0 * * *", wake: "0 8 * * *" },
+          };
+        }
+        if (!config.schedules || config.schedules.length === 0) {
+          config.schedules = [
+            {
+              id: "heartbeat",
+              cron: "0 12,16,20 * * *",
+              message:
+                "A quiet moment. You might write something — a note, a journal entry, a page. You could explore a topic that interests you, check in on #system, or just think. No obligations, just time.",
+              enabled: true,
+              skipWhenSleeping: true,
+            },
+          ];
+        }
+        writeVoluteConfig(dest, config);
       }
 
       if (body.model) {
@@ -808,6 +829,9 @@ const app = new Hono<AuthEnv>()
           description: body.description,
         },
       });
+
+      // Announce to #system channel
+      announceToSystem(`${name} has joined`).catch(() => {});
 
       return c.json({
         ok: true,

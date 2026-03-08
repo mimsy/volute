@@ -22,6 +22,14 @@ import {
 } from "../../lib/auth.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import { readRegistry, voluteHome } from "../../lib/registry.js";
+import { joinSystemChannel } from "../../lib/system-channel.js";
+
+/** Only join system channel when running inside the daemon (not in tests). */
+function tryJoinSystem(userId: number): void {
+  if (!process.env.VOLUTE_DAEMON_TOKEN) return;
+  joinSystemChannel(userId).catch(() => {});
+}
+
 import {
   type AuthEnv,
   authMiddleware,
@@ -252,6 +260,9 @@ const app = new Hono()
       setCookie(c, "volute_session", sessionId, SESSION_COOKIE_OPTIONS);
     }
 
+    // Auto-join #system channel
+    tryJoinSystem(user.id);
+
     return c.json({ id: user.id, username: user.username, role: user.role });
   })
   .post("/login", zValidator("json", credentialsSchema), async (c) => {
@@ -264,6 +275,10 @@ const app = new Hono()
 
     const sessionId = await createSession(user.id);
     setCookie(c, "volute_session", sessionId, SESSION_COOKIE_OPTIONS);
+
+    // Auto-join #system channel
+    tryJoinSystem(user.id);
+
     return c.json({ id: user.id, username: user.username, role: user.role });
   })
   .post("/logout", async (c) => {

@@ -147,6 +147,41 @@ export const conversationReads = sqliteTable(
   ],
 );
 
+export const notes = sqliteTable(
+  "notes",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    author_id: integer("author_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    slug: text("slug").notNull(),
+    content: text("content").notNull(),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+    updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    uniqueIndex("idx_notes_author_slug").on(table.author_id, table.slug),
+    index("idx_notes_created_at").on(table.created_at),
+  ],
+);
+
+export const noteComments = sqliteTable(
+  "note_comments",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    note_id: integer("note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
+    author_id: integer("author_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [index("idx_note_comments_note_id").on(table.note_id)],
+);
+
 export const messages = sqliteTable(
   "messages",
   {
