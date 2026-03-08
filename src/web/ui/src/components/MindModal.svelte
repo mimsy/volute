@@ -114,9 +114,7 @@ function formatCreated(dateStr: string): string {
     flex-direction: column;
     height: 100%;
     background: var(--bg-1);
-    border-left: 1px solid var(--border);
-    width: 480px;
-    flex-shrink: 0;
+    width: 100%;
     overflow: hidden;
   }
 
@@ -280,7 +278,7 @@ function formatCreated(dateStr: string): string {
 
   @media (max-width: 1024px) {
     .mind-panel {
-      width: min(480px, 100vw);
+      width: 100%;
     }
   }
 </style>

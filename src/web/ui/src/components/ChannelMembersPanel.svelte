@@ -125,9 +125,7 @@ function isBrainIridescent(username: string): boolean {
     flex-direction: column;
     height: 100%;
     background: var(--bg-1);
-    border-left: 1px solid var(--border);
-    width: 280px;
-    flex-shrink: 0;
+    width: 100%;
     overflow: hidden;
   }
 
@@ -233,7 +231,7 @@ function isBrainIridescent(username: string): boolean {
 
   @media (max-width: 1024px) {
     .members-panel {
-      width: min(280px, 100vw);
+      width: 100%;
     }
   }
 </style>
