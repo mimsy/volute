@@ -1,12 +1,6 @@
 <script lang="ts">
 import type { ContentBlock, Message, Mind, Participant } from "@volute/api";
-import {
-  fetchChannelMembers,
-  fetchConversationMessages,
-  reportTyping,
-  sendChat,
-  sendChatUnified,
-} from "../lib/client";
+import { fetchConversationMessages, reportTyping, sendChat, sendChatUnified } from "../lib/client";
 import { subscribe } from "../lib/connection.svelte";
 import type { ChatEntry } from "../lib/types";
 import MessageInput from "./MessageInput.svelte";
@@ -46,7 +40,6 @@ let sending = $state(false);
 let typingNames = $state<string[]>([]);
 let hasMore = $state(false);
 let loadingOlder = $state(false);
-let memberCount = $state(0);
 let currentConvId: string | null = null;
 let typingSafetyTimer = 0;
 let messageList: MessageList;
@@ -134,21 +127,6 @@ $effect(() => {
     return;
   }
   loadMessages(conversationId, true);
-});
-
-// Load member count for channels
-$effect(() => {
-  if (convType !== "channel" || !channelName) {
-    memberCount = 0;
-    return;
-  }
-  fetchChannelMembers(channelName)
-    .then((m) => {
-      memberCount = m.length;
-    })
-    .catch((err) => {
-      console.warn("[chat] failed to load member count:", err);
-    });
 });
 
 // Subscribe to unified SSE for real-time updates
@@ -259,7 +237,6 @@ async function handleSend(message: string, images: Array<{ media_type: string; d
   {#if convType === "channel" && channelName}
     <div class="channel-header">
       <span class="channel-title">#{channelName}</span>
-      <span class="channel-members">{memberCount} member{memberCount === 1 ? "" : "s"}</span>
     </div>
   {/if}
 
@@ -298,7 +275,7 @@ async function handleSend(message: string, images: Array<{ media_type: string; d
     padding: 6px 12px;
     text-align: center;
     color: var(--yellow);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 500;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -316,15 +293,9 @@ async function handleSend(message: string, images: Array<{ media_type: string; d
   }
 
   .channel-title {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
     color: var(--text-0);
-  }
-
-  .channel-members {
-    font-size: 11px;
-    color: var(--text-2);
-    flex: 1;
   }
 
   @media (max-width: 1024px) {
