@@ -322,14 +322,14 @@ function isProfileDirty(user: AuthUser): boolean {
   .display-name {
     font-weight: 500;
     color: var(--text-0);
-    font-size: 13px;
+    font-size: 14px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .username {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
     flex-shrink: 0;
   }
@@ -350,7 +350,7 @@ function isProfileDirty(user: AuthUser): boolean {
 
   .expand-icon {
     color: var(--text-2);
-    font-size: 10px;
+    font-size: 11px;
     transition: transform 0.15s;
     display: inline-block;
   }
@@ -360,7 +360,7 @@ function isProfileDirty(user: AuthUser): boolean {
   }
 
   .role {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
   }
 
@@ -377,7 +377,7 @@ function isProfileDirty(user: AuthUser): boolean {
     background: var(--accent-dim);
     color: var(--accent);
     border-radius: var(--radius);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 500;
   }
 
@@ -398,7 +398,7 @@ function isProfileDirty(user: AuthUser): boolean {
   }
 
   .field label {
-    font-size: 10px;
+    font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text-2);
@@ -410,7 +410,7 @@ function isProfileDirty(user: AuthUser): boolean {
     border-radius: var(--radius);
     padding: 6px 10px;
     color: var(--text-0);
-    font-size: 12px;
+    font-size: 13px;
     font-family: inherit;
   }
 
@@ -441,7 +441,7 @@ function isProfileDirty(user: AuthUser): boolean {
     padding: 4px 8px;
     background: none;
     color: var(--text-2);
-    font-size: 11px;
+    font-size: 12px;
     border-radius: var(--radius);
   }
 
@@ -465,7 +465,7 @@ function isProfileDirty(user: AuthUser): boolean {
   }
 
   .confirm-prompt {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--red);
     display: flex;
     align-items: center;
@@ -476,7 +476,7 @@ function isProfileDirty(user: AuthUser): boolean {
     padding: 2px 8px;
     background: var(--red-bg);
     color: var(--red);
-    font-size: 11px;
+    font-size: 12px;
     border-radius: var(--radius);
     font-weight: 500;
   }
@@ -490,7 +490,7 @@ function isProfileDirty(user: AuthUser): boolean {
     padding: 2px 8px;
     background: none;
     color: var(--text-2);
-    font-size: 11px;
+    font-size: 12px;
     border-radius: var(--radius);
   }
 
@@ -504,7 +504,7 @@ function isProfileDirty(user: AuthUser): boolean {
     background: var(--accent-dim);
     color: var(--accent);
     border-radius: var(--radius);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 500;
   }
 
@@ -520,7 +520,7 @@ function isProfileDirty(user: AuthUser): boolean {
 
   .error {
     color: var(--red);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .empty {

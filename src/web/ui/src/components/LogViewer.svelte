@@ -78,7 +78,7 @@ function resumeScroll() {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
   }
 
@@ -87,7 +87,7 @@ function resumeScroll() {
     color: var(--accent);
     padding: 2px 10px;
     border-radius: var(--radius);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .log-output {
@@ -95,7 +95,7 @@ function resumeScroll() {
     overflow: auto;
     padding: 12px;
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.7;
     white-space: pre-wrap;
     word-break: break-all;

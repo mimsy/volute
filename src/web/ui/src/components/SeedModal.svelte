@@ -184,7 +184,7 @@ async function handleSubmit() {
   .modal-title {
     font-weight: 600;
     color: var(--text-0);
-    font-size: 14px;
+    font-size: 15px;
   }
 
   .field {
@@ -195,7 +195,7 @@ async function handleSubmit() {
 
   .label {
     color: var(--text-2);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .input {
@@ -204,9 +204,9 @@ async function handleSubmit() {
     border-radius: var(--radius);
     padding: 8px 10px;
     color: var(--text-0);
-    font-size: 13px;
+    font-size: 14px;
     outline: none;
-    font-family: var(--mono);
+    font-family: inherit;
   }
 
   .select {
@@ -215,7 +215,7 @@ async function handleSubmit() {
 
   .error {
     color: var(--red);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .actions {
@@ -229,7 +229,7 @@ async function handleSubmit() {
     background: var(--bg-2);
     color: var(--text-1);
     border-radius: var(--radius);
-    font-size: 12px;
+    font-size: 13px;
     border: 1px solid var(--border);
   }
 
@@ -238,15 +238,15 @@ async function handleSubmit() {
     background: var(--yellow);
     color: var(--bg-0);
     border-radius: var(--radius);
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
   }
 
   .advanced-toggle {
     background: transparent;
     color: var(--text-2);
-    font-size: 11px;
-    font-family: var(--mono);
+    font-size: 12px;
+    font-family: inherit;
     border: none;
     cursor: pointer;
     padding: 0;
@@ -267,14 +267,14 @@ async function handleSubmit() {
   .textarea {
     resize: vertical;
     min-height: 80px;
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.5;
   }
 
   .hint {
     color: var(--text-2);
-    font-size: 10px;
-    font-family: var(--mono);
+    font-size: 11px;
+    font-family: inherit;
   }
 
   .skill-list {
@@ -287,7 +287,7 @@ async function handleSubmit() {
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-1);
     cursor: pointer;
   }

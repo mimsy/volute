@@ -88,7 +88,7 @@ $effect(() => {
     text-align: left;
     background: transparent;
     color: var(--text-1);
-    font-size: 12px;
+    font-size: 13px;
     font-family: var(--mono);
     border-radius: 4px;
     transition: all 0.1s;
@@ -112,7 +112,7 @@ $effect(() => {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .filename {
@@ -121,7 +121,7 @@ $effect(() => {
 
   .error {
     color: var(--red);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .file-content {
@@ -130,7 +130,7 @@ $effect(() => {
     background: var(--bg-0);
     color: var(--text-0);
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.7;
     border: none;
     outline: none;

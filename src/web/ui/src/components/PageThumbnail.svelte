@@ -58,7 +58,7 @@ let {
   }
 
   .thumbnail-label {
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 500;
     color: var(--text-0);
     padding: 0 2px;
@@ -69,7 +69,7 @@ let {
   }
 
   .thumbnail-sublabel {
-    font-size: 10px;
+    font-size: 11px;
     color: var(--text-2);
     padding: 0 2px;
     overflow: hidden;

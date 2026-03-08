@@ -51,7 +51,7 @@ let tab = $state<Tab>("Settings");
   .close-btn {
     background: none;
     color: var(--text-2);
-    font-size: 14px;
+    font-size: 15px;
     padding: 4px 8px;
   }
 

@@ -230,7 +230,7 @@ let buttonDisabled = $derived(
   .modal-title {
     font-weight: 600;
     color: var(--text-0);
-    font-size: 14px;
+    font-size: 15px;
   }
 
   .title-input {
@@ -239,20 +239,20 @@ let buttonDisabled = $derived(
     border-radius: var(--radius);
     padding: 8px 10px;
     color: var(--text-0);
-    font-size: 12px;
+    font-size: 13px;
     outline: none;
-    font-family: var(--mono);
+    font-family: inherit;
   }
 
   .hint {
     color: var(--text-2);
-    font-size: 11px;
+    font-size: 12px;
     padding: 8px;
   }
 
   .error {
     color: var(--red);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .tag-input-wrapper {
@@ -283,7 +283,7 @@ let buttonDisabled = $derived(
     background: var(--bg-3);
     border-radius: 3px;
     padding: 2px 6px;
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-0);
     white-space: nowrap;
   }
@@ -295,7 +295,7 @@ let buttonDisabled = $derived(
   .tag-remove {
     cursor: pointer;
     color: var(--text-2);
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1;
     margin-left: 2px;
   }
@@ -318,9 +318,9 @@ let buttonDisabled = $derived(
     border: none;
     outline: none;
     color: var(--text-0);
-    font-size: 12px;
+    font-size: 13px;
     padding: 2px 0;
-    font-family: var(--mono);
+    font-family: inherit;
   }
 
   .tag-text-input::placeholder {
@@ -347,7 +347,7 @@ let buttonDisabled = $derived(
     gap: 8px;
     padding: 6px 10px;
     cursor: pointer;
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-0);
   }
 
@@ -363,7 +363,7 @@ let buttonDisabled = $derived(
 
   .item-badge {
     color: var(--accent);
-    font-size: 10px;
+    font-size: 11px;
     flex-shrink: 0;
   }
 
@@ -378,7 +378,7 @@ let buttonDisabled = $derived(
     background: var(--bg-2);
     color: var(--text-1);
     border-radius: var(--radius);
-    font-size: 12px;
+    font-size: 13px;
     border: 1px solid var(--border);
   }
 
@@ -387,7 +387,7 @@ let buttonDisabled = $derived(
     background: var(--accent-dim);
     color: var(--accent);
     border-radius: var(--radius);
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 500;
   }
 </style>

@@ -223,11 +223,11 @@ function handleClickOutside(e: MouseEvent) {
   }
 
   .filter-label {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
     width: 52px;
     flex-shrink: 0;
-    font-family: var(--mono);
+    font-family: inherit;
   }
 
   .types-row {
@@ -252,8 +252,8 @@ function handleClickOutside(e: MouseEvent) {
   }
 
   .types-action {
-    font-size: 10px;
-    font-family: var(--mono);
+    font-size: 11px;
+    font-family: inherit;
     color: var(--text-2);
     background: none;
     border: none;
@@ -271,8 +271,8 @@ function handleClickOutside(e: MouseEvent) {
     align-items: center;
     gap: 4px;
     padding: 2px 6px;
-    font-size: 10px;
-    font-family: var(--mono);
+    font-size: 11px;
+    font-family: inherit;
     color: var(--text-2);
     background: none;
     border: none;
@@ -311,8 +311,8 @@ function handleClickOutside(e: MouseEvent) {
     border: none;
     border-radius: var(--radius);
     padding: 3px 6px;
-    font-size: 11px;
-    font-family: var(--mono);
+    font-size: 12px;
+    font-family: inherit;
     cursor: pointer;
     transition: color 0.15s;
   }
@@ -353,8 +353,8 @@ function handleClickOutside(e: MouseEvent) {
     width: 100%;
     text-align: left;
     padding: 5px 8px;
-    font-size: 11px;
-    font-family: var(--mono);
+    font-size: 12px;
+    font-family: inherit;
     color: var(--text-1);
     background: none;
     border: none;

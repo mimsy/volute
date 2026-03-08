@@ -17,6 +17,7 @@ let {
   senderName,
   createdAt,
   showHeader = true,
+  showDate = false,
   senderColor = "var(--text-0)",
   entryIndex,
   openTools,
@@ -30,6 +31,7 @@ let {
   senderName?: string;
   createdAt?: string;
   showHeader?: boolean;
+  showDate?: boolean;
   senderColor?: string;
   entryIndex: number;
   openTools: Set<number>;
@@ -68,7 +70,12 @@ function formatTime(dateStr?: string): string {
   if (!dateStr) return "";
   try {
     const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
-    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    if (showDate) {
+      const date = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      return `${date}, ${time}`;
+    }
+    return time;
   } catch {
     return "";
   }
@@ -189,7 +196,7 @@ function buildAssistantItems(
   }
 
   .sender {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
   }
 
@@ -198,7 +205,7 @@ function buildAssistantItems(
     border: none;
     padding: 0;
     font: inherit;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
   }
@@ -208,7 +215,7 @@ function buildAssistantItems(
   }
 
   .timestamp {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
   }
 
@@ -219,6 +226,8 @@ function buildAssistantItems(
 
   .entry-content {
     min-width: 0;
+    font-family: var(--mono);
+    font-size: 14px;
   }
 
   .user-text {

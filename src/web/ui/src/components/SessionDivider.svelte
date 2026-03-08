@@ -44,7 +44,7 @@ let {
     border-top: 1px solid var(--border);
   }
   .label {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
     white-space: nowrap;
     display: flex;

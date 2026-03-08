@@ -54,7 +54,7 @@ let {
   }
 
   .page-count {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
   }
 
@@ -66,6 +66,6 @@ let {
 
   .empty {
     color: var(--text-2);
-    font-size: 12px;
+    font-size: 13px;
   }
 </style>

@@ -97,10 +97,10 @@ let contextLabel = $derived.by(() => {
 <div class="main-frame">
   <div class="mobile-header">
     <button class="hamburger-btn" onclick={() => onToggleSidebar?.()}>&#9776;</button>
+    <img src="/logo.png" alt="" class="mobile-logo" />
+    <span class="mobile-title">volute</span>
     {#if contextLabel && onOpenRightPanel}
       <button class="context-label-btn" onclick={onOpenRightPanel}>{contextLabel}</button>
-    {:else}
-      <span class="mobile-title">Volute</span>
     {/if}
   </div>
   {#if selection.kind === "page"}
@@ -176,8 +176,8 @@ let contextLabel = $derived.by(() => {
     align-items: center;
     gap: 6px;
     padding: 8px 16px;
-    font-family: var(--font-mono, monospace);
-    font-size: 11px;
+    font-family: inherit;
+    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--text-2);
@@ -240,22 +240,30 @@ let contextLabel = $derived.by(() => {
     background: var(--bg-2);
   }
 
+  .mobile-logo {
+    width: 20px;
+    height: 20px;
+    filter: invert(1);
+  }
+
   .mobile-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-1);
-    flex: 1;
+    font-family: var(--display);
+    font-size: 18px;
+    font-weight: 300;
+    color: var(--text-0);
+    letter-spacing: 0.04em;
+    margin-left: -4px;
   }
 
   .context-label-btn {
-    flex: 1;
+    margin-left: auto;
     background: none;
     border: none;
-    color: var(--text-0);
-    font-size: 13px;
-    font-weight: 600;
+    color: var(--text-1);
+    font-size: 14px;
+    font-weight: 500;
     padding: 4px 0;
-    text-align: left;
+    text-align: right;
     cursor: pointer;
     overflow: hidden;
     text-overflow: ellipsis;

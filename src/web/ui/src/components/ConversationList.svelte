@@ -197,7 +197,7 @@ $effect(() => {
     align-items: center;
     justify-content: space-between;
     padding: 10px 12px 4px;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
     color: var(--text-2);
     letter-spacing: 0.05em;
@@ -205,7 +205,7 @@ $effect(() => {
   }
 
   .browse-btn {
-    font-size: 10px;
+    font-size: 11px;
     color: var(--accent);
     background: none;
     padding: 0;
@@ -215,7 +215,7 @@ $effect(() => {
   }
 
   .conv-item {
-    padding: 6px 12px;
+    padding: 6px 12px 6px 26px;
     margin: 0 4px;
     cursor: pointer;
     border-radius: var(--radius);
@@ -246,7 +246,7 @@ $effect(() => {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12px;
+    font-size: 14px;
     color: var(--text-1);
     display: flex;
     align-items: center;
@@ -265,7 +265,7 @@ $effect(() => {
   .unread-badge {
     background: var(--accent);
     color: var(--bg-0);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
     min-width: 16px;
     height: 16px;
@@ -306,7 +306,7 @@ $effect(() => {
   .delete-btn {
     background: transparent;
     color: var(--text-2);
-    font-size: 11px;
+    font-size: 12px;
     padding: 0 4px;
     flex-shrink: 0;
   }
@@ -314,7 +314,7 @@ $effect(() => {
   .menu-btn {
     background: transparent;
     color: var(--text-2);
-    font-size: 11px;
+    font-size: 12px;
     padding: 0 4px;
     flex-shrink: 0;
     opacity: 0;
@@ -332,7 +332,7 @@ $effect(() => {
   }
 
   .member-count {
-    font-size: 10px;
+    font-size: 11px;
     color: var(--text-2);
     padding-left: 1px;
   }
@@ -367,7 +367,7 @@ $effect(() => {
 
   .empty {
     color: var(--text-2);
-    font-size: 11px;
+    font-size: 12px;
     padding: 8px 12px;
     text-align: center;
   }
@@ -389,7 +389,7 @@ $effect(() => {
     padding: 6px 12px;
     background: none;
     color: var(--text-1);
-    font-size: 12px;
+    font-size: 13px;
     text-align: left;
     white-space: nowrap;
   }
@@ -401,7 +401,7 @@ $effect(() => {
 
   @media (max-width: 767px) {
     .conv-item {
-      padding: 10px 12px;
+      padding: 10px 12px 10px 26px;
     }
 
     .menu-btn {
