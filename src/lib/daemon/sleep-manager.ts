@@ -223,18 +223,6 @@ export class SleepManager {
     this.transitioning.add(name);
 
     try {
-      const sleepingSince = state.sleepingSince ? new Date(state.sleepingSince) : new Date();
-      const now = new Date();
-      const duration = formatDuration(sleepingSince, now);
-      const currentDate = formatCurrentDate();
-      const sleepTime = sleepingSince.toLocaleTimeString("en-US", {
-        hour: "numeric",
-        minute: "2-digit",
-      });
-
-      // Build queued summary
-      const queuedSummary = await this.buildQueuedSummary(name);
-
       // Start the mind process
       try {
         await wakeMind(name);
@@ -247,50 +235,56 @@ export class SleepManager {
       const entry = findMind(name);
       if (!entry) return;
 
-      // Deliver wake summary
-      let summaryText: string;
       if (opts?.trigger) {
+        // Trigger-wakes are brief interruptions — the trigger message itself
+        // provides context, so skip the wake summary. The mind returns to sleep
+        // after going idle via onActivityEvent.
         state.wokenByTrigger = true;
-        summaryText = await getPrompt("wake_trigger_summary", {
-          currentDate,
-          triggerChannel: opts.trigger.channel,
-          sleepTime,
-          duration,
-          queuedSummary,
-        });
       } else {
-        summaryText = await getPrompt("wake_summary", {
+        const sleepingSince = state.sleepingSince ? new Date(state.sleepingSince) : new Date();
+        const now = new Date();
+        const duration = formatDuration(sleepingSince, now);
+        const currentDate = formatCurrentDate();
+        const sleepTime = sleepingSince.toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+        });
+
+        // Build queued summary
+        const queuedSummary = await this.buildQueuedSummary(name);
+
+        const summaryText = await getPrompt("wake_summary", {
           currentDate,
           sleepTime,
           duration,
           queuedSummary,
         });
-      }
 
-      // Persist wake summary to mind_history
-      try {
-        const db = await getDb();
-        await db.insert(mindHistory).values({
-          mind: name,
-          type: "inbound",
-          channel: "system:sleep",
-          content: summaryText,
-        });
-      } catch (err) {
-        slog.error(`failed to persist wake summary for ${name}`, log.errorData(err));
-      }
-
-      try {
-        await fetch(`http://127.0.0.1:${entry.port}/message`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            content: [{ type: "text", text: summaryText }],
+        // Persist wake summary to mind_history
+        try {
+          const db = await getDb();
+          await db.insert(mindHistory).values({
+            mind: name,
+            type: "inbound",
             channel: "system:sleep",
-          }),
-        });
-      } catch (err) {
-        slog.warn(`failed to deliver wake summary to ${name}`, log.errorData(err));
+            content: summaryText,
+          });
+        } catch (err) {
+          slog.error(`failed to persist wake summary for ${name}`, log.errorData(err));
+        }
+
+        try {
+          await fetch(`http://127.0.0.1:${entry.port}/message`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              content: [{ type: "text", text: summaryText }],
+              channel: "system:sleep",
+            }),
+          });
+        } catch (err) {
+          slog.warn(`failed to deliver wake summary to ${name}`, log.errorData(err));
+        }
       }
 
       // Flush queued messages

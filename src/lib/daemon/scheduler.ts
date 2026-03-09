@@ -137,7 +137,7 @@ export class Scheduler {
       }
       await this.deliver(mindName, {
         content: [{ type: "text", text }],
-        channel: "system:scheduler",
+        channel: schedule.channel ?? "system:scheduler",
         sender: schedule.id,
       });
       slog.info(`fired "${schedule.id}" for ${mindName}`);

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { toSDKContent } from "./lib/content.js";
@@ -64,6 +66,28 @@ export function createMind(options: {
   // Per-session compaction state
   const compactionTriggered = new Map<string, boolean>();
 
+  // --- Dreamer subagent ---
+
+  let dreamerPrompt: string | undefined;
+  try {
+    dreamerPrompt = readFileSync(resolve(options.cwd, "SOUL.md"), "utf-8") || undefined;
+  } catch {
+    // SOUL.md not found — dreamer agent won't be available
+  }
+
+  const agents = dreamerPrompt
+    ? {
+        dreamer: {
+          description:
+            "Use when dreaming. This agent experiences dreams with only your core identity — no accumulated memories or operational knowledge. Give it a rich dream premise and it will write the dream.",
+          prompt: dreamerPrompt,
+          tools: ["Read", "Write", "Bash"],
+          model: "inherit" as const,
+          maxTurns: 10,
+        },
+      }
+    : undefined;
+
   // --- Event broadcasting ---
 
   function broadcastToSession(session: Session, event: VoluteEvent) {
@@ -106,6 +130,7 @@ export function createMind(options: {
         model: options.model,
         maxThinkingTokens: options.maxThinkingTokens,
         resume,
+        agents,
         hooks: {
           PostToolUse: postToolUseHooks,
           PreCompact: [{ hooks: [preCompactHook] }],

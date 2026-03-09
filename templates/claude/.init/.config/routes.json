@@ -2,7 +2,8 @@
   "gateUnmatched": true,
   "rules": [
     { "channel": "volute:*", "isDM": true, "session": "${channel}" },
-    { "channel": "volute:*", "isDM": false, "session": "group-${channel}" }
+    { "channel": "volute:*", "isDM": false, "session": "group-${channel}" },
+    { "channel": "system:dream", "session": "$new" }
   ],
   "sessions": {
     "group-*": { "batch": { "debounce": 20, "maxWait": 120, "triggers": ["@{{name}}"] } }
