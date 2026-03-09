@@ -111,9 +111,9 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
   },
   wake_summary: {
     content:
-      "Good morning — it's ${currentDate}. You slept from ${sleepTime} to now (${duration}).\n\n${queuedSummary}",
+      "Good morning — it's ${currentDate}. You slept from ${sleepTime} to now (${duration}).\n\n${sleepActivity}",
     description: "Wake-up summary after scheduled sleep",
-    variables: ["currentDate", "sleepTime", "duration", "queuedSummary"],
+    variables: ["currentDate", "sleepTime", "duration", "sleepActivity"],
     category: "system",
   },
   wake_trigger_summary: {

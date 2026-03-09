@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn as spawnChild } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -31,6 +31,7 @@ export type SleepState = {
   wokenByTrigger: boolean;
   voluntaryWakeAt: string | null;
   queuedMessageCount: number;
+  triggerWakeHistory: { channel: string; at: string }[];
 };
 
 type SleepStatePersisted = Record<string, SleepState>;
@@ -43,6 +44,7 @@ function defaultState(): SleepState {
     wokenByTrigger: false,
     voluntaryWakeAt: null,
     queuedMessageCount: 0,
+    triggerWakeHistory: [],
   };
 }
 
@@ -251,6 +253,11 @@ export class SleepManager {
         // provides context, so skip the wake summary. The mind returns to sleep
         // after going idle via onActivityEvent.
         state.wokenByTrigger = true;
+        state.triggerWakeHistory.push({
+          channel: opts.trigger.channel,
+          at: new Date().toISOString(),
+        });
+        this.saveState();
       } else {
         const sleepingSince = state.sleepingSince ? new Date(state.sleepingSince) : new Date();
         const now = new Date();
@@ -261,14 +268,23 @@ export class SleepManager {
           minute: "2-digit",
         });
 
-        // Build queued summary
+        // Build wake context sections
+        const triggerWakeSummary = this.buildTriggerWakeSummary(state);
+        const wakeContext = await this.runWakeContextScript(
+          name,
+          state.sleepingSince ?? sleepingSince.toISOString(),
+          duration,
+        );
         const queuedSummary = await this.buildQueuedSummary(name);
+        const sleepActivity = [triggerWakeSummary, wakeContext, queuedSummary]
+          .filter(Boolean)
+          .join("\n\n");
 
         const summaryText = await getPrompt("wake_summary", {
           currentDate,
           sleepTime,
           duration,
-          queuedSummary,
+          sleepActivity,
         });
 
         // Persist wake summary to mind_history
@@ -442,6 +458,7 @@ export class SleepManager {
       wokenByTrigger: false,
       voluntaryWakeAt: opts?.voluntaryWakeAt ?? null,
       queuedMessageCount: this.states.get(name)?.queuedMessageCount ?? 0,
+      triggerWakeHistory: [],
     };
     this.states.set(name, state);
     this.saveState();
@@ -583,26 +600,78 @@ export class SleepManager {
     }
   }
 
+  private async runWakeContextScript(
+    name: string,
+    sleepingSince: string,
+    duration: string,
+  ): Promise<string> {
+    const scriptPath = resolve(mindDir(name), "home", ".config", "hooks", "wake-context.sh");
+    if (!existsSync(scriptPath)) return "";
+
+    const input = JSON.stringify({
+      sleepingSince,
+      duration,
+      wakeTime: new Date().toISOString(),
+    });
+
+    try {
+      const result = await new Promise<string>((resolvePromise, reject) => {
+        const child = spawnChild("bash", [scriptPath], {
+          cwd: mindDir(name),
+          timeout: 5000,
+          env: { ...process.env, VOLUTE_MIND: name },
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        let stdout = "";
+        child.stdout.on("data", (data: Buffer) => {
+          stdout += data.toString();
+        });
+        child.on("close", (code) => {
+          if (code === 0) resolvePromise(stdout);
+          else reject(new Error(`wake-context script exited with code ${code}`));
+        });
+        child.on("error", reject);
+        child.stdin.end(input);
+      });
+      return result.trim();
+    } catch (err) {
+      slog.warn(`wake-context script failed for ${name}`, log.errorData(err));
+      return "";
+    }
+  }
+
+  private buildTriggerWakeSummary(state: SleepState): string {
+    const history = state.triggerWakeHistory;
+    if (!history || history.length === 0) return "";
+
+    const channels = [...new Set(history.map((h) => h.channel))];
+    const times = history.length === 1 ? "once" : `${history.length} times`;
+    return `You were briefly woken ${times} during sleep to handle messages on ${channels.join(", ")} (sessions were archived after each).`;
+  }
+
   private async buildQueuedSummary(name: string): Promise<string> {
     try {
       const db = await getDb();
       const rows = await db
-        .select({ channel: deliveryQueue.channel })
+        .select({ channel: deliveryQueue.channel, sender: deliveryQueue.sender })
         .from(deliveryQueue)
         .where(and(eq(deliveryQueue.mind, name), eq(deliveryQueue.status, "sleep-queued")))
         .all();
 
       if (rows.length === 0) return "No messages arrived while you slept.";
 
-      // Count per channel
+      // Count per channel and collect unique senders
       const channelCounts = new Map<string, number>();
+      const senders = new Set<string>();
       for (const row of rows) {
         const ch = row.channel ?? "unknown";
         channelCounts.set(ch, (channelCounts.get(ch) ?? 0) + 1);
+        if (row.sender) senders.add(row.sender);
       }
 
       const parts = [...channelCounts.entries()].map(([ch, count]) => `${count} on ${ch}`);
-      return `${rows.length} message${rows.length === 1 ? "" : "s"} arrived while you slept (${parts.join(", ")}). They'll be delivered to your normal channels now.`;
+      const senderNote = senders.size > 0 ? ` from ${[...senders].join(", ")}` : "";
+      return `${rows.length} message${rows.length === 1 ? "" : "s"} arrived while you slept${senderNote} (${parts.join(", ")}). They'll be delivered to your normal channels now.`;
     } catch (err) {
       slog.error(`failed to build queued summary for ${name}`, log.errorData(err));
       return "Unable to check for queued messages — there may be messages waiting.";

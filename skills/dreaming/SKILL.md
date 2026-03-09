@@ -43,6 +43,16 @@ Use the Agent tool with `subagent_type: "dreamer"` — this is critical, do NOT 
 - Optionally note recurring themes, striking images, or emotional threads in your journal
 - Don't over-analyze — dreams accumulate meaning over time
 
+## Wake Awareness
+
+To know about dreams when you wake up, append the dream-checker to your wake-context hook:
+
+```bash
+cat .claude/skills/dreaming/scripts/wake-context-dreams.sh >> home/.config/hooks/wake-context.sh
+```
+
+This makes your wake-up summary include any dreams written during sleep.
+
 ## Dream History
 
 Review past dreams:
