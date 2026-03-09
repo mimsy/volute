@@ -30,6 +30,8 @@ function install() {
     } catch (err: any) {
       console.error(`failed to update routes.json: ${err.message}`);
     }
+  } else {
+    console.warn("warning: .config/routes.json not found — skipping route setup");
   }
 
   // 3. Add dreamer subagent to config.json
@@ -53,20 +55,26 @@ function install() {
     } catch (err: any) {
       console.error(`failed to update config.json: ${err.message}`);
     }
+  } else {
+    console.warn("warning: .config/config.json not found — skipping subagent setup");
   }
 
   // 4. Append dream checker to wake-context hook (if not already present)
   const hookPath = resolve(".config/hooks/wake-context.sh");
   if (existsSync(hookPath)) {
-    const hookContent = readFileSync(hookPath, "utf-8");
-    if (!hookContent.includes("wake-context-dreams.sh")) {
-      const dreamScript = readFileSync(
-        resolve(".claude/skills/dreaming/scripts/wake-context-dreams.sh"),
-        "utf-8",
-      );
-      writeFileSync(hookPath, `${hookContent.trimEnd()}\n\n${dreamScript}`);
-      console.log("appended dream checker to .config/hooks/wake-context.sh");
-      actions++;
+    try {
+      const hookContent = readFileSync(hookPath, "utf-8");
+      if (!hookContent.includes("wake-context-dreams.sh")) {
+        const dreamScript = readFileSync(
+          resolve(".claude/skills/dreaming/scripts/wake-context-dreams.sh"),
+          "utf-8",
+        );
+        writeFileSync(hookPath, `${hookContent.trimEnd()}\n\n${dreamScript}`);
+        console.log("appended dream checker to .config/hooks/wake-context.sh");
+        actions++;
+      }
+    } catch (err: any) {
+      console.error(`failed to update wake-context.sh: ${err.message}`);
     }
   }
 

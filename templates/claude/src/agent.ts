@@ -69,32 +69,42 @@ export function createMind(options: {
 
   // --- Subagents (config-driven) ---
 
+  type SDKAgent = {
+    description: string;
+    prompt: string;
+    tools: string[];
+    model: "inherit";
+    maxTurns?: number;
+  };
+
   function loadSubagents(
     configs: Record<string, SubagentConfig> | undefined,
-  ):
-    | Record<string, { description: string; prompt: string; tools: string[]; model: "inherit" }>
-    | undefined {
+  ): Record<string, SDKAgent> | undefined {
     if (!configs || Object.keys(configs).length === 0) return undefined;
-    const agents: Record<
-      string,
-      { description: string; prompt: string; tools: string[]; model: "inherit" }
-    > = {};
+    const agents: Record<string, SDKAgent> = {};
     for (const [name, config] of Object.entries(configs)) {
+      if (typeof config.description !== "string" || typeof config.systemPrompt !== "string") {
+        log("mind", `subagent "${name}": missing description or systemPrompt, skipping`);
+        continue;
+      }
       try {
         const prompt = readFileSync(resolvePath(options.cwd, config.systemPrompt), "utf-8");
-        if (!prompt) continue;
+        if (!prompt) {
+          log("mind", `subagent "${name}": ${config.systemPrompt} is empty, skipping`);
+          continue;
+        }
         agents[name] = {
           description: config.description,
           prompt,
           tools: config.tools ?? ["Read", "Write", "Bash"],
           model: "inherit" as const,
+          maxTurns: config.maxTurns,
         };
       } catch (err: any) {
-        if (err?.code !== "ENOENT") {
-          log(
-            "mind",
-            `failed to read ${config.systemPrompt} for subagent "${name}": ${err.message}`,
-          );
+        if (err?.code === "ENOENT") {
+          log("mind", `subagent "${name}": ${config.systemPrompt} not found, skipping`);
+        } else {
+          log("mind", `subagent "${name}": failed to read ${config.systemPrompt}: ${err.message}`);
         }
       }
     }
