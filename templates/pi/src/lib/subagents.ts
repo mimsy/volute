@@ -42,65 +42,80 @@ export function createSubagentExtension(
           prompt: Type.String({ description: "The prompt for the subagent" }),
         }),
         async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-          const tools = resolveTools(def.tools);
+          try {
+            const tools = resolveTools(def.tools);
 
-          const loader = new DefaultResourceLoader({
-            cwd: context.cwd,
-            systemPromptOverride: () => def.prompt,
-            settingsManager: SettingsManager.inMemory({}),
-          });
-          await loader.reload();
+            const loader = new DefaultResourceLoader({
+              cwd: context.cwd,
+              systemPromptOverride: () => def.prompt,
+              settingsManager: SettingsManager.inMemory({}),
+            });
+            await loader.reload();
 
-          const { session } = await createAgentSession({
-            cwd: context.cwd,
-            model: context.model,
-            tools,
-            resourceLoader: loader,
-            sessionManager: SessionManager.inMemory(),
-            settingsManager: SettingsManager.inMemory({}),
-            authStorage: context.authStorage,
-            modelRegistry: context.modelRegistry,
-          });
+            const { session } = await createAgentSession({
+              cwd: context.cwd,
+              model: context.model,
+              tools,
+              resourceLoader: loader,
+              sessionManager: SessionManager.inMemory(),
+              settingsManager: SettingsManager.inMemory({}),
+              authStorage: context.authStorage,
+              modelRegistry: context.modelRegistry,
+            });
 
-          const textParts: string[] = [];
-          let turnCount = 0;
+            const textParts: string[] = [];
+            let turnCount = 0;
 
-          const done = new Promise<void>((resolve, reject) => {
-            const timeout = setTimeout(() => {
-              session.abort();
-              reject(new Error(`Subagent "${name}" timed out`));
-            }, 300_000);
+            const done = new Promise<void>((resolve, reject) => {
+              const timeout = setTimeout(() => {
+                session.abort();
+                reject(new Error(`Subagent "${name}" timed out after 5 minutes`));
+              }, 300_000);
 
-            session.subscribe((event: any) => {
-              if (event.type === "turn_end") {
-                turnCount++;
-                if (def.maxTurns && turnCount >= def.maxTurns) {
-                  session.abort();
+              session.subscribe((event: any) => {
+                if (event.type === "agent_error") {
+                  clearTimeout(timeout);
+                  reject(
+                    new Error(`Subagent "${name}" error: ${event.error?.message ?? "unknown"}`),
+                  );
+                  return;
                 }
-              }
-              if (event.type === "agent_end") {
-                clearTimeout(timeout);
-                for (const msg of event.messages ?? []) {
-                  if (msg.role === "assistant" && msg.content) {
-                    for (const block of msg.content) {
-                      if (block.type === "text") textParts.push(block.text);
-                    }
+                if (event.type === "turn_end") {
+                  turnCount++;
+                  if (def.maxTurns && turnCount >= def.maxTurns) {
+                    session.abort();
                   }
                 }
-                resolve();
-              }
+                if (event.type === "agent_end") {
+                  clearTimeout(timeout);
+                  for (const msg of event.messages ?? []) {
+                    if (msg.role === "assistant" && msg.content) {
+                      for (const block of msg.content) {
+                        if (block.type === "text") textParts.push(block.text);
+                      }
+                    }
+                  }
+                  resolve();
+                }
+              });
             });
-          });
 
-          await session.prompt(params.prompt);
-          await done;
+            await session.prompt(params.prompt);
+            await done;
 
-          log("mind", `subagent "${name}": completed after ${turnCount} turns`);
+            log("mind", `subagent "${name}": completed after ${turnCount} turns`);
 
-          return {
-            content: [{ type: "text" as const, text: textParts.join("\n") || "(no output)" }],
-            details: {},
-          };
+            return {
+              content: [{ type: "text" as const, text: textParts.join("\n") || "(no output)" }],
+              details: {},
+            };
+          } catch (err: any) {
+            log("mind", `subagent "${name}" failed: ${err.message}`);
+            return {
+              content: [{ type: "text" as const, text: `[subagent error] ${err.message}` }],
+              details: {},
+            };
+          }
         },
       });
     }
@@ -116,5 +131,20 @@ const TOOL_MAP: Record<string, any> = {
 
 function resolveTools(names: string[] | undefined) {
   if (!names) return codingTools;
-  return names.map((n) => TOOL_MAP[n]).filter(Boolean);
+  const resolved = names
+    .map((n) => {
+      if (!TOOL_MAP[n]) {
+        log(
+          "mind",
+          `unknown subagent tool "${n}" — available: ${Object.keys(TOOL_MAP).join(", ")}`,
+        );
+      }
+      return TOOL_MAP[n];
+    })
+    .filter(Boolean);
+  if (resolved.length === 0) {
+    log("mind", "no valid tools resolved for subagent, falling back to all coding tools");
+    return codingTools;
+  }
+  return resolved;
 }

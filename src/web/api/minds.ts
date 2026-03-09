@@ -1153,12 +1153,13 @@ const app = new Hono<AuthEnv>()
 
     try {
       // During sleep (including trigger-wakes), skip identity reloads.
-      // The changes will take effect on the next wake.
+      // The mind process restarts on wake, picking up changes then.
       if (context?.type === "reload") {
         const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
         const sleepState = getSleepManagerIfReady()?.getState(name);
         if (sleepState?.sleeping) {
-          return c.json({ ok: true, port: targetPort });
+          log.info(`skipping reload for ${name} during sleep — will apply on next wake`);
+          return c.json({ ok: true, deferred: true, port: targetPort });
         }
       }
 

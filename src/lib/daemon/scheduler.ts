@@ -113,8 +113,8 @@ export class Scheduler {
         slog.info(`skipped "${schedule.id}" for ${mindName} (sleeping)`);
         return;
       }
-      // During trigger-wake, only the triggering schedule's channel should fire.
-      // Skip other schedules to prevent flooding the mind during brief wake-ups.
+      // During trigger-wake, skip all scheduled fires. The trigger message already
+      // woke the mind; additional schedules would flood a brief wake-up.
       if (sleepState.wokenByTrigger) {
         slog.info(`skipped "${schedule.id}" for ${mindName} (trigger-woken)`);
         return;

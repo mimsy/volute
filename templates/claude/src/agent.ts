@@ -71,8 +71,10 @@ export function createMind(options: {
   let dreamerPrompt: string | undefined;
   try {
     dreamerPrompt = readFileSync(resolvePath(options.cwd, "SOUL.md"), "utf-8") || undefined;
-  } catch {
-    // SOUL.md not found — dreamer agent won't be available
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") {
+      log("mind", `failed to read SOUL.md for dreamer agent: ${err.message}`);
+    }
   }
 
   const agents = dreamerPrompt

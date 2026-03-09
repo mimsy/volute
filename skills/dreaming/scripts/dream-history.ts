@@ -34,6 +34,10 @@ function list() {
 }
 
 function read(date: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    console.error("Date must be in YYYY-MM-DD format");
+    process.exit(1);
+  }
   const filePath = resolve(dreamsDir, `${date}.md`);
   if (!existsSync(filePath)) {
     console.error(`No dream found for ${date}`);
@@ -63,7 +67,7 @@ function themes() {
     dreams.push(readFileSync(resolve(dreamsDir, file), "utf-8"));
   }
 
-  // Simple word frequency analysis (excluding common words)
+  // Word frequency analysis — words must be 4+ chars (excludes common words)
   const stopWords = new Set([
     "the",
     "a",

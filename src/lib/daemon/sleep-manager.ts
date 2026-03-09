@@ -83,7 +83,7 @@ export class SleepManager {
   start(): void {
     this.loadState();
     this.interval = setInterval(() => this.tick(), 60_000);
-    // Listen for mind_idle/mind_done events for return-to-sleep
+    // Listen for mind_idle events for return-to-sleep after trigger wake
     this.unsubActivity = subscribe((event) => this.onActivityEvent(event));
   }
 
@@ -101,6 +101,7 @@ export class SleepManager {
       if (existsSync(this.statePath)) {
         const data: SleepStatePersisted = JSON.parse(readFileSync(this.statePath, "utf-8"));
         for (const [name, state] of Object.entries(data)) {
+          state.triggerWakeHistory ??= [];
           this.states.set(name, state);
         }
       }
@@ -623,12 +624,21 @@ export class SleepManager {
           stdio: ["pipe", "pipe", "pipe"],
         });
         let stdout = "";
+        let stderr = "";
         child.stdout.on("data", (data: Buffer) => {
           stdout += data.toString();
         });
+        child.stderr.on("data", (data: Buffer) => {
+          stderr += data.toString();
+        });
         child.on("close", (code) => {
           if (code === 0) resolvePromise(stdout);
-          else reject(new Error(`wake-context script exited with code ${code}`));
+          else
+            reject(
+              new Error(
+                `wake-context script exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`,
+              ),
+            );
         });
         child.on("error", reject);
         child.stdin.end(input);

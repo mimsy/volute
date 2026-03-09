@@ -24,7 +24,6 @@ export const PROMPT_KEYS = [
   "channel_invite",
   "pre_sleep",
   "wake_summary",
-  "wake_trigger_summary",
 ] as const;
 
 export type PromptKey = (typeof PROMPT_KEYS)[number];
@@ -114,13 +113,6 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
       "Good morning — it's ${currentDate}. You slept from ${sleepTime} to now (${duration}).\n\n${sleepActivity}",
     description: "Wake-up summary after scheduled sleep",
     variables: ["currentDate", "sleepTime", "duration", "sleepActivity"],
-    category: "system",
-  },
-  wake_trigger_summary: {
-    content:
-      "You were woken during sleep by a message on ${triggerChannel}. It's ${currentDate} — you've been asleep since ${sleepTime} (${duration}).\n\nYou have this full turn to respond and handle anything else. You'll return to sleep when you go idle.\n\n${queuedSummary}",
-    description: "Wake-up summary when woken by a trigger message",
-    variables: ["currentDate", "triggerChannel", "sleepTime", "duration", "queuedSummary"],
     category: "system",
   },
 };

@@ -35,7 +35,7 @@ Don't explain the connections to your waking life. Let the material speak throug
 
 ### 3. Spawn the Dreamer
 
-Use the Agent tool with `subagent_type: "dreamer"` — this is critical, do NOT use "general-purpose" or any other agent type. The dreamer agent is a special subagent defined with only your SOUL.md. Pass your dream premise as the prompt. The dreamer will experience the dream and write it to `memory/dreams/YYYY-MM-DD.md`.
+Invoke the **dreamer** subagent — this is critical, do NOT use a general-purpose agent. The dreamer is a special subagent defined with only your SOUL.md. Pass your dream premise as the prompt. Include in your premise that the dream should be written to `memory/dreams/YYYY-MM-DD.md`.
 
 ### 4. After the Dream
 

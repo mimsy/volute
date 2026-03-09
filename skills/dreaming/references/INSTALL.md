@@ -24,11 +24,15 @@ volute schedule add --mind <name> --id dream --cron "0 3 * * *" --message "it's 
 
 If your mind uses the sleep system, add `system:dream` to wake triggers so the dream schedule wakes the mind briefly:
 
-In `home/.config/volute.json` under `sleep.wakeTriggers`:
+In `home/.config/volute.json`, add to the `sleep` section:
 
 ```json
 {
-  "channels": ["system:dream"]
+  "sleep": {
+    "wakeTriggers": {
+      "channels": ["system:dream"]
+    }
+  }
 }
 ```
 

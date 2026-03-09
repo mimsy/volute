@@ -30,7 +30,6 @@ describe("prompts library", () => {
     assert.ok(PROMPT_KEYS.includes("sprout_message"));
     assert.ok(PROMPT_KEYS.includes("pre_sleep"));
     assert.ok(PROMPT_KEYS.includes("wake_summary"));
-    assert.ok(PROMPT_KEYS.includes("wake_trigger_summary"));
   });
 
   it("PROMPT_DEFAULTS has metadata for every key", () => {
