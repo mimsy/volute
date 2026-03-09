@@ -58,7 +58,7 @@ export async function initSandbox(): Promise<void> {
  * Build the deny-read list for a mind process.
  * Blocks access to other minds' dirs, system state, and sensitive user dirs.
  */
-function buildDenyRead(mindName: string, mindDir: string): string[] {
+export function buildDenyRead(mindName: string, mindDir: string): string[] {
   const home = voluteHome();
   const userHome = process.env.HOME || "";
   const mindsDir = process.env.VOLUTE_MINDS_DIR || resolve(home, "minds");
@@ -102,7 +102,7 @@ function buildDenyRead(mindName: string, mindDir: string): string[] {
   return deny;
 }
 
-function shellEscape(s: string): string {
+export function shellEscape(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
@@ -116,6 +116,7 @@ export async function wrapForSandbox(
   args: string[],
   mindDir: string,
   mindName: string,
+  allowWrite?: string[],
 ): Promise<[string, string[]]> {
   if (!sandboxManager) return [cmd, args];
 
@@ -123,7 +124,7 @@ export async function wrapForSandbox(
   const customConfig: Partial<SandboxRuntimeConfig> = {
     filesystem: {
       denyRead,
-      allowWrite: [mindDir],
+      allowWrite: allowWrite ?? [mindDir],
       denyWrite: [],
     },
   };
@@ -135,41 +136,6 @@ export async function wrapForSandbox(
   } catch (err) {
     slog.error(
       `failed to sandbox mind ${mindName} — running without isolation`,
-      log.errorData(err),
-    );
-    return [cmd, args];
-  }
-}
-
-/**
- * Wrap a connector command for sandbox execution.
- * Connectors need write access to the mind's state dir too (for channels.json).
- */
-export async function wrapConnectorForSandbox(
-  cmd: string,
-  args: string[],
-  mindDir: string,
-  mindName: string,
-  mindStateDir: string,
-): Promise<[string, string[]]> {
-  if (!sandboxManager) return [cmd, args];
-
-  const denyRead = buildDenyRead(mindName, mindDir);
-  const customConfig: Partial<SandboxRuntimeConfig> = {
-    filesystem: {
-      denyRead,
-      allowWrite: [mindDir, mindStateDir],
-      denyWrite: [],
-    },
-  };
-
-  try {
-    const shellCmd = [cmd, ...args].map(shellEscape).join(" ");
-    const wrapped = await sandboxManager.wrapWithSandbox(shellCmd, undefined, customConfig);
-    return ["bash", ["-c", wrapped]];
-  } catch (err) {
-    slog.error(
-      `failed to sandbox connector for ${mindName} — running without isolation`,
       log.errorData(err),
     );
     return [cmd, args];

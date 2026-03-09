@@ -113,7 +113,7 @@ describe("migrateSetupConfig", () => {
     const config = readGlobalConfig();
     assert.ok(config.setup);
     assert.equal(config.setup.type, "local");
-    assert.equal(config.setup.isolation, "sandbox");
+    assert.equal(config.setup.isolation, "none");
   });
 
   it("detects system isolation from env", () => {

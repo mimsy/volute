@@ -93,7 +93,7 @@ export function migrateSetupConfig(): void {
 
   const setup: SetupConfig = {
     type: isSystem ? "system" : "local",
-    isolation: isSystem ? "user" : "sandbox",
+    isolation: isSystem ? "user" : "none",
     mindsDir,
     service: hasService,
   };

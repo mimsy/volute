@@ -125,7 +125,7 @@ function buildServicePath(voluteBin: string): string {
 function generateSystemUnit(voluteBin: string, port?: number, host?: string): string {
   const args = ["up", "--foreground"];
   if (port != null) args.push("--port", String(port));
-  if (host) args.push("--host", host ?? "0.0.0.0");
+  if (host) args.push("--host", host);
 
   const home = homedir();
   const binUnderHome = voluteBin.startsWith(`${home}/`);
@@ -163,24 +163,37 @@ const MINDS_DIR = "/minds";
 const PROFILE_PATH = "/etc/profile.d/volute.sh";
 const WRAPPER_PATH = "/usr/local/bin/volute";
 
-async function installUserService(voluteBin: string, port?: number, host?: string): Promise<void> {
+async function installUserService(
+  voluteBin: string,
+  port?: number,
+  host?: string,
+): Promise<boolean> {
   const platform = process.platform;
-  if (platform === "darwin") {
-    mkdirSync(resolve(homedir(), "Library", "LaunchAgents"), { recursive: true });
-    writeFileSync(LAUNCHD_PLIST_PATH, generatePlist(voluteBin, { port, host }));
-    console.log(`  Wrote ${LAUNCHD_PLIST_PATH}`);
-    await execFileAsync("launchctl", ["load", LAUNCHD_PLIST_PATH]);
-    console.log("  Service installed (launchd)");
-  } else if (platform === "linux") {
-    mkdirSync(resolve(homedir(), ".config", "systemd", "user"), { recursive: true });
-    writeFileSync(USER_SYSTEMD_UNIT, generateUserUnit(voluteBin, port, host));
-    console.log(`  Wrote ${USER_SYSTEMD_UNIT}`);
-    await execFileAsync("systemctl", ["--user", "enable", "--now", "volute"]);
-    console.log("  Service installed (systemd user)");
+  try {
+    if (platform === "darwin") {
+      mkdirSync(resolve(homedir(), "Library", "LaunchAgents"), { recursive: true });
+      writeFileSync(LAUNCHD_PLIST_PATH, generatePlist(voluteBin, { port, host }));
+      console.log(`  Wrote ${LAUNCHD_PLIST_PATH}`);
+      await execFileAsync("launchctl", ["load", LAUNCHD_PLIST_PATH]);
+      console.log("  Service installed (launchd)");
+      return true;
+    } else if (platform === "linux") {
+      mkdirSync(resolve(homedir(), ".config", "systemd", "user"), { recursive: true });
+      writeFileSync(USER_SYSTEMD_UNIT, generateUserUnit(voluteBin, port, host));
+      console.log(`  Wrote ${USER_SYSTEMD_UNIT}`);
+      await execFileAsync("systemctl", ["--user", "enable", "--now", "volute"]);
+      console.log("  Service installed (systemd user)");
+      return true;
+    }
+  } catch (err) {
+    console.warn(
+      `  Warning: failed to install service: ${err instanceof Error ? err.message : err}`,
+    );
   }
+  return false;
 }
 
-function installSystemService(voluteBin: string, port?: number, host?: string): void {
+function installSystemService(voluteBin: string, port?: number, host?: string): boolean {
   const platform = process.platform;
   if (platform === "darwin") {
     writeFileSync(
@@ -191,11 +204,13 @@ function installSystemService(voluteBin: string, port?: number, host?: string): 
     try {
       execFileSync("launchctl", ["load", SYSTEM_LAUNCHD_PLIST_PATH]);
       console.log("  Service installed (LaunchDaemon)");
+      return true;
     } catch (err) {
       console.warn(
         `  Warning: failed to load LaunchDaemon: ${err instanceof Error ? err.message : err}`,
       );
       console.warn("  Try: sudo launchctl load /Library/LaunchDaemons/com.volute.daemon.plist");
+      return false;
     }
   } else if (platform === "linux") {
     writeFileSync(SYSTEM_SERVICE_PATH, generateSystemUnit(voluteBin, port, host ?? "0.0.0.0"));
@@ -204,13 +219,16 @@ function installSystemService(voluteBin: string, port?: number, host?: string): 
       execFileSync("systemctl", ["daemon-reload"]);
       execFileSync("systemctl", ["enable", "--now", "volute"]);
       console.log("  Service installed (systemd)");
+      return true;
     } catch (err) {
       console.warn(
         `  Warning: failed to enable service: ${err instanceof Error ? err.message : err}`,
       );
       console.warn("  Try: systemctl daemon-reload && systemctl enable --now volute");
+      return false;
     }
   }
+  return false;
 }
 
 function setupSystemDirectories(): void {
@@ -353,7 +371,7 @@ export async function run(args: string[]) {
     setupSystemEnvProfile();
 
     if (wantService) {
-      installSystemService(voluteBin, port, host);
+      if (!installSystemService(voluteBin, port, host)) wantService = false;
     }
   } else {
     // Local setup
@@ -371,7 +389,7 @@ export async function run(args: string[]) {
 
     if (wantService) {
       const voluteBin = resolveVoluteBin();
-      await installUserService(voluteBin, port, host);
+      if (!(await installUserService(voluteBin, port, host))) wantService = false;
     }
   }
 
