@@ -16,11 +16,19 @@ export function parseArgs(): { port: number } {
   return { port };
 }
 
+export type SubagentConfig = {
+  description: string;
+  systemPrompt: string; // path relative to home/, e.g. "SOUL.md"
+  tools?: string[];
+  maxTurns?: number;
+};
+
 export function loadConfig(): {
   model?: string;
   logLevel?: "error" | "warn" | "info" | "debug";
   compactionMessage?: string;
   compaction?: { maxContextTokens?: number };
+  subagents?: Record<string, SubagentConfig>;
 } {
   // Mind-own config lives in config.json; fall back to volute.json for older minds
   for (const file of ["home/.config/config.json", "home/.config/volute.json"]) {

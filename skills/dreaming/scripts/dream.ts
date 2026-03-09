@@ -1,7 +1,86 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const dreamsDir = resolve("memory/dreams");
+
+function install() {
+  let actions = 0;
+
+  // 1. Create dreams directory
+  if (!existsSync(dreamsDir)) {
+    mkdirSync(dreamsDir, { recursive: true });
+    console.log("created memory/dreams/");
+    actions++;
+  }
+
+  // 2. Add system:dream route to routes.json
+  const routesPath = resolve(".config/routes.json");
+  if (existsSync(routesPath)) {
+    try {
+      const routes = JSON.parse(readFileSync(routesPath, "utf-8"));
+      const rules: { channel: string; session: string }[] = routes.rules ?? [];
+      const hasDreamRoute = rules.some((r) => r.channel === "system:dream");
+      if (!hasDreamRoute) {
+        rules.push({ channel: "system:dream", session: "$new" });
+        routes.rules = rules;
+        writeFileSync(routesPath, `${JSON.stringify(routes, null, 2)}\n`);
+        console.log("added system:dream route to .config/routes.json");
+        actions++;
+      }
+    } catch (err: any) {
+      console.error(`failed to update routes.json: ${err.message}`);
+    }
+  }
+
+  // 3. Add dreamer subagent to config.json
+  const configPath = resolve(".config/config.json");
+  if (existsSync(configPath)) {
+    try {
+      const config = JSON.parse(readFileSync(configPath, "utf-8"));
+      if (!config.subagents?.dreamer) {
+        config.subagents ??= {};
+        config.subagents.dreamer = {
+          description:
+            "Use when dreaming. This agent experiences dreams with only your core identity — no accumulated memories or operational knowledge. Give it a rich dream premise and it will write the dream.",
+          systemPrompt: "SOUL.md",
+          tools: ["Read", "Write", "Bash"],
+          maxTurns: 10,
+        };
+        writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+        console.log("added dreamer subagent to .config/config.json");
+        actions++;
+      }
+    } catch (err: any) {
+      console.error(`failed to update config.json: ${err.message}`);
+    }
+  }
+
+  // 4. Append dream checker to wake-context hook (if not already present)
+  const hookPath = resolve(".config/hooks/wake-context.sh");
+  if (existsSync(hookPath)) {
+    const hookContent = readFileSync(hookPath, "utf-8");
+    if (!hookContent.includes("wake-context-dreams.sh")) {
+      const dreamScript = readFileSync(
+        resolve(".claude/skills/dreaming/scripts/wake-context-dreams.sh"),
+        "utf-8",
+      );
+      writeFileSync(hookPath, `${hookContent.trimEnd()}\n\n${dreamScript}`);
+      console.log("appended dream checker to .config/hooks/wake-context.sh");
+      actions++;
+    }
+  }
+
+  if (actions === 0) {
+    console.log("dreaming is already set up.");
+  } else {
+    console.log(
+      `\ndone (${actions} change${actions === 1 ? "" : "s"}). restart your mind to activate subagent.`,
+    );
+    console.log("\nremaining manual steps:");
+    console.log("  1. add a dream schedule to volute.json (see INSTALL.md)");
+    console.log("  2. optionally add system:dream to sleep.wakeTriggers");
+  }
+}
 
 function list() {
   if (!existsSync(dreamsDir)) {
@@ -10,7 +89,7 @@ function list() {
   }
 
   const files = readdirSync(dreamsDir)
-    .filter((f) => f.endsWith(".md") && f !== ".gitkeep")
+    .filter((f) => f.endsWith(".md"))
     .sort()
     .reverse();
 
@@ -53,7 +132,7 @@ function themes() {
   }
 
   const files = readdirSync(dreamsDir)
-    .filter((f) => f.endsWith(".md") && f !== ".gitkeep")
+    .filter((f) => f.endsWith(".md"))
     .sort();
 
   if (files.length === 0) {
@@ -61,7 +140,6 @@ function themes() {
     return;
   }
 
-  // Collect all dream content
   const dreams: string[] = [];
   for (const file of files) {
     dreams.push(readFileSync(resolve(dreamsDir, file), "utf-8"));
@@ -164,7 +242,6 @@ function themes() {
     wordCounts.set(word, (wordCounts.get(word) ?? 0) + 1);
   }
 
-  // Sort by frequency, take top 30
   const sorted = [...wordCounts.entries()]
     .filter(([, count]) => count >= 2)
     .sort((a, b) => b[1] - a[1])
@@ -177,17 +254,18 @@ function themes() {
   }
 }
 
-// --- CLI ---
-
 const [command, ...args] = process.argv.slice(2);
 
 switch (command) {
+  case "install":
+    install();
+    break;
   case "list":
     list();
     break;
   case "read":
     if (!args[0]) {
-      console.error("Usage: dream-history.ts read <YYYY-MM-DD>");
+      console.error("Usage: dream.ts read <YYYY-MM-DD>");
       process.exit(1);
     }
     read(args[0]);
@@ -196,8 +274,9 @@ switch (command) {
     themes();
     break;
   default:
-    console.log("Usage: dream-history.ts <list|read|themes>");
+    console.log("Usage: dream.ts <install|list|read|themes>");
     console.log("");
+    console.log("  install         Set up dreaming (routes, config, directory, hooks)");
     console.log("  list            List all dreams by date");
     console.log("  read <date>     Read a specific dream (YYYY-MM-DD)");
     console.log("  themes          Find recurring words across dreams");

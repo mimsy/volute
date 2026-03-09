@@ -15,7 +15,7 @@ import { log } from "./lib/logger.js";
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
 import { createSessionContextExtension } from "./lib/session-context-extension.js";
-import { loadPrompts } from "./lib/startup.js";
+import { loadPrompts, type SubagentConfig } from "./lib/startup.js";
 import { createSubagentExtension, type SubagentDefinition } from "./lib/subagents.js";
 import type {
   HandlerMeta,
@@ -47,6 +47,7 @@ export function createMind(options: {
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   compactionMessage?: string;
   maxContextTokens?: number;
+  subagents?: Record<string, SubagentConfig>;
 }): { resolve: HandlerResolver } {
   const sessions = new Map<string, PiSession>();
   const prompts = loadPrompts();
@@ -66,27 +67,36 @@ export function createMind(options: {
   const authStorage = new AuthStorage();
   const modelRegistry = new ModelRegistry(authStorage);
 
-  // --- Dreamer subagent ---
+  // --- Subagents (config-driven) ---
 
-  let dreamerPrompt: string | undefined;
-  try {
-    dreamerPrompt = readFileSync(resolvePath(options.cwd, "SOUL.md"), "utf-8") || undefined;
-  } catch (err: any) {
-    if (err?.code !== "ENOENT") {
-      log("mind", `failed to read SOUL.md for dreamer agent: ${err.message}`);
+  function loadSubagents(
+    configs: Record<string, SubagentConfig> | undefined,
+  ): Record<string, SubagentDefinition> {
+    const result: Record<string, SubagentDefinition> = {};
+    if (!configs) return result;
+    for (const [name, config] of Object.entries(configs)) {
+      try {
+        const prompt = readFileSync(resolvePath(options.cwd, config.systemPrompt), "utf-8");
+        if (!prompt) continue;
+        result[name] = {
+          description: config.description,
+          prompt,
+          tools: config.tools,
+          maxTurns: config.maxTurns,
+        };
+      } catch (err: any) {
+        if (err?.code !== "ENOENT") {
+          log(
+            "mind",
+            `failed to read ${config.systemPrompt} for subagent "${name}": ${err.message}`,
+          );
+        }
+      }
     }
+    return result;
   }
 
-  const subagents: Record<string, SubagentDefinition> = {};
-  if (dreamerPrompt) {
-    subagents.dreamer = {
-      description:
-        "Use when dreaming. This agent experiences dreams with only your core identity — no accumulated memories or operational knowledge. Give it a rich dream premise and it will write the dream.",
-      prompt: dreamerPrompt,
-      tools: ["Read", "Write", "Bash"],
-      maxTurns: 10,
-    };
-  }
+  const subagents = loadSubagents(options.subagents);
 
   const subagentExtension =
     Object.keys(subagents).length > 0

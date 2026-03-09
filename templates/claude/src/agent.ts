@@ -12,7 +12,7 @@ import { createSessionContextHook } from "./lib/hooks/session-context.js";
 import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
 import { createSessionStore } from "./lib/session-store.js";
-import { loadPrompts } from "./lib/startup.js";
+import { loadPrompts, type SubagentConfig } from "./lib/startup.js";
 import { consumeStream } from "./lib/stream-consumer.js";
 import type {
   HandlerMeta,
@@ -42,6 +42,7 @@ export function createMind(options: {
   sessionsDir: string;
   compactionMessage?: string;
   maxContextTokens?: number;
+  subagents?: Record<string, SubagentConfig>;
   onIdentityReload?: () => Promise<void>;
 }): { resolve: HandlerResolver; waitForCommits: () => Promise<void> } {
   const autoCommit = createAutoCommitHook(options.cwd);
@@ -66,28 +67,41 @@ export function createMind(options: {
   // Per-session compaction state
   const compactionTriggered = new Map<string, boolean>();
 
-  // --- Dreamer subagent ---
+  // --- Subagents (config-driven) ---
 
-  let dreamerPrompt: string | undefined;
-  try {
-    dreamerPrompt = readFileSync(resolvePath(options.cwd, "SOUL.md"), "utf-8") || undefined;
-  } catch (err: any) {
-    if (err?.code !== "ENOENT") {
-      log("mind", `failed to read SOUL.md for dreamer agent: ${err.message}`);
+  function loadSubagents(
+    configs: Record<string, SubagentConfig> | undefined,
+  ):
+    | Record<string, { description: string; prompt: string; tools: string[]; model: "inherit" }>
+    | undefined {
+    if (!configs || Object.keys(configs).length === 0) return undefined;
+    const agents: Record<
+      string,
+      { description: string; prompt: string; tools: string[]; model: "inherit" }
+    > = {};
+    for (const [name, config] of Object.entries(configs)) {
+      try {
+        const prompt = readFileSync(resolvePath(options.cwd, config.systemPrompt), "utf-8");
+        if (!prompt) continue;
+        agents[name] = {
+          description: config.description,
+          prompt,
+          tools: config.tools ?? ["Read", "Write", "Bash"],
+          model: "inherit" as const,
+        };
+      } catch (err: any) {
+        if (err?.code !== "ENOENT") {
+          log(
+            "mind",
+            `failed to read ${config.systemPrompt} for subagent "${name}": ${err.message}`,
+          );
+        }
+      }
     }
+    return Object.keys(agents).length > 0 ? agents : undefined;
   }
 
-  const agents = dreamerPrompt
-    ? {
-        dreamer: {
-          description:
-            "Use when dreaming. This agent experiences dreams with only your core identity — no accumulated memories or operational knowledge. Give it a rich dream premise and it will write the dream.",
-          prompt: dreamerPrompt,
-          tools: ["Read", "Write", "Bash"],
-          model: "inherit" as const,
-        },
-      }
-    : undefined;
+  const agents = loadSubagents(options.subagents);
 
   // --- Event broadcasting ---
 

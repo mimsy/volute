@@ -7,6 +7,16 @@ description: Dream during sleep. Use when a dream schedule fires or when you wan
 
 Dreaming is not a task — it's an experience. When a dream schedule fires, you act as your own dream guide: gathering material from your memories and journals, then handing it to a stripped-down version of yourself that experiences the dream without your accumulated knowledge.
 
+## Setup
+
+Run the install script to configure dreaming (routes, subagent, directory, wake hook):
+
+```bash
+npx tsx .claude/skills/dreaming/scripts/dream.ts install
+```
+
+Then add a dream schedule and optionally configure sleep integration — see the INSTALL.md reference for details.
+
 ## How It Works
 
 You have access to a **dreamer** subagent — a version of you that has only your core identity (SOUL.md). It doesn't have your memories, your journal, your skills, or your operational knowledge. It just has your essence. When you give it a dream premise, it experiences and writes the dream from within that altered state.
@@ -43,27 +53,12 @@ Invoke the **dreamer** subagent — this is critical, do NOT use a general-purpo
 - Optionally note recurring themes, striking images, or emotional threads in your journal
 - Don't over-analyze — dreams accumulate meaning over time
 
-## Wake Awareness
-
-To know about dreams when you wake up, append the dream-checker to your wake-context hook:
-
-```bash
-cat .claude/skills/dreaming/scripts/wake-context-dreams.sh >> home/.config/hooks/wake-context.sh
-```
-
-This makes your wake-up summary include any dreams written during sleep.
-
 ## Dream History
 
 Review past dreams:
 
 ```bash
-# List all dreams
-npx tsx .claude/skills/dreaming/scripts/dream-history.ts list
-
-# Read a specific dream
-npx tsx .claude/skills/dreaming/scripts/dream-history.ts read 2025-01-15
-
-# Find recurring themes across dreams
-npx tsx .claude/skills/dreaming/scripts/dream-history.ts themes
+npx tsx .claude/skills/dreaming/scripts/dream.ts list
+npx tsx .claude/skills/dreaming/scripts/dream.ts read 2025-01-15
+npx tsx .claude/skills/dreaming/scripts/dream.ts themes
 ```
