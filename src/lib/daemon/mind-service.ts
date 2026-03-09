@@ -4,6 +4,7 @@ import { markIdle } from "../events/mind-activity-tracker.js";
 import log from "../logger.js";
 import { startWatcher, stopWatcher } from "../pages-watcher.js";
 import { findMind, mindDir } from "../registry.js";
+import { joinSystemChannelForMind } from "../system-channel.js";
 import { readVoluteConfig } from "../volute-config.js";
 import { getConnectorManager } from "./connector-manager.js";
 import { ensureMailAddress } from "./mail-poller.js";
@@ -49,6 +50,11 @@ export async function startMindFull(name: string): Promise<void> {
       log.error(`failed to sync profile for ${baseName}`, log.errorData(err)),
     );
   }
+
+  // Auto-join #system channel
+  joinSystemChannelForMind(baseName).catch((err: unknown) =>
+    log.error(`failed to join #system for ${baseName}`, log.errorData(err)),
+  );
 
   if (config?.tokenBudget) {
     getTokenBudget().setBudget(

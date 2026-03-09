@@ -8,6 +8,8 @@ import type {
 } from "@volute/api";
 import type { Selection } from "../lib/navigate";
 import Home from "../pages/Home.svelte";
+import Notes from "../pages/Notes.svelte";
+import NoteView from "../pages/NoteView.svelte";
 import PagesDashboard from "../pages/PagesDashboard.svelte";
 import SiteView from "../pages/SiteView.svelte";
 import Chat from "./Chat.svelte";
@@ -27,6 +29,8 @@ let {
   onSelectPages,
   onSelectConversation,
   onTypingNames,
+  onSelectNotes,
+  onSelectNote,
   onToggleSidebar,
   onOpenRightPanel,
 }: {
@@ -43,6 +47,8 @@ let {
   onSelectSite: (name: string) => void;
   onSelectPages: () => void;
   onSelectConversation: (id: string) => void;
+  onSelectNotes: () => void;
+  onSelectNote: (author: string, slug: string) => void;
   onTypingNames?: (names: string[]) => void;
   onToggleSidebar?: () => void;
   onOpenRightPanel?: () => void;
@@ -129,6 +135,22 @@ let contextLabel = $derived.by(() => {
     </div>
     <div class="frame-content padded">
       <SiteView site={selectedSite} {onSelectPage} />
+    </div>
+  {:else if selection.kind === "notes"}
+    <div class="breadcrumbs">
+      <span class="breadcrumb-current">Notes</span>
+    </div>
+    <div class="frame-content padded">
+      <Notes onSelectNote={onSelectNote} />
+    </div>
+  {:else if selection.kind === "note"}
+    <div class="breadcrumbs">
+      <button class="breadcrumb-link" onclick={onSelectNotes}>Notes</button>
+      <span class="breadcrumb-sep">/</span>
+      <span class="breadcrumb-current">{selection.author}/{selection.slug}</span>
+    </div>
+    <div class="frame-content padded">
+      <NoteView author={selection.author} slug={selection.slug} {username} onBack={onSelectNotes} onNavigate={onSelectNote} />
     </div>
   {:else if selection.kind === "conversation"}
     <div class="frame-content">

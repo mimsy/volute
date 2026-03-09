@@ -21,6 +21,7 @@ let {
   onSelectSite,
   onSelectPages,
   onHideConversation,
+  onSelectNotes,
   onHome,
 }: {
   minds: Mind[];
@@ -38,6 +39,7 @@ let {
   onSelectSite: (name: string) => void;
   onSelectPages: () => void;
   onHideConversation?: (id: string) => void;
+  onSelectNotes: () => void;
   onHome: () => void;
 } = $props();
 
@@ -208,6 +210,15 @@ function toggleSection(section: Section) {
           {onOpenMind}
         />
       {/if}
+    </div>
+
+    <!-- Notes -->
+    <div class="section">
+      <div class="section-header-row">
+        <button class="section-toggle" onclick={onSelectNotes}>
+          <span>Notes</span>
+        </button>
+      </div>
     </div>
 
     <!-- Pages -->
