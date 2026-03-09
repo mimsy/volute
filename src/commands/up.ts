@@ -4,19 +4,10 @@ import { dirname, resolve } from "node:path";
 import { parseArgs } from "../lib/parse-args.js";
 import { voluteHome } from "../lib/registry.js";
 import { getServiceMode, modeLabel, pollHealth, startService } from "../lib/service-mode.js";
+import { readGlobalConfig } from "../lib/setup.js";
 
-type GlobalConfig = { hostname?: string; port?: number };
-
-export function readGlobalConfig(): GlobalConfig {
-  const configPath = resolve(voluteHome(), "config.json");
-  if (!existsSync(configPath)) return {};
-  try {
-    return JSON.parse(readFileSync(configPath, "utf-8"));
-  } catch (err) {
-    console.error(`Invalid config file ${configPath}: ${err instanceof Error ? err.message : err}`);
-    process.exit(1);
-  }
-}
+export { readGlobalConfig };
+export type { GlobalConfig } from "../lib/setup.js";
 
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
@@ -24,6 +15,7 @@ export async function run(args: string[]) {
     host: { type: "string" },
     foreground: { type: "boolean" },
     tailscale: { type: "boolean" },
+    "no-sandbox": { type: "boolean" },
   });
 
   const mode = getServiceMode();
@@ -101,6 +93,11 @@ export async function run(args: string[]) {
     // Port not responding — good, we can proceed
   }
 
+  // Set env var before importing daemon (foreground) or spawning it (background)
+  if (flags["no-sandbox"]) {
+    process.env.VOLUTE_SANDBOX = "0";
+  }
+
   if (flags.foreground) {
     const { startDaemon } = await import("../daemon.js");
     await startDaemon({ port, hostname, foreground: true, tailscale: flags.tailscale });
@@ -121,6 +118,7 @@ export async function run(args: string[]) {
 
   const daemonArgs = [daemonModule, "--port", String(port), "--host", hostname];
   if (flags.tailscale) daemonArgs.push("--tailscale");
+  if (flags["no-sandbox"]) daemonArgs.push("--no-sandbox");
 
   const child = spawn(process.execPath, daemonArgs, {
     stdio: ["ignore", "ignore", logFd],

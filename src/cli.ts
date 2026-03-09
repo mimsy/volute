@@ -16,7 +16,22 @@ if (command === "--version" || command === "-v") {
   process.exit(0);
 }
 
+// Gate commands on setup — skip for setup itself, help, version, and update
+const ungatedCommands = new Set(["setup", "--help", "-h", "--version", "-v", "update", undefined]);
+if (!ungatedCommands.has(command)) {
+  const { isSetupComplete, migrateSetupConfig } = await import("./lib/setup.js");
+  // Auto-migrate existing users so they're never blocked
+  migrateSetupConfig();
+  if (!isSetupComplete()) {
+    console.error("Volute is not set up. Run `volute setup` first.");
+    process.exit(1);
+  }
+}
+
 switch (command) {
+  case "setup":
+    await import("./commands/setup.js").then((m) => m.run(args));
+    break;
   case "mind":
     await import("./commands/mind.js").then((m) => m.run(args));
     break;
@@ -107,9 +122,10 @@ Configuration:
   pages     Publish web pages
 
 System:
+  setup                            First-time setup
   up / down / restart              Daemon control
   update                           Update volute
-  service install/uninstall        Auto-start service
+  service status                   Check service status
   auth register/login/logout       volute.systems account
 
 Options:

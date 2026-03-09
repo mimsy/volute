@@ -10,6 +10,7 @@ import log from "../logger.js";
 import { getPrompt } from "../prompts.js";
 import { findMind, mindDir, setMindRunning, stateDir, voluteHome } from "../registry.js";
 import { RotatingLog } from "../rotating-log.js";
+import { isSandboxEnabled, wrapForSandbox } from "../sandbox.js";
 import { mindHistory } from "../schema.js";
 import { findVariant, setVariantRunning } from "../variants.js";
 import { RestartTracker } from "./restart-tracker.js";
@@ -140,7 +141,16 @@ export class MindManager {
 
     const tsxBin = resolve(dir, "node_modules", ".bin", "tsx");
     const tsxArgs = ["src/server.ts", "--port", String(port)];
-    const [spawnCmd, spawnArgs] = wrapForIsolation(tsxBin, tsxArgs, name);
+    let spawnCmd: string;
+    let spawnArgs: string[];
+    if (isIsolationEnabled()) {
+      [spawnCmd, spawnArgs] = wrapForIsolation(tsxBin, tsxArgs, name);
+    } else if (isSandboxEnabled()) {
+      [spawnCmd, spawnArgs] = await wrapForSandbox(tsxBin, tsxArgs, dir, name);
+    } else {
+      spawnCmd = tsxBin;
+      spawnArgs = tsxArgs;
+    }
 
     const spawnOpts: SpawnOptions = {
       cwd: dir,

@@ -16,6 +16,7 @@ export const LAUNCHD_PLIST_PATH = resolve(
   "LaunchAgents",
   `${LAUNCHD_PLIST_LABEL}.plist`,
 );
+export const SYSTEM_LAUNCHD_PLIST_PATH = "/Library/LaunchDaemons/com.volute.daemon.plist";
 
 export const HEALTH_POLL_TIMEOUT = 30_000;
 export const STOP_GRACE_TIMEOUT = 10_000;
@@ -23,7 +24,7 @@ export const POLL_INTERVAL = 500;
 
 // --- Types ---
 
-export type ServiceMode = "manual" | "system" | "user-systemd" | "user-launchd";
+export type ServiceMode = "manual" | "system" | "system-launchd" | "user-systemd" | "user-launchd";
 export type ManagedServiceMode = Exclude<ServiceMode, "manual">;
 
 // --- Detection ---
@@ -47,6 +48,11 @@ export function getServiceMode(): ServiceMode {
     } catch {
       // Unit file exists but not enabled — fall through
     }
+  }
+
+  // System-level macOS LaunchDaemon
+  if (process.platform === "darwin" && existsSync(SYSTEM_LAUNCHD_PLIST_PATH)) {
+    return "system-launchd";
   }
 
   // macOS launchd
@@ -130,6 +136,9 @@ export async function startService(mode: ManagedServiceMode): Promise<void> {
     case "user-systemd":
       await execInherit("systemctl", ["--user", "start", "volute"]);
       break;
+    case "system-launchd":
+      await execInherit("sudo", ["launchctl", "load", SYSTEM_LAUNCHD_PLIST_PATH]);
+      break;
     case "user-launchd":
       await execInherit("launchctl", ["load", LAUNCHD_PLIST_PATH]);
       break;
@@ -144,6 +153,9 @@ export async function stopService(mode: ManagedServiceMode): Promise<void> {
     case "user-systemd":
       await execInherit("systemctl", ["--user", "stop", "volute"]);
       break;
+    case "system-launchd":
+      await execInherit("sudo", ["launchctl", "unload", SYSTEM_LAUNCHD_PLIST_PATH]);
+      break;
     case "user-launchd":
       await execInherit("launchctl", ["unload", LAUNCHD_PLIST_PATH]);
       break;
@@ -157,6 +169,16 @@ export async function restartService(mode: ManagedServiceMode): Promise<void> {
       break;
     case "user-systemd":
       await execInherit("systemctl", ["--user", "restart", "volute"]);
+      break;
+    case "system-launchd":
+      try {
+        await execInherit("sudo", ["launchctl", "unload", SYSTEM_LAUNCHD_PLIST_PATH]);
+      } catch (err) {
+        console.warn(
+          `Warning: launchctl unload failed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+      await execInherit("sudo", ["launchctl", "load", SYSTEM_LAUNCHD_PLIST_PATH]);
       break;
     case "user-launchd":
       // launchd doesn't have a "restart" — unload then load
@@ -203,6 +225,8 @@ export function modeLabel(mode: ServiceMode): string {
       return "system service (systemd)";
     case "user-systemd":
       return "user service (systemd)";
+    case "system-launchd":
+      return "system service (launchd)";
     case "user-launchd":
       return "user service (launchd)";
     case "manual":

@@ -46,14 +46,15 @@ describe("isolation", () => {
     assert.deepEqual(args, ["src/server.ts"]);
   });
 
-  it("wrapForIsolation wraps with runuser when isolation enabled", () => {
+  it("wrapForIsolation wraps with runuser/sudo when isolation enabled", () => {
     process.env.VOLUTE_ISOLATION = "user";
     const [cmd, args] = wrapForIsolation(
       "/usr/bin/tsx",
       ["src/server.ts", "--port", "4100"],
       "alice",
     );
-    assert.equal(cmd, "runuser");
+    const expectedCmd = process.platform === "darwin" ? "sudo" : "runuser";
+    assert.equal(cmd, expectedCmd);
     assert.deepEqual(args, [
       "-u",
       "mind-alice",
@@ -68,7 +69,8 @@ describe("isolation", () => {
   it("wrapForIsolation extracts base name from name@variant", () => {
     process.env.VOLUTE_ISOLATION = "user";
     const [cmd, args] = wrapForIsolation("node", ["index.js"], "alice@experiment");
-    assert.equal(cmd, "runuser");
+    const expectedCmd = process.platform === "darwin" ? "sudo" : "runuser";
+    assert.equal(cmd, expectedCmd);
     assert.deepEqual(args, ["-u", "mind-alice", "--", "node", "index.js"]);
   });
 
@@ -76,7 +78,8 @@ describe("isolation", () => {
     process.env.VOLUTE_ISOLATION = "user";
     process.env.VOLUTE_USER_PREFIX = "volute-";
     const [cmd, args] = wrapForIsolation("node", ["index.js"], "bob");
-    assert.equal(cmd, "runuser");
+    const expectedCmd = process.platform === "darwin" ? "sudo" : "runuser";
+    assert.equal(cmd, expectedCmd);
     assert.deepEqual(args, ["-u", "volute-bob", "--", "node", "index.js"]);
   });
 });

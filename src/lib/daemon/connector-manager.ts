@@ -7,6 +7,7 @@ import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../isolation
 import log from "../logger.js";
 import { daemonLoopback, stateDir, voluteHome } from "../registry.js";
 import { RotatingLog } from "../rotating-log.js";
+import { isSandboxEnabled, wrapConnectorForSandbox } from "../sandbox.js";
 import { readVoluteConfig } from "../volute-config.js";
 import { RestartTracker } from "./restart-tracker.js";
 
@@ -180,7 +181,22 @@ export class ConnectorManager {
       },
     };
 
-    const [spawnCmd, spawnArgs] = wrapForIsolation(runtime, [connectorScript], mindName);
+    let spawnCmd: string;
+    let spawnArgs: string[];
+    if (isIsolationEnabled()) {
+      [spawnCmd, spawnArgs] = wrapForIsolation(runtime, [connectorScript], mindName);
+    } else if (isSandboxEnabled()) {
+      [spawnCmd, spawnArgs] = await wrapConnectorForSandbox(
+        runtime,
+        [connectorScript],
+        mindDir,
+        mindName,
+        mindStateDir,
+      );
+    } else {
+      spawnCmd = runtime;
+      spawnArgs = [connectorScript];
+    }
 
     const child = spawn(spawnCmd, spawnArgs, spawnOpts);
 
