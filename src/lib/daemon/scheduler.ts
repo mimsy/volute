@@ -106,10 +106,17 @@ export class Scheduler {
   }
 
   private async fire(mindName: string, schedule: Schedule): Promise<void> {
-    if (schedule.skipWhenSleeping) {
-      const sleepManager = getSleepManagerIfReady();
-      if (sleepManager?.isSleeping(mindName)) {
+    const sleepManager = getSleepManagerIfReady();
+    const sleepState = sleepManager?.getState(mindName);
+    if (sleepState?.sleeping) {
+      if (schedule.skipWhenSleeping) {
         slog.info(`skipped "${schedule.id}" for ${mindName} (sleeping)`);
+        return;
+      }
+      // During trigger-wake, only the triggering schedule's channel should fire.
+      // Skip other schedules to prevent flooding the mind during brief wake-ups.
+      if (sleepState.wokenByTrigger) {
+        slog.info(`skipped "${schedule.id}" for ${mindName} (trigger-woken)`);
         return;
       }
     }

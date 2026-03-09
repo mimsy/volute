@@ -1152,6 +1152,16 @@ const app = new Hono<AuthEnv>()
     const manager = getMindManager();
 
     try {
+      // During sleep (including trigger-wakes), skip identity reloads.
+      // The changes will take effect on the next wake.
+      if (context?.type === "reload") {
+        const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
+        const sleepState = getSleepManagerIfReady()?.getState(name);
+        if (sleepState?.sleeping) {
+          return c.json({ ok: true, port: targetPort });
+        }
+      }
+
       // Stop running mind and connectors
       if (manager.isRunning(name)) {
         await stopMindFullService(name);
@@ -1319,9 +1329,15 @@ const app = new Hono<AuthEnv>()
     const sm = getSleepManagerIfReady();
     if (!sm) return c.json({ error: "Sleep manager not initialized" }, 503);
 
-    if (!sm.isSleeping(name)) return c.json({ error: "Mind is not sleeping" }, 409);
+    const sleepState = sm.getState(name);
+    if (!sleepState.sleeping) return c.json({ error: "Mind is not sleeping" }, 409);
 
-    sm.initiateWake(name).catch((err) => log.error(`failed to wake ${name}`, log.errorData(err)));
+    if (sleepState.wokenByTrigger) {
+      // Convert trigger-wake to full wake (mind is already running)
+      sm.convertTriggerToFullWake(name);
+    } else {
+      sm.initiateWake(name).catch((err) => log.error(`failed to wake ${name}`, log.errorData(err)));
+    }
 
     return c.json({ ok: true });
   })

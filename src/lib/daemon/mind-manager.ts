@@ -280,10 +280,12 @@ export class MindManager {
 
       mlog.error(`mind ${name} exited with code ${code}`);
 
-      // If the mind is sleeping, don't attempt crash recovery
+      // If the mind is sleeping (including trigger-wakes), don't attempt crash recovery.
+      // During trigger-wakes, the sleep manager handles the process lifecycle.
       try {
         const { getSleepManagerIfReady } = await import("./sleep-manager.js");
-        if (getSleepManagerIfReady()?.isSleeping(name)) {
+        const sleepState = getSleepManagerIfReady()?.getState(name);
+        if (sleepState?.sleeping) {
           mlog.info(`${name} is sleeping — skipping crash recovery`);
           return;
         }

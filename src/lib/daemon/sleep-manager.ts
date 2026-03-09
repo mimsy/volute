@@ -132,6 +132,17 @@ export class SleepManager {
     return this.states.get(name) ?? defaultState();
   }
 
+  /**
+   * Convert a trigger-wake into a full wake. The mind is already running;
+   * this just clears the sleep state so onActivityEvent won't return it to sleep.
+   */
+  convertTriggerToFullWake(name: string): void {
+    const state = this.states.get(name);
+    if (!state?.sleeping || !state.wokenByTrigger) return;
+    this.markAwake(name);
+    slog.info(`${name} trigger-wake converted to full wake`);
+  }
+
   getSleepConfig(name: string): SleepConfig | null {
     const dir = mindDir(name);
     const config = readVoluteConfig(dir);
