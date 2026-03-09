@@ -1,6 +1,7 @@
 {
   "gateUnmatched": true,
   "rules": [
+    { "channel": "system:dream", "session": "$new" },
     { "channel": "volute:*", "isDM": true, "session": "${channel}" },
     { "channel": "volute:*", "isDM": false, "session": "group-${channel}" }
   ],

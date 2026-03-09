@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import {
   AuthStorage,
   createAgentSession,
@@ -14,6 +16,7 @@ import { createReplyInstructionsExtension } from "./lib/reply-instructions-exten
 import { resolveModel } from "./lib/resolve-model.js";
 import { createSessionContextExtension } from "./lib/session-context-extension.js";
 import { loadPrompts } from "./lib/startup.js";
+import { createSubagentExtension, type SubagentDefinition } from "./lib/subagents.js";
 import type {
   HandlerMeta,
   HandlerResolver,
@@ -62,6 +65,31 @@ export function createMind(options: {
   const model = resolveModel(modelStr);
   const authStorage = new AuthStorage();
   const modelRegistry = new ModelRegistry(authStorage);
+
+  // --- Dreamer subagent ---
+
+  let dreamerPrompt: string | undefined;
+  try {
+    dreamerPrompt = readFileSync(resolvePath(options.cwd, "SOUL.md"), "utf-8") || undefined;
+  } catch {
+    // SOUL.md not found — dreamer agent won't be available
+  }
+
+  const subagents: Record<string, SubagentDefinition> = {};
+  if (dreamerPrompt) {
+    subagents.dreamer = {
+      description:
+        "Use when dreaming. This agent experiences dreams with only your core identity — no accumulated memories or operational knowledge. Give it a rich dream premise and it will write the dream.",
+      prompt: dreamerPrompt,
+      tools: ["Read", "Write", "Bash"],
+      maxTurns: 10,
+    };
+  }
+
+  const subagentExtension =
+    Object.keys(subagents).length > 0
+      ? createSubagentExtension(subagents, { cwd: options.cwd, model, authStorage, modelRegistry })
+      : undefined;
 
   // --- Session lifecycle ---
 
@@ -158,6 +186,7 @@ export function createMind(options: {
         preCompactExtension,
         sessionContextExtension,
         replyInstructionsExtension,
+        ...(subagentExtension ? [subagentExtension] : []),
       ],
     });
     await resourceLoader.reload();
