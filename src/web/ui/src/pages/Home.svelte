@@ -94,7 +94,7 @@ function handleActivityClick(item: ActivityItem) {
   <!-- Minds -->
   <div class="section">
     <div class="section-header">
-      <span class="section-title">minds</span>
+      <span class="section-title">Minds</span>
     </div>
     {#if minds.length === 0}
       <div class="empty-hint">
@@ -132,7 +132,7 @@ function handleActivityClick(item: ActivityItem) {
   {#if timelineItems.length > 0}
     <div class="section">
       <div class="section-header">
-        <span class="section-title">activity</span>
+        <span class="section-title">Activity</span>
       </div>
       <div class="timeline">
         {#each timelineItems as entry (`${entry.kind}-${entry.item.id}`)}
@@ -178,19 +178,19 @@ function handleActivityClick(item: ActivityItem) {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
     margin-bottom: 8px;
   }
 
   .section-title {
+    font-family: var(--display);
+    font-size: 17px;
+    font-weight: 300;
     color: var(--text-2);
   }
 
   .empty-hint {
     color: var(--text-2);
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .code-hint {
@@ -234,7 +234,7 @@ function handleActivityClick(item: ActivityItem) {
   .mind-name {
     color: var(--text-0);
     font-weight: 500;
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .seed-tag {
@@ -249,7 +249,7 @@ function handleActivityClick(item: ActivityItem) {
   }
 
   .channel-chip {
-    font-size: 10px;
+    font-size: 11px;
     padding: 1px 5px;
     border-radius: 3px;
     background: var(--accent-dim);
@@ -257,7 +257,7 @@ function handleActivityClick(item: ActivityItem) {
   }
 
   .mind-activity {
-    font-size: 10px;
+    font-size: 11px;
     color: var(--text-2);
   }
 
@@ -277,7 +277,7 @@ function handleActivityClick(item: ActivityItem) {
     cursor: pointer;
     text-align: left;
     color: inherit;
-    font-size: 12px;
+    font-size: 13px;
     transition: background 0.12s;
     width: 100%;
   }
@@ -334,7 +334,7 @@ function handleActivityClick(item: ActivityItem) {
 
   .timeline-time {
     color: var(--text-2);
-    font-size: 10px;
+    font-size: 11px;
     flex-shrink: 0;
   }
 

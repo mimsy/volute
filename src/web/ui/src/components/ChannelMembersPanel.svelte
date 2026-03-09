@@ -1,8 +1,8 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
-import { inviteToChannel } from "../lib/client";
 import { mindDotColor } from "../lib/format";
-import { activeMinds, onlineBrains, reconnectActivity } from "../lib/stores.svelte";
+import { activeMinds, onlineBrains } from "../lib/stores.svelte";
+import InviteModal from "./InviteModal.svelte";
 import ProfileHoverCard from "./ProfileHoverCard.svelte";
 
 let {
@@ -29,49 +29,8 @@ let mindParticipants = $derived(
 
 let userParticipants = $derived(conversation.participants.filter((p) => p.userType !== "mind"));
 
-// Invite state (channels only)
 let isChannel = $derived(conversation.type === "channel" && !!conversation.name);
-let inviteQuery = $state("");
-let inviteError = $state("");
-let inviting = $state(false);
-let showSuggestions = $state(false);
-
-let memberNames = $derived(new Set(conversation.participants.map((p) => p.username)));
-
-let suggestions = $derived(
-  inviteQuery.trim()
-    ? minds.filter(
-        (m) => !memberNames.has(m.name) && m.name.toLowerCase().includes(inviteQuery.toLowerCase()),
-      )
-    : minds.filter((m) => !memberNames.has(m.name)),
-);
-
-async function handleInvite(name: string) {
-  if (!conversation.name || inviting) return;
-  inviting = true;
-  inviteError = "";
-  try {
-    await inviteToChannel(conversation.name, name);
-    inviteQuery = "";
-    showSuggestions = false;
-    reconnectActivity();
-  } catch (err) {
-    inviteError = err instanceof Error ? err.message : "Failed to invite";
-  } finally {
-    inviting = false;
-  }
-}
-
-function handleInputFocus() {
-  showSuggestions = true;
-}
-
-function handleInputBlur() {
-  // Delay to allow click on suggestion
-  setTimeout(() => {
-    showSuggestions = false;
-  }, 150);
-}
+let showInvite = $state(false);
 
 function brainDotColor(username: string): string | undefined {
   if (typingSet.has(username)) return undefined; // iridescent
@@ -88,39 +47,11 @@ function isBrainIridescent(username: string): boolean {
   <div class="panel-header">
     <span class="panel-title">Members</span>
     <span class="member-count">{conversation.participants.length}</span>
+    {#if isChannel}
+      <button class="invite-btn" onclick={() => showInvite = true} title="Invite">+</button>
+    {/if}
   </div>
   <div class="panel-body">
-    {#if isChannel}
-      <div class="invite-section">
-        <div class="invite-input-wrap">
-          <input
-            type="text"
-            bind:value={inviteQuery}
-            placeholder="Invite a mind..."
-            class="invite-input"
-            onfocus={handleInputFocus}
-            onblur={handleInputBlur}
-          />
-          {#if showSuggestions && suggestions.length > 0}
-            <div class="suggestions">
-              {#each suggestions as mind}
-                <button class="suggestion-row" onmousedown={() => handleInvite(mind.name)}>
-                  <span
-                    class="status-dot"
-                    class:iridescent={activeMinds.has(mind.name)}
-                    style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
-                  ></span>
-                  <span class="suggestion-name">{mind.name}</span>
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-        {#if inviteError}
-          <div class="invite-error">{inviteError}</div>
-        {/if}
-      </div>
-    {/if}
     {#if mindParticipants.length > 0}
       <div class="section-title">Minds</div>
       {#each mindParticipants as { participant, mind }}
@@ -180,15 +111,21 @@ function isBrainIridescent(username: string): boolean {
   </div>
 </div>
 
+{#if showInvite && conversation.name}
+  <InviteModal
+    channelName={conversation.name}
+    {minds}
+    onClose={() => showInvite = false}
+  />
+{/if}
+
 <style>
   .members-panel {
     display: flex;
     flex-direction: column;
     height: 100%;
     background: var(--bg-1);
-    border-left: 1px solid var(--border);
-    width: 280px;
-    flex-shrink: 0;
+    width: 100%;
     overflow: hidden;
   }
 
@@ -202,14 +139,29 @@ function isBrainIridescent(username: string): boolean {
   }
 
   .panel-title {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
     color: var(--text-0);
   }
 
   .member-count {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
+    flex: 1;
+  }
+
+  .invite-btn {
+    background: none;
+    color: var(--text-2);
+    font-size: 15px;
+    padding: 2px 6px;
+    border-radius: var(--radius);
+    flex-shrink: 0;
+  }
+
+  .invite-btn:hover {
+    color: var(--text-0);
+    background: var(--bg-2);
   }
 
   .panel-body {
@@ -218,83 +170,8 @@ function isBrainIridescent(username: string): boolean {
     padding: 12px 0;
   }
 
-  .invite-section {
-    padding: 0 12px 8px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 4px;
-  }
-
-  .invite-input-wrap {
-    position: relative;
-  }
-
-  .invite-input {
-    width: 100%;
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 6px 10px;
-    color: var(--text-0);
-    font-size: 12px;
-    font-family: var(--mono);
-    outline: none;
-    box-sizing: border-box;
-  }
-
-  .invite-input:focus {
-    border-color: var(--border-bright);
-  }
-
-  .suggestions {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    background: var(--bg-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    margin-top: 4px;
-    max-height: 200px;
-    overflow: auto;
-    z-index: 10;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  }
-
-  .suggestion-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    width: 100%;
-    background: none;
-    border: none;
-    text-align: left;
-    font-size: 12px;
-    color: var(--text-1);
-    cursor: pointer;
-  }
-
-  .suggestion-row:hover {
-    background: var(--bg-2);
-  }
-
-  .suggestion-name {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-weight: 500;
-    color: var(--text-0);
-  }
-
-  .invite-error {
-    color: var(--red);
-    font-size: 11px;
-    padding: 4px 0 0;
-  }
-
   .section-title {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -307,7 +184,7 @@ function isBrainIridescent(username: string): boolean {
     align-items: center;
     gap: 8px;
     padding: 6px 16px;
-    font-size: 13px;
+    font-size: 14px;
     color: var(--text-1);
     width: 100%;
     background: none;
@@ -354,7 +231,7 @@ function isBrainIridescent(username: string): boolean {
 
   @media (max-width: 1024px) {
     .members-panel {
-      width: min(280px, 100vw);
+      width: 100%;
     }
   }
 </style>

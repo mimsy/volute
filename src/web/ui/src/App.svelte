@@ -30,6 +30,8 @@ import {
   hideConversation,
   layout,
   reconnectActivity,
+  rightPanel,
+  saveRightPanelWidth,
   saveSidebarWidth,
   setActiveConversation,
   sidebar,
@@ -299,6 +301,33 @@ function handleResizeEnd() {
   saveSidebarWidth();
 }
 
+// Right panel resize
+let resizingRight = $state(false);
+
+function handleRightResizeStart(e: PointerEvent) {
+  resizingRight = true;
+  const target = e.currentTarget as HTMLElement;
+  target.setPointerCapture(e.pointerId);
+  document.body.style.userSelect = "none";
+  document.body.style.cursor = "col-resize";
+}
+
+function handleRightResizeMove(e: PointerEvent) {
+  if (!resizingRight) return;
+  const shellBody = (e.currentTarget as HTMLElement).parentElement;
+  if (!shellBody) return;
+  const rect = shellBody.getBoundingClientRect();
+  rightPanel.width = Math.max(240, Math.min(600, rect.right - e.clientX));
+}
+
+function handleRightResizeEnd() {
+  if (!resizingRight) return;
+  resizingRight = false;
+  document.body.style.userSelect = "";
+  document.body.style.cursor = "";
+  saveRightPanelWidth();
+}
+
 function handleEscape(e: KeyboardEvent) {
   if (e.key !== "Escape") return;
   if (rightPanelOpen) {
@@ -344,6 +373,7 @@ function handleEscape(e: KeyboardEvent) {
           onSeed={() => (activeModal = "seed")}
           onSelectSite={handleSelectSite}
           onSelectPages={handleSelectPages}
+          onSelectNotes={() => { selection = { kind: "notes" }; }}
           onHideConversation={handleHideConversation}
           onHome={() => (selection = { kind: "home" })}
         />
@@ -375,6 +405,8 @@ function handleEscape(e: KeyboardEvent) {
           onSelectPage={handleSelectPage}
           onSelectSite={handleSelectSite}
           onSelectPages={handleSelectPages}
+          onSelectNotes={() => { selection = { kind: "notes" }; }}
+          onSelectNote={(author: string, slug: string) => { selection = { kind: "note", author, slug }; }}
           onTypingNames={(names) => { typingNames = names; }}
           onToggleSidebar={toggleSidebar}
           onOpenRightPanel={hasRightPanel ? openRightPanel : undefined}
@@ -385,7 +417,15 @@ function handleEscape(e: KeyboardEvent) {
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="right-panel-backdrop" onclick={closeRightPanel}></div>
         {/if}
-        <div class="right-panel" class:right-panel-open={rightPanelOpen}>
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="resize-handle right-resize-handle"
+          onpointerdown={handleRightResizeStart}
+          onpointermove={handleRightResizeMove}
+          onpointerup={handleRightResizeEnd}
+          onpointercancel={handleRightResizeEnd}
+        ></div>
+        <div class="right-panel" class:right-panel-open={rightPanelOpen} style:width="{rightPanel.width}px">
           {#if rightPanelMind}
             {#key rightPanelMind.name}
               <MindModal
@@ -486,6 +526,12 @@ function handleEscape(e: KeyboardEvent) {
     min-width: 0;
   }
 
+  .right-panel {
+    flex-shrink: 0;
+    border-left: 1px solid var(--border);
+    overflow: hidden;
+  }
+
   .right-panel-backdrop {
     display: none;
   }
@@ -507,6 +553,11 @@ function handleEscape(e: KeyboardEvent) {
       right: 0;
       bottom: 0;
       z-index: 40;
+      width: min(360px, 100vw) !important;
+    }
+
+    .right-resize-handle {
+      display: none;
     }
 
     .right-panel-backdrop {

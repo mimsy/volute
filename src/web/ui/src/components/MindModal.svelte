@@ -5,13 +5,14 @@ import { data } from "../lib/stores.svelte";
 import History from "./History.svelte";
 import MindInfo from "./MindInfo.svelte";
 import MindSkills from "./MindSkills.svelte";
+import PublicFiles from "./PublicFiles.svelte";
 import StatusBadge from "./StatusBadge.svelte";
 import TabBar from "./TabBar.svelte";
 import VariantList from "./VariantList.svelte";
 
 let { mind: initialMind, onClose }: { mind: Mind; onClose?: () => void } = $props();
 
-const TABS = ["Info", "Settings"] as const;
+const TABS = ["Info", "Files", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 
 let mind = $derived(data.minds.find((m) => m.name === initialMind.name) ?? initialMind);
@@ -43,7 +44,7 @@ function formatCreated(dateStr: string): string {
     </div>
     <TabBar tabs={[...TABS]} active={tab} onchange={(t) => (tab = t as Tab)} />
   </div>
-  <div class="panel-body" class:panel-body-flex={tab === "Info"}>
+  <div class="panel-body" class:panel-body-flex={tab === "Info" || tab === "Files"}>
     {#if tab === "Info"}
       <div class="profile-section">
         <span class="profile-display-name">{mind.displayName ?? mind.name}</span>
@@ -63,6 +64,10 @@ function formatCreated(dateStr: string): string {
 
       <div class="history-section">
         <History name={mind.name} />
+      </div>
+    {:else if tab === "Files"}
+      <div class="files-section">
+        <PublicFiles name={mind.name} />
       </div>
     {:else if tab === "Settings"}
       <div class="settings-content">
@@ -109,9 +114,7 @@ function formatCreated(dateStr: string): string {
     flex-direction: column;
     height: 100%;
     background: var(--bg-1);
-    border-left: 1px solid var(--border);
-    width: 480px;
-    flex-shrink: 0;
+    width: 100%;
     overflow: hidden;
   }
 
@@ -136,15 +139,16 @@ function formatCreated(dateStr: string): string {
   }
 
   .mind-name {
-    font-size: 14px;
-    font-weight: 600;
+    font-family: var(--display);
+    font-size: 20px;
+    font-weight: 400;
     color: var(--text-0);
   }
 
   .close-btn {
     background: none;
     color: var(--text-2);
-    font-size: 14px;
+    font-size: 15px;
     padding: 4px 8px;
   }
 
@@ -162,6 +166,11 @@ function formatCreated(dateStr: string): string {
     padding: 16px;
   }
 
+  .files-section {
+    flex: 1;
+    min-height: 0;
+  }
+
   .panel-body-flex {
     display: flex;
     flex-direction: column;
@@ -175,7 +184,7 @@ function formatCreated(dateStr: string): string {
   }
 
   .section-title {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -186,7 +195,7 @@ function formatCreated(dateStr: string): string {
   .connections-empty {
     color: var(--text-2);
     padding: 12px 0;
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .connections-list {
@@ -200,7 +209,7 @@ function formatCreated(dateStr: string): string {
     gap: 8px;
     padding: 6px 0;
     border-bottom: 1px solid var(--border);
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .connection-row:last-child {
@@ -213,12 +222,12 @@ function formatCreated(dateStr: string): string {
   }
 
   .connection-bot {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-1);
   }
 
   .connection-time {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
     margin-left: auto;
   }
@@ -239,13 +248,14 @@ function formatCreated(dateStr: string): string {
   }
 
   .profile-display-name {
-    font-size: 18px;
-    font-weight: 600;
+    font-family: var(--display);
+    font-size: 24px;
+    font-weight: 400;
     color: var(--text-0);
   }
 
   .profile-description {
-    font-size: 13px;
+    font-size: 14px;
     color: var(--text-1);
     text-align: center;
     max-width: 320px;
@@ -254,7 +264,7 @@ function formatCreated(dateStr: string): string {
   }
 
   .profile-meta {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
     margin-top: 4px;
   }
@@ -268,7 +278,7 @@ function formatCreated(dateStr: string): string {
 
   @media (max-width: 1024px) {
     .mind-panel {
-      width: min(480px, 100vw);
+      width: 100%;
     }
   }
 </style>

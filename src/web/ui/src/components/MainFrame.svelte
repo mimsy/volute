@@ -8,6 +8,8 @@ import type {
 } from "@volute/api";
 import type { Selection } from "../lib/navigate";
 import Home from "../pages/Home.svelte";
+import Notes from "../pages/Notes.svelte";
+import NoteView from "../pages/NoteView.svelte";
 import PagesDashboard from "../pages/PagesDashboard.svelte";
 import SiteView from "../pages/SiteView.svelte";
 import Chat from "./Chat.svelte";
@@ -27,6 +29,8 @@ let {
   onSelectPages,
   onSelectConversation,
   onTypingNames,
+  onSelectNotes,
+  onSelectNote,
   onToggleSidebar,
   onOpenRightPanel,
 }: {
@@ -43,6 +47,8 @@ let {
   onSelectSite: (name: string) => void;
   onSelectPages: () => void;
   onSelectConversation: (id: string) => void;
+  onSelectNotes: () => void;
+  onSelectNote: (author: string, slug: string) => void;
   onTypingNames?: (names: string[]) => void;
   onToggleSidebar?: () => void;
   onOpenRightPanel?: () => void;
@@ -97,10 +103,10 @@ let contextLabel = $derived.by(() => {
 <div class="main-frame">
   <div class="mobile-header">
     <button class="hamburger-btn" onclick={() => onToggleSidebar?.()}>&#9776;</button>
+    <img src="/logo.png" alt="" class="mobile-logo" />
+    <span class="mobile-title">volute</span>
     {#if contextLabel && onOpenRightPanel}
       <button class="context-label-btn" onclick={onOpenRightPanel}>{contextLabel}</button>
-    {:else}
-      <span class="mobile-title">Volute</span>
     {/if}
   </div>
   {#if selection.kind === "page"}
@@ -129,6 +135,22 @@ let contextLabel = $derived.by(() => {
     </div>
     <div class="frame-content padded">
       <SiteView site={selectedSite} {onSelectPage} />
+    </div>
+  {:else if selection.kind === "notes"}
+    <div class="breadcrumbs">
+      <span class="breadcrumb-current">Notes</span>
+    </div>
+    <div class="frame-content padded">
+      <Notes onSelectNote={onSelectNote} />
+    </div>
+  {:else if selection.kind === "note"}
+    <div class="breadcrumbs">
+      <button class="breadcrumb-link" onclick={onSelectNotes}>Notes</button>
+      <span class="breadcrumb-sep">/</span>
+      <span class="breadcrumb-current">{selection.author}/{selection.slug}</span>
+    </div>
+    <div class="frame-content padded">
+      <NoteView author={selection.author} slug={selection.slug} {username} onBack={onSelectNotes} onNavigate={onSelectNote} />
     </div>
   {:else if selection.kind === "conversation"}
     <div class="frame-content">
@@ -176,8 +198,8 @@ let contextLabel = $derived.by(() => {
     align-items: center;
     gap: 6px;
     padding: 8px 16px;
-    font-family: var(--font-mono, monospace);
-    font-size: 11px;
+    font-family: inherit;
+    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--text-2);
@@ -240,22 +262,30 @@ let contextLabel = $derived.by(() => {
     background: var(--bg-2);
   }
 
+  .mobile-logo {
+    width: 20px;
+    height: 20px;
+    filter: invert(1);
+  }
+
   .mobile-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-1);
-    flex: 1;
+    font-family: var(--display);
+    font-size: 18px;
+    font-weight: 300;
+    color: var(--text-0);
+    letter-spacing: 0.04em;
+    margin-left: -4px;
   }
 
   .context-label-btn {
-    flex: 1;
+    margin-left: auto;
     background: none;
     border: none;
-    color: var(--text-0);
-    font-size: 13px;
-    font-weight: 600;
+    color: var(--text-1);
+    font-size: 14px;
+    font-weight: 500;
     padding: 4px 0;
-    text-align: left;
+    text-align: right;
     cursor: pointer;
     overflow: hidden;
     text-overflow: ellipsis;

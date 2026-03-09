@@ -135,7 +135,7 @@ function handleKeyDown(e: KeyboardEvent) {
 <style>
   .error {
     padding: 8px 16px;
-    font-size: 12px;
+    font-size: 13px;
     color: var(--red);
   }
 
@@ -147,7 +147,7 @@ function handleKeyDown(e: KeyboardEvent) {
 
   .empty {
     color: var(--text-2);
-    font-size: 12px;
+    font-size: 13px;
     text-align: center;
     padding: 20px;
   }
@@ -171,19 +171,19 @@ function handleKeyDown(e: KeyboardEvent) {
   }
 
   .channel-name {
-    font-size: 13px;
+    font-size: 14px;
     color: var(--text-0);
     font-weight: 500;
   }
 
   .channel-meta {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
   }
 
   .action-btn {
     padding: 4px 12px;
-    font-size: 11px;
+    font-size: 12px;
     border-radius: var(--radius);
     background: var(--accent-dim);
     color: var(--accent);
@@ -209,8 +209,8 @@ function handleKeyDown(e: KeyboardEvent) {
     border-radius: var(--radius);
     padding: 8px 10px;
     color: var(--text-0);
-    font-size: 12px;
-    font-family: var(--mono);
+    font-size: 13px;
+    font-family: inherit;
     outline: none;
   }
 
@@ -223,7 +223,7 @@ function handleKeyDown(e: KeyboardEvent) {
     background: var(--accent-dim);
     color: var(--accent);
     border-radius: var(--radius);
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 500;
   }
 

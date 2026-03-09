@@ -18,7 +18,7 @@ export type AuthEnv = {
   };
 };
 
-const SESSION_MAX_AGE = 86400000; // 24 hours
+export const SESSION_MAX_AGE = 365 * 24 * 60 * 60 * 1000; // 1 year
 const SESSION_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 type CachedSession = { userId: number; user: User; expires: number };

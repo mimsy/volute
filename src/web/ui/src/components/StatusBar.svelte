@@ -121,7 +121,8 @@ function handleClickOutside(e: MouseEvent) {
     padding: 0 12px;
     background: var(--bg-1);
     border-top: 1px solid var(--border);
-    font-size: 11px;
+    font-family: var(--display);
+    font-size: 13px;
     color: var(--text-2);
     flex-shrink: 0;
   }
@@ -153,7 +154,7 @@ function handleClickOutside(e: MouseEvent) {
   .status-btn {
     background: none;
     color: var(--text-2);
-    font-size: 11px;
+    font-size: 13px;
     padding: 2px 4px;
     display: flex;
     align-items: center;
@@ -195,7 +196,7 @@ function handleClickOutside(e: MouseEvent) {
     padding: 6px 12px;
     background: none;
     color: var(--text-1);
-    font-size: 11px;
+    font-size: 13px;
     white-space: nowrap;
   }
 

@@ -14,7 +14,11 @@ import { initDeliveryManager } from "./lib/delivery/delivery-manager.js";
 import { stopAll as stopAllActivityTrackers } from "./lib/events/mind-activity-tracker.js";
 import log from "./lib/logger.js";
 import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
-import { migrateDotVoluteDir, migrateMindState } from "./lib/migrate-state.js";
+import {
+  migrateDotVoluteDir,
+  migrateMindState,
+  migratePagesDirToPublic,
+} from "./lib/migrate-state.js";
 import { stopAllWatchers } from "./lib/pages-watcher.js";
 import {
   initRegistryCache,
@@ -26,6 +30,7 @@ import {
 import { RotatingLog } from "./lib/rotating-log.js";
 import { ensureSharedRepo } from "./lib/shared.js";
 import { syncBuiltinSkills } from "./lib/skills.js";
+import { ensureSystemChannel } from "./lib/system-channel.js";
 import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
 import { initWebhook } from "./lib/webhook.js";
 import { cleanExpiredSessions } from "./web/middleware/auth.js";
@@ -80,11 +85,22 @@ export async function startDaemon(opts: {
   // Load registry into memory for fast reads within the daemon
   initRegistryCache();
 
+  // Initialize sandbox runtime for mind process isolation
+  const { initSandbox } = await import("./lib/sandbox.js");
+  await initSandbox();
+
   // Sync built-in skills into the shared pool (non-fatal)
   try {
     await syncBuiltinSkills();
   } catch (err) {
     log.error("failed to sync built-in skills", log.errorData(err));
+  }
+
+  // Ensure #system channel exists (non-fatal)
+  try {
+    await ensureSystemChannel();
+  } catch (err) {
+    log.warn("failed to ensure #system channel", log.errorData(err));
   }
 
   // Use existing token if set (for testing), otherwise generate one
@@ -147,11 +163,12 @@ export async function startDaemon(opts: {
   // Migrate .volute/ → .mind/ and system state for all registered minds
   const registry = readRegistry();
   for (const entry of registry) {
-    try {
-      migrateDotVoluteDir(entry.name);
-      migrateMindState(entry.name);
-    } catch (err) {
-      log.warn(`failed to migrate state for ${entry.name}`, log.errorData(err));
+    for (const migrate of [migrateDotVoluteDir, migrateMindState, migratePagesDirToPublic]) {
+      try {
+        migrate(entry.name);
+      } catch (err) {
+        log.warn(`failed to migrate state for ${entry.name}`, log.errorData(err));
+      }
     }
   }
 
@@ -314,6 +331,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   let hostname = "127.0.0.1";
   let foreground = false;
   let tailscale = false;
+  let noSandbox = false;
 
   for (let i = 2; i < process.argv.length; i++) {
     if (process.argv[i] === "--port" && process.argv[i + 1]) {
@@ -326,7 +344,13 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
       foreground = true;
     } else if (process.argv[i] === "--tailscale") {
       tailscale = true;
+    } else if (process.argv[i] === "--no-sandbox") {
+      noSandbox = true;
     }
+  }
+
+  if (noSandbox) {
+    process.env.VOLUTE_SANDBOX = "0";
   }
 
   startDaemon({ port, hostname, foreground, tailscale });

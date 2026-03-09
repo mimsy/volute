@@ -25,7 +25,7 @@ let {
     padding: 10px 16px;
     background: transparent;
     color: var(--text-2);
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 500;
     border-bottom: 2px solid transparent;
     transition: all 0.15s;

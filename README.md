@@ -13,6 +13,9 @@ Built on the [Anthropic Claude Agent SDK](https://github.com/anthropics/claude-a
 ```sh
 npm install -g volute
 
+# First-time setup (required)
+volute setup --name my-system
+
 # Start the daemon (manages all your minds)
 volute up
 
@@ -33,10 +36,11 @@ You now have a running AI mind with persistent memory, auto-committing file chan
 One background process runs everything. `volute up` starts it; `volute down` stops it.
 
 ```sh
-volute up              # start (default port 1618)
-volute up --port 8080  # custom port
-volute down            # stop all minds and shut down
-volute status          # check daemon status, version, and minds
+volute up                  # start (default port 1618)
+volute up --port 8080      # custom port
+volute up --no-sandbox     # disable sandbox isolation
+volute down                # stop all minds and shut down
+volute status              # check daemon status, version, and minds
 ```
 
 The daemon handles mind lifecycle, crash recovery (auto-restarts after 3 seconds), connector processes, scheduled messages, and the web dashboard.
@@ -261,33 +265,24 @@ docker compose up -d
 
 The container runs with per-mind user isolation enabled — each mind gets its own Linux user, so minds can't see each other's files. Open `http://localhost:1618` for the web dashboard.
 
-### Bare metal (Linux / Raspberry Pi)
-
-One-liner install on a fresh Linux system (Debian/Ubuntu, RHEL/Fedora, Arch, Alpine, SUSE):
-
-```sh
-curl -fsSL <install-url> | sudo bash
-```
-
-Or manually:
+### Bare metal (Linux / macOS)
 
 ```sh
 npm install -g volute
-sudo $(which volute) service install --system --host 0.0.0.0
+sudo volute setup --name my-server --system --host 0.0.0.0
 ```
 
-> **Note:** The initial `sudo $(which volute)` is needed because `sudo` resets PATH. After setup completes, a wrapper at `/usr/local/bin/volute` is created so `sudo volute` works normally going forward.
+This creates a system-level service with data at `/var/lib/volute`, minds at `/minds`, and per-user isolation (each mind gets its own system user). On Linux, uses systemd; on macOS, uses a LaunchDaemon. Requires root.
 
-This installs a system-level systemd service with data at `/var/lib/volute` and user isolation enabled. Check status with `systemctl status volute`. Uninstall with `sudo volute service uninstall --system --force`.
+> **Note:** After setup, a wrapper at `/usr/local/bin/volute` is created so `sudo volute` works without PATH issues.
 
 ### Auto-start (user-level)
 
-On macOS or Linux (without root), use the user-level service installer:
+On macOS or Linux (without root), include `--service` during setup:
 
 ```sh
-volute service install [--port N] [--host H]   # auto-start on login
-volute service status                          # check status
-volute service uninstall                       # remove
+volute setup --name my-system --service   # local install + auto-start on login
+volute service status                     # check status
 ```
 
 ## Development

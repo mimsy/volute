@@ -68,7 +68,7 @@ let {
   }
 
   .section-header {
-    font-size: 11px;
+    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     margin-bottom: 12px;
@@ -86,6 +86,6 @@ let {
 
   .empty {
     color: var(--text-2);
-    font-size: 12px;
+    font-size: 13px;
   }
 </style>

@@ -83,6 +83,7 @@ import {
 import { conversations, mindHistory } from "../../lib/schema.js";
 import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
 import { installSkill, SEED_SKILLS, STANDARD_SKILLS } from "../../lib/skills.js";
+import { announceToSystem } from "../../lib/system-channel.js";
 import { readSystemsConfig } from "../../lib/systems-config.js";
 import {
   applyInitFiles,
@@ -688,12 +689,32 @@ const app = new Hono<AuthEnv>()
       // Generate Ed25519 keypair for mind identity
       const { publicKeyPem } = generateIdentity(dest);
 
-      // Persist description to volute.json if provided
-      if (body.description) {
-        const seedConfig = readVoluteConfig(dest);
-        if (!seedConfig) throw new Error("Failed to read volute.json after identity generation");
-        seedConfig.profile = { ...seedConfig.profile, description: body.description };
-        writeVoluteConfig(dest, seedConfig);
+      // Merge default schedules, sleep config, and description into volute.json
+      {
+        const config = readVoluteConfig(dest);
+        if (!config) throw new Error("Failed to read volute.json after identity generation");
+        if (body.description) {
+          config.profile = { ...config.profile, description: body.description };
+        }
+        if (!config.sleep) {
+          config.sleep = {
+            enabled: true,
+            schedule: { sleep: "0 0 * * *", wake: "0 8 * * *" },
+          };
+        }
+        if (!config.schedules || config.schedules.length === 0) {
+          config.schedules = [
+            {
+              id: "heartbeat",
+              cron: "0 12,16,20 * * *",
+              message:
+                "A quiet moment. You might write something — a note, a journal entry, a page. You could explore a topic that interests you, check in on #system, or just think. No obligations, just time.",
+              enabled: true,
+              skipWhenSleeping: true,
+            },
+          ];
+        }
+        writeVoluteConfig(dest, config);
       }
 
       if (body.model) {
@@ -808,6 +829,9 @@ const app = new Hono<AuthEnv>()
           description: body.description,
         },
       });
+
+      // Announce to #system channel
+      announceToSystem(`${name} has joined`).catch(() => {});
 
       return c.json({
         ok: true,
@@ -1018,7 +1042,7 @@ const app = new Hono<AuthEnv>()
     const minds = await Promise.all(
       entries.map(async (entry) => {
         const mindStatus = await getMindStatus(entry.name, entry.port);
-        const hasPages = existsSync(resolve(mindDir(entry.name), "home", "pages"));
+        const hasPages = existsSync(resolve(mindDir(entry.name), "home", "public", "pages"));
         return {
           ...entry,
           ...mindStatus,
@@ -1062,7 +1086,7 @@ const app = new Hono<AuthEnv>()
       }),
     );
 
-    const hasPages = existsSync(resolve(mindDir(name), "home", "pages"));
+    const hasPages = existsSync(resolve(mindDir(name), "home", "public", "pages"));
     return c.json({ ...entry, ...mindStatus, variants: variantStatuses, hasPages });
   })
   // Start mind (supports name@variant) — admin only
@@ -1128,6 +1152,17 @@ const app = new Hono<AuthEnv>()
     const manager = getMindManager();
 
     try {
+      // During sleep (including trigger-wakes), skip identity reloads.
+      // The mind process restarts on wake, picking up changes then.
+      if (context?.type === "reload") {
+        const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
+        const sleepState = getSleepManagerIfReady()?.getState(name);
+        if (sleepState?.sleeping) {
+          log.info(`skipping reload for ${name} during sleep — will apply on next wake`);
+          return c.json({ ok: true, deferred: true, port: targetPort });
+        }
+      }
+
       // Stop running mind and connectors
       if (manager.isRunning(name)) {
         await stopMindFullService(name);
@@ -1295,9 +1330,15 @@ const app = new Hono<AuthEnv>()
     const sm = getSleepManagerIfReady();
     if (!sm) return c.json({ error: "Sleep manager not initialized" }, 503);
 
-    if (!sm.isSleeping(name)) return c.json({ error: "Mind is not sleeping" }, 409);
+    const sleepState = sm.getState(name);
+    if (!sleepState.sleeping) return c.json({ error: "Mind is not sleeping" }, 409);
 
-    sm.initiateWake(name).catch((err) => log.error(`failed to wake ${name}`, log.errorData(err)));
+    if (sleepState.wokenByTrigger) {
+      // Convert trigger-wake to full wake (mind is already running)
+      sm.convertTriggerToFullWake(name);
+    } else {
+      sm.initiateWake(name).catch((err) => log.error(`failed to wake ${name}`, log.errorData(err)));
+    }
 
     return c.json({ ok: true });
   })

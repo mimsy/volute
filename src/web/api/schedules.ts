@@ -68,6 +68,7 @@ const app = new Hono<AuthEnv>()
     const schedule: Schedule = { id, cron: body.cron, enabled: body.enabled ?? true };
     if (body.message) schedule.message = body.message;
     if (body.script) schedule.script = body.script;
+    if (body.channel) schedule.channel = body.channel;
     schedules.push(schedule);
     writeSchedules(name, schedules);
     return c.json({ ok: true, id }, 201);
@@ -103,6 +104,7 @@ const app = new Hono<AuthEnv>()
       delete schedules[idx].message;
     }
     if (body.enabled !== undefined) schedules[idx].enabled = body.enabled;
+    if (body.channel !== undefined) schedules[idx].channel = body.channel || undefined;
 
     writeSchedules(name, schedules);
     return c.json({ ok: true });

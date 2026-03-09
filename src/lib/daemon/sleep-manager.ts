@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn as spawnChild } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -31,6 +31,7 @@ export type SleepState = {
   wokenByTrigger: boolean;
   voluntaryWakeAt: string | null;
   queuedMessageCount: number;
+  triggerWakeHistory: { channel: string; at: string }[];
 };
 
 type SleepStatePersisted = Record<string, SleepState>;
@@ -43,6 +44,7 @@ function defaultState(): SleepState {
     wokenByTrigger: false,
     voluntaryWakeAt: null,
     queuedMessageCount: 0,
+    triggerWakeHistory: [],
   };
 }
 
@@ -81,7 +83,7 @@ export class SleepManager {
   start(): void {
     this.loadState();
     this.interval = setInterval(() => this.tick(), 60_000);
-    // Listen for mind_idle/mind_done events for return-to-sleep
+    // Listen for mind_idle events for return-to-sleep after trigger wake
     this.unsubActivity = subscribe((event) => this.onActivityEvent(event));
   }
 
@@ -99,6 +101,7 @@ export class SleepManager {
       if (existsSync(this.statePath)) {
         const data: SleepStatePersisted = JSON.parse(readFileSync(this.statePath, "utf-8"));
         for (const [name, state] of Object.entries(data)) {
+          state.triggerWakeHistory ??= [];
           this.states.set(name, state);
         }
       }
@@ -130,6 +133,17 @@ export class SleepManager {
 
   getState(name: string): SleepState {
     return this.states.get(name) ?? defaultState();
+  }
+
+  /**
+   * Convert a trigger-wake into a full wake. The mind is already running;
+   * this just clears the sleep state so onActivityEvent won't return it to sleep.
+   */
+  convertTriggerToFullWake(name: string): void {
+    const state = this.states.get(name);
+    if (!state?.sleeping || !state.wokenByTrigger) return;
+    this.markAwake(name);
+    slog.info(`${name} trigger-wake converted to full wake`);
   }
 
   getSleepConfig(name: string): SleepConfig | null {
@@ -223,18 +237,6 @@ export class SleepManager {
     this.transitioning.add(name);
 
     try {
-      const sleepingSince = state.sleepingSince ? new Date(state.sleepingSince) : new Date();
-      const now = new Date();
-      const duration = formatDuration(sleepingSince, now);
-      const currentDate = formatCurrentDate();
-      const sleepTime = sleepingSince.toLocaleTimeString("en-US", {
-        hour: "numeric",
-        minute: "2-digit",
-      });
-
-      // Build queued summary
-      const queuedSummary = await this.buildQueuedSummary(name);
-
       // Start the mind process
       try {
         await wakeMind(name);
@@ -247,50 +249,70 @@ export class SleepManager {
       const entry = findMind(name);
       if (!entry) return;
 
-      // Deliver wake summary
-      let summaryText: string;
       if (opts?.trigger) {
+        // Trigger-wakes are brief interruptions — the trigger message itself
+        // provides context, so skip the wake summary. The mind returns to sleep
+        // after going idle via onActivityEvent.
         state.wokenByTrigger = true;
-        summaryText = await getPrompt("wake_trigger_summary", {
-          currentDate,
-          triggerChannel: opts.trigger.channel,
-          sleepTime,
-          duration,
-          queuedSummary,
+        state.triggerWakeHistory.push({
+          channel: opts.trigger.channel,
+          at: new Date().toISOString(),
         });
+        this.saveState();
       } else {
-        summaryText = await getPrompt("wake_summary", {
+        const sleepingSince = state.sleepingSince ? new Date(state.sleepingSince) : new Date();
+        const now = new Date();
+        const duration = formatDuration(sleepingSince, now);
+        const currentDate = formatCurrentDate();
+        const sleepTime = sleepingSince.toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+        });
+
+        // Build wake context sections
+        const triggerWakeSummary = this.buildTriggerWakeSummary(state);
+        const wakeContext = await this.runWakeContextScript(
+          name,
+          state.sleepingSince ?? sleepingSince.toISOString(),
+          duration,
+        );
+        const queuedSummary = await this.buildQueuedSummary(name);
+        const sleepActivity = [triggerWakeSummary, wakeContext, queuedSummary]
+          .filter(Boolean)
+          .join("\n\n");
+
+        const summaryText = await getPrompt("wake_summary", {
           currentDate,
           sleepTime,
           duration,
-          queuedSummary,
+          sleepActivity,
         });
-      }
 
-      // Persist wake summary to mind_history
-      try {
-        const db = await getDb();
-        await db.insert(mindHistory).values({
-          mind: name,
-          type: "inbound",
-          channel: "system:sleep",
-          content: summaryText,
-        });
-      } catch (err) {
-        slog.error(`failed to persist wake summary for ${name}`, log.errorData(err));
-      }
-
-      try {
-        await fetch(`http://127.0.0.1:${entry.port}/message`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            content: [{ type: "text", text: summaryText }],
+        // Persist wake summary to mind_history
+        try {
+          const db = await getDb();
+          await db.insert(mindHistory).values({
+            mind: name,
+            type: "inbound",
             channel: "system:sleep",
-          }),
-        });
-      } catch (err) {
-        slog.warn(`failed to deliver wake summary to ${name}`, log.errorData(err));
+            content: summaryText,
+          });
+        } catch (err) {
+          slog.error(`failed to persist wake summary for ${name}`, log.errorData(err));
+        }
+
+        try {
+          await fetch(`http://127.0.0.1:${entry.port}/message`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              content: [{ type: "text", text: summaryText }],
+              channel: "system:sleep",
+            }),
+          });
+        } catch (err) {
+          slog.warn(`failed to deliver wake summary to ${name}`, log.errorData(err));
+        }
       }
 
       // Flush queued messages
@@ -437,6 +459,7 @@ export class SleepManager {
       wokenByTrigger: false,
       voluntaryWakeAt: opts?.voluntaryWakeAt ?? null,
       queuedMessageCount: this.states.get(name)?.queuedMessageCount ?? 0,
+      triggerWakeHistory: [],
     };
     this.states.set(name, state);
     this.saveState();
@@ -578,26 +601,87 @@ export class SleepManager {
     }
   }
 
+  private async runWakeContextScript(
+    name: string,
+    sleepingSince: string,
+    duration: string,
+  ): Promise<string> {
+    const scriptPath = resolve(mindDir(name), "home", ".config", "hooks", "wake-context.sh");
+    if (!existsSync(scriptPath)) return "";
+
+    const input = JSON.stringify({
+      sleepingSince,
+      duration,
+      wakeTime: new Date().toISOString(),
+    });
+
+    try {
+      const result = await new Promise<string>((resolvePromise, reject) => {
+        const child = spawnChild("bash", [scriptPath], {
+          cwd: mindDir(name),
+          timeout: 5000,
+          env: { ...process.env, VOLUTE_MIND: name },
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        let stdout = "";
+        let stderr = "";
+        child.stdout.on("data", (data: Buffer) => {
+          stdout += data.toString();
+        });
+        child.stderr.on("data", (data: Buffer) => {
+          stderr += data.toString();
+        });
+        child.on("close", (code) => {
+          if (code === 0) resolvePromise(stdout);
+          else
+            reject(
+              new Error(
+                `wake-context script exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`,
+              ),
+            );
+        });
+        child.on("error", reject);
+        child.stdin.end(input);
+      });
+      return result.trim();
+    } catch (err) {
+      slog.warn(`wake-context script failed for ${name}`, log.errorData(err));
+      return "";
+    }
+  }
+
+  private buildTriggerWakeSummary(state: SleepState): string {
+    const history = state.triggerWakeHistory;
+    if (!history || history.length === 0) return "";
+
+    const channels = [...new Set(history.map((h) => h.channel))];
+    const times = history.length === 1 ? "once" : `${history.length} times`;
+    return `You were briefly woken ${times} during sleep to handle messages on ${channels.join(", ")} (sessions were archived after each).`;
+  }
+
   private async buildQueuedSummary(name: string): Promise<string> {
     try {
       const db = await getDb();
       const rows = await db
-        .select({ channel: deliveryQueue.channel })
+        .select({ channel: deliveryQueue.channel, sender: deliveryQueue.sender })
         .from(deliveryQueue)
         .where(and(eq(deliveryQueue.mind, name), eq(deliveryQueue.status, "sleep-queued")))
         .all();
 
       if (rows.length === 0) return "No messages arrived while you slept.";
 
-      // Count per channel
+      // Count per channel and collect unique senders
       const channelCounts = new Map<string, number>();
+      const senders = new Set<string>();
       for (const row of rows) {
         const ch = row.channel ?? "unknown";
         channelCounts.set(ch, (channelCounts.get(ch) ?? 0) + 1);
+        if (row.sender) senders.add(row.sender);
       }
 
       const parts = [...channelCounts.entries()].map(([ch, count]) => `${count} on ${ch}`);
-      return `${rows.length} message${rows.length === 1 ? "" : "s"} arrived while you slept (${parts.join(", ")}). They'll be delivered to your normal channels now.`;
+      const senderNote = senders.size > 0 ? ` from ${[...senders].join(", ")}` : "";
+      return `${rows.length} message${rows.length === 1 ? "" : "s"} arrived while you slept${senderNote} (${parts.join(", ")}). They'll be delivered to your normal channels now.`;
     } catch (err) {
       slog.error(`failed to build queued summary for ${name}`, log.errorData(err));
       return "Unable to check for queued messages — there may be messages waiting.";

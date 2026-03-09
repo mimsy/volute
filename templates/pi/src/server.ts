@@ -31,6 +31,7 @@ const mind = createMind({
   thinkingLevel: config.thinkingLevel,
   compactionMessage: config.compactionMessage,
   maxContextTokens: config.compaction?.maxContextTokens,
+  subagents: config.subagents,
 });
 
 const router = createRouter({

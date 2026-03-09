@@ -351,6 +351,18 @@ export async function fetchSystemInfo(): Promise<{ system: string | null }> {
   }
 }
 
+export function systemRegister(name: string): Promise<{ system: string }> {
+  return post(`${V1}/system/register`, { name });
+}
+
+export function systemLogin(key: string): Promise<{ system: string }> {
+  return post(`${V1}/system/login`, { key });
+}
+
+export function systemLogout(): Promise<void> {
+  return post(`${V1}/system/logout`);
+}
+
 // --- Auth (these stay on /api/ since they're not mind-scoped) ---
 
 export function fetchAvailableUsers(type?: string): Promise<AvailableUser[]> {

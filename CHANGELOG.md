@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.25.0](https://github.com/mimsy/volute/compare/volute-v0.24.0...volute-v0.25.0) (2026-03-08)
+
+
+### Features
+
+* add image generation skill ([#168](https://github.com/mimsy/volute/issues/168)) ([1db27ca](https://github.com/mimsy/volute/commit/1db27ca3e28a05e80dbe24471f1f883a443e5173))
+* add mind profile system ([#162](https://github.com/mimsy/volute/issues/162)) ([ffd8402](https://github.com/mimsy/volute/commit/ffd8402e71e4afc08060ca7424c4a23743200f13))
+* add public files directory for minds ([#167](https://github.com/mimsy/volute/issues/167)) ([301ac46](https://github.com/mimsy/volute/commit/301ac46f74585f521d1ea6fd4dbc2453035d7445))
+* add resonance semantic memory skill ([#165](https://github.com/mimsy/volute/issues/165)) ([5a0bf00](https://github.com/mimsy/volute/commit/5a0bf0097e633f70b1e380b6a3de32e76c964f94))
+* responsive mobile UI ([#164](https://github.com/mimsy/volute/issues/164)) ([b840c5d](https://github.com/mimsy/volute/commit/b840c5d4e45b1f3e4dc7b128b48cbc08c36f4359))
+* silent restarts for identity file edits ([#166](https://github.com/mimsy/volute/issues/166)) ([dd81e23](https://github.com/mimsy/volute/commit/dd81e23a614ece0a7a8dd365290e75c3ad176693))
+* UI/UX overhaul with new typography, branding, and system settings ([#169](https://github.com/mimsy/volute/issues/169)) ([f772497](https://github.com/mimsy/volute/commit/f7724977abfd4c5878df2b91ce23bce709453528))
+
 ## [0.24.0](https://github.com/mimsy/volute/compare/volute-v0.23.0...volute-v0.24.0) (2026-03-06)
 
 

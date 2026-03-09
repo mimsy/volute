@@ -68,35 +68,35 @@ $effect(() => {
 <style>
   .file-editor {
     display: flex;
+    flex-direction: column;
     height: 100%;
     gap: 0;
   }
 
   .sidebar {
-    width: 160px;
     flex-shrink: 0;
-    border-right: 1px solid var(--border);
-    padding: 8px 0;
-    overflow: auto;
+    border-bottom: 1px solid var(--border);
+    padding: 4px 8px;
+    overflow-x: auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
   }
 
   .file-item {
-    display: block;
-    width: 100%;
-    padding: 6px 12px;
+    padding: 4px 10px;
     text-align: left;
     background: transparent;
     color: var(--text-1);
-    font-size: 12px;
+    font-size: 13px;
     font-family: var(--mono);
-    border-left: 2px solid transparent;
+    border-radius: 4px;
     transition: all 0.1s;
   }
 
   .file-item.active {
     background: var(--accent-bg);
     color: var(--accent);
-    border-left-color: var(--accent);
   }
 
   .viewer {
@@ -112,7 +112,7 @@ $effect(() => {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .filename {
@@ -121,7 +121,7 @@ $effect(() => {
 
   .error {
     color: var(--red);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .file-content {
@@ -130,7 +130,7 @@ $effect(() => {
     background: var(--bg-0);
     color: var(--text-0);
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.7;
     border: none;
     outline: none;

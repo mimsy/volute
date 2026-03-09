@@ -22,6 +22,14 @@ import {
 } from "../../lib/auth.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import { readRegistry, voluteHome } from "../../lib/registry.js";
+import { joinSystemChannel } from "../../lib/system-channel.js";
+
+/** Only join system channel when running inside the daemon (not in tests). */
+function tryJoinSystem(userId: number): void {
+  if (!process.env.VOLUTE_DAEMON_TOKEN) return;
+  joinSystemChannel(userId).catch(() => {});
+}
+
 import {
   type AuthEnv,
   authMiddleware,
@@ -29,7 +37,15 @@ import {
   deleteSession,
   getSessionUserId,
   invalidateSessionCache,
+  SESSION_MAX_AGE,
 } from "../middleware/auth.js";
+
+const SESSION_COOKIE_OPTIONS = {
+  path: "/",
+  httpOnly: true,
+  sameSite: "Lax" as const,
+  maxAge: Math.floor(SESSION_MAX_AGE / 1000),
+};
 
 const credentialsSchema = z.object({
   username: z.string().min(1),
@@ -241,8 +257,11 @@ const app = new Hono()
     if (user.role === "admin") {
       // Auto-login first user
       const sessionId = await createSession(user.id);
-      setCookie(c, "volute_session", sessionId, { path: "/", httpOnly: true, sameSite: "Lax" });
+      setCookie(c, "volute_session", sessionId, SESSION_COOKIE_OPTIONS);
     }
+
+    // Auto-join #system channel
+    tryJoinSystem(user.id);
 
     return c.json({ id: user.id, username: user.username, role: user.role });
   })
@@ -255,7 +274,11 @@ const app = new Hono()
     }
 
     const sessionId = await createSession(user.id);
-    setCookie(c, "volute_session", sessionId, { path: "/", httpOnly: true, sameSite: "Lax" });
+    setCookie(c, "volute_session", sessionId, SESSION_COOKIE_OPTIONS);
+
+    // Auto-join #system channel
+    tryJoinSystem(user.id);
+
     return c.json({ id: user.id, username: user.username, role: user.role });
   })
   .post("/logout", async (c) => {

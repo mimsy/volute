@@ -27,7 +27,7 @@ export async function run(args: string[]) {
     pagesDir = resolve(sharedDir(), "pages");
   } else if (flags.mind || process.env.VOLUTE_MIND) {
     mindName = resolveMindName(flags);
-    pagesDir = resolve(mindDir(mindName), "home", "pages");
+    pagesDir = resolve(mindDir(mindName), "home", "public", "pages");
   } else {
     mindName = "system";
     pagesDir = resolve(sharedDir(), "pages");

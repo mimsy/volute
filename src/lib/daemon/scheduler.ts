@@ -6,6 +6,7 @@ import { clearJsonMap, loadJsonMap, saveJsonMap } from "../json-state.js";
 import log from "../logger.js";
 import { mindDir, voluteHome } from "../registry.js";
 import { readVoluteConfig, type Schedule } from "../volute-config.js";
+import { getSleepManagerIfReady } from "./sleep-manager.js";
 
 const slog = log.child("scheduler");
 
@@ -105,6 +106,20 @@ export class Scheduler {
   }
 
   private async fire(mindName: string, schedule: Schedule): Promise<void> {
+    const sleepManager = getSleepManagerIfReady();
+    const sleepState = sleepManager?.getState(mindName);
+    if (sleepState?.sleeping) {
+      if (schedule.skipWhenSleeping) {
+        slog.info(`skipped "${schedule.id}" for ${mindName} (sleeping)`);
+        return;
+      }
+      // During trigger-wake, skip all scheduled fires. The trigger message already
+      // woke the mind; additional schedules would flood a brief wake-up.
+      if (sleepState.wokenByTrigger) {
+        slog.info(`skipped "${schedule.id}" for ${mindName} (trigger-woken)`);
+        return;
+      }
+    }
     try {
       let text: string;
       if (schedule.script) {
@@ -129,7 +144,7 @@ export class Scheduler {
       }
       await this.deliver(mindName, {
         content: [{ type: "text", text }],
-        channel: "system:scheduler",
+        channel: schedule.channel ?? "system:scheduler",
         sender: schedule.id,
       });
       slog.info(`fired "${schedule.id}" for ${mindName}`);

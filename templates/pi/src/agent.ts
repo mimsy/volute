@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import {
   AuthStorage,
   createAgentSession,
@@ -13,7 +15,8 @@ import { log } from "./lib/logger.js";
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
 import { createSessionContextExtension } from "./lib/session-context-extension.js";
-import { loadPrompts } from "./lib/startup.js";
+import { loadPrompts, type SubagentConfig } from "./lib/startup.js";
+import { createSubagentExtension, type SubagentDefinition } from "./lib/subagents.js";
 import type {
   HandlerMeta,
   HandlerResolver,
@@ -44,6 +47,7 @@ export function createMind(options: {
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   compactionMessage?: string;
   maxContextTokens?: number;
+  subagents?: Record<string, SubagentConfig>;
 }): { resolve: HandlerResolver } {
   const sessions = new Map<string, PiSession>();
   const prompts = loadPrompts();
@@ -62,6 +66,48 @@ export function createMind(options: {
   const model = resolveModel(modelStr);
   const authStorage = new AuthStorage();
   const modelRegistry = new ModelRegistry(authStorage);
+
+  // --- Subagents (config-driven) ---
+
+  function loadSubagents(
+    configs: Record<string, SubagentConfig> | undefined,
+  ): Record<string, SubagentDefinition> {
+    const result: Record<string, SubagentDefinition> = {};
+    if (!configs) return result;
+    for (const [name, config] of Object.entries(configs)) {
+      if (typeof config.description !== "string" || typeof config.systemPrompt !== "string") {
+        log("mind", `subagent "${name}": missing description or systemPrompt, skipping`);
+        continue;
+      }
+      try {
+        const prompt = readFileSync(resolvePath(options.cwd, config.systemPrompt), "utf-8");
+        if (!prompt) {
+          log("mind", `subagent "${name}": ${config.systemPrompt} is empty, skipping`);
+          continue;
+        }
+        result[name] = {
+          description: config.description,
+          prompt,
+          tools: config.tools,
+          maxTurns: config.maxTurns,
+        };
+      } catch (err: any) {
+        if (err?.code === "ENOENT") {
+          log("mind", `subagent "${name}": ${config.systemPrompt} not found, skipping`);
+        } else {
+          log("mind", `subagent "${name}": failed to read ${config.systemPrompt}: ${err.message}`);
+        }
+      }
+    }
+    return result;
+  }
+
+  const subagents = loadSubagents(options.subagents);
+
+  const subagentExtension =
+    Object.keys(subagents).length > 0
+      ? createSubagentExtension(subagents, { cwd: options.cwd, model, authStorage, modelRegistry })
+      : undefined;
 
   // --- Session lifecycle ---
 
@@ -158,6 +204,7 @@ export function createMind(options: {
         preCompactExtension,
         sessionContextExtension,
         replyInstructionsExtension,
+        ...(subagentExtension ? [subagentExtension] : []),
       ],
     });
     await resourceLoader.reload();

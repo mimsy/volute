@@ -61,6 +61,23 @@ describe("scheduler", () => {
     assert.equal(scheduler.scriptCalls.length, 0);
   });
 
+  it("fire uses custom channel when specified", async () => {
+    const scheduler = new TestScheduler();
+    await (scheduler as any).fire("test-mind", {
+      id: "dream",
+      cron: "0 3 * * *",
+      message: "time to dream",
+      enabled: true,
+      channel: "system:dream",
+    });
+    assert.equal(scheduler.deliveries.length, 1);
+    assert.deepEqual(scheduler.deliveries[0].payload, {
+      content: [{ type: "text", text: "time to dream" }],
+      channel: "system:dream",
+      sender: "dream",
+    });
+  });
+
   it("fire runs script and delivers output", async () => {
     const scheduler = new TestScheduler();
     scheduler.scriptResult = "script output\n";

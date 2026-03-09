@@ -170,14 +170,11 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute auth logout` | Remove stored credentials |
 | `volute pages publish [--mind <name>] [--system]` | Publish pages (mind's or --system for shared/pages/) |
 | `volute pages status [--mind <name>] [--system]` | Show publish status (mind's or --system) |
-| `volute up [--port N] [--foreground]` | Start the daemon (default: 1618) |
+| `volute setup [--name N] [--system] [--service] [--dir D] [--port N] [--host H]` | Required first-run setup (interactive or non-interactive) |
+| `volute up [--port N] [--foreground] [--no-sandbox]` | Start the daemon (default: 1618) |
 | `volute down` | Stop the daemon |
 | `volute restart [--port N]` | Restart the daemon |
-| `volute service install [--port N] [--host H]` | Install as user-level auto-start service |
-| `volute service uninstall` | Remove user-level service |
 | `volute service status` | Check service status |
-| `volute service install --system [--port N] [--host H]` | Install system service with user isolation (Linux, requires root) |
-| `volute service uninstall --system [--force]` | Remove system service (--force removes data + users) |
 | `volute status` | Show daemon status, version, and minds |
 | `volute update` | Check for updates |
 
@@ -227,14 +224,16 @@ Mind-scoped commands (`send`, `history`, `variant`, `schedule`, `channel`, `file
 | `read-stdin.ts` | Reads piped stdin for send commands (returns undefined if TTY) |
 | `resolve-mind-name.ts` | Resolves mind name from `--mind` flag or `VOLUTE_MIND` env var |
 | `typing.ts` | Typing indicator tracking |
-| `service-mode.ts` | Service mode detection (manual/systemd/launchd), service control, health polling, daemon config reader |
+| `setup.ts` | Global config (`~/.volute/config.json`) with setup state (type, isolation, mindsDir, service), `isSetupComplete()`, migration for existing users |
+| `sandbox.ts` | Sandbox runtime (`@anthropic-ai/sandbox-runtime`) integration: `isSandboxEnabled()`, `initSandbox()`, `wrapForSandbox()`, deny-read list for mind isolation |
+| `service-mode.ts` | Service mode detection (manual/systemd/launchd/system-launchd), service control, health polling, daemon config reader |
 | `systems-config.ts` | Read/write `~/.volute/systems.json` (API key, system name, API URL) |
 | `systems-fetch.ts` | Shared fetch wrapper for volute.systems API calls |
 | `prompt.ts` | Shared interactive terminal prompt utility |
 | `update-check.ts` | npm update check on CLI invocation |
 | `verify.ts` | Mind verification utilities |
 | `volute-config.ts` | Mind volute.json config reader |
-| `isolation.ts` | Per-mind Linux user isolation (`VOLUTE_ISOLATION=user`), user/group management, chown |
+| `isolation.ts` | Per-mind user isolation (`VOLUTE_ISOLATION=user`), user/group management (Linux via useradd, macOS via dscl), chown |
 | `pages-watcher.ts` | Filesystem watcher for mind pages, publishes activity events |
 
 ### src/lib/daemon/
@@ -335,7 +334,8 @@ Mind-scoped commands (`send`, `history`, `variant`, `schedule`, `channel`, `file
 - Model configurable via `VOLUTE_MODEL` env var
 - Auto-commit hooks track file changes in mind `home/` directory
 - Centralized message persistence in `mind_history` table via daemon routes (text + tool call summaries)
-- Optional per-mind Linux user isolation via `VOLUTE_ISOLATION=user` env var — minds spawn as separate system users
+- Mind process isolation: sandbox mode (local installs, `@anthropic-ai/sandbox-runtime`), per-user mode (system installs, Linux/macOS), or none. Configured via `volute setup`, stored in `config.json` as `setup.isolation`
+- `volute setup` is the required first-run command; CLI commands are gated on `isSetupComplete()` with auto-migration for existing users via `migrateSetupConfig()`
 - Built-in skills live in `skills/` at repo root and are synced to the shared pool (`~/.volute/skills/`) on daemon startup via `syncBuiltinSkills()`. Skill sets: `SEED_SKILLS` (orientation, memory) for seeds, `STANDARD_SKILLS` (volute-mind, memory, sessions) for sprouted minds. Skills are installed from the shared pool with upstream tracking (`.upstream.json`) for independent updates.
 
 ## Deployment
@@ -349,21 +349,25 @@ docker run -d -p 1618:1618 -v volute-data:/data -v volute-minds:/minds volute
 
 Or with docker-compose: `docker compose up -d`. The container runs with `VOLUTE_ISOLATION=user` enabled, so each mind gets its own Linux user inside the container.
 
-### Bare metal (Linux)
+### Bare metal (Linux / macOS)
 
 ```sh
 sudo bash install.sh
 # or manually:
-sudo volute service install --system --host 0.0.0.0
+sudo volute setup --name myserver --system --host 0.0.0.0
 ```
 
-`volute service install --system` installs a system-level systemd service at `/etc/systemd/system/volute.service` with data at `/var/lib/volute`, minds at `/minds`, and user isolation enabled. Requires root. Uninstall with `volute service uninstall --system [--force]`.
+`volute setup --system` creates a system-level service (systemd on Linux, LaunchDaemon on macOS) with data at `/var/lib/volute`, minds at `/minds`, and per-user isolation enabled. Requires root.
 
-### User isolation
+### Mind isolation
 
-When `VOLUTE_ISOLATION=user` is set, `volute mind create` creates a Linux system user (`mind-<name>`, prefix configurable via `VOLUTE_USER_PREFIX`) and `chown`s the mind directory. Mind and connector processes are spawned with the mind's uid/gid, so minds can't access each other's files. This is a no-op when the env var is unset (default for local development).
+Three isolation modes, configured via `volute setup` (stored in `~/.volute/config.json` as `setup.isolation`):
 
-On production deployments, `VOLUTE_MINDS_DIR` separates mind directories from the Volute system directory. When set (e.g. `/minds`), `mindDir(name)` returns `$VOLUTE_MINDS_DIR/<name>` instead of `$VOLUTE_HOME/minds/<name>`. This gives minds simpler, top-level home directories. Both `volute service install --system` (Linux) and Docker set this automatically.
+- **`sandbox`** — Local installs use `@anthropic-ai/sandbox-runtime` to sandbox mind processes. Each mind can only write to its own directory; reads to other minds' dirs, system state (`volute.db`, `env.json`, `minds.json`, `systems.json`), and sensitive user dirs (`.ssh`, `.aws`, `.gnupg`, `.config`) are blocked. Sandbox wrapping happens per-mind at spawn time. Disable at runtime with `volute up --no-sandbox` or `VOLUTE_SANDBOX=0`.
+- **`user`** — System installs create per-mind OS users (`mind-<name>`, prefix configurable via `VOLUTE_USER_PREFIX`). On Linux, uses `useradd`/`runuser`; on macOS, uses `dscl`/`sudo -u`. Mind and connector processes spawn with the mind's uid/gid. Requires root.
+- **`none`** — No isolation. Used for development or when migrated from a pre-setup installation.
+
+On production deployments, `VOLUTE_MINDS_DIR` separates mind directories from the Volute system directory. When set (e.g. `/minds`), `mindDir(name)` returns `$VOLUTE_MINDS_DIR/<name>` instead of `$VOLUTE_HOME/minds/<name>`. Both `volute setup --system` and Docker set this automatically.
 
 ## Development
 

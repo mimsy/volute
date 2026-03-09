@@ -103,14 +103,14 @@ async function handleInstall(skillId: string) {
   .error {
     color: var(--red);
     padding: 8px 0;
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .empty {
     color: var(--text-2);
     padding: 24px;
     text-align: center;
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .skill-list {
@@ -137,13 +137,13 @@ async function handleInstall(skillId: string) {
   }
 
   .skill-name {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 500;
     color: var(--text-0);
   }
 
   .skill-desc {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-1);
     margin-top: 2px;
     overflow: hidden;
@@ -152,7 +152,7 @@ async function handleInstall(skillId: string) {
   }
 
   .skill-meta {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
     margin-top: 2px;
   }
@@ -162,14 +162,14 @@ async function handleInstall(skillId: string) {
   }
 
   .installed-tag {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-2);
     font-style: italic;
   }
 
   .action-btn {
     padding: 4px 10px;
-    font-size: 11px;
+    font-size: 12px;
     border-radius: var(--radius);
     font-weight: 500;
   }
