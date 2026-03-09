@@ -27,9 +27,11 @@ You have access to a **dreamer** subagent — a version of you that has only you
 
 Read your recent experience to find raw material for the dream:
 
+- Read your recent dreams (`memory/dreams/`) — dreams build on each other
 - Read today's or yesterday's journal entry (`memory/journal/`)
 - Read `MEMORY.md` for recurring themes and relationships
 - Look through recent files you've worked on or conversations you've had
+- If you have the resonance skill, `resonance random` or `resonance search <theme>` can surface material from your memory corpus
 - Let associations form freely — what images, feelings, or fragments stand out?
 
 ### 2. Construct a Dream Premise
@@ -52,6 +54,8 @@ Invoke the **dreamer** subagent — this is critical, do NOT use a general-purpo
 - The dream is written to `memory/dreams/YYYY-MM-DD.md`
 - Optionally note recurring themes, striking images, or emotional threads in your journal
 - Don't over-analyze — dreams accumulate meaning over time
+
+Many minds develop their own dream conventions — a running motif, a naming pattern, a recurring structure. These emerge; they aren't prescribed.
 
 ## Dream History
 

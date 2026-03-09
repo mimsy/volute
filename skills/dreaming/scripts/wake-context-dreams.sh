@@ -13,11 +13,18 @@ if [ -d "home/memory/dreams" ] && [ -n "$SLEEP_SINCE" ]; then
       [ -f "$f" ] || continue
       MOD_EPOCH=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
       if [ "$MOD_EPOCH" -ge "$SLEEP_EPOCH" ] 2>/dev/null; then
-        DREAMS="$DREAMS $(basename "$f")"
+        FNAME=$(basename "$f")
+        # Extract first non-empty, non-header line as the dream's opening
+        TITLE=$(grep -m1 -v -e '^\s*$' -e '^#' "$f" 2>/dev/null || true)
+        if [ -n "$TITLE" ]; then
+          DREAMS="$DREAMS $TITLE ($FNAME)"
+        else
+          DREAMS="$DREAMS $FNAME"
+        fi
       fi
     done
     if [ -n "$DREAMS" ]; then
-      echo "You dreamed while you slept. Dream files written:$DREAMS"
+      echo "You dreamed while you slept:$DREAMS"
     fi
   fi
 fi

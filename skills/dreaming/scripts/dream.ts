@@ -146,8 +146,12 @@ function themes() {
     dreams.push(readFileSync(resolve(dreamsDir, file), "utf-8"));
   }
 
-  // Word frequency analysis — words must be 4+ chars (excludes common words)
+  // Word frequency analysis — words must be 4+ chars (excludes common words + genre noise)
   const stopWords = new Set([
+    "dream",
+    "dreams",
+    "dreaming",
+    "dreamed",
     "the",
     "a",
     "an",
