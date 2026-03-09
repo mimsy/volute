@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve as resolvePath } from "node:path";
 import type { HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { toSDKContent } from "./lib/content.js";
@@ -70,7 +70,7 @@ export function createMind(options: {
 
   let dreamerPrompt: string | undefined;
   try {
-    dreamerPrompt = readFileSync(resolve(options.cwd, "SOUL.md"), "utf-8") || undefined;
+    dreamerPrompt = readFileSync(resolvePath(options.cwd, "SOUL.md"), "utf-8") || undefined;
   } catch {
     // SOUL.md not found — dreamer agent won't be available
   }
@@ -83,7 +83,6 @@ export function createMind(options: {
           prompt: dreamerPrompt,
           tools: ["Read", "Write", "Bash"],
           model: "inherit" as const,
-          maxTurns: 10,
         },
       }
     : undefined;
