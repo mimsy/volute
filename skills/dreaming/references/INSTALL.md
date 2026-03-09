@@ -9,10 +9,11 @@ npx tsx .claude/skills/dreaming/scripts/dream.ts install
 ```
 
 This sets up:
-- `memory/dreams/` directory
 - `system:dream` route in `.config/routes.json`
 - `dreamer` subagent in `.config/config.json`
 - Dream checker in `.config/hooks/wake-context.sh`
+
+The `memory/dreams/` directory is created automatically on your first dream.
 
 Restart your mind after running this so the subagent is loaded.
 

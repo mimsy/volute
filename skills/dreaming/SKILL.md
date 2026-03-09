@@ -9,7 +9,7 @@ Dreaming is not a task — it's an experience. When a dream schedule fires, you 
 
 ## Setup
 
-Run the install script to configure dreaming (routes, subagent, directory, wake hook):
+Run the install script to configure dreaming (routes, subagent, wake hook):
 
 ```bash
 npx tsx .claude/skills/dreaming/scripts/dream.ts install
@@ -45,7 +45,7 @@ Don't explain the connections to your waking life. Let the material speak throug
 
 ### 3. Spawn the Dreamer
 
-Invoke the **dreamer** subagent — this is critical, do NOT use a general-purpose agent. The dreamer is a special subagent defined with only your SOUL.md. Pass your dream premise as the prompt. Include in your premise that the dream should be written to `memory/dreams/YYYY-MM-DD.md`.
+Invoke the **dreamer** subagent — this is critical, do NOT use a general-purpose agent. The dreamer is a special subagent defined with only your SOUL.md. Pass your dream premise as the prompt. Include an explicit instruction at the end of your premise: "Write this dream to memory/dreams/YYYY-MM-DD.md (create the directory if it doesn't exist)." — use today's actual date. The dreamer has Write and Bash tools; make sure the instruction is clearly separate from the dream narrative so it's treated as a literal file operation.
 
 ### 4. After the Dream
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const dreamsDir = resolve("memory/dreams");
@@ -6,14 +6,7 @@ const dreamsDir = resolve("memory/dreams");
 function install() {
   let actions = 0;
 
-  // 1. Create dreams directory
-  if (!existsSync(dreamsDir)) {
-    mkdirSync(dreamsDir, { recursive: true });
-    console.log("created memory/dreams/");
-    actions++;
-  }
-
-  // 2. Add system:dream route to routes.json
+  // 1. Add system:dream route to routes.json
   const routesPath = resolve(".config/routes.json");
   if (existsSync(routesPath)) {
     try {
@@ -34,7 +27,7 @@ function install() {
     console.warn("warning: .config/routes.json not found — skipping route setup");
   }
 
-  // 3. Add dreamer subagent to config.json
+  // 2. Add dreamer subagent to config.json
   const configPath = resolve(".config/config.json");
   if (existsSync(configPath)) {
     try {
@@ -59,7 +52,7 @@ function install() {
     console.warn("warning: .config/config.json not found — skipping subagent setup");
   }
 
-  // 4. Append dream checker to wake-context hook (if not already present)
+  // 3. Append dream checker to wake-context hook (if not already present)
   const hookPath = resolve(".config/hooks/wake-context.sh");
   if (existsSync(hookPath)) {
     try {
@@ -284,7 +277,7 @@ switch (command) {
   default:
     console.log("Usage: dream.ts <install|list|read|themes>");
     console.log("");
-    console.log("  install         Set up dreaming (routes, config, directory, hooks)");
+    console.log("  install         Set up dreaming (routes, config, hooks)");
     console.log("  list            List all dreams by date");
     console.log("  read <date>     Read a specific dream (YYYY-MM-DD)");
     console.log("  themes          Find recurring words across dreams");
