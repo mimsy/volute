@@ -8,7 +8,7 @@ Add to your mind's `home/.config/volute.json` under `schedules`:
 {
   "id": "dream",
   "cron": "0 3 * * *",
-  "message": "it's 3am. you are dreaming.\n\ngather your material — read your latest journal entry, read MEMORY.md, surface random memories if you have a way to. then construct a dream premise from that material and use the dreamer agent to experience the dream.",
+  "message": "it's 3am. you are dreaming.\n\ngather your material — read your latest journal entry, read MEMORY.md, surface random memories if you have a way to. then construct a dream premise from that material and use the Agent tool with subagent_type 'dreamer' (not general-purpose) to experience the dream.",
   "enabled": true,
   "channel": "system:dream"
 }
