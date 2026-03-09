@@ -85,6 +85,10 @@ export async function startDaemon(opts: {
   // Load registry into memory for fast reads within the daemon
   initRegistryCache();
 
+  // Initialize sandbox runtime for mind process isolation
+  const { initSandbox } = await import("./lib/sandbox.js");
+  await initSandbox();
+
   // Sync built-in skills into the shared pool (non-fatal)
   try {
     await syncBuiltinSkills();
@@ -327,6 +331,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   let hostname = "127.0.0.1";
   let foreground = false;
   let tailscale = false;
+  let noSandbox = false;
 
   for (let i = 2; i < process.argv.length; i++) {
     if (process.argv[i] === "--port" && process.argv[i + 1]) {
@@ -339,7 +344,13 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
       foreground = true;
     } else if (process.argv[i] === "--tailscale") {
       tailscale = true;
+    } else if (process.argv[i] === "--no-sandbox") {
+      noSandbox = true;
     }
+  }
+
+  if (noSandbox) {
+    process.env.VOLUTE_SANDBOX = "0";
   }
 
   startDaemon({ port, hostname, foreground, tailscale });

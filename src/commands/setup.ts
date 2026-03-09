@@ -1,17 +1,30 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { execFile, execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
+import { promisify } from "node:util";
 import { resolveVoluteBin } from "../lib/exec.js";
 import { ensureVoluteGroup } from "../lib/isolation.js";
-import { SYSTEM_SERVICE_PATH } from "../lib/service-mode.js";
+import { parseArgs } from "../lib/parse-args.js";
+import { promptLine } from "../lib/prompt.js";
+import {
+  LAUNCHD_PLIST_LABEL,
+  LAUNCHD_PLIST_PATH,
+  SYSTEM_LAUNCHD_PLIST_PATH,
+  SYSTEM_SERVICE_PATH,
+  USER_SYSTEMD_UNIT,
+} from "../lib/service-mode.js";
+import {
+  type GlobalConfig,
+  type IsolationMode,
+  readGlobalConfig,
+  type SetupConfig,
+  type SetupType,
+  writeGlobalConfig,
+} from "../lib/setup.js";
 
-const SERVICE_NAME = "volute.service";
-const PROFILE_PATH = "/etc/profile.d/volute.sh";
-const WRAPPER_PATH = "/usr/local/bin/volute";
-const DATA_DIR = "/var/lib/volute";
-const MINDS_DIR = "/minds";
-const LEGACY_AGENTS_DIR = "/agents";
+const execFileAsync = promisify(execFile);
+
 const HOST_RE = /^[a-zA-Z0-9.:_-]+$/;
 
 function validateHost(host: string): void {
@@ -20,9 +33,82 @@ function validateHost(host: string): void {
   }
 }
 
+function escapeXml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// --- Service installation helpers ---
+
+function generatePlist(
+  voluteBin: string,
+  opts: { port?: number; host?: string; system?: boolean },
+): string {
+  const args = ["up", "--foreground"];
+  if (opts.port != null) args.push("--port", String(opts.port));
+  if (opts.host) args.push("--host", opts.host);
+
+  const logPath = opts.system
+    ? "/var/lib/volute/daemon.log"
+    : resolve(homedir(), ".volute", "daemon.log");
+
+  const envEntries: string[] = [];
+  if (opts.system) {
+    envEntries.push(
+      "  <key>EnvironmentVariables</key>",
+      "  <dict>",
+      "    <key>VOLUTE_HOME</key>",
+      "    <string>/var/lib/volute</string>",
+      "    <key>VOLUTE_MINDS_DIR</key>",
+      "    <string>/minds</string>",
+      "    <key>VOLUTE_ISOLATION</key>",
+      "    <string>user</string>",
+      "  </dict>",
+    );
+  }
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${LAUNCHD_PLIST_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    ${[voluteBin, ...args].map((a) => `<string>${escapeXml(a)}</string>`).join("\n    ")}
+  </array>
+${envEntries.length > 0 ? envEntries.join("\n") + "\n" : ""}  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${logPath}</string>
+  <key>StandardErrorPath</key>
+  <string>${logPath}</string>
+</dict>
+</plist>`;
+}
+
+function generateUserUnit(voluteBin: string, port?: number, host?: string): string {
+  const args = ["up", "--foreground"];
+  if (port != null) args.push("--port", String(port));
+  if (host) args.push("--host", host);
+
+  return `[Unit]
+Description=Volute Daemon
+After=network.target
+
+[Service]
+Type=exec
+ExecStart=${voluteBin} ${args.join(" ")}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+`;
+}
+
 function buildServicePath(voluteBin: string): string {
-  // Include the volute binary's directory (which for nvm installs won't be on the
-  // default system PATH) plus standard paths for system tools (useradd, groupadd, etc.)
   const binDir = dirname(voluteBin);
   const standardPaths = [
     "/usr/local/sbin",
@@ -36,16 +122,13 @@ function buildServicePath(voluteBin: string): string {
   return parts.join(":");
 }
 
-function generateUnit(voluteBin: string, port?: number, host?: string): string {
+function generateSystemUnit(voluteBin: string, port?: number, host?: string): string {
   const args = ["up", "--foreground"];
   if (port != null) args.push("--port", String(port));
   if (host) args.push("--host", host);
 
-  // ProtectHome=yes makes /home and /root inaccessible to the service.
-  // Skip it if the volute binary lives under the home directory (e.g. nvm installs).
   const home = homedir();
   const binUnderHome = voluteBin.startsWith(`${home}/`);
-
   const lines = [
     "[Unit]",
     "Description=Volute Mind Manager",
@@ -55,198 +138,279 @@ function generateUnit(voluteBin: string, port?: number, host?: string): string {
     "Type=exec",
     `ExecStart=${voluteBin} ${args.join(" ")}`,
     `Environment=PATH=${buildServicePath(voluteBin)}`,
-    `Environment=VOLUTE_HOME=${DATA_DIR}`,
-    `Environment=VOLUTE_MINDS_DIR=${MINDS_DIR}`,
+    "Environment=VOLUTE_HOME=/var/lib/volute",
+    "Environment=VOLUTE_MINDS_DIR=/minds",
     "Environment=VOLUTE_ISOLATION=user",
     "Restart=on-failure",
     "RestartSec=5",
     "ProtectSystem=true",
-    `ReadWritePaths=${DATA_DIR} ${MINDS_DIR}`,
+    "ReadWritePaths=/var/lib/volute /minds",
     "PrivateTmp=yes",
   ];
 
   if (!binUnderHome) {
     lines.push("ProtectHome=yes");
-  } else {
-    console.warn(`Warning: ProtectHome=yes omitted because volute binary is under ${home}.`);
-    console.warn("Consider installing Node.js system-wide for stronger sandboxing.");
   }
 
   lines.push("RestrictSUIDSGID=yes", "", "[Install]", "WantedBy=multi-user.target", "");
   return lines.join("\n");
 }
 
-export function install(port?: number, host?: string): void {
-  if (host) validateHost(host);
-  if (process.getuid?.() !== 0) {
-    console.error("Error: volute service install --system must be run as root (use sudo).");
-    process.exit(1);
+// --- Setup steps ---
+
+const DATA_DIR = "/var/lib/volute";
+const MINDS_DIR = "/minds";
+const PROFILE_PATH = "/etc/profile.d/volute.sh";
+const WRAPPER_PATH = "/usr/local/bin/volute";
+
+async function installUserService(
+  voluteBin: string,
+  port?: number,
+  host?: string,
+): Promise<boolean> {
+  const platform = process.platform;
+  try {
+    if (platform === "darwin") {
+      mkdirSync(resolve(homedir(), "Library", "LaunchAgents"), { recursive: true });
+      writeFileSync(LAUNCHD_PLIST_PATH, generatePlist(voluteBin, { port, host }));
+      console.log(`  Wrote ${LAUNCHD_PLIST_PATH}`);
+      await execFileAsync("launchctl", ["load", LAUNCHD_PLIST_PATH]);
+      console.log("  Service installed (launchd)");
+      return true;
+    } else if (platform === "linux") {
+      mkdirSync(resolve(homedir(), ".config", "systemd", "user"), { recursive: true });
+      writeFileSync(USER_SYSTEMD_UNIT, generateUserUnit(voluteBin, port, host));
+      console.log(`  Wrote ${USER_SYSTEMD_UNIT}`);
+      await execFileAsync("systemctl", ["--user", "enable", "--now", "volute"]);
+      console.log("  Service installed (systemd user)");
+      return true;
+    }
+  } catch (err) {
+    console.warn(
+      `  Warning: failed to install service: ${err instanceof Error ? err.message : err}`,
+    );
   }
+  return false;
+}
 
-  if (process.platform !== "linux") {
-    console.error("Error: volute service install --system is only supported on Linux.");
-    console.error("On macOS, use `volute service install` for user-level service management.");
-    process.exit(1);
+function installSystemService(voluteBin: string, port?: number, host?: string): boolean {
+  const platform = process.platform;
+  if (platform === "darwin") {
+    writeFileSync(
+      SYSTEM_LAUNCHD_PLIST_PATH,
+      generatePlist(voluteBin, { port, host: host ?? "0.0.0.0", system: true }),
+    );
+    console.log(`  Wrote ${SYSTEM_LAUNCHD_PLIST_PATH}`);
+    try {
+      execFileSync("launchctl", ["load", SYSTEM_LAUNCHD_PLIST_PATH]);
+      console.log("  Service installed (LaunchDaemon)");
+      return true;
+    } catch (err) {
+      console.warn(
+        `  Warning: failed to load LaunchDaemon: ${err instanceof Error ? err.message : err}`,
+      );
+      console.warn("  Try: sudo launchctl load /Library/LaunchDaemons/com.volute.daemon.plist");
+      return false;
+    }
+  } else if (platform === "linux") {
+    writeFileSync(SYSTEM_SERVICE_PATH, generateSystemUnit(voluteBin, port, host ?? "0.0.0.0"));
+    console.log(`  Wrote ${SYSTEM_SERVICE_PATH}`);
+    try {
+      execFileSync("systemctl", ["daemon-reload"]);
+      execFileSync("systemctl", ["enable", "--now", "volute"]);
+      console.log("  Service installed (systemd)");
+      return true;
+    } catch (err) {
+      console.warn(
+        `  Warning: failed to enable service: ${err instanceof Error ? err.message : err}`,
+      );
+      console.warn("  Try: systemctl daemon-reload && systemctl enable --now volute");
+      return false;
+    }
   }
+  return false;
+}
 
-  const voluteBin = resolveVoluteBin();
-
-  // Create data directory
+function setupSystemDirectories(): void {
   mkdirSync(DATA_DIR, { recursive: true });
-  console.log(`Created ${DATA_DIR}`);
-
-  // Create minds directory
+  console.log(`  Created ${DATA_DIR}`);
   mkdirSync(MINDS_DIR, { recursive: true });
-  console.log(`Created ${MINDS_DIR}`);
+  console.log(`  Created ${MINDS_DIR}`);
 
-  // Create volute group (idempotent)
-  ensureVoluteGroup({ force: true });
-  console.log("Ensured volute group exists");
+  execFileSync("chmod", ["755", DATA_DIR]);
+  execFileSync("chmod", ["755", MINDS_DIR]);
+}
 
-  // Set system-wide git identity for daemon commits if not already configured
+function setupSystemGitIdentity(): void {
   try {
     execFileSync("git", ["config", "--system", "user.name"]);
-    console.log("System git identity already configured, skipping");
+    console.log("  System git identity already configured");
   } catch {
     try {
       execFileSync("git", ["config", "--system", "user.name", "Volute"]);
       execFileSync("git", ["config", "--system", "user.email", "volute@localhost"]);
-      console.log("Configured system git identity");
+      console.log("  Configured system git identity");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`Warning: failed to set system git config: ${msg}`);
-      console.warn("Git commits by the daemon may fail. You can set this manually with:");
-      console.warn('  git config --system user.name "Volute"');
-      console.warn('  git config --system user.email "volute@localhost"');
+      console.warn(
+        `  Warning: failed to set system git config: ${err instanceof Error ? err.message : err}`,
+      );
     }
   }
+}
 
-  // Set permissions on data and minds directories
-  execFileSync("chmod", ["755", DATA_DIR]);
-  execFileSync("chmod", ["755", MINDS_DIR]);
-  console.log("Set permissions on directories");
-
-  // Write environment for CLI users so they can find the daemon
-  writeFileSync(
-    PROFILE_PATH,
-    `export VOLUTE_HOME=${DATA_DIR}\nexport VOLUTE_MINDS_DIR=${MINDS_DIR}\n`,
-  );
-  console.log(`Wrote ${PROFILE_PATH}`);
-
-  // If the binary is under a home directory (nvm), create a wrapper at /usr/local/bin
-  // so `sudo volute` works (sudo resets PATH and won't find nvm binaries)
+function setupSystemWrapper(voluteBin: string): void {
   const binDir = dirname(voluteBin);
   if (voluteBin !== WRAPPER_PATH && !voluteBin.startsWith("/usr/bin")) {
     const wrapper = `#!/bin/sh\nexport PATH="${binDir}:$PATH"\nexport VOLUTE_HOME="${DATA_DIR}"\nexport VOLUTE_MINDS_DIR="${MINDS_DIR}"\nexec "${voluteBin}" "$@"\n`;
     writeFileSync(WRAPPER_PATH, wrapper, { mode: 0o755 });
-    console.log(`Wrote ${WRAPPER_PATH} (wrapper for ${voluteBin})`);
-  }
-
-  // Install systemd service
-  writeFileSync(SYSTEM_SERVICE_PATH, generateUnit(voluteBin, port, host ?? "0.0.0.0"));
-  console.log(`Wrote ${SYSTEM_SERVICE_PATH}`);
-
-  try {
-    execFileSync("systemctl", ["daemon-reload"]);
-  } catch (err) {
-    const e = err as { stderr?: string };
-    console.error(`Failed to reload systemd after writing ${SYSTEM_SERVICE_PATH}.`);
-    if (e.stderr) console.error(e.stderr.toString().trim());
-    console.error(
-      "Try running `systemctl daemon-reload` manually, then `systemctl enable --now volute`.",
-    );
-    process.exit(1);
-  }
-  try {
-    execFileSync("systemctl", ["enable", "--now", SERVICE_NAME]);
-    console.log("Service installed, enabled, and started.");
-    console.log(
-      "Run `source /etc/profile.d/volute.sh` or start a new shell to use volute CLI commands.",
-    );
-    console.log(`\nVolute daemon is running. Data directory: ${DATA_DIR}`);
-    console.log("Use `systemctl status volute` to check status.");
-  } catch (err) {
-    const e = err as { stderr?: string };
-    console.error("Service installed but failed to start.");
-    if (e.stderr) console.error(e.stderr.toString().trim());
-    console.error("Check `journalctl -xeu volute.service` for details.");
-    process.exit(1);
+    console.log(`  Wrote ${WRAPPER_PATH}`);
   }
 }
 
-export function uninstall(force: boolean): void {
-  if (process.getuid?.() !== 0) {
-    console.error("Error: volute service uninstall --system must be run as root (use sudo).");
-    process.exit(1);
+function setupSystemEnvProfile(): void {
+  if (process.platform === "linux") {
+    writeFileSync(
+      PROFILE_PATH,
+      `export VOLUTE_HOME=${DATA_DIR}\nexport VOLUTE_MINDS_DIR=${MINDS_DIR}\n`,
+    );
+    console.log(`  Wrote ${PROFILE_PATH}`);
   }
+}
 
-  if (!existsSync(SYSTEM_SERVICE_PATH)) {
-    console.log("Service not installed.");
-    return;
-  }
+// --- Main ---
 
-  try {
-    execFileSync("systemctl", ["disable", "--now", SERVICE_NAME], { stdio: "ignore" });
-  } catch {
-    console.warn("Warning: failed to disable service (may already be stopped)");
-  }
-  unlinkSync(SYSTEM_SERVICE_PATH);
-  if (existsSync(PROFILE_PATH)) unlinkSync(PROFILE_PATH);
-  if (existsSync(WRAPPER_PATH)) unlinkSync(WRAPPER_PATH);
-  try {
-    execFileSync("systemctl", ["daemon-reload"]);
-  } catch {
-    console.warn("Warning: failed to reload systemd daemon");
-  }
-  console.log("Service stopped and removed.");
+export async function run(args: string[]) {
+  const { flags } = parseArgs(args, {
+    name: { type: "string" },
+    system: { type: "boolean" },
+    service: { type: "boolean" },
+    dir: { type: "string" },
+    port: { type: "number" },
+    host: { type: "string" },
+  });
 
-  if (force) {
-    // Remove mind users
-    try {
-      const output = execFileSync("getent", ["group", "volute"], { encoding: "utf-8" });
-      const members = output.split(":")[3]?.trim();
-      if (members) {
-        for (const user of members.split(",")) {
-          const u = user.trim();
-          try {
-            execFileSync("userdel", [u], { stdio: "ignore" });
-          } catch {
-            console.warn(`Warning: failed to remove user ${u}`);
-          }
-          try {
-            execFileSync("groupdel", [u], { stdio: "ignore" });
-          } catch {
-            // Per-user group may not exist — ignore
-          }
-        }
-      }
-    } catch {
-      // Group may not exist — ignore
+  // Determine interactive vs non-interactive
+  const isInteractive = !flags.name && process.stdin.isTTY;
+
+  let systemName: string;
+  let setupType: SetupType;
+  let wantService: boolean;
+  const port = flags.port;
+  const host = flags.host;
+
+  if (isInteractive) {
+    console.log("Welcome to Volute!\n");
+
+    systemName = await promptLine("System name: ");
+    if (!systemName.trim()) {
+      console.error("System name is required.");
+      process.exit(1);
+    }
+    systemName = systemName.trim();
+
+    console.log("\nInstall type:");
+    console.log("  1. Local (minds in ~/.volute/minds/, sandbox isolation)");
+    console.log("  2. System (minds in /minds, per-user isolation, requires sudo)");
+    const typeChoice = await promptLine("> ");
+    setupType = typeChoice.trim() === "2" ? "system" : "local";
+
+    if (setupType === "system" && process.getuid?.() !== 0) {
+      console.error("\nSystem install requires root. Re-run with sudo.");
+      process.exit(1);
     }
 
-    // Remove data and minds directories (also clean up legacy /agents)
-    if (existsSync(DATA_DIR)) {
-      rmSync(DATA_DIR, { recursive: true, force: true });
-      console.log(`Deleted ${DATA_DIR}`);
-    }
-    if (existsSync(MINDS_DIR)) {
-      rmSync(MINDS_DIR, { recursive: true, force: true });
-      console.log(`Deleted ${MINDS_DIR}`);
-    }
-    if (existsSync(LEGACY_AGENTS_DIR)) {
-      rmSync(LEGACY_AGENTS_DIR, { recursive: true, force: true });
-      console.log(`Deleted ${LEGACY_AGENTS_DIR} (legacy)`);
-    }
-
-    // Remove group
-    try {
-      execFileSync("groupdel", ["volute"], { stdio: "ignore" });
-      console.log("Removed volute group");
-    } catch {
-      // Group may not exist — ignore
+    const serviceDefault = setupType === "system" ? "Y/n" : "y/N";
+    const servicePrompt = `\nInstall as a service (auto-start on boot)? [${serviceDefault}]: `;
+    const serviceAnswer = (await promptLine(servicePrompt)).trim().toLowerCase();
+    if (setupType === "system") {
+      wantService = serviceAnswer !== "n";
+    } else {
+      wantService = serviceAnswer === "y" || serviceAnswer === "yes";
     }
   } else {
-    console.log(`Data directory preserved: ${DATA_DIR}`);
-    console.log("Use --force to also remove data and system users.");
+    // Non-interactive mode
+    if (!flags.name) {
+      console.error("Error: --name is required in non-interactive mode.");
+      console.error("Usage: volute setup --name <name> [--system] [--service] [--dir <path>]");
+      process.exit(1);
+    }
+    systemName = flags.name;
+    setupType = flags.system ? "system" : "local";
+    wantService = flags.service ?? setupType === "system";
+
+    if (setupType === "system" && process.getuid?.() !== 0) {
+      console.error("Error: system install requires root (use sudo).");
+      process.exit(1);
+    }
   }
+
+  if (host) validateHost(host);
+
+  console.log("\nSetting up...");
+
+  let isolation: IsolationMode;
+  let mindsDir: string;
+  let configHome: string;
+
+  if (setupType === "system") {
+    configHome = DATA_DIR;
+    mindsDir = MINDS_DIR;
+    isolation = "user";
+
+    // Set VOLUTE_HOME for system installs
+    process.env.VOLUTE_HOME = DATA_DIR;
+    process.env.VOLUTE_MINDS_DIR = MINDS_DIR;
+
+    setupSystemDirectories();
+    ensureVoluteGroup({ force: true });
+    console.log("  Ensured volute group exists");
+    setupSystemGitIdentity();
+
+    const voluteBin = resolveVoluteBin();
+    setupSystemWrapper(voluteBin);
+    setupSystemEnvProfile();
+
+    if (wantService) {
+      if (!installSystemService(voluteBin, port, host)) wantService = false;
+    }
+  } else {
+    // Local setup
+    configHome = flags.dir ? resolve(flags.dir) : resolve(homedir(), ".volute");
+    if (flags.dir) {
+      process.env.VOLUTE_HOME = configHome;
+    }
+    mindsDir = resolve(configHome, "minds");
+    isolation = "sandbox";
+
+    mkdirSync(configHome, { recursive: true });
+    console.log(`  Created ${configHome}`);
+    mkdirSync(mindsDir, { recursive: true });
+    console.log("  Sandbox enabled for mind isolation");
+
+    if (wantService) {
+      const voluteBin = resolveVoluteBin();
+      if (!(await installUserService(voluteBin, port, host))) wantService = false;
+    }
+  }
+
+  // Write config
+  const existingConfig = readGlobalConfig();
+  const setup: SetupConfig = {
+    type: setupType,
+    mindsDir,
+    isolation,
+    service: wantService,
+  };
+
+  const config: GlobalConfig = {
+    ...existingConfig,
+    name: systemName,
+    setup,
+  };
+  if (port != null) config.port = port;
+  if (host) config.hostname = host;
+
+  writeGlobalConfig(config);
+
+  console.log(`\nDone! Use \`volute mind create <name>\` to create your first mind.`);
 }
