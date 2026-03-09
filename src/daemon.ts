@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { format } from "node:util";
+import { migrateMindRoles } from "./lib/auth.js";
 import { initConnectorManager } from "./lib/daemon/connector-manager.js";
 import { initMailPoller } from "./lib/daemon/mail-poller.js";
 import { initMindManager } from "./lib/daemon/mind-manager.js";
@@ -261,17 +262,10 @@ export async function startDaemon(opts: {
     log.warn("failed to clean expired sessions", log.errorData(err));
   });
 
-  // Migrate mind users from role "mind" to "user" (non-blocking)
-  import("./lib/db.js")
-    .then(({ getDb }) => getDb())
-    .then(async (db) => {
-      const { users } = await import("./lib/schema.js");
-      const { eq } = await import("drizzle-orm");
-      await db.update(users).set({ role: "user" }).where(eq(users.role, "mind"));
-    })
-    .catch((err) => {
-      log.warn("failed to migrate mind roles", log.errorData(err));
-    });
+  // Migrate mind users from role "mind"/"agent" to "user" (non-blocking)
+  migrateMindRoles().catch((err) => {
+    log.warn("failed to migrate mind roles", log.errorData(err));
+  });
 
   log.info(`running on ${hostname}:${port}, pid ${myPid}`);
 

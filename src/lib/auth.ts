@@ -1,5 +1,5 @@
 import { compareSync, hashSync } from "bcryptjs";
-import { and, count, eq } from "drizzle-orm";
+import { and, count, eq, inArray } from "drizzle-orm";
 import { getDb } from "./db.js";
 import { broadcast } from "./events/activity-events.js";
 import { users } from "./schema.js";
@@ -210,4 +210,12 @@ export async function syncMindProfile(mindName: string, config: MindProfile): Pr
   const db = await getDb();
   await db.update(users).set(newProfile).where(eq(users.id, user.id));
   broadcast({ type: "profile_updated", mind: mindName, summary: `${mindName} profile updated` });
+}
+
+export async function migrateMindRoles(): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(users)
+    .set({ role: "user" })
+    .where(and(eq(users.user_type, "mind"), inArray(users.role, ["mind", "agent"])));
 }
