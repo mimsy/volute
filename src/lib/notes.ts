@@ -1,4 +1,4 @@
-import { and, count, desc, eq, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "./db.js";
 import { noteComments, noteReactions, notes, users } from "./schema.js";
 import { slugify } from "./slugify.js";
@@ -180,6 +180,7 @@ export async function listNotes(opts?: {
       count: count(),
     })
     .from(noteComments)
+    .where(inArray(noteComments.note_id, noteIds))
     .groupBy(noteComments.note_id)
     .all();
 
@@ -193,6 +194,7 @@ export async function listNotes(opts?: {
       count: count(),
     })
     .from(noteReactions)
+    .where(inArray(noteReactions.note_id, noteIds))
     .groupBy(noteReactions.note_id, noteReactions.emoji)
     .all();
 
@@ -206,25 +208,23 @@ export async function listNotes(opts?: {
   const replyToIds = [...new Set(rows.filter((r) => r.reply_to_id).map((r) => r.reply_to_id!))];
   const replyToMap = new Map<number, { author_username: string; slug: string; title: string }>();
   if (replyToIds.length > 0) {
-    for (const id of replyToIds) {
-      const parent = await db
-        .select({
-          id: notes.id,
-          title: notes.title,
-          slug: notes.slug,
-          author_username: users.username,
-        })
-        .from(notes)
-        .innerJoin(users, eq(notes.author_id, users.id))
-        .where(eq(notes.id, id))
-        .get();
-      if (parent) {
-        replyToMap.set(parent.id, {
-          author_username: parent.author_username,
-          slug: parent.slug,
-          title: parent.title,
-        });
-      }
+    const parents = await db
+      .select({
+        id: notes.id,
+        title: notes.title,
+        slug: notes.slug,
+        author_username: users.username,
+      })
+      .from(notes)
+      .innerJoin(users, eq(notes.author_id, users.id))
+      .where(inArray(notes.id, replyToIds))
+      .all();
+    for (const parent of parents) {
+      replyToMap.set(parent.id, {
+        author_username: parent.author_username,
+        slug: parent.slug,
+        title: parent.title,
+      });
     }
   }
 

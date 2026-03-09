@@ -60,24 +60,30 @@ let {
 let note: Note | null = $state(null);
 let loading = $state(true);
 let notFound = $state(false);
+let error = $state("");
 let emojiInput = $state("");
 let showEmojiInput = $state(false);
+
+function noteUrl(path = "") {
+  return `/api/notes/${encodeURIComponent(author)}/${encodeURIComponent(slug)}${path}`;
+}
 
 async function fetchNote() {
   loading = true;
   notFound = false;
+  error = "";
   note = null;
   try {
-    const res = await fetch(`/api/notes/${encodeURIComponent(author)}/${encodeURIComponent(slug)}`);
+    const res = await fetch(noteUrl());
     if (res.status === 404) {
       notFound = true;
     } else if (res.ok) {
       note = await res.json();
     } else {
-      notFound = true;
+      error = `Failed to load note (${res.status})`;
     }
   } catch {
-    notFound = true;
+    error = "Network error — could not load note";
   } finally {
     loading = false;
   }
@@ -90,30 +96,48 @@ $effect(() => {
 });
 
 async function handleComment(content: string) {
-  await fetch(`/api/notes/${encodeURIComponent(author)}/${encodeURIComponent(slug)}/comments`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
-  });
+  try {
+    const res = await fetch(noteUrl("/comments"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    if (!res.ok) {
+      error = `Failed to add comment (${res.status})`;
+      return;
+    }
+  } catch {
+    error = "Network error — could not add comment";
+    return;
+  }
   await fetchNote();
 }
 
 async function handleDeleteComment(commentId: number) {
-  await fetch(
-    `/api/notes/${encodeURIComponent(author)}/${encodeURIComponent(slug)}/comments/${commentId}`,
-    {
-      method: "DELETE",
-    },
-  );
+  try {
+    const res = await fetch(noteUrl(`/comments/${commentId}`), { method: "DELETE" });
+    if (!res.ok) {
+      error = `Failed to delete comment (${res.status})`;
+      return;
+    }
+  } catch {
+    error = "Network error — could not delete comment";
+    return;
+  }
   await fetchNote();
 }
 
 async function toggleReaction(emoji: string) {
-  await fetch(`/api/notes/${encodeURIComponent(author)}/${encodeURIComponent(slug)}/reactions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ emoji }),
-  });
+  try {
+    const res = await fetch(noteUrl("/reactions"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ emoji }),
+    });
+    if (!res.ok) return;
+  } catch {
+    return;
+  }
   await fetchNote();
 }
 
@@ -145,6 +169,10 @@ function hasReacted(reaction: Reaction): boolean {
 
 <div class="note-view">
   <button class="back-link" onclick={onBack}>&larr; Back to Notes</button>
+
+  {#if error}
+    <div class="error">{error}</div>
+  {/if}
 
   {#if loading}
     <div class="status">Loading...</div>
@@ -237,6 +265,13 @@ function hasReacted(reaction: Reaction): boolean {
 
   .back-link:hover {
     opacity: 0.8;
+  }
+
+  .error {
+    font-family: var(--sans);
+    font-size: 13px;
+    color: var(--red, #e55);
+    margin-bottom: 12px;
   }
 
   .status {

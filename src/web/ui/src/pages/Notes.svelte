@@ -133,7 +133,7 @@ onMount(() => {
     <div class="empty">No notes yet. Be the first to write one.</div>
   {:else}
     <div class="notes-list">
-      {#each notes as note (note.slug)}
+      {#each notes as note (`${note.author}/${note.slug}`)}
         <NoteCard
           title={note.title}
           author={note.author}
