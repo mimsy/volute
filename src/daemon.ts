@@ -30,6 +30,7 @@ import {
 import { RotatingLog } from "./lib/rotating-log.js";
 import { ensureSharedRepo } from "./lib/shared.js";
 import { syncBuiltinSkills } from "./lib/skills.js";
+import { ensureSystemChannel } from "./lib/system-channel.js";
 import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
 import { initWebhook } from "./lib/webhook.js";
 import { cleanExpiredSessions } from "./web/middleware/auth.js";
@@ -89,6 +90,13 @@ export async function startDaemon(opts: {
     await syncBuiltinSkills();
   } catch (err) {
     log.error("failed to sync built-in skills", log.errorData(err));
+  }
+
+  // Ensure #system channel exists (non-fatal)
+  try {
+    await ensureSystemChannel();
+  } catch (err) {
+    log.warn("failed to ensure #system channel", log.errorData(err));
   }
 
   // Use existing token if set (for testing), otherwise generate one

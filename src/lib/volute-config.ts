@@ -7,6 +7,7 @@ export type Schedule = {
   message?: string;
   script?: string;
   enabled: boolean;
+  skipWhenSleeping?: boolean;
 };
 
 export type WakeTriggerConfig = {

@@ -6,6 +6,7 @@ import { clearJsonMap, loadJsonMap, saveJsonMap } from "../json-state.js";
 import log from "../logger.js";
 import { mindDir, voluteHome } from "../registry.js";
 import { readVoluteConfig, type Schedule } from "../volute-config.js";
+import { getSleepManagerIfReady } from "./sleep-manager.js";
 
 const slog = log.child("scheduler");
 
@@ -105,6 +106,13 @@ export class Scheduler {
   }
 
   private async fire(mindName: string, schedule: Schedule): Promise<void> {
+    if (schedule.skipWhenSleeping) {
+      const sleepManager = getSleepManagerIfReady();
+      if (sleepManager?.isSleeping(mindName)) {
+        slog.info(`skipped "${schedule.id}" for ${mindName} (sleeping)`);
+        return;
+      }
+    }
     try {
       let text: string;
       if (schedule.script) {

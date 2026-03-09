@@ -65,6 +65,9 @@ switch (command) {
   case "status":
     await import("./commands/status.js").then((m) => m.run(args));
     break;
+  case "notes":
+    await import("./commands/notes.js").then((m) => m.run(args));
+    break;
   case "pages":
     await import("./commands/pages.js").then((m) => m.run(args));
     break;
@@ -100,6 +103,7 @@ Configuration:
   env       Manage environment variables
   file      Mind-to-mind file sharing
   shared    Collaborative shared repository
+  notes     Read and write notes
   pages     Publish web pages
 
 System:

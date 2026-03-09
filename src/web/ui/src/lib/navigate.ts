@@ -3,11 +3,18 @@ export type Selection =
   | { kind: "pages" }
   | { kind: "site"; name: string }
   | { kind: "page"; mind: string; path: string }
+  | { kind: "notes" }
+  | { kind: "note"; author: string; slug: string }
   | { kind: "conversation"; conversationId?: string; mindName?: string };
 
 export function parseSelection(): Selection {
   const path = window.location.pathname;
   const search = new URLSearchParams(window.location.search);
+
+  if (path === "/notes") return { kind: "notes" };
+
+  const noteMatch = path.match(/^\/notes\/([^/]+)\/(.+)$/);
+  if (noteMatch) return { kind: "note", author: noteMatch[1], slug: noteMatch[2] };
 
   if (path === "/page" || path === "/pages") return { kind: "pages" };
 
@@ -31,6 +38,10 @@ export function parseSelection(): Selection {
 
 export function selectionToPath(selection: Selection): string {
   switch (selection.kind) {
+    case "notes":
+      return "/notes";
+    case "note":
+      return `/notes/${selection.author}/${selection.slug}`;
     case "pages":
       return "/page";
     case "site":
