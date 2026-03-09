@@ -106,10 +106,17 @@ export class Scheduler {
   }
 
   private async fire(mindName: string, schedule: Schedule): Promise<void> {
-    if (schedule.skipWhenSleeping) {
-      const sleepManager = getSleepManagerIfReady();
-      if (sleepManager?.isSleeping(mindName)) {
+    const sleepManager = getSleepManagerIfReady();
+    const sleepState = sleepManager?.getState(mindName);
+    if (sleepState?.sleeping) {
+      if (schedule.skipWhenSleeping) {
         slog.info(`skipped "${schedule.id}" for ${mindName} (sleeping)`);
+        return;
+      }
+      // During trigger-wake, skip all scheduled fires. The trigger message already
+      // woke the mind; additional schedules would flood a brief wake-up.
+      if (sleepState.wokenByTrigger) {
+        slog.info(`skipped "${schedule.id}" for ${mindName} (trigger-woken)`);
         return;
       }
     }
@@ -137,7 +144,7 @@ export class Scheduler {
       }
       await this.deliver(mindName, {
         content: [{ type: "text", text }],
-        channel: "system:scheduler",
+        channel: schedule.channel ?? "system:scheduler",
         sender: schedule.id,
       });
       slog.info(`fired "${schedule.id}" for ${mindName}`);

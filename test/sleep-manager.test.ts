@@ -68,6 +68,11 @@ class TestSleepManager extends SleepManager {
   setStatePath(path: string): void {
     Object.defineProperty(this, "statePath", { get: () => path });
   }
+
+  // Expose buildTriggerWakeSummary for testing
+  testBuildTriggerWakeSummary(state: SleepState): string {
+    return (this as any).buildTriggerWakeSummary(state);
+  }
 }
 
 function sleepingState(overrides?: Partial<SleepState>): SleepState {
@@ -78,6 +83,7 @@ function sleepingState(overrides?: Partial<SleepState>): SleepState {
     wokenByTrigger: false,
     voluntaryWakeAt: null,
     queuedMessageCount: 0,
+    triggerWakeHistory: [],
     ...overrides,
   };
 }
@@ -90,6 +96,7 @@ function awakeState(): SleepState {
     wokenByTrigger: false,
     voluntaryWakeAt: null,
     queuedMessageCount: 0,
+    triggerWakeHistory: [],
   };
 }
 
@@ -579,5 +586,130 @@ describe("SleepManager state persistence", () => {
     assert.equal(sm.isSleeping("any-mind"), false);
 
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("loadState initializes missing triggerWakeHistory on old persisted state", () => {
+    const tmpDir = resolve(tmpdir(), `sleep-test-${Date.now()}`);
+    mkdirSync(tmpDir, { recursive: true });
+    const statePath = resolve(tmpDir, "sleep-state.json");
+
+    // Simulate old state format without triggerWakeHistory
+    const oldState = {
+      sleeping: true,
+      sleepingSince: new Date().toISOString(),
+      scheduledWakeAt: null,
+      wokenByTrigger: false,
+      voluntaryWakeAt: null,
+      queuedMessageCount: 0,
+    };
+    writeFileSync(statePath, JSON.stringify({ "test-mind": oldState }));
+
+    const sm = new SleepManager();
+    Object.defineProperty(sm, "statePath", { get: () => statePath });
+    (sm as any).loadState();
+
+    const state = sm.getState("test-mind");
+    assert.ok(
+      Array.isArray(state.triggerWakeHistory),
+      "triggerWakeHistory should be initialized as array",
+    );
+    assert.equal(state.triggerWakeHistory.length, 0);
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+});
+
+describe("SleepManager.convertTriggerToFullWake", () => {
+  it("clears sleep state when trigger-woken", () => {
+    const sm = new TestSleepManager();
+    sm.setStateForTest("test-mind", sleepingState({ wokenByTrigger: true }));
+    assert.equal(sm.getState("test-mind").sleeping, true);
+
+    sm.convertTriggerToFullWake("test-mind");
+
+    // markAwake deletes the state, so getState returns default (not sleeping)
+    assert.equal(sm.getState("test-mind").sleeping, false);
+  });
+
+  it("is a no-op when sleeping but not trigger-woken", () => {
+    const sm = new TestSleepManager();
+    sm.setStateForTest("test-mind", sleepingState({ wokenByTrigger: false }));
+
+    sm.convertTriggerToFullWake("test-mind");
+
+    // Should still be sleeping
+    assert.equal(sm.getState("test-mind").sleeping, true);
+  });
+
+  it("is a no-op when mind is not sleeping", () => {
+    const sm = new TestSleepManager();
+    sm.setStateForTest("test-mind", awakeState());
+
+    sm.convertTriggerToFullWake("test-mind");
+
+    assert.equal(sm.getState("test-mind").sleeping, false);
+  });
+
+  it("is a no-op for unknown minds", () => {
+    const sm = new TestSleepManager();
+    sm.convertTriggerToFullWake("unknown-mind");
+    assert.equal(sm.getState("unknown-mind").sleeping, false);
+  });
+});
+
+describe("SleepManager.buildTriggerWakeSummary", () => {
+  it("returns empty string for empty history", () => {
+    const sm = new TestSleepManager();
+    const result = sm.testBuildTriggerWakeSummary(sleepingState({ triggerWakeHistory: [] }));
+    assert.equal(result, "");
+  });
+
+  it("returns empty string for undefined history", () => {
+    const sm = new TestSleepManager();
+    const state = sleepingState();
+    (state as any).triggerWakeHistory = undefined;
+    const result = sm.testBuildTriggerWakeSummary(state);
+    assert.equal(result, "");
+  });
+
+  it("describes single trigger wake", () => {
+    const sm = new TestSleepManager();
+    const result = sm.testBuildTriggerWakeSummary(
+      sleepingState({
+        triggerWakeHistory: [{ channel: "system:dream", at: new Date().toISOString() }],
+      }),
+    );
+    assert.ok(result.includes("once"));
+    assert.ok(result.includes("system:dream"));
+  });
+
+  it("describes multiple trigger wakes on same channel", () => {
+    const sm = new TestSleepManager();
+    const result = sm.testBuildTriggerWakeSummary(
+      sleepingState({
+        triggerWakeHistory: [
+          { channel: "system:dream", at: new Date().toISOString() },
+          { channel: "system:dream", at: new Date().toISOString() },
+        ],
+      }),
+    );
+    assert.ok(result.includes("2 times"));
+    assert.ok(result.includes("system:dream"));
+  });
+
+  it("describes multiple trigger wakes on different channels", () => {
+    const sm = new TestSleepManager();
+    const result = sm.testBuildTriggerWakeSummary(
+      sleepingState({
+        triggerWakeHistory: [
+          { channel: "system:dream", at: new Date().toISOString() },
+          { channel: "discord:server/general", at: new Date().toISOString() },
+          { channel: "system:dream", at: new Date().toISOString() },
+        ],
+      }),
+    );
+    assert.ok(result.includes("3 times"));
+    assert.ok(result.includes("system:dream"));
+    assert.ok(result.includes("discord:server/general"));
   });
 });

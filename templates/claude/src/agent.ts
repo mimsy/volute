@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import type { HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { toSDKContent } from "./lib/content.js";
@@ -10,7 +12,7 @@ import { createSessionContextHook } from "./lib/hooks/session-context.js";
 import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
 import { createSessionStore } from "./lib/session-store.js";
-import { loadPrompts } from "./lib/startup.js";
+import { loadPrompts, type SubagentConfig } from "./lib/startup.js";
 import { consumeStream } from "./lib/stream-consumer.js";
 import type {
   HandlerMeta,
@@ -40,6 +42,7 @@ export function createMind(options: {
   sessionsDir: string;
   compactionMessage?: string;
   maxContextTokens?: number;
+  subagents?: Record<string, SubagentConfig>;
   onIdentityReload?: () => Promise<void>;
 }): { resolve: HandlerResolver; waitForCommits: () => Promise<void> } {
   const autoCommit = createAutoCommitHook(options.cwd);
@@ -63,6 +66,52 @@ export function createMind(options: {
 
   // Per-session compaction state
   const compactionTriggered = new Map<string, boolean>();
+
+  // --- Subagents (config-driven) ---
+
+  type SDKAgent = {
+    description: string;
+    prompt: string;
+    tools: string[];
+    model: "inherit";
+    maxTurns?: number;
+  };
+
+  function loadSubagents(
+    configs: Record<string, SubagentConfig> | undefined,
+  ): Record<string, SDKAgent> | undefined {
+    if (!configs || Object.keys(configs).length === 0) return undefined;
+    const agents: Record<string, SDKAgent> = {};
+    for (const [name, config] of Object.entries(configs)) {
+      if (typeof config.description !== "string" || typeof config.systemPrompt !== "string") {
+        log("mind", `subagent "${name}": missing description or systemPrompt, skipping`);
+        continue;
+      }
+      try {
+        const prompt = readFileSync(resolvePath(options.cwd, config.systemPrompt), "utf-8");
+        if (!prompt) {
+          log("mind", `subagent "${name}": ${config.systemPrompt} is empty, skipping`);
+          continue;
+        }
+        agents[name] = {
+          description: config.description,
+          prompt,
+          tools: config.tools ?? ["Read", "Write", "Bash"],
+          model: "inherit" as const,
+          maxTurns: config.maxTurns,
+        };
+      } catch (err: any) {
+        if (err?.code === "ENOENT") {
+          log("mind", `subagent "${name}": ${config.systemPrompt} not found, skipping`);
+        } else {
+          log("mind", `subagent "${name}": failed to read ${config.systemPrompt}: ${err.message}`);
+        }
+      }
+    }
+    return Object.keys(agents).length > 0 ? agents : undefined;
+  }
+
+  const agents = loadSubagents(options.subagents);
 
   // --- Event broadcasting ---
 
@@ -106,6 +155,7 @@ export function createMind(options: {
         model: options.model,
         maxThinkingTokens: options.maxThinkingTokens,
         resume,
+        agents,
         hooks: {
           PostToolUse: postToolUseHooks,
           PreCompact: [{ hooks: [preCompactHook] }],
