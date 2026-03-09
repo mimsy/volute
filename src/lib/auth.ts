@@ -8,7 +8,7 @@ import type { MindProfile } from "./volute-config.js";
 export type User = {
   id: number;
   username: string;
-  role: "admin" | "user" | "pending" | "mind";
+  role: "admin" | "user" | "pending";
   user_type: "brain" | "mind";
   display_name: string | null;
   description: string | null;
@@ -112,7 +112,7 @@ export async function getOrCreateMindUser(mindName: string): Promise<User> {
       .values({
         username: mindName,
         password_hash: "!mind",
-        role: "mind",
+        role: "user",
         user_type: "mind",
       })
       .returning(userSelectFields);

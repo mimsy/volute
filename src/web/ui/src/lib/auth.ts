@@ -1,7 +1,7 @@
 export type AuthUser = {
   id: number;
   username: string;
-  role: "admin" | "user" | "pending" | "mind";
+  role: "admin" | "user" | "pending";
   user_type?: "brain" | "mind";
   display_name?: string | null;
   description?: string | null;

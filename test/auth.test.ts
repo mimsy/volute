@@ -100,7 +100,7 @@ describe("auth", () => {
     const mind = await getOrCreateMindUser("my-mind");
     assert.equal(mind.username, "my-mind");
     assert.equal(mind.user_type, "mind");
-    assert.equal(mind.role, "mind");
+    assert.equal(mind.role, "user");
 
     // Calling again returns the same user
     const again = await getOrCreateMindUser("my-mind");

@@ -13,6 +13,7 @@ import { RotatingLog } from "../rotating-log.js";
 import { isSandboxEnabled, wrapForSandbox } from "../sandbox.js";
 import { mindHistory } from "../schema.js";
 import { findVariant, setVariantRunning } from "../variants.js";
+import { generateMindToken, revokeMindToken } from "./mind-tokens.js";
 import { RestartTracker } from "./restart-tracker.js";
 
 const mlog = log.child("minds");
@@ -123,6 +124,7 @@ export class MindManager {
     }
 
     const logStream = new RotatingLog(resolve(logsDir, "mind.log"));
+    const mindToken = generateMindToken(name);
     const mindEnv = loadMergedEnv(name);
     const env: Record<string, string | undefined> = {
       ...process.env,
@@ -131,6 +133,7 @@ export class MindManager {
       VOLUTE_STATE_DIR: stateDir(name),
       VOLUTE_MIND_DIR: dir,
       VOLUTE_MIND_PORT: String(port),
+      VOLUTE_DAEMON_TOKEN: mindToken,
       // Strip CLAUDECODE so the Agent SDK can spawn Claude Code subprocesses
       CLAUDECODE: undefined,
     };
@@ -363,6 +366,7 @@ export class MindManager {
     });
 
     this.stopping.delete(name);
+    revokeMindToken(name);
     if (this.restartTracker.reset(name)) this.saveCrashAttempts();
     rmSync(mindPidPath(name), { force: true });
 

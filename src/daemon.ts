@@ -261,6 +261,18 @@ export async function startDaemon(opts: {
     log.warn("failed to clean expired sessions", log.errorData(err));
   });
 
+  // Migrate mind users from role "mind" to "user" (non-blocking)
+  import("./lib/db.js")
+    .then(({ getDb }) => getDb())
+    .then(async (db) => {
+      const { users } = await import("./lib/schema.js");
+      const { eq } = await import("drizzle-orm");
+      await db.update(users).set({ role: "user" }).where(eq(users.role, "mind"));
+    })
+    .catch((err) => {
+      log.warn("failed to migrate mind roles", log.errorData(err));
+    });
+
   log.info(`running on ${hostname}:${port}, pid ${myPid}`);
 
   // Only delete PID/config files if they still belong to this process

@@ -2,7 +2,8 @@ import { timingSafeEqual } from "node:crypto";
 import { eq, lt } from "drizzle-orm";
 import { getCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
-import { getUser, type User } from "../../lib/auth.js";
+import { getOrCreateMindUser, getUser, type User } from "../../lib/auth.js";
+import { resolveMindToken } from "../../lib/daemon/mind-tokens.js";
 import { getDb } from "../../lib/db.js";
 import { sessions } from "../../lib/schema.js";
 
@@ -66,15 +67,39 @@ export const requireAdmin = createMiddleware<AuthEnv>(async (c, next) => {
   await next();
 });
 
+async function resolveSession(sessionId: string): Promise<User | null> {
+  // Check session cache first
+  const cached = sessionCache.get(sessionId);
+  if (cached && cached.expires > Date.now()) {
+    return cached.user;
+  }
+
+  const userId = await getSessionUserId(sessionId);
+  if (userId == null) {
+    sessionCache.delete(sessionId);
+    return null;
+  }
+
+  const user = await getUser(userId);
+  if (!user) {
+    sessionCache.delete(sessionId);
+    return null;
+  }
+
+  sessionCache.set(sessionId, { userId, user, expires: Date.now() + SESSION_CACHE_TTL });
+  return user;
+}
+
 export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
-  // Allow internal CLI-to-daemon requests via bearer token
   const authHeader = c.req.header("Authorization");
   if (authHeader?.startsWith("Bearer ")) {
     const token = authHeader.slice(7);
+
+    // 1. Daemon token — internal, always admin
     if (token && isValidDaemonToken(token)) {
       c.set("user", {
         id: 0,
-        username: "cli",
+        username: "daemon",
         role: "admin",
         user_type: "brain",
         display_name: null,
@@ -84,34 +109,48 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
       await next();
       return;
     }
+
+    // 2. Mind token — per-mind, resolves to mind's user record
+    const mindName = resolveMindToken(token);
+    if (mindName) {
+      const mindUser = await getOrCreateMindUser(mindName);
+      c.set("user", mindUser);
+      await next();
+      return;
+    }
+
+    // 3. Session token via Bearer (CLI login)
+    if (token) {
+      const user = await resolveSession(token);
+      if (user) {
+        if (user.role === "pending") return c.json({ error: "Account pending approval" }, 403);
+        c.set("user", user);
+        await next();
+        return;
+      }
+    }
   }
 
+  // 4. Cookie-based session (web UI)
   const sessionId = getCookie(c, "volute_session");
   if (!sessionId) return c.json({ error: "Unauthorized" }, 401);
 
-  // Check session cache first
-  const cached = sessionCache.get(sessionId);
-  if (cached && cached.expires > Date.now()) {
-    if (cached.user.role === "pending") return c.json({ error: "Account pending approval" }, 403);
-    c.set("user", cached.user);
-    await next();
-    return;
-  }
-
-  const userId = await getSessionUserId(sessionId);
-  if (userId == null) {
-    sessionCache.delete(sessionId);
-    return c.json({ error: "Unauthorized" }, 401);
-  }
-
-  const user = await getUser(userId);
-  if (!user) {
-    sessionCache.delete(sessionId);
-    return c.json({ error: "Unauthorized" }, 401);
-  }
+  const user = await resolveSession(sessionId);
+  if (!user) return c.json({ error: "Unauthorized" }, 401);
   if (user.role === "pending") return c.json({ error: "Account pending approval" }, 403);
 
-  sessionCache.set(sessionId, { userId, user, expires: Date.now() + SESSION_CACHE_TTL });
   c.set("user", user);
   await next();
 });
+
+export const requireSelf = (paramName = "name") =>
+  createMiddleware<AuthEnv>(async (c, next) => {
+    const user = c.get("user");
+    if (user.role !== "admin") {
+      const target = c.req.param(paramName);
+      if (user.username !== target) {
+        return c.json({ error: "Forbidden" }, 403);
+      }
+    }
+    await next();
+  });

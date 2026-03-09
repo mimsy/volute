@@ -9,6 +9,7 @@ import { daemonLoopback, stateDir, voluteHome } from "../registry.js";
 import { RotatingLog } from "../rotating-log.js";
 import { isSandboxEnabled, wrapForSandbox } from "../sandbox.js";
 import { readVoluteConfig } from "../volute-config.js";
+import { getMindToken } from "./mind-tokens.js";
 import { RestartTracker } from "./restart-tracker.js";
 
 const clog = log.child("connectors");
@@ -174,7 +175,7 @@ export class ConnectorManager {
         ...(daemonPort
           ? {
               VOLUTE_DAEMON_URL: `http://${daemonLoopback()}:${daemonPort}`,
-              VOLUTE_DAEMON_TOKEN: process.env.VOLUTE_DAEMON_TOKEN,
+              VOLUTE_DAEMON_TOKEN: getMindToken(mindName) ?? process.env.VOLUTE_DAEMON_TOKEN,
             }
           : {}),
         ...connectorEnv,

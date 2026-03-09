@@ -2,6 +2,18 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { voluteHome } from "./registry.js";
 
+type CliSession = { sessionId: string; username: string };
+
+function readCliSession(): CliSession | null {
+  const sessionPath = resolve(voluteHome(), "cli-session.json");
+  if (!existsSync(sessionPath)) return null;
+  try {
+    return JSON.parse(readFileSync(sessionPath, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
 type DaemonConfig = { port: number; internalPort?: number; hostname?: string; token?: string };
 
 // This module is CLI-only (imported by src/commands/). process.exit() is intentional —
@@ -53,8 +65,11 @@ export async function daemonFetch(path: string, options?: RequestInit): Promise<
   const url = buildUrl(config);
   const headers = new Headers(options?.headers);
 
-  // Include internal auth token for CLI-to-daemon requests
-  if (config.token) {
+  // Prefer CLI session token, fall back to daemon token
+  const cliSession = readCliSession();
+  if (cliSession?.sessionId) {
+    headers.set("Authorization", `Bearer ${cliSession.sessionId}`);
+  } else if (config.token) {
     headers.set("Authorization", `Bearer ${config.token}`);
   }
 
