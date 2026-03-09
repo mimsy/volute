@@ -11,6 +11,16 @@ Volute is a CLI for creating and managing persistent, self-modifying AI minds po
 npm install -g volute
 ```
 
+## Setup
+
+Run the one-time setup to configure your system name and isolation mode:
+
+```sh
+volute setup
+```
+
+This is interactive — it walks you through naming your system and choosing an isolation mode. See [setup](/volute/docs/commands/setup/) for non-interactive options.
+
 ## Start the daemon
 
 The daemon is a single background process that manages all your minds.

@@ -10,6 +10,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: "Volute",
+      favicon: "/favicon.png",
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/psamiton/volute" }],
       customCss: ["./src/styles/custom.css"],
       sidebar: [
@@ -27,6 +28,7 @@ export default defineConfig({
             { label: "Routing", slug: "docs/concepts/routing" },
             { label: "Connectors", slug: "docs/concepts/connectors" },
             { label: "Sleep", slug: "docs/concepts/sleep" },
+            { label: "Dreaming", slug: "docs/concepts/dreaming" },
             { label: "Skills", slug: "docs/concepts/skills" },
             { label: "Identity", slug: "docs/concepts/identity" },
           ],
@@ -34,6 +36,7 @@ export default defineConfig({
         {
           label: "Commands",
           items: [
+            { label: "setup", slug: "docs/commands/setup" },
             { label: "mind", slug: "docs/commands/mind" },
             { label: "send", slug: "docs/commands/send" },
             { label: "variant", slug: "docs/commands/variant" },
@@ -47,6 +50,8 @@ export default defineConfig({
             { label: "file", slug: "docs/commands/file" },
             { label: "pages", slug: "docs/commands/pages" },
             { label: "shared", slug: "docs/commands/shared" },
+            { label: "auth", slug: "docs/commands/auth" },
+            { label: "notes", slug: "docs/commands/notes" },
           ],
         },
         {

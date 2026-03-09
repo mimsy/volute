@@ -1,8 +1,9 @@
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Averia+Serif+Libre:wght@300;400;700&family=Averia+Sans+Libre:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Fira+Code:wght@300;400;500;600&display=swap");
 
 :root {
-  --sl-font: "IBM Plex Mono", monospace;
-  --sl-font-system-mono: "IBM Plex Mono", monospace;
+  --sl-font: "Averia Sans Libre", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --sl-font-system-mono: "Fira Code", "SF Mono", monospace;
+  --sl-font-system: "Averia Sans Libre", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --sl-text-xs: 0.8125rem;
   --sl-text-sm: 0.875rem;
   --sl-text-base: 0.9375rem;
@@ -89,7 +90,7 @@ pre {
   border: 1px solid #2a3040;
   border-radius: 6px;
   padding: 0.75rem 1.5rem;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: "Fira Code", "SF Mono", monospace;
   font-size: 0.9375rem;
   color: #a0aabb;
   margin-top: 1rem;
@@ -160,7 +161,7 @@ pre {
   border-radius: 10px;
   padding: 1.5rem;
   margin: 2.5rem 0;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: "Fira Code", "SF Mono", monospace;
   font-size: 0.8125rem;
   line-height: 1.8;
   overflow-x: auto;
@@ -179,6 +180,19 @@ pre {
 }
 .terminal-demo .dim {
   color: #6a7588;
+}
+
+/* Headings use display font */
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6),
+.hero h1 {
+  font-family: "Averia Serif Libre", Georgia, serif;
+}
+
+/* Site title in nav */
+.site-title {
+  font-family: "Averia Serif Libre", Georgia, serif !important;
+  font-weight: 300;
+  letter-spacing: 0.04em;
 }
 
 /* Hide theme toggle (dark-only site) */

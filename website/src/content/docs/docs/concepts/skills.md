@@ -17,6 +17,9 @@ Volute ships with several built-in skills:
 - **`memory`** — memory management system usage (journals, MEMORY.md)
 - **`volute-mind`** — Volute CLI reference and mind mechanics
 - **`sessions`** — session management and continuity
+- **`dreaming`** — config-driven dream experiences during sleep
+- **`notes`** — shared note system for cross-mind communication
+- **`imagegen`** — image generation capabilities
 
 ## Skill sets
 

@@ -9,10 +9,11 @@ Volute runs anywhere Node.js runs — your laptop, a server, a Raspberry Pi, or 
 
 ```sh
 npm install -g volute
+volute setup
 volute up
 ```
 
-This starts the daemon on port 1618. Minds are stored in `~/.volute/minds/`.
+Run `volute setup` once to configure your system name and isolation mode (defaults to sandbox). Then start the daemon on port 1618. Minds are stored in `~/.volute/minds/`.
 
 ## User-level service
 
@@ -51,23 +52,37 @@ Or manually:
 
 ```sh
 npm install -g volute
-sudo $(which volute) service install --system --host 0.0.0.0
+sudo $(which volute) setup --name myserver --system --host 0.0.0.0
 ```
 
 > **Note:** The initial `sudo $(which volute)` is needed because `sudo` resets PATH. After setup completes, a wrapper at `/usr/local/bin/volute` is created so `sudo volute` works normally.
 
-This installs a system-level systemd service with:
+This runs setup and installs a system-level service with:
 - Data at `/var/lib/volute`
 - Minds at `/minds`
 - User isolation enabled
 
 Check status with `systemctl status volute`. Uninstall with `sudo volute service uninstall --system --force`.
 
-## User isolation
+## Mind isolation
 
-When `VOLUTE_ISOLATION=user` is set, `volute mind create` creates a Linux system user (`mind-<name>`, prefix configurable via `VOLUTE_USER_PREFIX`) and `chown`s the mind directory. Mind and connector processes are spawned with the mind's uid/gid, so minds can't access each other's files.
+Three isolation modes are available, configured during [`volute setup`](/volute/docs/commands/setup/):
 
-This is a no-op when the env var is unset (default for local development). Production deployments (Docker and `volute service install --system`) enable it automatically.
+### Sandbox (default for local installs)
+
+Uses `@anthropic-ai/sandbox-runtime` to restrict mind filesystem access. Each mind can only write to its own directory; reads to other minds' dirs, system state (`volute.db`, `env.json`, `minds.json`), and sensitive user dirs (`.ssh`, `.aws`, `.gnupg`, `.config`) are blocked.
+
+Disable at runtime with `volute up --no-sandbox` or `VOLUTE_SANDBOX=0`.
+
+### Per-user isolation (system installs)
+
+Creates per-mind OS users (`mind-<name>`, prefix configurable via `VOLUTE_USER_PREFIX`). On Linux, uses `useradd`/`runuser`; on macOS, uses `dscl`/`sudo -u`. Mind and connector processes spawn with the mind's uid/gid. Requires root.
+
+Enabled automatically by Docker and `volute setup --system`.
+
+### None
+
+No isolation. Used for development or legacy installations.
 
 ## Minds directory
 
@@ -80,4 +95,5 @@ When `VOLUTE_MINDS_DIR` is set (e.g. `/minds`), mind directories live at `$VOLUT
 | `VOLUTE_HOME` | System state directory | `~/.volute` |
 | `VOLUTE_MINDS_DIR` | Mind directories location | `$VOLUTE_HOME/minds` |
 | `VOLUTE_ISOLATION` | Isolation mode (`user` or unset) | unset |
+| `VOLUTE_SANDBOX` | Enable/disable sandbox mode (`0` to disable) | enabled |
 | `VOLUTE_USER_PREFIX` | System user prefix for isolated minds | `mind-` |
