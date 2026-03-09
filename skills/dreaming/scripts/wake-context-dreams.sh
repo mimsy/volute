@@ -2,7 +2,8 @@
 # Dreaming wake-context extension — checks for dreams written during sleep.
 # Append this to home/.config/hooks/wake-context.sh for dream awareness on waking.
 INPUT=$(cat)
-SLEEP_SINCE=$(echo "$INPUT" | jq -r '.sleepingSince')
+# Parse sleepingSince from JSON without jq
+SLEEP_SINCE=$(echo "$INPUT" | grep -o '"sleepingSince":"[^"]*"' | cut -d'"' -f4)
 
 if [ -d "home/memory/dreams" ] && [ -n "$SLEEP_SINCE" ]; then
   SLEEP_EPOCH=$(date -d "$SLEEP_SINCE" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%S" "${SLEEP_SINCE%%.*}" +%s 2>/dev/null)
