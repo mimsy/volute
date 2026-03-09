@@ -85,13 +85,9 @@ export async function startDaemon(opts: {
   // Load registry into memory for fast reads within the daemon
   initRegistryCache();
 
-  // Initialize sandbox runtime for mind process isolation (non-fatal)
-  try {
-    const { initSandbox } = await import("./lib/sandbox.js");
-    await initSandbox();
-  } catch (err) {
-    log.warn("failed to initialize sandbox runtime", log.errorData(err));
-  }
+  // Initialize sandbox runtime for mind process isolation
+  const { initSandbox } = await import("./lib/sandbox.js");
+  await initSandbox();
 
   // Sync built-in skills into the shared pool (non-fatal)
   try {

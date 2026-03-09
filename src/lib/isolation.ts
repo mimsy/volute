@@ -20,8 +20,10 @@ function findNextMacId(type: "Users" | "Groups"): number {
   let output: string;
   try {
     output = execFileSync("dscl", [".", "-list", `/${type}`, idField], { encoding: "utf-8" });
-  } catch {
-    return 401; // fallback if dscl fails
+  } catch (err) {
+    throw new Error(
+      `Failed to query ${type} via dscl: ${err instanceof Error ? err.message : err}`,
+    );
   }
   const ids = new Set<number>();
   for (const line of output.split("\n")) {

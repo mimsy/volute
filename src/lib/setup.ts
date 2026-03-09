@@ -28,7 +28,8 @@ export function readGlobalConfig(): GlobalConfig {
   if (!existsSync(path)) return {};
   try {
     return JSON.parse(readFileSync(path, "utf-8"));
-  } catch {
+  } catch (err) {
+    console.error(`Failed to parse ${path}: ${err instanceof Error ? err.message : err}`);
     return {};
   }
 }

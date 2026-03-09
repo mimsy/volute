@@ -1,7 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
+import log from "./logger.js";
 import { voluteHome } from "./registry.js";
+import { readGlobalConfig } from "./setup.js";
 
 type SandboxManagerType = {
   initialize(config: SandboxRuntimeConfig): Promise<void>;
@@ -13,23 +15,14 @@ type SandboxManagerType = {
   ): Promise<string>;
 };
 
+const slog = log.child("sandbox");
+
 let sandboxManager: SandboxManagerType | null = null;
-let sandboxAvailable = false;
 
 /** Check if sandbox isolation is enabled via config. */
 export function isSandboxEnabled(): boolean {
   if (process.env.VOLUTE_SANDBOX === "0") return false;
-
-  const home = voluteHome();
-  const configPath = resolve(home, "config.json");
-  if (!existsSync(configPath)) return false;
-
-  try {
-    const config = JSON.parse(readFileSync(configPath, "utf-8"));
-    return config.setup?.isolation === "sandbox";
-  } catch {
-    return false;
-  }
+  return readGlobalConfig().setup?.isolation === "sandbox";
 }
 
 /** Initialize the sandbox runtime. Call once at daemon startup. */
@@ -53,10 +46,11 @@ export async function initSandbox(): Promise<void> {
     };
     await SandboxManager.initialize(config);
     sandboxManager = SandboxManager;
-    sandboxAvailable = true;
   } catch (err) {
-    console.warn(`Sandbox runtime not available: ${err instanceof Error ? err.message : err}`);
-    console.warn("Mind processes will run without sandbox isolation.");
+    slog.error(
+      "sandbox runtime not available — minds will run without sandbox isolation",
+      log.errorData(err),
+    );
   }
 }
 
@@ -77,6 +71,8 @@ function buildDenyRead(mindName: string, mindDir: string): string[] {
   deny.push(resolve(home, "env.json"));
   deny.push(resolve(home, "config.json"));
   deny.push(resolve(home, "daemon.json"));
+  deny.push(resolve(home, "minds.json"));
+  deny.push(resolve(home, "systems.json"));
 
   // Other minds — deny each individually since the mind's own dir is inside the same parent
   try {
@@ -91,8 +87,8 @@ function buildDenyRead(mindName: string, mindDir: string): string[] {
         }
       }
     }
-  } catch {
-    // Best-effort
+  } catch (err) {
+    slog.warn("failed to read minds registry for deny-read list", log.errorData(err));
   }
 
   // Sensitive user directories
@@ -121,7 +117,7 @@ export async function wrapForSandbox(
   mindDir: string,
   mindName: string,
 ): Promise<[string, string[]]> {
-  if (!sandboxAvailable || !sandboxManager) return [cmd, args];
+  if (!sandboxManager) return [cmd, args];
 
   const denyRead = buildDenyRead(mindName, mindDir);
   const customConfig: Partial<SandboxRuntimeConfig> = {
@@ -137,7 +133,10 @@ export async function wrapForSandbox(
     const wrapped = await sandboxManager.wrapWithSandbox(shellCmd, undefined, customConfig);
     return ["bash", ["-c", wrapped]];
   } catch (err) {
-    console.warn(`Failed to wrap command for sandbox: ${err instanceof Error ? err.message : err}`);
+    slog.error(
+      `failed to sandbox mind ${mindName} — running without isolation`,
+      log.errorData(err),
+    );
     return [cmd, args];
   }
 }
@@ -153,7 +152,7 @@ export async function wrapConnectorForSandbox(
   mindName: string,
   mindStateDir: string,
 ): Promise<[string, string[]]> {
-  if (!sandboxAvailable || !sandboxManager) return [cmd, args];
+  if (!sandboxManager) return [cmd, args];
 
   const denyRead = buildDenyRead(mindName, mindDir);
   const customConfig: Partial<SandboxRuntimeConfig> = {
@@ -169,8 +168,9 @@ export async function wrapConnectorForSandbox(
     const wrapped = await sandboxManager.wrapWithSandbox(shellCmd, undefined, customConfig);
     return ["bash", ["-c", wrapped]];
   } catch (err) {
-    console.warn(
-      `Failed to wrap connector for sandbox: ${err instanceof Error ? err.message : err}`,
+    slog.error(
+      `failed to sandbox connector for ${mindName} — running without isolation`,
+      log.errorData(err),
     );
     return [cmd, args];
   }
