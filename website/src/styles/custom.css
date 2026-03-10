@@ -82,6 +82,9 @@ pre {
   border-bottom: 1px solid #2a3040;
   padding-bottom: 3rem !important;
 }
+.hero img {
+  filter: invert(1);
+}
 
 /* Landing page install command */
 .install-command {
