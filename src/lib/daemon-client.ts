@@ -68,9 +68,14 @@ export async function daemonFetch(path: string, options?: RequestInit): Promise<
   const url = buildUrl(config);
   const headers = new Headers(options?.headers);
 
-  // Use CLI session token if available
-  const cliSession = readCliSession();
-  if (cliSession?.sessionId) {
+  // When running inside a mind process, use the mind token for auth.
+  // This ensures CLI commands run by a mind authenticate as the mind,
+  // not as whatever human CLI session happens to be on disk.
+  const mindToken = process.env.VOLUTE_DAEMON_TOKEN;
+  const cliSession = mindToken ? null : readCliSession();
+  if (mindToken) {
+    headers.set("Authorization", `Bearer ${mindToken}`);
+  } else if (cliSession?.sessionId) {
     headers.set("Authorization", `Bearer ${cliSession.sessionId}`);
   }
 
