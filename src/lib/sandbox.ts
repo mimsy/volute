@@ -72,6 +72,9 @@ export function buildDenyRead(mindName: string, mindDir: string): string[] {
   const userVoluteHome = voluteUserHome();
   if (userVoluteHome !== home) {
     deny.push(userVoluteHome);
+  } else {
+    // On local installs, systems.json lives at voluteHome root (outside system/)
+    deny.push(resolve(home, "systems.json"));
   }
 
   // Other minds — deny each individually since the mind's own dir is inside the same parent

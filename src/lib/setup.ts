@@ -25,11 +25,13 @@ export function configPath(): string {
 
 export function readGlobalConfig(): GlobalConfig {
   const path = configPath();
-  if (!existsSync(path)) return {};
+  const legacyPath = resolve(voluteHome(), "config.json");
+  const effectivePath = existsSync(path) ? path : legacyPath;
+  if (!existsSync(effectivePath)) return {};
   try {
-    return JSON.parse(readFileSync(path, "utf-8"));
+    return JSON.parse(readFileSync(effectivePath, "utf-8"));
   } catch (err) {
-    console.error(`Failed to parse ${path}: ${err instanceof Error ? err.message : err}`);
+    console.error(`Failed to parse ${effectivePath}: ${err instanceof Error ? err.message : err}`);
     return {};
   }
 }
