@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.26.0](https://github.com/mimsy/volute/compare/volute-v0.25.1...volute-v0.26.0) (2026-03-10)
+
+
+### Features
+
+* add CLI permissions system with per-mind tokens and role-based access ([#176](https://github.com/mimsy/volute/issues/176)) ([dc899e7](https://github.com/mimsy/volute/commit/dc899e712e0cd42427dd98e3fdcb6c596a252744))
+* add dreaming system with config-driven subagents ([#175](https://github.com/mimsy/volute/issues/175)) ([54583c0](https://github.com/mimsy/volute/commit/54583c0c76349d12e2a449a626a52606ce9cead8))
+* add notes system, #system channel, and default schedules ([#172](https://github.com/mimsy/volute/issues/172)) ([9d99939](https://github.com/mimsy/volute/commit/9d999395f5dfa32ca43aa48f3d01a7820e6d0447))
+* add volute setup command and sandbox runtime isolation ([#174](https://github.com/mimsy/volute/issues/174)) ([16c09be](https://github.com/mimsy/volute/commit/16c09be82061c596fd1190a4bd22333b66267969))
+
 ## [0.25.0](https://github.com/mimsy/volute/compare/volute-v0.24.0...volute-v0.25.0) (2026-03-08)
 
 
