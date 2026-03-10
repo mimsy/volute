@@ -15,7 +15,7 @@
   --sl-line-height: 1.6;
 }
 
-/* Force dark theme — same palette for both data-theme values */
+/* Force dark theme */
 :root {
   color-scheme: dark;
   --sl-color-bg: #0a0c0f;
@@ -40,28 +40,23 @@
   --sl-color-text-invert: #0a0c0f;
 }
 
-/* Selection */
 ::selection {
   background: rgba(224, 168, 96, 0.25);
   color: #e0a860;
 }
 
-/* Links */
 a {
   transition: color 0.15s;
 }
 
-/* Code blocks */
 pre {
   border: 1px solid #2a3040 !important;
 }
 
-/* Sidebar tweaks */
 .sidebar-content a[aria-current="page"] {
   color: #e0a860;
 }
 
-/* Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -77,95 +72,103 @@ pre {
   background: #3a4560;
 }
 
-/* Hero section customization */
+/* ===== LANDING PAGE ===== */
+
+/* Kill Starlight's hero entirely — we replace it with custom markup */
 .hero {
-  border-bottom: 1px solid #2a3040;
-  padding-bottom: 2rem !important;
-}
-/* Hide Starlight's default hero title since we use custom brand */
-.hero h1 {
-  display: none;
-}
-.hero .tagline {
-  display: none;
+  display: none !important;
 }
 
-/* Custom hero brand — spiral + wordmark */
+/* Custom hero brand — spiral + wordmark, centered */
 .hero-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 0.75rem;
+  justify-content: center;
+  gap: 16px;
+  padding-top: 5rem;
+  margin-bottom: 1rem;
 }
 .hero-spiral {
-  width: 72px;
-  height: 72px;
+  width: 80px;
+  height: 80px;
   filter: invert(1);
+  opacity: 0.9;
 }
 .hero-wordmark {
   font-family: "Averia Serif Libre", Georgia, serif;
-  font-size: 4.5rem;
+  font-size: 5rem;
   font-weight: 300;
   color: var(--sl-color-text);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   line-height: 1;
 }
+
+/* Tagline — the main statement */
 .hero-tagline {
   font-family: "Averia Serif Libre", Georgia, serif;
-  font-size: 1.5rem;
-  font-weight: 400;
-  color: var(--sl-color-text);
-  margin-bottom: 0.5rem;
-}
-.hero-sub {
+  font-size: 1.625rem;
+  font-weight: 300;
   color: var(--sl-color-gray-1);
-  font-size: 1rem;
-  line-height: 1.6;
-  max-width: 560px;
-  margin-bottom: 1.5rem;
+  text-align: center;
+  margin-bottom: 0.75rem;
 }
-/* Hide Starlight's default action buttons */
-.hero .action {
-  display: none;
+
+/* Description */
+.hero-sub {
+  color: var(--sl-color-gray-2);
+  font-size: 0.9375rem;
+  line-height: 1.7;
+  text-align: center;
+  max-width: 520px;
+  margin: 0 auto 2rem;
 }
-/* Custom action buttons */
+
+/* Action buttons */
 .hero-actions {
   display: flex;
   align-items: center;
-  gap: 1.25rem;
-  margin-bottom: 0.5rem;
+  justify-content: center;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
 }
 .hero-btn {
   display: inline-block;
-  padding: 10px 20px;
+  padding: 10px 24px;
   border-radius: 99px;
   font-size: 0.9375rem;
   font-weight: 500;
   text-decoration: none;
-  transition: opacity 0.15s;
-}
-.hero-btn:hover {
-  opacity: 0.85;
+  transition: all 0.15s;
 }
 .hero-btn.primary {
   background: var(--sl-color-accent);
   color: var(--sl-color-black);
 }
+.hero-btn.primary:hover {
+  background: var(--sl-color-accent-high);
+}
 .hero-btn.secondary {
+  color: var(--sl-color-gray-2);
+}
+.hero-btn.secondary:hover {
   color: var(--sl-color-gray-1);
 }
 
-/* Landing page install command */
+/* Install command — centered */
 .install-command {
+  display: block;
+  text-align: center;
+  margin: 0 auto 4rem;
+}
+.install-command code {
   display: inline-block;
-  background: #181c24;
+  background: #11141a;
   border: 1px solid #2a3040;
   border-radius: 6px;
-  padding: 0.75rem 1.5rem;
+  padding: 0.625rem 1.25rem;
   font-family: "Fira Code", "SF Mono", monospace;
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
   color: #a0aabb;
-  margin-top: 1rem;
 }
 .install-command .prompt {
   color: #6a7588;
@@ -174,69 +177,85 @@ pre {
   color: #e0a860;
 }
 
-/* Feature cards */
+/* Feature cards — 2x2 grid with subtle glow on hover */
 .feature-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 1.25rem;
-  margin: 2.5rem 0;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1px;
+  background: #2a3040;
+  border: 1px solid #2a3040;
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 4rem;
 }
 .feature-card {
-  background: #11141a;
-  border: 1px solid #2a3040;
-  border-radius: 10px;
-  padding: 1.5rem;
-  transition: border-color 0.2s;
+  background: #0f1218;
+  padding: 2rem;
+  transition: background 0.2s;
 }
 .feature-card:hover {
-  border-color: #3a4560;
+  background: #131820;
 }
 .feature-card h3 {
+  font-family: "Averia Serif Libre", Georgia, serif;
   color: #e8ecf4;
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: 1.0625rem;
+  font-weight: 400;
   margin: 0 0 0.5rem;
 }
 .feature-card p {
-  color: #a0aabb;
+  color: #6a7588;
   font-size: 0.8125rem;
-  line-height: 1.6;
+  line-height: 1.65;
   margin: 0;
 }
-.feature-card .icon {
-  font-size: 1.25rem;
-  margin-bottom: 0.75rem;
-  display: block;
-}
 
-/* Philosophy teaser */
+/* Philosophy — centered, larger, more presence */
 .philosophy-teaser {
-  border-top: 1px solid #2a3040;
-  border-bottom: 1px solid #2a3040;
-  padding: 2.5rem 0;
-  margin: 2.5rem 0;
-  max-width: 640px;
+  text-align: center;
+  max-width: 560px;
+  margin: 0 auto 4rem;
+  padding: 0;
+  border: none;
 }
 .philosophy-teaser p {
-  color: #a0aabb;
-  font-size: 0.875rem;
-  line-height: 1.7;
+  color: var(--sl-color-gray-1);
+  font-size: 0.9375rem;
+  line-height: 1.75;
+  font-style: italic;
 }
 .philosophy-teaser a {
   color: #e0a860;
+  font-style: normal;
 }
 
-/* Terminal demo */
+/* Terminal demo — with fake window chrome */
 .terminal-demo {
-  background: #11141a;
+  background: #0c0e12;
   border: 1px solid #2a3040;
-  border-radius: 10px;
-  padding: 1.5rem;
-  margin: 2.5rem 0;
+  border-radius: 12px;
+  margin: 0 0 2rem;
   font-family: "Fira Code", "SF Mono", monospace;
   font-size: 0.8125rem;
   line-height: 1.8;
-  overflow-x: auto;
+  overflow: hidden;
+}
+.terminal-chrome {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 16px;
+  background: #11141a;
+  border-bottom: 1px solid #1f2430;
+}
+.terminal-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #2a3040;
+}
+.terminal-body {
+  padding: 1.25rem 1.5rem;
 }
 .terminal-demo .prompt {
   color: #6a7588;
@@ -254,9 +273,10 @@ pre {
   color: #6a7588;
 }
 
+/* ===== DOCS PAGES ===== */
+
 /* Headings use display font */
-.sl-markdown-content :is(h1, h2, h3, h4, h5, h6),
-.hero h1 {
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6) {
   font-family: "Averia Serif Libre", Georgia, serif;
 }
 
@@ -277,4 +297,21 @@ starlight-theme-select {
   max-width: 800px;
   margin: 0 auto;
   padding: 3rem 1.5rem;
+}
+
+/* Responsive — stack feature cards on mobile */
+@media (max-width: 640px) {
+  .feature-grid {
+    grid-template-columns: 1fr;
+  }
+  .hero-brand {
+    padding-top: 3rem;
+  }
+  .hero-wordmark {
+    font-size: 3.5rem;
+  }
+  .hero-spiral {
+    width: 56px;
+    height: 56px;
+  }
 }
