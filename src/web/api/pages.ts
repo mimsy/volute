@@ -27,7 +27,7 @@ const app = new Hono().get("/:name/*", async (c) => {
   if (name === "_system") {
     pagesRoot = resolve(voluteHome(), "shared", "pages");
   } else {
-    if (!findMind(name)) return c.text("Not found", 404);
+    if (!(await findMind(name))) return c.text("Not found", 404);
     pagesRoot = resolve(mindDir(name), "home", "public", "pages");
   }
   const wildcard = c.req.path.replace(`/pages/${name}`, "") || "/";

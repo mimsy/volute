@@ -18,14 +18,14 @@ Core values:
 
 - `src/cli.ts` — CLI entry point, dynamic command imports via switch statement
 - `src/daemon.ts` — Daemon entry point, starts web server + mind/connector/scheduler managers
-- `src/commands/` — One file per command, each exports `async function run(args: string[])`. Top-level nouns (`mind.ts`, `auth.ts`, `channel.ts`, `env.ts`, `schedule.ts`, `service.ts`, `variant.ts`) dispatch to subcommand files.
+- `src/commands/` — One file per command, each exports `async function run(args: string[])`. Top-level nouns (`mind.ts`, `auth.ts`, `channel.ts`, `env.ts`, `schedule.ts`, `service.ts`) dispatch to subcommand files.
 - `src/lib/` — Shared libraries (registry, mind-manager, connector-manager, scheduler, daemon-client, arg parsing, exec wrappers, variant metadata, db, auth, conversations, channels)
 - `src/web/` — Web dashboard (Hono backend + Svelte frontend), served by the daemon
 - `src/connectors/` — Built-in connector implementations (Discord, Slack, Telegram) + shared SDK
 - `skills/` — Built-in skill definitions (memory, sessions, orientation, volute-mind), synced to the shared pool on daemon startup
 - `templates/claude/` — Default template (Claude Agent SDK) copied by `volute mind create`
 - `templates/pi/` — Alternative template using pi-coding-agent for multi-provider LLM support
-- All minds live in `~/.volute/minds/<name>/` by default (overridable via `VOLUTE_MINDS_DIR`) with a centralized registry at `~/.volute/minds.json`
+- All minds live in `~/.volute/minds/<name>/` by default (overridable via `VOLUTE_MINDS_DIR`) with a centralized registry backed by the `minds` DB table in `volute.db`
 
 ### Daemon model
 
@@ -38,7 +38,7 @@ A single daemon process (`volute up`) manages all minds, connectors, and schedul
 - **MailPoller** (`src/lib/mail-poller.ts`) — System-wide email polling via volute.systems API (auto-activates when a systems account exists)
 - **DaemonClient** (`src/lib/daemon-client.ts`) — CLI commands talk to the daemon via HTTP API
 
-CLI commands like `mind start`, `mind stop`, `message send`, `connector`, `variant` all proxy through the daemon API.
+CLI commands like `mind start`, `mind stop`, `message send`, `connector`, `mind split`, `mind join` all proxy through the daemon API.
 
 ### Centralized state directory
 
@@ -93,8 +93,7 @@ Each mind project (created from the template) has:
     ├── session-cursors.json   # Session polling cursors
     ├── identity/              # Ed25519 keypair (private.pem, public.pem)
     ├── connectors/            # Connector configs (e.g. connectors/discord/config.json)
-    ├── schedules.json         # Cron schedules for this mind
-    └── variants.json          # Variant metadata
+    └── schedules.json         # Cron schedules for this mind
 ```
 
 The SDK runs with `cwd: home/` so it picks up `CLAUDE.md` and `.claude/skills/` from there.
@@ -124,7 +123,7 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 - **Backend** (`src/web/`): Hono API routes for auth, minds, chat, conversations, logs, variants, files, connectors, schedules, channels, env, keys, pages, prompts, skills, file-sharing
 - **Frontend** (`src/web/ui/`): Svelte SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs)
 - **Auth**: Cookie-based (`volute_session`), in-memory session map, first user auto-admin
-- **Database**: libSQL at `~/.volute/volute.db` for users, conversations, messages, mind_history
+- **Database**: libSQL at `~/.volute/volute.db` for users, conversations, messages, mind_history, minds
 - **Build**: `vite build` → `dist/web-assets/`
 
 ## Commands
@@ -149,10 +148,8 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute chat list [--mind]` | List conversations |
 | `volute chat create --participants u1,u2 [--mind]` | Create a conversation |
 | `volute chat bridge add/remove/list/map/unmap` | Manage platform bridges |
-| `volute variant create <name> [--mind] [--soul "..."] [--port N] [--no-start] [--json]` | Create variant (worktree + server) |
-| `volute variant list [--mind] [--json]` | List variants with health status |
-| `volute variant merge <name> [--mind] [--summary "..." --memory "..." --justification "..."]` | Merge variant back and restart |
-| `volute variant delete <name> [--mind]` | Delete a variant |
+| `volute mind split <name> [--mind] [--soul "..."] [--port N] [--no-start]` | Create a variant (worktree + server) |
+| `volute mind join <variant-name> [--mind] [--summary "..." --memory "..." --justification "..."]` | Merge variant back and restart parent |
 | `volute env <set\|get\|list\|remove> [--mind] [--reveal]` | Manage environment variables |
 | `volute mind connect <type> [--mind]` | Enable a connector for a mind |
 | `volute mind disconnect <type> [--mind]` | Disable a connector for a mind |
@@ -177,7 +174,7 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute status` | Show daemon status, version, and minds |
 | `volute update` | Check for updates |
 
-Mind-scoped commands (`chat`, `variant`, `schedule`, `file`, `skill`, `shared`, `pages`) use `--mind <name>` or `VOLUTE_MIND` env var.
+Mind-scoped commands (`chat`, `schedule`, `file`, `skill`, `shared`, `pages`) use `--mind <name>` or `VOLUTE_MIND` env var.
 
 ## Source files
 
@@ -185,11 +182,13 @@ Mind-scoped commands (`chat`, `variant`, `schedule`, `file`, `skill`, `shared`, 
 
 | File | Purpose |
 |------|---------|
-| `registry.ts` | Mind registry at `~/.volute/minds.json`, port allocation (4100+), `running` field, name@variant resolution |
+| `registry.ts` | Mind registry backed by DB `minds` table, port allocation (4100+), `running` field |
 | `connector-defs.ts` | Connector type definitions and metadata |
 | `daemon-client.ts` | HTTP client for CLI → daemon communication, reads `~/.volute/daemon.json` for port |
 | `api-client.ts` | HTTP client for mind → daemon API calls |
-| `variants.ts` | Variant metadata (`~/.volute/variants.json`), health checks, git worktree ops |
+| `variants.ts` | Branch name validation for variants |
+| `health.ts` | Shared health check utility for mind ports |
+| `migrate-registry-to-db.ts` | One-time migration from JSON registry to DB |
 | `template.ts` | Template discovery, copying, `{{name}}` substitution, `.init/` → `home/` migration |
 | `spawn-server.ts` | Spawns `tsx src/server.ts`, waits for port listening (used for variants only) |
 | `parse-args.ts` | Type-safe argument parser with positional args and typed flags |
@@ -197,7 +196,7 @@ Mind-scoped commands (`chat`, `variant`, `schedule`, `file`, `skill`, `shared`, 
 | `exec.ts` | Async wrappers around `execFile` (returns stdout) and `spawn` (inherits stdio) |
 | `env.ts` | Environment variables (shared `~/.volute/env.json` + mind-specific state dir env) |
 | `format-tool.ts` | Shared tool call summarization (`[toolName primaryArg]` format) |
-| `schema.ts` | Drizzle ORM schema (users, conversations, conversation_participants, messages, mind_history, sessions) |
+| `schema.ts` | Drizzle ORM schema (users, conversations, conversation_participants, messages, mind_history, sessions, minds) |
 | `db.ts` | libSQL database singleton at `~/.volute/volute.db` (WAL mode, foreign keys) |
 | `auth.ts` | bcrypt password hashing, first user auto-admin, pending approval flow, mind users |
 | `channels.ts` | ChannelProvider registry with optional drivers (read/send), display names, slug resolution via `channels.json` |
@@ -316,8 +315,8 @@ Mind-scoped commands (`chat`, `variant`, `schedule`, `file`, `skill`, `shared`, 
 
 - Single daemon process manages all minds, connectors, and schedules
 - CLI commands proxy through daemon HTTP API via `daemonFetch()` in `daemon-client.ts`
-- Centralized registry at `~/.volute/minds.json` maps mind names to ports, tracks `running` state
-- `resolveMind()` supports `name@variant` syntax for addressing variants
+- Centralized registry in the `minds` DB table maps mind names to ports, tracks `running` state; variants are rows with a `parent` field
+- `resolveMind()` does DB lookups to resolve mind names (including variants by their standalone name)
 - MindManager spawns mind servers as child processes with crash recovery (3s delay) and merge-restart
 - Channel URIs use human-readable slugs: `discord:my-server/general`, `slack:workspace/channel`, `telegram:@username`, `volute:conversation-title`. Connectors generate slugs and write slug→platformId mappings to `~/.volute/state/<name>/channels.json`. Channel drivers resolve slugs back to platform IDs via this mapping.
 - Connector resolution: mind-specific → user-shared (`~/.volute/connectors/`) → built-in (`src/connectors/`)
@@ -326,7 +325,7 @@ Mind-scoped commands (`chat`, `variant`, `schedule`, `file`, `skill`, `shared`, 
 - Message routing via `routes.json` rules with glob matching, `isDM`/`participants` matching, template expansion (`${sender}`, `${channel}`), and file/mind destinations
 - Channel gating (`gateUnmatched`) holds unrecognized channels in `inbox/` until the mind adds a routing rule
 - Multi-participant conversations with fan-out to all mind participants; mind users tracked in the `users` table with `user_type: "mind"`
-- Variants use git worktrees with detached server processes; metadata in `~/.volute/variants.json`
+- Variants use git worktrees with detached server processes; tracked as rows in the `minds` DB table with a `parent` field
 - All child process execution must be async (never `execFileSync`) to avoid blocking the event loop
 - Arg parsing via `src/lib/parse-args.ts` — type-safe with positional args and typed flags
 - Mind system prompt built from: SOUL.md + VOLUTE.md + MEMORY.md
@@ -362,7 +361,7 @@ sudo volute setup --name myserver --system --host 0.0.0.0
 
 Three isolation modes, configured via `volute setup` (stored in `~/.volute/config.json` as `setup.isolation`):
 
-- **`sandbox`** — Local installs use `@anthropic-ai/sandbox-runtime` to sandbox mind processes. Each mind can only write to its own directory; reads to other minds' dirs, system state (`volute.db`, `env.json`, `minds.json`, `systems.json`), and sensitive user dirs (`.ssh`, `.aws`, `.gnupg`, `.config`) are blocked. Sandbox wrapping happens per-mind at spawn time. Disable at runtime with `volute up --no-sandbox` or `VOLUTE_SANDBOX=0`.
+- **`sandbox`** — Local installs use `@anthropic-ai/sandbox-runtime` to sandbox mind processes. Each mind can only write to its own directory; reads to other minds' dirs, system state (`volute.db`, `env.json`, `systems.json`), and sensitive user dirs (`.ssh`, `.aws`, `.gnupg`, `.config`) are blocked. Sandbox wrapping happens per-mind at spawn time. Disable at runtime with `volute up --no-sandbox` or `VOLUTE_SANDBOX=0`.
 - **`user`** — System installs create per-mind OS users (`mind-<name>`, prefix configurable via `VOLUTE_USER_PREFIX`). On Linux, uses `useradd`/`runuser`; on macOS, uses `dscl`/`sudo -u`. Mind and connector processes spawn with the mind's uid/gid. Requires root.
 - **`none`** — No isolation. Used for development or when migrated from a pre-setup installation.
 

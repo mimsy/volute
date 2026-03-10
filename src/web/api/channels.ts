@@ -12,7 +12,7 @@ function buildEnv(name: string): Record<string, string> {
 const app = new Hono<AuthEnv>()
   .post("/:name/channels/send", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
 
     const { platform, uri, message, images, sender } = await c.req.json<{
       platform: string;
@@ -35,7 +35,7 @@ const app = new Hono<AuthEnv>()
   })
   .get("/:name/channels/read", async (c) => {
     const name = c.req.param("name");
-    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
 
     const platform = c.req.query("platform");
     const uri = c.req.query("uri");
@@ -56,7 +56,7 @@ const app = new Hono<AuthEnv>()
   })
   .get("/:name/channels/list", async (c) => {
     const name = c.req.param("name");
-    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
 
     const platform = c.req.query("platform");
     const platforms = platform ? [platform] : Object.keys(CHANNELS);
@@ -87,7 +87,7 @@ const app = new Hono<AuthEnv>()
   })
   .get("/:name/channels/users", async (c) => {
     const name = c.req.param("name");
-    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
 
     const platform = c.req.query("platform");
     if (!platform) return c.json({ error: "platform required" }, 400);
@@ -106,7 +106,7 @@ const app = new Hono<AuthEnv>()
   })
   .post("/:name/channels/create", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
 
     const {
       platform,

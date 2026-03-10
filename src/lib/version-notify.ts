@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { deliverMessage } from "./delivery/message-delivery.js";
 import log from "./logger.js";
-import { readRegistry, voluteSystemDir, writeRegistry } from "./registry.js";
+import { readRegistry, setMindTemplateHash, voluteSystemDir } from "./registry.js";
 import { parseReleaseNotes } from "./release-notes.js";
 import { computeTemplateHash } from "./template-hash.js";
 import { getCurrentVersion } from "./update-check.js";
@@ -32,9 +32,8 @@ function writeState(state: VersionNotifyState): void {
  * Backfill templateHash for minds that don't have one.
  * Uses the current template hash so existing minds won't get a false upgrade notification.
  */
-export function backfillTemplateHashes(): void {
-  const entries = readRegistry();
-  let changed = false;
+export async function backfillTemplateHashes(): Promise<void> {
+  const entries = await readRegistry();
 
   for (const entry of entries) {
     if (entry.templateHash != null) continue;
@@ -42,15 +41,11 @@ export function backfillTemplateHashes(): void {
 
     const tmpl = entry.template ?? "claude";
     try {
-      entry.templateHash = computeTemplateHash(tmpl);
-      changed = true;
+      const hash = computeTemplateHash(tmpl);
+      await setMindTemplateHash(entry.name, hash);
     } catch (err) {
       log.warn(`failed to compute template hash for ${entry.name}`, log.errorData(err));
     }
-  }
-
-  if (changed) {
-    writeRegistry(entries);
   }
 }
 
@@ -72,7 +67,7 @@ export async function notifyVersionUpdate(): Promise<void> {
   // Version unchanged: nothing to do
   if (state.lastNotifiedVersion === currentVersion) return;
 
-  const entries = readRegistry();
+  const entries = await readRegistry();
   const runningMinds = entries.filter((e) => e.running && e.stage !== "seed");
 
   if (runningMinds.length === 0) {

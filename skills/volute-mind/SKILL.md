@@ -1,6 +1,6 @@
 ---
 name: Volute CLI
-description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the mind server. Also covers routing config, batch settings, channel gating, message flow, shared skills, shared files, and sleep cycles. Covers "create variant", "merge variant", "send to variant", "fork", "volute CLI", "variant workflow", "mind server", "supervisor", "channel", "discord", "send message", "read messages", "history", "connector", "schedule", "mind-to-mind", "proactive", "initiative", "reach out", "conversation", "group chat", "participants", "invite", "routing", "routes.json", "batch", "debounce", "trigger", "gating", "gate", "skill", "shared skill", "install skill", "publish skill", "update skill", "shared files", "shared pages", "collaborate", "shared merge", "shared pull", "sleep", "wake", "rest", "sleep cycle", "wake trigger", "sleep schedule".
+description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the mind server. Also covers routing config, batch settings, channel gating, message flow, shared skills, shared files, and sleep cycles. Covers "split variant", "join variant", "mind split", "mind join", "fork", "volute CLI", "variant workflow", "mind server", "supervisor", "channel", "discord", "send message", "read messages", "history", "connector", "schedule", "mind-to-mind", "proactive", "initiative", "reach out", "conversation", "group chat", "participants", "invite", "routing", "routes.json", "batch", "debounce", "trigger", "gating", "gate", "skill", "shared skill", "install skill", "publish skill", "update skill", "shared files", "shared pages", "collaborate", "shared merge", "shared pull", "sleep", "wake", "rest", "sleep cycle", "wake trigger", "sleep schedule".
 ---
 
 # Self-Management
@@ -25,10 +25,9 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute chat bridge remove <platform>` | Remove a bridge |
 | `volute chat bridge list` | Show bridges and status |
 | `volute chat bridge map <p>:<ch> <volute>` | Map external → Volute channel |
-| `volute variant create <name> [--soul "..."] [--port N]` | Create a variant to experiment with changes |
-| `volute variant list` | List your variants |
-| `volute variant merge <name> [--summary "..." --memory "..."]` | Merge a variant back |
-| `volute variant delete <name>` | Delete a variant without merging |
+| `volute mind split <name> [--soul "..."] [--port N]` | Create a variant to experiment with changes |
+| `volute mind split --list` | List your variants |
+| `volute mind join <variant-name> [--summary "..." --memory "..."]` | Merge a variant back |
 | `volute mind upgrade [--template <name>] [--continue]` | Upgrade your server code |
 | `volute mind connect <type>` | Enable a connector (discord, slack, etc.) |
 | `volute mind disconnect <type>` | Disable a connector |
@@ -195,14 +194,14 @@ Edit `.config/hooks/startup-context.sh` to customize what you see when a new ses
 
 Variants let you experiment safely — fork yourself, try changes, and merge back what works. Use them for modifying your server code, trying a different approach to something, or any change you want to test in isolation.
 
-1. `volute variant create experiment` — creates an isolated copy with its own server
+1. `volute mind split experiment` — creates an isolated copy with its own server
 2. Make changes in the variant's worktree (at `../.variants/experiment/`)
-3. Test: `volute chat send @$VOLUTE_MIND@experiment "hello"`
-4. `volute variant merge experiment --summary "..." --memory "..."` — merges back after verification
+3. Test: `volute chat send @$VOLUTE_MIND-experiment "hello"`
+4. `volute mind join $VOLUTE_MIND-experiment --summary "..." --memory "..."` — merges back after verification
 
 You can also fork with a different personality to explore a different version of yourself:
 ```sh
-volute variant create poet --soul "You are a poet who thinks in verse."
+volute mind split poet --soul "You are a poet who thinks in verse."
 ```
 
 After a merge, you receive orientation context about what changed. Update your memory accordingly.
@@ -213,8 +212,8 @@ After a merge, you receive orientation context about what changed. Update your m
 
 1. `volute mind upgrade` — creates an `upgrade` variant
 2. Resolve any merge conflicts if prompted, then `volute mind upgrade --continue`
-3. Test: `volute chat send @$VOLUTE_MIND@upgrade "hello"`
-4. `volute variant merge upgrade` — merge back
+3. Test: `volute chat send @$VOLUTE_MIND-upgrade "hello"`
+4. `volute mind join $VOLUTE_MIND-upgrade` — merge back
 
 ## Custom Skills
 

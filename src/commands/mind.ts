@@ -56,6 +56,12 @@ export async function run(args: string[]) {
     case "wake":
       await import("./mind-wake.js").then((m) => m.run(args.slice(1)));
       break;
+    case "split":
+      await import("./split.js").then((m) => m.run(args.slice(1)));
+      break;
+    case "join":
+      await import("./join.js").then((m) => m.run(args.slice(1)));
+      break;
     case "--help":
     case "-h":
     case undefined:
@@ -89,7 +95,9 @@ function printUsage() {
   volute mind sprout
   volute mind sleep [name] [--wake-at <time>]
   volute mind wake [name]
-  volute mind upgrade [name] [--template <name>] [--continue]
+  volute mind split <name> [--from <mind>] [--soul "..."] [--port N] [--no-start] [--json]
+  volute mind join <variant-name> [--summary "..." --justification "..." --memory "..."] [--skip-verify]
+  volute mind upgrade [name] [--template <name>] [--continue] [--accept]
   volute mind import <path> [--name <name>] [--session <path>] [--template <name>]
   volute mind export <name> [--include-env] [--include-identity] [--include-history] [--include-sessions] [--all] [--output <path>]
 

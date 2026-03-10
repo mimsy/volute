@@ -109,11 +109,11 @@ Mind:
   mind status [name]               Check a mind's status
   mind logs [name] [--follow]      Tail mind logs
   mind sprout                      Complete orientation
+  mind split/join                  Create and merge experimental splits
   mind upgrade/import/export       Lifecycle operations
 
 Configuration:
   chat      Conversations, messages, and platform bridges
-  variant   Create and merge experimental variants
   schedule  Manage cron schedules
   skill     Browse and install skills
   env       Manage environment variables
@@ -136,7 +136,7 @@ Options:
 
 Run 'volute <command> --help' for details.
 
-Mind-scoped commands (chat, variant, schedule, file, skill, shared, pages)
+Mind-scoped commands (chat, schedule, file, skill, shared, pages)
 use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
   default:

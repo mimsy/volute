@@ -3,7 +3,7 @@ import { publish as publishActivity } from "../events/activity-events.js";
 import { markIdle } from "../events/mind-activity-tracker.js";
 import log from "../logger.js";
 import { startWatcher, stopWatcher } from "../pages-watcher.js";
-import { findMind, mindDir } from "../registry.js";
+import { findMind, getBaseName, mindDir } from "../registry.js";
 import { joinSystemChannelForMind } from "../system-channel.js";
 import { readVoluteConfig } from "../volute-config.js";
 import { ensureMailAddress } from "./mail-poller.js";
@@ -16,7 +16,8 @@ import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "./token-budget.js
  * Variants only get the server — no schedules/budget.
  */
 export async function startMindFull(name: string): Promise<void> {
-  const [baseName, variantName] = name.split("@", 2);
+  const entry = await findMind(name);
+  const baseName = entry?.parent ?? name;
 
   await getMindManager().startMind(name);
 
@@ -26,10 +27,9 @@ export async function startMindFull(name: string): Promise<void> {
     summary: `${name} started`,
   }).catch((err) => log.error("failed to publish mind_started activity", log.errorData(err)));
 
-  if (variantName) return;
+  if (entry?.parent) return;
 
   // Seed minds only get the server — no schedules or budget
-  const entry = findMind(baseName);
   if (!entry || entry.stage === "seed") return;
 
   const dir = mindDir(baseName);
@@ -93,9 +93,10 @@ export async function wakeMind(name: string): Promise<void> {
 }
 
 export async function stopMindFull(name: string): Promise<void> {
-  const [baseName, variantName] = name.split("@", 2);
+  const baseName = await getBaseName(name);
+  const isBase = baseName === name;
 
-  if (!variantName) {
+  if (isBase) {
     stopWatcher(baseName);
     markIdle(baseName);
     getScheduler().unloadSchedules(baseName);

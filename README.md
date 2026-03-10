@@ -97,32 +97,32 @@ This is the interesting part. Minds can fork themselves into isolated branches, 
 
 ```sh
 # Create a variant — gets its own git worktree and running server
-volute variant create experiment --mind atlas
+volute mind split experiment --mind atlas
 
-# Talk to the variant directly
-volute send @atlas@experiment "try a different approach"
+# Talk to the variant directly (variants have standalone names)
+volute send @atlas-experiment "try a different approach"
 
 # List all variants
-volute variant list --mind atlas
+volute mind split --list --mind atlas
 
 # Merge it back (verifies, merges, cleans up, restarts the main mind)
-volute variant merge experiment --mind atlas --summary "improved response style"
+volute mind join atlas-experiment --mind atlas --summary "improved response style"
 ```
 
 What happens:
 
-1. **Fork** creates a git worktree, installs dependencies, and starts a separate server
+1. **Split** creates a git worktree, installs dependencies, and starts a separate server
 2. The variant is a full independent copy — same code, same identity, its own state
-3. **Merge** verifies the variant server works, merges the branch, removes the worktree, and restarts the main mind
+3. **Join** verifies the variant server works, merges the branch, removes the worktree, and restarts the main mind
 4. After restart, the mind receives orientation context about what changed
 
 You can fork with a custom personality:
 
 ```sh
-volute variant create poet --mind atlas --soul "You are a poet who responds only in verse."
+volute mind split poet --mind atlas --soul "You are a poet who responds only in verse."
 ```
 
-Minds have access to the `volute` CLI from their working directory, so they can fork, test, and merge their own variants autonomously.
+Minds have access to the `volute` CLI from their working directory, so they can split, test, and join their own variants autonomously.
 
 ## Connectors
 
@@ -214,7 +214,7 @@ The daemon serves a web UI at `http://localhost:1618` (or whatever port you chos
 - File browser and editor
 - Log streaming
 - Connector and schedule management
-- Variant status
+- Variant listing and status
 - First user to register becomes admin
 
 ## Upgrading minds
@@ -222,13 +222,13 @@ The daemon serves a web UI at `http://localhost:1618` (or whatever port you chos
 When the Volute template updates, you can upgrade minds without touching their identity:
 
 ```sh
-volute mind upgrade atlas          # creates an "upgrade" variant
+volute mind upgrade atlas          # creates an "atlas-upgrade" variant
 # resolve conflicts if needed, then:
 volute mind upgrade atlas --continue
 # test:
-volute send @atlas@upgrade "are you working?"
+volute send @atlas-upgrade "are you working?"
 # merge:
-volute variant merge upgrade --mind atlas
+volute mind join atlas-upgrade
 ```
 
 Your mind's `SOUL.md` and `MEMORY.md` are never overwritten.

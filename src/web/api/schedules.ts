@@ -28,15 +28,15 @@ function writeSchedules(name: string, schedules: Schedule[]): void {
 
 const app = new Hono<AuthEnv>()
   // List schedules
-  .get("/:name/schedules", (c) => {
+  .get("/:name/schedules", async (c) => {
     const name = c.req.param("name");
-    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
     return c.json(readSchedules(name));
   })
   // Add schedule — admin only
   .post("/:name/schedules", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
     if (entry.stage === "seed")
       return c.json({ error: "Seed minds cannot use schedules — sprout first" }, 403);
@@ -77,7 +77,7 @@ const app = new Hono<AuthEnv>()
   .put("/:name/schedules/:id", requireAdmin, async (c) => {
     const name = c.req.param("name");
     const id = c.req.param("id");
-    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
 
     const schedules = readSchedules(name);
     const idx = schedules.findIndex((s) => s.id === id);
@@ -110,10 +110,10 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true });
   })
   // Delete schedule — admin only
-  .delete("/:name/schedules/:id", requireAdmin, (c) => {
+  .delete("/:name/schedules/:id", requireAdmin, async (c) => {
     const name = c.req.param("name");
     const id = c.req.param("id");
-    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
 
     const schedules = readSchedules(name);
     const filtered = schedules.filter((s) => s.id !== id);
@@ -128,7 +128,7 @@ const app = new Hono<AuthEnv>()
   .post("/:name/webhook/:event", async (c) => {
     const name = c.req.param("name");
     const event = c.req.param("event");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const body = await c.req.text();

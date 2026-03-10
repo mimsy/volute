@@ -42,6 +42,7 @@ import {
   subscribe as subscribeMindEvent,
 } from "../../lib/events/mind-events.js";
 import { exec, gitExec } from "../../lib/exec.js";
+import { checkHealth } from "../../lib/health.js";
 import {
   generateIdentity,
   getFingerprint,
@@ -68,8 +69,11 @@ import {
 } from "../../lib/prompts.js";
 import {
   addMind,
+  addVariant,
   ensureVoluteHome,
   findMind,
+  findVariants,
+  getBaseName,
   mindDir,
   nextPort,
   readRegistry,
@@ -95,14 +99,7 @@ import {
 import { computeTemplateHash } from "../../lib/template-hash.js";
 import { getTypingMap, publishTypingForChannels } from "../../lib/typing.js";
 import { cleanupVariant } from "../../lib/variant-cleanup.js";
-import {
-  addVariant,
-  checkHealth,
-  findVariant,
-  readVariants,
-  removeAllVariants,
-  validateBranchName,
-} from "../../lib/variants.js";
+import { validateBranchName } from "../../lib/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
 import { fireWebhook } from "../../lib/webhook.js";
 import { type AuthEnv, requireAdmin, requireSelf } from "../middleware/auth.js";
@@ -296,7 +293,7 @@ async function mergeTemplateBranch(worktreeDir: string): Promise<boolean> {
  */
 async function npmInstallAsMind(cwd: string, mindName: string): Promise<void> {
   if (isIsolationEnabled()) {
-    const [cmd, args] = wrapForIsolation("npm", ["install"], mindName);
+    const [cmd, args] = await wrapForIsolation("npm", ["install"], mindName);
     await exec(cmd, args, { cwd, env: { ...process.env, HOME: resolve(cwd, "home") } });
   } else {
     await exec("npm", ["install"], { cwd });
@@ -340,7 +337,7 @@ async function importFromFullArchive(
   const nameErr = validateMindName(name);
   if (nameErr) return c.json({ error: nameErr }, 400);
 
-  if (findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
+  if (await findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
 
   ensureVoluteHome();
   const dest = mindDir(name);
@@ -370,10 +367,10 @@ async function importFromFullArchive(
     }
 
     // Assign port and register
-    const port = nextPort();
-    addMind(name, port, manifest.stage, manifest.template);
+    const port = await nextPort();
+    await addMind(name, port, manifest.stage, manifest.template);
     try {
-      setMindTemplateHash(name, computeTemplateHash(manifest.template));
+      await setMindTemplateHash(name, computeTemplateHash(manifest.template));
     } catch (err) {
       log.warn(`failed to set template hash for ${name}`, log.errorData(err));
     }
@@ -417,7 +414,7 @@ async function importFromFullArchive(
   } catch (err) {
     if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
     try {
-      removeMind(name);
+      await removeMind(name);
     } catch (cleanupErr) {
       log.error(`Failed to clean up registry for ${name}`, log.errorData(cleanupErr));
     }
@@ -439,7 +436,7 @@ async function importFromHomeOnlyArchive(
   const nameErr = validateMindName(name);
   if (nameErr) return c.json({ error: nameErr }, 400);
 
-  if (findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
+  if (await findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
 
   ensureVoluteHome();
   const dest = mindDir(name);
@@ -499,8 +496,8 @@ async function importFromHomeOnlyArchive(
     }
 
     // 7. Register with correct stage and template
-    const port = nextPort();
-    addMind(name, port, manifest.stage, manifest.template);
+    const port = await nextPort();
+    await addMind(name, port, manifest.stage, manifest.template);
 
     // 8. User isolation setup
     const homeDir = resolve(dest, "home");
@@ -569,7 +566,7 @@ async function importFromHomeOnlyArchive(
   } catch (err) {
     if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
     try {
-      removeMind(name);
+      await removeMind(name);
     } catch (cleanupErr) {
       log.error(`Failed to clean up registry for ${name}`, log.errorData(cleanupErr));
     }
@@ -659,7 +656,7 @@ const app = new Hono<AuthEnv>()
     const nameErr = validateMindName(name);
     if (nameErr) return c.json({ error: nameErr }, 400);
 
-    if (findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
+    if (await findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
 
     ensureVoluteHome();
     const dest = mindDir(name);
@@ -720,10 +717,10 @@ const app = new Hono<AuthEnv>()
         `${JSON.stringify(mindPrompts, null, 2)}\n`,
       );
 
-      const port = nextPort();
-      addMind(name, port, body.stage, template);
+      const port = await nextPort();
+      await addMind(name, port, body.stage, template);
       try {
-        setMindTemplateHash(name, computeTemplateHash(template));
+        await setMindTemplateHash(name, computeTemplateHash(template));
       } catch (err) {
         log.warn(`failed to set template hash for ${name}`, log.errorData(err));
       }
@@ -833,7 +830,7 @@ const app = new Hono<AuthEnv>()
       // Clean up partial state
       if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
       try {
-        removeMind(name);
+        await removeMind(name);
       } catch {
         // ignore cleanup errors
       }
@@ -883,7 +880,7 @@ const app = new Hono<AuthEnv>()
     const nameErr = validateMindName(name);
     if (nameErr) return c.json({ error: nameErr }, 400);
 
-    if (findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
+    if (await findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
 
     const mergedSoul = `${soul.trimEnd()}\n\n---\n\n${identity.trimEnd()}\n`;
     const mergedMemoryExtra = user ? `\n\n---\n\n${user.trimEnd()}\n` : "";
@@ -933,10 +930,10 @@ const app = new Hono<AuthEnv>()
       }
 
       // Assign port and register
-      const port = nextPort();
-      addMind(name, port, undefined, template);
+      const port = await nextPort();
+      await addMind(name, port, undefined, template);
       try {
-        setMindTemplateHash(name, computeTemplateHash(template));
+        await setMindTemplateHash(name, computeTemplateHash(template));
       } catch (err) {
         log.warn(`failed to set template hash for ${name}`, log.errorData(err));
       }
@@ -999,7 +996,7 @@ const app = new Hono<AuthEnv>()
     } catch (err) {
       if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
       try {
-        removeMind(name);
+        await removeMind(name);
       } catch {
         // ignore cleanup errors
       }
@@ -1010,7 +1007,7 @@ const app = new Hono<AuthEnv>()
   })
   // List all minds
   .get("/", async (c) => {
-    const entries = readRegistry();
+    const entries = await readRegistry();
     let lastActiveMap = new Map<string, string>();
     try {
       const db = await getDb();
@@ -1051,46 +1048,43 @@ const app = new Hono<AuthEnv>()
   // Get single mind
   .get("/:name", async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    if (!existsSync(mindDir(name))) return c.json({ error: "Mind directory missing" }, 404);
+    const dir = entry.dir ?? mindDir(entry.parent ?? name);
+    if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
 
     const mindStatus = await getMindStatus(name, entry.port);
 
     // Include variant info
-    const variants = readVariants(name);
+    const variants = await findVariants(name);
     const manager = getMindManager();
     const variantStatuses = await Promise.all(
-      variants.map(async (v) => {
-        const compositeKey = `${name}@${v.name}`;
+      variants.map(async (s) => {
         let variantStatus: "running" | "stopped" | "starting" = "stopped";
-        if (manager.isRunning(compositeKey)) {
-          const health = await checkHealth(v.port);
+        if (manager.isRunning(s.name)) {
+          const health = await checkHealth(s.port);
           variantStatus = health.ok ? "running" : "starting";
         }
-        return { name: v.name, port: v.port, status: variantStatus };
+        return { name: s.name, port: s.port, status: variantStatus };
       }),
     );
 
     const hasPages = existsSync(resolve(mindDir(name), "home", "public", "pages"));
     return c.json({ ...entry, ...mindStatus, variants: variantStatuses, hasPages });
   })
-  // Start mind (supports name@variant) — admin only
+  // Start mind (supports variants) — admin only
   .post("/:name/start", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    const [baseName, variantName] = name.split("@", 2);
 
-    const entry = findMind(baseName);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    let targetPort = entry.port;
-    if (variantName) {
-      const variant = findVariant(baseName, variantName);
-      if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
-      targetPort = variant.port;
+    const targetPort = entry.port;
+    if (entry.parent) {
+      if (!entry.dir) return c.json({ error: `Variant ${name} has no directory` }, 404);
     } else {
-      const dir = mindDir(baseName);
+      const dir = mindDir(name);
       if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
     }
 
@@ -1105,22 +1099,20 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: err instanceof Error ? err.message : "Failed to start mind" }, 500);
     }
   })
-  // Restart mind (supports name@variant) — admin or self
+  // Restart mind (supports variants) — admin or self
   // Accepts optional JSON body: { context?: { type: string, name?: string, summary?: string, ... } }
   .post("/:name/restart", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const [baseName, variantName] = name.split("@", 2);
 
-    const entry = findMind(baseName);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    let targetPort = entry.port;
-    if (variantName) {
-      const variant = findVariant(baseName, variantName);
-      if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
-      targetPort = variant.port;
+    const baseName = entry.parent ?? name;
+    const targetPort = entry.port;
+    if (entry.parent) {
+      if (!entry.dir) return c.json({ error: `Variant ${name} has no directory` }, 404);
     } else {
-      const dir = mindDir(baseName);
+      const dir = mindDir(name);
       if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
     }
 
@@ -1156,25 +1148,32 @@ const app = new Hono<AuthEnv>()
       }
 
       // Handle mind-initiated merge: perform merge operations directly
-      if (context?.type === "merge" && context.name && !variantName) {
+      if (context?.type === "merge" && context.name && !entry.parent) {
         const mergeVariantName = String(context.name);
         const branchErr = validateBranchName(mergeVariantName);
         if (branchErr) {
           return c.json({ error: `Invalid variant name: ${branchErr}` }, 400);
         }
         log.error(`merging variant for ${baseName}: ${mergeVariantName}`);
-        const variant = findVariant(baseName, mergeVariantName);
-        if (variant) {
+        const variantEntry = await findMind(mergeVariantName);
+        if (
+          variantEntry &&
+          variantEntry.parent === baseName &&
+          variantEntry.dir &&
+          variantEntry.branch
+        ) {
           const projectRoot = mindDir(baseName);
 
           // Auto-commit variant worktree
-          if (existsSync(variant.path)) {
-            const status = (await gitExec(["status", "--porcelain"], { cwd: variant.path })).trim();
+          if (existsSync(variantEntry.dir)) {
+            const status = (
+              await gitExec(["status", "--porcelain"], { cwd: variantEntry.dir })
+            ).trim();
             if (status) {
               try {
-                await gitExec(["add", "-A"], { cwd: variant.path });
+                await gitExec(["add", "-A"], { cwd: variantEntry.dir });
                 await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
-                  cwd: variant.path,
+                  cwd: variantEntry.dir,
                 });
               } catch (e) {
                 log.error(
@@ -1201,8 +1200,8 @@ const app = new Hono<AuthEnv>()
           }
 
           // Merge, cleanup worktree/branch, reinstall
-          await gitExec(["merge", variant.branch], { cwd: projectRoot });
-          await cleanupVariant(baseName, mergeVariantName, projectRoot, variant.path);
+          await gitExec(["merge", variantEntry.branch], { cwd: projectRoot });
+          await cleanupVariant(mergeVariantName, projectRoot, variantEntry.dir);
           try {
             await npmInstallAsMind(projectRoot, baseName);
           } catch (e) {
@@ -1218,7 +1217,7 @@ const app = new Hono<AuthEnv>()
       }
 
       // Inject "[seed has sprouted]" system message into active volute conversations
-      if (context?.type === "sprouted" && !variantName) {
+      if (context?.type === "sprouted" && !entry.parent) {
         try {
           const db = await getDb();
           const activeConvs = await db
@@ -1242,18 +1241,12 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: err instanceof Error ? err.message : "Failed to restart mind" }, 500);
     }
   })
-  // Stop mind (supports name@variant) — admin only
+  // Stop mind (supports variants) — admin only
   .post("/:name/stop", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    const [baseName, variantName] = name.split("@", 2);
 
-    const entry = findMind(baseName);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
-
-    if (variantName) {
-      const variant = findVariant(baseName, variantName);
-      if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
-    }
 
     const manager = getMindManager();
     if (!manager.isRunning(name)) {
@@ -1270,7 +1263,7 @@ const app = new Hono<AuthEnv>()
   // Get sleep state
   .get("/:name/sleep", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
@@ -1282,7 +1275,7 @@ const app = new Hono<AuthEnv>()
   // Initiate sleep — admin only
   .post("/:name/sleep", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
@@ -1310,7 +1303,7 @@ const app = new Hono<AuthEnv>()
   // Wake a sleeping mind — admin only
   .post("/:name/wake", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
@@ -1332,7 +1325,7 @@ const app = new Hono<AuthEnv>()
   // Flush queued sleep messages — admin only
   .post("/:name/sleep/messages", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
@@ -1345,18 +1338,18 @@ const app = new Hono<AuthEnv>()
   // Sprout a seed mind — admin only
   .post("/:name/sprout", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
     if (entry.stage !== "seed") {
       return c.json({ error: `Mind is not a seed (stage: ${entry.stage})` }, 409);
     }
-    setMindStage(name, "sprouted");
+    await setMindStage(name, "sprouted");
     return c.json({ ok: true });
   })
   // Delete mind — admin only
   .delete("/:name", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(name);
@@ -1368,7 +1361,13 @@ const app = new Hono<AuthEnv>()
       await stopMindFullService(name);
     }
 
-    removeAllVariants(name);
+    // Stop and clean up any running variants before deleting parent
+    const variants = await findVariants(name);
+    for (const s of variants) {
+      if (s.dir) {
+        await cleanupVariant(s.name, dir, s.dir, { stop: true });
+      }
+    }
 
     // Clean up shared worktree (best effort)
     try {
@@ -1377,7 +1376,7 @@ const app = new Hono<AuthEnv>()
       log.warn(`failed to clean up shared worktree for ${name}`, log.errorData(err));
     }
 
-    removeMind(name);
+    await removeMind(name);
     await deleteMindUser(name);
 
     // Clean up centralized state directory (logs, env, channels)
@@ -1402,13 +1401,13 @@ const app = new Hono<AuthEnv>()
   // Upgrade mind — admin only
   .post("/:name/upgrade", requireAdmin, async (c) => {
     const mindName = c.req.param("name");
-    const entry = findMind(mindName);
+    const entry = await findMind(mindName);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(mindName);
     if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
 
-    let body: { template?: string; continue?: boolean; abort?: boolean } = {};
+    let body: { template?: string; continue?: boolean; abort?: boolean; accept?: boolean } = {};
     try {
       body = await c.req.json();
     } catch {
@@ -1416,10 +1415,11 @@ const app = new Hono<AuthEnv>()
     }
 
     const template = body.template ?? entry.template ?? "claude";
-    const UPGRADE_VARIANT = "upgrade";
+    const UPGRADE_BRANCH = "upgrade";
+    const upgradeVariantName = `${mindName}-upgrade`;
+    const worktreeDir = resolve(dir, ".variants", UPGRADE_BRANCH);
 
     if (body.abort) {
-      const worktreeDir = resolve(dir, ".variants", UPGRADE_VARIANT);
       if (!existsSync(worktreeDir)) {
         return c.json({ error: "No upgrade in progress" }, 400);
       }
@@ -1434,7 +1434,15 @@ const app = new Hono<AuthEnv>()
           }
         } catch {}
 
-        await cleanupVariant(mindName, UPGRADE_VARIANT, dir, worktreeDir, { stop: true });
+        await cleanupVariant(upgradeVariantName, dir, worktreeDir, { stop: true });
+
+        // Also delete the upgrade branch directly — cleanupVariant uses the variant
+        // name as fallback branch, but the actual branch is UPGRADE_BRANCH
+        try {
+          await gitExec(["branch", "-D", UPGRADE_BRANCH], { cwd: dir });
+        } catch {
+          // Branch may already be deleted by cleanupVariant
+        }
 
         return c.json({ ok: true });
       } catch (err) {
@@ -1447,7 +1455,6 @@ const app = new Hono<AuthEnv>()
 
     if (body.continue) {
       // Continue upgrade after conflict resolution
-      const worktreeDir = resolve(dir, ".variants", UPGRADE_VARIANT);
       if (!existsSync(worktreeDir)) {
         return c.json({ error: "No upgrade in progress" }, 400);
       }
@@ -1481,25 +1488,19 @@ const app = new Hono<AuthEnv>()
       try {
         await npmInstallAsMind(worktreeDir, mindName);
 
-        const variantPort = nextPort();
-        addVariant(mindName, {
-          name: UPGRADE_VARIANT,
-          branch: UPGRADE_VARIANT,
-          path: worktreeDir,
-          port: variantPort,
-          created: new Date().toISOString(),
-        });
+        const variantPort = await nextPort();
+        await addVariant(upgradeVariantName, mindName, variantPort, worktreeDir, UPGRADE_BRANCH);
 
-        await getMindManager().startMind(`${mindName}@${UPGRADE_VARIANT}`);
+        await getMindManager().startMind(upgradeVariantName);
 
         return c.json({
           ok: true,
           name: mindName,
-          variant: UPGRADE_VARIANT,
+          variant: UPGRADE_BRANCH,
           port: variantPort,
         });
       } catch (err) {
-        await cleanupVariant(mindName, UPGRADE_VARIANT, dir, worktreeDir);
+        await cleanupVariant(upgradeVariantName, dir, worktreeDir);
         return c.json(
           { error: err instanceof Error ? err.message : "Failed to continue upgrade" },
           500,
@@ -1507,8 +1508,83 @@ const app = new Hono<AuthEnv>()
       }
     }
 
+    if (body.accept) {
+      // Accept upgrade — merge the upgrade variant back into the parent mind
+      if (!existsSync(worktreeDir)) {
+        return c.json({ error: "No upgrade in progress" }, 400);
+      }
+
+      const variantEntry = await findMind(upgradeVariantName);
+      if (!variantEntry) {
+        return c.json({ error: "Upgrade variant not found in DB" }, 400);
+      }
+
+      // Auto-commit any uncommitted changes in the upgrade worktree
+      const status = (await gitExec(["status", "--porcelain"], { cwd: worktreeDir })).trim();
+      if (status) {
+        try {
+          await gitExec(["add", "-A"], { cwd: worktreeDir });
+          await gitExec(["commit", "-m", "Auto-commit before upgrade merge"], {
+            cwd: worktreeDir,
+          });
+        } catch (e) {
+          return c.json({ error: "Failed to auto-commit upgrade changes before merge" }, 500);
+        }
+      }
+
+      // Auto-commit any uncommitted changes in the main worktree
+      const mainStatus = (await gitExec(["status", "--porcelain"], { cwd: dir })).trim();
+      if (mainStatus) {
+        try {
+          await gitExec(["add", "-A"], { cwd: dir });
+          await gitExec(["commit", "-m", "Auto-commit before upgrade merge"], { cwd: dir });
+        } catch (e) {
+          return c.json({ error: "Failed to auto-commit main changes before merge" }, 500);
+        }
+      }
+
+      // Merge upgrade branch
+      try {
+        await gitExec(["merge", UPGRADE_BRANCH], { cwd: dir });
+      } catch {
+        return c.json({ error: "Merge failed. Resolve conflicts manually." }, 500);
+      }
+
+      await cleanupVariant(upgradeVariantName, dir, worktreeDir, { stop: true });
+
+      // Update template hash
+      try {
+        await setMindTemplateHash(mindName, computeTemplateHash(template));
+      } catch (err) {
+        log.warn(`failed to update template hash for ${mindName}`, log.errorData(err));
+      }
+
+      // Reinstall dependencies
+      try {
+        await npmInstallAsMind(dir, mindName);
+      } catch (err) {
+        log.warn(`npm install failed after upgrade merge for ${mindName}`, log.errorData(err));
+      }
+
+      // Restart mind
+      const manager = getMindManager();
+      try {
+        if (manager.isRunning(mindName)) {
+          await manager.stopMind(mindName);
+        }
+        manager.setPendingContext(mindName, { type: "merged", name: upgradeVariantName });
+        await manager.startMind(mindName);
+      } catch (e) {
+        return c.json({
+          ok: true,
+          warning: `Upgrade merged but mind restart failed: ${e instanceof Error ? e.message : String(e)}`,
+        });
+      }
+
+      return c.json({ ok: true });
+    }
+
     // Fresh upgrade
-    const worktreeDir = resolve(dir, ".variants", UPGRADE_VARIANT);
 
     if (existsSync(worktreeDir)) {
       return c.json(
@@ -1542,7 +1618,7 @@ const app = new Hono<AuthEnv>()
     // Clean up stale worktree refs and leftover branch
     await gitExec(["worktree", "prune"], { cwd: dir });
     try {
-      await gitExec(["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
+      await gitExec(["branch", "-D", UPGRADE_BRANCH], { cwd: dir });
     } catch {
       // branch doesn't exist
     }
@@ -1568,7 +1644,7 @@ const app = new Hono<AuthEnv>()
       mkdirSync(parentDir, { recursive: true });
     }
 
-    await gitExec(["worktree", "add", "-b", UPGRADE_VARIANT, worktreeDir], { cwd: dir });
+    await gitExec(["worktree", "add", "-b", UPGRADE_BRANCH, worktreeDir], { cwd: dir });
 
     // Merge template branch
     const hasConflicts = await mergeTemplateBranch(worktreeDir);
@@ -1589,25 +1665,19 @@ const app = new Hono<AuthEnv>()
     try {
       await npmInstallAsMind(worktreeDir, mindName);
 
-      const variantPort = nextPort();
-      addVariant(mindName, {
-        name: UPGRADE_VARIANT,
-        branch: UPGRADE_VARIANT,
-        path: worktreeDir,
-        port: variantPort,
-        created: new Date().toISOString(),
-      });
+      const variantPort = await nextPort();
+      await addVariant(upgradeVariantName, mindName, variantPort, worktreeDir, UPGRADE_BRANCH);
 
-      await getMindManager().startMind(`${mindName}@${UPGRADE_VARIANT}`);
+      await getMindManager().startMind(upgradeVariantName);
 
       return c.json({
         ok: true,
         name: mindName,
-        variant: UPGRADE_VARIANT,
+        variant: UPGRADE_BRANCH,
         port: variantPort,
       });
     } catch (err) {
-      await cleanupVariant(mindName, UPGRADE_VARIANT, dir, worktreeDir);
+      await cleanupVariant(upgradeVariantName, dir, worktreeDir);
       return c.json(
         { error: err instanceof Error ? err.message : "Failed to complete upgrade" },
         500,
@@ -1617,15 +1687,11 @@ const app = new Hono<AuthEnv>()
   // Proxy message to mind — enriches, then delegates to delivery manager
   .post("/:name/message", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const [baseName, variantName] = name.split("@", 2);
 
-    const entry = findMind(baseName);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    if (variantName) {
-      const variant = findVariant(baseName, variantName);
-      if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
-    }
+    const baseName = entry.parent ?? name;
 
     // If the mind is sleeping, queue the message
     try {
@@ -1711,7 +1777,7 @@ const app = new Hono<AuthEnv>()
 
     // Sign message BEFORE content mutation (budget warnings, seed nudges)
     // so the signature covers the original content the sender intended
-    if (sender && findMind(sender)) {
+    if (sender && (await findMind(sender))) {
       try {
         const senderDir = mindDir(sender);
         const senderPrivateKey = getPrivateKey(senderDir);
@@ -1742,7 +1808,7 @@ const app = new Hono<AuthEnv>()
     }
 
     // Nudge seed minds toward sprouting after extended conversation
-    const seedEntry = findMind(baseName);
+    const seedEntry = await findMind(baseName);
     if (seedEntry?.stage === "seed") {
       try {
         const db = await getDb();
@@ -1796,15 +1862,15 @@ const app = new Hono<AuthEnv>()
   // Budget status
   .get("/:name/budget", async (c) => {
     const name = c.req.param("name");
-    const [baseName] = name.split("@", 2);
+    const baseName = await getBaseName(name);
     const usage = getTokenBudget().getUsage(baseName);
     if (!usage) return c.json({ error: "No budget configured" }, 404);
     return c.json(usage);
   })
   // Get mind config (registry + volute.json + env)
-  .get("/:name/config", (c) => {
+  .get("/:name/config", async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(name);
@@ -1856,7 +1922,7 @@ const app = new Hono<AuthEnv>()
     ),
     async (c) => {
       const name = c.req.param("name");
-      const entry = findMind(name);
+      const entry = await findMind(name);
       if (!entry) return c.json({ error: "Mind not found" }, 404);
 
       const dir = mindDir(name);
@@ -1892,7 +1958,7 @@ const app = new Hono<AuthEnv>()
   // Get pending/gated delivery messages
   .get("/:name/delivery/pending", async (c) => {
     const name = c.req.param("name");
-    const [baseName] = name.split("@", 2);
+    const baseName = await getBaseName(name);
     try {
       const pending = await getDeliveryManager().getPending(baseName);
       return c.json(pending);
@@ -1907,7 +1973,7 @@ const app = new Hono<AuthEnv>()
   // Receive events from mind, persist to mind_history, publish to pub-sub
   .post("/:name/events", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const [baseName] = name.split("@", 2);
+    const baseName = await getBaseName(name);
 
     let body: {
       type: string;
@@ -1995,9 +2061,9 @@ const app = new Hono<AuthEnv>()
   // SSE endpoint for mind events
   .get("/:name/events", async (c) => {
     const name = c.req.param("name");
-    const [baseName] = name.split("@", 2);
+    const baseName = await getBaseName(name);
 
-    const entry = findMind(baseName);
+    const entry = await findMind(baseName);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     // Parse optional filters from query params
@@ -2061,7 +2127,7 @@ const app = new Hono<AuthEnv>()
   // Persist external channel send to mind_history
   .post("/:name/history", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const [baseName] = name.split("@", 2);
+    const baseName = await getBaseName(name);
 
     let body: { channel: string; content: string; sender?: string };
     try {
@@ -2120,7 +2186,7 @@ const app = new Hono<AuthEnv>()
   })
   .get("/:name/history/export", async (c) => {
     const name = c.req.param("name");
-    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
 
     const db = await getDb();
     const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, name));

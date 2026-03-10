@@ -8,7 +8,7 @@ import { findMind, stateDir } from "../../lib/registry.js";
 const app = new Hono()
   .get("/:name/logs", async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const logFile = resolve(stateDir(name), "logs", "mind.log");
@@ -45,7 +45,7 @@ const app = new Hono()
   })
   .get("/:name/logs/tail", async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const logFile = resolve(stateDir(name), "logs", "mind.log");
