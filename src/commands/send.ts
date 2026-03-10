@@ -136,17 +136,17 @@ export async function run(args: string[]) {
 
   if (!target || (!message && !images)) {
     console.error(
-      'Usage: volute send <target> "<message>" [--mind <name>] [--image <path>] [--wait]',
+      'Usage: volute chat send <target> "<message>" [--mind <name>] [--image <path>] [--wait]',
     );
-    console.error('       echo "message" | volute send <target> [--mind <name>]');
+    console.error('       echo "message" | volute chat send <target> [--mind <name>]');
     console.error("");
     console.error("Examples:");
-    console.error('  volute send @other-mind "hello"');
-    console.error('  volute send animal-chat "hello everyone"');
-    console.error('  volute send discord:server/channel "hello"');
-    console.error('  volute send @mind "check this out" --image photo.png');
-    console.error("  volute send @mind --image photo.png");
-    console.error('  volute send @mind "hello" --wait');
+    console.error('  volute chat send @other-mind "hello"');
+    console.error('  volute chat send animal-chat "hello everyone"');
+    console.error('  volute chat send discord:server/channel "hello"');
+    console.error('  volute chat send @mind "check this out" --image photo.png');
+    console.error("  volute chat send @mind --image photo.png");
+    console.error('  volute chat send @mind "hello" --wait');
     process.exit(1);
   }
 
@@ -154,7 +154,7 @@ export async function run(args: string[]) {
   if (target === "system" || target === "@system") {
     console.error(
       "Can't send to system — system messages are automated.\n" +
-        'To reply to a person, use their username from the message prefix (e.g. volute send @username "msg").',
+        'To reply to a person, use their username from the message prefix (e.g. volute chat send @username "msg").',
     );
     process.exit(1);
   }

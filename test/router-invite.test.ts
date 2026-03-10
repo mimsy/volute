@@ -277,7 +277,10 @@ describe("router invite gating", () => {
 
     const mainCalls = mindCalls.get("main")!;
     const text = (mainCalls[0].content[0] as { text: string }).text;
-    assert.ok(text.includes("volute send discord:general"), "should include channel send command");
+    assert.ok(
+      text.includes("volute chat send discord:general"),
+      "should include channel send command",
+    );
   });
 
   it("uses channel send for volute channels in invite", async () => {
@@ -299,7 +302,7 @@ describe("router invite gating", () => {
     const mainCalls = mindCalls.get("main")!;
     const text = (mainCalls[0].content[0] as { text: string }).text;
     assert.ok(
-      text.includes("volute send volute:conv-xyz"),
+      text.includes("volute chat send volute:conv-xyz"),
       "should use channel send for volute channels",
     );
   });

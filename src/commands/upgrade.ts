@@ -59,6 +59,8 @@ export async function run(args: string[]) {
 
   console.log(`\nUpgrade variant running on port ${data.port}`);
   console.log(`\nNext steps:`);
-  console.log(`  volute send @${mindName}@${data.variant} "hello"    # chat with upgraded variant`);
+  console.log(
+    `  volute chat send @${mindName}@${data.variant} "hello"    # chat with upgraded variant`,
+  );
   console.log(`  volute variant merge ${data.variant}                # merge back when satisfied`);
 }
