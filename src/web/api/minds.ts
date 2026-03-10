@@ -69,10 +69,10 @@ import {
 } from "../../lib/prompts.js";
 import {
   addMind,
-  addSplit,
+  addVariant,
   ensureVoluteHome,
   findMind,
-  findSplits,
+  findVariants,
   getBaseName,
   mindDir,
   nextPort,
@@ -86,7 +86,6 @@ import {
 import { conversations, mindHistory } from "../../lib/schema.js";
 import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
 import { installSkill, SEED_SKILLS, STANDARD_SKILLS } from "../../lib/skills.js";
-import { cleanupSplit } from "../../lib/split-cleanup.js";
 import { announceToSystem } from "../../lib/system-channel.js";
 import { readSystemsConfig } from "../../lib/systems-config.js";
 import {
@@ -99,6 +98,7 @@ import {
 } from "../../lib/template.js";
 import { computeTemplateHash } from "../../lib/template-hash.js";
 import { getTypingMap, publishTypingForChannels } from "../../lib/typing.js";
+import { cleanupVariant } from "../../lib/variant-cleanup.js";
 import { validateBranchName } from "../../lib/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
 import { fireWebhook } from "../../lib/webhook.js";
@@ -1081,10 +1081,10 @@ const app = new Hono<AuthEnv>()
     const mindStatus = await getMindStatus(name, entry.port);
 
     // Include variant info
-    const splits = findSplits(name);
+    const variants = findVariants(name);
     const manager = getMindManager();
     const variantStatuses = await Promise.all(
-      splits.map(async (s) => {
+      variants.map(async (s) => {
         let variantStatus: "running" | "stopped" | "starting" = "stopped";
         if (manager.isRunning(s.name)) {
           const health = await checkHealth(s.port);
@@ -1097,7 +1097,7 @@ const app = new Hono<AuthEnv>()
     const hasPages = existsSync(resolve(mindDir(name), "home", "public", "pages"));
     return c.json({ ...entry, ...mindStatus, variants: variantStatuses, hasPages });
   })
-  // Start mind (supports splits) — admin only
+  // Start mind (supports variants) — admin only
   .post("/:name/start", requireAdmin, async (c) => {
     const name = c.req.param("name");
 
@@ -1106,7 +1106,7 @@ const app = new Hono<AuthEnv>()
 
     const targetPort = entry.port;
     if (entry.parent) {
-      if (!entry.dir) return c.json({ error: `Split ${name} has no directory` }, 404);
+      if (!entry.dir) return c.json({ error: `Variant ${name} has no directory` }, 404);
     } else {
       const dir = mindDir(name);
       if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
@@ -1123,7 +1123,7 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: err instanceof Error ? err.message : "Failed to start mind" }, 500);
     }
   })
-  // Restart mind (supports splits) — admin or self
+  // Restart mind (supports variants) — admin or self
   // Accepts optional JSON body: { context?: { type: string, name?: string, summary?: string, ... } }
   .post("/:name/restart", requireSelf(), async (c) => {
     const name = c.req.param("name");
@@ -1134,7 +1134,7 @@ const app = new Hono<AuthEnv>()
     const baseName = entry.parent ?? name;
     const targetPort = entry.port;
     if (entry.parent) {
-      if (!entry.dir) return c.json({ error: `Split ${name} has no directory` }, 404);
+      if (!entry.dir) return c.json({ error: `Variant ${name} has no directory` }, 404);
     } else {
       const dir = mindDir(name);
       if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
@@ -1179,20 +1179,25 @@ const app = new Hono<AuthEnv>()
           return c.json({ error: `Invalid variant name: ${branchErr}` }, 400);
         }
         log.error(`merging variant for ${baseName}: ${mergeVariantName}`);
-        const splitEntry = findMind(mergeVariantName);
-        if (splitEntry && splitEntry.parent === baseName && splitEntry.dir && splitEntry.branch) {
+        const variantEntry = findMind(mergeVariantName);
+        if (
+          variantEntry &&
+          variantEntry.parent === baseName &&
+          variantEntry.dir &&
+          variantEntry.branch
+        ) {
           const projectRoot = mindDir(baseName);
 
           // Auto-commit variant worktree
-          if (existsSync(splitEntry.dir)) {
+          if (existsSync(variantEntry.dir)) {
             const status = (
-              await gitExec(["status", "--porcelain"], { cwd: splitEntry.dir })
+              await gitExec(["status", "--porcelain"], { cwd: variantEntry.dir })
             ).trim();
             if (status) {
               try {
-                await gitExec(["add", "-A"], { cwd: splitEntry.dir });
+                await gitExec(["add", "-A"], { cwd: variantEntry.dir });
                 await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
-                  cwd: splitEntry.dir,
+                  cwd: variantEntry.dir,
                 });
               } catch (e) {
                 log.error(
@@ -1219,8 +1224,8 @@ const app = new Hono<AuthEnv>()
           }
 
           // Merge, cleanup worktree/branch, reinstall
-          await gitExec(["merge", splitEntry.branch], { cwd: projectRoot });
-          await cleanupSplit(mergeVariantName, projectRoot, splitEntry.dir);
+          await gitExec(["merge", variantEntry.branch], { cwd: projectRoot });
+          await cleanupVariant(mergeVariantName, projectRoot, variantEntry.dir);
           try {
             await npmInstallAsMind(projectRoot, baseName);
           } catch (e) {
@@ -1260,7 +1265,7 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: err instanceof Error ? err.message : "Failed to restart mind" }, 500);
     }
   })
-  // Stop mind (supports splits) — admin only
+  // Stop mind (supports variants) — admin only
   .post("/:name/stop", requireAdmin, async (c) => {
     const name = c.req.param("name");
 
@@ -1380,11 +1385,11 @@ const app = new Hono<AuthEnv>()
       await stopMindFullService(name);
     }
 
-    // Stop and clean up any running splits before deleting parent
-    const splits = findSplits(name);
-    for (const s of splits) {
+    // Stop and clean up any running variants before deleting parent
+    const variants = findVariants(name);
+    for (const s of variants) {
       if (s.dir) {
-        await cleanupSplit(s.name, dir, s.dir, { stop: true });
+        await cleanupVariant(s.name, dir, s.dir, { stop: true });
       }
     }
 
@@ -1435,7 +1440,7 @@ const app = new Hono<AuthEnv>()
 
     const template = body.template ?? entry.template ?? "claude";
     const UPGRADE_BRANCH = "upgrade";
-    const upgradeSplitName = `${mindName}-upgrade`;
+    const upgradeVariantName = `${mindName}-upgrade`;
     const worktreeDir = resolve(dir, ".variants", UPGRADE_BRANCH);
 
     if (body.abort) {
@@ -1453,7 +1458,7 @@ const app = new Hono<AuthEnv>()
           }
         } catch {}
 
-        await cleanupSplit(upgradeSplitName, dir, worktreeDir, { stop: true });
+        await cleanupVariant(upgradeVariantName, dir, worktreeDir, { stop: true });
 
         return c.json({ ok: true });
       } catch (err) {
@@ -1500,9 +1505,9 @@ const app = new Hono<AuthEnv>()
         await npmInstallAsMind(worktreeDir, mindName);
 
         const variantPort = nextPort();
-        addSplit(upgradeSplitName, mindName, variantPort, worktreeDir, UPGRADE_BRANCH);
+        addVariant(upgradeVariantName, mindName, variantPort, worktreeDir, UPGRADE_BRANCH);
 
-        await getMindManager().startMind(upgradeSplitName);
+        await getMindManager().startMind(upgradeVariantName);
 
         return c.json({
           ok: true,
@@ -1511,7 +1516,7 @@ const app = new Hono<AuthEnv>()
           port: variantPort,
         });
       } catch (err) {
-        await cleanupSplit(upgradeSplitName, dir, worktreeDir);
+        await cleanupVariant(upgradeVariantName, dir, worktreeDir);
         return c.json(
           { error: err instanceof Error ? err.message : "Failed to continue upgrade" },
           500,
@@ -1601,9 +1606,9 @@ const app = new Hono<AuthEnv>()
       await npmInstallAsMind(worktreeDir, mindName);
 
       const variantPort = nextPort();
-      addSplit(upgradeSplitName, mindName, variantPort, worktreeDir, UPGRADE_BRANCH);
+      addVariant(upgradeVariantName, mindName, variantPort, worktreeDir, UPGRADE_BRANCH);
 
-      await getMindManager().startMind(upgradeSplitName);
+      await getMindManager().startMind(upgradeVariantName);
 
       return c.json({
         ok: true,
@@ -1612,7 +1617,7 @@ const app = new Hono<AuthEnv>()
         port: variantPort,
       });
     } catch (err) {
-      await cleanupSplit(upgradeSplitName, dir, worktreeDir);
+      await cleanupVariant(upgradeVariantName, dir, worktreeDir);
       return c.json(
         { error: err instanceof Error ? err.message : "Failed to complete upgrade" },
         500,

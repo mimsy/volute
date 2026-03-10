@@ -6,16 +6,16 @@ import { exec, gitExec } from "../../lib/exec.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
 import {
-  addSplit,
+  addVariant,
   findMind,
-  findSplits,
+  findVariants,
   mindDir,
   nextPort,
   removeMind,
   setMindRunning,
 } from "../../lib/registry.js";
 import { spawnServer } from "../../lib/spawn-server.js";
-import { cleanupSplit } from "../../lib/split-cleanup.js";
+import { cleanupVariant } from "../../lib/variant-cleanup.js";
 import { validateBranchName } from "../../lib/variants.js";
 import { verify } from "../../lib/verify.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
@@ -39,9 +39,9 @@ const app = new Hono<AuthEnv>()
     const entry = findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    const splits = findSplits(name);
+    const variants = findVariants(name);
     const results = await Promise.all(
-      splits.map(async (s) => {
+      variants.map(async (s) => {
         if (!s.port) return { ...s, status: "no-server" };
         const health = await checkHealth(s.port);
         return { ...s, status: health.ok ? "running" : "dead" };
@@ -52,13 +52,13 @@ const app = new Hono<AuthEnv>()
     try {
       for (const r of results) {
         const isRunning = r.status === "running";
-        const split = splits.find((s) => s.name === r.name);
-        if (split && split.running !== isRunning) {
+        const variant = variants.find((s) => s.name === r.name);
+        if (variant && variant.running !== isRunning) {
           setMindRunning(r.name, isRunning);
         }
       }
     } catch (err) {
-      log.warn(`failed to sync split status for ${name}`, log.errorData(err));
+      log.warn(`failed to sync variant status for ${name}`, log.errorData(err));
     }
 
     return c.json(results);
@@ -78,29 +78,29 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Invalid JSON" }, 400);
     }
 
-    const splitName = body.name;
-    if (!splitName) return c.json({ error: "Split name required" }, 400);
+    const variantName = body.name;
+    if (!variantName) return c.json({ error: "Variant name required" }, 400);
 
-    const err = validateBranchName(splitName);
+    const err = validateBranchName(variantName);
     if (err) return c.json({ error: err }, 400);
 
     // Check name isn't already taken
-    if (findMind(splitName)) {
-      return c.json({ error: `Name already in use: ${splitName}` }, 409);
+    if (findMind(variantName)) {
+      return c.json({ error: `Name already in use: ${variantName}` }, 409);
     }
 
     const projectRoot = mindDir(mindName);
-    const splitDir = resolve(projectRoot, ".variants", splitName);
+    const variantDir = resolve(projectRoot, ".variants", variantName);
 
-    if (existsSync(splitDir)) {
-      return c.json({ error: `Split directory already exists: ${splitDir}` }, 409);
+    if (existsSync(variantDir)) {
+      return c.json({ error: `Variant directory already exists: ${variantDir}` }, 409);
     }
 
     mkdirSync(resolve(projectRoot, ".variants"), { recursive: true });
 
     // Create git worktree
     try {
-      await gitExec(["worktree", "add", "-b", splitName, splitDir], { cwd: projectRoot });
+      await gitExec(["worktree", "add", "-b", variantName, variantDir], { cwd: projectRoot });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       return c.json({ error: `Failed to create worktree: ${msg}` }, 500);
@@ -114,11 +114,11 @@ const app = new Hono<AuthEnv>()
       if (isIsolationEnabled()) {
         const [cmd, args] = wrapForIsolation("npm", ["install"], mindName);
         await exec(cmd, args, {
-          cwd: splitDir,
-          env: { ...process.env, HOME: resolve(splitDir, "home") },
+          cwd: variantDir,
+          env: { ...process.env, HOME: resolve(variantDir, "home") },
         });
       } else {
-        await exec("npm", ["install"], { cwd: splitDir });
+        await exec("npm", ["install"], { cwd: variantDir });
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -127,46 +127,46 @@ const app = new Hono<AuthEnv>()
 
     // Write SOUL.md if provided
     if (body.soul) {
-      writeFileSync(resolve(splitDir, "home/SOUL.md"), body.soul);
+      writeFileSync(resolve(variantDir, "home/SOUL.md"), body.soul);
     }
 
-    const splitPort = body.port ?? nextPort();
+    const variantPort = body.port ?? nextPort();
 
-    // Register split in DB
-    addSplit(splitName, mindName, splitPort, splitDir, splitName);
+    // Register variant in DB
+    addVariant(variantName, mindName, variantPort, variantDir, variantName);
 
-    // Start split via mind manager unless noStart
+    // Start variant via mind manager unless noStart
     if (!body.noStart) {
       try {
-        await getMindManager().startMind(splitName);
+        await getMindManager().startMind(variantName);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
-        return c.json({ error: `Split created but failed to start: ${msg}` }, 500);
+        return c.json({ error: `Variant created but failed to start: ${msg}` }, 500);
       }
     }
 
     return c.json({
       ok: true,
-      variant: { name: splitName, branch: splitName, path: splitDir, port: splitPort },
+      variant: { name: variantName, branch: variantName, path: variantDir, port: variantPort },
     });
   })
   // Merge variant — admin only
   .post("/:name/variants/:variant/merge", requireAdmin, async (c) => {
     const mindName = c.req.param("name");
-    const splitName = c.req.param("variant");
+    const variantName = c.req.param("variant");
 
     const parentEntry = findMind(mindName);
     if (!parentEntry) return c.json({ error: "Mind not found" }, 404);
 
-    const splitEntry = findMind(splitName);
-    if (!splitEntry || splitEntry.parent !== mindName) {
-      return c.json({ error: `Unknown split: ${splitName}` }, 404);
+    const variantEntry = findMind(variantName);
+    if (!variantEntry || variantEntry.parent !== mindName) {
+      return c.json({ error: `Unknown variant: ${variantName}` }, 404);
     }
 
-    if (!splitEntry.dir) return c.json({ error: `Split ${splitName} has no directory` }, 500);
-    if (!splitEntry.branch) return c.json({ error: `Split ${splitName} has no branch` }, 500);
+    if (!variantEntry.dir) return c.json({ error: `Variant ${variantName} has no directory` }, 500);
+    if (!variantEntry.branch) return c.json({ error: `Variant ${variantName} has no branch` }, 500);
 
-    const branchErr = validateBranchName(splitEntry.branch);
+    const branchErr = validateBranchName(variantEntry.branch);
     if (branchErr) return c.json({ error: branchErr }, 400);
 
     let body: { summary?: string; justification?: string; memory?: string; skipVerify?: boolean } =
@@ -179,20 +179,20 @@ const app = new Hono<AuthEnv>()
 
     const projectRoot = mindDir(mindName);
 
-    // Auto-commit any uncommitted changes in the split worktree
-    if (existsSync(splitEntry.dir)) {
-      const status = (await gitExec(["status", "--porcelain"], { cwd: splitEntry.dir })).trim();
+    // Auto-commit any uncommitted changes in the variant worktree
+    if (existsSync(variantEntry.dir)) {
+      const status = (await gitExec(["status", "--porcelain"], { cwd: variantEntry.dir })).trim();
       if (status) {
         try {
-          await gitExec(["add", "-A"], { cwd: splitEntry.dir });
+          await gitExec(["add", "-A"], { cwd: variantEntry.dir });
           await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
-            cwd: splitEntry.dir,
+            cwd: variantEntry.dir,
           });
         } catch (e) {
           return c.json(
             {
               error:
-                "Failed to auto-commit split changes. Commit or stash manually before merging.",
+                "Failed to auto-commit variant changes. Commit or stash manually before merging.",
             },
             500,
           );
@@ -200,9 +200,9 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    // Verify split before merge
+    // Verify variant before merge
     if (!body.skipVerify) {
-      const result = await spawnServer(splitEntry.dir, 0, { detached: true });
+      const result = await spawnServer(variantEntry.dir, 0, { detached: true });
       if (!result) {
         return c.json(
           { error: "Failed to start server for verification. Use skipVerify to skip." },
@@ -242,15 +242,15 @@ const app = new Hono<AuthEnv>()
 
     // Merge branch
     try {
-      await gitExec(["merge", splitEntry.branch], { cwd: projectRoot });
+      await gitExec(["merge", variantEntry.branch], { cwd: projectRoot });
     } catch (e) {
       return c.json({ error: "Merge failed. Resolve conflicts manually." }, 500);
     }
 
-    await cleanupSplit(splitName, projectRoot, splitEntry.dir);
+    await cleanupVariant(variantName, projectRoot, variantEntry.dir);
 
     // Update template hash after upgrade merge
-    if (splitName.endsWith("-upgrade") || splitName === "upgrade") {
+    if (variantName.endsWith("-upgrade") || variantName === "upgrade") {
       try {
         const { computeTemplateHash } = await import("../../lib/template-hash.js");
         const { setMindTemplateHash } = await import("../../lib/registry.js");
@@ -280,7 +280,7 @@ const app = new Hono<AuthEnv>()
     const manager = getMindManager();
     const context = {
       type: "merged",
-      name: splitName,
+      name: variantName,
       ...(body.summary && { summary: body.summary }),
       ...(body.justification && { justification: body.justification }),
       ...(body.memory && { memory: body.memory }),
@@ -303,21 +303,21 @@ const app = new Hono<AuthEnv>()
   // Delete variant — admin only
   .delete("/:name/variants/:variant", requireAdmin, async (c) => {
     const mindName = c.req.param("name");
-    const splitName = c.req.param("variant");
+    const variantName = c.req.param("variant");
 
     const parentEntry = findMind(mindName);
     if (!parentEntry) return c.json({ error: "Mind not found" }, 404);
 
-    const splitEntry = findMind(splitName);
-    if (!splitEntry || splitEntry.parent !== mindName) {
-      return c.json({ error: `Unknown split: ${splitName}` }, 404);
+    const variantEntry = findMind(variantName);
+    if (!variantEntry || variantEntry.parent !== mindName) {
+      return c.json({ error: `Unknown variant: ${variantName}` }, 404);
     }
 
-    if (!splitEntry.dir) return c.json({ error: `Split ${splitName} has no directory` }, 500);
+    if (!variantEntry.dir) return c.json({ error: `Variant ${variantName} has no directory` }, 500);
 
     const projectRoot = mindDir(mindName);
 
-    await cleanupSplit(splitName, projectRoot, splitEntry.dir, { stop: true });
+    await cleanupVariant(variantName, projectRoot, variantEntry.dir, { stop: true });
 
     return c.json({ ok: true });
   });

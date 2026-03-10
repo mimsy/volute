@@ -93,7 +93,7 @@ export function readRegistry(): MindEntry[] {
   return rows.map(rowToEntry);
 }
 
-/** Read ALL minds (base + splits) from DB. */
+/** Read ALL minds (base + variants) from DB. */
 export function readAllMinds(): MindEntry[] {
   const db = getRawDb();
   const rows = db.prepare("SELECT * FROM minds").all() as RawMindRow[];
@@ -127,7 +127,13 @@ export function addMind(
   ).run(name, port, stage ?? null, template ?? null);
 }
 
-export function addSplit(name: string, parent: string, port: number, dir: string, branch: string) {
+export function addVariant(
+  name: string,
+  parent: string,
+  port: number,
+  dir: string,
+  branch: string,
+) {
   const err = validateMindName(name);
   if (err) throw new Error(err);
   const db = getRawDb();
@@ -163,13 +169,13 @@ export function findMind(name: string): MindEntry | undefined {
   return row ? rowToEntry(row) : undefined;
 }
 
-export function findSplits(parent: string): MindEntry[] {
+export function findVariants(parent: string): MindEntry[] {
   const db = getRawDb();
   const rows = db.prepare("SELECT * FROM minds WHERE parent = ?").all(parent) as RawMindRow[];
   return rows.map(rowToEntry);
 }
 
-/** Get the base mind name for a given name. If it's a split, returns its parent. */
+/** Get the base mind name for a given name. If it's a variant, returns its parent. */
 export function getBaseName(name: string): string {
   const entry = findMind(name);
   return entry?.parent ?? name;

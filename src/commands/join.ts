@@ -8,29 +8,29 @@ export async function run(args: string[]) {
     "skip-verify": { type: "boolean" },
   });
 
-  const splitName = positional[0];
-  if (!splitName) {
+  const variantName = positional[0];
+  if (!variantName) {
     console.error(
-      "Usage: volute mind join <split-name> [--summary '...'] [--justification '...'] [--memory '...'] [--skip-verify]",
+      "Usage: volute mind join <variant-name> [--summary '...'] [--justification '...'] [--memory '...'] [--skip-verify]",
     );
     process.exit(1);
   }
 
-  console.log(`Joining split ${splitName}...`);
+  console.log(`Joining variant ${variantName}...`);
 
   const { daemonFetch } = await import("../lib/daemon-client.js");
   const { getClient, urlOf } = await import("../lib/api-client.js");
 
   const client = getClient();
-  // The split name is used to look up its parent in the DB
+  // The variant name is used to look up its parent in the DB
   // The API endpoint still uses the parent mind name + variant name
-  // So we need to resolve the split's parent first
+  // So we need to resolve the variant's parent first
   const statusRes = await daemonFetch(
-    urlOf(client.api.minds[":name"].$url({ param: { name: splitName } })),
+    urlOf(client.api.minds[":name"].$url({ param: { name: variantName } })),
   );
 
   if (!statusRes.ok) {
-    console.error(`Split '${splitName}' not found`);
+    console.error(`Variant '${variantName}' not found`);
     process.exit(1);
   }
 
@@ -38,14 +38,14 @@ export async function run(args: string[]) {
   const parentName = statusData.parent;
 
   if (!parentName) {
-    console.error(`'${splitName}' is not a split — it has no parent mind`);
+    console.error(`'${variantName}' is not a variant — it has no parent mind`);
     process.exit(1);
   }
 
   const res = await daemonFetch(
     urlOf(
       client.api.minds[":name"].variants[":variant"].merge.$url({
-        param: { name: parentName, variant: splitName },
+        param: { name: parentName, variant: variantName },
       }),
     ),
     {
@@ -63,9 +63,9 @@ export async function run(args: string[]) {
   const data = (await res.json()) as { ok?: boolean; error?: string };
 
   if (!res.ok) {
-    console.error(data.error ?? "Failed to join split");
+    console.error(data.error ?? "Failed to join variant");
     process.exit(1);
   }
 
-  console.log(`Split ${splitName} joined and cleaned up.`);
+  console.log(`Variant ${variantName} joined and cleaned up.`);
 }

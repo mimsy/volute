@@ -104,7 +104,7 @@ function printUsage() {
   volute mind sleep [name] [--wake-at <time>]
   volute mind wake [name]
   volute mind split <name> [--from <mind>] [--soul "..."] [--port N] [--no-start] [--json]
-  volute mind join <split-name> [--summary "..." --justification "..." --memory "..."] [--skip-verify]
+  volute mind join <variant-name> [--summary "..." --justification "..." --memory "..."] [--skip-verify]
   volute mind upgrade [name] [--template <name>] [--continue] [--accept]
   volute mind import <path> [--name <name>] [--session <path>] [--template <name>]
   volute mind export <name> [--include-env] [--include-identity] [--include-connectors] [--include-history] [--include-sessions] [--all] [--output <path>]

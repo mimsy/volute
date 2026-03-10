@@ -44,8 +44,8 @@ export class MindManager {
     if (!entry) throw new Error(`Unknown mind: ${name}`);
 
     if (entry.parent) {
-      // Split — dir and port come from the minds table entry
-      if (!entry.dir) throw new Error(`Split ${name} has no directory`);
+      // Variant — dir and port come from the minds table entry
+      if (!entry.dir) throw new Error(`Variant ${name} has no directory`);
       return { dir: entry.dir, port: entry.port, baseName: entry.parent };
     }
 

@@ -185,7 +185,7 @@ export async function startDaemon(opts: {
     }
   }
 
-  // Start all minds + splits that were previously running (parallel, concurrency limit of 5)
+  // Start all minds + variants that were previously running (parallel, concurrency limit of 5)
   // Skip sleeping minds — they only need connectors, not the mind process
   const allMinds = readAllMinds();
   const runningEntries = allMinds.filter((e) => e.running);

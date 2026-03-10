@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import {
   addMind,
-  addSplit,
+  addVariant,
   daemonLoopback,
   findMind,
-  findSplits,
+  findVariants,
   getBaseName,
   mindDir,
   nextPort,
@@ -38,9 +38,9 @@ describe("registry", () => {
     assert.ok(Array.isArray(entries));
   });
 
-  it("nextPort skips split ports", () => {
+  it("nextPort skips variant ports", () => {
     addMind(testMind, 4100);
-    addSplit(`${testMind}-v1`, testMind, 4101, "/fake/v1", "v1");
+    addVariant(`${testMind}-v1`, testMind, 4101, "/fake/v1", "v1");
     const port = nextPort();
     assert.ok(port >= 4102, `Expected port >= 4102, got ${port}`);
   });
@@ -100,7 +100,7 @@ describe("registry", () => {
   });
 });
 
-describe("splits", () => {
+describe("variants", () => {
   const splitName = `${testMind}-split`;
 
   afterEach(() => {
@@ -109,9 +109,9 @@ describe("splits", () => {
     } catch {}
   });
 
-  it("addSplit creates a split with parent", () => {
+  it("addVariant creates a variant with parent", () => {
     addMind(testMind, 4100);
-    addSplit(splitName, testMind, 4101, "/fake/split", "split-branch");
+    addVariant(splitName, testMind, 4101, "/fake/split", "split-branch");
     const entry = findMind(splitName);
     assert.ok(entry);
     assert.equal(entry.parent, testMind);
@@ -119,17 +119,17 @@ describe("splits", () => {
     assert.equal(entry.branch, "split-branch");
   });
 
-  it("findSplits returns splits for parent", () => {
+  it("findVariants returns variants for parent", () => {
     addMind(testMind, 4100);
-    addSplit(splitName, testMind, 4101, "/fake/split", "split-branch");
-    const splits = findSplits(testMind);
+    addVariant(splitName, testMind, 4101, "/fake/split", "split-branch");
+    const splits = findVariants(testMind);
     assert.equal(splits.length, 1);
     assert.equal(splits[0].name, splitName);
   });
 
-  it("getBaseName returns parent for split", () => {
+  it("getBaseName returns parent for variant", () => {
     addMind(testMind, 4100);
-    addSplit(splitName, testMind, 4101, "/fake/split", "split-branch");
+    addVariant(splitName, testMind, 4101, "/fake/split", "split-branch");
     assert.equal(getBaseName(splitName), testMind);
   });
 
@@ -138,24 +138,24 @@ describe("splits", () => {
     assert.equal(getBaseName(testMind), testMind);
   });
 
-  it("cascade delete removes splits when parent is deleted", () => {
+  it("cascade delete removes variants when parent is deleted", () => {
     addMind(testMind, 4100);
-    addSplit(splitName, testMind, 4101, "/fake/split", "split-branch");
+    addVariant(splitName, testMind, 4101, "/fake/split", "split-branch");
     removeMind(testMind);
     assert.equal(findMind(splitName), undefined);
   });
 
-  it("readAllMinds includes both base minds and splits", () => {
+  it("readAllMinds includes both base minds and variants", () => {
     addMind(testMind, 4100);
-    addSplit(splitName, testMind, 4101, "/fake/split", "split-branch");
+    addVariant(splitName, testMind, 4101, "/fake/split", "split-branch");
     const all = readAllMinds();
     assert.ok(all.some((e) => e.name === testMind));
     assert.ok(all.some((e) => e.name === splitName));
   });
 
-  it("readRegistry excludes splits", () => {
+  it("readRegistry excludes variants", () => {
     addMind(testMind, 4100);
-    addSplit(splitName, testMind, 4101, "/fake/split", "split-branch");
+    addVariant(splitName, testMind, 4101, "/fake/split", "split-branch");
     const base = readRegistry();
     assert.ok(base.some((e) => e.name === testMind));
     assert.ok(!base.some((e) => e.name === splitName));

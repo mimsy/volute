@@ -11,18 +11,18 @@ export async function run(args: string[]) {
   });
 
   const mindName = resolveMindName({ mind: flags.from });
-  const splitName = positional[0];
+  const variantName = positional[0];
   const { soul, port, json } = flags;
   const noStart = flags["no-start"];
 
-  if (!splitName) {
+  if (!variantName) {
     console.error(
       'Usage: volute mind split <name> [--from <mind>] [--soul "..."] [--port N] [--no-start] [--json]',
     );
     process.exit(1);
   }
 
-  if (!json) console.log("Creating split via daemon...");
+  if (!json) console.log("Creating variant via daemon...");
 
   const { daemonFetch } = await import("../lib/daemon-client.js");
   const { getClient, urlOf } = await import("../lib/api-client.js");
@@ -34,7 +34,7 @@ export async function run(args: string[]) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: splitName,
+        name: variantName,
         ...(soul && { soul }),
         ...(port && { port }),
         ...(noStart && { noStart }),
@@ -49,14 +49,14 @@ export async function run(args: string[]) {
   };
 
   if (!res.ok) {
-    console.error(data.error ?? "Failed to create split");
+    console.error(data.error ?? "Failed to create variant");
     process.exit(1);
   }
 
   if (json) {
     console.log(JSON.stringify(data.variant, null, 2));
   } else {
-    console.log(`\nSplit created: ${splitName}`);
+    console.log(`\nVariant created: ${variantName}`);
     console.log(`  Branch: ${data.variant?.branch}`);
     console.log(`  Path:   ${data.variant?.path}`);
     console.log(`  Port:   ${data.variant?.port}`);

@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import {
   addMind,
-  addSplit,
+  addVariant,
   findMind,
-  findSplits,
+  findVariants,
   getBaseName,
   readAllMinds,
   removeMind,
@@ -14,22 +14,22 @@ import { validateBranchName } from "../src/lib/variants.js";
 
 const testMind = `test-mind-${Date.now()}`;
 
-describe("splits CRUD", () => {
+describe("variants CRUD", () => {
   afterEach(() => {
     try {
       removeMind(testMind);
     } catch {}
   });
 
-  it("findSplits returns empty array when no splits", () => {
+  it("findVariants returns empty array when no variants", () => {
     addMind(testMind, 4200);
-    assert.deepStrictEqual(findSplits(testMind), []);
+    assert.deepStrictEqual(findVariants(testMind), []);
   });
 
-  it("addSplit creates a split linked to parent", () => {
+  it("addVariant creates a variant linked to parent", () => {
     addMind(testMind, 4200);
-    addSplit(`${testMind}-a`, testMind, 4201, "/fake/a", "branch-a");
-    const splits = findSplits(testMind);
+    addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "branch-a");
+    const splits = findVariants(testMind);
     assert.equal(splits.length, 1);
     assert.equal(splits[0].name, `${testMind}-a`);
     assert.equal(splits[0].parent, testMind);
@@ -37,62 +37,62 @@ describe("splits CRUD", () => {
     assert.equal(splits[0].branch, "branch-a");
   });
 
-  it("addSplit can create multiple splits", () => {
+  it("addVariant can create multiple variants", () => {
     addMind(testMind, 4200);
-    addSplit(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
-    addSplit(`${testMind}-b`, testMind, 4202, "/fake/b", "b");
-    const splits = findSplits(testMind);
+    addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
+    addVariant(`${testMind}-b`, testMind, 4202, "/fake/b", "b");
+    const splits = findVariants(testMind);
     assert.equal(splits.length, 2);
   });
 
-  it("removeMind removes a split", () => {
+  it("removeMind removes a variant", () => {
     addMind(testMind, 4200);
-    addSplit(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
+    addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
     removeMind(`${testMind}-a`);
-    assert.deepStrictEqual(findSplits(testMind), []);
+    assert.deepStrictEqual(findVariants(testMind), []);
   });
 
-  it("findMind returns split entry", () => {
+  it("findMind returns variant entry", () => {
     addMind(testMind, 4200);
-    addSplit(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
+    addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
     const entry = findMind(`${testMind}-a`);
     assert.ok(entry);
     assert.equal(entry.parent, testMind);
   });
 
-  it("findMind returns undefined for missing split", () => {
+  it("findMind returns undefined for missing variant", () => {
     assert.equal(findMind(`${testMind}-nope`), undefined);
   });
 
-  it("cascade delete removes splits when parent is deleted", () => {
+  it("cascade delete removes variants when parent is deleted", () => {
     addMind(testMind, 4200);
-    addSplit(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
-    addSplit(`${testMind}-b`, testMind, 4202, "/fake/b", "b");
+    addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
+    addVariant(`${testMind}-b`, testMind, 4202, "/fake/b", "b");
     removeMind(testMind);
     assert.equal(findMind(`${testMind}-a`), undefined);
     assert.equal(findMind(`${testMind}-b`), undefined);
   });
 });
 
-describe("split running state", () => {
+describe("variant running state", () => {
   afterEach(() => {
     try {
       removeMind(testMind);
     } catch {}
   });
 
-  it("setMindRunning works for splits", () => {
+  it("setMindRunning works for variants", () => {
     addMind(testMind, 4200);
-    addSplit(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
+    addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
     setMindRunning(`${testMind}-a`, true);
     assert.equal(findMind(`${testMind}-a`)!.running, true);
     setMindRunning(`${testMind}-a`, false);
     assert.equal(findMind(`${testMind}-a`)!.running, false);
   });
 
-  it("readAllMinds includes running splits", () => {
+  it("readAllMinds includes running variants", () => {
     addMind(testMind, 4200);
-    addSplit(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
+    addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
     setMindRunning(`${testMind}-a`, true);
     const all = readAllMinds();
     const split = all.find((e) => e.name === `${testMind}-a`);
@@ -108,9 +108,9 @@ describe("getBaseName", () => {
     } catch {}
   });
 
-  it("returns parent name for a split", () => {
+  it("returns parent name for a variant", () => {
     addMind(testMind, 4200);
-    addSplit(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
+    addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
     assert.equal(getBaseName(`${testMind}-a`), testMind);
   });
 

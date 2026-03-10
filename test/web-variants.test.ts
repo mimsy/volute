@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { Hono } from "hono";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
-import { addMind, findSplits, removeMind } from "../src/lib/registry.js";
+import { addMind, findVariants, removeMind } from "../src/lib/registry.js";
 import { conversations, messages, sessions, users } from "../src/lib/schema.js";
 import { authMiddleware, createSession } from "../src/web/middleware/auth.js";
 
@@ -35,8 +35,8 @@ function createApp(mindExists: boolean) {
   app.get("/api/minds/:name/variants", async (c) => {
     if (!mindExists) return c.json({ error: "Mind not found" }, 404);
 
-    const splits = findSplits(testMind);
-    const results = splits.map((s) => ({
+    const variants = findVariants(testMind);
+    const results = variants.map((s) => ({
       ...s,
       status: s.port ? "no-server" : "no-server",
     }));
