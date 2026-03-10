@@ -5,7 +5,7 @@ import { checkMissingEnvVars, getConnectorDef } from "../connector-defs.js";
 import { loadMergedEnv } from "../env.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../isolation.js";
 import log from "../logger.js";
-import { daemonLoopback, stateDir, voluteHome } from "../registry.js";
+import { daemonLoopback, getBaseName, stateDir, voluteHome } from "../registry.js";
 import { RotatingLog } from "../rotating-log.js";
 import { isSandboxEnabled, wrapForSandbox } from "../sandbox.js";
 import { readVoluteConfig } from "../volute-config.js";
@@ -146,8 +146,7 @@ export class ConnectorManager {
     // State dir is created by root — chown so the mind user can write channels.json, etc.
     if (isIsolationEnabled()) {
       try {
-        const [base] = mindName.split("@", 2);
-        chownMindDir(mindStateDir, base);
+        chownMindDir(mindStateDir, getBaseName(mindName));
       } catch (err) {
         throw new Error(
           `Cannot start connector ${type} for ${mindName}: failed to set ownership on state directory ${mindStateDir}: ${err instanceof Error ? err.message : err}`,

@@ -1,8 +1,13 @@
-import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import log from "./logger.js";
-import { voluteHome, voluteSystemDir, voluteUserHome } from "./registry.js";
+import {
+  getBaseName,
+  readRegistry,
+  voluteHome,
+  voluteSystemDir,
+  voluteUserHome,
+} from "./registry.js";
 import { readGlobalConfig } from "./setup.js";
 
 type SandboxManagerType = {
@@ -79,15 +84,12 @@ export function buildDenyRead(mindName: string, mindDir: string): string[] {
 
   // Other minds — deny each individually since the mind's own dir is inside the same parent
   try {
-    const registryPath = resolve(voluteSystemDir(), "minds.json");
-    if (existsSync(registryPath)) {
-      const registry = JSON.parse(readFileSync(registryPath, "utf-8")) as Array<{ name: string }>;
-      for (const entry of registry) {
-        if (entry.name === mindName.split("@")[0]) continue;
-        const otherDir = resolve(mindsDir, entry.name);
-        if (otherDir !== mindDir) {
-          deny.push(otherDir);
-        }
+    const entries = readRegistry();
+    for (const entry of entries) {
+      if (entry.name === getBaseName(mindName)) continue;
+      const otherDir = resolve(mindsDir, entry.name);
+      if (otherDir !== mindDir) {
+        deny.push(otherDir);
       }
     }
   } catch (err) {

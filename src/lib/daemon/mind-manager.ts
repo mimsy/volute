@@ -8,11 +8,17 @@ import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../isolation
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../json-state.js";
 import log from "../logger.js";
 import { getPrompt } from "../prompts.js";
-import { findMind, mindDir, setMindRunning, stateDir, voluteSystemDir } from "../registry.js";
+import {
+  findMind,
+  getBaseName,
+  mindDir,
+  setMindRunning,
+  stateDir,
+  voluteSystemDir,
+} from "../registry.js";
 import { RotatingLog } from "../rotating-log.js";
 import { isSandboxEnabled, wrapForSandbox } from "../sandbox.js";
 import { mindHistory } from "../schema.js";
-import { findVariant, setVariantRunning } from "../variants.js";
 import { generateMindToken, revokeMindToken } from "./mind-tokens.js";
 import { RestartTracker } from "./restart-tracker.js";
 
@@ -41,22 +47,19 @@ export class MindManager {
     port: number;
     isVariant: boolean;
     baseName: string;
-    variantName?: string;
   } {
-    const [baseName, variantName] = name.split("@", 2);
+    const entry = findMind(name);
+    if (!entry) throw new Error(`Unknown mind: ${name}`);
 
-    const entry = findMind(baseName);
-    if (!entry) throw new Error(`Unknown mind: ${baseName}`);
-
-    if (variantName) {
-      const variant = findVariant(baseName, variantName);
-      if (!variant) throw new Error(`Unknown variant: ${variantName} (mind: ${baseName})`);
-      return { dir: variant.path, port: variant.port, isVariant: true, baseName, variantName };
+    if (entry.parent) {
+      // Split — dir and port come from the minds table entry
+      if (!entry.dir) throw new Error(`Split ${name} has no directory`);
+      return { dir: entry.dir, port: entry.port, isVariant: true, baseName: entry.parent };
     }
 
-    const dir = mindDir(baseName);
+    const dir = mindDir(name);
     if (!existsSync(dir)) throw new Error(`Mind directory missing: ${dir}`);
-    return { dir, port: entry.port, isVariant: false, baseName };
+    return { dir, port: entry.port, isVariant: false, baseName: name };
   }
 
   async startMind(name: string): Promise<void> {
@@ -65,7 +68,7 @@ export class MindManager {
     }
 
     const target = this.resolveTarget(name);
-    const { dir, isVariant, baseName, variantName } = target;
+    const { dir, isVariant, baseName } = target;
     const port = target.port;
 
     // Kill any orphan process from a previous daemon session
@@ -217,11 +220,7 @@ export class MindManager {
     // Set up crash recovery after successful start
     if (this.restartTracker.reset(name)) this.saveCrashAttempts();
     this.setupCrashRecovery(name, child);
-    if (isVariant) {
-      setVariantRunning(baseName, variantName!, true);
-    } else {
-      setMindRunning(name, true);
-    }
+    setMindRunning(name, true);
 
     mlog.info(`started mind ${name} on port ${port}`);
 
@@ -320,12 +319,7 @@ export class MindManager {
       this.saveCrashAttempts();
       if (!shouldRestart) {
         mlog.error(`${name} crashed ${attempt} times — giving up on restart`);
-        const [base, variant] = name.split("@", 2);
-        if (variant) {
-          setVariantRunning(base, variant, false);
-        } else {
-          setMindRunning(name, false);
-        }
+        setMindRunning(name, false);
         return;
       }
       mlog.info(
@@ -371,12 +365,7 @@ export class MindManager {
     rmSync(mindPidPath(name), { force: true });
 
     if (!this.shuttingDown) {
-      const [baseName, variantName] = name.split("@", 2);
-      if (variantName) {
-        setVariantRunning(baseName, variantName, false);
-      } else {
-        setMindRunning(name, false);
-      }
+      setMindRunning(name, false);
     }
 
     mlog.info(`stopped mind ${name}`);

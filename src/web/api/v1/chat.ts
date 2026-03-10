@@ -16,7 +16,7 @@ import {
   isParticipantOrOwner,
 } from "../../../lib/events/conversations.js";
 import log from "../../../lib/logger.js";
-import { findMind } from "../../../lib/registry.js";
+import { findMind, getBaseName } from "../../../lib/registry.js";
 import { buildVoluteSlug } from "../../../lib/slugify.js";
 import { getTypingMap } from "../../../lib/typing.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
@@ -116,7 +116,7 @@ const app = new Hono<AuthEnv>()
   // Mind-scoped chat: POST /api/v1/minds/:name/chat
   .post("/minds/:name/chat", zValidator("json", mindChatSchema), async (c) => {
     const name = c.req.param("name");
-    const [baseName] = name.split("@", 2);
+    const baseName = getBaseName(name);
 
     const entry = findMind(baseName);
     if (!entry) return c.json({ error: "Mind not found" }, 404);

@@ -71,6 +71,7 @@ import {
   addMind,
   ensureVoluteHome,
   findMind,
+  getBaseName,
   mindDir,
   nextPort,
   readRegistry,
@@ -1089,21 +1090,18 @@ const app = new Hono<AuthEnv>()
     const hasPages = existsSync(resolve(mindDir(name), "home", "public", "pages"));
     return c.json({ ...entry, ...mindStatus, variants: variantStatuses, hasPages });
   })
-  // Start mind (supports name@variant) — admin only
+  // Start mind (supports splits) — admin only
   .post("/:name/start", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    const [baseName, variantName] = name.split("@", 2);
 
-    const entry = findMind(baseName);
+    const entry = findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    let targetPort = entry.port;
-    if (variantName) {
-      const variant = findVariant(baseName, variantName);
-      if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
-      targetPort = variant.port;
+    const targetPort = entry.port;
+    if (entry.parent) {
+      if (!entry.dir) return c.json({ error: `Split ${name} has no directory` }, 404);
     } else {
-      const dir = mindDir(baseName);
+      const dir = mindDir(name);
       if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
     }
 
@@ -1118,22 +1116,20 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: err instanceof Error ? err.message : "Failed to start mind" }, 500);
     }
   })
-  // Restart mind (supports name@variant) — admin or self
+  // Restart mind (supports splits) — admin or self
   // Accepts optional JSON body: { context?: { type: string, name?: string, summary?: string, ... } }
   .post("/:name/restart", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const [baseName, variantName] = name.split("@", 2);
 
-    const entry = findMind(baseName);
+    const entry = findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    let targetPort = entry.port;
-    if (variantName) {
-      const variant = findVariant(baseName, variantName);
-      if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
-      targetPort = variant.port;
+    const baseName = entry.parent ?? name;
+    const targetPort = entry.port;
+    if (entry.parent) {
+      if (!entry.dir) return c.json({ error: `Split ${name} has no directory` }, 404);
     } else {
-      const dir = mindDir(baseName);
+      const dir = mindDir(name);
       if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
     }
 
@@ -1169,7 +1165,7 @@ const app = new Hono<AuthEnv>()
       }
 
       // Handle mind-initiated merge: perform merge operations directly
-      if (context?.type === "merge" && context.name && !variantName) {
+      if (context?.type === "merge" && context.name && !entry.parent) {
         const mergeVariantName = String(context.name);
         const branchErr = validateBranchName(mergeVariantName);
         if (branchErr) {
@@ -1231,7 +1227,7 @@ const app = new Hono<AuthEnv>()
       }
 
       // Inject "[seed has sprouted]" system message into active volute conversations
-      if (context?.type === "sprouted" && !variantName) {
+      if (context?.type === "sprouted" && !entry.parent) {
         try {
           const db = await getDb();
           const activeConvs = await db
@@ -1255,18 +1251,12 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: err instanceof Error ? err.message : "Failed to restart mind" }, 500);
     }
   })
-  // Stop mind (supports name@variant) — admin only
+  // Stop mind (supports splits) — admin only
   .post("/:name/stop", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    const [baseName, variantName] = name.split("@", 2);
 
-    const entry = findMind(baseName);
+    const entry = findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
-
-    if (variantName) {
-      const variant = findVariant(baseName, variantName);
-      if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
-    }
 
     const manager = getMindManager();
     if (!manager.isRunning(name)) {
@@ -1630,15 +1620,11 @@ const app = new Hono<AuthEnv>()
   // Proxy message to mind — enriches, then delegates to delivery manager
   .post("/:name/message", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const [baseName, variantName] = name.split("@", 2);
 
-    const entry = findMind(baseName);
+    const entry = findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    if (variantName) {
-      const variant = findVariant(baseName, variantName);
-      if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
-    }
+    const baseName = entry.parent ?? name;
 
     // If the mind is sleeping, queue the message
     try {
@@ -1809,7 +1795,7 @@ const app = new Hono<AuthEnv>()
   // Budget status
   .get("/:name/budget", async (c) => {
     const name = c.req.param("name");
-    const [baseName] = name.split("@", 2);
+    const baseName = getBaseName(name);
     const usage = getTokenBudget().getUsage(baseName);
     if (!usage) return c.json({ error: "No budget configured" }, 404);
     return c.json(usage);
@@ -1905,7 +1891,7 @@ const app = new Hono<AuthEnv>()
   // Get pending/gated delivery messages
   .get("/:name/delivery/pending", async (c) => {
     const name = c.req.param("name");
-    const [baseName] = name.split("@", 2);
+    const baseName = getBaseName(name);
     try {
       const pending = await getDeliveryManager().getPending(baseName);
       return c.json(pending);
@@ -1920,7 +1906,7 @@ const app = new Hono<AuthEnv>()
   // Receive events from mind, persist to mind_history, publish to pub-sub
   .post("/:name/events", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const [baseName] = name.split("@", 2);
+    const baseName = getBaseName(name);
 
     let body: {
       type: string;
@@ -2008,7 +1994,7 @@ const app = new Hono<AuthEnv>()
   // SSE endpoint for mind events
   .get("/:name/events", async (c) => {
     const name = c.req.param("name");
-    const [baseName] = name.split("@", 2);
+    const baseName = getBaseName(name);
 
     const entry = findMind(baseName);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
@@ -2074,7 +2060,7 @@ const app = new Hono<AuthEnv>()
   // Persist external channel send to mind_history
   .post("/:name/history", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const [baseName] = name.split("@", 2);
+    const baseName = getBaseName(name);
 
     let body: { channel: string; content: string; sender?: string };
     try {

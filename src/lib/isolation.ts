@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { validateMindName } from "./registry.js";
+import { getBaseName, validateMindName } from "./registry.js";
 
 /** Returns true when per-mind user isolation is enabled. */
 export function isIsolationEnabled(): boolean {
@@ -175,7 +175,7 @@ export function wrapForIsolation(
   mindName: string,
 ): [string, string[]] {
   if (!isIsolationEnabled()) return [cmd, args];
-  const baseName = mindName.split("@", 2)[0];
+  const baseName = getBaseName(mindName);
   const user = mindUserName(baseName);
   if (process.platform === "darwin") {
     return ["sudo", ["-u", user, "--", cmd, ...args]];

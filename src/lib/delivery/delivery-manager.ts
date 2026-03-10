@@ -4,10 +4,9 @@ import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { getParticipants } from "../events/conversations.js";
 import log from "../logger.js";
-import { findMind, mindDir, voluteHome } from "../registry.js";
+import { findMind, getBaseName, mindDir, voluteHome } from "../registry.js";
 import { deliveryQueue } from "../schema.js";
 import { getTypingMap, publishTypingForChannels } from "../typing.js";
-import { findVariant } from "../variants.js";
 import { readVoluteConfig } from "../volute-config.js";
 import {
   type DeliveryPayload,
@@ -80,7 +79,7 @@ export class DeliveryManager {
         reason: string;
       }
   > {
-    const [baseName] = mindName.split("@", 2);
+    const baseName = getBaseName(mindName);
     const config = getRoutingConfig(baseName);
 
     const meta: MatchMeta = {
@@ -144,7 +143,7 @@ export class DeliveryManager {
    * and may trigger batch flush if session goes idle.
    */
   sessionDone(mindName: string, session?: string): void {
-    const [baseName] = mindName.split("@", 2);
+    const baseName = getBaseName(mindName);
 
     if (session) {
       this.decrementActive(baseName, session);
@@ -270,16 +269,9 @@ export class DeliveryManager {
   // --- Private ---
 
   private resolvePort(mindName: string): { baseName: string; port: number } | null {
-    const [baseName, variantName] = mindName.split("@", 2);
-    const entry = findMind(baseName);
+    const entry = findMind(mindName);
     if (!entry) return null;
-
-    if (variantName) {
-      const variant = findVariant(baseName, variantName);
-      if (!variant) return null;
-      return { baseName, port: variant.port };
-    }
-
+    const baseName = entry.parent ?? mindName;
     return { baseName, port: entry.port };
   }
 
@@ -483,7 +475,7 @@ export class DeliveryManager {
     // New-speaker interrupt: if mind is active on this channel and a different sender
     // arrives (within the maxWait window and past the debounce cooldown), force-flush
     // with interrupt so the mind can incorporate the new voice
-    const [baseName] = mindName.split("@", 2);
+    const baseName = getBaseName(mindName);
     const state = this.sessionStates.get(baseName)?.get(session);
     if (
       state &&
@@ -600,7 +592,7 @@ export class DeliveryManager {
 
     if (messages.length === 0) return;
 
-    const [baseName] = mindName.split("@", 2);
+    const baseName = getBaseName(mindName);
     const config = getRoutingConfig(baseName);
     const sessionConfig = resolveDeliveryMode(config, session);
 
@@ -619,7 +611,7 @@ export class DeliveryManager {
     session: string,
     payload: DeliveryPayload,
   ): Promise<void> {
-    const [baseName] = mindName.split("@", 2);
+    const baseName = getBaseName(mindName);
     await this.persistToQueue(baseName, session, payload, "gated");
 
     // Check if this is the first gated message for this channel — send invite
@@ -670,7 +662,7 @@ export class DeliveryManager {
       content: [{ type: "text", text: notification }],
     };
 
-    const config = getRoutingConfig(mindName.split("@", 2)[0]);
+    const config = getRoutingConfig(getBaseName(mindName));
     const sessionConfig = resolveDeliveryMode(config, "main");
 
     await this.deliverToMind(mindName, "main", invitePayload, {

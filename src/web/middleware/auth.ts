@@ -5,6 +5,7 @@ import { createMiddleware } from "hono/factory";
 import { getOrCreateMindUser, getUser, type User } from "../../lib/auth.js";
 import { resolveMindToken } from "../../lib/daemon/mind-tokens.js";
 import { getDb } from "../../lib/db.js";
+import { getBaseName } from "../../lib/registry.js";
 import { sessions } from "../../lib/schema.js";
 
 function isValidDaemonToken(token: string): boolean {
@@ -148,7 +149,7 @@ export const requireSelf = (paramName = "name") =>
     const user = c.get("user");
     if (user.role !== "admin") {
       const target = c.req.param(paramName) ?? "";
-      const [baseName] = target.split("@", 2);
+      const baseName = getBaseName(target);
       if (user.username !== baseName) {
         return c.json({ error: "Forbidden" }, 403);
       }
