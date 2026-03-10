@@ -2,7 +2,7 @@ import { getSleepManagerIfReady } from "../daemon/sleep-manager.js";
 import { getDb } from "../db.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import log from "../logger.js";
-import { findMind } from "../registry.js";
+import { findMind, getBaseName } from "../registry.js";
 import { mindHistory } from "../schema.js";
 import { getDeliveryManager } from "./delivery-manager.js";
 import { type DeliveryPayload, extractTextContent } from "./delivery-router.js";
@@ -49,8 +49,8 @@ export async function recordInbound(
  */
 export async function deliverMessage(mindName: string, payload: DeliveryPayload): Promise<void> {
   try {
-    const [baseName] = mindName.split("@", 2);
-    const entry = findMind(baseName);
+    const baseName = await getBaseName(mindName);
+    const entry = await findMind(baseName);
     if (!entry) {
       dlog.warn(`cannot deliver to ${mindName}: mind not found`);
       return;

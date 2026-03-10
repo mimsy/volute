@@ -6,9 +6,9 @@ import { findMind, mindDir, voluteHome } from "../../lib/registry.js";
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
-function resolvePublicRoot(name: string): string | null {
+async function resolvePublicRoot(name: string): Promise<string | null> {
   if (name === "_system") return resolve(voluteHome(), "shared");
-  if (!findMind(name)) return null;
+  if (!(await findMind(name))) return null;
   return resolve(mindDir(name), "home", "public");
 }
 
@@ -55,7 +55,7 @@ const app = new Hono()
   // Directory listing: GET /public/:name/
   .get("/:name/", async (c) => {
     const name = c.req.param("name");
-    const publicRoot = resolvePublicRoot(name);
+    const publicRoot = await resolvePublicRoot(name);
     if (!publicRoot) return c.json({ error: "Not found" }, 404);
 
     return c.json(await listDir(publicRoot));
@@ -63,7 +63,7 @@ const app = new Hono()
   // File serving or subdirectory listing: GET /public/:name/*
   .get("/:name/*", async (c) => {
     const name = c.req.param("name");
-    const publicRoot = resolvePublicRoot(name);
+    const publicRoot = await resolvePublicRoot(name);
     if (!publicRoot) return c.text("Not found", 404);
 
     const wildcard = c.req.path.replace(`/public/${name}`, "") || "/";

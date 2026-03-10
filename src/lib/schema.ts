@@ -1,6 +1,23 @@
 import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
+export const minds = sqliteTable(
+  "minds",
+  {
+    name: text("name").primaryKey(),
+    port: integer("port").notNull().unique(),
+    parent: text("parent").references((): any => minds.name, { onDelete: "cascade" }),
+    dir: text("dir"),
+    branch: text("branch"),
+    stage: text("stage"),
+    template: text("template"),
+    template_hash: text("template_hash"),
+    running: integer("running").notNull().default(0),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [index("idx_minds_parent").on(table.parent)],
+);
+
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   username: text("username").unique().notNull(),

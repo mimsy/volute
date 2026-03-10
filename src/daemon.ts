@@ -24,8 +24,8 @@ import { migrateToSystemDir } from "./lib/migrate-system-dir.js";
 import { stopAllWatchers } from "./lib/pages-watcher.js";
 import {
   ensureSystemDir,
-  initRegistryCache,
   mindDir,
+  readAllMinds,
   readRegistry,
   setMindRunning,
   voluteHome,
@@ -35,7 +35,6 @@ import { RotatingLog } from "./lib/rotating-log.js";
 import { ensureSharedRepo } from "./lib/shared.js";
 import { syncBuiltinSkills } from "./lib/skills.js";
 import { ensureSystemChannel } from "./lib/system-channel.js";
-import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
 import { initWebhook } from "./lib/webhook.js";
 import { cleanExpiredSessions } from "./web/middleware/auth.js";
 import { startServer } from "./web/server.js";
@@ -92,8 +91,12 @@ export async function startDaemon(opts: {
     log.warn("failed to initialize shared repo", log.errorData(err));
   }
 
-  // Load registry into memory for fast reads within the daemon
-  initRegistryCache();
+  // Initialize database (runs drizzle migrations + creates raw connection)
+  await (await import("./lib/db.js")).getDb();
+
+  // Migrate minds.json + variants.json into DB (idempotent)
+  const { migrateRegistryToDb } = await import("./lib/migrate-registry-to-db.js");
+  migrateRegistryToDb();
 
   // Initialize sandbox runtime for mind process isolation
   const { initSandbox } = await import("./lib/sandbox.js");
@@ -171,7 +174,7 @@ export async function startDaemon(opts: {
   const unsubscribeWebhook = initWebhook();
 
   // Migrate .volute/ → .mind/ and system state for all registered minds
-  const registry = readRegistry();
+  const registry = await readRegistry();
   for (const entry of registry) {
     for (const migrate of [migrateDotVoluteDir, migrateMindState, migratePagesDirToPublic]) {
       try {
@@ -182,15 +185,16 @@ export async function startDaemon(opts: {
     }
   }
 
-  // Start all minds that were previously running (parallel, concurrency limit of 5)
+  // Start all minds + variants that were previously running (parallel, concurrency limit of 5)
   // Skip sleeping minds — they only need connectors, not the mind process
-  const runningEntries = registry.filter((e) => e.running);
+  const allMinds = await readAllMinds();
+  const runningEntries = allMinds.filter((e) => e.running);
   {
     const queue = [...runningEntries];
     const workers = Array.from({ length: Math.min(5, queue.length) }, async () => {
       while (queue.length > 0) {
         const entry = queue.shift()!;
-        if (sleepManager.isSleeping(entry.name)) {
+        if (!entry.parent && sleepManager.isSleeping(entry.name)) {
           // Sleeping mind: start connectors/schedules but not the process
           try {
             // We need connectors running but not the mind process
@@ -212,26 +216,7 @@ export async function startDaemon(opts: {
           await startMindFull(entry.name);
         } catch (err) {
           log.error(`failed to start mind ${entry.name}`, log.errorData(err));
-          setMindRunning(entry.name, false);
-        }
-      }
-    });
-    await Promise.all(workers);
-  }
-
-  // Restore running variants (in parallel with same pattern)
-  const runningVariants = getAllRunningVariants();
-  {
-    const queue = [...runningVariants];
-    const workers = Array.from({ length: Math.min(5, queue.length) }, async () => {
-      while (queue.length > 0) {
-        const { mindName, variant } = queue.shift()!;
-        const compositeKey = `${mindName}@${variant.name}`;
-        try {
-          await startMindFull(compositeKey);
-        } catch (err) {
-          log.error(`failed to start variant ${compositeKey}`, log.errorData(err));
-          setVariantRunning(mindName, variant.name, false);
+          await setMindRunning(entry.name, false);
         }
       }
     });

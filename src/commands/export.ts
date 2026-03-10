@@ -24,7 +24,7 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  const entry = findMind(name);
+  const entry = await findMind(name);
   if (!entry) {
     console.error(`Unknown mind: ${name}`);
     process.exit(1);

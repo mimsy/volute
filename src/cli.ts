@@ -114,11 +114,11 @@ Mind:
   mind connect/disconnect <type>   Manage connectors
   mind logs [name] [--follow]      Tail mind logs
   mind sprout                      Complete orientation
+  mind split/join                  Create and merge experimental splits
   mind upgrade/import/export       Lifecycle operations
 
 Configuration:
   channel   Read, list, and manage channels
-  variant   Create and merge experimental variants
   schedule  Manage cron schedules
   skill     Browse and install skills
   env       Manage environment variables
@@ -141,7 +141,7 @@ Options:
 
 Run 'volute <command> --help' for details.
 
-Mind-scoped commands (send, history, variant, schedule, channel, file, skill, shared, pages)
+Mind-scoped commands (send, history, schedule, channel, file, skill, shared, pages)
 use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
   default:

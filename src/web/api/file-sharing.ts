@@ -40,7 +40,7 @@ const app = new Hono<AuthEnv>()
   // Send a file to another mind
   .post("/:name/files/send", requireSelf(), async (c) => {
     const senderName = c.req.param("name");
-    const senderEntry = findMind(senderName);
+    const senderEntry = await findMind(senderName);
     if (!senderEntry) return c.json({ error: "Sender mind not found" }, 404);
 
     const body = (await c.req.json()) as { targetMind?: string; filePath?: string };
@@ -48,7 +48,7 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "targetMind and filePath are required" }, 400);
     }
 
-    const receiverEntry = findMind(body.targetMind);
+    const receiverEntry = await findMind(body.targetMind);
     if (!receiverEntry) return c.json({ error: "Target mind not found" }, 404);
 
     const pathErr = validateFilePath(body.filePath);
@@ -116,16 +116,16 @@ const app = new Hono<AuthEnv>()
   })
 
   // List pending incoming files
-  .get("/:name/files/pending", (c) => {
+  .get("/:name/files/pending", async (c) => {
     const name = c.req.param("name");
-    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
     return c.json(listPending(name));
   })
 
   // Accept a pending file
   .post("/:name/files/accept", async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const body = (await c.req.json()) as { id?: string };
@@ -143,7 +143,7 @@ const app = new Hono<AuthEnv>()
     }
 
     // Notify sender that file was accepted
-    const senderEntry = findMind(result.sender);
+    const senderEntry = await findMind(result.sender);
     if (senderEntry?.running) {
       await notifyMind(
         senderEntry.port,
@@ -159,7 +159,7 @@ const app = new Hono<AuthEnv>()
   // Reject a pending file
   .post("/:name/files/reject", async (c) => {
     const name = c.req.param("name");
-    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
 
     const body = (await c.req.json()) as { id?: string };
     if (!body.id) return c.json({ error: "id is required" }, 400);
@@ -176,7 +176,7 @@ const app = new Hono<AuthEnv>()
     }
 
     // Notify sender that file was rejected
-    const senderEntry = findMind(result.sender);
+    const senderEntry = await findMind(result.sender);
     if (senderEntry?.running) {
       await notifyMind(
         senderEntry.port,
@@ -192,7 +192,7 @@ const app = new Hono<AuthEnv>()
   // Add a trusted sender
   .post("/:name/files/trust", async (c) => {
     const name = c.req.param("name");
-    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
 
     const body = (await c.req.json()) as { sender?: string };
     if (!body.sender) return c.json({ error: "sender is required" }, 400);
@@ -202,9 +202,9 @@ const app = new Hono<AuthEnv>()
   })
 
   // Remove a trusted sender
-  .delete("/:name/files/trust/:sender", (c) => {
+  .delete("/:name/files/trust/:sender", async (c) => {
     const name = c.req.param("name");
-    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
 
     const sender = c.req.param("sender");
     removeTrust(mindDir(name), sender);

@@ -12,7 +12,7 @@ export async function run(_args: string[]) {
     process.exit(1);
   }
 
-  const entry = findMind(mindName);
+  const entry = await findMind(mindName);
   if (!entry) {
     console.error(`Unknown mind: ${mindName}`);
     process.exit(1);

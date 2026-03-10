@@ -75,8 +75,8 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
         log.error("[v1-events] failed to fetch conversations", log.errorData(err));
       }
 
-      const sites = getCachedSites();
-      const recentPages = getCachedRecentPages();
+      const sites = await getCachedSites();
+      const recentPages = await getCachedRecentPages();
 
       const snapshotData = {
         event: "snapshot" as const,

@@ -21,7 +21,7 @@ const app = new Hono()
   // Serve avatar image
   .get("/:name/avatar", async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(name);
@@ -64,7 +64,7 @@ const app = new Hono()
   // List markdown files in home/
   .get("/:name/files", async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(name);
@@ -85,7 +85,7 @@ const app = new Hono()
       return c.json({ error: "File not allowed" }, 403);
     }
 
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(name);
