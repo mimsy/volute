@@ -6,6 +6,7 @@ export async function run(args: string[]) {
     template: { type: "string" },
     continue: { type: "boolean" },
     abort: { type: "boolean" },
+    accept: { type: "boolean" },
   });
 
   const mindName = resolveMindName({ mind: positional[0] });
@@ -23,6 +24,7 @@ export async function run(args: string[]) {
         template: flags.template,
         continue: flags.continue,
         abort: flags.abort,
+        accept: flags.accept,
       }),
     },
   );
@@ -47,6 +49,11 @@ export async function run(args: string[]) {
     return;
   }
 
+  if (flags.accept) {
+    console.log(`Upgrade accepted for ${mindName}.`);
+    return;
+  }
+
   if (data.conflicts) {
     console.log("\nMerge conflicts detected. Resolve them in:");
     console.log(`  ${data.worktreeDir}`);
@@ -60,5 +67,5 @@ export async function run(args: string[]) {
   console.log(`\nUpgrade variant running on port ${data.port}`);
   console.log(`\nNext steps:`);
   console.log(`  volute send @${mindName}@${data.variant} "hello"    # chat with upgraded variant`);
-  console.log(`  volute variant merge ${data.variant}                # merge back when satisfied`);
+  console.log(`  volute mind upgrade ${mindName} --accept            # accept the upgrade`);
 }
