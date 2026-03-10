@@ -51,6 +51,16 @@ export function voluteHome(): string {
   return resolve(homedir(), ".volute");
 }
 
+/**
+ * Per-user config directory (~/.volute/), independent of VOLUTE_HOME.
+ * Used for user-specific state like login sessions and API keys that
+ * shouldn't live in system directories (e.g. /var/lib/volute).
+ */
+export function voluteUserHome(): string {
+  if (process.env.VOLUTE_USER_HOME) return process.env.VOLUTE_USER_HOME;
+  return resolve(homedir(), ".volute");
+}
+
 export type MindEntry = {
   name: string;
   port: number;
