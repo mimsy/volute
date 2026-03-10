@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { createUser } from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
+import { getRawDb } from "../src/lib/db.js";
 import {
   addMind,
   findMind,
@@ -12,7 +12,6 @@ import {
   setMindStage,
   voluteHome,
 } from "../src/lib/registry.js";
-import { sessions, users } from "../src/lib/schema.js";
 import { createSession } from "../src/web/middleware/auth.js";
 
 function postHeaders(cookie: string) {
@@ -63,25 +62,25 @@ describe("registry stage", () => {
 describe("seed mind creation API", () => {
   let cookie: string;
 
-  async function cleanup() {
-    const db = await getDb();
-    await db.delete(sessions);
-    await db.delete(users);
+  function cleanup() {
+    const db = getRawDb();
+    db.prepare("DELETE FROM sessions").run();
+    db.prepare("DELETE FROM users").run();
   }
 
   beforeEach(async () => {
-    await cleanup();
+    cleanup();
     const user = await createUser("orient-admin", "pass");
     cookie = await createSession(user.id);
   });
-  afterEach(async () => {
+  afterEach(() => {
     // Clean up any minds we created
     for (const entry of readRegistry()) {
       if (entry.name.startsWith("seed-test-")) {
         removeMind(entry.name);
       }
     }
-    await cleanup();
+    cleanup();
   });
 
   it("POST /api/minds with stage=seed creates mind with correct stage", async () => {
@@ -119,15 +118,15 @@ describe("seed gating", () => {
   let cookie: string;
   const mindName = `gated-seed-${Date.now()}`;
 
-  async function cleanup() {
-    const db = await getDb();
-    await db.delete(sessions);
-    await db.delete(users);
+  function cleanup() {
+    const db = getRawDb();
+    db.prepare("DELETE FROM sessions").run();
+    db.prepare("DELETE FROM users").run();
     removeMind(mindName);
   }
 
   beforeEach(async () => {
-    await cleanup();
+    cleanup();
     const user = await createUser("gate-admin", "pass");
     cookie = await createSession(user.id);
     addMind(mindName, 4199, "seed");
