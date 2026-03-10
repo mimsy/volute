@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { createUser } from "../src/lib/auth.js";
-import { getRawDb } from "../src/lib/db.js";
+import { getDb } from "../src/lib/db.js";
 import {
   addMind,
   findMind,
@@ -12,6 +12,7 @@ import {
   setMindStage,
   voluteHome,
 } from "../src/lib/registry.js";
+import { sessions, users } from "../src/lib/schema.js";
 import { createSession } from "../src/web/middleware/auth.js";
 
 function postHeaders(cookie: string) {
@@ -24,63 +25,63 @@ function postHeaders(cookie: string) {
 describe("registry stage", () => {
   const name = `orient-test-${Date.now()}`;
 
-  afterEach(() => {
-    removeMind(name);
+  afterEach(async () => {
+    await removeMind(name);
   });
 
-  it("addMind with stage=seed persists correctly", () => {
-    addMind(name, 4100, "seed");
-    const entry = findMind(name);
+  it("addMind with stage=seed persists correctly", async () => {
+    await addMind(name, 4100, "seed");
+    const entry = await findMind(name);
     assert.ok(entry);
     assert.equal(entry.stage, "seed");
   });
 
-  it("addMind without stage defaults to sprouted on read", () => {
-    addMind(name, 4100);
-    const entry = findMind(name);
+  it("addMind without stage defaults to sprouted on read", async () => {
+    await addMind(name, 4100);
+    const entry = await findMind(name);
     assert.ok(entry);
     assert.equal(entry.stage, "sprouted");
   });
 
-  it("readRegistry defaults missing stage to sprouted", () => {
+  it("readRegistry defaults missing stage to sprouted", async () => {
     // Add a mind without explicit stage — should default to sprouted on read
-    addMind(name, 4100);
-    const entries = readRegistry();
+    await addMind(name, 4100);
+    const entries = await readRegistry();
     const entry = entries.find((e) => e.name === name);
     assert.ok(entry);
     assert.equal(entry.stage, "sprouted");
   });
 
-  it("setMindStage flips seed to sprouted", () => {
-    addMind(name, 4100, "seed");
-    assert.equal(findMind(name)?.stage, "seed");
-    setMindStage(name, "sprouted");
-    assert.equal(findMind(name)?.stage, "sprouted");
+  it("setMindStage flips seed to sprouted", async () => {
+    await addMind(name, 4100, "seed");
+    assert.equal((await findMind(name))?.stage, "seed");
+    await setMindStage(name, "sprouted");
+    assert.equal((await findMind(name))?.stage, "sprouted");
   });
 });
 
 describe("seed mind creation API", () => {
   let cookie: string;
 
-  function cleanup() {
-    const db = getRawDb();
-    db.prepare("DELETE FROM sessions").run();
-    db.prepare("DELETE FROM users").run();
+  async function cleanup() {
+    const db = await getDb();
+    await db.delete(sessions);
+    await db.delete(users);
   }
 
   beforeEach(async () => {
-    cleanup();
+    await cleanup();
     const user = await createUser("orient-admin", "pass");
     cookie = await createSession(user.id);
   });
-  afterEach(() => {
+  afterEach(async () => {
     // Clean up any minds we created
-    for (const entry of readRegistry()) {
+    for (const entry of await readRegistry()) {
       if (entry.name.startsWith("seed-test-")) {
-        removeMind(entry.name);
+        await removeMind(entry.name);
       }
     }
-    cleanup();
+    await cleanup();
   });
 
   it("POST /api/minds with stage=seed creates mind with correct stage", async () => {
@@ -105,12 +106,12 @@ describe("seed mind creation API", () => {
     if (res.status === 200) {
       const body = (await res.json()) as { stage?: string };
       assert.equal(body.stage, "seed");
-      const entry = findMind(mindName);
+      const entry = await findMind(mindName);
       assert.ok(entry);
       assert.equal(entry.stage, "seed");
     }
     // Clean up
-    removeMind(mindName);
+    await removeMind(mindName);
   });
 });
 
@@ -118,18 +119,18 @@ describe("seed gating", () => {
   let cookie: string;
   const mindName = `gated-seed-${Date.now()}`;
 
-  function cleanup() {
-    const db = getRawDb();
-    db.prepare("DELETE FROM sessions").run();
-    db.prepare("DELETE FROM users").run();
-    removeMind(mindName);
+  async function cleanup() {
+    const db = await getDb();
+    await db.delete(sessions);
+    await db.delete(users);
+    await removeMind(mindName);
   }
 
   beforeEach(async () => {
-    cleanup();
+    await cleanup();
     const user = await createUser("gate-admin", "pass");
     cookie = await createSession(user.id);
-    addMind(mindName, 4199, "seed");
+    await addMind(mindName, 4199, "seed");
     // Create minimal mind directory
     const dir = resolve(voluteHome(), "minds", mindName);
     mkdirSync(resolve(dir, "home/.config"), { recursive: true });

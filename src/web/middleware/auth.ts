@@ -149,7 +149,7 @@ export const requireSelf = (paramName = "name") =>
     const user = c.get("user");
     if (user.role !== "admin") {
       const target = c.req.param(paramName) ?? "";
-      const baseName = getBaseName(target);
+      const baseName = await getBaseName(target);
       if (user.username !== baseName) {
         return c.json({ error: "Forbidden" }, 403);
       }

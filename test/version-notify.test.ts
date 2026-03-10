@@ -32,38 +32,38 @@ describe("backfillTemplateHashes", () => {
     mkdirSync(voluteSystemDir(), { recursive: true });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     try {
-      removeMind(testMind);
+      await removeMind(testMind);
     } catch {}
   });
 
-  it("sets templateHash for minds without one", () => {
-    addMind(testMind, 4100, undefined, "claude");
+  it("sets templateHash for minds without one", async () => {
+    await addMind(testMind, 4100, undefined, "claude");
 
-    backfillTemplateHashes();
+    await backfillTemplateHashes();
 
-    const entry = findMind(testMind);
+    const entry = await findMind(testMind);
     assert.ok(entry?.templateHash, "should have templateHash set");
     assert.equal(entry!.templateHash!.length, 64, "should be SHA-256 hex");
   });
 
-  it("skips minds that already have a hash", () => {
-    addMind(testMind, 4100, undefined, "claude");
-    setMindTemplateHash(testMind, "existing-hash");
+  it("skips minds that already have a hash", async () => {
+    await addMind(testMind, 4100, undefined, "claude");
+    await setMindTemplateHash(testMind, "existing-hash");
 
-    backfillTemplateHashes();
+    await backfillTemplateHashes();
 
-    const entry = findMind(testMind);
+    const entry = await findMind(testMind);
     assert.equal(entry?.templateHash, "existing-hash", "should not overwrite existing hash");
   });
 
-  it("skips seed minds", () => {
-    addMind(testMind, 4100, "seed");
+  it("skips seed minds", async () => {
+    await addMind(testMind, 4100, "seed");
 
-    backfillTemplateHashes();
+    await backfillTemplateHashes();
 
-    const entry = findMind(testMind);
+    const entry = await findMind(testMind);
     assert.equal(entry?.templateHash, undefined, "seed minds should not get a hash");
   });
 });

@@ -49,8 +49,8 @@ export async function recordInbound(
  */
 export async function deliverMessage(mindName: string, payload: DeliveryPayload): Promise<void> {
   try {
-    const baseName = getBaseName(mindName);
-    const entry = findMind(baseName);
+    const baseName = await getBaseName(mindName);
+    const entry = await findMind(baseName);
     if (!entry) {
       dlog.warn(`cannot deliver to ${mindName}: mind not found`);
       return;

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { getRawDb } from "../src/lib/db.js";
+import { sql } from "drizzle-orm";
+import { getDb } from "../src/lib/db.js";
 import { migrateRegistryToDb } from "../src/lib/migrate-registry-to-db.js";
 import { voluteSystemDir } from "../src/lib/registry.js";
 
@@ -31,10 +32,10 @@ function cleanFiles() {
   }
 }
 
-function cleanDb(names: string[]) {
-  const db = getRawDb();
+async function cleanDb(names: string[]) {
+  const db = await getDb();
   for (const name of names) {
-    db.prepare("DELETE FROM minds WHERE name = ? OR name LIKE ?").run(name, `${name}@%`);
+    await db.run(sql`DELETE FROM minds WHERE name = ${name} OR name LIKE ${`${name}@%`}`);
   }
 }
 
@@ -43,18 +44,18 @@ describe("migrateRegistryToDb", () => {
   const variantName = `test-variant-${suffix}`;
   const orphanParent = `orphan-parent-${suffix}`;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     mkdirSync(systemDir(), { recursive: true });
     cleanFiles();
-    cleanDb([mindName, variantName, orphanParent]);
+    await cleanDb([mindName, variantName, orphanParent]);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanFiles();
-    cleanDb([mindName, variantName, orphanParent]);
+    await cleanDb([mindName, variantName, orphanParent]);
   });
 
-  it("happy path: migrates minds.json and variants.json into DB and creates .bak files", () => {
+  it("happy path: migrates minds.json and variants.json into DB and creates .bak files", async () => {
     const mindEntries = [
       {
         name: mindName,
@@ -82,10 +83,11 @@ describe("migrateRegistryToDb", () => {
     writeFileSync(mindsJsonPath(), JSON.stringify(mindEntries));
     writeFileSync(variantsJsonPath(), JSON.stringify(variantEntries));
 
-    migrateRegistryToDb();
+    await migrateRegistryToDb();
 
-    const db = getRawDb();
-    const mind = db.prepare("SELECT * FROM minds WHERE name = ?").get(mindName) as any;
+    const db = await getDb();
+    const minds = await db.all(sql`SELECT * FROM minds WHERE name = ${mindName}`);
+    const mind = minds[0] as any;
     assert.ok(mind, "base mind should be in DB");
     assert.equal(mind.port, 4200);
     assert.equal(mind.stage, "sprouted");
@@ -93,9 +95,10 @@ describe("migrateRegistryToDb", () => {
     assert.equal(mind.template_hash, "abc123");
     assert.equal(mind.running, 0);
 
-    const variant = db
-      .prepare("SELECT * FROM minds WHERE name = ?")
-      .get(`${mindName}@${variantName}`) as any;
+    const variants = await db.all(
+      sql`SELECT * FROM minds WHERE name = ${`${mindName}@${variantName}`}`,
+    );
+    const variant = variants[0] as any;
     assert.ok(variant, "variant should be in DB");
     assert.equal(variant.port, 4201);
     assert.equal(variant.parent, mindName);
@@ -108,39 +111,39 @@ describe("migrateRegistryToDb", () => {
     assert.ok(!existsSync(variantsJsonPath()), "variants.json should be renamed");
   });
 
-  it("idempotency: running twice does not throw and does not duplicate entries", () => {
+  it("idempotency: running twice does not throw and does not duplicate entries", async () => {
     const mindEntries = [{ name: mindName, port: 4200, created: "2025-01-01T00:00:00.000Z" }];
     writeFileSync(mindsJsonPath(), JSON.stringify(mindEntries));
 
-    migrateRegistryToDb();
+    await migrateRegistryToDb();
     // After first run, minds.json is renamed to .bak; second run should be a no-op
-    migrateRegistryToDb();
+    await migrateRegistryToDb();
 
-    const db = getRawDb();
-    const rows = db.prepare("SELECT * FROM minds WHERE name = ?").all(mindName) as any[];
+    const db = await getDb();
+    const rows = await db.all(sql`SELECT * FROM minds WHERE name = ${mindName}`);
     assert.equal(rows.length, 1, "should have exactly one entry, not duplicated");
   });
 
-  it("corrupt minds.json: does not rename to .bak, logs error", () => {
+  it("corrupt minds.json: does not rename to .bak, logs error", async () => {
     writeFileSync(mindsJsonPath(), "{ not valid json {{");
 
-    migrateRegistryToDb();
+    await migrateRegistryToDb();
 
     // minds.json should still be present (not renamed)
     assert.ok(existsSync(mindsJsonPath()), "minds.json should remain when parse fails");
     assert.ok(!existsSync(`${mindsJsonPath()}.bak`), "minds.json.bak should not be created");
   });
 
-  it("corrupt variants.json: does not rename to .bak, logs error", () => {
+  it("corrupt variants.json: does not rename to .bak, logs error", async () => {
     writeFileSync(variantsJsonPath(), ">>> invalid <<<");
 
-    migrateRegistryToDb();
+    await migrateRegistryToDb();
 
     assert.ok(existsSync(variantsJsonPath()), "variants.json should remain when parse fails");
     assert.ok(!existsSync(`${variantsJsonPath()}.bak`), "variants.json.bak should not be created");
   });
 
-  it("orphaned variant: variant with non-existent parent fails FK constraint, variants.json not renamed", () => {
+  it("orphaned variant: variant with non-existent parent fails FK constraint, variants.json not renamed", async () => {
     // No entry for orphanParent in minds.json — only in variants.json.
     // The minds table has a FK on parent → minds.name, so inserting a variant
     // whose parent doesn't exist will fail. The migration logs a warning and
@@ -159,34 +162,30 @@ describe("migrateRegistryToDb", () => {
     };
     writeFileSync(variantsJsonPath(), JSON.stringify(variantEntries));
 
-    migrateRegistryToDb();
+    await migrateRegistryToDb();
 
-    const db = getRawDb();
-    const variant = db
-      .prepare("SELECT * FROM minds WHERE name = ?")
-      .get(`${orphanParent}@${variantName}`) as any;
-    assert.equal(
-      variant,
-      undefined,
-      "orphaned variant should not be inserted due to FK constraint",
+    const db = await getDb();
+    const rows = await db.all(
+      sql`SELECT * FROM minds WHERE name = ${`${orphanParent}@${variantName}`}`,
     );
+    assert.equal(rows.length, 0, "orphaned variant should not be inserted due to FK constraint");
 
     // variants.json should NOT be renamed to .bak since the insert failed
     assert.ok(existsSync(variantsJsonPath()), "variants.json should remain when insert fails");
     assert.ok(!existsSync(`${variantsJsonPath()}.bak`), "variants.json.bak should not be created");
   });
 
-  it("missing files: returns early when neither minds.json nor variants.json exist", () => {
+  it("missing files: returns early when neither minds.json nor variants.json exist", async () => {
     // Ensure neither file exists
     assert.ok(!existsSync(mindsJsonPath()));
     assert.ok(!existsSync(variantsJsonPath()));
 
     // Should not throw
-    migrateRegistryToDb();
+    await migrateRegistryToDb();
 
     // DB should have no entries for our test names
-    const db = getRawDb();
-    const rows = db.prepare("SELECT * FROM minds WHERE name = ?").all(mindName) as any[];
+    const db = await getDb();
+    const rows = await db.all(sql`SELECT * FROM minds WHERE name = ${mindName}`);
     assert.equal(rows.length, 0);
   });
 });

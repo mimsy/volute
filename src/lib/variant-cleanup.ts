@@ -26,7 +26,7 @@ export async function cleanupVariant(
 
   // Get the branch name from the variant entry before removing from DB
   const { findMind } = await import("./registry.js");
-  const variantEntry = findMind(variantName);
+  const variantEntry = await findMind(variantName);
   const branchName = variantEntry?.branch ?? variantName;
 
   if (existsSync(variantPath)) {
@@ -52,7 +52,7 @@ export async function cleanupVariant(
   const baseName = variantEntry?.parent ?? variantName;
 
   try {
-    removeMind(variantName);
+    await removeMind(variantName);
   } catch (err) {
     log.warn(`failed to remove variant ${variantName} from DB`, log.errorData(err));
   }

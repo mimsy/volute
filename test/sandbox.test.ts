@@ -80,52 +80,52 @@ describe("buildDenyRead", () => {
     else process.env.HOME = origHome;
   });
 
-  it("denies system directory", () => {
+  it("denies system directory", async () => {
     const home = voluteHome();
-    const deny = buildDenyRead("alice", resolve(home, "minds", "alice"));
+    const deny = await buildDenyRead("alice", resolve(home, "minds", "alice"));
     assert.ok(deny.includes(voluteSystemDir()), "should block entire system directory");
   });
 
-  it("denies sensitive user directories", () => {
+  it("denies sensitive user directories", async () => {
     const userHome = process.env.HOME!;
-    const deny = buildDenyRead("alice", "/tmp/minds/alice");
+    const deny = await buildDenyRead("alice", "/tmp/minds/alice");
     assert.ok(deny.includes(resolve(userHome, ".ssh")));
     assert.ok(deny.includes(resolve(userHome, ".aws")));
     assert.ok(deny.includes(resolve(userHome, ".gnupg")));
     assert.ok(deny.includes(resolve(userHome, ".config")));
   });
 
-  it("denies other minds but not the current mind", () => {
+  it("denies other minds but not the current mind", async () => {
     const home = voluteHome();
-    addMind("alice", 4100);
-    addMind("bob", 4101);
-    addMind("carol", 4102);
+    await addMind("alice", 4100);
+    await addMind("bob", 4101);
+    await addMind("carol", 4102);
 
     const mindsDir = resolve(home, "minds");
-    const deny = buildDenyRead("alice", resolve(mindsDir, "alice"));
+    const deny = await buildDenyRead("alice", resolve(mindsDir, "alice"));
     assert.ok(!deny.includes(resolve(mindsDir, "alice")), "should not deny own dir");
     assert.ok(deny.includes(resolve(mindsDir, "bob")), "should deny bob");
     assert.ok(deny.includes(resolve(mindsDir, "carol")), "should deny carol");
-    removeMind("alice");
-    removeMind("bob");
-    removeMind("carol");
+    await removeMind("alice");
+    await removeMind("bob");
+    await removeMind("carol");
   });
 
-  it("handles split names correctly", () => {
+  it("handles split names correctly", async () => {
     const home = voluteHome();
-    addMind("alice", 4100);
-    addMind("bob", 4101);
+    await addMind("alice", 4100);
+    await addMind("bob", 4101);
 
     const mindsDir = resolve(home, "minds");
-    const deny = buildDenyRead("alice", resolve(mindsDir, "alice"));
+    const deny = await buildDenyRead("alice", resolve(mindsDir, "alice"));
     assert.ok(!deny.includes(resolve(mindsDir, "alice")), "should not deny base mind dir");
     assert.ok(deny.includes(resolve(mindsDir, "bob")), "should deny other minds");
-    removeMind("alice");
-    removeMind("bob");
+    await removeMind("alice");
+    await removeMind("bob");
   });
 
-  it("handles empty registry without crashing", () => {
-    const deny = buildDenyRead("alice", "/tmp/minds/alice");
+  it("handles empty registry without crashing", async () => {
+    const deny = await buildDenyRead("alice", "/tmp/minds/alice");
     // Should still have system state and sensitive dirs
     assert.ok(deny.length > 0);
   });

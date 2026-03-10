@@ -116,9 +116,9 @@ const app = new Hono<AuthEnv>()
   // Mind-scoped chat: POST /api/v1/minds/:name/chat
   .post("/minds/:name/chat", zValidator("json", mindChatSchema), async (c) => {
     const name = c.req.param("name");
-    const baseName = getBaseName(name);
+    const baseName = await getBaseName(name);
 
-    const entry = findMind(baseName);
+    const entry = await findMind(baseName);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const body = c.req.valid("json");
@@ -140,7 +140,7 @@ const app = new Hono<AuthEnv>()
       if (user.id !== 0) {
         participantIds.push(user.id);
       } else if (body.sender) {
-        const senderMind = findMind(body.sender);
+        const senderMind = await findMind(body.sender);
         if (senderMind) {
           const senderMindUser = await getOrCreateMindUser(body.sender);
           participantIds.push(senderMindUser.id);

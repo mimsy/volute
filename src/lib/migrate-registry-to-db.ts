@@ -1,8 +1,9 @@
 import { existsSync, readFileSync, renameSync } from "node:fs";
 import { resolve } from "node:path";
-import { getRawDb } from "./db.js";
+import { getDb } from "./db.js";
 import log from "./logger.js";
 import { voluteSystemDir } from "./registry.js";
+import { minds } from "./schema.js";
 
 type LegacyMindEntry = {
   name: string;
@@ -27,26 +28,14 @@ type LegacyVariant = {
  * Migrate minds.json + variants.json into the `minds` DB table.
  * Idempotent — skips if JSON files don't exist (already migrated or fresh install).
  */
-export function migrateRegistryToDb(): void {
+export async function migrateRegistryToDb(): Promise<void> {
   const systemDir = voluteSystemDir();
   const mindsJsonPath = resolve(systemDir, "minds.json");
   const variantsJsonPath = resolve(systemDir, "variants.json");
 
   if (!existsSync(mindsJsonPath) && !existsSync(variantsJsonPath)) return;
 
-  const db = getRawDb();
-
-  const insertMind = db.prepare(
-    `INSERT INTO minds (name, port, stage, template, template_hash, running, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(name) DO NOTHING`,
-  );
-
-  const insertSplit = db.prepare(
-    `INSERT INTO minds (name, port, parent, dir, branch, running, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(name) DO NOTHING`,
-  );
+  const db = await getDb();
 
   // Read minds.json
   let mindEntries: LegacyMindEntry[] = [];
@@ -76,15 +65,18 @@ export function migrateRegistryToDb(): void {
   let mindFailCount = 0;
   for (const entry of mindEntries) {
     try {
-      insertMind.run(
-        entry.name,
-        entry.port,
-        entry.stage ?? "sprouted",
-        entry.template ?? null,
-        entry.templateHash ?? null,
-        entry.running ? 1 : 0,
-        entry.created,
-      );
+      await db
+        .insert(minds)
+        .values({
+          name: entry.name,
+          port: entry.port,
+          stage: entry.stage ?? "sprouted",
+          template: entry.template ?? null,
+          template_hash: entry.templateHash ?? null,
+          running: entry.running ? 1 : 0,
+          created_at: entry.created,
+        })
+        .onConflictDoNothing();
     } catch (err) {
       mindFailCount++;
       log.warn(`failed to migrate mind ${entry.name} to DB`, { error: err });
@@ -96,15 +88,18 @@ export function migrateRegistryToDb(): void {
   for (const [mindName, variants] of Object.entries(allVariants)) {
     for (const v of variants) {
       try {
-        insertSplit.run(
-          `${mindName}@${v.name}`,
-          v.port,
-          mindName,
-          v.path,
-          v.branch,
-          v.running ? 1 : 0,
-          v.created,
-        );
+        await db
+          .insert(minds)
+          .values({
+            name: `${mindName}@${v.name}`,
+            port: v.port,
+            parent: mindName,
+            dir: v.path,
+            branch: v.branch,
+            running: v.running ? 1 : 0,
+            created_at: v.created,
+          })
+          .onConflictDoNothing();
       } catch (err) {
         variantFailCount++;
         log.warn(`failed to migrate variant ${mindName}@${v.name} to DB`, { error: err });

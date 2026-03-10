@@ -15,21 +15,21 @@ import { validateBranchName } from "../src/lib/variants.js";
 const testMind = `test-mind-${Date.now()}`;
 
 describe("variants CRUD", () => {
-  afterEach(() => {
+  afterEach(async () => {
     try {
-      removeMind(testMind);
+      await removeMind(testMind);
     } catch {}
   });
 
-  it("findVariants returns empty array when no variants", () => {
-    addMind(testMind, 4200);
-    assert.deepStrictEqual(findVariants(testMind), []);
+  it("findVariants returns empty array when no variants", async () => {
+    await addMind(testMind, 4200);
+    assert.deepStrictEqual(await findVariants(testMind), []);
   });
 
-  it("addVariant creates a variant linked to parent", () => {
-    addMind(testMind, 4200);
-    addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "branch-a");
-    const splits = findVariants(testMind);
+  it("addVariant creates a variant linked to parent", async () => {
+    await addMind(testMind, 4200);
+    await addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "branch-a");
+    const splits = await findVariants(testMind);
     assert.equal(splits.length, 1);
     assert.equal(splits[0].name, `${testMind}-a`);
     assert.equal(splits[0].parent, testMind);
@@ -37,64 +37,64 @@ describe("variants CRUD", () => {
     assert.equal(splits[0].branch, "branch-a");
   });
 
-  it("addVariant can create multiple variants", () => {
-    addMind(testMind, 4200);
-    addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
-    addVariant(`${testMind}-b`, testMind, 4202, "/fake/b", "b");
-    const splits = findVariants(testMind);
+  it("addVariant can create multiple variants", async () => {
+    await addMind(testMind, 4200);
+    await addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
+    await addVariant(`${testMind}-b`, testMind, 4202, "/fake/b", "b");
+    const splits = await findVariants(testMind);
     assert.equal(splits.length, 2);
   });
 
-  it("removeMind removes a variant", () => {
-    addMind(testMind, 4200);
-    addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
-    removeMind(`${testMind}-a`);
-    assert.deepStrictEqual(findVariants(testMind), []);
+  it("removeMind removes a variant", async () => {
+    await addMind(testMind, 4200);
+    await addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
+    await removeMind(`${testMind}-a`);
+    assert.deepStrictEqual(await findVariants(testMind), []);
   });
 
-  it("findMind returns variant entry", () => {
-    addMind(testMind, 4200);
-    addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
-    const entry = findMind(`${testMind}-a`);
+  it("findMind returns variant entry", async () => {
+    await addMind(testMind, 4200);
+    await addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
+    const entry = await findMind(`${testMind}-a`);
     assert.ok(entry);
     assert.equal(entry.parent, testMind);
   });
 
-  it("findMind returns undefined for missing variant", () => {
-    assert.equal(findMind(`${testMind}-nope`), undefined);
+  it("findMind returns undefined for missing variant", async () => {
+    assert.equal(await findMind(`${testMind}-nope`), undefined);
   });
 
-  it("cascade delete removes variants when parent is deleted", () => {
-    addMind(testMind, 4200);
-    addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
-    addVariant(`${testMind}-b`, testMind, 4202, "/fake/b", "b");
-    removeMind(testMind);
-    assert.equal(findMind(`${testMind}-a`), undefined);
-    assert.equal(findMind(`${testMind}-b`), undefined);
+  it("cascade delete removes variants when parent is deleted", async () => {
+    await addMind(testMind, 4200);
+    await addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
+    await addVariant(`${testMind}-b`, testMind, 4202, "/fake/b", "b");
+    await removeMind(testMind);
+    assert.equal(await findMind(`${testMind}-a`), undefined);
+    assert.equal(await findMind(`${testMind}-b`), undefined);
   });
 });
 
 describe("variant running state", () => {
-  afterEach(() => {
+  afterEach(async () => {
     try {
-      removeMind(testMind);
+      await removeMind(testMind);
     } catch {}
   });
 
-  it("setMindRunning works for variants", () => {
-    addMind(testMind, 4200);
-    addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
-    setMindRunning(`${testMind}-a`, true);
-    assert.equal(findMind(`${testMind}-a`)!.running, true);
-    setMindRunning(`${testMind}-a`, false);
-    assert.equal(findMind(`${testMind}-a`)!.running, false);
+  it("setMindRunning works for variants", async () => {
+    await addMind(testMind, 4200);
+    await addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
+    await setMindRunning(`${testMind}-a`, true);
+    assert.equal((await findMind(`${testMind}-a`))!.running, true);
+    await setMindRunning(`${testMind}-a`, false);
+    assert.equal((await findMind(`${testMind}-a`))!.running, false);
   });
 
-  it("readAllMinds includes running variants", () => {
-    addMind(testMind, 4200);
-    addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
-    setMindRunning(`${testMind}-a`, true);
-    const all = readAllMinds();
+  it("readAllMinds includes running variants", async () => {
+    await addMind(testMind, 4200);
+    await addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
+    await setMindRunning(`${testMind}-a`, true);
+    const all = await readAllMinds();
     const split = all.find((e) => e.name === `${testMind}-a`);
     assert.ok(split);
     assert.equal(split.running, true);
@@ -102,25 +102,25 @@ describe("variant running state", () => {
 });
 
 describe("getBaseName", () => {
-  afterEach(() => {
+  afterEach(async () => {
     try {
-      removeMind(testMind);
+      await removeMind(testMind);
     } catch {}
   });
 
-  it("returns parent name for a variant", () => {
-    addMind(testMind, 4200);
-    addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
-    assert.equal(getBaseName(`${testMind}-a`), testMind);
+  it("returns parent name for a variant", async () => {
+    await addMind(testMind, 4200);
+    await addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
+    assert.equal(await getBaseName(`${testMind}-a`), testMind);
   });
 
-  it("returns name itself for base mind", () => {
-    addMind(testMind, 4200);
-    assert.equal(getBaseName(testMind), testMind);
+  it("returns name itself for base mind", async () => {
+    await addMind(testMind, 4200);
+    assert.equal(await getBaseName(testMind), testMind);
   });
 
-  it("returns name itself for unknown mind", () => {
-    assert.equal(getBaseName("nonexistent"), "nonexistent");
+  it("returns name itself for unknown mind", async () => {
+    assert.equal(await getBaseName("nonexistent"), "nonexistent");
   });
 });
 

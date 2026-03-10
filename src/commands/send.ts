@@ -162,7 +162,7 @@ export async function run(args: string[]) {
   let parsed = parseTarget(target);
 
   // If bare name matches a registered mind, treat as a DM (e.g. "sprout" → "@sprout")
-  if (!parsed.isDM && parsed.platform === "volute" && findMind(parsed.identifier)) {
+  if (!parsed.isDM && parsed.platform === "volute" && (await findMind(parsed.identifier))) {
     parsed = {
       platform: "volute",
       identifier: `@${parsed.identifier}`,
@@ -184,11 +184,11 @@ export async function run(args: string[]) {
     const mindSelf = process.env.VOLUTE_MIND;
     const sender = flags.sender || mindSelf || userInfo().username;
 
-    waitMindName = findMind(targetName) ? targetName : undefined;
+    waitMindName = (await findMind(targetName)) ? targetName : undefined;
 
     // When a mind sends to a non-mind (human), use the sender mind's context
     // so the conversation is created under the mind (humans aren't in the registry).
-    const targetIsMind = !!findMind(targetName);
+    const targetIsMind = !!(await findMind(targetName));
     const contextMind = mindSelf && !targetIsMind ? mindSelf : targetName;
     const participants = mindSelf && !targetIsMind ? [targetName] : [sender];
 

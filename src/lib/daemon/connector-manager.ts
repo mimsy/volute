@@ -146,7 +146,7 @@ export class ConnectorManager {
     // State dir is created by root — chown so the mind user can write channels.json, etc.
     if (isIsolationEnabled()) {
       try {
-        chownMindDir(mindStateDir, getBaseName(mindName));
+        chownMindDir(mindStateDir, await getBaseName(mindName));
       } catch (err) {
         throw new Error(
           `Cannot start connector ${type} for ${mindName}: failed to set ownership on state directory ${mindStateDir}: ${err instanceof Error ? err.message : err}`,
@@ -184,7 +184,7 @@ export class ConnectorManager {
     let spawnCmd: string;
     let spawnArgs: string[];
     if (isIsolationEnabled()) {
-      [spawnCmd, spawnArgs] = wrapForIsolation(runtime, [connectorScript], mindName);
+      [spawnCmd, spawnArgs] = await wrapForIsolation(runtime, [connectorScript], mindName);
     } else if (isSandboxEnabled()) {
       [spawnCmd, spawnArgs] = await wrapForSandbox(runtime, [connectorScript], mindDir, mindName, [
         mindDir,

@@ -64,7 +64,7 @@ const app = new Hono<AuthEnv>()
           continue;
         }
         // If name matches a registered mind, auto-create mind user
-        if (findMind(pname)) {
+        if (await findMind(pname)) {
           const au = await getOrCreateMindUser(pname);
           participantSet.add(au.id);
           continue;

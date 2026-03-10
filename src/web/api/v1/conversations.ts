@@ -76,7 +76,7 @@ const app = new Hono<AuthEnv>()
         if (!firstMindName && existing.user_type === "mind") firstMindName = name;
         continue;
       }
-      if (findMind(name)) {
+      if (await findMind(name)) {
         const au = await getOrCreateMindUser(name);
         participantIds.add(au.id);
         if (!firstMindName) firstMindName = name;

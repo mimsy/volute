@@ -22,26 +22,26 @@ import {
 const testMind = `registry-test-${Date.now()}`;
 
 describe("registry", () => {
-  afterEach(() => {
+  afterEach(async () => {
     try {
-      removeMind(testMind);
+      await removeMind(testMind);
     } catch {}
   });
 
-  it("nextPort returns 4100 when registry is empty", () => {
-    const port = nextPort();
+  it("nextPort returns 4100 when registry is empty", async () => {
+    const port = await nextPort();
     assert.ok(port >= 4100, `Expected port >= 4100, got ${port}`);
   });
 
-  it("readRegistry returns array", () => {
-    const entries = readRegistry();
+  it("readRegistry returns array", async () => {
+    const entries = await readRegistry();
     assert.ok(Array.isArray(entries));
   });
 
-  it("nextPort skips variant ports", () => {
-    addMind(testMind, 4100);
-    addVariant(`${testMind}-v1`, testMind, 4101, "/fake/v1", "v1");
-    const port = nextPort();
+  it("nextPort skips variant ports", async () => {
+    await addMind(testMind, 4100);
+    await addVariant(`${testMind}-v1`, testMind, 4101, "/fake/v1", "v1");
+    const port = await nextPort();
     assert.ok(port >= 4102, `Expected port >= 4102, got ${port}`);
   });
 
@@ -62,8 +62,8 @@ describe("registry", () => {
     assert.ok(validateMindName("a".repeat(65)) !== null);
   });
 
-  it("addMind throws on invalid name", () => {
-    assert.throws(() => addMind("../evil", 4100), /Mind name must/);
+  it("addMind throws on invalid name", async () => {
+    await assert.rejects(() => addMind("../evil", 4100), /Mind name must/);
   });
 
   it("stateDir returns path under VOLUTE_HOME/system/state", () => {
@@ -72,91 +72,91 @@ describe("registry", () => {
     assert.ok(dir.endsWith("/state/my-mind"));
   });
 
-  it("findMind returns null for non-existent mind", () => {
-    assert.equal(findMind("nonexistent-mind"), undefined);
+  it("findMind returns null for non-existent mind", async () => {
+    assert.equal(await findMind("nonexistent-mind"), undefined);
   });
 
-  it("findMind returns entry for existing mind", () => {
-    addMind(testMind, 4100);
-    const entry = findMind(testMind);
+  it("findMind returns entry for existing mind", async () => {
+    await addMind(testMind, 4100);
+    const entry = await findMind(testMind);
     assert.ok(entry);
     assert.equal(entry.name, testMind);
     assert.equal(entry.port, 4100);
   });
 
-  it("setMindRunning updates running state", () => {
-    addMind(testMind, 4100);
-    setMindRunning(testMind, true);
-    assert.equal(findMind(testMind)!.running, true);
-    setMindRunning(testMind, false);
-    assert.equal(findMind(testMind)!.running, false);
+  it("setMindRunning updates running state", async () => {
+    await addMind(testMind, 4100);
+    await setMindRunning(testMind, true);
+    assert.equal((await findMind(testMind))!.running, true);
+    await setMindRunning(testMind, false);
+    assert.equal((await findMind(testMind))!.running, false);
   });
 
-  it("removeMind deletes entry", () => {
-    addMind(testMind, 4100);
-    assert.ok(findMind(testMind));
-    removeMind(testMind);
-    assert.equal(findMind(testMind), undefined);
+  it("removeMind deletes entry", async () => {
+    await addMind(testMind, 4100);
+    assert.ok(await findMind(testMind));
+    await removeMind(testMind);
+    assert.equal(await findMind(testMind), undefined);
   });
 });
 
 describe("variants", () => {
   const splitName = `${testMind}-split`;
 
-  afterEach(() => {
+  afterEach(async () => {
     try {
-      removeMind(testMind);
+      await removeMind(testMind);
     } catch {}
   });
 
-  it("addVariant creates a variant with parent", () => {
-    addMind(testMind, 4100);
-    addVariant(splitName, testMind, 4101, "/fake/split", "split-branch");
-    const entry = findMind(splitName);
+  it("addVariant creates a variant with parent", async () => {
+    await addMind(testMind, 4100);
+    await addVariant(splitName, testMind, 4101, "/fake/split", "split-branch");
+    const entry = await findMind(splitName);
     assert.ok(entry);
     assert.equal(entry.parent, testMind);
     assert.equal(entry.dir, "/fake/split");
     assert.equal(entry.branch, "split-branch");
   });
 
-  it("findVariants returns variants for parent", () => {
-    addMind(testMind, 4100);
-    addVariant(splitName, testMind, 4101, "/fake/split", "split-branch");
-    const splits = findVariants(testMind);
+  it("findVariants returns variants for parent", async () => {
+    await addMind(testMind, 4100);
+    await addVariant(splitName, testMind, 4101, "/fake/split", "split-branch");
+    const splits = await findVariants(testMind);
     assert.equal(splits.length, 1);
     assert.equal(splits[0].name, splitName);
   });
 
-  it("getBaseName returns parent for variant", () => {
-    addMind(testMind, 4100);
-    addVariant(splitName, testMind, 4101, "/fake/split", "split-branch");
-    assert.equal(getBaseName(splitName), testMind);
+  it("getBaseName returns parent for variant", async () => {
+    await addMind(testMind, 4100);
+    await addVariant(splitName, testMind, 4101, "/fake/split", "split-branch");
+    assert.equal(await getBaseName(splitName), testMind);
   });
 
-  it("getBaseName returns name for base mind", () => {
-    addMind(testMind, 4100);
-    assert.equal(getBaseName(testMind), testMind);
+  it("getBaseName returns name for base mind", async () => {
+    await addMind(testMind, 4100);
+    assert.equal(await getBaseName(testMind), testMind);
   });
 
-  it("cascade delete removes variants when parent is deleted", () => {
-    addMind(testMind, 4100);
-    addVariant(splitName, testMind, 4101, "/fake/split", "split-branch");
-    removeMind(testMind);
-    assert.equal(findMind(splitName), undefined);
+  it("cascade delete removes variants when parent is deleted", async () => {
+    await addMind(testMind, 4100);
+    await addVariant(splitName, testMind, 4101, "/fake/split", "split-branch");
+    await removeMind(testMind);
+    assert.equal(await findMind(splitName), undefined);
   });
 
-  it("readAllMinds includes both base minds and variants", () => {
-    addMind(testMind, 4100);
-    addVariant(splitName, testMind, 4101, "/fake/split", "split-branch");
-    const all = readAllMinds();
+  it("readAllMinds includes both base minds and variants", async () => {
+    await addMind(testMind, 4100);
+    await addVariant(splitName, testMind, 4101, "/fake/split", "split-branch");
+    const all = await readAllMinds();
     assert.ok(all.some((e) => e.name === testMind));
     assert.ok(all.some((e) => e.name === splitName));
   });
 
-  it("readRegistry excludes variants", () => {
-    addMind(testMind, 4100);
-    addVariant(splitName, testMind, 4101, "/fake/split", "split-branch");
-    const base = readRegistry();
+  it("readRegistry excludes variants", async () => {
+    await addMind(testMind, 4100);
+    await addVariant(splitName, testMind, 4101, "/fake/split", "split-branch");
+    const base = await readRegistry();
     assert.ok(base.some((e) => e.name === testMind));
     assert.ok(!base.some((e) => e.name === splitName));
   });

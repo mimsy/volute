@@ -17,7 +17,7 @@ import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "./token-budget.js
  * Variants only get the server — no connectors/schedules/budget.
  */
 export async function startMindFull(name: string): Promise<void> {
-  const entry = findMind(name);
+  const entry = await findMind(name);
   const baseName = entry?.parent ?? name;
 
   await getMindManager().startMind(name);
@@ -98,7 +98,7 @@ export async function wakeMind(name: string): Promise<void> {
 }
 
 export async function stopMindFull(name: string): Promise<void> {
-  const baseName = getBaseName(name);
+  const baseName = await getBaseName(name);
   const isBase = baseName === name;
 
   if (isBase) {

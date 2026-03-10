@@ -169,7 +169,7 @@ export class SleepManager {
         return;
       }
 
-      const entry = findMind(name);
+      const entry = await findMind(name);
       if (!entry) return;
 
       // Send pre-sleep message
@@ -246,7 +246,7 @@ export class SleepManager {
       }
 
       // Wait for health check
-      const entry = findMind(name);
+      const entry = await findMind(name);
       if (!entry) return;
 
       if (opts?.trigger) {
@@ -481,12 +481,12 @@ export class SleepManager {
     }
   }
 
-  private tick(): void {
+  private async tick(): Promise<void> {
     const now = new Date();
     const epochMinute = Math.floor(now.getTime() / 60_000);
 
     // Check each mind's sleep config
-    const registry = readRegistry();
+    const registry = await readRegistry();
 
     for (const entry of registry) {
       if (!entry.running && !this.isSleeping(entry.name)) continue;

@@ -35,12 +35,12 @@ export class MindManager {
   private restartTracker = new RestartTracker();
   private pendingContext = new Map<string, Record<string, unknown>>();
 
-  private resolveTarget(name: string): {
+  private async resolveTarget(name: string): Promise<{
     dir: string;
     port: number;
     baseName: string;
-  } {
-    const entry = findMind(name);
+  }> {
+    const entry = await findMind(name);
     if (!entry) throw new Error(`Unknown mind: ${name}`);
 
     if (entry.parent) {
@@ -59,7 +59,7 @@ export class MindManager {
       throw new Error(`Mind ${name} is already running`);
     }
 
-    const target = this.resolveTarget(name);
+    const target = await this.resolveTarget(name);
     const { dir, baseName } = target;
     const port = target.port;
 
@@ -142,7 +142,7 @@ export class MindManager {
     let spawnCmd: string;
     let spawnArgs: string[];
     if (isIsolationEnabled()) {
-      [spawnCmd, spawnArgs] = wrapForIsolation(tsxBin, tsxArgs, name);
+      [spawnCmd, spawnArgs] = await wrapForIsolation(tsxBin, tsxArgs, name);
     } else if (isSandboxEnabled()) {
       [spawnCmd, spawnArgs] = await wrapForSandbox(tsxBin, tsxArgs, dir, name);
     } else {
@@ -212,7 +212,7 @@ export class MindManager {
     // Set up crash recovery after successful start
     if (this.restartTracker.reset(name)) this.saveCrashAttempts();
     this.setupCrashRecovery(name, child);
-    setMindRunning(name, true);
+    await setMindRunning(name, true);
 
     mlog.info(`started mind ${name} on port ${port}`);
 
@@ -311,7 +311,7 @@ export class MindManager {
       this.saveCrashAttempts();
       if (!shouldRestart) {
         mlog.error(`${name} crashed ${attempt} times — giving up on restart`);
-        setMindRunning(name, false);
+        await setMindRunning(name, false);
         return;
       }
       mlog.info(
@@ -357,7 +357,7 @@ export class MindManager {
     rmSync(mindPidPath(name), { force: true });
 
     if (!this.shuttingDown) {
-      setMindRunning(name, false);
+      await setMindRunning(name, false);
     }
 
     mlog.info(`stopped mind ${name}`);

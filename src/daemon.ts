@@ -174,7 +174,7 @@ export async function startDaemon(opts: {
   const unsubscribeWebhook = initWebhook();
 
   // Migrate .volute/ → .mind/ and system state for all registered minds
-  const registry = readRegistry();
+  const registry = await readRegistry();
   for (const entry of registry) {
     for (const migrate of [migrateDotVoluteDir, migrateMindState, migratePagesDirToPublic]) {
       try {
@@ -187,7 +187,7 @@ export async function startDaemon(opts: {
 
   // Start all minds + variants that were previously running (parallel, concurrency limit of 5)
   // Skip sleeping minds — they only need connectors, not the mind process
-  const allMinds = readAllMinds();
+  const allMinds = await readAllMinds();
   const runningEntries = allMinds.filter((e) => e.running);
   {
     const queue = [...runningEntries];
@@ -216,7 +216,7 @@ export async function startDaemon(opts: {
           await startMindFull(entry.name);
         } catch (err) {
           log.error(`failed to start mind ${entry.name}`, log.errorData(err));
-          setMindRunning(entry.name, false);
+          await setMindRunning(entry.name, false);
         }
       }
     });

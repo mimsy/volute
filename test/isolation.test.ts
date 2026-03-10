@@ -40,16 +40,16 @@ describe("isolation", () => {
     assert.equal(mindUserName("my-mind_1"), "mind-my-mind_1");
   });
 
-  it("wrapForIsolation returns original cmd when isolation disabled", () => {
+  it("wrapForIsolation returns original cmd when isolation disabled", async () => {
     delete process.env.VOLUTE_ISOLATION;
-    const [cmd, args] = wrapForIsolation("/usr/bin/tsx", ["src/server.ts"], "alice");
+    const [cmd, args] = await wrapForIsolation("/usr/bin/tsx", ["src/server.ts"], "alice");
     assert.equal(cmd, "/usr/bin/tsx");
     assert.deepEqual(args, ["src/server.ts"]);
   });
 
-  it("wrapForIsolation wraps with runuser/sudo when isolation enabled", () => {
+  it("wrapForIsolation wraps with runuser/sudo when isolation enabled", async () => {
     process.env.VOLUTE_ISOLATION = "user";
-    const [cmd, args] = wrapForIsolation(
+    const [cmd, args] = await wrapForIsolation(
       "/usr/bin/tsx",
       ["src/server.ts", "--port", "4100"],
       "alice",
@@ -67,21 +67,21 @@ describe("isolation", () => {
     ]);
   });
 
-  it("wrapForIsolation uses base name for splits", () => {
+  it("wrapForIsolation uses base name for splits", async () => {
     process.env.VOLUTE_ISOLATION = "user";
-    addMind("alice", 4150);
-    addVariant("alice-experiment", "alice", 4151, "/fake", "experiment");
-    const [cmd, args] = wrapForIsolation("node", ["index.js"], "alice-experiment");
+    await addMind("alice", 4150);
+    await addVariant("alice-experiment", "alice", 4151, "/fake", "experiment");
+    const [cmd, args] = await wrapForIsolation("node", ["index.js"], "alice-experiment");
     const expectedCmd = process.platform === "darwin" ? "sudo" : "runuser";
     assert.equal(cmd, expectedCmd);
     assert.deepEqual(args, ["-u", "mind-alice", "--", "node", "index.js"]);
-    removeMind("alice");
+    await removeMind("alice");
   });
 
-  it("wrapForIsolation respects VOLUTE_USER_PREFIX", () => {
+  it("wrapForIsolation respects VOLUTE_USER_PREFIX", async () => {
     process.env.VOLUTE_ISOLATION = "user";
     process.env.VOLUTE_USER_PREFIX = "volute-";
-    const [cmd, args] = wrapForIsolation("node", ["index.js"], "bob");
+    const [cmd, args] = await wrapForIsolation("node", ["index.js"], "bob");
     const expectedCmd = process.platform === "darwin" ? "sudo" : "runuser";
     assert.equal(cmd, expectedCmd);
     assert.deepEqual(args, ["-u", "volute-bob", "--", "node", "index.js"]);

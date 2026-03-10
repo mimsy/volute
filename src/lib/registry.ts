@@ -2,7 +2,9 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getRawDb } from "./db.js";
+import { eq, isNull } from "drizzle-orm";
+import { getDb } from "./db.js";
+import { minds } from "./schema.js";
 
 export type MindEntry = {
   name: string;
@@ -87,17 +89,17 @@ function rowToEntry(row: RawMindRow): MindEntry {
 }
 
 /** Read base minds (no parent) from DB. */
-export function readRegistry(): MindEntry[] {
-  const db = getRawDb();
-  const rows = db.prepare("SELECT * FROM minds WHERE parent IS NULL").all() as RawMindRow[];
-  return rows.map(rowToEntry);
+export async function readRegistry(): Promise<MindEntry[]> {
+  const db = await getDb();
+  const rows = await db.select().from(minds).where(isNull(minds.parent));
+  return (rows as unknown as RawMindRow[]).map(rowToEntry);
 }
 
 /** Read ALL minds (base + variants) from DB. */
-export function readAllMinds(): MindEntry[] {
-  const db = getRawDb();
-  const rows = db.prepare("SELECT * FROM minds").all() as RawMindRow[];
-  return rows.map(rowToEntry);
+export async function readAllMinds(): Promise<MindEntry[]> {
+  const db = await getDb();
+  const rows = await db.select().from(minds);
+  return (rows as unknown as RawMindRow[]).map(rowToEntry);
 }
 
 const MIND_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
@@ -112,7 +114,7 @@ export function validateMindName(name: string): string | null {
   return null;
 }
 
-export function addMind(
+export async function addMind(
   name: string,
   port: number,
   stage?: "seed" | "sprouted",
@@ -120,14 +122,17 @@ export function addMind(
 ) {
   const err = validateMindName(name);
   if (err) throw new Error(err);
-  const db = getRawDb();
-  db.prepare(
-    `INSERT INTO minds (name, port, stage, template) VALUES (?, ?, ?, ?)
-     ON CONFLICT(name) DO UPDATE SET port=excluded.port, stage=excluded.stage, template=excluded.template`,
-  ).run(name, port, stage ?? null, template ?? null);
+  const db = await getDb();
+  await db
+    .insert(minds)
+    .values({ name, port, stage: stage ?? null, template: template ?? null })
+    .onConflictDoUpdate({
+      target: minds.name,
+      set: { port, stage: stage ?? null, template: template ?? null },
+    });
 }
 
-export function addVariant(
+export async function addVariant(
   name: string,
   parent: string,
   port: number,
@@ -136,48 +141,52 @@ export function addVariant(
 ) {
   const err = validateMindName(name);
   if (err) throw new Error(err);
-  const db = getRawDb();
-  db.prepare(
-    `INSERT INTO minds (name, port, parent, dir, branch) VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(name) DO UPDATE SET port=excluded.port, parent=excluded.parent, dir=excluded.dir, branch=excluded.branch`,
-  ).run(name, port, parent, dir, branch);
+  const db = await getDb();
+  await db.insert(minds).values({ name, port, parent, dir, branch }).onConflictDoUpdate({
+    target: minds.name,
+    set: { port, parent, dir, branch },
+  });
 }
 
-export function removeMind(name: string) {
-  const db = getRawDb();
-  db.prepare("DELETE FROM minds WHERE name = ?").run(name);
+export async function removeMind(name: string) {
+  const db = await getDb();
+  await db.delete(minds).where(eq(minds.name, name));
 }
 
-export function setMindRunning(name: string, running: boolean) {
-  const db = getRawDb();
-  db.prepare("UPDATE minds SET running = ? WHERE name = ?").run(running ? 1 : 0, name);
+export async function setMindRunning(name: string, running: boolean) {
+  const db = await getDb();
+  await db
+    .update(minds)
+    .set({ running: running ? 1 : 0 })
+    .where(eq(minds.name, name));
 }
 
-export function setMindStage(name: string, stage: "seed" | "sprouted") {
-  const db = getRawDb();
-  db.prepare("UPDATE minds SET stage = ? WHERE name = ?").run(stage, name);
+export async function setMindStage(name: string, stage: "seed" | "sprouted") {
+  const db = await getDb();
+  await db.update(minds).set({ stage }).where(eq(minds.name, name));
 }
 
-export function setMindTemplateHash(name: string, hash: string) {
-  const db = getRawDb();
-  db.prepare("UPDATE minds SET template_hash = ? WHERE name = ?").run(hash, name);
+export async function setMindTemplateHash(name: string, hash: string) {
+  const db = await getDb();
+  await db.update(minds).set({ template_hash: hash }).where(eq(minds.name, name));
 }
 
-export function findMind(name: string): MindEntry | undefined {
-  const db = getRawDb();
-  const row = db.prepare("SELECT * FROM minds WHERE name = ?").get(name) as RawMindRow | undefined;
-  return row ? rowToEntry(row) : undefined;
+export async function findMind(name: string): Promise<MindEntry | undefined> {
+  const db = await getDb();
+  const rows = await db.select().from(minds).where(eq(minds.name, name));
+  if (rows.length === 0) return undefined;
+  return rowToEntry(rows[0] as unknown as RawMindRow);
 }
 
-export function findVariants(parent: string): MindEntry[] {
-  const db = getRawDb();
-  const rows = db.prepare("SELECT * FROM minds WHERE parent = ?").all(parent) as RawMindRow[];
-  return rows.map(rowToEntry);
+export async function findVariants(parent: string): Promise<MindEntry[]> {
+  const db = await getDb();
+  const rows = await db.select().from(minds).where(eq(minds.parent, parent));
+  return (rows as unknown as RawMindRow[]).map(rowToEntry);
 }
 
 /** Get the base mind name for a given name. If it's a variant, returns its parent. */
-export function getBaseName(name: string): string {
-  const entry = findMind(name);
+export async function getBaseName(name: string): Promise<string> {
+  const entry = await findMind(name);
   return entry?.parent ?? name;
 }
 
@@ -192,9 +201,9 @@ export function stateDir(name: string): string {
   return resolve(voluteSystemDir(), "state", name);
 }
 
-export function nextPort(): number {
-  const db = getRawDb();
-  const rows = db.prepare("SELECT port FROM minds").all() as Array<{ port: number }>;
+export async function nextPort(): Promise<number> {
+  const db = await getDb();
+  const rows = await db.select({ port: minds.port }).from(minds);
   const usedPorts = new Set(rows.map((r) => r.port));
   const basePort = parseInt(process.env.VOLUTE_BASE_PORT || "4100", 10);
   let port = basePort;

@@ -160,7 +160,7 @@ function scanPagesDir(dir: string, urlPrefix: string): SitePage[] {
   return pages;
 }
 
-function buildSites(): Site[] {
+async function buildSites(): Promise<Site[]> {
   const sites: Site[] = [];
   const systemPagesDir = resolve(voluteHome(), "shared", "pages");
   if (existsSync(systemPagesDir)) {
@@ -170,7 +170,7 @@ function buildSites(): Site[] {
     }
   }
 
-  const entries = readRegistry();
+  const entries = await readRegistry();
   for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
     const pagesDir = resolve(mindDir(entry.name), "home", "public", "pages");
     if (!existsSync(pagesDir)) continue;
@@ -183,8 +183,8 @@ function buildSites(): Site[] {
   return sites;
 }
 
-function buildRecentPages(): RecentPage[] {
-  const entries = readRegistry();
+async function buildRecentPages(): Promise<RecentPage[]> {
+  const entries = await readRegistry();
   const pages: RecentPage[] = [];
 
   for (const entry of entries) {
@@ -232,12 +232,12 @@ function buildRecentPages(): RecentPage[] {
   return pages.slice(0, 10);
 }
 
-export function getCachedSites(): Site[] {
-  if (!sitesCache) sitesCache = buildSites();
+export async function getCachedSites(): Promise<Site[]> {
+  if (!sitesCache) sitesCache = await buildSites();
   return sitesCache;
 }
 
-export function getCachedRecentPages(): RecentPage[] {
-  if (!recentPagesCache) recentPagesCache = buildRecentPages();
+export async function getCachedRecentPages(): Promise<RecentPage[]> {
+  if (!recentPagesCache) recentPagesCache = await buildRecentPages();
   return recentPagesCache;
 }

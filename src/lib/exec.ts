@@ -2,13 +2,13 @@ import { execFile as execFileCb, execFileSync, spawn } from "node:child_process"
 import { wrapForIsolation } from "./isolation.js";
 
 /** Promise wrapper around child_process.execFile. Returns stdout as a string. */
-export function exec(
+export async function exec(
   cmd: string,
   args: string[],
   options?: { cwd?: string; mindName?: string; env?: NodeJS.ProcessEnv },
 ): Promise<string> {
   const [wrappedCmd, wrappedArgs] = options?.mindName
-    ? wrapForIsolation(cmd, args, options.mindName)
+    ? await wrapForIsolation(cmd, args, options.mindName)
     : [cmd, args];
   return new Promise((resolve, reject) => {
     execFileCb(
@@ -53,13 +53,13 @@ export function resolveVoluteBin(): string {
 }
 
 /** Promise wrapper around spawn with stdio: "inherit". Resolves when the process exits 0, rejects otherwise. */
-export function execInherit(
+export async function execInherit(
   cmd: string,
   args: string[],
   options?: { cwd?: string; mindName?: string; env?: NodeJS.ProcessEnv },
 ): Promise<void> {
   const [wrappedCmd, wrappedArgs] = options?.mindName
-    ? wrapForIsolation(cmd, args, options.mindName)
+    ? await wrapForIsolation(cmd, args, options.mindName)
     : [cmd, args];
   return new Promise((resolve, reject) => {
     const child = spawn(wrappedCmd, wrappedArgs, {

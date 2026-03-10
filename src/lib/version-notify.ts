@@ -32,8 +32,8 @@ function writeState(state: VersionNotifyState): void {
  * Backfill templateHash for minds that don't have one.
  * Uses the current template hash so existing minds won't get a false upgrade notification.
  */
-export function backfillTemplateHashes(): void {
-  const entries = readRegistry();
+export async function backfillTemplateHashes(): Promise<void> {
+  const entries = await readRegistry();
 
   for (const entry of entries) {
     if (entry.templateHash != null) continue;
@@ -42,7 +42,7 @@ export function backfillTemplateHashes(): void {
     const tmpl = entry.template ?? "claude";
     try {
       const hash = computeTemplateHash(tmpl);
-      setMindTemplateHash(entry.name, hash);
+      await setMindTemplateHash(entry.name, hash);
     } catch (err) {
       log.warn(`failed to compute template hash for ${entry.name}`, log.errorData(err));
     }
@@ -67,7 +67,7 @@ export async function notifyVersionUpdate(): Promise<void> {
   // Version unchanged: nothing to do
   if (state.lastNotifiedVersion === currentVersion) return;
 
-  const entries = readRegistry();
+  const entries = await readRegistry();
   const runningMinds = entries.filter((e) => e.running && e.stage !== "seed");
 
   if (runningMinds.length === 0) {

@@ -121,9 +121,9 @@ const chatSchema = z.object({
 const app = new Hono<AuthEnv>()
   .post("/:name/chat", zValidator("json", chatSchema), async (c) => {
     const name = c.req.param("name");
-    const baseName = getBaseName(name);
+    const baseName = await getBaseName(name);
 
-    const entry = findMind(baseName);
+    const entry = await findMind(baseName);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const body = c.req.valid("json");
@@ -151,7 +151,7 @@ const app = new Hono<AuthEnv>()
         participantIds.push(user.id);
       } else if (body.sender) {
         // Check if sender is a mind — if so, add their mind user as participant
-        const senderMind = findMind(body.sender);
+        const senderMind = await findMind(body.sender);
         if (senderMind) {
           const senderMindUser = await getOrCreateMindUser(body.sender);
           participantIds.push(senderMindUser.id);

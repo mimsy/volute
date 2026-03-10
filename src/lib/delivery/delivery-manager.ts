@@ -79,7 +79,7 @@ export class DeliveryManager {
         reason: string;
       }
   > {
-    const baseName = getBaseName(mindName);
+    const baseName = await getBaseName(mindName);
     const config = getRoutingConfig(baseName);
 
     const meta: MatchMeta = {
@@ -129,7 +129,7 @@ export class DeliveryManager {
 
     if (sessionConfig.delivery.mode === "batch") {
       dlog.debug(`enqueueing batch message for ${mindName}/${sessionName}`);
-      this.enqueueBatch(mindName, sessionName, payload, sessionConfig);
+      await this.enqueueBatch(mindName, sessionName, payload, sessionConfig);
       return { routed: true, session: sessionName, destination: "mind", mode: "batch" };
     }
 
@@ -142,8 +142,8 @@ export class DeliveryManager {
    * Called when a mind's session emits a "done" event — decrements active count
    * and may trigger batch flush if session goes idle.
    */
-  sessionDone(mindName: string, session?: string): void {
-    const baseName = getBaseName(mindName);
+  async sessionDone(mindName: string, session?: string): Promise<void> {
+    const baseName = await getBaseName(mindName);
 
     if (session) {
       this.decrementActive(baseName, session);
@@ -268,8 +268,8 @@ export class DeliveryManager {
 
   // --- Private ---
 
-  private resolvePort(mindName: string): { baseName: string; port: number } | null {
-    const entry = findMind(mindName);
+  private async resolvePort(mindName: string): Promise<{ baseName: string; port: number } | null> {
+    const entry = await findMind(mindName);
     if (!entry) return null;
     const baseName = entry.parent ?? mindName;
     return { baseName, port: entry.port };
@@ -303,7 +303,7 @@ export class DeliveryManager {
     payload: DeliveryPayload,
     sessionConfig: ResolvedSessionConfig,
   ): Promise<void> {
-    const resolved = this.resolvePort(mindName);
+    const resolved = await this.resolvePort(mindName);
     if (!resolved) {
       dlog.warn(`cannot deliver to ${mindName}: mind not found`);
       return;
@@ -356,7 +356,7 @@ export class DeliveryManager {
     sessionConfig: ResolvedSessionConfig,
     interruptOverride?: boolean,
   ): Promise<void> {
-    const resolved = this.resolvePort(mindName);
+    const resolved = await this.resolvePort(mindName);
     if (!resolved) {
       dlog.warn(`cannot deliver batch to ${mindName}: mind not found`);
       return;
@@ -446,12 +446,12 @@ export class DeliveryManager {
     }
   }
 
-  private enqueueBatch(
+  private async enqueueBatch(
     mindName: string,
     session: string,
     payload: DeliveryPayload,
     sessionConfig: ResolvedSessionConfig,
-  ): void {
+  ): Promise<void> {
     const delivery = sessionConfig.delivery as Extract<ResolvedDeliveryMode, { mode: "batch" }>;
 
     // Check triggers — immediate flush if matched
@@ -460,7 +460,7 @@ export class DeliveryManager {
       const lower = text.toLowerCase();
       if (delivery.triggers.some((t) => lower.includes(t.toLowerCase()))) {
         // Flush existing buffer + this message immediately
-        this.flushBatch(mindName, session, [
+        await this.flushBatch(mindName, session, [
           {
             payload,
             channel: payload.channel,
@@ -475,7 +475,7 @@ export class DeliveryManager {
     // New-speaker interrupt: if mind is active on this channel and a different sender
     // arrives (within the maxWait window and past the debounce cooldown), force-flush
     // with interrupt so the mind can incorporate the new voice
-    const baseName = getBaseName(mindName);
+    const baseName = await getBaseName(mindName);
     const state = this.sessionStates.get(baseName)?.get(session);
     if (
       state &&
@@ -492,7 +492,7 @@ export class DeliveryManager {
       this.persistToQueue(mindName, session, payload).catch((err) => {
         dlog.warn(`failed to persist batch message for ${mindName}/${session}`, log.errorData(err));
       });
-      this.flushBatch(
+      await this.flushBatch(
         mindName,
         session,
         [{ payload, channel: payload.channel, sender: payload.sender, createdAt: Date.now() }],
@@ -570,12 +570,12 @@ export class DeliveryManager {
     }
   }
 
-  private flushBatch(
+  private async flushBatch(
     mindName: string,
     session: string,
     extra?: QueuedMessage[],
     interruptOverride?: boolean,
-  ): void {
+  ): Promise<void> {
     const bufferKey = `${mindName}:${session}`;
     const buffer = this.batchBuffers.get(bufferKey);
 
@@ -592,7 +592,7 @@ export class DeliveryManager {
 
     if (messages.length === 0) return;
 
-    const baseName = getBaseName(mindName);
+    const baseName = await getBaseName(mindName);
     const config = getRoutingConfig(baseName);
     const sessionConfig = resolveDeliveryMode(config, session);
 
@@ -611,7 +611,7 @@ export class DeliveryManager {
     session: string,
     payload: DeliveryPayload,
   ): Promise<void> {
-    const baseName = getBaseName(mindName);
+    const baseName = await getBaseName(mindName);
     await this.persistToQueue(baseName, session, payload, "gated");
 
     // Check if this is the first gated message for this channel — send invite
@@ -662,7 +662,7 @@ export class DeliveryManager {
       content: [{ type: "text", text: notification }],
     };
 
-    const config = getRoutingConfig(getBaseName(mindName));
+    const config = getRoutingConfig(await getBaseName(mindName));
     const sessionConfig = resolveDeliveryMode(config, "main");
 
     await this.deliverToMind(mindName, "main", invitePayload, {

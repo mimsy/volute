@@ -17,7 +17,7 @@ async function cleanup() {
   await db.delete(conversations);
   await db.delete(users);
   try {
-    removeMind(testMind);
+    await removeMind(testMind);
   } catch {}
 }
 
@@ -35,7 +35,7 @@ function createApp(mindExists: boolean) {
   app.get("/api/minds/:name/variants", async (c) => {
     if (!mindExists) return c.json({ error: "Mind not found" }, 404);
 
-    const variants = findVariants(testMind);
+    const variants = await findVariants(testMind);
     const results = variants.map((s) => ({
       ...s,
       status: s.port ? "no-server" : "no-server",
@@ -62,7 +62,7 @@ describe("web variants routes", () => {
 
   it("GET /:name/variants — lists variants for existing mind (empty)", async () => {
     const cookie = await setupAuth();
-    addMind(testMind, 4300);
+    await addMind(testMind, 4300);
     const app = createApp(true);
 
     const res = await app.request("/api/minds/test-mind/variants", {
