@@ -20,13 +20,16 @@ import {
   migrateMindState,
   migratePagesDirToPublic,
 } from "./lib/migrate-state.js";
+import { migrateToSystemDir } from "./lib/migrate-system-dir.js";
 import { stopAllWatchers } from "./lib/pages-watcher.js";
 import {
+  ensureSystemDir,
   initRegistryCache,
   mindDir,
   readRegistry,
   setMindRunning,
   voluteHome,
+  voluteSystemDir,
 } from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
 import { ensureSharedRepo } from "./lib/shared.js";
@@ -57,9 +60,11 @@ export async function startDaemon(opts: {
 
   const home = voluteHome();
 
+  const systemDir = voluteSystemDir();
+
   // In background mode, redirect structured logs and console to a rotating log file
   if (!opts.foreground) {
-    const rotatingLog = new RotatingLog(resolve(home, "daemon.log"));
+    const rotatingLog = new RotatingLog(resolve(systemDir, "daemon.log"));
     log.setOutput((line) => rotatingLog.write(`${line}\n`));
     // Keep console redirect as safety net for uncaught/third-party output
     const write = (...args: any[]) => rotatingLog.write(`${format(...args)}\n`);
@@ -68,10 +73,14 @@ export async function startDaemon(opts: {
     console.warn = write;
     console.info = write;
   }
-  const DAEMON_PID_PATH = resolve(home, "daemon.pid");
-  const DAEMON_JSON_PATH = resolve(home, "daemon.json");
+  const DAEMON_PID_PATH = resolve(systemDir, "daemon.pid");
+  const DAEMON_JSON_PATH = resolve(systemDir, "daemon.json");
 
   mkdirSync(home, { recursive: true });
+  ensureSystemDir();
+
+  // One-time migration: move infrastructure files to system/ subdirectory
+  migrateToSystemDir();
 
   // One-time migration: agents.json → minds.json, agents/ → minds/
   migrateAgentsToMinds();

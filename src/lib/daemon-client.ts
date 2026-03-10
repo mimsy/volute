@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { voluteHome, voluteUserHome } from "./registry.js";
+import { voluteHome, voluteSystemDir, voluteUserHome } from "./registry.js";
 
 type CliSession = { sessionId: string; username: string };
 
@@ -19,7 +19,10 @@ type DaemonConfig = { port: number; internalPort?: number; hostname?: string; to
 // This module is CLI-only (imported by src/commands/). process.exit() is intentional —
 // CLI commands should terminate immediately with a clear error when the daemon is unreachable.
 function readDaemonConfig(): DaemonConfig {
-  const configPath = resolve(voluteHome(), "daemon.json");
+  // Check new location first, fall back to old location for transition period
+  const newPath = resolve(voluteSystemDir(), "daemon.json");
+  const legacyPath = resolve(voluteHome(), "daemon.json");
+  const configPath = existsSync(newPath) ? newPath : legacyPath;
   if (!existsSync(configPath)) {
     // If a system service is installed, the issue is likely VOLUTE_HOME not being set
     if (existsSync("/etc/systemd/system/volute.service") && !process.env.VOLUTE_HOME) {

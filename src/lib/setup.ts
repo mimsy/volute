@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { voluteHome } from "./registry.js";
+import { voluteHome, voluteSystemDir } from "./registry.js";
 
 export type SetupType = "local" | "system";
 export type IsolationMode = "sandbox" | "user" | "none";
@@ -20,7 +20,7 @@ export type GlobalConfig = {
 };
 
 export function configPath(): string {
-  return resolve(voluteHome(), "config.json");
+  return resolve(voluteSystemDir(), "config.json");
 }
 
 export function readGlobalConfig(): GlobalConfig {
@@ -36,7 +36,7 @@ export function readGlobalConfig(): GlobalConfig {
 
 export function writeGlobalConfig(config: GlobalConfig): void {
   const path = configPath();
-  mkdirSync(voluteHome(), { recursive: true });
+  mkdirSync(voluteSystemDir(), { recursive: true });
   writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
 }
 
@@ -55,8 +55,10 @@ export function migrateSetupConfig(): void {
   if (config.setup) return; // already configured
 
   const home = voluteHome();
-  const registryPath = resolve(home, "minds.json");
-  if (!existsSync(registryPath)) return; // truly fresh install, no migration needed
+  const systemDir = voluteSystemDir();
+  const registryPath = resolve(systemDir, "minds.json");
+  const legacyRegistryPath = resolve(home, "minds.json");
+  if (!existsSync(registryPath) && !existsSync(legacyRegistryPath)) return; // truly fresh install, no migration needed
 
   // Existing user — infer setup state
   const isSystem = process.env.VOLUTE_ISOLATION === "user";

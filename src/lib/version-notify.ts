@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { deliverMessage } from "./delivery/message-delivery.js";
 import log from "./logger.js";
-import { readRegistry, voluteHome, writeRegistry } from "./registry.js";
+import { readRegistry, voluteSystemDir, writeRegistry } from "./registry.js";
 import { parseReleaseNotes } from "./release-notes.js";
 import { computeTemplateHash } from "./template-hash.js";
 import { getCurrentVersion } from "./update-check.js";
@@ -12,7 +12,7 @@ type VersionNotifyState = {
 };
 
 function statePath(): string {
-  return resolve(voluteHome(), "version-notify.json");
+  return resolve(voluteSystemDir(), "version-notify.json");
 }
 
 function readState(): VersionNotifyState | null {

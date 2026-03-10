@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { voluteHome, writeRegistry } from "../src/lib/registry.js";
+import { voluteSystemDir, writeRegistry } from "../src/lib/registry.js";
 import { backfillTemplateHashes, notifyVersionUpdate } from "../src/lib/version-notify.js";
 
-const statePath = () => resolve(voluteHome(), "version-notify.json");
-const registryPath = () => resolve(voluteHome(), "minds.json");
+const statePath = () => resolve(voluteSystemDir(), "version-notify.json");
+const registryPath = () => resolve(voluteSystemDir(), "minds.json");
 
 function writeState(state: { lastNotifiedVersion: string }) {
   writeFileSync(statePath(), JSON.stringify(state));
@@ -22,7 +22,7 @@ function readState(): { lastNotifiedVersion: string } | null {
 
 describe("backfillTemplateHashes", () => {
   beforeEach(() => {
-    mkdirSync(voluteHome(), { recursive: true });
+    mkdirSync(voluteSystemDir(), { recursive: true });
   });
 
   afterEach(() => {
@@ -87,7 +87,7 @@ describe("backfillTemplateHashes", () => {
 
 describe("notifyVersionUpdate", () => {
   beforeEach(() => {
-    mkdirSync(voluteHome(), { recursive: true });
+    mkdirSync(voluteSystemDir(), { recursive: true });
   });
 
   afterEach(() => {

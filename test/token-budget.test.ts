@@ -7,7 +7,7 @@ import { TokenBudget } from "../src/lib/daemon/token-budget.js";
 describe("TokenBudget", () => {
   // Clean up persisted budget state between tests to ensure isolation
   beforeEach(() => {
-    const stateBase = resolve(process.env.VOLUTE_HOME!, "state");
+    const stateBase = resolve(process.env.VOLUTE_HOME!, "system", "state");
     try {
       rmSync(stateBase, { recursive: true, force: true });
     } catch {}

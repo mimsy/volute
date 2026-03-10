@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { voluteHome } from "../src/lib/registry.js";
+import { voluteSystemDir } from "../src/lib/registry.js";
 import {
   type GlobalConfig,
   isSetupComplete,
@@ -12,11 +12,11 @@ import {
 } from "../src/lib/setup.js";
 
 function configPath() {
-  return resolve(voluteHome(), "config.json");
+  return resolve(voluteSystemDir(), "config.json");
 }
 
 function registryPath() {
-  return resolve(voluteHome(), "minds.json");
+  return resolve(voluteSystemDir(), "minds.json");
 }
 
 function cleanup() {
@@ -36,7 +36,7 @@ describe("setup config", () => {
   });
 
   it("readGlobalConfig reads all fields", () => {
-    mkdirSync(voluteHome(), { recursive: true });
+    mkdirSync(voluteSystemDir(), { recursive: true });
     const config: GlobalConfig = {
       name: "test",
       hostname: "0.0.0.0",
@@ -70,7 +70,7 @@ describe("setup config", () => {
   });
 
   it("isSetupComplete returns false when config has no setup field", () => {
-    mkdirSync(voluteHome(), { recursive: true });
+    mkdirSync(voluteSystemDir(), { recursive: true });
     writeFileSync(configPath(), JSON.stringify({ hostname: "localhost" }));
     assert.equal(isSetupComplete(), false);
   });
@@ -97,7 +97,7 @@ describe("migrateSetupConfig", () => {
       name: "existing",
       setup: { type: "system", mindsDir: "/minds", isolation: "user", service: true },
     });
-    mkdirSync(voluteHome(), { recursive: true });
+    mkdirSync(voluteSystemDir(), { recursive: true });
     writeFileSync(registryPath(), "[]");
     migrateSetupConfig();
     // Should not overwrite existing config
@@ -107,7 +107,7 @@ describe("migrateSetupConfig", () => {
   });
 
   it("auto-populates setup for existing users with minds.json", () => {
-    mkdirSync(voluteHome(), { recursive: true });
+    mkdirSync(voluteSystemDir(), { recursive: true });
     writeFileSync(registryPath(), JSON.stringify([{ name: "alice", port: 4100 }]));
     migrateSetupConfig();
     const config = readGlobalConfig();
@@ -120,7 +120,7 @@ describe("migrateSetupConfig", () => {
     const orig = process.env.VOLUTE_ISOLATION;
     process.env.VOLUTE_ISOLATION = "user";
     try {
-      mkdirSync(voluteHome(), { recursive: true });
+      mkdirSync(voluteSystemDir(), { recursive: true });
       writeFileSync(registryPath(), "[]");
       migrateSetupConfig();
       const config = readGlobalConfig();
