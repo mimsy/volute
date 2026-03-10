@@ -78,7 +78,6 @@ import {
   nextPort,
   readRegistry,
   removeMind,
-  setMindRunning,
   setMindStage,
   setMindTemplateHash,
   stateDir,

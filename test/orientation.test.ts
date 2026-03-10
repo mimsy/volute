@@ -11,7 +11,6 @@ import {
   removeMind,
   setMindStage,
   voluteHome,
-  voluteSystemDir,
 } from "../src/lib/registry.js";
 import { sessions, users } from "../src/lib/schema.js";
 import { createSession } from "../src/web/middleware/auth.js";
