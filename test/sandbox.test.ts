@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { voluteHome, voluteSystemDir } from "../src/lib/registry.js";
+import { addMind, removeMind, voluteHome, voluteSystemDir } from "../src/lib/registry.js";
 import {
   buildDenyRead,
   isSandboxEnabled,
@@ -97,54 +97,36 @@ describe("buildDenyRead", () => {
 
   it("denies other minds but not the current mind", () => {
     const home = voluteHome();
-    const systemDir = voluteSystemDir();
-    mkdirSync(systemDir, { recursive: true });
-    writeFileSync(
-      resolve(systemDir, "minds.json"),
-      JSON.stringify([
-        { name: "alice", port: 4100 },
-        { name: "bob", port: 4101 },
-        { name: "carol", port: 4102 },
-      ]),
-    );
+    addMind("alice", 4100);
+    addMind("bob", 4101);
+    addMind("carol", 4102);
 
     const mindsDir = resolve(home, "minds");
     const deny = buildDenyRead("alice", resolve(mindsDir, "alice"));
     assert.ok(!deny.includes(resolve(mindsDir, "alice")), "should not deny own dir");
     assert.ok(deny.includes(resolve(mindsDir, "bob")), "should deny bob");
     assert.ok(deny.includes(resolve(mindsDir, "carol")), "should deny carol");
+    removeMind("alice");
+    removeMind("bob");
+    removeMind("carol");
   });
 
-  it("handles variant names correctly", () => {
+  it("handles split names correctly", () => {
     const home = voluteHome();
-    const systemDir = voluteSystemDir();
-    mkdirSync(systemDir, { recursive: true });
-    writeFileSync(
-      resolve(systemDir, "minds.json"),
-      JSON.stringify([
-        { name: "alice", port: 4100 },
-        { name: "bob", port: 4101 },
-      ]),
-    );
+    addMind("alice", 4100);
+    addMind("bob", 4101);
 
     const mindsDir = resolve(home, "minds");
-    const deny = buildDenyRead("alice@experiment", resolve(mindsDir, "alice"));
+    const deny = buildDenyRead("alice", resolve(mindsDir, "alice"));
     assert.ok(!deny.includes(resolve(mindsDir, "alice")), "should not deny base mind dir");
     assert.ok(deny.includes(resolve(mindsDir, "bob")), "should deny other minds");
+    removeMind("alice");
+    removeMind("bob");
   });
 
-  it("handles missing minds.json without crashing", () => {
+  it("handles empty registry without crashing", () => {
     const deny = buildDenyRead("alice", "/tmp/minds/alice");
     // Should still have system state and sensitive dirs
-    assert.ok(deny.length > 0);
-  });
-
-  it("handles corrupt minds.json without crashing", () => {
-    const systemDir = voluteSystemDir();
-    mkdirSync(systemDir, { recursive: true });
-    writeFileSync(resolve(systemDir, "minds.json"), "not json");
-
-    const deny = buildDenyRead("alice", "/tmp/minds/alice");
     assert.ok(deny.length > 0);
   });
 });

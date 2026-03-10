@@ -5,19 +5,33 @@ import { getMindManager } from "../../lib/daemon/mind-manager.js";
 import { exec, gitExec } from "../../lib/exec.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
-import { findMind, mindDir, nextPort } from "../../lib/registry.js";
-import { spawnServer } from "../../lib/spawn-server.js";
-import { cleanupVariant } from "../../lib/variant-cleanup.js";
 import {
-  addVariant,
-  checkHealth,
-  findVariant,
-  readVariants,
-  validateBranchName,
-  writeVariants,
-} from "../../lib/variants.js";
+  addSplit,
+  findMind,
+  findSplits,
+  mindDir,
+  nextPort,
+  removeMind,
+  setMindRunning,
+} from "../../lib/registry.js";
+import { spawnServer } from "../../lib/spawn-server.js";
+import { cleanupSplit } from "../../lib/split-cleanup.js";
+import { validateBranchName } from "../../lib/variants.js";
 import { verify } from "../../lib/verify.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
+
+async function checkHealth(port: number): Promise<{ ok: boolean; name?: string }> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/health`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!res.ok) return { ok: false };
+    const data = (await res.json()) as { name: string };
+    return { ok: true, name: data.name };
+  } catch {
+    return { ok: false };
+  }
+}
 
 const app = new Hono<AuthEnv>()
   .get("/:name/variants", async (c) => {
@@ -25,25 +39,26 @@ const app = new Hono<AuthEnv>()
     const entry = findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    const variants = readVariants(name);
+    const splits = findSplits(name);
     const results = await Promise.all(
-      variants.map(async (v) => {
-        if (!v.port) return { ...v, status: "no-server" };
-        const health = await checkHealth(v.port);
-        return { ...v, status: health.ok ? "running" : "dead" };
+      splits.map(async (s) => {
+        if (!s.port) return { ...s, status: "no-server" };
+        const health = await checkHealth(s.port);
+        return { ...s, status: health.ok ? "running" : "dead" };
       }),
     );
 
-    // Sync running status back to variants.json (best-effort)
+    // Sync running status back to DB (best-effort)
     try {
-      const updated = results.map(({ status, ...v }) => ({
-        ...v,
-        running: status === "running",
-      }));
-      const changed = variants.some((v, i) => v.running !== updated[i].running);
-      if (changed) writeVariants(name, updated);
+      for (const r of results) {
+        const isRunning = r.status === "running";
+        const split = splits.find((s) => s.name === r.name);
+        if (split && split.running !== isRunning) {
+          setMindRunning(r.name, isRunning);
+        }
+      }
     } catch (err) {
-      log.warn(`failed to sync variant status for ${name}`, log.errorData(err));
+      log.warn(`failed to sync split status for ${name}`, log.errorData(err));
     }
 
     return c.json(results);
@@ -63,24 +78,29 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Invalid JSON" }, 400);
     }
 
-    const variantName = body.name;
-    if (!variantName) return c.json({ error: "Variant name required" }, 400);
+    const splitName = body.name;
+    if (!splitName) return c.json({ error: "Split name required" }, 400);
 
-    const err = validateBranchName(variantName);
+    const err = validateBranchName(splitName);
     if (err) return c.json({ error: err }, 400);
 
-    const projectRoot = mindDir(mindName);
-    const variantDir = resolve(projectRoot, ".variants", variantName);
+    // Check name isn't already taken
+    if (findMind(splitName)) {
+      return c.json({ error: `Name already in use: ${splitName}` }, 409);
+    }
 
-    if (existsSync(variantDir)) {
-      return c.json({ error: `Variant directory already exists: ${variantDir}` }, 409);
+    const projectRoot = mindDir(mindName);
+    const splitDir = resolve(projectRoot, ".variants", splitName);
+
+    if (existsSync(splitDir)) {
+      return c.json({ error: `Split directory already exists: ${splitDir}` }, 409);
     }
 
     mkdirSync(resolve(projectRoot, ".variants"), { recursive: true });
 
     // Create git worktree
     try {
-      await gitExec(["worktree", "add", "-b", variantName, variantDir], { cwd: projectRoot });
+      await gitExec(["worktree", "add", "-b", splitName, splitDir], { cwd: projectRoot });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       return c.json({ error: `Failed to create worktree: ${msg}` }, 500);
@@ -94,11 +114,11 @@ const app = new Hono<AuthEnv>()
       if (isIsolationEnabled()) {
         const [cmd, args] = wrapForIsolation("npm", ["install"], mindName);
         await exec(cmd, args, {
-          cwd: variantDir,
-          env: { ...process.env, HOME: resolve(variantDir, "home") },
+          cwd: splitDir,
+          env: { ...process.env, HOME: resolve(splitDir, "home") },
         });
       } else {
-        await exec("npm", ["install"], { cwd: variantDir });
+        await exec("npm", ["install"], { cwd: splitDir });
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -107,48 +127,46 @@ const app = new Hono<AuthEnv>()
 
     // Write SOUL.md if provided
     if (body.soul) {
-      writeFileSync(resolve(variantDir, "home/SOUL.md"), body.soul);
+      writeFileSync(resolve(splitDir, "home/SOUL.md"), body.soul);
     }
 
-    const variantPort = body.port ?? nextPort();
+    const splitPort = body.port ?? nextPort();
 
-    const variant = {
-      name: variantName,
-      branch: variantName,
-      path: variantDir,
-      port: variantPort,
-      created: new Date().toISOString(),
-    };
+    // Register split in DB
+    addSplit(splitName, mindName, splitPort, splitDir, splitName);
 
-    addVariant(mindName, variant);
-
-    // Start variant via mind manager unless noStart
+    // Start split via mind manager unless noStart
     if (!body.noStart) {
       try {
-        await getMindManager().startMind(`${mindName}@${variantName}`);
+        await getMindManager().startMind(splitName);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
-        return c.json({ error: `Variant created but failed to start: ${msg}` }, 500);
+        return c.json({ error: `Split created but failed to start: ${msg}` }, 500);
       }
     }
 
     return c.json({
       ok: true,
-      variant: { name: variantName, branch: variantName, path: variantDir, port: variantPort },
+      variant: { name: splitName, branch: splitName, path: splitDir, port: splitPort },
     });
   })
   // Merge variant — admin only
   .post("/:name/variants/:variant/merge", requireAdmin, async (c) => {
     const mindName = c.req.param("name");
-    const variantName = c.req.param("variant");
+    const splitName = c.req.param("variant");
 
-    const entry = findMind(mindName);
-    if (!entry) return c.json({ error: "Mind not found" }, 404);
+    const parentEntry = findMind(mindName);
+    if (!parentEntry) return c.json({ error: "Mind not found" }, 404);
 
-    const variant = findVariant(mindName, variantName);
-    if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
+    const splitEntry = findMind(splitName);
+    if (!splitEntry || splitEntry.parent !== mindName) {
+      return c.json({ error: `Unknown split: ${splitName}` }, 404);
+    }
 
-    const branchErr = validateBranchName(variant.branch);
+    if (!splitEntry.dir) return c.json({ error: `Split ${splitName} has no directory` }, 500);
+    if (!splitEntry.branch) return c.json({ error: `Split ${splitName} has no branch` }, 500);
+
+    const branchErr = validateBranchName(splitEntry.branch);
     if (branchErr) return c.json({ error: branchErr }, 400);
 
     let body: { summary?: string; justification?: string; memory?: string; skipVerify?: boolean } =
@@ -161,20 +179,20 @@ const app = new Hono<AuthEnv>()
 
     const projectRoot = mindDir(mindName);
 
-    // Auto-commit any uncommitted changes in the variant worktree
-    if (existsSync(variant.path)) {
-      const status = (await gitExec(["status", "--porcelain"], { cwd: variant.path })).trim();
+    // Auto-commit any uncommitted changes in the split worktree
+    if (existsSync(splitEntry.dir)) {
+      const status = (await gitExec(["status", "--porcelain"], { cwd: splitEntry.dir })).trim();
       if (status) {
         try {
-          await gitExec(["add", "-A"], { cwd: variant.path });
+          await gitExec(["add", "-A"], { cwd: splitEntry.dir });
           await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
-            cwd: variant.path,
+            cwd: splitEntry.dir,
           });
         } catch (e) {
           return c.json(
             {
               error:
-                "Failed to auto-commit variant changes. Commit or stash manually before merging.",
+                "Failed to auto-commit split changes. Commit or stash manually before merging.",
             },
             500,
           );
@@ -182,9 +200,9 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    // Verify variant before merge
+    // Verify split before merge
     if (!body.skipVerify) {
-      const result = await spawnServer(variant.path, 0, { detached: true });
+      const result = await spawnServer(splitEntry.dir, 0, { detached: true });
       if (!result) {
         return c.json(
           { error: "Failed to start server for verification. Use skipVerify to skip." },
@@ -224,19 +242,19 @@ const app = new Hono<AuthEnv>()
 
     // Merge branch
     try {
-      await gitExec(["merge", variant.branch], { cwd: projectRoot });
+      await gitExec(["merge", splitEntry.branch], { cwd: projectRoot });
     } catch (e) {
       return c.json({ error: "Merge failed. Resolve conflicts manually." }, 500);
     }
 
-    await cleanupVariant(mindName, variantName, projectRoot, variant.path);
+    await cleanupSplit(splitName, projectRoot, splitEntry.dir);
 
     // Update template hash after upgrade merge
-    if (variantName === "upgrade") {
+    if (splitName.endsWith("-upgrade") || splitName === "upgrade") {
       try {
         const { computeTemplateHash } = await import("../../lib/template-hash.js");
         const { setMindTemplateHash } = await import("../../lib/registry.js");
-        const tmpl = entry.template ?? "claude";
+        const tmpl = parentEntry.template ?? "claude";
         setMindTemplateHash(mindName, computeTemplateHash(tmpl));
       } catch (err) {
         console.error(`[daemon] failed to update template hash for ${mindName}:`, err);
@@ -262,7 +280,7 @@ const app = new Hono<AuthEnv>()
     const manager = getMindManager();
     const context = {
       type: "merged",
-      name: variantName,
+      name: splitName,
       ...(body.summary && { summary: body.summary }),
       ...(body.justification && { justification: body.justification }),
       ...(body.memory && { memory: body.memory }),
@@ -285,17 +303,21 @@ const app = new Hono<AuthEnv>()
   // Delete variant — admin only
   .delete("/:name/variants/:variant", requireAdmin, async (c) => {
     const mindName = c.req.param("name");
-    const variantName = c.req.param("variant");
+    const splitName = c.req.param("variant");
 
-    const entry = findMind(mindName);
-    if (!entry) return c.json({ error: "Mind not found" }, 404);
+    const parentEntry = findMind(mindName);
+    if (!parentEntry) return c.json({ error: "Mind not found" }, 404);
 
-    const variant = findVariant(mindName, variantName);
-    if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
+    const splitEntry = findMind(splitName);
+    if (!splitEntry || splitEntry.parent !== mindName) {
+      return c.json({ error: `Unknown split: ${splitName}` }, 404);
+    }
+
+    if (!splitEntry.dir) return c.json({ error: `Split ${splitName} has no directory` }, 500);
 
     const projectRoot = mindDir(mindName);
 
-    await cleanupVariant(mindName, variantName, projectRoot, variant.path, { stop: true });
+    await cleanupSplit(splitName, projectRoot, splitEntry.dir, { stop: true });
 
     return c.json({ ok: true });
   });

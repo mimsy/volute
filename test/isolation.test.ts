@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { isIsolationEnabled, mindUserName, wrapForIsolation } from "../src/lib/isolation.js";
+import { addMind, addSplit, removeMind } from "../src/lib/registry.js";
 
 describe("isolation", () => {
   const originalEnv = process.env.VOLUTE_ISOLATION;
@@ -66,12 +67,15 @@ describe("isolation", () => {
     ]);
   });
 
-  it("wrapForIsolation extracts base name from name@variant", () => {
+  it("wrapForIsolation uses base name for splits", () => {
     process.env.VOLUTE_ISOLATION = "user";
-    const [cmd, args] = wrapForIsolation("node", ["index.js"], "alice@experiment");
+    addMind("alice", 4150);
+    addSplit("alice-experiment", "alice", 4151, "/fake", "experiment");
+    const [cmd, args] = wrapForIsolation("node", ["index.js"], "alice-experiment");
     const expectedCmd = process.platform === "darwin" ? "sudo" : "runuser";
     assert.equal(cmd, expectedCmd);
     assert.deepEqual(args, ["-u", "mind-alice", "--", "node", "index.js"]);
+    removeMind("alice");
   });
 
   it("wrapForIsolation respects VOLUTE_USER_PREFIX", () => {

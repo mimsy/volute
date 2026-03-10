@@ -1,38 +1,21 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { findVariant, readVariants } from "./variants.js";
+import { getRawDb } from "./db.js";
 
-// In-memory registry cache for the daemon process.
-// When active, reads come from memory and writes flush to disk.
-// CLI processes (daemon not running) continue reading from file.
-let registryCache: MindEntry[] | null = null;
-
-export function initRegistryCache(): void {
-  registryCache = readRegistryFromDisk();
-}
-
-export function getRegistryCache(): MindEntry[] | null {
-  return registryCache;
-}
-
-function readRegistryFromDisk(): MindEntry[] {
-  const registryPath = resolve(voluteSystemDir(), "minds.json");
-  if (!existsSync(registryPath)) return [];
-  try {
-    const entries = JSON.parse(readFileSync(registryPath, "utf-8")) as Array<
-      Omit<MindEntry, "running"> & { running?: boolean }
-    >;
-    return entries.map((e) => ({
-      ...e,
-      running: e.running ?? false,
-      stage: e.stage ?? "sprouted",
-    }));
-  } catch {
-    return [];
-  }
-}
+export type MindEntry = {
+  name: string;
+  port: number;
+  created: string;
+  running: boolean;
+  stage?: "seed" | "sprouted";
+  template?: string;
+  templateHash?: string;
+  parent?: string;
+  dir?: string;
+  branch?: string;
+};
 
 export function voluteHome(): string {
   if (process.env.VOLUTE_HOME) return process.env.VOLUTE_HOME;
@@ -61,16 +44,6 @@ export function voluteUserHome(): string {
   return resolve(homedir(), ".volute");
 }
 
-export type MindEntry = {
-  name: string;
-  port: number;
-  created: string;
-  running: boolean;
-  stage?: "seed" | "sprouted";
-  template?: string;
-  templateHash?: string;
-};
-
 export function voluteSystemDir(): string {
   return resolve(voluteHome(), "system");
 }
@@ -85,18 +58,46 @@ export function ensureVoluteHome() {
   ensureSystemDir();
 }
 
-export function readRegistry(): MindEntry[] {
-  if (registryCache) return registryCache;
-  return readRegistryFromDisk();
+type RawMindRow = {
+  name: string;
+  port: number;
+  parent: string | null;
+  dir: string | null;
+  branch: string | null;
+  stage: string | null;
+  template: string | null;
+  template_hash: string | null;
+  running: number;
+  created_at: string;
+};
+
+function rowToEntry(row: RawMindRow): MindEntry {
+  return {
+    name: row.name,
+    port: row.port,
+    created: row.created_at,
+    running: row.running === 1,
+    stage: (row.stage as MindEntry["stage"]) ?? (row.parent ? undefined : "sprouted"),
+    template: row.template ?? undefined,
+    templateHash: row.template_hash ?? undefined,
+    parent: row.parent ?? undefined,
+    dir: row.dir ?? undefined,
+    branch: row.branch ?? undefined,
+  };
 }
 
-export function writeRegistry(entries: MindEntry[]) {
-  if (registryCache) registryCache = entries;
-  ensureVoluteHome();
-  const registryPath = resolve(voluteSystemDir(), "minds.json");
-  const tmpPath = `${registryPath}.tmp`;
-  writeFileSync(tmpPath, `${JSON.stringify(entries, null, 2)}\n`);
-  renameSync(tmpPath, registryPath);
+/** Read base minds (no parent) from DB. */
+export function readRegistry(): MindEntry[] {
+  const db = getRawDb();
+  const rows = db.prepare("SELECT * FROM minds WHERE parent IS NULL").all() as RawMindRow[];
+  return rows.map(rowToEntry);
+}
+
+/** Read ALL minds (base + splits) from DB. */
+export function readAllMinds(): MindEntry[] {
+  const db = getRawDb();
+  const rows = db.prepare("SELECT * FROM minds").all() as RawMindRow[];
+  return rows.map(rowToEntry);
 }
 
 const MIND_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
@@ -119,46 +120,59 @@ export function addMind(
 ) {
   const err = validateMindName(name);
   if (err) throw new Error(err);
-  const entries = readRegistry();
-  const filtered = entries.filter((e) => e.name !== name);
-  filtered.push({ name, port, created: new Date().toISOString(), running: false, stage, template });
-  writeRegistry(filtered);
+  const db = getRawDb();
+  db.prepare(
+    `INSERT INTO minds (name, port, stage, template) VALUES (?, ?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET port=excluded.port, stage=excluded.stage, template=excluded.template`,
+  ).run(name, port, stage ?? null, template ?? null);
+}
+
+export function addSplit(name: string, parent: string, port: number, dir: string, branch: string) {
+  const err = validateMindName(name);
+  if (err) throw new Error(err);
+  const db = getRawDb();
+  db.prepare(
+    `INSERT INTO minds (name, port, parent, dir, branch) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET port=excluded.port, parent=excluded.parent, dir=excluded.dir, branch=excluded.branch`,
+  ).run(name, port, parent, dir, branch);
 }
 
 export function removeMind(name: string) {
-  const entries = readRegistry();
-  writeRegistry(entries.filter((e) => e.name !== name));
+  const db = getRawDb();
+  db.prepare("DELETE FROM minds WHERE name = ?").run(name);
 }
 
 export function setMindRunning(name: string, running: boolean) {
-  const entries = readRegistry();
-  const entry = entries.find((e) => e.name === name);
-  if (entry) {
-    entry.running = running;
-    writeRegistry(entries);
-  }
+  const db = getRawDb();
+  db.prepare("UPDATE minds SET running = ? WHERE name = ?").run(running ? 1 : 0, name);
 }
 
 export function setMindStage(name: string, stage: "seed" | "sprouted") {
-  const entries = readRegistry();
-  const entry = entries.find((e) => e.name === name);
-  if (entry) {
-    entry.stage = stage;
-    writeRegistry(entries);
-  }
+  const db = getRawDb();
+  db.prepare("UPDATE minds SET stage = ? WHERE name = ?").run(stage, name);
 }
 
 export function setMindTemplateHash(name: string, hash: string) {
-  const entries = readRegistry();
-  const entry = entries.find((e) => e.name === name);
-  if (entry) {
-    entry.templateHash = hash;
-    writeRegistry(entries);
-  }
+  const db = getRawDb();
+  db.prepare("UPDATE minds SET template_hash = ? WHERE name = ?").run(hash, name);
 }
 
 export function findMind(name: string): MindEntry | undefined {
-  return readRegistry().find((e) => e.name === name);
+  const db = getRawDb();
+  const row = db.prepare("SELECT * FROM minds WHERE name = ?").get(name) as RawMindRow | undefined;
+  return row ? rowToEntry(row) : undefined;
+}
+
+export function findSplits(parent: string): MindEntry[] {
+  const db = getRawDb();
+  const rows = db.prepare("SELECT * FROM minds WHERE parent = ?").all(parent) as RawMindRow[];
+  return rows.map(rowToEntry);
+}
+
+/** Get the base mind name for a given name. If it's a split, returns its parent. */
+export function getBaseName(name: string): string {
+  const entry = findMind(name);
+  return entry?.parent ?? name;
 }
 
 export function mindDir(name: string): string {
@@ -173,14 +187,9 @@ export function stateDir(name: string): string {
 }
 
 export function nextPort(): number {
-  const entries = readRegistry();
-  const usedPorts = new Set(entries.map((e) => e.port));
-  // Also reserve ports used by variants
-  for (const entry of entries) {
-    for (const v of readVariants(entry.name)) {
-      if (v.port) usedPorts.add(v.port);
-    }
-  }
+  const db = getRawDb();
+  const rows = db.prepare("SELECT port FROM minds").all() as Array<{ port: number }>;
+  const usedPorts = new Set(rows.map((r) => r.port));
   const basePort = parseInt(process.env.VOLUTE_BASE_PORT || "4100", 10);
   let port = basePort;
   while (usedPorts.has(port)) port++;
@@ -196,26 +205,42 @@ export function daemonLoopback(): string {
   return host;
 }
 
-export function resolveMind(name: string): { entry: MindEntry; dir: string } {
-  // Parse name@variant syntax
-  const [baseName, variantName] = name.split("@", 2);
+// --- Legacy JSON support (for migration) ---
 
-  const entry = findMind(baseName);
-  if (!entry) {
-    throw new Error(`Unknown mind: ${baseName}`);
+export function readRegistryFromDisk(): Array<{
+  name: string;
+  port: number;
+  created: string;
+  running: boolean;
+  stage?: string;
+  template?: string;
+  templateHash?: string;
+}> {
+  const registryPath = resolve(voluteSystemDir(), "minds.json");
+  if (!existsSync(registryPath)) return [];
+  try {
+    const entries = JSON.parse(readFileSync(registryPath, "utf-8")) as Array<
+      Omit<MindEntry, "running"> & { running?: boolean }
+    >;
+    return entries.map((e) => ({
+      ...e,
+      running: e.running ?? false,
+      stage: e.stage ?? "sprouted",
+    }));
+  } catch {
+    return [];
   }
-  const dir = mindDir(baseName);
-  if (!existsSync(dir)) {
-    throw new Error(`Mind directory missing: ${dir}`);
-  }
+}
 
-  if (variantName) {
-    const variant = findVariant(baseName, variantName);
-    if (!variant) {
-      throw new Error(`Unknown variant: ${variantName} (mind: ${baseName})`);
-    }
-    return { entry: { ...entry, port: variant.port }, dir: variant.path };
+// Backwards compatibility — these are no-ops now but kept for callsites that haven't been updated
+export function initRegistryCache(): void {}
+export function getRegistryCache(): MindEntry[] | null {
+  try {
+    return readRegistry();
+  } catch {
+    return null;
   }
-
-  return { entry, dir };
+}
+export function writeRegistry(_entries: MindEntry[]) {
+  // No-op — DB is the source of truth now
 }

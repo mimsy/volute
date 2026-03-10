@@ -69,13 +69,16 @@ import {
 } from "../../lib/prompts.js";
 import {
   addMind,
+  addSplit,
   ensureVoluteHome,
   findMind,
+  findSplits,
   getBaseName,
   mindDir,
   nextPort,
   readRegistry,
   removeMind,
+  setMindRunning,
   setMindStage,
   setMindTemplateHash,
   stateDir,
@@ -84,6 +87,7 @@ import {
 import { conversations, mindHistory } from "../../lib/schema.js";
 import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
 import { installSkill, SEED_SKILLS, STANDARD_SKILLS } from "../../lib/skills.js";
+import { cleanupSplit } from "../../lib/split-cleanup.js";
 import { announceToSystem } from "../../lib/system-channel.js";
 import { readSystemsConfig } from "../../lib/systems-config.js";
 import {
@@ -96,15 +100,7 @@ import {
 } from "../../lib/template.js";
 import { computeTemplateHash } from "../../lib/template-hash.js";
 import { getTypingMap, publishTypingForChannels } from "../../lib/typing.js";
-import { cleanupVariant } from "../../lib/variant-cleanup.js";
-import {
-  addVariant,
-  checkHealth,
-  findVariant,
-  readVariants,
-  removeAllVariants,
-  validateBranchName,
-} from "../../lib/variants.js";
+import { validateBranchName } from "../../lib/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
 import { fireWebhook } from "../../lib/webhook.js";
 import { type AuthEnv, requireAdmin, requireSelf } from "../middleware/auth.js";
@@ -115,6 +111,19 @@ type ChannelStatus = {
   status: "connected" | "disconnected";
   showToolCalls: boolean;
 };
+
+async function checkHealth(port: number): Promise<{ ok: boolean; name?: string }> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/health`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!res.ok) return { ok: false };
+    const data = (await res.json()) as { name: string };
+    return { ok: true, name: data.name };
+  } catch {
+    return { ok: false };
+  }
+}
 
 async function getMindStatus(name: string, port: number) {
   const manager = getMindManager();
@@ -1073,17 +1082,16 @@ const app = new Hono<AuthEnv>()
     const mindStatus = await getMindStatus(name, entry.port);
 
     // Include variant info
-    const variants = readVariants(name);
+    const splits = findSplits(name);
     const manager = getMindManager();
     const variantStatuses = await Promise.all(
-      variants.map(async (v) => {
-        const compositeKey = `${name}@${v.name}`;
+      splits.map(async (s) => {
         let variantStatus: "running" | "stopped" | "starting" = "stopped";
-        if (manager.isRunning(compositeKey)) {
-          const health = await checkHealth(v.port);
+        if (manager.isRunning(s.name)) {
+          const health = await checkHealth(s.port);
           variantStatus = health.ok ? "running" : "starting";
         }
-        return { name: v.name, port: v.port, status: variantStatus };
+        return { name: s.name, port: s.port, status: variantStatus };
       }),
     );
 
@@ -1172,18 +1180,20 @@ const app = new Hono<AuthEnv>()
           return c.json({ error: `Invalid variant name: ${branchErr}` }, 400);
         }
         log.error(`merging variant for ${baseName}: ${mergeVariantName}`);
-        const variant = findVariant(baseName, mergeVariantName);
-        if (variant) {
+        const splitEntry = findMind(mergeVariantName);
+        if (splitEntry && splitEntry.parent === baseName && splitEntry.dir && splitEntry.branch) {
           const projectRoot = mindDir(baseName);
 
           // Auto-commit variant worktree
-          if (existsSync(variant.path)) {
-            const status = (await gitExec(["status", "--porcelain"], { cwd: variant.path })).trim();
+          if (existsSync(splitEntry.dir)) {
+            const status = (
+              await gitExec(["status", "--porcelain"], { cwd: splitEntry.dir })
+            ).trim();
             if (status) {
               try {
-                await gitExec(["add", "-A"], { cwd: variant.path });
+                await gitExec(["add", "-A"], { cwd: splitEntry.dir });
                 await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
-                  cwd: variant.path,
+                  cwd: splitEntry.dir,
                 });
               } catch (e) {
                 log.error(
@@ -1210,8 +1220,8 @@ const app = new Hono<AuthEnv>()
           }
 
           // Merge, cleanup worktree/branch, reinstall
-          await gitExec(["merge", variant.branch], { cwd: projectRoot });
-          await cleanupVariant(baseName, mergeVariantName, projectRoot, variant.path);
+          await gitExec(["merge", splitEntry.branch], { cwd: projectRoot });
+          await cleanupSplit(mergeVariantName, projectRoot, splitEntry.dir);
           try {
             await npmInstallAsMind(projectRoot, baseName);
           } catch (e) {
@@ -1371,7 +1381,13 @@ const app = new Hono<AuthEnv>()
       await stopMindFullService(name);
     }
 
-    removeAllVariants(name);
+    // Stop and clean up any running splits before deleting parent
+    const splits = findSplits(name);
+    for (const s of splits) {
+      if (s.dir) {
+        await cleanupSplit(s.name, dir, s.dir, { stop: true });
+      }
+    }
 
     // Clean up shared worktree (best effort)
     try {
@@ -1419,10 +1435,11 @@ const app = new Hono<AuthEnv>()
     }
 
     const template = body.template ?? entry.template ?? "claude";
-    const UPGRADE_VARIANT = "upgrade";
+    const UPGRADE_BRANCH = "upgrade";
+    const upgradeSplitName = `${mindName}-upgrade`;
+    const worktreeDir = resolve(dir, ".variants", UPGRADE_BRANCH);
 
     if (body.abort) {
-      const worktreeDir = resolve(dir, ".variants", UPGRADE_VARIANT);
       if (!existsSync(worktreeDir)) {
         return c.json({ error: "No upgrade in progress" }, 400);
       }
@@ -1437,7 +1454,7 @@ const app = new Hono<AuthEnv>()
           }
         } catch {}
 
-        await cleanupVariant(mindName, UPGRADE_VARIANT, dir, worktreeDir, { stop: true });
+        await cleanupSplit(upgradeSplitName, dir, worktreeDir, { stop: true });
 
         return c.json({ ok: true });
       } catch (err) {
@@ -1450,7 +1467,6 @@ const app = new Hono<AuthEnv>()
 
     if (body.continue) {
       // Continue upgrade after conflict resolution
-      const worktreeDir = resolve(dir, ".variants", UPGRADE_VARIANT);
       if (!existsSync(worktreeDir)) {
         return c.json({ error: "No upgrade in progress" }, 400);
       }
@@ -1485,24 +1501,18 @@ const app = new Hono<AuthEnv>()
         await npmInstallAsMind(worktreeDir, mindName);
 
         const variantPort = nextPort();
-        addVariant(mindName, {
-          name: UPGRADE_VARIANT,
-          branch: UPGRADE_VARIANT,
-          path: worktreeDir,
-          port: variantPort,
-          created: new Date().toISOString(),
-        });
+        addSplit(upgradeSplitName, mindName, variantPort, worktreeDir, UPGRADE_BRANCH);
 
-        await getMindManager().startMind(`${mindName}@${UPGRADE_VARIANT}`);
+        await getMindManager().startMind(upgradeSplitName);
 
         return c.json({
           ok: true,
           name: mindName,
-          variant: UPGRADE_VARIANT,
+          variant: UPGRADE_BRANCH,
           port: variantPort,
         });
       } catch (err) {
-        await cleanupVariant(mindName, UPGRADE_VARIANT, dir, worktreeDir);
+        await cleanupSplit(upgradeSplitName, dir, worktreeDir);
         return c.json(
           { error: err instanceof Error ? err.message : "Failed to continue upgrade" },
           500,
@@ -1511,7 +1521,6 @@ const app = new Hono<AuthEnv>()
     }
 
     // Fresh upgrade
-    const worktreeDir = resolve(dir, ".variants", UPGRADE_VARIANT);
 
     if (existsSync(worktreeDir)) {
       return c.json(
@@ -1545,7 +1554,7 @@ const app = new Hono<AuthEnv>()
     // Clean up stale worktree refs and leftover branch
     await gitExec(["worktree", "prune"], { cwd: dir });
     try {
-      await gitExec(["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
+      await gitExec(["branch", "-D", UPGRADE_BRANCH], { cwd: dir });
     } catch {
       // branch doesn't exist
     }
@@ -1571,7 +1580,7 @@ const app = new Hono<AuthEnv>()
       mkdirSync(parentDir, { recursive: true });
     }
 
-    await gitExec(["worktree", "add", "-b", UPGRADE_VARIANT, worktreeDir], { cwd: dir });
+    await gitExec(["worktree", "add", "-b", UPGRADE_BRANCH, worktreeDir], { cwd: dir });
 
     // Merge template branch
     const hasConflicts = await mergeTemplateBranch(worktreeDir);
@@ -1593,24 +1602,18 @@ const app = new Hono<AuthEnv>()
       await npmInstallAsMind(worktreeDir, mindName);
 
       const variantPort = nextPort();
-      addVariant(mindName, {
-        name: UPGRADE_VARIANT,
-        branch: UPGRADE_VARIANT,
-        path: worktreeDir,
-        port: variantPort,
-        created: new Date().toISOString(),
-      });
+      addSplit(upgradeSplitName, mindName, variantPort, worktreeDir, UPGRADE_BRANCH);
 
-      await getMindManager().startMind(`${mindName}@${UPGRADE_VARIANT}`);
+      await getMindManager().startMind(upgradeSplitName);
 
       return c.json({
         ok: true,
         name: mindName,
-        variant: UPGRADE_VARIANT,
+        variant: UPGRADE_BRANCH,
         port: variantPort,
       });
     } catch (err) {
-      await cleanupVariant(mindName, UPGRADE_VARIANT, dir, worktreeDir);
+      await cleanupSplit(upgradeSplitName, dir, worktreeDir);
       return c.json(
         { error: err instanceof Error ? err.message : "Failed to complete upgrade" },
         500,

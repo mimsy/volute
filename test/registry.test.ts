@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import {
   addMind,
+  addSplit,
   daemonLoopback,
-  getRegistryCache,
-  initRegistryCache,
+  findMind,
+  findSplits,
+  getBaseName,
   mindDir,
   nextPort,
+  readAllMinds,
   readRegistry,
   removeMind,
   setMindRunning,
@@ -17,14 +18,14 @@ import {
   voluteHome,
   voluteSystemDir,
 } from "../src/lib/registry.js";
-import { addVariant, removeAllVariants } from "../src/lib/variants.js";
 
 const testMind = `registry-test-${Date.now()}`;
 
 describe("registry", () => {
   afterEach(() => {
-    removeMind(testMind);
-    removeAllVariants(testMind);
+    try {
+      removeMind(testMind);
+    } catch {}
   });
 
   it("nextPort returns 4100 when registry is empty", () => {
@@ -37,16 +38,9 @@ describe("registry", () => {
     assert.ok(Array.isArray(entries));
   });
 
-  it("nextPort skips variant ports", () => {
+  it("nextPort skips split ports", () => {
     addMind(testMind, 4100);
-    addVariant(testMind, {
-      name: "v1",
-      branch: "v1",
-      path: "/fake/v1",
-      port: 4101,
-      pid: null,
-      created: new Date().toISOString(),
-    });
+    addSplit(`${testMind}-v1`, testMind, 4101, "/fake/v1", "v1");
     const port = nextPort();
     assert.ok(port >= 4102, `Expected port >= 4102, got ${port}`);
   });
@@ -78,9 +72,93 @@ describe("registry", () => {
     assert.ok(dir.endsWith("/state/my-mind"));
   });
 
-  it("stateDir handles name@variant format", () => {
-    const dir = stateDir("my-mind@v1");
-    assert.ok(dir.endsWith("/state/my-mind@v1"));
+  it("findMind returns null for non-existent mind", () => {
+    assert.equal(findMind("nonexistent-mind"), undefined);
+  });
+
+  it("findMind returns entry for existing mind", () => {
+    addMind(testMind, 4100);
+    const entry = findMind(testMind);
+    assert.ok(entry);
+    assert.equal(entry.name, testMind);
+    assert.equal(entry.port, 4100);
+  });
+
+  it("setMindRunning updates running state", () => {
+    addMind(testMind, 4100);
+    setMindRunning(testMind, true);
+    assert.equal(findMind(testMind)!.running, true);
+    setMindRunning(testMind, false);
+    assert.equal(findMind(testMind)!.running, false);
+  });
+
+  it("removeMind deletes entry", () => {
+    addMind(testMind, 4100);
+    assert.ok(findMind(testMind));
+    removeMind(testMind);
+    assert.equal(findMind(testMind), undefined);
+  });
+});
+
+describe("splits", () => {
+  const splitName = `${testMind}-split`;
+
+  afterEach(() => {
+    try {
+      removeMind(testMind);
+    } catch {}
+  });
+
+  it("addSplit creates a split with parent", () => {
+    addMind(testMind, 4100);
+    addSplit(splitName, testMind, 4101, "/fake/split", "split-branch");
+    const entry = findMind(splitName);
+    assert.ok(entry);
+    assert.equal(entry.parent, testMind);
+    assert.equal(entry.dir, "/fake/split");
+    assert.equal(entry.branch, "split-branch");
+  });
+
+  it("findSplits returns splits for parent", () => {
+    addMind(testMind, 4100);
+    addSplit(splitName, testMind, 4101, "/fake/split", "split-branch");
+    const splits = findSplits(testMind);
+    assert.equal(splits.length, 1);
+    assert.equal(splits[0].name, splitName);
+  });
+
+  it("getBaseName returns parent for split", () => {
+    addMind(testMind, 4100);
+    addSplit(splitName, testMind, 4101, "/fake/split", "split-branch");
+    assert.equal(getBaseName(splitName), testMind);
+  });
+
+  it("getBaseName returns name for base mind", () => {
+    addMind(testMind, 4100);
+    assert.equal(getBaseName(testMind), testMind);
+  });
+
+  it("cascade delete removes splits when parent is deleted", () => {
+    addMind(testMind, 4100);
+    addSplit(splitName, testMind, 4101, "/fake/split", "split-branch");
+    removeMind(testMind);
+    assert.equal(findMind(splitName), undefined);
+  });
+
+  it("readAllMinds includes both base minds and splits", () => {
+    addMind(testMind, 4100);
+    addSplit(splitName, testMind, 4101, "/fake/split", "split-branch");
+    const all = readAllMinds();
+    assert.ok(all.some((e) => e.name === testMind));
+    assert.ok(all.some((e) => e.name === splitName));
+  });
+
+  it("readRegistry excludes splits", () => {
+    addMind(testMind, 4100);
+    addSplit(splitName, testMind, 4101, "/fake/split", "split-branch");
+    const base = readRegistry();
+    assert.ok(base.some((e) => e.name === testMind));
+    assert.ok(!base.some((e) => e.name === splitName));
   });
 });
 
@@ -101,67 +179,6 @@ describe("mindDir", () => {
     const dir = mindDir("foo");
     assert.ok(dir.startsWith(voluteHome()));
     assert.ok(dir.endsWith("/minds/foo"));
-  });
-});
-
-describe("registry cache", () => {
-  const cacheMind = `cache-test-${Date.now()}`;
-
-  afterEach(() => {
-    removeMind(cacheMind);
-  });
-
-  it("getRegistryCache returns null before init", () => {
-    // At this point in the test suite, no initRegistryCache has been called
-    // so getRegistryCache should reflect whatever state exists.
-    // We test the public contract: before initRegistryCache, readRegistry reads from disk.
-    const entries = readRegistry();
-    assert.ok(Array.isArray(entries));
-  });
-
-  it("initRegistryCache loads from disk and caches", () => {
-    addMind(cacheMind, 4199);
-    initRegistryCache();
-
-    const cached = getRegistryCache();
-    assert.ok(cached !== null);
-    assert.ok(cached!.some((e) => e.name === cacheMind));
-  });
-
-  it("readRegistry returns cached data after initRegistryCache", () => {
-    addMind(cacheMind, 4199);
-    initRegistryCache();
-
-    const entries = readRegistry();
-    assert.ok(entries.some((e) => e.name === cacheMind));
-  });
-
-  it("writeRegistry updates both cache and disk", () => {
-    initRegistryCache();
-    addMind(cacheMind, 4199);
-
-    // Cache should be updated
-    const cached = getRegistryCache();
-    assert.ok(cached!.some((e) => e.name === cacheMind));
-
-    // Disk should also be updated
-    const registryPath = resolve(voluteSystemDir(), "minds.json");
-    const diskEntries = JSON.parse(readFileSync(registryPath, "utf-8"));
-    assert.ok(diskEntries.some((e: { name: string }) => e.name === cacheMind));
-  });
-
-  it("setMindRunning propagates through cache", () => {
-    addMind(cacheMind, 4199);
-    initRegistryCache();
-
-    setMindRunning(cacheMind, true);
-    const cached = getRegistryCache();
-    const entry = cached!.find((e) => e.name === cacheMind);
-    assert.equal(entry!.running, true);
-
-    setMindRunning(cacheMind, false);
-    const entry2 = getRegistryCache()!.find((e) => e.name === cacheMind);
-    assert.equal(entry2!.running, false);
   });
 });
 

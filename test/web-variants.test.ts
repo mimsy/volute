@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { Hono } from "hono";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
+import { addMind, findSplits, removeMind } from "../src/lib/registry.js";
 import { conversations, messages, sessions, users } from "../src/lib/schema.js";
-import { readVariants, removeAllVariants } from "../src/lib/variants.js";
 import { authMiddleware, createSession } from "../src/web/middleware/auth.js";
 
 let sessionId: string;
@@ -16,7 +16,9 @@ async function cleanup() {
   await db.delete(messages);
   await db.delete(conversations);
   await db.delete(users);
-  removeAllVariants(testMind);
+  try {
+    removeMind(testMind);
+  } catch {}
 }
 
 async function setupAuth() {
@@ -33,10 +35,10 @@ function createApp(mindExists: boolean) {
   app.get("/api/minds/:name/variants", async (c) => {
     if (!mindExists) return c.json({ error: "Mind not found" }, 404);
 
-    const variants = readVariants(testMind);
-    const results = variants.map((v) => ({
-      ...v,
-      status: v.port ? "no-server" : "no-server",
+    const splits = findSplits(testMind);
+    const results = splits.map((s) => ({
+      ...s,
+      status: s.port ? "no-server" : "no-server",
     }));
     return c.json(results);
   });
@@ -60,6 +62,7 @@ describe("web variants routes", () => {
 
   it("GET /:name/variants — lists variants for existing mind (empty)", async () => {
     const cookie = await setupAuth();
+    addMind(testMind, 4300);
     const app = createApp(true);
 
     const res = await app.request("/api/minds/test-mind/variants", {

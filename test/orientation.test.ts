@@ -45,12 +45,8 @@ describe("registry stage", () => {
   });
 
   it("readRegistry defaults missing stage to sprouted", () => {
-    // Write a registry entry without stage field
-    const registryPath = resolve(voluteSystemDir(), "minds.json");
-    writeFileSync(
-      registryPath,
-      JSON.stringify([{ name, port: 4100, created: new Date().toISOString(), running: false }]),
-    );
+    // Add a mind without explicit stage — should default to sprouted on read
+    addMind(name, 4100);
     const entries = readRegistry();
     const entry = entries.find((e) => e.name === name);
     assert.ok(entry);
