@@ -10,9 +10,9 @@ const CONNECTOR_TYPE_RE = /^[a-z][a-z0-9-]*$/;
 
 const app = new Hono<AuthEnv>()
   // List connectors + status
-  .get("/:name/connectors", (c) => {
+  .get("/:name/connectors", async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(name);
@@ -44,7 +44,7 @@ const app = new Hono<AuthEnv>()
     if (!CONNECTOR_TYPE_RE.test(type)) {
       return c.json({ error: "Invalid connector type" }, 400);
     }
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
     if (entry.stage === "seed")
       return c.json({ error: "Seed minds cannot use connectors — sprout first" }, 403);
@@ -90,7 +90,7 @@ const app = new Hono<AuthEnv>()
     if (!CONNECTOR_TYPE_RE.test(type)) {
       return c.json({ error: "Invalid connector type" }, 400);
     }
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(name);

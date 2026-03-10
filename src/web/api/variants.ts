@@ -23,10 +23,10 @@ import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 const app = new Hono<AuthEnv>()
   .get("/:name/variants", async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    const variants = findVariants(name);
+    const variants = await findVariants(name);
     const results = await Promise.all(
       variants.map(async (s) => {
         if (!s.port) return { ...s, status: "no-server" };
@@ -41,7 +41,7 @@ const app = new Hono<AuthEnv>()
         const isRunning = r.status === "running";
         const variant = variants.find((s) => s.name === r.name);
         if (variant && variant.running !== isRunning) {
-          setMindRunning(r.name, isRunning);
+          await setMindRunning(r.name, isRunning);
         }
       }
     } catch (err) {
@@ -53,7 +53,7 @@ const app = new Hono<AuthEnv>()
   // Create variant — admin only
   .post("/:name/variants", requireAdmin, async (c) => {
     const mindName = c.req.param("name");
-    const entry = findMind(mindName);
+    const entry = await findMind(mindName);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
     if (entry.stage === "seed")
       return c.json({ error: "Seed minds cannot create variants — sprout first" }, 403);
@@ -72,7 +72,7 @@ const app = new Hono<AuthEnv>()
     if (err) return c.json({ error: err }, 400);
 
     // Check name isn't already taken
-    if (findMind(variantName)) {
+    if (await findMind(variantName)) {
       return c.json({ error: `Name already in use: ${variantName}` }, 409);
     }
 
@@ -99,7 +99,7 @@ const app = new Hono<AuthEnv>()
     // Install dependencies
     try {
       if (isIsolationEnabled()) {
-        const [cmd, args] = wrapForIsolation("npm", ["install"], mindName);
+        const [cmd, args] = await wrapForIsolation("npm", ["install"], mindName);
         await exec(cmd, args, {
           cwd: variantDir,
           env: { ...process.env, HOME: resolve(variantDir, "home") },
@@ -117,10 +117,10 @@ const app = new Hono<AuthEnv>()
       writeFileSync(resolve(variantDir, "home/SOUL.md"), body.soul);
     }
 
-    const variantPort = body.port ?? nextPort();
+    const variantPort = body.port ?? (await nextPort());
 
     // Register variant in DB
-    addVariant(variantName, mindName, variantPort, variantDir, variantName);
+    await addVariant(variantName, mindName, variantPort, variantDir, variantName);
 
     // Start variant via mind manager unless noStart
     if (!body.noStart) {
@@ -142,10 +142,10 @@ const app = new Hono<AuthEnv>()
     const mindName = c.req.param("name");
     const variantName = c.req.param("variant");
 
-    const parentEntry = findMind(mindName);
+    const parentEntry = await findMind(mindName);
     if (!parentEntry) return c.json({ error: "Mind not found" }, 404);
 
-    const variantEntry = findMind(variantName);
+    const variantEntry = await findMind(variantName);
     if (!variantEntry || variantEntry.parent !== mindName) {
       return c.json({ error: `Unknown variant: ${variantName}` }, 404);
     }
@@ -242,7 +242,7 @@ const app = new Hono<AuthEnv>()
         const { computeTemplateHash } = await import("../../lib/template-hash.js");
         const { setMindTemplateHash } = await import("../../lib/registry.js");
         const tmpl = parentEntry.template ?? "claude";
-        setMindTemplateHash(mindName, computeTemplateHash(tmpl));
+        await setMindTemplateHash(mindName, computeTemplateHash(tmpl));
       } catch (err) {
         log.warn(`failed to update template hash for ${mindName}`, log.errorData(err));
       }
@@ -252,7 +252,7 @@ const app = new Hono<AuthEnv>()
     let restartWarning: string | undefined;
     try {
       if (isIsolationEnabled()) {
-        const [cmd, args] = wrapForIsolation("npm", ["install"], mindName);
+        const [cmd, args] = await wrapForIsolation("npm", ["install"], mindName);
         await exec(cmd, args, {
           cwd: projectRoot,
           env: { ...process.env, HOME: resolve(projectRoot, "home") },
@@ -293,10 +293,10 @@ const app = new Hono<AuthEnv>()
     const mindName = c.req.param("name");
     const variantName = c.req.param("variant");
 
-    const parentEntry = findMind(mindName);
+    const parentEntry = await findMind(mindName);
     if (!parentEntry) return c.json({ error: "Mind not found" }, 404);
 
-    const variantEntry = findMind(variantName);
+    const variantEntry = await findMind(variantName);
     if (!variantEntry || variantEntry.parent !== mindName) {
       return c.json({ error: `Unknown variant: ${variantName}` }, 404);
     }

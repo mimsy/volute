@@ -161,7 +161,7 @@ const admin = new Hono<AuthEnv>()
     if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
 
     // Ensure all registered minds have user records
-    const minds = readRegistry();
+    const minds = await readRegistry();
     for (const mind of minds) {
       await getOrCreateMindUser(mind.name);
     }

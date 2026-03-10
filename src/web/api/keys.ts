@@ -4,10 +4,10 @@ import { mindDir, readRegistry } from "../../lib/registry.js";
 
 const app = new Hono()
   /** Look up a public key by fingerprint (used by minds for signature verification) */
-  .get("/:fingerprint", (c) => {
+  .get("/:fingerprint", async (c) => {
     const fingerprint = c.req.param("fingerprint");
 
-    for (const entry of readRegistry()) {
+    for (const entry of await readRegistry()) {
       try {
         const pubKey = getPublicKey(mindDir(entry.name));
         if (!pubKey) continue;

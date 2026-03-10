@@ -6,7 +6,7 @@ import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 const app = new Hono<AuthEnv>()
   .post("/:name/shared/merge", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     let body: { message?: string };
@@ -27,7 +27,7 @@ const app = new Hono<AuthEnv>()
   })
   .post("/:name/shared/pull", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     try {
@@ -39,7 +39,7 @@ const app = new Hono<AuthEnv>()
   })
   .get("/:name/shared/log", async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const limit = parseInt(c.req.query("limit") ?? "20", 10) || 20;
@@ -53,7 +53,7 @@ const app = new Hono<AuthEnv>()
   })
   .get("/:name/shared/status", async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     try {
