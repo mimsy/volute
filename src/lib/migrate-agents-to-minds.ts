@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { voluteHome } from "./registry.js";
+import { voluteHome, voluteSystemDir } from "./registry.js";
 
 const TAG = "[migrate]";
 
@@ -52,8 +52,9 @@ function bridgeEnvVar(): void {
  * Throws on write failure so the daemon doesn't start with a missing registry.
  */
 function migrateRegistry(home: string): string[] {
+  const systemDir = voluteSystemDir();
   const oldPath = resolve(home, "agents.json");
-  const newPath = resolve(home, "minds.json");
+  const newPath = resolve(systemDir, "minds.json");
 
   // Already migrated or no old registry — read names from whichever exists
   if (!existsSync(oldPath) || existsSync(newPath)) {
@@ -112,9 +113,10 @@ function migrateMindsDirectory(home: string): void {
 }
 
 /** Rename agent.log → mind.log in each mind's state/logs directory. */
-function migrateLogFiles(home: string, names: string[]): void {
+function migrateLogFiles(_home: string, names: string[]): void {
+  const systemDir = voluteSystemDir();
   for (const name of names) {
-    const logsDir = resolve(home, "state", name, "logs");
+    const logsDir = resolve(systemDir, "state", name, "logs");
     const oldLog = resolve(logsDir, "agent.log");
     const newLog = resolve(logsDir, "mind.log");
 

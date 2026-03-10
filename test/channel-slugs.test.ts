@@ -12,7 +12,7 @@ import { resolveChannelId as resolveChannelIdEnv } from "../src/lib/channels.js"
 import { stateDir } from "../src/lib/registry.js";
 import { buildVoluteSlug, slugify } from "../src/lib/slugify.js";
 
-// Test mind name — stateDir will resolve to VOLUTE_HOME/state/test-channel-mind
+// Test mind name — stateDir will resolve to VOLUTE_HOME/system/state/test-channel-mind
 const TEST_MIND = "test-channel-mind";
 
 describe("slugify", () => {

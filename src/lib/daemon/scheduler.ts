@@ -4,7 +4,7 @@ import { deliverMessage } from "../delivery/message-delivery.js";
 import { exec } from "../exec.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../json-state.js";
 import log from "../logger.js";
-import { mindDir, voluteHome } from "../registry.js";
+import { mindDir, voluteSystemDir } from "../registry.js";
 import { readVoluteConfig, type Schedule } from "../volute-config.js";
 import { getSleepManagerIfReady } from "./sleep-manager.js";
 
@@ -16,7 +16,7 @@ export class Scheduler {
   private lastFired = new Map<string, number>(); // "mind:scheduleId" → epoch minute
 
   private get statePath(): string {
-    return resolve(voluteHome(), "scheduler-state.json");
+    return resolve(voluteSystemDir(), "scheduler-state.json");
   }
 
   start(): void {

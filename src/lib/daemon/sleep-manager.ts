@@ -16,7 +16,7 @@ import { getDb } from "../db.js";
 import { type ActivityEvent, subscribe } from "../events/activity-events.js";
 import log from "../logger.js";
 import { getPrompt } from "../prompts.js";
-import { findMind, mindDir, readRegistry, voluteHome } from "../registry.js";
+import { findMind, mindDir, readRegistry, voluteSystemDir } from "../registry.js";
 import { deliveryQueue, mindHistory } from "../schema.js";
 import { readVoluteConfig, type SleepConfig } from "../volute-config.js";
 import { getMindManager } from "./mind-manager.js";
@@ -77,7 +77,7 @@ export class SleepManager {
   private transitioning = new Set<string>();
 
   private get statePath(): string {
-    return resolve(voluteHome(), "sleep-state.json");
+    return resolve(voluteSystemDir(), "sleep-state.json");
   }
 
   start(): void {

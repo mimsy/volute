@@ -48,8 +48,8 @@ function generatePlist(
   if (opts.host) args.push("--host", opts.host);
 
   const logPath = opts.system
-    ? "/var/lib/volute/daemon.log"
-    : resolve(homedir(), ".volute", "daemon.log");
+    ? "/var/lib/volute/system/daemon.log"
+    : resolve(homedir(), ".volute", "system", "daemon.log");
 
   const envEntries: string[] = [];
   if (opts.system) {

@@ -11,6 +11,7 @@ import {
   removeMind,
   setMindStage,
   voluteHome,
+  voluteSystemDir,
 } from "../src/lib/registry.js";
 import { sessions, users } from "../src/lib/schema.js";
 import { createSession } from "../src/web/middleware/auth.js";
@@ -45,7 +46,7 @@ describe("registry stage", () => {
 
   it("readRegistry defaults missing stage to sprouted", () => {
     // Write a registry entry without stage field
-    const registryPath = resolve(voluteHome(), "minds.json");
+    const registryPath = resolve(voluteSystemDir(), "minds.json");
     writeFileSync(
       registryPath,
       JSON.stringify([{ name, port: 4100, created: new Date().toISOString(), running: false }]),

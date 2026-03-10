@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { voluteHome } from "../src/lib/registry.js";
+import { voluteSystemDir } from "../src/lib/registry.js";
 import {
   checkForUpdate,
   checkForUpdateCached,
@@ -53,7 +53,7 @@ describe("getCurrentVersion", () => {
 });
 
 describe("checkForUpdateCached", () => {
-  const cacheFile = () => resolve(voluteHome(), "update-check.json");
+  const cacheFile = () => resolve(voluteSystemDir(), "update-check.json");
 
   afterEach(() => {
     try {
@@ -82,7 +82,7 @@ describe("checkForUpdateCached", () => {
 });
 
 describe("checkForUpdate", () => {
-  const cacheFile = () => resolve(voluteHome(), "update-check.json");
+  const cacheFile = () => resolve(voluteSystemDir(), "update-check.json");
 
   afterEach(() => {
     try {

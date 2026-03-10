@@ -8,7 +8,7 @@ import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../isolation
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../json-state.js";
 import log from "../logger.js";
 import { getPrompt } from "../prompts.js";
-import { findMind, mindDir, setMindRunning, stateDir, voluteHome } from "../registry.js";
+import { findMind, mindDir, setMindRunning, stateDir, voluteSystemDir } from "../registry.js";
 import { RotatingLog } from "../rotating-log.js";
 import { isSandboxEnabled, wrapForSandbox } from "../sandbox.js";
 import { mindHistory } from "../schema.js";
@@ -402,7 +402,7 @@ export class MindManager {
   }
 
   private get crashAttemptsPath(): string {
-    return resolve(voluteHome(), "crash-attempts.json");
+    return resolve(voluteSystemDir(), "crash-attempts.json");
   }
 
   loadCrashAttempts(): void {

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { migrateAgentsToMinds } from "../src/lib/migrate-agents-to-minds.js";
-import { voluteHome } from "../src/lib/registry.js";
+import { voluteHome, voluteSystemDir } from "../src/lib/registry.js";
 
 describe("migrateAgentsToMinds", () => {
   let home: string;
@@ -18,12 +18,21 @@ describe("migrateAgentsToMinds", () => {
 
   afterEach(() => {
     // Clean up files created during tests
-    for (const f of ["agents.json", "agents.json.bak", "minds.json"]) {
+    for (const f of ["agents.json", "agents.json.bak"]) {
       const p = resolve(home, f);
       if (existsSync(p)) rmSync(p);
     }
-    for (const d of ["agents", "minds", "state"]) {
+    const systemDir = voluteSystemDir();
+    for (const f of ["minds.json"]) {
+      const p = resolve(systemDir, f);
+      if (existsSync(p)) rmSync(p);
+    }
+    for (const d of ["agents", "minds"]) {
       const p = resolve(home, d);
+      if (existsSync(p)) rmSync(p, { recursive: true, force: true });
+    }
+    for (const d of ["state"]) {
+      const p = resolve(systemDir, d);
       if (existsSync(p)) rmSync(p, { recursive: true, force: true });
     }
     delete process.env.VOLUTE_AGENTS_DIR;
@@ -31,13 +40,14 @@ describe("migrateAgentsToMinds", () => {
   });
 
   describe("registry migration", () => {
-    it("renames agents.json to minds.json", () => {
+    it("renames agents.json to minds.json in system dir", () => {
       const entries = [{ name: "alice", port: 4100, created: "2025-01-01T00:00:00.000Z" }];
       writeFileSync(resolve(home, "agents.json"), JSON.stringify(entries));
 
       migrateAgentsToMinds();
 
-      assert.ok(existsSync(resolve(home, "minds.json")));
+      const systemDir = voluteSystemDir();
+      assert.ok(existsSync(resolve(systemDir, "minds.json")));
       assert.ok(!existsSync(resolve(home, "agents.json")), "original should be renamed to .bak");
       assert.ok(existsSync(resolve(home, "agents.json.bak")));
     });
@@ -51,24 +61,26 @@ describe("migrateAgentsToMinds", () => {
 
       migrateAgentsToMinds();
 
-      const result = JSON.parse(readFileSync(resolve(home, "minds.json"), "utf-8"));
+      const systemDir = voluteSystemDir();
+      const result = JSON.parse(readFileSync(resolve(systemDir, "minds.json"), "utf-8"));
       assert.equal(result[0].stage, "sprouted");
       assert.equal(result[1].stage, "seed");
     });
 
-    it("skips if minds.json already exists", () => {
+    it("skips if minds.json already exists in system dir", () => {
+      const systemDir = voluteSystemDir();
       writeFileSync(resolve(home, "agents.json"), JSON.stringify([{ name: "old" }]));
-      writeFileSync(resolve(home, "minds.json"), JSON.stringify([{ name: "new" }]));
+      writeFileSync(resolve(systemDir, "minds.json"), JSON.stringify([{ name: "new" }]));
 
       migrateAgentsToMinds();
 
-      const result = JSON.parse(readFileSync(resolve(home, "minds.json"), "utf-8"));
+      const result = JSON.parse(readFileSync(resolve(systemDir, "minds.json"), "utf-8"));
       assert.equal(result[0].name, "new", "should not overwrite existing minds.json");
     });
 
     it("no-ops when no agents.json exists", () => {
       migrateAgentsToMinds();
-      assert.ok(!existsSync(resolve(home, "minds.json")));
+      assert.ok(!existsSync(resolve(voluteSystemDir(), "minds.json")));
     });
   });
 
@@ -131,7 +143,8 @@ describe("migrateAgentsToMinds", () => {
       const entries = [{ name: "alice", port: 4100 }];
       writeFileSync(resolve(home, "agents.json"), JSON.stringify(entries));
 
-      const logsDir = resolve(home, "state", "alice", "logs");
+      const systemDir = voluteSystemDir();
+      const logsDir = resolve(systemDir, "state", "alice", "logs");
       mkdirSync(logsDir, { recursive: true });
       writeFileSync(resolve(logsDir, "agent.log"), "old log content");
 
@@ -146,7 +159,8 @@ describe("migrateAgentsToMinds", () => {
       const entries = [{ name: "alice", port: 4100 }];
       writeFileSync(resolve(home, "agents.json"), JSON.stringify(entries));
 
-      const logsDir = resolve(home, "state", "alice", "logs");
+      const systemDir = voluteSystemDir();
+      const logsDir = resolve(systemDir, "state", "alice", "logs");
       mkdirSync(logsDir, { recursive: true });
       writeFileSync(resolve(logsDir, "agent.log"), "old");
       writeFileSync(resolve(logsDir, "mind.log"), "new");
@@ -162,8 +176,9 @@ describe("migrateAgentsToMinds", () => {
 
       migrateAgentsToMinds();
 
+      const systemDir = voluteSystemDir();
       // Should not throw, just skip
-      assert.ok(!existsSync(resolve(home, "state", "alice", "logs", "mind.log")));
+      assert.ok(!existsSync(resolve(systemDir, "state", "alice", "logs", "mind.log")));
     });
   });
 
@@ -172,14 +187,15 @@ describe("migrateAgentsToMinds", () => {
       const entries = [{ name: "alice", port: 4100, stage: "mind" }];
       writeFileSync(resolve(home, "agents.json"), JSON.stringify(entries));
       mkdirSync(resolve(home, "agents", "alice"), { recursive: true });
-      const logsDir = resolve(home, "state", "alice", "logs");
+      const systemDir = voluteSystemDir();
+      const logsDir = resolve(systemDir, "state", "alice", "logs");
       mkdirSync(logsDir, { recursive: true });
       writeFileSync(resolve(logsDir, "agent.log"), "log content");
 
       migrateAgentsToMinds();
       migrateAgentsToMinds();
 
-      const result = JSON.parse(readFileSync(resolve(home, "minds.json"), "utf-8"));
+      const result = JSON.parse(readFileSync(resolve(systemDir, "minds.json"), "utf-8"));
       assert.equal(result[0].stage, "sprouted");
       assert.ok(existsSync(resolve(home, "minds", "alice")));
       assert.equal(readFileSync(resolve(logsDir, "mind.log"), "utf-8"), "log content");

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { voluteHome } from "./registry.js";
+import { voluteSystemDir } from "./registry.js";
 
 export type Variant = {
   name: string;
@@ -12,7 +12,7 @@ export type Variant = {
 };
 
 function variantsPath(): string {
-  return resolve(voluteHome(), "variants.json");
+  return resolve(voluteSystemDir(), "variants.json");
 }
 
 function readAllVariants(): Record<string, Variant[]> {
@@ -26,7 +26,7 @@ function readAllVariants(): Record<string, Variant[]> {
 }
 
 function writeAllVariants(all: Record<string, Variant[]>) {
-  mkdirSync(voluteHome(), { recursive: true });
+  mkdirSync(voluteSystemDir(), { recursive: true });
   writeFileSync(variantsPath(), `${JSON.stringify(all, null, 2)}\n`);
 }
 

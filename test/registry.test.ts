@@ -15,6 +15,7 @@ import {
   stateDir,
   validateMindName,
   voluteHome,
+  voluteSystemDir,
 } from "../src/lib/registry.js";
 import { addVariant, removeAllVariants } from "../src/lib/variants.js";
 
@@ -71,9 +72,9 @@ describe("registry", () => {
     assert.throws(() => addMind("../evil", 4100), /Mind name must/);
   });
 
-  it("stateDir returns path under VOLUTE_HOME/state", () => {
+  it("stateDir returns path under VOLUTE_HOME/system/state", () => {
     const dir = stateDir("my-mind");
-    assert.ok(dir.startsWith(voluteHome()));
+    assert.ok(dir.startsWith(voluteSystemDir()));
     assert.ok(dir.endsWith("/state/my-mind"));
   });
 
@@ -144,7 +145,7 @@ describe("registry cache", () => {
     assert.ok(cached!.some((e) => e.name === cacheMind));
 
     // Disk should also be updated
-    const registryPath = resolve(voluteHome(), "minds.json");
+    const registryPath = resolve(voluteSystemDir(), "minds.json");
     const diskEntries = JSON.parse(readFileSync(registryPath, "utf-8"));
     assert.ok(diskEntries.some((e: { name: string }) => e.name === cacheMind));
   });

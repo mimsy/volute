@@ -6,5 +6,6 @@ import { resolve } from "node:path";
 // the live ~/.volute (registry, variants, database, env, etc.)
 const testHome = resolve(tmpdir(), `volute-test-${process.pid}`);
 mkdirSync(testHome, { recursive: true });
+mkdirSync(resolve(testHome, "system"), { recursive: true });
 process.env.VOLUTE_HOME = testHome;
 process.env.VOLUTE_USER_HOME = testHome;

@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import log from "./logger.js";
-import { voluteHome } from "./registry.js";
+import { voluteHome, voluteSystemDir, voluteUserHome } from "./registry.js";
 import { readGlobalConfig } from "./setup.js";
 
 type SandboxManagerType = {
@@ -65,18 +65,21 @@ export function buildDenyRead(mindName: string, mindDir: string): string[] {
 
   const deny: string[] = [];
 
-  // System state
-  deny.push(resolve(home, "state"));
-  deny.push(resolve(home, "volute.db"));
-  deny.push(resolve(home, "env.json"));
-  deny.push(resolve(home, "config.json"));
-  deny.push(resolve(home, "daemon.json"));
-  deny.push(resolve(home, "minds.json"));
-  deny.push(resolve(home, "systems.json"));
+  // Block entire system directory (db, registry, daemon config, env, state, etc.)
+  deny.push(voluteSystemDir());
+
+  // Block user-specific files on system installs (where voluteUserHome != voluteHome)
+  const userVoluteHome = voluteUserHome();
+  if (userVoluteHome !== home) {
+    deny.push(userVoluteHome);
+  } else {
+    // On local installs, systems.json lives at voluteHome root (outside system/)
+    deny.push(resolve(home, "systems.json"));
+  }
 
   // Other minds — deny each individually since the mind's own dir is inside the same parent
   try {
-    const registryPath = resolve(home, "minds.json");
+    const registryPath = resolve(voluteSystemDir(), "minds.json");
     if (existsSync(registryPath)) {
       const registry = JSON.parse(readFileSync(registryPath, "utf-8")) as Array<{ name: string }>;
       for (const entry of registry) {

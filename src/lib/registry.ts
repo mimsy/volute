@@ -18,7 +18,7 @@ export function getRegistryCache(): MindEntry[] | null {
 }
 
 function readRegistryFromDisk(): MindEntry[] {
-  const registryPath = resolve(voluteHome(), "minds.json");
+  const registryPath = resolve(voluteSystemDir(), "minds.json");
   if (!existsSync(registryPath)) return [];
   try {
     const entries = JSON.parse(readFileSync(registryPath, "utf-8")) as Array<
@@ -71,9 +71,18 @@ export type MindEntry = {
   templateHash?: string;
 };
 
+export function voluteSystemDir(): string {
+  return resolve(voluteHome(), "system");
+}
+
+export function ensureSystemDir(): void {
+  mkdirSync(voluteSystemDir(), { recursive: true });
+}
+
 export function ensureVoluteHome() {
   const mindsBase = process.env.VOLUTE_MINDS_DIR ?? resolve(voluteHome(), "minds");
   mkdirSync(mindsBase, { recursive: true });
+  ensureSystemDir();
 }
 
 export function readRegistry(): MindEntry[] {
@@ -84,7 +93,7 @@ export function readRegistry(): MindEntry[] {
 export function writeRegistry(entries: MindEntry[]) {
   if (registryCache) registryCache = entries;
   ensureVoluteHome();
-  const registryPath = resolve(voluteHome(), "minds.json");
+  const registryPath = resolve(voluteSystemDir(), "minds.json");
   const tmpPath = `${registryPath}.tmp`;
   writeFileSync(tmpPath, `${JSON.stringify(entries, null, 2)}\n`);
   renameSync(tmpPath, registryPath);
@@ -160,7 +169,7 @@ export function mindDir(name: string): string {
 }
 
 export function stateDir(name: string): string {
-  return resolve(voluteHome(), "state", name);
+  return resolve(voluteSystemDir(), "state", name);
 }
 
 export function nextPort(): number {
