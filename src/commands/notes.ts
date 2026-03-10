@@ -10,7 +10,6 @@ async function list(args: string[]) {
   const { flags } = parseArgs(args, {
     author: { type: "string" },
     limit: { type: "number" },
-    mind: { type: "string" },
   });
 
   const params = new URLSearchParams();
@@ -59,7 +58,6 @@ async function write(args: string[]) {
   const { flags } = parseArgs(args, {
     title: { type: "string" },
     content: { type: "string" },
-    mind: { type: "string" },
     "reply-to": { type: "string" },
   });
 
@@ -76,14 +74,10 @@ async function write(args: string[]) {
     process.exit(1);
   }
 
-  // Resolve the acting user: mind (via VOLUTE_MIND) or CLI user
-  const asUser = process.env.VOLUTE_MIND ?? flags.mind;
-  const params = asUser ? `?as=${encodeURIComponent(asUser)}` : "";
-
   const body: Record<string, string> = { title: flags.title, content };
   if (flags["reply-to"]) body.reply_to = flags["reply-to"];
 
-  const res = await daemonFetch(`${apiUrl("")}${params}`, {
+  const res = await daemonFetch(apiUrl(""), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -100,7 +94,7 @@ async function write(args: string[]) {
 }
 
 async function read(args: string[]) {
-  const { positional } = parseArgs(args, { mind: { type: "string" } });
+  const { positional } = parseArgs(args, {});
   const ref = positional[0];
 
   if (!ref || !ref.includes("/")) {
@@ -163,7 +157,7 @@ async function read(args: string[]) {
 }
 
 async function react(args: string[]) {
-  const { positional, flags } = parseArgs(args, { mind: { type: "string" } });
+  const { positional } = parseArgs(args, {});
   const ref = positional[0];
   const emoji = positional[1];
 
@@ -173,10 +167,8 @@ async function react(args: string[]) {
   }
 
   const [author, slug] = ref.split("/", 2);
-  const asUser = process.env.VOLUTE_MIND ?? flags.mind;
-  const params = asUser ? `?as=${encodeURIComponent(asUser)}` : "";
 
-  const res = await daemonFetch(`${apiUrl(`/${author}/${slug}/reactions`)}${params}`, {
+  const res = await daemonFetch(apiUrl(`/${author}/${slug}/reactions`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ emoji }),
@@ -193,7 +185,7 @@ async function react(args: string[]) {
 }
 
 async function comment(args: string[]) {
-  const { positional, flags } = parseArgs(args, { mind: { type: "string" } });
+  const { positional } = parseArgs(args, {});
   const ref = positional[0];
   const text = positional[1] ?? (await readStdin());
 
@@ -203,10 +195,8 @@ async function comment(args: string[]) {
   }
 
   const [author, slug] = ref.split("/", 2);
-  const asUser = process.env.VOLUTE_MIND ?? flags.mind;
-  const params = asUser ? `?as=${encodeURIComponent(asUser)}` : "";
 
-  const res = await daemonFetch(`${apiUrl(`/${author}/${slug}/comments`)}${params}`, {
+  const res = await daemonFetch(apiUrl(`/${author}/${slug}/comments`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content: text }),
@@ -222,7 +212,7 @@ async function comment(args: string[]) {
 }
 
 async function del(args: string[]) {
-  const { positional, flags } = parseArgs(args, { mind: { type: "string" } });
+  const { positional } = parseArgs(args, {});
   const ref = positional[0];
 
   if (!ref || !ref.includes("/")) {
@@ -231,10 +221,8 @@ async function del(args: string[]) {
   }
 
   const [author, slug] = ref.split("/", 2);
-  const asUser = process.env.VOLUTE_MIND ?? flags.mind;
-  const params = asUser ? `?as=${encodeURIComponent(asUser)}` : "";
 
-  const res = await daemonFetch(`${apiUrl(`/${author}/${slug}`)}${params}`, {
+  const res = await daemonFetch(apiUrl(`/${author}/${slug}`), {
     method: "DELETE",
   });
 

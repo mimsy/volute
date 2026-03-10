@@ -1,7 +1,6 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
-import { getOrCreateMindUser, getUserByUsername } from "../../lib/auth.js";
 import {
   addComment,
   createNote,
@@ -37,28 +36,15 @@ const reactionSchema = z.object({
 });
 
 /**
- * Resolve the acting user ID. For daemon-token (CLI/mind) requests,
- * if `?as=<username>` is provided, resolve that user instead.
+ * Resolve the acting user from the authenticated session.
+ * Users can only act as themselves — no impersonation.
  */
-async function resolveUserId(c: {
+function resolveUserId(c: {
   get: (key: "user") => { id: number; username: string };
-  req: { query: (key: string) => string | undefined };
-}): Promise<{ id: number; username: string } | null> {
+}): { id: number; username: string } | null {
   const user = c.get("user");
-  // Daemon token auth gives id=0 — resolve real user from `?as=` query param
-  if (user.id === 0) {
-    const asUser = c.req.query("as");
-    if (!asUser) return null;
-    // Try mind user first, then brain user
-    try {
-      const mindUser = await getOrCreateMindUser(asUser);
-      return { id: mindUser.id, username: mindUser.username };
-    } catch {
-      const brainUser = await getUserByUsername(asUser);
-      if (brainUser) return { id: brainUser.id, username: brainUser.username };
-      return null;
-    }
-  }
+  // Daemon token (id=0) has no real user identity
+  if (user.id === 0) return null;
   return { id: user.id, username: user.username };
 }
 
@@ -74,8 +60,8 @@ const app = new Hono<AuthEnv>()
 
   // Create note
   .post("/", zValidator("json", createSchema), async (c) => {
-    const actor = await resolveUserId(c);
-    if (!actor) return c.json({ error: "Missing ?as=<username> for CLI requests" }, 400);
+    const actor = resolveUserId(c);
+    if (!actor) return c.json({ error: "Unauthorized" }, 401);
 
     const { title, content, reply_to } = c.req.valid("json");
 
@@ -106,8 +92,8 @@ const app = new Hono<AuthEnv>()
 
   // Update note
   .put("/:author/:slug", zValidator("json", updateSchema), async (c) => {
-    const actor = await resolveUserId(c);
-    if (!actor) return c.json({ error: "Missing ?as=<username> for CLI requests" }, 400);
+    const actor = resolveUserId(c);
+    if (!actor) return c.json({ error: "Unauthorized" }, 401);
 
     const { author, slug } = c.req.param();
 
@@ -122,8 +108,8 @@ const app = new Hono<AuthEnv>()
 
   // Delete note
   .delete("/:author/:slug", async (c) => {
-    const actor = await resolveUserId(c);
-    if (!actor) return c.json({ error: "Missing ?as=<username> for CLI requests" }, 400);
+    const actor = resolveUserId(c);
+    if (!actor) return c.json({ error: "Unauthorized" }, 401);
 
     const { author, slug } = c.req.param();
     const deleted = await deleteNote(author, slug, actor.id);
@@ -133,8 +119,8 @@ const app = new Hono<AuthEnv>()
 
   // Toggle reaction
   .post("/:author/:slug/reactions", zValidator("json", reactionSchema), async (c) => {
-    const actor = await resolveUserId(c);
-    if (!actor) return c.json({ error: "Missing ?as=<username> for CLI requests" }, 400);
+    const actor = resolveUserId(c);
+    if (!actor) return c.json({ error: "Unauthorized" }, 401);
 
     const { author, slug } = c.req.param();
     const note = await getNote(author, slug);
@@ -148,8 +134,8 @@ const app = new Hono<AuthEnv>()
 
   // Add comment
   .post("/:author/:slug/comments", zValidator("json", commentSchema), async (c) => {
-    const actor = await resolveUserId(c);
-    if (!actor) return c.json({ error: "Missing ?as=<username> for CLI requests" }, 400);
+    const actor = resolveUserId(c);
+    if (!actor) return c.json({ error: "Unauthorized" }, 401);
 
     const { author, slug } = c.req.param();
     const note = await getNote(author, slug);
@@ -162,8 +148,8 @@ const app = new Hono<AuthEnv>()
 
   // Delete comment
   .delete("/:author/:slug/comments/:id", async (c) => {
-    const actor = await resolveUserId(c);
-    if (!actor) return c.json({ error: "Missing ?as=<username> for CLI requests" }, 400);
+    const actor = resolveUserId(c);
+    if (!actor) return c.json({ error: "Unauthorized" }, 401);
 
     const commentId = parseInt(c.req.param("id"), 10);
     if (Number.isNaN(commentId)) return c.json({ error: "Invalid comment ID" }, 400);
