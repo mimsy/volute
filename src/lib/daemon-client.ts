@@ -68,9 +68,12 @@ export async function daemonFetch(path: string, options?: RequestInit): Promise<
   const url = buildUrl(config);
   const headers = new Headers(options?.headers);
 
-  // Use CLI session token if available
-  const cliSession = readCliSession();
-  if (cliSession?.sessionId) {
+  // Authenticate: mind token (VOLUTE_DAEMON_TOKEN) > CLI session
+  const daemonToken = process.env.VOLUTE_DAEMON_TOKEN;
+  const cliSession = daemonToken ? null : readCliSession();
+  if (daemonToken) {
+    headers.set("Authorization", `Bearer ${daemonToken}`);
+  } else if (cliSession?.sessionId) {
     headers.set("Authorization", `Bearer ${cliSession.sessionId}`);
   }
 

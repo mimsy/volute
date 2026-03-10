@@ -7,8 +7,17 @@ import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { parseTarget } from "../lib/parse-target.js";
 import { readStdin } from "../lib/read-stdin.js";
-import { findMind } from "../lib/registry.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
+
+/** Check if a name is a registered mind via the daemon API (avoids direct DB access). */
+async function isMind(name: string): Promise<boolean> {
+  try {
+    const res = await daemonFetch(`/api/minds/${encodeURIComponent(name)}`);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 const IMAGE_MEDIA_TYPES: Record<string, string> = {
   ".png": "image/png",
@@ -162,7 +171,7 @@ export async function run(args: string[]) {
   let parsed = parseTarget(target);
 
   // If bare name matches a registered mind, treat as a DM (e.g. "sprout" → "@sprout")
-  if (!parsed.isDM && parsed.platform === "volute" && (await findMind(parsed.identifier))) {
+  if (!parsed.isDM && parsed.platform === "volute" && (await isMind(parsed.identifier))) {
     parsed = {
       platform: "volute",
       identifier: `@${parsed.identifier}`,
@@ -184,11 +193,11 @@ export async function run(args: string[]) {
     const mindSelf = process.env.VOLUTE_MIND;
     const sender = flags.sender || mindSelf || userInfo().username;
 
-    waitMindName = (await findMind(targetName)) ? targetName : undefined;
+    const targetIsMind = await isMind(targetName);
+    waitMindName = targetIsMind ? targetName : undefined;
 
     // When a mind sends to a non-mind (human), use the sender mind's context
     // so the conversation is created under the mind (humans aren't in the registry).
-    const targetIsMind = !!(await findMind(targetName));
     const contextMind = mindSelf && !targetIsMind ? mindSelf : targetName;
     const participants = mindSelf && !targetIsMind ? [targetName] : [sender];
 
