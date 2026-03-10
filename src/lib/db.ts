@@ -40,6 +40,7 @@ export async function getDb(): Promise<DbInstance> {
   rawDb = new DatabaseConstructor(dbPath);
   rawDb.pragma("journal_mode = WAL");
   rawDb.pragma("foreign_keys = ON");
+  rawDb.pragma("busy_timeout = 5000");
 
   return db;
 }
