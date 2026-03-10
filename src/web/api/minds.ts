@@ -1064,7 +1064,8 @@ const app = new Hono<AuthEnv>()
     const entry = findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    if (!existsSync(mindDir(name))) return c.json({ error: "Mind directory missing" }, 404);
+    const dir = entry.dir ?? mindDir(entry.parent ?? name);
+    if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
 
     const mindStatus = await getMindStatus(name, entry.port);
 
@@ -1447,6 +1448,14 @@ const app = new Hono<AuthEnv>()
         } catch {}
 
         await cleanupVariant(upgradeVariantName, dir, worktreeDir, { stop: true });
+
+        // Also delete the upgrade branch directly — cleanupVariant uses the variant
+        // name as fallback branch, but the actual branch is UPGRADE_BRANCH
+        try {
+          await gitExec(["branch", "-D", UPGRADE_BRANCH], { cwd: dir });
+        } catch {
+          // Branch may already be deleted by cleanupVariant
+        }
 
         return c.json({ ok: true });
       } catch (err) {
