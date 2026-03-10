@@ -8,14 +8,7 @@ import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../isolation
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../json-state.js";
 import log from "../logger.js";
 import { getPrompt } from "../prompts.js";
-import {
-  findMind,
-  getBaseName,
-  mindDir,
-  setMindRunning,
-  stateDir,
-  voluteSystemDir,
-} from "../registry.js";
+import { findMind, mindDir, setMindRunning, stateDir, voluteSystemDir } from "../registry.js";
 import { RotatingLog } from "../rotating-log.js";
 import { isSandboxEnabled, wrapForSandbox } from "../sandbox.js";
 import { mindHistory } from "../schema.js";
@@ -45,7 +38,6 @@ export class MindManager {
   private resolveTarget(name: string): {
     dir: string;
     port: number;
-    isVariant: boolean;
     baseName: string;
   } {
     const entry = findMind(name);
@@ -54,12 +46,12 @@ export class MindManager {
     if (entry.parent) {
       // Split — dir and port come from the minds table entry
       if (!entry.dir) throw new Error(`Split ${name} has no directory`);
-      return { dir: entry.dir, port: entry.port, isVariant: true, baseName: entry.parent };
+      return { dir: entry.dir, port: entry.port, baseName: entry.parent };
     }
 
     const dir = mindDir(name);
     if (!existsSync(dir)) throw new Error(`Mind directory missing: ${dir}`);
-    return { dir, port: entry.port, isVariant: false, baseName: name };
+    return { dir, port: entry.port, baseName: name };
   }
 
   async startMind(name: string): Promise<void> {
@@ -68,7 +60,7 @@ export class MindManager {
     }
 
     const target = this.resolveTarget(name);
-    const { dir, isVariant, baseName } = target;
+    const { dir, baseName } = target;
     const port = target.port;
 
     // Kill any orphan process from a previous daemon session
