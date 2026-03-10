@@ -35,6 +35,9 @@ switch (command) {
   case "mind":
     await import("./commands/mind.js").then((m) => m.run(args));
     break;
+  case "chat":
+    await import("./commands/chat.js").then((m) => m.run(args));
+    break;
   case "send":
     await import("./commands/send.js").then((m) => m.run(args));
     break;
@@ -101,8 +104,10 @@ switch (command) {
     console.log(`volute — create and manage AI minds
 
 Common:
-  send <target> "<msg>"            Send a message
-  history [--channel <ch>]         View activity history
+  chat send <target> "<msg>"       Send a message
+  chat history [--channel <ch>]    View activity history
+  chat list / read / create        Manage conversations
+  chat bridge                      Manage platform bridges
   status                           Show system status
 
 Mind:
@@ -117,6 +122,7 @@ Mind:
   mind upgrade/import/export       Lifecycle operations
 
 Configuration:
+  chat      Conversations, messages, and platform bridges
   channel   Read, list, and manage channels
   variant   Create and merge experimental variants
   schedule  Manage cron schedules
@@ -141,7 +147,7 @@ Options:
 
 Run 'volute <command> --help' for details.
 
-Mind-scoped commands (send, history, variant, schedule, channel, file, skill, shared, pages)
+Mind-scoped commands (chat, send, history, variant, schedule, channel, file, skill, shared, pages)
 use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
   default:
