@@ -1,10 +1,10 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { daemonFetch } from "../lib/daemon-client.js";
-import { voluteHome } from "../lib/registry.js";
+import { voluteUserHome } from "../lib/registry.js";
 
 export async function run(_args: string[]): Promise<void> {
-  const sessionPath = resolve(voluteHome(), "cli-session.json");
+  const sessionPath = resolve(voluteUserHome(), "cli-session.json");
 
   if (!existsSync(sessionPath)) {
     console.log("Not logged in");

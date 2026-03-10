@@ -7,3 +7,4 @@ import { resolve } from "node:path";
 const testHome = resolve(tmpdir(), `volute-test-${process.pid}`);
 mkdirSync(testHome, { recursive: true });
 process.env.VOLUTE_HOME = testHome;
+process.env.VOLUTE_USER_HOME = testHome;

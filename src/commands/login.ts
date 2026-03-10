@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { promptLine, promptPassword } from "../lib/prompt.js";
-import { voluteHome } from "../lib/registry.js";
+import { voluteUserHome } from "../lib/registry.js";
 
 export async function run(_args: string[]): Promise<void> {
   const username = await promptLine("Username: ");
@@ -30,7 +30,7 @@ export async function run(_args: string[]): Promise<void> {
     sessionId: string;
   };
 
-  const sessionPath = resolve(voluteHome(), "cli-session.json");
+  const sessionPath = resolve(voluteUserHome(), "cli-session.json");
   try {
     writeFileSync(sessionPath, JSON.stringify({ sessionId, username: name }), { mode: 0o600 });
   } catch (err) {

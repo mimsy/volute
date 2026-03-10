@@ -1,11 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { voluteHome } from "./registry.js";
+import { voluteHome, voluteUserHome } from "./registry.js";
 
 type CliSession = { sessionId: string; username: string };
 
 function readCliSession(): CliSession | null {
-  const sessionPath = resolve(voluteHome(), "cli-session.json");
+  const sessionPath = resolve(voluteUserHome(), "cli-session.json");
   if (!existsSync(sessionPath)) return null;
   try {
     return JSON.parse(readFileSync(sessionPath, "utf-8"));

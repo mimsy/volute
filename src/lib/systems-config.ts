@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { voluteHome } from "./registry.js";
+import { voluteUserHome } from "./registry.js";
 
 export type SystemsConfig = {
   apiKey: string;
@@ -11,7 +11,7 @@ export type SystemsConfig = {
 const DEFAULT_API_URL = "https://volute.systems";
 
 function configPath(): string {
-  return resolve(voluteHome(), "systems.json");
+  return resolve(voluteUserHome(), "systems.json");
 }
 
 export function readSystemsConfig(): SystemsConfig | null {
@@ -34,7 +34,7 @@ export function readSystemsConfig(): SystemsConfig | null {
 }
 
 export function writeSystemsConfig(config: SystemsConfig): void {
-  mkdirSync(voluteHome(), { recursive: true });
+  mkdirSync(voluteUserHome(), { recursive: true });
   writeFileSync(configPath(), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 }
 

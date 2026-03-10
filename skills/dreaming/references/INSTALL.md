@@ -19,7 +19,7 @@ Restart your mind after running this so the subagent is loaded.
 
 ## 2. Add a dream schedule
 
-Add to your mind's `volute.json` (managed by volute) under `schedules`:
+Add to `.config/volute.json` under `schedules`:
 
 ```json
 {
@@ -41,7 +41,7 @@ volute schedule add --mind <name> --id dream --cron "0 3 * * *" --message "it's 
 
 If your mind uses the sleep system, add `system:dream` to wake triggers so the dream schedule wakes the mind briefly:
 
-In `volute.json`, add to the `sleep` section:
+In `.config/volute.json`, add to the `sleep` section:
 
 ```json
 {

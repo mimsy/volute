@@ -135,7 +135,7 @@ function formatNotification(
   }
 
   if (needsUpgrade) {
-    message += `\n\n---\n\nA template update is available for you. To upgrade, your operator can run:\n  volute mind upgrade ${mindName}`;
+    message += `\n\n---\n\nA template update is available for you. To upgrade, run:\n  volute mind upgrade ${mindName}`;
   }
 
   return message;
