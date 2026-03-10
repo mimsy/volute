@@ -58,7 +58,12 @@ const app = new Hono<AuthEnv>()
     // Resolve participant names to IDs (auto-creating mind users for registered minds)
     if (body.participantNames) {
       for (const pname of body.participantNames) {
-        const existing = await getUserByUsername(pname);
+        let existing = await getUserByUsername(pname);
+        // Try un-slugifying: discord-user → discord:user (puppet usernames use platform: prefix)
+        if (!existing && pname.includes("-")) {
+          const colonized = pname.replace("-", ":");
+          existing = await getUserByUsername(colonized);
+        }
         if (existing) {
           participantSet.add(existing.id);
           continue;

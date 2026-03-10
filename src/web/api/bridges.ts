@@ -75,7 +75,7 @@ const app = new Hono<AuthEnv>()
       if (!mindName) {
         return c.json({ error: "No default mind configured for DM routing" }, 400);
       }
-      const mindEntry = findMind(mindName);
+      const mindEntry = await findMind(mindName);
       if (!mindEntry) {
         return c.json({ error: `Mind ${mindName} not found` }, 404);
       }
