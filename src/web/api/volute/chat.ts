@@ -200,7 +200,7 @@ const app = new Hono<AuthEnv>()
     await addMessage(conversationId, "user", senderName, contentBlocks);
 
     // If sender is a mind, check for outbound bridge routing (fire-and-forget)
-    const senderIsMind = user.id === 0 && body.sender && findMind(body.sender);
+    const senderIsMind = user.id === 0 && body.sender && (await findMind(body.sender));
     if (senderIsMind) {
       routeOutboundBridge(conversationId!, senderName, contentBlocks).catch(() => {});
     }

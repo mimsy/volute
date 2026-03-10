@@ -24,7 +24,6 @@ import { migrateToSystemDir } from "./lib/migrate-system-dir.js";
 import { stopAllWatchers } from "./lib/pages-watcher.js";
 import {
   ensureSystemDir,
-  initRegistryCache,
   readAllMinds,
   readRegistry,
   setMindRunning,

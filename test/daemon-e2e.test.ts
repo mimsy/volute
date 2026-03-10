@@ -46,7 +46,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
 
   before(async () => {
     // Clean up any leftover test mind
-    cleanupMind();
+    await cleanupMind();
 
     // Ensure setup config exists so CLI commands don't fail with "not set up"
     writeFileSync(
@@ -75,7 +75,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
 
   after(async () => {
     // Clean up test mind
-    cleanupMind();
+    await cleanupMind();
 
     // Kill daemon
     if (daemon && !daemon.killed) {
@@ -92,24 +92,22 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     }
   });
 
-  function cleanupMind() {
+  async function cleanupMind() {
     try {
-      if (findMind(TEST_MIND)) {
-        const entry = findMind(TEST_MIND);
-        if (entry) {
-          // Kill any orphan process on the mind's port from a previous crashed run
-          try {
-            const pids = execFileSync("lsof", ["-ti", `:${entry.port}`, "-sTCP:LISTEN"], {
-              encoding: "utf-8",
-            }).trim();
-            for (const pid of pids.split("\n").filter(Boolean)) {
-              try {
-                process.kill(parseInt(pid, 10), "SIGTERM");
-              } catch {}
-            }
-          } catch {}
-        }
-        removeMind(TEST_MIND);
+      const entry = await findMind(TEST_MIND);
+      if (entry) {
+        // Kill any orphan process on the mind's port from a previous crashed run
+        try {
+          const pids = execFileSync("lsof", ["-ti", `:${entry.port}`, "-sTCP:LISTEN"], {
+            encoding: "utf-8",
+          }).trim();
+          for (const pid of pids.split("\n").filter(Boolean)) {
+            try {
+              process.kill(parseInt(pid, 10), "SIGTERM");
+            } catch {}
+          }
+        } catch {}
+        await removeMind(TEST_MIND);
       }
       const dir = mindDir(TEST_MIND);
       if (existsSync(dir)) {
@@ -225,7 +223,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     });
 
     // Registry should still show running: true
-    const entry = findMind(TEST_MIND);
+    const entry = await findMind(TEST_MIND);
     assert.ok(entry, "Mind should still be in registry");
     assert.equal(entry.running, true, "Mind should still be marked as running in registry");
 
@@ -266,7 +264,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.equal(status.status, "stopped", "Mind should be stopped before this test");
 
     // Verify registry shows running: false
-    const entryBefore = findMind(TEST_MIND);
+    const entryBefore = await findMind(TEST_MIND);
     assert.ok(entryBefore, "Mind should be in registry");
     assert.equal(entryBefore.running, false, "Mind should be marked as not running in registry");
 
@@ -283,7 +281,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     });
 
     // Registry should still show running: false
-    const entryAfter = findMind(TEST_MIND);
+    const entryAfter = await findMind(TEST_MIND);
     assert.ok(entryAfter, "Mind should still be in registry");
     assert.equal(entryAfter.running, false, "Stopped mind should remain not running in registry");
 

@@ -277,11 +277,7 @@ export class BridgeManager {
   }
 
   private resolveBuiltinBridge(platform: string): string | null {
-    // Try bridge-specific file first, fall back to legacy connector file
-    return (
-      searchUpwards("connectors", `${platform}-bridge.js`) ??
-      searchUpwards("connectors", `${platform}.js`)
-    );
+    return searchUpwards("connectors", `${platform}-bridge.js`);
   }
 }
 
