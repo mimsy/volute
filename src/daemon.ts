@@ -5,7 +5,6 @@ import { resolve } from "node:path";
 import { format } from "node:util";
 import { migrateMindRoles } from "./lib/auth.js";
 import { initBridgeManager } from "./lib/daemon/bridge-manager.js";
-import { initConnectorManager } from "./lib/daemon/connector-manager.js";
 import { initMailPoller } from "./lib/daemon/mail-poller.js";
 import { initMindManager } from "./lib/daemon/mind-manager.js";
 import { startMindFull } from "./lib/daemon/mind-service.js";
@@ -26,7 +25,6 @@ import { stopAllWatchers } from "./lib/pages-watcher.js";
 import {
   ensureSystemDir,
   initRegistryCache,
-  mindDir,
   readRegistry,
   setMindRunning,
   voluteHome,
@@ -156,11 +154,10 @@ export async function startDaemon(opts: {
   if (tls) daemonConfig.tls = true;
   writeFileSync(DAEMON_JSON_PATH, `${JSON.stringify(daemonConfig, null, 2)}\n`, { mode: 0o644 });
 
-  // Start delivery manager, mind manager, connector manager, and scheduler
+  // Start delivery manager, mind manager, bridge manager, and scheduler
   const delivery = initDeliveryManager();
   const manager = initMindManager();
   manager.loadCrashAttempts();
-  const connectors = initConnectorManager();
   const bridgeManager = initBridgeManager();
   const scheduler = initScheduler();
   scheduler.start();
@@ -193,18 +190,12 @@ export async function startDaemon(opts: {
       while (queue.length > 0) {
         const entry = queue.shift()!;
         if (sleepManager.isSleeping(entry.name)) {
-          // Sleeping mind: start connectors/schedules but not the process
+          // Sleeping mind: start schedules but not the process
           try {
-            // We need connectors running but not the mind process
-            const dir = mindDir(entry.name);
-            const daemonPort = process.env.VOLUTE_DAEMON_PORT
-              ? parseInt(process.env.VOLUTE_DAEMON_PORT, 10)
-              : undefined;
-            await connectors.startConnectors(entry.name, dir, entry.port, daemonPort);
             scheduler.loadSchedules(entry.name);
           } catch (err) {
             log.error(
-              `failed to start connectors for sleeping mind ${entry.name}`,
+              `failed to start schedules for sleeping mind ${entry.name}`,
               log.errorData(err),
             );
           }
@@ -331,7 +322,6 @@ export async function startDaemon(opts: {
       safe("tokenBudget.stop", () => tokenBudget.stop());
       safe("delivery.dispose", () => delivery.dispose());
       await safe("bridgeManager.stopAll", () => bridgeManager.stopAll());
-      await safe("connectors.stopAll", () => connectors.stopAll());
       await safe("manager.stopAll", () => manager.stopAll());
       safe("clearCrashAttempts", () => manager.clearCrashAttempts());
       safe("server.close", () => server.close());

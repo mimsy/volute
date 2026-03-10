@@ -38,17 +38,8 @@ switch (command) {
   case "chat":
     await import("./commands/chat.js").then((m) => m.run(args));
     break;
-  case "send":
-    await import("./commands/send.js").then((m) => m.run(args));
-    break;
-  case "history":
-    await import("./commands/history.js").then((m) => m.run(args));
-    break;
   case "variant":
     await import("./commands/variant.js").then((m) => m.run(args));
-    break;
-  case "channel":
-    await import("./commands/channel.js").then((m) => m.run(args));
     break;
   case "schedule":
     await import("./commands/schedule.js").then((m) => m.run(args));
@@ -116,14 +107,12 @@ Mind:
   mind start/stop/restart [name]   Control a mind
   mind list                        List all minds
   mind status [name]               Check a mind's status
-  mind connect/disconnect <type>   Manage connectors
   mind logs [name] [--follow]      Tail mind logs
   mind sprout                      Complete orientation
   mind upgrade/import/export       Lifecycle operations
 
 Configuration:
   chat      Conversations, messages, and platform bridges
-  channel   Read, list, and manage channels
   variant   Create and merge experimental variants
   schedule  Manage cron schedules
   skill     Browse and install skills
@@ -147,7 +136,7 @@ Options:
 
 Run 'volute <command> --help' for details.
 
-Mind-scoped commands (chat, send, history, variant, schedule, channel, file, skill, shared, pages)
+Mind-scoped commands (chat, variant, schedule, file, skill, shared, pages)
 use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
   default:

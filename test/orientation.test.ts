@@ -143,18 +143,6 @@ describe("seed gating", () => {
   });
   afterEach(cleanup);
 
-  it("POST connectors returns 403 for seed minds", async () => {
-    const { default: app } = await import("../src/web/app.js");
-
-    const res = await app.request(`http://localhost/api/minds/${mindName}/connectors/discord`, {
-      method: "POST",
-      headers: postHeaders(cookie),
-    });
-    assert.equal(res.status, 403);
-    const body = (await res.json()) as { error: string };
-    assert.ok(body.error.includes("Seed"));
-  });
-
   it("POST schedules returns 403 for seed minds", async () => {
     const { default: app } = await import("../src/web/app.js");
 

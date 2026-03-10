@@ -260,17 +260,25 @@ describe("import: findOpenClawSession", () => {
 });
 
 describe("import: importOpenClawConnectors", () => {
+  const systemDir = resolve(scratchDir, "system");
+  const bridgesPath = resolve(systemDir, "bridges.json");
+  const envPath = resolve(systemDir, "env.json");
+
   beforeEach(() => {
     mkdirSync(resolve(scratchDir, "home/.config"), { recursive: true });
     mkdirSync(resolve(scratchDir, ".mind"), { recursive: true });
+    mkdirSync(systemDir, { recursive: true });
+    // Set VOLUTE_HOME so bridges/env helpers write to our scratch dir
+    process.env.VOLUTE_HOME = scratchDir;
   });
 
   afterEach(() => {
     rmSync(scratchDir, { recursive: true, force: true });
+    delete process.env.VOLUTE_HOME;
   });
 
-  // Mirror of importOpenClawConnectors from import.ts
-  function importOpenClawConnectors(dirPath: string, configPath: string) {
+  // Mirror of importOpenClawConnectors from import.ts (bridge-based version)
+  function importOpenClawConnectors(mindName: string, configPath: string) {
     if (!existsSync(configPath)) return;
 
     let config: {
@@ -292,51 +300,48 @@ describe("import: importOpenClawConnectors", () => {
     const discord = config.channels?.discord;
     if (!discord?.enabled || !discord.token) return;
 
-    // Write DISCORD_TOKEN to mind env
-    const envPath = resolve(dirPath, ".mind", "env.json");
+    // Write DISCORD_TOKEN to shared (system-level) env
     let env: Record<string, string> = {};
     if (existsSync(envPath)) {
       try {
         env = JSON.parse(readFileSync(envPath, "utf-8"));
       } catch {}
     }
-    env.DISCORD_TOKEN = discord.token;
-    mkdirSync(dirname(envPath), { recursive: true });
-    writeFileSync(envPath, JSON.stringify(env, null, 2));
+    if (!env.DISCORD_TOKEN) {
+      env.DISCORD_TOKEN = discord.token;
+      mkdirSync(dirname(envPath), { recursive: true });
+      writeFileSync(envPath, JSON.stringify(env, null, 2));
+    }
 
-    // Extract followed channel names from guilds config
-    const channelNames = new Set<string>();
+    // Extract followed channel names from guilds config for mapping
+    const channelMappings: Record<string, string> = {};
     if (discord.guilds) {
       for (const guild of Object.values(discord.guilds)) {
         if (!guild.channels) continue;
-        for (const [name, ch] of Object.entries(guild.channels)) {
-          if (ch.allow) channelNames.add(name);
+        for (const [channelName, ch] of Object.entries(guild.channels)) {
+          if (ch.allow) {
+            channelMappings[channelName] = channelName;
+          }
         }
       }
     }
 
-    // Enable discord connector in volute.json
-    const voluteConfigPath = resolve(dirPath, "home/.config/volute.json");
-    let voluteConfig: {
-      model?: string;
-      connectors?: string[];
-      discord?: { channels?: string[] };
-    } = {};
-    if (existsSync(voluteConfigPath)) {
+    // Set up system-level Discord bridge
+    let bridges: Record<string, unknown> = {};
+    if (existsSync(bridgesPath)) {
       try {
-        voluteConfig = JSON.parse(readFileSync(voluteConfigPath, "utf-8"));
+        bridges = JSON.parse(readFileSync(bridgesPath, "utf-8"));
       } catch {}
     }
-    const connectors = new Set(voluteConfig.connectors ?? []);
-    connectors.add("discord");
-    voluteConfig.connectors = [...connectors];
-    if (channelNames.size > 0) {
-      voluteConfig.discord = { channels: [...channelNames] };
-    }
-    writeFileSync(voluteConfigPath, JSON.stringify(voluteConfig, null, 2));
+    bridges.discord = {
+      enabled: true,
+      defaultMind: mindName,
+      channelMappings,
+    };
+    writeFileSync(bridgesPath, JSON.stringify(bridges, null, 2));
   }
 
-  it("imports discord token and enables connector", () => {
+  it("imports discord token and sets up bridge", () => {
     const configPath = resolve(scratchDir, "openclaw.json");
     writeFileSync(
       configPath,
@@ -344,21 +349,15 @@ describe("import: importOpenClawConnectors", () => {
         channels: { discord: { enabled: true, token: "test-token-123" } },
       }),
     );
-    writeFileSync(
-      resolve(scratchDir, "home/.config/volute.json"),
-      JSON.stringify({ model: "claude-sonnet-4-20250514" }),
-    );
 
-    importOpenClawConnectors(scratchDir, configPath);
+    importOpenClawConnectors("test-mind", configPath);
 
-    const env = JSON.parse(readFileSync(resolve(scratchDir, ".mind/env.json"), "utf-8"));
+    const env = JSON.parse(readFileSync(envPath, "utf-8"));
     assert.equal(env.DISCORD_TOKEN, "test-token-123");
 
-    const config = JSON.parse(
-      readFileSync(resolve(scratchDir, "home/.config/volute.json"), "utf-8"),
-    );
-    assert.deepEqual(config.connectors, ["discord"]);
-    assert.equal(config.model, "claude-sonnet-4-20250514");
+    const bridges = JSON.parse(readFileSync(bridgesPath, "utf-8"));
+    assert.equal(bridges.discord.enabled, true);
+    assert.equal(bridges.discord.defaultMind, "test-mind");
   });
 
   it("does nothing when discord is not enabled", () => {
@@ -370,27 +369,27 @@ describe("import: importOpenClawConnectors", () => {
       }),
     );
 
-    importOpenClawConnectors(scratchDir, configPath);
+    importOpenClawConnectors("test-mind", configPath);
 
-    assert.ok(!existsSync(resolve(scratchDir, ".mind/env.json")));
+    assert.ok(!existsSync(envPath));
+    assert.ok(!existsSync(bridgesPath));
   });
 
   it("does nothing when discord has no token", () => {
     const configPath = resolve(scratchDir, "openclaw.json");
     writeFileSync(configPath, JSON.stringify({ channels: { discord: { enabled: true } } }));
 
-    importOpenClawConnectors(scratchDir, configPath);
+    importOpenClawConnectors("test-mind", configPath);
 
-    assert.ok(!existsSync(resolve(scratchDir, ".mind/env.json")));
+    assert.ok(!existsSync(envPath));
   });
 
   it("does nothing when config file does not exist", () => {
-    importOpenClawConnectors(scratchDir, resolve(scratchDir, "nonexistent.json"));
-    assert.ok(!existsSync(resolve(scratchDir, ".mind/env.json")));
+    importOpenClawConnectors("test-mind", resolve(scratchDir, "nonexistent.json"));
+    assert.ok(!existsSync(envPath));
   });
 
-  it("preserves existing env vars", () => {
-    const envPath = resolve(scratchDir, ".mind/env.json");
+  it("preserves existing shared env vars", () => {
     writeFileSync(envPath, JSON.stringify({ EXISTING_VAR: "keep-me" }));
 
     const configPath = resolve(scratchDir, "openclaw.json");
@@ -401,14 +400,31 @@ describe("import: importOpenClawConnectors", () => {
       }),
     );
 
-    importOpenClawConnectors(scratchDir, configPath);
+    importOpenClawConnectors("test-mind", configPath);
 
     const env = JSON.parse(readFileSync(envPath, "utf-8"));
     assert.equal(env.EXISTING_VAR, "keep-me");
     assert.equal(env.DISCORD_TOKEN, "new-token");
   });
 
-  it("imports followed channel names from guilds config", () => {
+  it("does not overwrite existing DISCORD_TOKEN", () => {
+    writeFileSync(envPath, JSON.stringify({ DISCORD_TOKEN: "existing-token" }));
+
+    const configPath = resolve(scratchDir, "openclaw.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        channels: { discord: { enabled: true, token: "new-token" } },
+      }),
+    );
+
+    importOpenClawConnectors("test-mind", configPath);
+
+    const env = JSON.parse(readFileSync(envPath, "utf-8"));
+    assert.equal(env.DISCORD_TOKEN, "existing-token");
+  });
+
+  it("imports followed channel names as bridge mappings", () => {
     const configPath = resolve(scratchDir, "openclaw.json");
     writeFileSync(
       configPath,
@@ -431,17 +447,13 @@ describe("import: importOpenClawConnectors", () => {
       }),
     );
 
-    importOpenClawConnectors(scratchDir, configPath);
+    importOpenClawConnectors("test-mind", configPath);
 
-    const config = JSON.parse(
-      readFileSync(resolve(scratchDir, "home/.config/volute.json"), "utf-8"),
-    );
-    assert.deepEqual(config.connectors, ["discord"]);
-    assert.ok(config.discord?.channels);
-    assert.equal(config.discord.channels.length, 2);
-    assert.ok(config.discord.channels.includes("general"));
-    assert.ok(config.discord.channels.includes("random"));
-    assert.ok(!config.discord.channels.includes("announcements"));
+    const bridges = JSON.parse(readFileSync(bridgesPath, "utf-8"));
+    const mappings = bridges.discord.channelMappings;
+    assert.equal(mappings.general, "general");
+    assert.equal(mappings.random, "random");
+    assert.equal(mappings.announcements, undefined);
   });
 
   it("imports channels from multiple guilds", () => {
@@ -462,16 +474,14 @@ describe("import: importOpenClawConnectors", () => {
       }),
     );
 
-    importOpenClawConnectors(scratchDir, configPath);
+    importOpenClawConnectors("test-mind", configPath);
 
-    const config = JSON.parse(
-      readFileSync(resolve(scratchDir, "home/.config/volute.json"), "utf-8"),
-    );
-    assert.ok(config.discord?.channels.includes("general"));
-    assert.ok(config.discord?.channels.includes("dev"));
+    const bridges = JSON.parse(readFileSync(bridgesPath, "utf-8"));
+    assert.equal(bridges.discord.channelMappings.general, "general");
+    assert.equal(bridges.discord.channelMappings.dev, "dev");
   });
 
-  it("does not set discord config when no channels are allowed", () => {
+  it("sets empty mappings when no channels are allowed", () => {
     const configPath = resolve(scratchDir, "openclaw.json");
     writeFileSync(
       configPath,
@@ -486,12 +496,10 @@ describe("import: importOpenClawConnectors", () => {
       }),
     );
 
-    importOpenClawConnectors(scratchDir, configPath);
+    importOpenClawConnectors("test-mind", configPath);
 
-    const config = JSON.parse(
-      readFileSync(resolve(scratchDir, "home/.config/volute.json"), "utf-8"),
-    );
-    assert.deepEqual(config.connectors, ["discord"]);
-    assert.equal(config.discord, undefined);
+    const bridges = JSON.parse(readFileSync(bridgesPath, "utf-8"));
+    assert.equal(bridges.discord.enabled, true);
+    assert.deepEqual(bridges.discord.channelMappings, {});
   });
 });

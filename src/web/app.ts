@@ -8,7 +8,6 @@ import activityRoutes from "./api/activity.js";
 import auth from "./api/auth.js";
 import bridges from "./api/bridges.js";
 import channels from "./api/channels.js";
-import connectors from "./api/connectors.js";
 import envRoutes, { sharedEnvApp } from "./api/env.js";
 import fileSharing from "./api/file-sharing.js";
 import files from "./api/files.js";
@@ -121,7 +120,6 @@ const routes = app
   .route("/api/system", update)
   .route("/api/minds", minds)
   .route("/api/minds", chat)
-  .route("/api/minds", connectors)
   .route("/api/minds", schedules)
   .route("/api/minds", logs)
   .route("/api/minds", typing)
@@ -153,7 +151,6 @@ app.route("/api/v1/minds", variants);
 app.route("/api/v1/minds", files);
 app.route("/api/v1/minds", envRoutes);
 app.route("/api/v1/minds", mindSkills);
-app.route("/api/v1/minds", connectors);
 app.route("/api/v1/minds", schedules);
 app.route("/api/v1/minds", logs);
 app.route("/api/v1/system", system);
