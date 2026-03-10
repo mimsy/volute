@@ -147,8 +147,9 @@ export const requireSelf = (paramName = "name") =>
   createMiddleware<AuthEnv>(async (c, next) => {
     const user = c.get("user");
     if (user.role !== "admin") {
-      const target = c.req.param(paramName);
-      if (user.username !== target) {
+      const target = c.req.param(paramName) ?? "";
+      const [baseName] = target.split("@", 2);
+      if (user.username !== baseName) {
         return c.json({ error: "Forbidden" }, 403);
       }
     }

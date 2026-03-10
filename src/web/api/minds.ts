@@ -1118,7 +1118,7 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: err instanceof Error ? err.message : "Failed to start mind" }, 500);
     }
   })
-  // Restart mind (supports name@variant) — admin only
+  // Restart mind (supports name@variant) — admin or self
   // Accepts optional JSON body: { context?: { type: string, name?: string, summary?: string, ... } }
   .post("/:name/restart", requireSelf(), async (c) => {
     const name = c.req.param("name");

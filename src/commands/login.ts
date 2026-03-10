@@ -31,7 +31,12 @@ export async function run(_args: string[]): Promise<void> {
   };
 
   const sessionPath = resolve(voluteHome(), "cli-session.json");
-  writeFileSync(sessionPath, JSON.stringify({ sessionId, username: name }), { mode: 0o600 });
+  try {
+    writeFileSync(sessionPath, JSON.stringify({ sessionId, username: name }), { mode: 0o600 });
+  } catch (err) {
+    console.error(`Login succeeded but failed to save session: ${(err as Error).message}`);
+    process.exit(1);
+  }
 
   console.log(`Logged in as ${name} (role: ${role})`);
 }

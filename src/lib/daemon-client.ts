@@ -76,8 +76,12 @@ export async function daemonFetch(path: string, options?: RequestInit): Promise<
 
   try {
     const res = await fetch(`${url}${path}`, { ...options, headers });
-    if (res.status === 401 && !cliSession) {
-      console.error("Not logged in. Run `volute login` first.");
+    if (res.status === 401 && !path.startsWith("/api/auth/")) {
+      if (cliSession) {
+        console.error("Session expired. Run `volute login` again.");
+      } else {
+        console.error("Not logged in. Run `volute login` first.");
+      }
       process.exit(1);
     }
     return res;

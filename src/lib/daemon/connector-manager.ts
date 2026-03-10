@@ -175,7 +175,7 @@ export class ConnectorManager {
         ...(daemonPort
           ? {
               VOLUTE_DAEMON_URL: `http://${daemonLoopback()}:${daemonPort}`,
-              VOLUTE_DAEMON_TOKEN: getMindToken(mindName) ?? process.env.VOLUTE_DAEMON_TOKEN,
+              VOLUTE_DAEMON_TOKEN: getMindToken(mindName) ?? undefined,
             }
           : {}),
         ...connectorEnv,
