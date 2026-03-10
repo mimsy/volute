@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { format } from "node:util";
 import { migrateMindRoles } from "./lib/auth.js";
+import { initBridgeManager } from "./lib/daemon/bridge-manager.js";
 import { initConnectorManager } from "./lib/daemon/connector-manager.js";
 import { initMailPoller } from "./lib/daemon/mail-poller.js";
 import { initMindManager } from "./lib/daemon/mind-manager.js";
@@ -160,6 +161,7 @@ export async function startDaemon(opts: {
   const manager = initMindManager();
   manager.loadCrashAttempts();
   const connectors = initConnectorManager();
+  const bridgeManager = initBridgeManager();
   const scheduler = initScheduler();
   scheduler.start();
   const mailPoller = initMailPoller();
@@ -237,6 +239,11 @@ export async function startDaemon(opts: {
     });
     await Promise.all(workers);
   }
+
+  // Start system-level bridges (non-blocking)
+  bridgeManager.startBridges(daemonPort).catch((err) => {
+    log.warn("failed to start bridges", log.errorData(err));
+  });
 
   // Consume messages queued in the cloud while the machine was off (non-blocking)
   import("./lib/cloud-sync.js")
@@ -323,6 +330,7 @@ export async function startDaemon(opts: {
       safe("mailPoller.stop", () => mailPoller.stop());
       safe("tokenBudget.stop", () => tokenBudget.stop());
       safe("delivery.dispose", () => delivery.dispose());
+      await safe("bridgeManager.stopAll", () => bridgeManager.stopAll());
       await safe("connectors.stopAll", () => connectors.stopAll());
       await safe("manager.stopAll", () => manager.stopAll());
       safe("clearCrashAttempts", () => manager.clearCrashAttempts());
