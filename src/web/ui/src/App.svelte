@@ -67,11 +67,13 @@ $effect(() => {
 // Derived
 let activeTab = $derived<Tab>(selection.tab);
 
-// Total unread for chat badge
+// Total unread for chat badge (exclude hidden conversations)
 let chatUnreadCount = $derived.by(() => {
   let total = 0;
-  for (const count of unreadCounts.values()) {
-    total += count;
+  for (const [id, count] of unreadCounts.entries()) {
+    if (!hiddenConversationIds.has(id)) {
+      total += count;
+    }
   }
   return total;
 });
