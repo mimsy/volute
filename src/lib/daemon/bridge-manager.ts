@@ -115,6 +115,9 @@ export class BridgeManager {
 
     // Read daemon token from process env
     const daemonToken = process.env.VOLUTE_DAEMON_TOKEN;
+    if (!daemonToken) {
+      throw new Error(`Cannot start bridge ${platform}: VOLUTE_DAEMON_TOKEN not set`);
+    }
 
     const spawnOpts: SpawnOptions = {
       stdio: ["ignore", "pipe", "pipe"],

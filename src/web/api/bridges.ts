@@ -301,7 +301,9 @@ async function fanOutToBridgedMinds(opts: {
       participants: participantNames,
       participantCount: participants.length,
       isDM: opts.isDM,
-    }).catch(() => {}); // deliverMessage logs errors internally
+    }).catch((err) => {
+      log.warn(`bridge fan-out delivery failed for ${mindName}`, log.errorData(err));
+    });
   }
 }
 

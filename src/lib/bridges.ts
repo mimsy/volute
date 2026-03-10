@@ -19,7 +19,8 @@ export function readBridgesConfig(): BridgesConfig {
   if (!existsSync(path)) return {};
   try {
     return JSON.parse(readFileSync(path, "utf-8"));
-  } catch {
+  } catch (err) {
+    console.error(`Failed to read bridges config at ${path}:`, err);
     return {};
   }
 }

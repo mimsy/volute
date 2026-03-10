@@ -65,6 +65,7 @@ client.on(Events.MessageCreate, async (message) => {
       });
     } catch (err) {
       console.error(`Failed to download attachment: ${err}`);
+      content.push({ type: "text", text: "[Image attachment could not be loaded]" });
     }
   }
 
@@ -99,7 +100,9 @@ client.on(Events.MessageCreate, async (message) => {
           isDM: true,
         });
         if (!result.ok) {
-          message.reply(result.error ?? "Failed to process message").catch(() => {});
+          message.reply(result.error ?? "Failed to process message").catch((err) => {
+            console.error(`Failed to send error reply: ${err}`);
+          });
         }
       } finally {
         clearInterval(typingInterval);
@@ -126,7 +129,9 @@ client.on(Events.MessageCreate, async (message) => {
             isDM: false,
           });
           if (!result.ok) {
-            message.reply(result.error ?? "Failed to process message").catch(() => {});
+            message.reply(result.error ?? "Failed to process message").catch((err) => {
+              console.error(`Failed to send error reply: ${err}`);
+            });
           }
         } finally {
           clearInterval(typingInterval);
@@ -142,7 +147,9 @@ client.on(Events.MessageCreate, async (message) => {
         isDM: false,
       });
       if (!result.ok) {
-        message.reply(result.error ?? "Failed to process message").catch(() => {});
+        message.reply(result.error ?? "Failed to process message").catch((err) => {
+          console.error(`Failed to send error reply: ${err}`);
+        });
       }
     }
   }

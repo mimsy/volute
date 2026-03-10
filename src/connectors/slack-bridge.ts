@@ -47,7 +47,11 @@ app.message(async ({ message }) => {
         const res = await fetch(file.url_private, {
           headers: { Authorization: `Bearer ${botToken}` },
         });
-        if (!res.ok) continue;
+        if (!res.ok) {
+          console.warn(`Failed to download Slack file: HTTP ${res.status}`);
+          content.push({ type: "text", text: "[Image attachment could not be loaded]" });
+          continue;
+        }
         const buffer = Buffer.from(await res.arrayBuffer());
         content.push({
           type: "image",
@@ -56,6 +60,7 @@ app.message(async ({ message }) => {
         });
       } catch (err) {
         console.error(`Failed to download attachment: ${err}`);
+        content.push({ type: "text", text: "[Image attachment could not be loaded]" });
       }
     }
   }

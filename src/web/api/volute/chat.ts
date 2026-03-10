@@ -202,7 +202,9 @@ const app = new Hono<AuthEnv>()
     // If sender is a mind, check for outbound bridge routing (fire-and-forget)
     const senderIsMind = user.id === 0 && body.sender && (await findMind(body.sender));
     if (senderIsMind) {
-      routeOutboundBridge(conversationId!, senderName, contentBlocks).catch(() => {});
+      routeOutboundBridge(conversationId!, senderName, contentBlocks).catch((err) => {
+        log.warn("outbound bridge routing failed", log.errorData(err));
+      });
     }
 
     // Fan out to all running mind participants
@@ -292,7 +294,9 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
 
     // If sender is a mind, check for outbound bridge routing (fire-and-forget)
     if (user.user_type === "mind") {
-      routeOutboundBridge(body.conversationId, senderName, contentBlocks).catch(() => {});
+      routeOutboundBridge(body.conversationId, senderName, contentBlocks).catch((err) => {
+        log.warn("outbound bridge routing failed", log.errorData(err));
+      });
     }
 
     // Fan out to running mind participants

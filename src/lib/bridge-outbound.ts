@@ -96,7 +96,12 @@ async function routeDMOutbound(
 
   for (const puppet of puppets) {
     const colonIdx = puppet.username.indexOf(":");
-    if (colonIdx === -1) continue;
+    if (colonIdx === -1) {
+      log.warn(
+        `puppet user ${puppet.username} has malformed username (expected platform:id format)`,
+      );
+      continue;
+    }
 
     const platform = puppet.username.slice(0, colonIdx);
     const externalUserId = puppet.username.slice(colonIdx + 1);
@@ -111,14 +116,18 @@ async function routeDMOutbound(
       continue;
     }
 
-    const env = readEnv(sharedEnvPath());
-    env.VOLUTE_SENDER = senderName;
-    env.VOLUTE_MIND = senderName;
-    env.VOLUTE_MIND_DIR = mindDir(senderName);
+    try {
+      const env = readEnv(sharedEnvPath());
+      env.VOLUTE_SENDER = senderName;
+      env.VOLUTE_MIND = senderName;
+      env.VOLUTE_MIND_DIR = mindDir(senderName);
 
-    // Create/find the DM channel on the external platform, then send
-    const slug = await driver.createConversation(env, [externalUserId]);
-    await driver.send(env, slug, text, images.length > 0 ? images : undefined);
-    log.debug(`bridge outbound DM: sent to ${platform}:${externalUserId}`);
+      // Create/find the DM channel on the external platform, then send
+      const slug = await driver.createConversation(env, [externalUserId]);
+      await driver.send(env, slug, text, images.length > 0 ? images : undefined);
+      log.debug(`bridge outbound DM: sent to ${platform}:${externalUserId}`);
+    } catch (err) {
+      log.error(`bridge outbound DM failed for puppet ${puppet.username}`, log.errorData(err));
+    }
   }
 }

@@ -59,10 +59,15 @@ const app = new Hono<AuthEnv>()
     if (body.participantNames) {
       for (const pname of body.participantNames) {
         let existing = await getUserByUsername(pname);
-        // Try un-slugifying: discord-user → discord:user (puppet usernames use platform: prefix)
-        if (!existing && pname.includes("-")) {
-          const colonized = pname.replace("-", ":");
-          existing = await getUserByUsername(colonized);
+        // Try un-slugifying: discord-user → discord:user (puppet usernames use platform:id format)
+        if (!existing) {
+          const hyphenIdx = pname.indexOf("-");
+          if (hyphenIdx > 0) {
+            const prefix = pname.slice(0, hyphenIdx);
+            if (["discord", "slack", "telegram"].includes(prefix)) {
+              existing = await getUserByUsername(prefix + ":" + pname.slice(hyphenIdx + 1));
+            }
+          }
         }
         if (existing) {
           participantSet.add(existing.id);

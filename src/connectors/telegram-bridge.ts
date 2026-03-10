@@ -5,7 +5,7 @@
 import { Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
 import { slugify } from "../lib/slugify.js";
-import { type ContentPart, loadBridgeEnv, sendToBridge } from "./bridge-sdk.js";
+import { type ContentPart, loadBridgeEnv, onShutdown, sendToBridge } from "./bridge-sdk.js";
 
 const env = loadBridgeEnv();
 
@@ -67,7 +67,9 @@ bot.on(message("text"), async (ctx) => {
         isDM: true,
       });
       if (!result.ok) {
-        ctx.reply(result.error ?? "Failed to process message").catch(() => {});
+        ctx.reply(result.error ?? "Failed to process message").catch((err) => {
+          console.error(`Failed to send error reply: ${err}`);
+        });
       }
     } finally {
       clearInterval(typingInterval);
@@ -81,7 +83,9 @@ bot.on(message("text"), async (ctx) => {
       isDM: false,
     });
     if (!result.ok) {
-      ctx.reply(result.error ?? "Failed to process message").catch(() => {});
+      ctx.reply(result.error ?? "Failed to process message").catch((err) => {
+        console.error(`Failed to send error reply: ${err}`);
+      });
     }
   }
 });
@@ -107,9 +111,13 @@ bot.on(message("photo"), async (ctx) => {
         media_type: "image/jpeg",
         data: buffer.toString("base64"),
       });
+    } else {
+      console.warn(`Failed to download Telegram photo: HTTP ${res.status}`);
+      content.push({ type: "text", text: "[Image attachment could not be loaded]" });
     }
   } catch (err) {
     console.error(`Failed to download photo: ${err}`);
+    content.push({ type: "text", text: "[Image attachment could not be loaded]" });
   }
 
   if (content.length === 0) return;
@@ -134,7 +142,9 @@ bot.on(message("photo"), async (ctx) => {
     isDM,
   });
   if (!result.ok) {
-    ctx.reply(result.error ?? "Failed to process message").catch(() => {});
+    ctx.reply(result.error ?? "Failed to process message").catch((err) => {
+      console.error(`Failed to send error reply: ${err}`);
+    });
   }
 });
 
@@ -148,5 +158,6 @@ bot
     process.exit(1);
   });
 
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+onShutdown(() => {
+  bot.stop("SIGTERM");
+});
