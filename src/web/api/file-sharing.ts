@@ -15,7 +15,7 @@ import {
   validateFilePath,
 } from "../../lib/file-sharing.js";
 import { findMind, mindDir } from "../../lib/registry.js";
-import type { AuthEnv } from "../middleware/auth.js";
+import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
 async function notifyMind(port: number, message: string, channel: string, sender: string) {
   try {
@@ -38,7 +38,7 @@ async function notifyMind(port: number, message: string, channel: string, sender
 
 const app = new Hono<AuthEnv>()
   // Send a file to another mind
-  .post("/:name/files/send", async (c) => {
+  .post("/:name/files/send", requireSelf(), async (c) => {
     const senderName = c.req.param("name");
     const senderEntry = findMind(senderName);
     if (!senderEntry) return c.json({ error: "Sender mind not found" }, 404);

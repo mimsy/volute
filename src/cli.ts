@@ -89,6 +89,12 @@ switch (command) {
   case "auth":
     await import("./commands/auth.js").then((m) => m.run(args));
     break;
+  case "login":
+    await import("./commands/login.js").then((m) => m.run(args));
+    break;
+  case "logout":
+    await import("./commands/logout.js").then((m) => m.run(args));
+    break;
   case "--help":
   case "-h":
   case undefined:
@@ -124,6 +130,7 @@ Configuration:
 System:
   setup                            First-time setup
   up / down / restart              Daemon control
+  login / logout                   CLI authentication
   update                           Update volute
   service status                   Check service status
   auth register/login/logout       volute.systems account

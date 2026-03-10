@@ -2,6 +2,18 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { voluteHome } from "./registry.js";
 
+type CliSession = { sessionId: string; username: string };
+
+function readCliSession(): CliSession | null {
+  const sessionPath = resolve(voluteHome(), "cli-session.json");
+  if (!existsSync(sessionPath)) return null;
+  try {
+    return JSON.parse(readFileSync(sessionPath, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
 type DaemonConfig = { port: number; internalPort?: number; hostname?: string; token?: string };
 
 // This module is CLI-only (imported by src/commands/). process.exit() is intentional —
@@ -53,16 +65,26 @@ export async function daemonFetch(path: string, options?: RequestInit): Promise<
   const url = buildUrl(config);
   const headers = new Headers(options?.headers);
 
-  // Include internal auth token for CLI-to-daemon requests
-  if (config.token) {
-    headers.set("Authorization", `Bearer ${config.token}`);
+  // Use CLI session token if available
+  const cliSession = readCliSession();
+  if (cliSession?.sessionId) {
+    headers.set("Authorization", `Bearer ${cliSession.sessionId}`);
   }
 
   // Set origin to pass CSRF checks on mutation requests
   headers.set("Origin", url);
 
   try {
-    return await fetch(`${url}${path}`, { ...options, headers });
+    const res = await fetch(`${url}${path}`, { ...options, headers });
+    if (res.status === 401 && !path.startsWith("/api/auth/")) {
+      if (cliSession) {
+        console.error("Session expired. Run `volute login` again.");
+      } else {
+        console.error("Not logged in. Run `volute login` first.");
+      }
+      process.exit(1);
+    }
+    return res;
   } catch (err) {
     if (
       err instanceof TypeError &&

@@ -279,13 +279,23 @@ const app = new Hono()
     // Auto-join #system channel
     tryJoinSystem(user.id);
 
-    return c.json({ id: user.id, username: user.username, role: user.role });
+    return c.json({ id: user.id, username: user.username, role: user.role, sessionId });
   })
   .post("/logout", async (c) => {
-    const sessionId = getCookie(c, "volute_session");
-    if (sessionId) {
-      await deleteSession(sessionId);
+    // Check cookie first, then Bearer header (for CLI logout)
+    const cookieSession = getCookie(c, "volute_session");
+    if (cookieSession) {
+      await deleteSession(cookieSession);
       deleteCookie(c, "volute_session", { path: "/" });
+      return c.json({ ok: true });
+    }
+
+    const authHeader = c.req.header("Authorization");
+    if (authHeader?.startsWith("Bearer ")) {
+      const token = authHeader.slice(7);
+      if (token) {
+        await deleteSession(token);
+      }
     }
     return c.json({ ok: true });
   })

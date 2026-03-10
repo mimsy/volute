@@ -1,4 +1,4 @@
-export function promptLine(prompt: string): Promise<string> {
+function rawPrompt(prompt: string, echo: boolean): Promise<string> {
   process.stderr.write(prompt);
   return new Promise((resolve) => {
     let value = "";
@@ -20,6 +20,7 @@ export function promptLine(prompt: string): Promise<string> {
           value = value.slice(0, -1);
         } else {
           value += String.fromCharCode(byte);
+          if (echo) process.stderr.write(String.fromCharCode(byte));
         }
       }
     };
@@ -27,4 +28,12 @@ export function promptLine(prompt: string): Promise<string> {
     process.stdin.resume();
     process.stdin.on("data", onData);
   });
+}
+
+export function promptLine(prompt: string): Promise<string> {
+  return rawPrompt(prompt, true);
+}
+
+export function promptPassword(prompt: string): Promise<string> {
+  return rawPrompt(prompt, false);
 }

@@ -106,7 +106,7 @@ import {
 } from "../../lib/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
 import { fireWebhook } from "../../lib/webhook.js";
-import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
+import { type AuthEnv, requireAdmin, requireSelf } from "../middleware/auth.js";
 
 type ChannelStatus = {
   name: string;
@@ -1118,9 +1118,9 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: err instanceof Error ? err.message : "Failed to start mind" }, 500);
     }
   })
-  // Restart mind (supports name@variant) — admin only
+  // Restart mind (supports name@variant) — admin or self
   // Accepts optional JSON body: { context?: { type: string, name?: string, summary?: string, ... } }
-  .post("/:name/restart", requireAdmin, async (c) => {
+  .post("/:name/restart", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const [baseName, variantName] = name.split("@", 2);
 
@@ -1628,7 +1628,7 @@ const app = new Hono<AuthEnv>()
     }
   })
   // Proxy message to mind — enriches, then delegates to delivery manager
-  .post("/:name/message", async (c) => {
+  .post("/:name/message", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const [baseName, variantName] = name.split("@", 2);
 
@@ -1918,7 +1918,7 @@ const app = new Hono<AuthEnv>()
     }
   })
   // Receive events from mind, persist to mind_history, publish to pub-sub
-  .post("/:name/events", async (c) => {
+  .post("/:name/events", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const [baseName] = name.split("@", 2);
 
@@ -2072,7 +2072,7 @@ const app = new Hono<AuthEnv>()
     });
   })
   // Persist external channel send to mind_history
-  .post("/:name/history", async (c) => {
+  .post("/:name/history", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const [baseName] = name.split("@", 2);
 

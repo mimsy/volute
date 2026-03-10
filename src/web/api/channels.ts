@@ -3,14 +3,14 @@ import { writeChannelEntry } from "../../connectors/sdk.js";
 import { CHANNELS, getChannelDriver, type ImageAttachment } from "../../lib/channels.js";
 import { loadMergedEnv } from "../../lib/env.js";
 import { findMind, mindDir } from "../../lib/registry.js";
-import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
+import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
 function buildEnv(name: string): Record<string, string> {
   return { ...loadMergedEnv(name), VOLUTE_MIND: name, VOLUTE_MIND_DIR: mindDir(name) };
 }
 
 const app = new Hono<AuthEnv>()
-  .post("/:name/channels/send", requireAdmin, async (c) => {
+  .post("/:name/channels/send", requireSelf(), async (c) => {
     const name = c.req.param("name");
     if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
 
@@ -104,7 +104,7 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
     }
   })
-  .post("/:name/channels/create", requireAdmin, async (c) => {
+  .post("/:name/channels/create", requireSelf(), async (c) => {
     const name = c.req.param("name");
     if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
 
