@@ -422,9 +422,16 @@ function handleEscape(e: KeyboardEvent) {
     {#if auth.user.role === "admin"}
       <UpdateBanner />
     {/if}
-    <TabSwitcher {activeTab} onSwitch={handleTabSwitch} {chatUnreadCount} />
     <div class="shell-body">
       <div class="sidebar" class:sidebar-open={layout.sidebarOpen} style:width="{sidebar.width}px">
+        <button class="sidebar-header" onclick={handleSystemHome}>
+          <span class="header-logo-wrap">
+            <img src="/logo.png" alt="" class="sidebar-logo" />
+            <span class="hover-dot"></span>
+          </span>
+          <span class="sidebar-title">volute</span>
+        </button>
+        <TabSwitcher {activeTab} onSwitch={handleTabSwitch} {chatUnreadCount} />
         {#if activeTab === "system"}
           <SystemSidebar
             minds={data.minds}
@@ -585,6 +592,72 @@ function handleEscape(e: KeyboardEvent) {
     overflow: hidden;
   }
 
+  .sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 12px;
+    flex-shrink: 0;
+    background: none;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .header-logo-wrap {
+    position: relative;
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
+  }
+
+  .sidebar-logo {
+    width: 30px;
+    height: 30px;
+    filter: invert(1);
+    transition: opacity 0.15s;
+  }
+
+  .hover-dot {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    opacity: 0;
+    transition: opacity 0.15s;
+    animation: iridescent 3s ease-in-out infinite;
+  }
+
+  .sidebar-header:hover .sidebar-logo {
+    opacity: 0;
+  }
+
+  .sidebar-header:hover .hover-dot {
+    opacity: 1;
+  }
+
+  .sidebar-title {
+    font-family: var(--display);
+    font-size: 26px;
+    font-weight: 300;
+    color: var(--text-0);
+    letter-spacing: 0.04em;
+    margin-top: -4px;
+    margin-left: -4px;
+  }
+
+  @keyframes iridescent {
+    0%   { background: #4ade80; }
+    16%  { background: #60a5fa; }
+    33%  { background: #c084fc; }
+    50%  { background: #f472b6; }
+    66%  { background: #fbbf24; }
+    83%  { background: #34d399; }
+    100% { background: #4ade80; }
+  }
+
   .resize-handle {
     width: 4px;
     cursor: col-resize;
@@ -673,6 +746,12 @@ function handleEscape(e: KeyboardEvent) {
     }
 
     .resize-handle {
+      display: none;
+    }
+  }
+
+  @media (max-width: 1024px) {
+    .sidebar-header {
       display: none;
     }
   }
