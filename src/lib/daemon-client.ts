@@ -65,19 +65,22 @@ export async function daemonFetch(path: string, options?: RequestInit): Promise<
   const url = buildUrl(config);
   const headers = new Headers(options?.headers);
 
-  // Prefer CLI session token, fall back to daemon token
+  // Use CLI session token if available
   const cliSession = readCliSession();
   if (cliSession?.sessionId) {
     headers.set("Authorization", `Bearer ${cliSession.sessionId}`);
-  } else if (config.token) {
-    headers.set("Authorization", `Bearer ${config.token}`);
   }
 
   // Set origin to pass CSRF checks on mutation requests
   headers.set("Origin", url);
 
   try {
-    return await fetch(`${url}${path}`, { ...options, headers });
+    const res = await fetch(`${url}${path}`, { ...options, headers });
+    if (res.status === 401 && !cliSession) {
+      console.error("Not logged in. Run `volute login` first.");
+      process.exit(1);
+    }
+    return res;
   } catch (err) {
     if (
       err instanceof TypeError &&
