@@ -43,6 +43,7 @@ import {
   subscribe as subscribeMindEvent,
 } from "../../lib/events/mind-events.js";
 import { exec, gitExec } from "../../lib/exec.js";
+import { checkHealth } from "../../lib/health.js";
 import {
   generateIdentity,
   getFingerprint,
@@ -110,19 +111,6 @@ type ChannelStatus = {
   status: "connected" | "disconnected";
   showToolCalls: boolean;
 };
-
-async function checkHealth(port: number): Promise<{ ok: boolean; name?: string }> {
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/health`, {
-      signal: AbortSignal.timeout(2000),
-    });
-    if (!res.ok) return { ok: false };
-    const data = (await res.json()) as { name: string };
-    return { ok: true, name: data.name };
-  } catch {
-    return { ok: false };
-  }
-}
 
 async function getMindStatus(name: string, port: number) {
   const manager = getMindManager();
@@ -1431,7 +1419,7 @@ const app = new Hono<AuthEnv>()
     const dir = mindDir(mindName);
     if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
 
-    let body: { template?: string; continue?: boolean; abort?: boolean } = {};
+    let body: { template?: string; continue?: boolean; abort?: boolean; accept?: boolean } = {};
     try {
       body = await c.req.json();
     } catch {
@@ -1522,6 +1510,82 @@ const app = new Hono<AuthEnv>()
           500,
         );
       }
+    }
+
+    if (body.accept) {
+      // Accept upgrade — merge the upgrade variant back into the parent mind
+      if (!existsSync(worktreeDir)) {
+        return c.json({ error: "No upgrade in progress" }, 400);
+      }
+
+      const variantEntry = findMind(upgradeVariantName);
+      if (!variantEntry) {
+        return c.json({ error: "Upgrade variant not found in DB" }, 400);
+      }
+
+      // Auto-commit any uncommitted changes in the upgrade worktree
+      const status = (await gitExec(["status", "--porcelain"], { cwd: worktreeDir })).trim();
+      if (status) {
+        try {
+          await gitExec(["add", "-A"], { cwd: worktreeDir });
+          await gitExec(["commit", "-m", "Auto-commit before upgrade merge"], {
+            cwd: worktreeDir,
+          });
+        } catch (e) {
+          return c.json({ error: "Failed to auto-commit upgrade changes before merge" }, 500);
+        }
+      }
+
+      // Auto-commit any uncommitted changes in the main worktree
+      const mainStatus = (await gitExec(["status", "--porcelain"], { cwd: dir })).trim();
+      if (mainStatus) {
+        try {
+          await gitExec(["add", "-A"], { cwd: dir });
+          await gitExec(["commit", "-m", "Auto-commit before upgrade merge"], { cwd: dir });
+        } catch (e) {
+          return c.json({ error: "Failed to auto-commit main changes before merge" }, 500);
+        }
+      }
+
+      // Merge upgrade branch
+      try {
+        await gitExec(["merge", UPGRADE_BRANCH], { cwd: dir });
+      } catch {
+        return c.json({ error: "Merge failed. Resolve conflicts manually." }, 500);
+      }
+
+      await cleanupVariant(upgradeVariantName, dir, worktreeDir, { stop: true });
+
+      // Update template hash
+      try {
+        setMindTemplateHash(mindName, computeTemplateHash(template));
+      } catch (err) {
+        log.warn(`failed to update template hash for ${mindName}`, log.errorData(err));
+      }
+
+      // Reinstall dependencies
+      try {
+        await npmInstallAsMind(dir, mindName);
+      } catch (err) {
+        log.warn(`npm install failed after upgrade merge for ${mindName}`, log.errorData(err));
+      }
+
+      // Restart mind
+      const manager = getMindManager();
+      try {
+        if (manager.isRunning(mindName)) {
+          await manager.stopMind(mindName);
+        }
+        manager.setPendingContext(mindName, { type: "merged", name: upgradeVariantName });
+        await manager.startMind(mindName);
+      } catch (e) {
+        return c.json({
+          ok: true,
+          warning: `Upgrade merged but mind restart failed: ${e instanceof Error ? e.message : String(e)}`,
+        });
+      }
+
+      return c.json({ ok: true });
     }
 
     // Fresh upgrade

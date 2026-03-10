@@ -30,7 +30,8 @@ export async function run(args: string[]) {
   );
 
   if (!statusRes.ok) {
-    console.error(`Variant '${variantName}' not found`);
+    const data = (await statusRes.json().catch(() => ({}))) as { error?: string };
+    console.error(data.error ?? `Variant '${variantName}' not found (HTTP ${statusRes.status})`);
     process.exit(1);
   }
 

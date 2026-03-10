@@ -3,7 +3,7 @@ import { getMindManager } from "./daemon/mind-manager.js";
 import { gitExec } from "./exec.js";
 import { chownMindDir } from "./isolation.js";
 import log from "./logger.js";
-import { getBaseName, removeMind } from "./registry.js";
+import { removeMind } from "./registry.js";
 
 /**
  * Clean up a variant's git resources: stop process, remove worktree, delete branch,
@@ -19,7 +19,9 @@ export async function cleanupVariant(
   if (opts?.stop) {
     try {
       await getMindManager().stopMind(variantName);
-    } catch {}
+    } catch (err) {
+      log.warn(`failed to stop variant ${variantName}`, log.errorData(err));
+    }
   }
 
   // Get the branch name from the variant entry before removing from DB
@@ -34,19 +36,27 @@ export async function cleanupVariant(
       rmSync(variantPath, { recursive: true, force: true });
       try {
         await gitExec(["worktree", "prune"], { cwd: projectRoot });
-      } catch {}
+      } catch (err) {
+        log.warn(`failed to prune worktrees for ${variantName}`, log.errorData(err));
+      }
     }
   }
 
   try {
     await gitExec(["branch", "-D", branchName], { cwd: projectRoot });
-  } catch {}
+  } catch (err) {
+    log.warn(`failed to delete branch ${branchName} for ${variantName}`, log.errorData(err));
+  }
+
+  // Get the base name before removing from DB (uses variantEntry.parent which is already fetched)
+  const baseName = variantEntry?.parent ?? variantName;
 
   try {
     removeMind(variantName);
-  } catch {}
+  } catch (err) {
+    log.warn(`failed to remove variant ${variantName} from DB`, log.errorData(err));
+  }
 
-  const baseName = getBaseName(variantName);
   try {
     chownMindDir(projectRoot, baseName);
   } catch (err) {

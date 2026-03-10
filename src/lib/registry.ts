@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -209,44 +209,4 @@ export function daemonLoopback(): string {
   if (host === "0.0.0.0") return "127.0.0.1";
   if (host === "::") return "[::1]";
   return host;
-}
-
-// --- Legacy JSON support (for migration) ---
-
-export function readRegistryFromDisk(): Array<{
-  name: string;
-  port: number;
-  created: string;
-  running: boolean;
-  stage?: string;
-  template?: string;
-  templateHash?: string;
-}> {
-  const registryPath = resolve(voluteSystemDir(), "minds.json");
-  if (!existsSync(registryPath)) return [];
-  try {
-    const entries = JSON.parse(readFileSync(registryPath, "utf-8")) as Array<
-      Omit<MindEntry, "running"> & { running?: boolean }
-    >;
-    return entries.map((e) => ({
-      ...e,
-      running: e.running ?? false,
-      stage: e.stage ?? "sprouted",
-    }));
-  } catch {
-    return [];
-  }
-}
-
-// Backwards compatibility — these are no-ops now but kept for callsites that haven't been updated
-export function initRegistryCache(): void {}
-export function getRegistryCache(): MindEntry[] | null {
-  try {
-    return readRegistry();
-  } catch {
-    return null;
-  }
-}
-export function writeRegistry(_entries: MindEntry[]) {
-  // No-op — DB is the source of truth now
 }

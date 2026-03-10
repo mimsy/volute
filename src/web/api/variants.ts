@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { Hono } from "hono";
 import { getMindManager } from "../../lib/daemon/mind-manager.js";
 import { exec, gitExec } from "../../lib/exec.js";
+import { checkHealth } from "../../lib/health.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
 import {
@@ -11,7 +12,6 @@ import {
   findVariants,
   mindDir,
   nextPort,
-  removeMind,
   setMindRunning,
 } from "../../lib/registry.js";
 import { spawnServer } from "../../lib/spawn-server.js";
@@ -19,19 +19,6 @@ import { cleanupVariant } from "../../lib/variant-cleanup.js";
 import { validateBranchName } from "../../lib/variants.js";
 import { verify } from "../../lib/verify.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
-
-async function checkHealth(port: number): Promise<{ ok: boolean; name?: string }> {
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/health`, {
-      signal: AbortSignal.timeout(2000),
-    });
-    if (!res.ok) return { ok: false };
-    const data = (await res.json()) as { name: string };
-    return { ok: true, name: data.name };
-  } catch {
-    return { ok: false };
-  }
-}
 
 const app = new Hono<AuthEnv>()
   .get("/:name/variants", async (c) => {
@@ -257,11 +244,12 @@ const app = new Hono<AuthEnv>()
         const tmpl = parentEntry.template ?? "claude";
         setMindTemplateHash(mindName, computeTemplateHash(tmpl));
       } catch (err) {
-        console.error(`[daemon] failed to update template hash for ${mindName}:`, err);
+        log.warn(`failed to update template hash for ${mindName}`, log.errorData(err));
       }
     }
 
     // Reinstall dependencies
+    let restartWarning: string | undefined;
     try {
       if (isIsolationEnabled()) {
         const [cmd, args] = wrapForIsolation("npm", ["install"], mindName);
@@ -272,8 +260,9 @@ const app = new Hono<AuthEnv>()
       } else {
         await exec("npm", ["install"], { cwd: projectRoot });
       }
-    } catch {
-      // Best effort — mind restart will still be attempted
+    } catch (err) {
+      log.warn(`npm install failed after merge for ${mindName}`, log.errorData(err));
+      restartWarning = `npm install failed after merge — mind may have stale dependencies`;
     }
 
     // Restart mind via mind manager with merge context
@@ -286,7 +275,6 @@ const app = new Hono<AuthEnv>()
       ...(body.memory && { memory: body.memory }),
     };
 
-    let restartWarning: string | undefined;
     try {
       if (manager.isRunning(mindName)) {
         await manager.stopMind(mindName);
@@ -295,7 +283,7 @@ const app = new Hono<AuthEnv>()
       await manager.startMind(mindName);
     } catch (e) {
       restartWarning = `Merge succeeded but mind restart failed: ${e instanceof Error ? e.message : String(e)}`;
-      console.error(`[daemon] ${restartWarning}`);
+      log.warn(restartWarning);
     }
 
     return c.json({ ok: true, ...(restartWarning && { warning: restartWarning }) });
