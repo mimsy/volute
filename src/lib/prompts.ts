@@ -103,9 +103,9 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
   },
   pre_sleep: {
     content:
-      "Time to rest. You have this turn to wind down however feels right — reflect on your day, update your journal or memory, finish any threads of thought, or simply settle.\n\nYour current session will be archived and a fresh one will begin when you wake. Anything in session context that isn't saved to files will be lost.\n\nYou'll wake at ${wakeTime}. ${queuedInfo}",
+      "Time to rest. You have this turn to wind down however feels right — reflect on your day, update your journal or memory, finish any threads of thought, or simply settle.\n\nYour current session will be archived and a fresh one will begin when you wake. Anything in session context that isn't saved to files will be lost.\n\nYou'll wake at ${wakeTime}.",
     description: "Pre-sleep message sent before stopping the mind",
-    variables: ["wakeTime", "queuedInfo"],
+    variables: ["wakeTime"],
     category: "system",
   },
   wake_summary: {

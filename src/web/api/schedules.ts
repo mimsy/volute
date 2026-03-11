@@ -1,6 +1,7 @@
 import { CronExpressionParser } from "cron-parser";
 import { Hono } from "hono";
 import { getScheduler } from "../../lib/daemon/scheduler.js";
+import { getSleepManagerIfReady } from "../../lib/daemon/sleep-manager.js";
 import log from "../../lib/logger.js";
 import { findMind, mindDir } from "../../lib/registry.js";
 import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../../lib/volute-config.js";
@@ -19,6 +20,7 @@ function writeSchedules(name: string, schedules: Schedule[]): void {
   config.schedules = schedules.length > 0 ? schedules : undefined;
   writeVoluteConfig(dir, config);
   getScheduler().loadSchedules(name);
+  getSleepManagerIfReady()?.invalidateSleepConfig(name);
   fireWebhook({
     event: "schedule_changed",
     mind: name,
@@ -27,6 +29,44 @@ function writeSchedules(name: string, schedules: Schedule[]): void {
 }
 
 const app = new Hono<AuthEnv>()
+  // Clock status — combined sleep state + upcoming schedules
+  .get("/:name/clock/status", async (c) => {
+    const name = c.req.param("name");
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
+
+    const sleepManager = getSleepManagerIfReady();
+    const sleepState = sleepManager?.getState(name) ?? null;
+    const sleepConfig = sleepManager?.getSleepConfig(name) ?? null;
+    const schedules = readSchedules(name);
+
+    // Compute upcoming schedule fires (next 24h)
+    const now = new Date();
+    const in24h = new Date(now.getTime() + 24 * 60 * 60_000);
+    const upcoming: { id: string; at: string; type: "cron" | "timer" }[] = [];
+
+    for (const s of schedules) {
+      if (!s.enabled) continue;
+      if (s.fireAt) {
+        const fireDate = new Date(s.fireAt);
+        if (fireDate >= now && fireDate <= in24h) {
+          upcoming.push({ id: s.id, at: fireDate.toISOString(), type: "timer" });
+        }
+      } else if (s.cron) {
+        try {
+          const interval = CronExpressionParser.parse(s.cron);
+          const next = interval.next().toDate();
+          if (next <= in24h) {
+            upcoming.push({ id: s.id, at: next.toISOString(), type: "cron" });
+          }
+        } catch {
+          // skip invalid cron
+        }
+      }
+    }
+    upcoming.sort((a, b) => a.at.localeCompare(b.at));
+
+    return c.json({ sleep: sleepState, sleepConfig, schedules, upcoming });
+  })
   // List schedules
   .get("/:name/schedules", async (c) => {
     const name = c.req.param("name");
@@ -42,8 +82,11 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Seed minds cannot use schedules — sprout first" }, 403);
 
     const body = (await c.req.json()) as Partial<Schedule>;
-    if (!body.cron) {
-      return c.json({ error: "cron is required" }, 400);
+    if (!body.cron && !body.fireAt) {
+      return c.json({ error: "cron or fireAt is required" }, 400);
+    }
+    if (body.cron && body.fireAt) {
+      return c.json({ error: "cron and fireAt are mutually exclusive" }, 400);
     }
     if (!body.message && !body.script) {
       return c.json({ error: "message or script is required" }, 400);
@@ -52,10 +95,15 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "message and script are mutually exclusive" }, 400);
     }
 
-    try {
-      CronExpressionParser.parse(body.cron);
-    } catch {
-      return c.json({ error: `Invalid cron expression: ${body.cron}` }, 400);
+    if (body.cron) {
+      try {
+        CronExpressionParser.parse(body.cron);
+      } catch {
+        return c.json({ error: `Invalid cron expression: ${body.cron}` }, 400);
+      }
+    }
+    if (body.fireAt && Number.isNaN(new Date(body.fireAt).getTime())) {
+      return c.json({ error: `Invalid fireAt date: ${body.fireAt}` }, 400);
     }
 
     const schedules = readSchedules(name);
@@ -65,10 +113,13 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: `Schedule "${id}" already exists` }, 409);
     }
 
-    const schedule: Schedule = { id, cron: body.cron, enabled: body.enabled ?? true };
+    const schedule: Schedule = { id, enabled: body.enabled ?? true };
+    if (body.cron) schedule.cron = body.cron;
+    if (body.fireAt) schedule.fireAt = body.fireAt;
     if (body.message) schedule.message = body.message;
     if (body.script) schedule.script = body.script;
     if (body.channel) schedule.channel = body.channel;
+    if (body.whileSleeping) schedule.whileSleeping = body.whileSleeping;
     schedules.push(schedule);
     writeSchedules(name, schedules);
     return c.json({ ok: true, id }, 201);
@@ -94,6 +145,14 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: `Invalid cron expression: ${body.cron}` }, 400);
       }
       schedules[idx].cron = body.cron;
+      delete schedules[idx].fireAt;
+    }
+    if (body.fireAt !== undefined) {
+      if (Number.isNaN(new Date(body.fireAt).getTime())) {
+        return c.json({ error: `Invalid fireAt date: ${body.fireAt}` }, 400);
+      }
+      schedules[idx].fireAt = body.fireAt;
+      delete schedules[idx].cron;
     }
     if (body.message !== undefined) {
       schedules[idx].message = body.message;
@@ -105,6 +164,8 @@ const app = new Hono<AuthEnv>()
     }
     if (body.enabled !== undefined) schedules[idx].enabled = body.enabled;
     if (body.channel !== undefined) schedules[idx].channel = body.channel || undefined;
+    if (body.whileSleeping !== undefined)
+      schedules[idx].whileSleeping = body.whileSleeping || undefined;
 
     writeSchedules(name, schedules);
     return c.json({ ok: true });

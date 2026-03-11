@@ -59,17 +59,37 @@ export async function deliverMessage(mindName: string, payload: DeliveryPayload)
     const textContent = extractTextContent(payload.content);
     await recordInbound(baseName, payload.channel, payload.sender ?? null, textContent);
 
-    // Check if mind is sleeping — queue or trigger wake
+    // Check if mind is sleeping — handle based on whileSleeping or wake triggers
     const sleepManager = getSleepManagerIfReady();
     if (sleepManager?.isSleeping(baseName)) {
-      if (sleepManager.checkWakeTrigger(baseName, payload)) {
+      const sleepBehavior = payload.whileSleeping;
+      const sleepState = sleepManager.getState(baseName);
+
+      if (sleepBehavior === "skip") {
+        // Schedule says skip entirely when sleeping
+        return;
+      }
+
+      if (sleepBehavior === "trigger-wake" && !sleepState.wokenByTrigger) {
+        // Schedule wants to briefly wake the mind
         await sleepManager.queueSleepMessage(baseName, payload);
         sleepManager
           .initiateWake(baseName, { trigger: { channel: payload.channel } })
           .catch((err) => dlog.warn(`failed to trigger-wake ${baseName}`, log.errorData(err)));
-      } else {
-        await sleepManager.queueSleepMessage(baseName, payload);
+        return;
       }
+
+      // External messages (no whileSleeping) check wake triggers
+      if (!sleepBehavior && sleepManager.checkWakeTrigger(baseName, payload)) {
+        await sleepManager.queueSleepMessage(baseName, payload);
+        sleepManager
+          .initiateWake(baseName, { trigger: { channel: payload.channel } })
+          .catch((err) => dlog.warn(`failed to trigger-wake ${baseName}`, log.errorData(err)));
+        return;
+      }
+
+      // Default: queue the message
+      await sleepManager.queueSleepMessage(baseName, payload);
       return;
     }
 

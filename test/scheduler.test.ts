@@ -6,6 +6,7 @@ type DeliveryPayload = {
   content: { type: string; text: string }[];
   channel: string;
   sender: string;
+  whileSleeping?: "skip" | "queue" | "trigger-wake";
 };
 
 /** Test subclass that captures calls instead of running real exec/deliver */
@@ -24,7 +25,10 @@ class TestScheduler extends Scheduler {
     return this.scriptResult;
   }
 
-  protected override async deliver(mindName: string, payload: DeliveryPayload): Promise<void> {
+  protected override async deliver(
+    mindName: string,
+    payload: DeliveryPayload & { whileSleeping?: "skip" | "queue" | "trigger-wake" },
+  ): Promise<void> {
     this.deliveries.push({ mindName, payload });
   }
 }
@@ -57,6 +61,7 @@ describe("scheduler", () => {
       content: [{ type: "text", text: "hello" }],
       channel: "system:scheduler",
       sender: "msg-sched",
+      whileSleeping: undefined,
     });
     assert.equal(scheduler.scriptCalls.length, 0);
   });
@@ -75,6 +80,7 @@ describe("scheduler", () => {
       content: [{ type: "text", text: "time to dream" }],
       channel: "system:dream",
       sender: "dream",
+      whileSleeping: undefined,
     });
   });
 
@@ -99,6 +105,7 @@ describe("scheduler", () => {
       content: [{ type: "text", text: "script output\n" }],
       channel: "system:scheduler",
       sender: "script-sched",
+      whileSleeping: undefined,
     });
   });
 
@@ -176,5 +183,128 @@ describe("scheduler", () => {
 
     assert.equal(scheduler.deliveries.length, 0);
     assert.equal(scheduler.scriptCalls.length, 0);
+  });
+
+  it("fire passes whileSleeping from schedule to delivery", async () => {
+    const scheduler = new TestScheduler();
+    await (scheduler as any).fire("test-mind", {
+      id: "sleep-sched",
+      cron: "* * * * *",
+      message: "hello",
+      enabled: true,
+      whileSleeping: "trigger-wake",
+    });
+    assert.equal(scheduler.deliveries.length, 1);
+    assert.equal(scheduler.deliveries[0].payload.whileSleeping, "trigger-wake");
+  });
+
+  it("fire maps legacy skipWhenSleeping to whileSleeping skip", async () => {
+    const scheduler = new TestScheduler();
+    await (scheduler as any).fire("test-mind", {
+      id: "legacy-sched",
+      cron: "* * * * *",
+      message: "hello",
+      enabled: true,
+      skipWhenSleeping: true,
+    });
+    assert.equal(scheduler.deliveries.length, 1);
+    assert.equal(scheduler.deliveries[0].payload.whileSleeping, "skip");
+  });
+
+  it("fire delivers fireAt schedule", async () => {
+    const scheduler = new TestScheduler();
+    await (scheduler as any).fire("test-mind", {
+      id: "timer-sched",
+      fireAt: new Date(Date.now() - 60000).toISOString(),
+      message: "timer fired",
+      enabled: true,
+    });
+    assert.equal(scheduler.deliveries.length, 1);
+    assert.equal(scheduler.deliveries[0].payload.content[0].text, "timer fired");
+  });
+});
+
+describe("scheduler fireAt", () => {
+  it("shouldFire returns true when fireAt time has passed", () => {
+    const scheduler = new TestScheduler();
+    const pastTime = new Date(Date.now() - 120000).toISOString();
+    const epochMinute = Math.floor(Date.now() / 60000);
+    const result = (scheduler as any).shouldFire(
+      { id: "timer", fireAt: pastTime, enabled: true },
+      epochMinute,
+      "test-mind",
+      new Map(),
+    );
+    assert.equal(result, true);
+  });
+
+  it("shouldFire returns false when fireAt time is in the future", () => {
+    const scheduler = new TestScheduler();
+    const futureTime = new Date(Date.now() + 300000).toISOString();
+    const epochMinute = Math.floor(Date.now() / 60000);
+    const result = (scheduler as any).shouldFire(
+      { id: "timer", fireAt: futureTime, enabled: true },
+      epochMinute,
+      "test-mind",
+      new Map(),
+    );
+    assert.equal(result, false);
+  });
+
+  it("shouldFire returns false when schedule has no cron or fireAt", () => {
+    const scheduler = new TestScheduler();
+    const epochMinute = Math.floor(Date.now() / 60000);
+    const result = (scheduler as any).shouldFire(
+      { id: "empty", enabled: true },
+      epochMinute,
+      "test-mind",
+      new Map(),
+    );
+    assert.equal(result, false);
+  });
+});
+
+describe("parseDuration", () => {
+  // Import dynamically since it's in clock.ts — test the regex logic directly
+  function parseDuration(input: string): number | null {
+    const parts = input.match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+    if (!parts || parts[0] !== input) return null;
+    const hours = parseInt(parts[1] || "0", 10);
+    const minutes = parseInt(parts[2] || "0", 10);
+    const seconds = parseInt(parts[3] || "0", 10);
+    const total = hours * 3600_000 + minutes * 60_000 + seconds * 1000;
+    return total > 0 ? total : null;
+  }
+
+  it("parses minutes", () => {
+    assert.equal(parseDuration("10m"), 600_000);
+  });
+
+  it("parses hours", () => {
+    assert.equal(parseDuration("1h"), 3600_000);
+  });
+
+  it("parses seconds", () => {
+    assert.equal(parseDuration("30s"), 30_000);
+  });
+
+  it("parses combined h+m", () => {
+    assert.equal(parseDuration("2h30m"), 9000_000);
+  });
+
+  it("parses combined h+m+s", () => {
+    assert.equal(parseDuration("1h30m15s"), 5415_000);
+  });
+
+  it("returns null for empty string", () => {
+    assert.equal(parseDuration(""), null);
+  });
+
+  it("returns null for invalid input", () => {
+    assert.equal(parseDuration("abc"), null);
+  });
+
+  it("returns null for zero duration", () => {
+    assert.equal(parseDuration("0m"), null);
   });
 });

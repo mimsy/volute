@@ -139,8 +139,8 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute mind history <name> [--channel <ch>] [--limit N] [--full]` | View mind activity history |
 | `volute mind restart <name>` | Restart a mind |
 | `volute mind upgrade <name>` | Upgrade mind to latest template |
-| `volute mind sleep <name> [--wake-at <time>]` | Put a mind to sleep (pre-sleep ritual, session archive, stop process) |
-| `volute mind wake <name>` | Wake a sleeping mind |
+| `volute clock sleep <name> [--wake-at <time>]` | Put a mind to sleep (pre-sleep ritual, session archive, stop process) |
+| `volute clock wake <name>` | Wake a sleeping mind |
 | `volute mind import <path> [--name <name>] [--session <path>]` | Import an OpenClaw workspace |
 | `volute chat send <target> "<msg>" [--mind] [--file <path>]` | Send a message (DM, channel, cross-platform, with file) |
 | `volute chat read <conversation> [--mind] [--limit N]` | Read conversation messages |
@@ -152,9 +152,10 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute env <set\|get\|list\|remove> [--mind] [--reveal]` | Manage environment variables |
 | `volute mind connect <type> [--mind]` | Enable a connector for a mind |
 | `volute mind disconnect <type> [--mind]` | Disable a connector for a mind |
-| `volute schedule list [--mind]` | List schedules for a mind |
-| `volute schedule add [--mind] --cron "..." --message/--script "..." [--id name]` | Add a cron schedule |
-| `volute schedule remove [--mind] --id <id>` | Remove a schedule |
+| `volute clock status [--mind]` | Show sleep state + upcoming schedule fires |
+| `volute clock list [--mind]` | List schedules and timers for a mind |
+| `volute clock add [--mind] --cron/--in "..." --message/--script "..." [--id name] [--while-sleeping skip\|queue\|trigger-wake]` | Add a schedule or timer |
+| `volute clock remove [--mind] --id <id>` | Remove a schedule or timer |
 | `volute skill <list\|add\|remove> [--mind]` | Manage mind skills |
 | `volute mind seed <name>` | Create a minimal seed mind |
 | `volute mind sprout` | Grow a seed into a full mind |
@@ -174,7 +175,7 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute status` | Show daemon status, service info, version, and minds |
 | `volute update` | Check for updates |
 
-Mind-scoped commands (`chat`, `schedule`, `skill`, `pages`) use `--mind <name>` or `VOLUTE_MIND` env var.
+Mind-scoped commands (`chat`, `clock`, `skill`, `pages`) use `--mind <name>` or `VOLUTE_MIND` env var.
 
 ## Source files
 

@@ -1,7 +1,7 @@
 import log from "../logger.js";
 import { publish } from "./activity-events.js";
 
-const IDLE_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 type MindState = {
   active: boolean;

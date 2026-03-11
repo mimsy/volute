@@ -75,6 +75,7 @@ export class SleepManager {
   private interval: ReturnType<typeof setInterval> | null = null;
   private unsubActivity: (() => void) | null = null;
   private transitioning = new Set<string>();
+  private sleepConfigs = new Map<string, SleepConfig | null>();
 
   private get statePath(): string {
     return resolve(voluteSystemDir(), "sleep-state.json");
@@ -147,9 +148,23 @@ export class SleepManager {
   }
 
   getSleepConfig(name: string): SleepConfig | null {
+    if (this.sleepConfigs.has(name)) {
+      return this.sleepConfigs.get(name) ?? null;
+    }
+    const config = this.loadSleepConfig(name);
+    return config;
+  }
+
+  loadSleepConfig(name: string): SleepConfig | null {
     const dir = mindDir(name);
     const config = readVoluteConfig(dir);
-    return config?.sleep ?? null;
+    const sleepConfig = config?.sleep ?? null;
+    this.sleepConfigs.set(name, sleepConfig);
+    return sleepConfig;
+  }
+
+  invalidateSleepConfig(name: string): void {
+    this.sleepConfigs.delete(name);
   }
 
   /**
@@ -176,8 +191,7 @@ export class SleepManager {
       const sleepConfig = this.getSleepConfig(name);
       const wakeTime =
         opts?.voluntaryWakeAt ?? this.getNextWakeTime(sleepConfig) ?? "scheduled time";
-      const queuedInfo = "";
-      const preSleepMsg = await getPrompt("pre_sleep", { wakeTime, queuedInfo });
+      const preSleepMsg = await getPrompt("pre_sleep", { wakeTime });
 
       // Persist pre-sleep message to mind_history
       try {

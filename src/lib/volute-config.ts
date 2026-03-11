@@ -3,11 +3,13 @@ import { dirname, resolve } from "node:path";
 
 export type Schedule = {
   id: string;
-  cron: string;
+  cron?: string;
+  fireAt?: string; // ISO date for one-time timers
   message?: string;
   script?: string;
   enabled: boolean;
-  skipWhenSleeping?: boolean;
+  whileSleeping?: "skip" | "queue" | "trigger-wake";
+  skipWhenSleeping?: boolean; // legacy — treated as whileSleeping: "skip"
   channel?: string;
 };
 
