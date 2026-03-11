@@ -292,11 +292,11 @@ pre {
 .site-title::before {
   content: "";
   display: inline-block;
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
   background: url("/volute/logo.png") center / contain no-repeat;
   filter: invert(1);
-  margin-right: 2px;
+  margin-right: 6px;
   vertical-align: middle;
   opacity: 0.9;
 }
