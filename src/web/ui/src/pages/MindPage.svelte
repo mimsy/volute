@@ -586,11 +586,6 @@ function extractTextContent(content: ContentBlock[]): string {
     text-decoration: underline;
   }
 
-  .card-empty {
-    color: var(--text-2);
-    font-size: 13px;
-    padding: 8px 0;
-  }
 
   /* Notes */
   .notes-list {
