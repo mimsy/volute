@@ -657,6 +657,34 @@ describe("SleepManager.convertTriggerToFullWake", () => {
   });
 });
 
+describe("SleepManager sleep config cache", () => {
+  it("getSleepConfig caches result", () => {
+    const sm = new TestSleepManager();
+    const config = { enabled: true, schedule: { sleep: "0 23 * * *", wake: "0 7 * * *" } };
+    sm.setSleepConfigForTest("test-mind", config);
+
+    const result1 = sm.getSleepConfig("test-mind");
+    const result2 = sm.getSleepConfig("test-mind");
+    assert.deepEqual(result1, config);
+    assert.deepEqual(result2, config);
+  });
+
+  it("invalidateSleepConfig clears cached config", () => {
+    const sm = new TestSleepManager();
+    const config = { enabled: true };
+    sm.setSleepConfigForTest("test-mind", config);
+
+    assert.deepEqual(sm.getSleepConfig("test-mind"), config);
+
+    // Invalidate — next call should return null (no real mind dir in test)
+    sm.invalidateSleepConfig("test-mind");
+    // After invalidation, getSleepConfig falls through to testSleepConfigs
+    // which no longer has the entry, so returns null
+    sm.setSleepConfigForTest("test-mind", null);
+    assert.equal(sm.getSleepConfig("test-mind"), null);
+  });
+});
+
 describe("SleepManager.buildTriggerWakeSummary", () => {
   it("returns empty string for empty history", () => {
     const sm = new TestSleepManager();

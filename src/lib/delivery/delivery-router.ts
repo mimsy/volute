@@ -85,6 +85,7 @@ export interface DeliveryPayload {
   participants?: string[];
   participantCount?: number;
   participantProfiles?: ParticipantProfile[];
+  whileSleeping?: "skip" | "queue" | "trigger-wake";
 }
 
 export function extractTextContent(content: unknown): string {

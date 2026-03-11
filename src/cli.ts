@@ -44,8 +44,12 @@ switch (command) {
   case "variant":
     await import("./commands/variant.js").then((m) => m.run(args));
     break;
+  case "clock":
+    await import("./commands/clock.js").then((m) => m.run(args));
+    break;
   case "schedule":
-    await import("./commands/schedule.js").then((m) => m.run(args));
+    // Legacy alias — redirect to clock
+    await import("./commands/clock.js").then((m) => m.run(args));
     break;
   case "skill":
     await import("./commands/skill.js").then((m) => m.run(args));
@@ -106,7 +110,7 @@ Mind:
 
 Configuration:
   chat      Conversations, messages, files, and platform bridges
-  schedule  Manage cron schedules
+  clock     Schedules, timers, and sleep/wake cycles
   skill     Browse and install skills
   env       Manage environment variables
   notes     Read and write notes
@@ -126,7 +130,7 @@ Options:
 
 Run 'volute <command> --help' for details.
 
-Mind-scoped commands (chat, schedule, skill, pages)
+Mind-scoped commands (chat, clock, skill, pages)
 use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
   default:

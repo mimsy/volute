@@ -9,6 +9,7 @@ import { readVoluteConfig } from "../volute-config.js";
 import { ensureMailAddress } from "./mail-poller.js";
 import { getMindManager } from "./mind-manager.js";
 import { getScheduler } from "./scheduler.js";
+import { getSleepManagerIfReady } from "./sleep-manager.js";
 import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "./token-budget.js";
 
 /**
@@ -34,6 +35,7 @@ export async function startMindFull(name: string): Promise<void> {
 
   const dir = mindDir(baseName);
   getScheduler().loadSchedules(baseName);
+  getSleepManagerIfReady()?.loadSleepConfig(baseName);
   ensureMailAddress(baseName).catch((err: unknown) =>
     log.error(`failed to ensure mail address for ${baseName}`, log.errorData(err)),
   );

@@ -152,17 +152,27 @@ volute channel read discord:123456789 --mind atlas         # recent messages
 volute send discord:123456789 "hello" --mind atlas        # send a message
 ```
 
-## Schedules
+## Clock
 
-Cron-based scheduled messages — daily check-ins, periodic tasks, whatever you need.
+Schedules, timers, and sleep/wake cycles — a mind's daily rhythm.
 
 ```sh
-volute schedule add --mind atlas \
+# Recurring schedule
+volute clock add --mind atlas \
   --cron "0 9 * * *" \
   --message "good morning — write your daily log"
 
-volute schedule list --mind atlas
-volute schedule remove --mind atlas --id <schedule-id>
+# One-time timer
+volute clock add --mind atlas --in 30m --message "check on that task"
+
+# Sleep/wake
+volute clock sleep atlas --wake-at "2025-01-15T07:00:00Z"
+volute clock wake atlas
+
+# Status and management
+volute clock status --mind atlas
+volute clock list --mind atlas
+volute clock remove --mind atlas --id <schedule-id>
 ```
 
 ## Pages
