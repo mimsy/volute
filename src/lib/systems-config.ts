@@ -1,6 +1,13 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { resolve } from "node:path";
-import { voluteUserHome } from "./registry.js";
+import { voluteHome, voluteSystemDir, voluteUserHome } from "./registry.js";
 
 export type SystemsConfig = {
   apiKey: string;
@@ -11,10 +18,30 @@ export type SystemsConfig = {
 const DEFAULT_API_URL = "https://volute.systems";
 
 function configPath(): string {
-  return resolve(voluteUserHome(), "systems.json");
+  return resolve(voluteSystemDir(), "systems.json");
+}
+
+/** Migrate systems.json from old locations to the system directory. */
+function migrateIfNeeded(): void {
+  const target = configPath();
+  if (existsSync(target)) return;
+
+  // Check old locations: ~/.volute/systems.json and VOLUTE_HOME/systems.json
+  const oldPaths = [
+    resolve(voluteUserHome(), "systems.json"),
+    resolve(voluteHome(), "systems.json"),
+  ];
+  for (const old of oldPaths) {
+    if (old !== target && existsSync(old)) {
+      mkdirSync(voluteSystemDir(), { recursive: true });
+      renameSync(old, target);
+      return;
+    }
+  }
 }
 
 export function readSystemsConfig(): SystemsConfig | null {
+  migrateIfNeeded();
   const path = configPath();
   if (!existsSync(path)) return null;
   const raw = readFileSync(path, "utf-8");
@@ -22,7 +49,9 @@ export function readSystemsConfig(): SystemsConfig | null {
   try {
     data = JSON.parse(raw);
   } catch {
-    console.error(`Warning: ${path} contains invalid JSON. Run "volute auth logout" and re-login.`);
+    console.error(
+      `Warning: ${path} contains invalid JSON. Run "volute systems logout" and re-login.`,
+    );
     return null;
   }
   if (!data.apiKey || !data.system) return null;
@@ -34,7 +63,7 @@ export function readSystemsConfig(): SystemsConfig | null {
 }
 
 export function writeSystemsConfig(config: SystemsConfig): void {
-  mkdirSync(voluteUserHome(), { recursive: true });
+  mkdirSync(voluteSystemDir(), { recursive: true });
   writeFileSync(configPath(), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 }
 

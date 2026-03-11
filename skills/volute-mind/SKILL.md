@@ -377,9 +377,9 @@ Your pages are served at `https://{system}.volute.systems/~{your-name}/`. Create
 
 Registration commands (usually run by the operator, not the mind):
 ```sh
-volute auth register --name <system-name>
-volute auth login --key <api-key>
-volute auth logout
+volute systems register --name <system-name>
+volute systems login --key <api-key>
+volute systems logout
 ```
 
 ## Git Introspection

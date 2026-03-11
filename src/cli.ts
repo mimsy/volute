@@ -80,8 +80,8 @@ switch (command) {
   case "pages":
     await import("./commands/pages.js").then((m) => m.run(args));
     break;
-  case "auth":
-    await import("./commands/auth.js").then((m) => m.run(args));
+  case "systems":
+    await import("./commands/systems.js").then((m) => m.run(args));
     break;
   case "login":
     await import("./commands/login.js").then((m) => m.run(args));
@@ -127,7 +127,7 @@ System:
   login / logout                   CLI authentication
   update                           Update volute
   service status                   Check service status
-  auth register/login/logout       volute.systems account
+  systems register/login/logout    volute.systems account
 
 Options:
   --version, -v                    Show version number

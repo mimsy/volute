@@ -135,6 +135,41 @@ const app = new Hono<AuthEnv>()
   .post("/logout", requireAdmin, (c) => {
     deleteSystemsConfig();
     return c.json({ ok: true });
+  })
+  // Proxy pages publish/status through daemon so CLI doesn't need direct file access
+  .put("/pages/publish/:name", requireAdmin, async (c) => {
+    const config = readSystemsConfig();
+    if (!config) return c.json({ error: "Not connected to volute.systems" }, 400);
+    const name = c.req.param("name");
+    const body = await c.req.text();
+    try {
+      const res = await fetch(`${config.apiUrl}/api/pages/publish/${name}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body,
+      });
+      const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      return c.json(data as Record<string, unknown>, res.status as 200);
+    } catch (err) {
+      return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
+    }
+  })
+  .get("/pages/status/:name", requireAdmin, async (c) => {
+    const config = readSystemsConfig();
+    if (!config) return c.json({ error: "Not connected to volute.systems" }, 400);
+    const name = c.req.param("name");
+    try {
+      const res = await fetch(`${config.apiUrl}/api/pages/status/${name}`, {
+        headers: { Authorization: `Bearer ${config.apiKey}` },
+      });
+      const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      return c.json(data as Record<string, unknown>, res.status as 200);
+    } catch (err) {
+      return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
+    }
   });
 
 export default app;
