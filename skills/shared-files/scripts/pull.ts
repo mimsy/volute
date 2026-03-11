@@ -15,16 +15,22 @@ if (!mind) {
 const worktree = resolve("shared");
 
 // Commit any pending changes first
-const status = execFileSync("git", ["status", "--porcelain"], {
-  cwd: worktree,
-  encoding: "utf-8",
-}).trim();
-if (status) {
-  execFileSync("git", ["add", "-A"], { cwd: worktree, stdio: "ignore" });
-  execFileSync("git", ["commit", "--author", `${mind} <${mind}@volute>`, "-m", `wip: ${mind}`], {
+try {
+  const status = execFileSync("git", ["status", "--porcelain"], {
     cwd: worktree,
-    stdio: "ignore",
-  });
+    encoding: "utf-8",
+  }).trim();
+  if (status) {
+    execFileSync("git", ["add", "-A"], { cwd: worktree, stdio: "ignore" });
+    execFileSync("git", ["commit", "--author", `${mind} <${mind}@volute>`, "-m", `wip: ${mind}`], {
+      cwd: worktree,
+      stdio: "ignore",
+    });
+  }
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error(`Failed to commit pending changes in shared worktree: ${msg}`);
+  process.exit(1);
 }
 
 // Rebase onto main
@@ -39,6 +45,8 @@ try {
     console.error("Rebase failed and abort failed — shared worktree may need manual repair.");
     process.exit(1);
   }
-  console.error("Rebase failed — conflicts with main. Merge your changes first, then pull.");
+  console.error(
+    "Rebase failed — your branch conflicts with main. Resolve the conflicting files and commit, then pull again.",
+  );
   process.exit(1);
 }

@@ -23,28 +23,40 @@ if (!mind || !port || !token) {
 
 // Commit any pending changes in the worktree first
 const worktree = resolve("shared");
-const status = execFileSync("git", ["status", "--porcelain"], {
-  cwd: worktree,
-  encoding: "utf-8",
-}).trim();
-if (status) {
-  execFileSync("git", ["add", "-A"], { cwd: worktree, stdio: "ignore" });
-  execFileSync("git", ["commit", "--author", `${mind} <${mind}@volute>`, "-m", `wip: ${mind}`], {
+try {
+  const status = execFileSync("git", ["status", "--porcelain"], {
     cwd: worktree,
-    stdio: "ignore",
-  });
+    encoding: "utf-8",
+  }).trim();
+  if (status) {
+    execFileSync("git", ["add", "-A"], { cwd: worktree, stdio: "ignore" });
+    execFileSync("git", ["commit", "--author", `${mind} <${mind}@volute>`, "-m", `wip: ${mind}`], {
+      cwd: worktree,
+      stdio: "ignore",
+    });
+  }
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error(`Failed to commit pending changes in shared worktree: ${msg}`);
+  process.exit(1);
 }
 
 // Call daemon merge endpoint
 const url = `http://localhost:${port}/api/minds/${encodeURIComponent(mind)}/shared/merge`;
-const res = await fetch(url, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${token}`,
-  },
-  body: JSON.stringify({ message }),
-});
+let res: Response;
+try {
+  res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ message }),
+  });
+} catch {
+  console.error(`Failed to reach daemon at localhost:${port} — is the daemon running?`);
+  process.exit(1);
+}
 
 if (!res.ok) {
   const body = (await res.json().catch(() => ({}))) as { error?: string };
