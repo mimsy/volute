@@ -35,7 +35,13 @@ import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
 import { extractTextContent } from "../../lib/delivery/delivery-router.js";
 import { recordInbound } from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
-import { addMessage } from "../../lib/events/conversations.js";
+import {
+  addMessage,
+  getMessages,
+  getMessagesPaginated,
+  isConversationForMind,
+  listConversationsForMind,
+} from "../../lib/events/conversations.js";
 import { onMindEvent } from "../../lib/events/mind-activity-tracker.js";
 import {
   publish as publishMindEvent,
@@ -1858,6 +1864,39 @@ const app = new Hono<AuthEnv>()
       });
 
     return c.json({ ok: true });
+  })
+  // All conversations for a mind (across all channels)
+  .get("/:name/conversations", async (c) => {
+    const name = c.req.param("name");
+    const entry = await findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+    const convs = await listConversationsForMind(name);
+    return c.json(convs);
+  })
+  // Read messages from a mind's conversation (read-only, no participant check)
+  .get("/:name/conversations/:convId/messages", async (c) => {
+    const name = c.req.param("name");
+    const convId = c.req.param("convId");
+    const entry = await findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+    // Verify conversation belongs to this mind
+    const belongs = await isConversationForMind(name, convId);
+    if (!belongs) {
+      return c.json({ error: "Conversation not found" }, 404);
+    }
+    const beforeStr = c.req.query("before");
+    const limitStr = c.req.query("limit");
+    if (!beforeStr && !limitStr) {
+      const msgs = await getMessages(convId);
+      return c.json({ items: msgs, hasMore: false });
+    }
+    const before = beforeStr ? parseInt(beforeStr, 10) : undefined;
+    const limit = limitStr ? parseInt(limitStr, 10) : undefined;
+    if ((before !== undefined && isNaN(before)) || (limit !== undefined && isNaN(limit))) {
+      return c.json({ error: "Invalid pagination parameters" }, 400);
+    }
+    const result = await getMessagesPaginated(convId, { before, limit });
+    return c.json({ items: result.messages, hasMore: result.hasMore });
   })
   // Budget status
   .get("/:name/budget", async (c) => {

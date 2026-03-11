@@ -6,7 +6,7 @@ import type {
   RecentPage,
   Site,
 } from "@volute/api";
-import type { Selection } from "../lib/navigate";
+import { navigate, type Selection } from "../lib/navigate";
 import ChatHome from "../pages/ChatHome.svelte";
 import Home from "../pages/Home.svelte";
 import MindPage from "../pages/MindPage.svelte";
@@ -14,6 +14,7 @@ import Notes from "../pages/Notes.svelte";
 import NoteView from "../pages/NoteView.svelte";
 import PagesDashboard from "../pages/PagesDashboard.svelte";
 import SiteView from "../pages/SiteView.svelte";
+import SystemSettingsPage from "../pages/SystemSettingsPage.svelte";
 import Chat from "./Chat.svelte";
 
 let {
@@ -31,7 +32,6 @@ let {
   onSelectPages,
   onSelectConversation,
   onSelectNotes,
-  onSelectNote,
   onTypingNames,
   onToggleSidebar,
   onOpenRightPanel,
@@ -50,11 +50,28 @@ let {
   onSelectPages: () => void;
   onSelectConversation: (id: string) => void;
   onSelectNotes: () => void;
-  onSelectNote: (author: string, slug: string) => void;
   onTypingNames?: (names: string[]) => void;
   onToggleSidebar?: () => void;
   onOpenRightPanel?: () => void;
 } = $props();
+
+function handleIframeNav(e: Event) {
+  const iframe = e.target as HTMLIFrameElement;
+  let path: string | undefined;
+  try {
+    path = iframe.contentWindow?.location.pathname;
+  } catch {
+    return; // cross-origin or security error — expected
+  }
+  if (!path) return;
+  const match = path.match(/^\/pages\/([^/]+)\/(.+)$/);
+  if (!match) return;
+  const [, mind, file] = match;
+  // Only update if path actually changed
+  if (selection.kind === "mind-page" && selection.mind === mind && selection.path === file) return;
+  if (selection.kind === "page" && selection.mind === mind && selection.path === file) return;
+  onSelectPage(mind, file);
+}
 
 let selectedSite = $derived.by(() => {
   if (selection.kind === "site") return sites.find((s) => s.name === selection.name);
@@ -117,54 +134,43 @@ let contextLabel = $derived.by(() => {
   {#if selection.tab === "system"}
     {#if selection.kind === "mind"}
       <div class="frame-content mind-frame">
-        <MindPage name={selection.name} section={selection.section} {onSelectNote} />
+        <MindPage name={selection.name} section={selection.section} />
+      </div>
+    {:else if selection.kind === "mind-note"}
+      <div class="frame-content padded">
+        <NoteView author={selection.mind} slug={selection.slug} {username} onNavigate={(author, slug) => navigate(`/minds/${author}/notes/${slug}`)} />
+      </div>
+    {:else if selection.kind === "mind-page"}
+      <div class="frame-content">
+        <iframe src="/pages/{selection.mind}/{selection.path}" class="page-iframe" title="Page" onload={handleIframeNav}></iframe>
       </div>
     {:else if selection.kind === "page"}
-      <div class="breadcrumbs">
-        <button class="breadcrumb-link" onclick={onSelectPages}>Pages</button>
-        <span class="breadcrumb-sep">/</span>
-        <button class="breadcrumb-link" onclick={() => onSelectSite(selection.mind)}>{selection.mind}</button>
-        <span class="breadcrumb-sep">/</span>
-        <span class="breadcrumb-current">{selection.path}</span>
-      </div>
       <div class="frame-content">
-        <iframe src="/pages/{selection.mind}/{selection.path}" class="page-iframe" title="Page"></iframe>
+        <iframe src="/pages/{selection.mind}/{selection.path}" class="page-iframe" title="Page" onload={handleIframeNav}></iframe>
       </div>
     {:else if selection.kind === "pages"}
-      <div class="breadcrumbs">
-        <span class="breadcrumb-current">Pages</span>
-      </div>
       <div class="frame-content padded">
         <PagesDashboard {sites} {recentPages} {onSelectSite} {onSelectPage} />
       </div>
     {:else if selection.kind === "site" && selectedSite}
-      <div class="breadcrumbs">
-        <button class="breadcrumb-link" onclick={onSelectPages}>Pages</button>
-        <span class="breadcrumb-sep">/</span>
-        <span class="breadcrumb-current">{selectedSite.name}</span>
-      </div>
       <div class="frame-content padded">
         <SiteView site={selectedSite} {onSelectPage} />
       </div>
-    {:else if selection.kind === "notes"}
-      <div class="breadcrumbs">
-        <span class="breadcrumb-current">Notes</span>
+    {:else if selection.kind === "settings"}
+      <div class="frame-content">
+        <SystemSettingsPage section={selection.section} />
       </div>
+    {:else if selection.kind === "notes"}
       <div class="frame-content padded">
-        <Notes onSelectNote={onSelectNote} />
+        <Notes />
       </div>
     {:else if selection.kind === "note"}
-      <div class="breadcrumbs">
-        <button class="breadcrumb-link" onclick={onSelectNotes}>Notes</button>
-        <span class="breadcrumb-sep">/</span>
-        <span class="breadcrumb-current">{selection.author}/{selection.slug}</span>
-      </div>
       <div class="frame-content padded">
-        <NoteView author={selection.author} slug={selection.slug} {username} onBack={onSelectNotes} onNavigate={onSelectNote} />
+        <NoteView author={selection.author} slug={selection.slug} {username} onNavigate={(author, slug) => navigate(`/minds/${author}/notes/${slug}`)} />
       </div>
     {:else}
       <div class="frame-content padded">
-        <Home {username} {conversations} {sites} {onSelectPage} {onSelectConversation} {onSelectNote} />
+        <Home {username} {conversations} {sites} {onSelectPage} {onSelectConversation} />
       </div>
     {/if}
 
@@ -186,7 +192,7 @@ let contextLabel = $derived.by(() => {
       />
     </div>
   {:else}
-    <div class="frame-content padded">
+    <div class="frame-content">
       <ChatHome {conversations} {username} {onSelectConversation} />
     </div>
   {/if}
@@ -213,43 +219,6 @@ let contextLabel = $derived.by(() => {
   .frame-content.mind-frame {
     padding: 24px;
     overflow: hidden;
-  }
-
-  .breadcrumbs {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 16px;
-    font-family: inherit;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-2);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-
-  .breadcrumb-link {
-    background: none;
-    border: none;
-    padding: 0;
-    font: inherit;
-    text-transform: inherit;
-    letter-spacing: inherit;
-    color: var(--text-1);
-    cursor: pointer;
-  }
-
-  .breadcrumb-link:hover {
-    color: var(--accent);
-  }
-
-  .breadcrumb-sep {
-    color: var(--text-2);
-  }
-
-  .breadcrumb-current {
-    color: var(--text-2);
   }
 
   .page-iframe {
@@ -318,17 +287,7 @@ let contextLabel = $derived.by(() => {
     color: var(--accent);
   }
 
-  @media (max-width: 1024px) {
-    .mobile-header {
-      display: flex;
-    }
-  }
-
   @media (max-width: 767px) {
-    .hamburger-btn {
-      display: block;
-    }
-
     .frame-content.padded {
       padding: 16px;
     }

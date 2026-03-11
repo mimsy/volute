@@ -49,6 +49,13 @@ function startPagesWatcher(mindName: string, pagesDir: string): void {
   }
 }
 
+export function startSystemWatcher(): void {
+  if (watchers.has("_system")) return;
+  const systemPagesDir = resolve(voluteHome(), "shared", "pages");
+  if (!existsSync(systemPagesDir)) return;
+  startPagesWatcher("_system", systemPagesDir);
+}
+
 export function startWatcher(mindName: string): void {
   if (watchers.has(mindName)) return;
 

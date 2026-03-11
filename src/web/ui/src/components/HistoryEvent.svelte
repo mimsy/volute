@@ -146,6 +146,7 @@ function formatArgs(args: unknown): string {
     background: var(--type-color);
     opacity: 0;
     transition: opacity 0.15s;
+    z-index: 1;
   }
   .event:hover::after {
     opacity: 1;

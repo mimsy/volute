@@ -13,6 +13,7 @@ let {
   onSelectMindSection,
   onSelectNotes,
   onSelectPages,
+  onSelectSettings,
   onSeed,
 }: {
   minds: Mind[];
@@ -23,6 +24,7 @@ let {
   onSelectMindSection: (name: string, section: string) => void;
   onSelectNotes: () => void;
   onSelectPages: () => void;
+  onSelectSettings: () => void;
   onSeed: () => void;
 } = $props();
 
@@ -35,13 +37,20 @@ let sortedMinds = $derived(
   }),
 );
 
-let activeMindName = $derived(
-  selection.tab === "system" && selection.kind === "mind" ? selection.name : null,
-);
+let activeMindName = $derived.by(() => {
+  if (selection.tab !== "system") return null;
+  if (selection.kind === "mind") return selection.name;
+  if (selection.kind === "mind-note" || selection.kind === "mind-page") return selection.mind;
+  return null;
+});
 
-let activeMindSection = $derived(
-  selection.tab === "system" && selection.kind === "mind" ? (selection.section ?? "info") : null,
-);
+let activeMindSection = $derived.by(() => {
+  if (selection.tab !== "system") return null;
+  if (selection.kind === "mind") return selection.section ?? "info";
+  if (selection.kind === "mind-note") return "notes";
+  if (selection.kind === "mind-page") return "pages";
+  return null;
+});
 
 const MIND_SECTIONS = [
   { key: "info", label: "Info" },
@@ -74,6 +83,11 @@ const MIND_SECTIONS = [
           class:active={selection.tab === "system" && (selection.kind === "pages" || selection.kind === "site" || selection.kind === "page")}
           onclick={onSelectPages}
         >Pages</button>
+        <button
+          class="sub-item"
+          class:active={selection.tab === "system" && selection.kind === "settings"}
+          onclick={onSelectSettings}
+        >Settings</button>
       </div>
     </div>
 

@@ -1,22 +1,20 @@
 <script lang="ts">
 import type { Conversation, Mind } from "@volute/api";
 import { onMount } from "svelte";
-import AdminModal from "./components/AdminModal.svelte";
 import ChannelBrowserModal from "./components/ChannelBrowserModal.svelte";
 import ChannelMembersPanel from "./components/ChannelMembersPanel.svelte";
 import ChatSidebar from "./components/ChatSidebar.svelte";
 import LoginPage from "./components/LoginPage.svelte";
 import MainFrame from "./components/MainFrame.svelte";
-import MindModal from "./components/MindModal.svelte";
 import MindPickerModal from "./components/MindPickerModal.svelte";
+import MindRightPanel from "./components/MindRightPanel.svelte";
 import SeedModal from "./components/SeedModal.svelte";
-import StatusBar from "./components/StatusBar.svelte";
 import SystemSidebar from "./components/SystemSidebar.svelte";
 import TabSwitcher from "./components/TabSwitcher.svelte";
 import UpdateBanner from "./components/UpdateBanner.svelte";
 import UserSettingsModal from "./components/UserSettingsModal.svelte";
-import { type AuthUser } from "./lib/auth";
-import { deleteConversation, restartDaemon } from "./lib/client";
+import { type AuthUser, fetchMe } from "./lib/auth";
+import { deleteConversation } from "./lib/client";
 import {
   navigate,
   parseSelection,
@@ -79,7 +77,7 @@ let chatUnreadCount = $derived.by(() => {
 });
 
 // Modals
-type ModalType = "newChat" | "channelBrowser" | "seed" | "admin" | "userSettings" | "mind" | null;
+type ModalType = "newChat" | "channelBrowser" | "seed" | "userSettings" | "mind" | null;
 let activeModal = $state<ModalType>(null);
 let selectedModalMind = $state<Mind | null>(null);
 
@@ -91,6 +89,23 @@ let typingNames = $state<string[]>([]);
 
 // Right panel: hidden on mobile unless explicitly opened
 let rightPanelOpen = $state(false);
+let rightPanelCollapsed = $state(false);
+
+// Responsive viewport tracking
+let narrowViewport = $state(false);
+
+// User menu
+let showUserMenu = $state(false);
+let userAvatar = $state<string | null>(null);
+
+// Auto-collapse right panel on narrow viewports
+$effect(() => {
+  if (narrowViewport) {
+    rightPanelCollapsed = true;
+  } else {
+    rightPanelCollapsed = false;
+  }
+});
 
 // Chat-specific derived values
 let activeConversationId = $derived(
@@ -122,23 +137,119 @@ let contextMind = $derived(
   contextMindName ? data.minds.find((m) => m.name === contextMindName) : undefined,
 );
 
+// System tab: mind for right panel when viewing a mind page
+let systemMindName = $derived.by(() => {
+  if (selection.tab !== "system") return "";
+  if (selection.kind === "mind") return selection.name;
+  if (selection.kind === "mind-note") return selection.mind;
+  if (selection.kind === "mind-page") return selection.mind;
+  return "";
+});
+let systemMind = $derived(
+  systemMindName ? data.minds.find((m) => m.name === systemMindName) : undefined,
+);
+
 let rightPanelMind = $derived(
-  activeModal === "mind" && selectedModalMind ? selectedModalMind : (contextMind ?? undefined),
+  activeModal === "mind" && selectedModalMind
+    ? selectedModalMind
+    : activeTab === "system"
+      ? systemMind
+      : (contextMind ?? undefined),
 );
 
 let rightPanelIsManual = $derived(!!(activeModal === "mind" && selectedModalMind));
 
-// Right panel only in chat tab
+// Show chat button in right panel unless already in a DM with that mind
+let showRightPanelChat = $derived.by(() => {
+  if (!rightPanelMind) return false;
+  if (activeTab === "system") return true;
+  // In chat tab: hide if this is the natural DM context (not manually opened)
+  if (!rightPanelIsManual && activeConv?.type === "dm") return false;
+  return true;
+});
+
+// Show mind page button in right panel unless already on the mind page
+let showRightPanelProfile = $derived.by(() => {
+  if (!rightPanelMind) return false;
+  if (activeTab === "system" && systemMindName === rightPanelMind.name) return false;
+  return true;
+});
+
 let hasRightPanel = $derived(
-  activeTab === "chat" &&
-    (!!rightPanelMind || activeConv?.type === "channel" || activeConv?.type === "group"),
+  (activeTab === "system" && !!systemMind) ||
+    (activeTab === "chat" &&
+      (!!rightPanelMind || activeConv?.type === "channel" || activeConv?.type === "group")),
 );
 
-let showRightPanel = $derived(hasRightPanel);
+let showRightPanel = $derived(
+  hasRightPanel && (!rightPanelCollapsed || (narrowViewport && rightPanelOpen)),
+);
+
+// Breadcrumb label for chat conversations
+let chatBreadcrumbLabel = $derived.by(() => {
+  if (selection.kind !== "conversation") return "";
+  if (activeConv?.type === "channel" && activeConv.name) return `#${activeConv.name}`;
+  if (contextMind) return contextMind.displayName ?? contextMind.name;
+  if (contextMindName) return contextMindName;
+  return "";
+});
+
+// Page breadcrumbs
+type Breadcrumb = { label: string; action?: () => void };
+let breadcrumbs = $derived.by((): Breadcrumb[] => {
+  const sel = selection;
+  const crumbs: Breadcrumb[] = [];
+  if (sel.tab === "system") {
+    crumbs.push({ label: "system", action: handleSystemHome });
+    if (sel.kind === "mind") {
+      crumbs.push({ label: sel.name, action: () => navigate(`/minds/${sel.name}`) });
+      if (sel.section && sel.section !== "info") crumbs.push({ label: sel.section });
+    } else if (sel.kind === "mind-note") {
+      crumbs.push({ label: sel.mind, action: () => navigate(`/minds/${sel.mind}`) });
+      crumbs.push({ label: "notes", action: () => navigate(`/minds/${sel.mind}/notes`) });
+      crumbs.push({ label: sel.slug });
+    } else if (sel.kind === "mind-page") {
+      crumbs.push({ label: sel.mind, action: () => navigate(`/minds/${sel.mind}`) });
+      crumbs.push({ label: "pages", action: () => navigate(`/minds/${sel.mind}/pages`) });
+      crumbs.push({ label: sel.path });
+    } else if (sel.kind === "page") {
+      crumbs.push({ label: "pages", action: handleSelectPages });
+      crumbs.push({ label: sel.mind, action: () => handleSelectSite(sel.mind) });
+      crumbs.push({ label: sel.path });
+    } else if (sel.kind === "pages") {
+      crumbs.push({ label: "pages" });
+    } else if (sel.kind === "site") {
+      crumbs.push({ label: "pages", action: handleSelectPages });
+      crumbs.push({ label: sel.name });
+    } else if (sel.kind === "settings") {
+      crumbs.push({ label: "settings" });
+    } else if (sel.kind === "notes") {
+      crumbs.push({ label: "notes" });
+    } else if (sel.kind === "note") {
+      crumbs.push({ label: "notes", action: handleSelectNotes });
+      crumbs.push({ label: sel.author, action: () => navigate(`/minds/${sel.author}`) });
+      crumbs.push({ label: sel.slug });
+    }
+  } else {
+    crumbs.push({ label: "chat" });
+    if (sel.kind === "conversation" && chatBreadcrumbLabel) {
+      crumbs.push({ label: chatBreadcrumbLabel });
+    }
+  }
+  return crumbs;
+});
 
 // Auth — one-time fetch on mount
 onMount(() => {
   checkAuth();
+
+  const mql = window.matchMedia("(max-width: 1024px)");
+  narrowViewport = mql.matches;
+  const handler = (e: MediaQueryListEvent) => {
+    narrowViewport = e.matches;
+  };
+  mql.addEventListener("change", handler);
+  return () => mql.removeEventListener("change", handler);
 });
 
 // Data polling
@@ -152,6 +263,18 @@ $effect(() => {
 $effect(() => {
   if (!auth.user) return;
   requestNotificationPermission();
+});
+
+// Fetch user avatar
+$effect(() => {
+  if (!auth.user) return;
+  fetchMe()
+    .then((me) => {
+      userAvatar = me?.avatar ? `/api/auth/avatars/${me.avatar}` : null;
+    })
+    .catch((err) => {
+      console.warn("Failed to fetch user profile:", err);
+    });
 });
 
 // Track whether selection change came from popstate (to avoid pushing duplicate history)
@@ -207,6 +330,15 @@ function closeRightPanel() {
     selectedModalMind = null;
   }
   rightPanelOpen = false;
+  rightPanelCollapsed = true;
+}
+
+function toggleRightPanel() {
+  if (narrowViewport) {
+    rightPanelOpen = !rightPanelOpen;
+  } else {
+    rightPanelCollapsed = !rightPanelCollapsed;
+  }
 }
 
 function handleOpenMindModal(mind: Mind) {
@@ -295,11 +427,20 @@ function handleSeedCreated(mindName: string) {
 }
 
 function handleSelectPage(mind: string, path: string) {
-  selection = { tab: "system", kind: "page", mind, path };
+  // Preserve mind-page context when navigating within a mind's pages
+  if (selection.tab === "system" && selection.kind === "mind-page") {
+    selection = { tab: "system", kind: "mind-page", mind, path };
+  } else {
+    selection = { tab: "system", kind: "page", mind, path };
+  }
 }
 
 function handleSelectSite(name: string) {
-  selection = { tab: "system", kind: "site", name };
+  if (name !== "_system") {
+    selection = { tab: "system", kind: "mind", name, section: "pages" };
+  } else {
+    selection = { tab: "system", kind: "site", name };
+  }
 }
 
 function handleSelectPages() {
@@ -340,8 +481,8 @@ function handleSelectNotes() {
   selection = { tab: "system", kind: "notes" };
 }
 
-function handleSelectNote(author: string, slug: string) {
-  selection = { tab: "system", kind: "note", author, slug };
+function handleSelectSettings() {
+  selection = { tab: "system", kind: "settings" };
 }
 
 // Resize
@@ -398,6 +539,10 @@ function handleRightResizeEnd() {
 
 function handleEscape(e: KeyboardEvent) {
   if (e.key !== "Escape") return;
+  if (showUserMenu) {
+    showUserMenu = false;
+    return;
+  }
   if (rightPanelOpen) {
     closeRightPanel();
     return;
@@ -407,9 +552,16 @@ function handleEscape(e: KeyboardEvent) {
     return;
   }
 }
+
+function handleGlobalClick(e: MouseEvent) {
+  if (showUserMenu && !(e.target as HTMLElement).closest(".user-menu-anchor")) {
+    showUserMenu = false;
+  }
+}
 </script>
 
 <svelte:window onkeydown={handleEscape} />
+<svelte:document onclick={handleGlobalClick} />
 
 {#if !auth.checked}
   <div class="app">
@@ -444,6 +596,7 @@ function handleEscape(e: KeyboardEvent) {
             onSelectMindSection={handleSelectMindSection}
             onSelectNotes={handleSelectNotes}
             onSelectPages={handleSelectPages}
+            onSelectSettings={handleSelectSettings}
             onSeed={() => (activeModal = "seed")}
           />
         {:else}
@@ -475,71 +628,106 @@ function handleEscape(e: KeyboardEvent) {
         onpointerup={handleResizeEnd}
         onpointercancel={handleResizeEnd}
       ></div>
-      <div class="main-frame">
-        <MainFrame
-          {selection}
-          minds={data.minds}
-          conversations={data.conversations}
-          recentPages={data.recentPages}
-          sites={data.sites}
-          activity={data.activity}
-          username={auth.user.username}
-          onConversationId={handleConversationId}
-          onSelectConversation={handleSelectConversation}
-          onOpenMind={handleOpenMindModal}
-          onSelectPage={handleSelectPage}
-          onSelectSite={handleSelectSite}
-          onSelectPages={handleSelectPages}
-          onSelectNotes={handleSelectNotes}
-          onSelectNote={handleSelectNote}
-          onTypingNames={(names) => { typingNames = names; }}
-          onToggleSidebar={toggleSidebar}
-          onOpenRightPanel={hasRightPanel ? openRightPanel : undefined}
-        />
-      </div>
-      {#if showRightPanel}
-        {#if rightPanelOpen}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="right-panel-backdrop" onclick={closeRightPanel}></div>
-        {/if}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          class="resize-handle right-resize-handle"
-          onpointerdown={handleRightResizeStart}
-          onpointermove={handleRightResizeMove}
-          onpointerup={handleRightResizeEnd}
-          onpointercancel={handleRightResizeEnd}
-        ></div>
-        <div class="right-panel" class:right-panel-open={rightPanelOpen} style:width="{rightPanel.width}px">
-          {#if rightPanelMind}
-            {#key rightPanelMind.name}
-              <MindModal
-                mind={rightPanelMind}
-                onClose={closeRightPanel}
-                onViewProfile={() => { handleSelectMind(rightPanelMind!.name); closeRightPanel(); }}
-              />
-            {/key}
-          {:else if activeConv?.type === "channel" || activeConv?.type === "group"}
-            <ChannelMembersPanel
-              conversation={activeConv}
+      <div class="content-area">
+        <div class="main-column">
+          <div class="page-header">
+            <button class="header-hamburger" onclick={toggleSidebar}>&#9776;</button>
+            <div class="page-breadcrumbs">
+              {#each breadcrumbs as crumb, i}
+                {#if i > 0}
+                  <span class="crumb-sep">/</span>
+                {/if}
+                {#if crumb.action && i < breadcrumbs.length - 1}
+                  <button class="crumb-link" onclick={crumb.action}>{crumb.label}</button>
+                {:else}
+                  <span class="crumb-current">{crumb.label}</span>
+                {/if}
+              {/each}
+            </div>
+            <div class="header-actions">
+              <div class="user-menu-anchor">
+                <button class="user-avatar-btn" onclick={() => { showUserMenu = !showUserMenu; }} title={auth.user?.username}>
+                  {#if userAvatar}
+                    <img src={userAvatar} alt="" class="user-avatar-img" />
+                  {:else}
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 12 0v1"/></svg>
+                  {/if}
+                </button>
+                {#if showUserMenu}
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <div class="user-dropdown">
+                    <button class="user-dropdown-item" onclick={() => { showUserMenu = false; activeModal = "userSettings"; }}>Profile</button>
+                    <button class="user-dropdown-item" onclick={() => { showUserMenu = false; handleLogout(); }}>Logout</button>
+                  </div>
+                {/if}
+              </div>
+              {#if hasRightPanel && rightPanelCollapsed}
+                <button class="panel-reopen" onclick={toggleRightPanel} title="Show sidebar">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+                </button>
+              {/if}
+            </div>
+          </div>
+          <div class="main-frame">
+            <MainFrame
+              {selection}
               minds={data.minds}
-              {typingNames}
+              conversations={data.conversations}
+              recentPages={data.recentPages}
+              sites={data.sites}
+              activity={data.activity}
+              username={auth.user.username}
+              onConversationId={handleConversationId}
+              onSelectConversation={handleSelectConversation}
               onOpenMind={handleOpenMindModal}
+              onSelectPage={handleSelectPage}
+              onSelectSite={handleSelectSite}
+              onSelectPages={handleSelectPages}
+              onSelectNotes={handleSelectNotes}
+              onTypingNames={(names) => { typingNames = names; }}
+              onToggleSidebar={toggleSidebar}
+              onOpenRightPanel={hasRightPanel ? openRightPanel : undefined}
             />
-          {/if}
+          </div>
         </div>
-      {/if}
+        {#if showRightPanel}
+          {#if narrowViewport && rightPanelOpen}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="right-panel-backdrop" onclick={closeRightPanel}></div>
+          {/if}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="resize-handle right-resize-handle"
+            onpointerdown={handleRightResizeStart}
+            onpointermove={handleRightResizeMove}
+            onpointerup={handleRightResizeEnd}
+            onpointercancel={handleRightResizeEnd}
+          ></div>
+          <div class="right-panel" class:right-panel-open={narrowViewport && rightPanelOpen} style:width="{rightPanel.width}px">
+            <button class="panel-close" onclick={closeRightPanel} title="Close">&times;</button>
+            {#if rightPanelMind}
+              {#key rightPanelMind.name}
+                <MindRightPanel
+                  mind={rightPanelMind}
+                  onProfile={showRightPanelProfile ? () => {
+                    selection = { tab: "system", kind: "mind", name: rightPanelMind.name };
+                    if (activeModal === "mind") { activeModal = null; selectedModalMind = null; }
+                  } : undefined}
+                  onChat={showRightPanelChat ? () => handleNewChatCreated(rightPanelMind.name) : undefined}
+                />
+              {/key}
+            {:else if activeConv?.type === "channel" || activeConv?.type === "group"}
+              <ChannelMembersPanel
+                conversation={activeConv}
+                minds={data.minds}
+                {typingNames}
+                onOpenMind={handleOpenMindModal}
+              />
+            {/if}
+          </div>
+        {/if}
+      </div>
     </div>
-    <StatusBar
-      username={auth.user.username}
-      systemName={auth.systemName}
-      connectionOk={data.connectionOk}
-      isAdmin={auth.user.role === "admin"}
-      onAdminClick={() => (activeModal = "admin")}
-      onRestart={() => restartDaemon()}
-      onLogout={handleLogout}
-      onUserSettings={() => (activeModal = "userSettings")}
-    />
   </div>
 
   {#if activeModal === "newChat"}
@@ -553,9 +741,6 @@ function handleEscape(e: KeyboardEvent) {
   {/if}
   {#if activeModal === "seed"}
     <SeedModal onClose={() => (activeModal = null)} onCreated={handleSeedCreated} />
-  {/if}
-  {#if activeModal === "admin"}
-    <AdminModal onClose={() => (activeModal = null)} minds={data.minds} />
   {/if}
   {#if activeModal === "userSettings"}
     <UserSettingsModal onClose={() => (activeModal = null)} />
@@ -672,16 +857,209 @@ function handleEscape(e: KeyboardEvent) {
     background: var(--border);
   }
 
+  .content-area {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    min-width: 0;
+  }
+
+  .main-column {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+  }
+
   .main-frame {
     flex: 1;
     overflow: hidden;
     min-width: 0;
   }
 
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .header-hamburger {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--text-1);
+    font-size: 18px;
+    padding: 4px 8px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .header-hamburger:hover {
+    background: var(--bg-2);
+  }
+
+  .page-breadcrumbs {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-family: var(--display);
+    font-size: 18px;
+    font-weight: 300;
+    color: var(--text-0);
+    letter-spacing: 0.02em;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .crumb-sep {
+    color: var(--text-2);
+    font-size: 14px;
+  }
+
+  .crumb-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--text-2);
+    cursor: pointer;
+  }
+
+  .crumb-link:hover {
+    color: var(--text-0);
+  }
+
+  .crumb-current {
+    color: var(--text-0);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .user-menu-anchor {
+    position: relative;
+  }
+
+  .user-avatar-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: none;
+    border: 1px solid var(--border);
+    padding: 0;
+    cursor: pointer;
+    overflow: hidden;
+    color: var(--text-2);
+  }
+
+  .user-avatar-btn:hover {
+    border-color: var(--border-bright);
+    color: var(--text-1);
+  }
+
+  .user-avatar-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .user-avatar-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .user-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    min-width: 120px;
+    padding: 4px 0;
+    z-index: 100;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+
+  .user-dropdown-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 6px 12px;
+    background: none;
+    color: var(--text-1);
+    font-size: 13px;
+    white-space: nowrap;
+    border: none;
+    cursor: pointer;
+  }
+
+  .user-dropdown-item:hover {
+    background: var(--bg-3);
+    color: var(--text-0);
+  }
+
+  .panel-reopen {
+    background: none;
+    border: none;
+    color: var(--text-2);
+    padding: 4px;
+    cursor: pointer;
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+  }
+
+  .panel-reopen:hover {
+    color: var(--text-1);
+    background: var(--bg-2);
+  }
+
+  .panel-reopen svg {
+    width: 16px;
+    height: 16px;
+  }
+
   .right-panel {
     flex-shrink: 0;
     border-left: 1px solid var(--border);
     overflow: hidden;
+    position: relative;
+  }
+
+  .panel-close {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 1;
+    background: none;
+    border: none;
+    color: var(--text-2);
+    font-size: 18px;
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: var(--radius);
+  }
+
+  .panel-close:hover {
+    color: var(--text-0);
+    background: var(--bg-2);
   }
 
   .right-panel-backdrop {
@@ -692,14 +1070,9 @@ function handleEscape(e: KeyboardEvent) {
     display: none;
   }
 
-  /* Right panel: hide on small screens, show on toggle */
+  /* Right panel: overlay on narrow viewports */
   @media (max-width: 1024px) {
     .right-panel {
-      display: none;
-    }
-
-    .right-panel.right-panel-open {
-      display: block;
       position: fixed;
       top: 0;
       right: 0;
@@ -752,9 +1125,17 @@ function handleEscape(e: KeyboardEvent) {
     }
   }
 
-  @media (max-width: 1024px) {
+  @media (max-width: 767px) {
     .sidebar-header {
       display: none;
+    }
+
+    .header-hamburger {
+      display: flex;
+    }
+
+    .page-breadcrumbs {
+      font-size: 15px;
     }
   }
 
