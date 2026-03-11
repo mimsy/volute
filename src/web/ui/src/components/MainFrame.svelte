@@ -270,16 +270,6 @@ let contextLabel = $derived.by(() => {
   }
 
   @media (max-width: 767px) {
-    .mobile-header {
-      display: flex;
-    }
-  }
-
-  @media (max-width: 767px) {
-    .hamburger-btn {
-      display: block;
-    }
-
     .frame-content.padded {
       padding: 16px;
     }

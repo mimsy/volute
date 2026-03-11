@@ -620,6 +620,7 @@ function handleGlobalClick(e: MouseEvent) {
       <div class="content-area">
         <div class="main-column">
           <div class="page-header">
+            <button class="header-hamburger" onclick={toggleSidebar}>&#9776;</button>
             <div class="page-breadcrumbs">
               {#each breadcrumbs as crumb, i}
                 {#if i > 0}
@@ -875,6 +876,24 @@ function handleGlobalClick(e: MouseEvent) {
     flex-shrink: 0;
   }
 
+  .header-hamburger {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--text-1);
+    font-size: 18px;
+    padding: 4px 8px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .header-hamburger:hover {
+    background: var(--bg-2);
+  }
+
   .page-breadcrumbs {
     display: flex;
     align-items: baseline;
@@ -884,6 +903,8 @@ function handleGlobalClick(e: MouseEvent) {
     font-weight: 300;
     color: var(--text-0);
     letter-spacing: 0.02em;
+    min-width: 0;
+    overflow: hidden;
   }
 
   .crumb-sep {
@@ -906,6 +927,9 @@ function handleGlobalClick(e: MouseEvent) {
 
   .crumb-current {
     color: var(--text-0);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .header-actions {
@@ -1095,8 +1119,12 @@ function handleGlobalClick(e: MouseEvent) {
       display: none;
     }
 
-    .page-header {
-      display: none;
+    .header-hamburger {
+      display: flex;
+    }
+
+    .page-breadcrumbs {
+      font-size: 15px;
     }
   }
 
