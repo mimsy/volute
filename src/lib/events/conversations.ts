@@ -447,6 +447,134 @@ export async function findDMConversation(
   return null;
 }
 
+export async function listConversationsForMind(
+  mindName: string,
+): Promise<(Conversation & { participants: Participant[]; lastMessage?: LastMessageSummary })[]> {
+  const db = await getDb();
+
+  // Find conversations by mind_name
+  const byName = (await db
+    .select()
+    .from(conversations)
+    .where(eq(conversations.mind_name, mindName))
+    .orderBy(desc(conversations.updated_at))
+    .all()) as Conversation[];
+
+  // Also find conversations where the mind is a participant
+  const mindUser = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.username, mindName), eq(users.user_type, "mind")))
+    .get();
+
+  const byNameIds = new Set(byName.map((c) => c.id));
+  let byParticipation: Conversation[] = [];
+  if (mindUser) {
+    const participantRows = await db
+      .select({ conversation_id: conversationParticipants.conversation_id })
+      .from(conversationParticipants)
+      .where(eq(conversationParticipants.user_id, mindUser.id))
+      .all();
+    const extraIds = participantRows
+      .map((r) => r.conversation_id)
+      .filter((id) => !byNameIds.has(id));
+    if (extraIds.length > 0) {
+      byParticipation = (await db
+        .select()
+        .from(conversations)
+        .where(inArray(conversations.id, extraIds))
+        .orderBy(desc(conversations.updated_at))
+        .all()) as Conversation[];
+    }
+  }
+
+  const convs = [...byName, ...byParticipation].sort(
+    (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+  );
+
+  if (convs.length === 0) return [];
+
+  const convIds = convs.map((c) => c.id);
+  const rows = await db
+    .select({
+      conversationId: conversationParticipants.conversation_id,
+      userId: users.id,
+      username: users.username,
+      userType: users.user_type,
+      role: conversationParticipants.role,
+      displayName: users.display_name,
+      description: users.description,
+      avatar: users.avatar,
+    })
+    .from(conversationParticipants)
+    .innerJoin(users, eq(conversationParticipants.user_id, users.id))
+    .where(inArray(conversationParticipants.conversation_id, convIds));
+
+  const byConv = new Map<string, Participant[]>();
+  for (const r of rows) {
+    let arr = byConv.get(r.conversationId);
+    if (!arr) {
+      arr = [];
+      byConv.set(r.conversationId, arr);
+    }
+    arr.push({
+      userId: r.userId,
+      username: r.username,
+      userType: r.userType as "brain" | "mind",
+      role: r.role as "owner" | "member",
+      displayName: r.displayName,
+      description: r.description,
+      avatar: r.avatar,
+    });
+  }
+
+  // Fetch last message per conversation
+  const lastMsgIds = await db
+    .select({
+      conversationId: messages.conversation_id,
+      maxId: sql<number>`MAX(${messages.id})`,
+    })
+    .from(messages)
+    .where(inArray(messages.conversation_id, convIds))
+    .groupBy(messages.conversation_id);
+
+  const byLastMsg = new Map<string, LastMessageSummary>();
+  if (lastMsgIds.length > 0) {
+    const msgRows = await db
+      .select()
+      .from(messages)
+      .where(
+        inArray(
+          messages.id,
+          lastMsgIds.map((r) => r.maxId),
+        ),
+      );
+    for (const m of msgRows) {
+      let text = "";
+      try {
+        const parsed = JSON.parse(m.content);
+        const blocks: ContentBlock[] = Array.isArray(parsed) ? parsed : [];
+        const textBlock = blocks.find((b) => b.type === "text");
+        if (textBlock && "text" in textBlock) text = textBlock.text;
+      } catch {
+        text = m.content;
+      }
+      byLastMsg.set(m.conversation_id, {
+        role: m.role as Message["role"],
+        senderName: m.sender_name,
+        text,
+        createdAt: m.created_at,
+      });
+    }
+  }
+
+  return convs.map((c) => ({
+    ...c,
+    participants: byConv.get(c.id) ?? [],
+    lastMessage: byLastMsg.get(c.id),
+  }));
+}
+
 export async function deleteConversation(id: string): Promise<void> {
   const db = await getDb();
   await db.delete(conversations).where(eq(conversations.id, id));
