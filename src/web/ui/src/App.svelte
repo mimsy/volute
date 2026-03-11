@@ -595,7 +595,7 @@ function handleEscape(e: KeyboardEvent) {
               {/if}
               {#if hasRightPanel && rightPanelCollapsed}
                 <button class="panel-reopen" onclick={toggleRightPanel} title="Show sidebar">
-                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="2"/><path d="M10 2v12"/></svg>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5"/><circle cx="15" cy="14" r="1.5"/><line x1="12" y1="4" x2="12" y2="8"/><circle cx="12" cy="3" r="1"/></svg>
                 </button>
               {/if}
             </div>
