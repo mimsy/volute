@@ -81,7 +81,7 @@ $effect(() => {
     recentMessages = [];
     return;
   }
-  fetchConversationMessages(conv.id, { limit: 20 })
+  fetchConversationMessages(conv.id, { limit: 10 })
     .then((res) => {
       recentMessages = res.items;
       requestAnimationFrame(() => {

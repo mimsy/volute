@@ -41,7 +41,7 @@ $effect(() => {
   const convs = topConversations;
   for (const conv of convs) {
     if (messagesMap[conv.id]) continue;
-    fetchConversationMessages(conv.id, { limit: 20 })
+    fetchConversationMessages(conv.id, { limit: 10 })
       .then((res) => {
         messagesMap[conv.id] = res.items;
         requestAnimationFrame(() => {
