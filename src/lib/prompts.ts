@@ -81,13 +81,13 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
     category: "mind",
   },
   reply_instructions: {
-    content: 'To reply to this message, use: volute send ${channel} "your message"',
+    content: 'To reply to this message, use: volute chat send ${channel} "your message"',
     description: "First-message reply hint injected via hook",
     variables: ["channel"],
     category: "mind",
   },
   channel_invite: {
-    content: `[Channel Invite]\n\${headers}\n\n[\${sender} — \${time}]\n\${preview}\n\nFurther messages will be saved to \${filePath}\n\nTo accept, add to .config/routes.json:\n  Rule: { "channel": "\${channel}", "session": "\${suggestedSession}" }\n\${batchRecommendation}To respond, use: volute send \${channel} "your message"\nTo reject, delete \${filePath}`,
+    content: `[Channel Invite]\n\${headers}\n\n[\${sender} — \${time}]\n\${preview}\n\nFurther messages will be saved to \${filePath}\n\nTo accept, add to .config/routes.json:\n  Rule: { "channel": "\${channel}", "session": "\${suggestedSession}" }\n\${batchRecommendation}To respond, use: volute chat send \${channel} "your message"\nTo reject, delete \${filePath}`,
     description: "New channel notification template",
     variables: [
       "headers",

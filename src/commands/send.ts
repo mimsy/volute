@@ -7,8 +7,17 @@ import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { parseTarget } from "../lib/parse-target.js";
 import { readStdin } from "../lib/read-stdin.js";
-import { findMind } from "../lib/registry.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
+
+/** Check if a name is a registered mind via the daemon API (avoids direct DB access). */
+async function isMind(name: string): Promise<boolean> {
+  try {
+    const res = await daemonFetch(`/api/minds/${encodeURIComponent(name)}`);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 const IMAGE_MEDIA_TYPES: Record<string, string> = {
   ".png": "image/png",
@@ -136,17 +145,17 @@ export async function run(args: string[]) {
 
   if (!target || (!message && !images)) {
     console.error(
-      'Usage: volute send <target> "<message>" [--mind <name>] [--image <path>] [--wait]',
+      'Usage: volute chat send <target> "<message>" [--mind <name>] [--image <path>] [--wait]',
     );
-    console.error('       echo "message" | volute send <target> [--mind <name>]');
+    console.error('       echo "message" | volute chat send <target> [--mind <name>]');
     console.error("");
     console.error("Examples:");
-    console.error('  volute send @other-mind "hello"');
-    console.error('  volute send animal-chat "hello everyone"');
-    console.error('  volute send discord:server/channel "hello"');
-    console.error('  volute send @mind "check this out" --image photo.png');
-    console.error("  volute send @mind --image photo.png");
-    console.error('  volute send @mind "hello" --wait');
+    console.error('  volute chat send @other-mind "hello"');
+    console.error('  volute chat send animal-chat "hello everyone"');
+    console.error('  volute chat send discord:server/channel "hello"');
+    console.error('  volute chat send @mind "check this out" --image photo.png');
+    console.error("  volute chat send @mind --image photo.png");
+    console.error('  volute chat send @mind "hello" --wait');
     process.exit(1);
   }
 
@@ -154,7 +163,7 @@ export async function run(args: string[]) {
   if (target === "system" || target === "@system") {
     console.error(
       "Can't send to system — system messages are automated.\n" +
-        'To reply to a person, use their username from the message prefix (e.g. volute send @username "msg").',
+        'To reply to a person, use their username from the message prefix (e.g. volute chat send @username "msg").',
     );
     process.exit(1);
   }
@@ -162,7 +171,7 @@ export async function run(args: string[]) {
   let parsed = parseTarget(target);
 
   // If bare name matches a registered mind, treat as a DM (e.g. "sprout" → "@sprout")
-  if (!parsed.isDM && parsed.platform === "volute" && (await findMind(parsed.identifier))) {
+  if (!parsed.isDM && parsed.platform === "volute" && (await isMind(parsed.identifier))) {
     parsed = {
       platform: "volute",
       identifier: `@${parsed.identifier}`,
@@ -184,11 +193,11 @@ export async function run(args: string[]) {
     const mindSelf = process.env.VOLUTE_MIND;
     const sender = flags.sender || mindSelf || userInfo().username;
 
-    waitMindName = (await findMind(targetName)) ? targetName : undefined;
+    const targetIsMind = await isMind(targetName);
+    waitMindName = targetIsMind ? targetName : undefined;
 
     // When a mind sends to a non-mind (human), use the sender mind's context
     // so the conversation is created under the mind (humans aren't in the registry).
-    const targetIsMind = !!(await findMind(targetName));
     const contextMind = mindSelf && !targetIsMind ? mindSelf : targetName;
     const participants = mindSelf && !targetIsMind ? [targetName] : [sender];
 

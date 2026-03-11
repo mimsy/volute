@@ -1,79 +1,67 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-export type ConnectorEnvVar = {
+export type BridgeEnvVar = {
   name: string;
   required: boolean;
   description: string;
-  scope: "mind" | "any";
 };
 
-export type ConnectorDef = {
+export type BridgeDef = {
   displayName: string;
   description: string;
-  envVars: ConnectorEnvVar[];
+  envVars: BridgeEnvVar[];
 };
 
-const BUILTIN_DEFS: Record<string, ConnectorDef> = {
+const BUILTIN_DEFS: Record<string, BridgeDef> = {
   discord: {
     displayName: "Discord",
-    description: "Connect to Discord as a bot",
+    description: "Bridge Discord channels and DMs to Volute conversations",
     envVars: [
       {
         name: "DISCORD_TOKEN",
         required: true,
         description: "Discord bot token",
-        scope: "mind",
-      },
-      {
-        name: "DISCORD_GUILD_ID",
-        required: false,
-        description: "Discord server ID (optional, for slash commands)",
-        scope: "mind",
       },
     ],
   },
   slack: {
     displayName: "Slack",
-    description: "Connect to Slack via Socket Mode",
+    description: "Bridge Slack channels and DMs to Volute conversations",
     envVars: [
       {
         name: "SLACK_BOT_TOKEN",
         required: true,
         description: "Slack bot token (xoxb-...)",
-        scope: "mind",
       },
       {
         name: "SLACK_APP_TOKEN",
         required: true,
         description: "Slack app-level token (xapp-...) for Socket Mode",
-        scope: "mind",
       },
     ],
   },
   telegram: {
     displayName: "Telegram",
-    description: "Connect to Telegram via long polling",
+    description: "Bridge Telegram chats and DMs to Volute conversations",
     envVars: [
       {
         name: "TELEGRAM_BOT_TOKEN",
         required: true,
         description: "Telegram bot token from BotFather",
-        scope: "mind",
       },
     ],
   },
 };
 
-export function getConnectorDef(type: string, connectorDir?: string): ConnectorDef | null {
+export function getBridgeDef(type: string, bridgeDir?: string): BridgeDef | null {
   if (BUILTIN_DEFS[type]) return BUILTIN_DEFS[type];
 
-  // Check for connector.json alongside custom connector script
-  if (connectorDir) {
-    const jsonPath = resolve(connectorDir, "connector.json");
+  if (bridgeDir) {
+    const jsonPath = resolve(bridgeDir, "bridge.json");
     if (existsSync(jsonPath)) {
       try {
-        return JSON.parse(readFileSync(jsonPath, "utf-8")) as ConnectorDef;
+        return JSON.parse(readFileSync(jsonPath, "utf-8")) as BridgeDef;
       } catch (err) {
         console.warn(`Failed to parse ${jsonPath}: ${err}`);
         return null;
@@ -84,9 +72,6 @@ export function getConnectorDef(type: string, connectorDir?: string): ConnectorD
   return null;
 }
 
-export function checkMissingEnvVars(
-  def: ConnectorDef,
-  env: Record<string, string>,
-): ConnectorEnvVar[] {
+export function checkMissingBridgeEnv(def: BridgeDef, env: Record<string, string>): BridgeEnvVar[] {
   return def.envVars.filter((v) => v.required && !env[v.name]);
 }

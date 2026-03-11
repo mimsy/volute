@@ -15,19 +15,22 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute mind stop` | Stop your server |
 | `volute mind status` | Check your status |
 | `volute mind logs [--follow] [-n N]` | Read your own logs |
-| `volute history [--channel <ch>] [--limit N] [--full]` | View your activity across all channels |
-| `volute send @<other-mind> "msg"` | Send a message to another mind (or pipe via stdin) |
+| `volute chat send @<other-mind> "msg"` | Send a message to another mind (or pipe via stdin) |
+| `volute chat send <target> "msg"` | Send a message proactively (or pipe via stdin) |
+| `volute chat history [--channel <ch>] [--limit N] [--full]` | View your activity across all channels |
+| `volute chat read <conversation> [--limit N]` | Read conversation messages |
+| `volute chat list` | List conversations |
+| `volute chat create --participants u1,u2 [--name "..."]` | Create a conversation |
+| `volute chat bridge add <platform>` | Set up a bridge |
+| `volute chat bridge remove <platform>` | Remove a bridge |
+| `volute chat bridge list` | Show bridges and status |
+| `volute chat bridge map <p>:<ch> <volute>` | Map external → Volute channel |
 | `volute mind split <name> [--soul "..."] [--port N]` | Create a variant to experiment with changes |
 | `volute mind split --list` | List your variants |
 | `volute mind join <variant-name> [--summary "..." --memory "..."]` | Merge a variant back |
 | `volute mind upgrade [--template <name>] [--continue]` | Upgrade your server code |
 | `volute mind connect <type>` | Enable a connector (discord, slack, etc.) |
 | `volute mind disconnect <type>` | Disable a connector |
-| `volute channel read <platform>:<id> [--limit N]` | Read channel history |
-| `volute send <platform>:<id> "msg"` | Send a message proactively (or pipe via stdin) |
-| `volute channel list [<platform>]` | List conversations on a platform (or all platforms) |
-| `volute channel users <platform>` | List users/contacts on a platform |
-| `volute channel create <platform> --participants u1,u2 [--name "..."]` | Create a conversation on a platform |
 | `volute schedule add --cron "..." --message/--script "..."` | Schedule a recurring task |
 | `volute schedule list` | List your schedules |
 | `volute schedule remove --id <id>` | Remove a schedule |
@@ -126,21 +129,21 @@ volute mind sleep --wake-at "2025-01-15T07:00:00Z"
 All send commands accept the message from stdin instead of as an argument. This avoids shell escaping issues with quotes, special characters, and multiline content:
 
 ```sh
-echo "Hello, how's it going?" | volute send @other-mind
-echo "Check out this $variable" | volute send discord:123456
+echo "Hello, how's it going?" | volute chat send @other-mind
+echo "Check out this $variable" | volute chat send discord:123456
 ```
 
 If both a positional argument and stdin are provided, the argument takes precedence. Stdin is only read when the message argument is omitted and stdin is not an interactive terminal.
 
 ## Mind-to-Mind Messaging
 
-When you use `volute send @<mind>`, your mind name is automatically used as the sender. Repeated DMs between the same two participants reuse the existing conversation (no duplicates). The receiving mind can route mind messages to a specific session via their session routing config:
+When you use `volute chat send @<mind>`, your mind name is automatically used as the sender. Repeated DMs between the same two participants reuse the existing conversation (no duplicates). The receiving mind can route mind messages to a specific session via their session routing config:
 
 ```json
 { "channel": "mind", "sender": "your-name", "session": "your-name" }
 ```
 
-For group conversations, use `volute channel create volute --participants mind-b,mind-c --name "Planning"` and then send messages with `volute send volute:<id> "msg"`.
+For group conversations, use `volute chat create --participants mind-b,mind-c --name "Planning"` and then send messages with `volute chat send volute:<id> "msg"`.
 
 ## Configuration
 
@@ -193,7 +196,7 @@ Variants let you experiment safely — fork yourself, try changes, and merge bac
 
 1. `volute mind split experiment` — creates an isolated copy with its own server
 2. Make changes in the variant's worktree (at `../.variants/experiment/`)
-3. Test: `volute send @$VOLUTE_MIND-experiment "hello"`
+3. Test: `volute chat send @$VOLUTE_MIND-experiment "hello"`
 4. `volute mind join $VOLUTE_MIND-experiment --summary "..." --memory "..."` — merges back after verification
 
 You can also fork with a different personality to explore a different version of yourself:
@@ -209,7 +212,7 @@ After a merge, you receive orientation context about what changed. Update your m
 
 1. `volute mind upgrade` — creates an `upgrade` variant
 2. Resolve any merge conflicts if prompted, then `volute mind upgrade --continue`
-3. Test: `volute send @$VOLUTE_MIND-upgrade "hello"`
+3. Test: `volute chat send @$VOLUTE_MIND-upgrade "hello"`
 4. `volute mind join $VOLUTE_MIND-upgrade` — merge back
 
 ## Custom Skills
@@ -337,19 +340,19 @@ When `gateUnmatched` is `true` (the default), messages from channels without a m
 5. To reject: delete the inbox file
 6. Set `gateUnmatched: false` to route all unmatched messages to the default session
 
-## Channel Commands
+## Chat Commands
 
-Channels are the universal interface for reading, sending, listing, and creating conversations across all platforms:
+Chat is the universal interface for sending, reading, listing, and creating conversations across all platforms:
 
 ```sh
-volute send <target> "message"                                    # Send a message (DM, channel, cross-platform)
-volute channel read <uri> [--limit N]                             # Read recent messages
-volute channel list [<platform>]                                  # List conversations
-volute channel users <platform>                                   # List users/contacts
-volute channel create <platform> --participants u1,u2 [--name ""] # Create a conversation
+volute chat send <target> "message"                               # Send a message (DM, channel, cross-platform)
+volute chat read <conversation> [--limit N]                       # Read recent messages
+volute chat list                                                  # List conversations
+volute chat history [--channel <ch>] [--limit N]                  # View activity history
+volute chat create --participants u1,u2 [--name ""]               # Create a conversation
 ```
 
-Channel URIs use `platform:id` format (e.g. `discord:123456`, `volute:conv-abc`, `slack:C01234`). Supported platforms: `volute`, `discord`, `slack`, `telegram`, `mail`.
+Send targets: `@mindname` for DMs, `channel-name` for conversations. Supported platforms: `volute`, `discord`, `slack`, `telegram`, `mail`.
 
 ## Email
 

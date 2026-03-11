@@ -4,6 +4,7 @@ import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { writeChannelEntry } from "../../../connectors/sdk.js";
 import { getOrCreateMindUser } from "../../../lib/auth.js";
+import { routeOutboundBridge } from "../../../lib/bridge-outbound.js";
 import { deliverMessage } from "../../../lib/delivery/message-delivery.js";
 import { subscribe } from "../../../lib/events/conversation-events.js";
 import {
@@ -198,6 +199,14 @@ const app = new Hono<AuthEnv>()
     // Save user message
     await addMessage(conversationId, "user", senderName, contentBlocks);
 
+    // If sender is a mind, check for outbound bridge routing (fire-and-forget)
+    const senderIsMind = user.id === 0 && body.sender && (await findMind(body.sender));
+    if (senderIsMind) {
+      routeOutboundBridge(conversationId!, senderName, contentBlocks).catch((err) => {
+        log.warn("outbound bridge routing failed", log.errorData(err));
+      });
+    }
+
     // Fan out to all running mind participants
     const isDM = conv?.type === "dm";
     await fanOutToMinds({
@@ -282,6 +291,13 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     }
 
     await addMessage(body.conversationId, "user", senderName, contentBlocks);
+
+    // If sender is a mind, check for outbound bridge routing (fire-and-forget)
+    if (user.user_type === "mind") {
+      routeOutboundBridge(body.conversationId, senderName, contentBlocks).catch((err) => {
+        log.warn("outbound bridge routing failed", log.errorData(err));
+      });
+    }
 
     // Fan out to running mind participants
     const isDM = conv.type === "dm";

@@ -76,5 +76,5 @@ export async function run(args: string[]) {
 
   console.log(`\nSeeded mind: ${name} (port ${createData.port})`);
   console.log(`\nTalk to your new mind:`);
-  console.log(`  volute send @${name} "hello"`);
+  console.log(`  volute chat send @${name} "hello"`);
 }

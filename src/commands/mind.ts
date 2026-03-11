@@ -44,12 +44,6 @@ export async function run(args: string[]) {
     case "export":
       await import("./export.js").then((m) => m.run(args.slice(1)));
       break;
-    case "connect":
-      await import("./connector.js").then((m) => m.run(["connect", ...args.slice(1)]));
-      break;
-    case "disconnect":
-      await import("./connector.js").then((m) => m.run(["disconnect", ...args.slice(1)]));
-      break;
     case "seed":
       await import("./seed.js").then((m) => m.run(args.slice(1)));
       break;
@@ -98,8 +92,6 @@ function printUsage() {
   volute mind list
   volute mind status [name]
   volute mind logs [name] [--follow] [-n N]
-  volute mind connect <type> [--mind <name>]
-  volute mind disconnect <type> [--mind <name>]
   volute mind sprout
   volute mind sleep [name] [--wake-at <time>]
   volute mind wake [name]
@@ -107,7 +99,7 @@ function printUsage() {
   volute mind join <variant-name> [--summary "..." --justification "..." --memory "..."] [--skip-verify]
   volute mind upgrade [name] [--template <name>] [--continue] [--accept]
   volute mind import <path> [--name <name>] [--session <path>] [--template <name>]
-  volute mind export <name> [--include-env] [--include-identity] [--include-connectors] [--include-history] [--include-sessions] [--all] [--output <path>]
+  volute mind export <name> [--include-env] [--include-identity] [--include-history] [--include-sessions] [--all] [--output <path>]
 
 Mind name can be omitted (where shown as [name]) if VOLUTE_MIND is set.`);
 }

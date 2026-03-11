@@ -6,7 +6,7 @@ export type HoverProfile = {
   displayName?: string | null;
   description?: string | null;
   avatarUrl?: string | null;
-  userType: "brain" | "mind";
+  userType: "brain" | "mind" | "puppet";
   created?: string;
 };
 

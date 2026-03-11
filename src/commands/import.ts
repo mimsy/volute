@@ -12,9 +12,9 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, resolve } from "node:path";
-import { mindEnvPath, readEnv, writeEnv } from "../lib/env.js";
+import { setBridgeConfig } from "../lib/bridges.js";
+import { readEnv, sharedEnvPath, writeEnv } from "../lib/env.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { readVoluteConfig, writeVoluteConfig } from "../lib/volute-config.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -254,8 +254,8 @@ type OpenClawDiscordConfig = {
   guilds?: Record<string, { channels?: Record<string, { allow?: boolean }> }>;
 };
 
-/** Import connector config from ~/.openclaw/openclaw.json into the new mind. */
-export function importOpenClawConnectors(name: string, mindDirPath: string) {
+/** Import connector config from ~/.openclaw/openclaw.json as a system-level bridge. */
+export function importOpenClawConnectors(name: string, _mindDirPath: string) {
   const configPath = resolve(homedir(), ".openclaw/openclaw.json");
   if (!existsSync(configPath)) return;
 
@@ -270,36 +270,38 @@ export function importOpenClawConnectors(name: string, mindDirPath: string) {
   const discord = config.channels?.discord;
   if (!discord?.enabled || !discord.token) return;
 
-  // Write DISCORD_TOKEN to mind env
-  const envPath = mindEnvPath(name);
+  // Write DISCORD_TOKEN to shared (system-level) env
+  const envPath = sharedEnvPath();
   const env = readEnv(envPath);
-  env.DISCORD_TOKEN = discord.token;
-  writeEnv(envPath, env);
+  if (!env.DISCORD_TOKEN) {
+    env.DISCORD_TOKEN = discord.token;
+    writeEnv(envPath, env);
+  }
 
-  // Extract followed channel names from guilds config
-  const channelNames = new Set<string>();
+  // Extract followed channel names from guilds config for mapping
+  const channelMappings: Record<string, string> = {};
   if (discord.guilds) {
     for (const guild of Object.values(discord.guilds)) {
       if (!guild.channels) continue;
-      for (const [name, ch] of Object.entries(guild.channels)) {
-        if (ch.allow) channelNames.add(name);
+      for (const [channelName, ch] of Object.entries(guild.channels)) {
+        if (ch.allow) {
+          // Map external channel to same-named Volute channel
+          channelMappings[channelName] = channelName;
+        }
       }
     }
   }
 
-  // Enable discord connector in volute.json
-  const voluteConfig = readVoluteConfig(mindDirPath) ?? {};
-  const connectors = new Set(voluteConfig.connectors ?? []);
-  connectors.add("discord");
-  voluteConfig.connectors = [...connectors];
-  if (channelNames.size > 0) {
-    voluteConfig.discord = { channels: [...channelNames] };
-  }
-  writeVoluteConfig(mindDirPath, voluteConfig);
+  // Set up system-level Discord bridge with this mind as default
+  setBridgeConfig("discord", {
+    enabled: true,
+    defaultMind: name,
+    channelMappings,
+  });
 
-  console.log("Imported Discord connector config");
-  if (channelNames.size > 0) {
-    console.log(`Imported followed channels: ${[...channelNames].join(", ")}`);
+  console.log(`Imported Discord as system bridge (default mind: ${name})`);
+  if (Object.keys(channelMappings).length > 0) {
+    console.log(`Mapped channels: ${Object.keys(channelMappings).join(", ")}`);
   }
 }
 

@@ -23,7 +23,6 @@ import { deleteMindUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { consolidateMemory } from "../../lib/consolidate.js";
 import { convertSession } from "../../lib/convert-session.js";
-import { getConnectorManager } from "../../lib/daemon/connector-manager.js";
 import { getMindManager } from "../../lib/daemon/mind-manager.js";
 // Lifecycle functions from mind-service.ts
 import {
@@ -141,18 +140,6 @@ async function getMindStatus(name: string, port: number) {
       displayName: provider.displayName,
       status: status === "running" ? "connected" : "disconnected",
       showToolCalls: channelConfig?.[provider.name]?.showToolCalls ?? provider.showToolCalls,
-    });
-  }
-
-  // External connectors
-  const connectorStatuses = getConnectorManager().getConnectorStatus(name);
-  for (const cs of connectorStatuses) {
-    const provider = CHANNELS[cs.type];
-    channels.push({
-      name: provider?.name ?? cs.type,
-      displayName: provider?.displayName ?? cs.type,
-      status: cs.running ? "connected" : "disconnected",
-      showToolCalls: channelConfig?.[cs.type]?.showToolCalls ?? provider?.showToolCalls ?? false,
     });
   }
 
@@ -472,7 +459,7 @@ async function importFromHomeOnlyArchive(
       cpSync(extractedHome, resolve(dest, "home"), { recursive: true });
     }
 
-    // 3. Overlay .mind/ from archive (preserves connectors, schedules, etc.)
+    // 3. Overlay .mind/ from archive (preserves schedules, etc.)
     const extractedMindInternal = resolve(extractedMindDir, ".mind");
     if (existsSync(extractedMindInternal)) {
       cpSync(extractedMindInternal, resolve(dest, ".mind"), { recursive: true });
@@ -987,7 +974,7 @@ const app = new Hono<AuthEnv>()
         }
       }
 
-      // Import connectors
+      // Import OpenClaw connectors as system bridges (non-fatal)
       importOpenClawConnectors(name, dest);
 
       // Add shared worktree (non-fatal)
@@ -1155,7 +1142,7 @@ const app = new Hono<AuthEnv>()
         }
       }
 
-      // Stop running mind and connectors
+      // Stop running mind
       if (manager.isRunning(name)) {
         await stopMindFullService(name);
       }
@@ -1368,7 +1355,7 @@ const app = new Hono<AuthEnv>()
     const dir = mindDir(name);
     const force = c.req.query("force") === "true";
 
-    // Stop connectors and mind if running
+    // Stop mind if running
     const manager = getMindManager();
     if (manager.isRunning(name)) {
       await stopMindFullService(name);
