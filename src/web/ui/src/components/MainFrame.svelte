@@ -31,7 +31,6 @@ let {
   onSelectPages,
   onSelectConversation,
   onSelectNotes,
-  onSelectNote,
   onTypingNames,
   onToggleSidebar,
   onOpenRightPanel,
@@ -50,7 +49,6 @@ let {
   onSelectPages: () => void;
   onSelectConversation: (id: string) => void;
   onSelectNotes: () => void;
-  onSelectNote: (author: string, slug: string) => void;
   onTypingNames?: (names: string[]) => void;
   onToggleSidebar?: () => void;
   onOpenRightPanel?: () => void;
@@ -135,7 +133,7 @@ let contextLabel = $derived.by(() => {
         <span class="breadcrumb-current">{selection.slug}</span>
       </div>
       <div class="frame-content padded">
-        <NoteView author={selection.mind} slug={selection.slug} {username} onBack={() => navigate(`/minds/${selection.mind}/notes`)} onNavigate={(author, slug) => navigate(`/minds/${author}/notes/${slug}`)} />
+        <NoteView author={selection.mind} slug={selection.slug} {username} onNavigate={(author, slug) => navigate(`/minds/${author}/notes/${slug}`)} />
       </div>
     {:else if selection.kind === "mind-page"}
       <div class="breadcrumbs">
@@ -180,20 +178,22 @@ let contextLabel = $derived.by(() => {
         <span class="breadcrumb-current">Notes</span>
       </div>
       <div class="frame-content padded">
-        <Notes onSelectNote={onSelectNote} />
+        <Notes />
       </div>
     {:else if selection.kind === "note"}
       <div class="breadcrumbs">
         <button class="breadcrumb-link" onclick={onSelectNotes}>Notes</button>
         <span class="breadcrumb-sep">/</span>
-        <span class="breadcrumb-current">{selection.author}/{selection.slug}</span>
+        <button class="breadcrumb-link" onclick={() => navigate(`/minds/${selection.author}`)}>{selection.author}</button>
+        <span class="breadcrumb-sep">/</span>
+        <span class="breadcrumb-current">{selection.slug}</span>
       </div>
       <div class="frame-content padded">
-        <NoteView author={selection.author} slug={selection.slug} {username} onBack={onSelectNotes} onNavigate={onSelectNote} />
+        <NoteView author={selection.author} slug={selection.slug} {username} onNavigate={(author, slug) => navigate(`/minds/${author}/notes/${slug}`)} />
       </div>
     {:else}
       <div class="frame-content padded">
-        <Home {username} {conversations} {sites} {onSelectPage} {onSelectConversation} {onSelectNote} />
+        <Home {username} {conversations} {sites} {onSelectPage} {onSelectConversation} />
       </div>
     {/if}
 

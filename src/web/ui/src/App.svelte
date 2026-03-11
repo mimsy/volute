@@ -340,10 +340,6 @@ function handleSelectNotes() {
   selection = { tab: "system", kind: "notes" };
 }
 
-function handleSelectNote(author: string, slug: string) {
-  selection = { tab: "system", kind: "note", author, slug };
-}
-
 // Resize
 function handleResizeStart(e: PointerEvent) {
   resizing = true;
@@ -491,7 +487,6 @@ function handleEscape(e: KeyboardEvent) {
           onSelectSite={handleSelectSite}
           onSelectPages={handleSelectPages}
           onSelectNotes={handleSelectNotes}
-          onSelectNote={handleSelectNote}
           onTypingNames={(names) => { typingNames = names; }}
           onToggleSidebar={toggleSidebar}
           onOpenRightPanel={hasRightPanel ? openRightPanel : undefined}

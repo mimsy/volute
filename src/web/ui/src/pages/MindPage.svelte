@@ -297,7 +297,7 @@ function extractTextContent(content: ContentBlock[]): string {
       </div>
     {:else if section === "notes"}
       <div class="section-content">
-        <Notes onSelectNote={handleSelectNote} author={name} />
+        <Notes author={name} />
       </div>
     {:else if section === "pages"}
       <div class="section-content">

@@ -11,6 +11,7 @@ import PageThumbnail from "../components/PageThumbnail.svelte";
 import { fetchConversationMessages } from "../lib/client";
 import { formatRelativeTime, getConversationLabel, normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
+import { navigate } from "../lib/navigate";
 
 type ConversationWithDetails = ConversationWithParticipants & {
   lastMessage?: LastMessageSummary;
@@ -33,15 +34,17 @@ let {
   sites,
   onSelectPage,
   onSelectConversation,
-  onSelectNote,
 }: {
   username: string;
   conversations: ConversationWithDetails[];
   sites: Site[];
   onSelectPage: (mind: string, path: string) => void;
   onSelectConversation: (id: string) => void;
-  onSelectNote: (author: string, slug: string) => void;
 } = $props();
+
+function handleSelectNote(noteAuthor: string, slug: string) {
+  navigate(`/minds/${noteAuthor}/notes/${slug}`);
+}
 
 let recentNotes = $state<ApiNote[]>([]);
 
@@ -163,7 +166,7 @@ function extractTextContent(content: ContentBlock[]): string {
               createdAt={item.note.created_at}
               replyTo={item.note.reply_to}
               reactions={item.note.reactions}
-              onSelect={onSelectNote}
+              onSelect={handleSelectNote}
             />
           </div>
         {:else if item.kind === "page"}
