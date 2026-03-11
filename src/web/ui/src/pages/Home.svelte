@@ -6,10 +6,8 @@ import type {
   Message,
   Site,
 } from "@volute/api";
-import NoteCard from "../components/NoteCard.svelte";
-import PageThumbnail from "../components/PageThumbnail.svelte";
 import { fetchConversationMessages } from "../lib/client";
-import { formatRelativeTime, getConversationLabel, normalizeTimestamp } from "../lib/format";
+import { formatRelativeTime, normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
 import { navigate } from "../lib/navigate";
 
@@ -42,8 +40,8 @@ let {
   onSelectConversation: (id: string) => void;
 } = $props();
 
-function handleSelectNote(noteAuthor: string, slug: string) {
-  navigate(`/minds/${noteAuthor}/notes/${slug}`);
+function handleSelectNote(author: string, slug: string) {
+  navigate(`/minds/${author}/notes/${slug}`);
 }
 
 let recentNotes = $state<ApiNote[]>([]);
@@ -59,7 +57,6 @@ $effect(() => {
     });
 });
 
-// Get one message card per recent conversation (top 6)
 let topConversations = $derived(
   [...conversations]
     .filter((c) => (c as any).lastMessage)
@@ -92,7 +89,6 @@ $effect(() => {
   }
 });
 
-// Mixed feed sorted by date
 type FeedItem =
   | { kind: "note"; note: ApiNote; date: string }
   | { kind: "page"; site: string; file: string; modified: string; date: string }
@@ -125,6 +121,20 @@ let feedItems = $derived.by(() => {
   return items;
 });
 
+function getConvLabel(conv: ConversationWithDetails): string {
+  if (conv.type === "channel" && conv.name) return `#${conv.name}`;
+  const parts = conv.participants ?? [];
+  if (conv.type === "dm" && parts.length === 2) {
+    const mind = parts.find((p) => p.userType === "mind");
+    const other = parts.find((p) => p.username !== mind?.username);
+    if (mind && other) return `@${mind.username}`;
+  }
+  const names = parts.map((p) => p.username);
+  if (names.length > 0) return names.join(", ");
+  if (conv.title) return conv.title;
+  return "Conversation";
+}
+
 function formatTime(dateStr: string): string {
   try {
     const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
@@ -147,6 +157,19 @@ function extractTextContent(content: ContentBlock[]): string {
     .map((b) => b.text)
     .join("\n\n");
 }
+
+function scaleIframe(node: HTMLElement) {
+  const iframe = node.querySelector("iframe") as HTMLIFrameElement;
+  if (!iframe) return;
+  const update = () => {
+    const w = node.clientWidth;
+    if (w > 0) iframe.style.transform = `scale(${w / 1280})`;
+  };
+  const ro = new ResizeObserver(update);
+  ro.observe(node);
+  update();
+  return { destroy: () => ro.disconnect() };
+}
 </script>
 
 <div class="home">
@@ -154,38 +177,59 @@ function extractTextContent(content: ContentBlock[]): string {
     <div class="empty-hint">Nothing here yet.</div>
   {:else}
     <div class="feed-grid">
-      {#each feedItems as item, idx (item.kind === "note" ? `note-${item.note.slug}` : item.kind === "page" ? `page-${item.site}-${item.file}` : `msg-${item.conv.id}`)}
+      {#each feedItems as item (item.kind === "note" ? `note-${item.note.slug}` : item.kind === "page" ? `page-${item.site}-${item.file}` : `msg-${item.conv.id}`)}
         {#if item.kind === "note"}
+          {@const note = item.note}
           <div class="feed-item">
-            <NoteCard
-              title={item.note.title}
-              author={item.note.author_username}
-              slug={item.note.slug}
-              excerpt={item.note.content.length > 120 ? `${item.note.content.slice(0, 120)}...` : item.note.content}
-              commentCount={item.note.comment_count}
-              createdAt={item.note.created_at}
-              replyTo={item.note.reply_to}
-              reactions={item.note.reactions}
-              onSelect={handleSelectNote}
-            />
+            <div class="feed-card card-note" role="button" tabindex="0" onclick={() => handleSelectNote(note.author_username, note.slug)} onkeydown={(e) => { if (e.key === 'Enter') handleSelectNote(note.author_username, note.slug); }}>
+              <div class="feed-card-header header-note">
+                <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h8M2 6h10M2 9h6M2 12h9"/></svg>
+                <span class="feed-card-label">{note.title}</span>
+                <span class="feed-card-meta">{formatRelativeTime(note.created_at)}</span>
+              </div>
+              <div class="feed-card-body note-body">
+                <p class="note-excerpt">{note.content.length > 300 ? `${note.content.slice(0, 300)}...` : note.content}</p>
+                <div class="note-footer">
+                  <span class="note-author">{note.author_username}</span>
+                  {#if note.comment_count > 0}
+                    <span class="note-comments">{note.comment_count} {note.comment_count === 1 ? "comment" : "comments"}</span>
+                  {/if}
+                </div>
+              </div>
+            </div>
           </div>
         {:else if item.kind === "page"}
           <div class="feed-item">
-            <PageThumbnail
-              url="/pages/{item.site}/{item.file}"
-              label="{item.site}/{item.file}"
-              sublabel={formatRelativeTime(item.modified)}
-              onclick={() => onSelectPage(item.site, item.file)}
-            />
+            <div class="feed-card card-page" role="button" tabindex="0" onclick={() => onSelectPage(item.site, item.file)} onkeydown={(e) => { if (e.key === 'Enter') onSelectPage(item.site, item.file); }}>
+              <div class="feed-card-header header-page">
+                <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M2 5.5h12"/></svg>
+                <span class="feed-card-label">{item.site}/{item.file}</span>
+                <span class="feed-card-meta">{formatRelativeTime(item.modified)}</span>
+              </div>
+              <div class="feed-card-body page-body" use:scaleIframe>
+                <iframe src="/pages/{item.site}/{item.file}" loading="lazy" sandbox="allow-same-origin" tabindex={-1} title={item.file}></iframe>
+              </div>
+            </div>
           </div>
         {:else}
           {@const conv = item.conv}
-          {@const label = getConversationLabel(conv.participants ?? [], conv.title, username, conv)}
+          {@const label = getConvLabel(conv)}
           {@const messages = messagesMap[conv.id] ?? []}
-          <div class="feed-item message-item">
-            <div class="msg-card">
-              <div class="msg-label">{label}</div>
-              <div class="msg-scroll" bind:this={scrollEls[conv.id]} onscroll={(e) => {
+          <div class="feed-item">
+            <div class="feed-card card-chat" role="button" tabindex="0" onclick={() => onSelectConversation(conv.id)} onkeydown={(e) => { if (e.key === 'Enter') onSelectConversation(conv.id); }}>
+              <div class="feed-card-header header-chat">
+                <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                <span class="feed-card-label">{label}</span>
+                <span class="feed-card-meta">{formatRelativeTime(conv.updated_at)}</span>
+                <button
+                  class="card-action-btn card-action-btn-primary"
+                  onclick={(e) => { e.stopPropagation(); onSelectConversation(conv.id); }}
+                >
+                  Chat
+                </button>
+              </div>
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div class="feed-card-body chat-body" bind:this={scrollEls[conv.id]} onscroll={(e) => {
                 const el = e.currentTarget;
                 if (el.scrollTop < 10) el.scrollTop = 10;
               }}>
@@ -196,7 +240,7 @@ function extractTextContent(content: ContentBlock[]): string {
                     <div class="chat-entry" class:new-sender={showSenderHeader(messages, i)}>
                       {#if showSenderHeader(messages, i)}
                         <div class="chat-entry-header">
-                          <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "you" : "")}</span>
+                          <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? username : "")}</span>
                           <span class="chat-timestamp">{formatTime(msg.created_at)}</span>
                         </div>
                       {/if}
@@ -211,9 +255,6 @@ function extractTextContent(content: ContentBlock[]): string {
                   {/each}
                 {/if}
               </div>
-              <button class="msg-open-btn" onclick={() => onSelectConversation(conv.id)}>
-                Open chat &rarr;
-              </button>
             </div>
           </div>
         {/if}
@@ -244,12 +285,8 @@ function extractTextContent(content: ContentBlock[]): string {
     min-width: 0;
   }
 
-  /* Message card */
-  .message-item {
-    grid-column: span 1;
-  }
-
-  .msg-card {
+  /* Unified card */
+  .feed-card {
     background: var(--bg-0);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
@@ -257,22 +294,157 @@ function extractTextContent(content: ContentBlock[]): string {
     flex-direction: column;
     height: 240px;
     overflow: hidden;
+    transition: border-color 0.15s;
   }
 
-  .msg-label {
-    padding: 8px 12px;
+  .feed-card[role="button"] {
+    cursor: pointer;
+  }
+
+  .feed-card-header {
+    padding: 6px 8px 6px 10px;
     font-size: 13px;
     font-weight: 500;
     color: var(--text-1);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
 
-  .msg-scroll {
+  .feed-card-icon {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+  }
+
+  .card-note .feed-card-icon { color: var(--yellow); }
+  .card-page .feed-card-icon { color: var(--purple); }
+  .card-chat .feed-card-icon { color: var(--blue); }
+
+  .card-note { border-color: color-mix(in srgb, var(--yellow) 25%, var(--border)); }
+  .card-page { border-color: color-mix(in srgb, var(--purple) 25%, var(--border)); }
+  .card-chat { border-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
+
+  .card-note .feed-card-header { border-bottom-color: color-mix(in srgb, var(--yellow) 25%, var(--border)); }
+  .card-page .feed-card-header { border-bottom-color: color-mix(in srgb, var(--purple) 25%, var(--border)); }
+  .card-chat .feed-card-header { border-bottom-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
+
+  .card-note:hover { border-color: color-mix(in srgb, var(--yellow) 50%, var(--border)); }
+  .card-page:hover { border-color: color-mix(in srgb, var(--purple) 50%, var(--border)); }
+  .card-chat:hover { border-color: color-mix(in srgb, var(--blue) 50%, var(--border)); }
+
+  .feed-card-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .feed-card-meta {
+    font-size: 11px;
+    color: var(--text-2);
+    font-weight: 400;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+
+  .feed-card-body {
     flex: 1;
     overflow: auto;
-    padding: 8px 12px;
+    padding: 10px 12px;
     min-height: 0;
+  }
+
+  /* Card action button */
+  .card-action-btn {
+    font-size: 12px;
+    padding: 2px 10px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    flex-shrink: 0;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    transition: color 0.15s, border-color 0.15s;
+  }
+
+  .card-action-btn:hover {
+    color: var(--text-1);
+    border-color: var(--border-bright);
+  }
+
+  .card-action-btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg-0);
+  }
+
+  .card-action-btn-primary:hover {
+    opacity: 0.85;
+    color: var(--bg-0);
+    border-color: var(--accent);
+  }
+
+  /* Note card body */
+  .note-body {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  .note-excerpt {
+    font-size: 13px;
+    color: var(--text-1);
+    margin: 0;
+    overflow: hidden;
+    line-height: 1.5;
+    flex: 1;
+  }
+
+  .note-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    margin-top: 6px;
+  }
+
+  .note-author {
+    font-size: 11px;
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  .note-comments {
+    font-size: 11px;
+    color: var(--text-2);
+  }
+
+  /* Page card body */
+  .page-body {
+    padding: 0;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .page-body iframe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1280px;
+    height: 960px;
+    transform-origin: top left;
+    pointer-events: none;
+    border: none;
+    background: white;
+  }
+
+  /* Chat card body */
+  .chat-body {
+    padding: 8px 12px;
   }
 
   .msg-empty {
@@ -280,25 +452,6 @@ function extractTextContent(content: ContentBlock[]): string {
     font-size: 13px;
     padding: 16px 0;
     text-align: center;
-  }
-
-  .msg-open-btn {
-    display: block;
-    width: 100%;
-    padding: 6px;
-    background: var(--accent-dim);
-    color: var(--accent);
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    border-top: 1px solid var(--border);
-    text-align: center;
-    flex-shrink: 0;
-    transition: background 0.15s;
-  }
-
-  .msg-open-btn:hover {
-    background: var(--accent-bg);
   }
 
   /* Chat entries */
