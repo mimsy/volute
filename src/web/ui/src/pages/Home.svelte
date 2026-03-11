@@ -1,350 +1,346 @@
 <script lang="ts">
 import type {
-  ActivityItem,
+  ContentBlock,
   ConversationWithParticipants,
   LastMessageSummary,
-  Mind,
-  RecentPage,
+  Message,
+  Site,
 } from "@volute/api";
-import StatusBadge from "../components/StatusBadge.svelte";
-import {
-  formatRelativeTime,
-  getConversationLabel,
-  getDisplayStatus,
-  normalizeTimestamp,
-} from "../lib/format";
+import NoteCard from "../components/NoteCard.svelte";
+import PageThumbnail from "../components/PageThumbnail.svelte";
+import { fetchConversationMessages } from "../lib/client";
+import { formatRelativeTime, getConversationLabel, normalizeTimestamp } from "../lib/format";
+import { renderMarkdown } from "../lib/markdown";
 
 type ConversationWithDetails = ConversationWithParticipants & {
   lastMessage?: LastMessageSummary;
 };
 
-type TimelineItem =
-  | { kind: "activity"; item: ActivityItem; timestamp: number }
-  | { kind: "conversation"; item: ConversationWithDetails; timestamp: number };
+interface ApiNote {
+  title: string;
+  author_username: string;
+  slug: string;
+  content: string;
+  comment_count: number;
+  created_at: string;
+  reply_to?: { author_username: string; slug: string; title: string } | null;
+  reactions?: { emoji: string; count: number }[];
+}
 
 let {
   username,
-  minds,
   conversations,
-  recentPages,
-  activity,
-  onOpenMind,
+  sites,
   onSelectPage,
   onSelectConversation,
+  onSelectNote,
 }: {
   username: string;
-  minds: Mind[];
   conversations: ConversationWithDetails[];
-  recentPages: RecentPage[];
-  activity: ActivityItem[];
-  onOpenMind: (mind: Mind) => void;
+  sites: Site[];
   onSelectPage: (mind: string, path: string) => void;
   onSelectConversation: (id: string) => void;
+  onSelectNote: (author: string, slug: string) => void;
 } = $props();
 
-let timelineItems = $derived.by(() => {
-  const items: TimelineItem[] = [];
+let recentNotes = $state<ApiNote[]>([]);
 
-  for (const a of activity) {
-    items.push({
-      kind: "activity",
-      item: a,
-      timestamp: new Date(normalizeTimestamp(a.created_at)).getTime(),
+$effect(() => {
+  fetch("/api/notes?limit=8")
+    .then((r) => (r.ok ? r.json() : []))
+    .then((notes: ApiNote[]) => {
+      recentNotes = notes;
+    })
+    .catch(() => {
+      recentNotes = [];
     });
-  }
-
-  for (const c of conversations) {
-    if (!(c as any).lastMessage) continue;
-    items.push({
-      kind: "conversation",
-      item: c,
-      timestamp: new Date(normalizeTimestamp(c.updated_at)).getTime(),
-    });
-  }
-
-  items.sort((a, b) => b.timestamp - a.timestamp);
-  return items.slice(0, 50);
 });
 
-let sortedMinds = $derived(
-  [...minds].sort((a, b) => {
-    if (a.status === "running" && b.status !== "running") return -1;
-    if (a.status !== "running" && b.status === "running") return 1;
-    const aTime = a.lastActiveAt ?? "";
-    const bTime = b.lastActiveAt ?? "";
-    return bTime.localeCompare(aTime);
-  }),
+// Get one message card per recent conversation (top 6)
+let topConversations = $derived(
+  [...conversations]
+    .filter((c) => (c as any).lastMessage)
+    .sort((a, b) => {
+      const aTime = new Date(normalizeTimestamp(a.updated_at)).getTime();
+      const bTime = new Date(normalizeTimestamp(b.updated_at)).getTime();
+      return bTime - aTime;
+    })
+    .slice(0, 6),
 );
 
-function mindForActivity(mindName: string): Mind | undefined {
-  return minds.find((m) => m.name === mindName);
+let messagesMap = $state<Record<string, Message[]>>({});
+let scrollEls = $state<Record<string, HTMLDivElement>>({});
+
+$effect(() => {
+  const convs = topConversations;
+  for (const conv of convs) {
+    if (messagesMap[conv.id]) continue;
+    fetchConversationMessages(conv.id, { limit: 20 })
+      .then((res) => {
+        messagesMap[conv.id] = res.items.reverse();
+        requestAnimationFrame(() => {
+          const el = scrollEls[conv.id];
+          if (el) el.scrollTop = el.scrollHeight;
+        });
+      })
+      .catch(() => {
+        messagesMap[conv.id] = [];
+      });
+  }
+});
+
+// Mixed feed sorted by date
+type FeedItem =
+  | { kind: "note"; note: ApiNote; date: string }
+  | { kind: "page"; site: string; file: string; modified: string; date: string }
+  | { kind: "message"; conv: ConversationWithDetails; date: string };
+
+let feedItems = $derived.by(() => {
+  const items: FeedItem[] = [];
+  for (const note of recentNotes) {
+    items.push({ kind: "note", note, date: note.created_at });
+  }
+  for (const site of sites) {
+    for (const page of site.pages.slice(0, 3)) {
+      items.push({
+        kind: "page",
+        site: site.name,
+        file: page.file,
+        modified: page.modified,
+        date: page.modified,
+      });
+    }
+  }
+  for (const conv of topConversations) {
+    items.push({ kind: "message", conv, date: conv.updated_at });
+  }
+  items.sort((a, b) => {
+    const aTime = new Date(normalizeTimestamp(a.date)).getTime();
+    const bTime = new Date(normalizeTimestamp(b.date)).getTime();
+    return bTime - aTime;
+  });
+  return items;
+});
+
+function formatTime(dateStr: string): string {
+  try {
+    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
+    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  } catch {
+    return "";
+  }
 }
 
-function handleActivityClick(item: ActivityItem) {
-  if (item.type === "page_updated" && item.metadata?.file) {
-    onSelectPage(item.mind, item.metadata.file as string);
-  } else {
-    const mind = mindForActivity(item.mind);
-    if (mind) onOpenMind(mind);
-  }
+function showSenderHeader(messages: Message[], i: number): boolean {
+  if (i === 0) return true;
+  const prev = messages[i - 1];
+  const cur = messages[i];
+  return (prev.sender_name ?? prev.role) !== (cur.sender_name ?? cur.role);
+}
+
+function extractTextContent(content: ContentBlock[]): string {
+  return content
+    .filter((b): b is ContentBlock & { type: "text" } => b.type === "text")
+    .map((b) => b.text)
+    .join("\n\n");
 }
 </script>
 
 <div class="home">
-  <!-- Minds -->
-  <div class="section">
-    <div class="section-header">
-      <span class="section-title">Minds</span>
-    </div>
-    {#if minds.length === 0}
-      <div class="empty-hint">
-        No minds registered. Run <code class="code-hint">volute mind create &lt;name&gt;</code> to get started.
-      </div>
-    {:else}
-      <div class="mind-row">
-        {#each sortedMinds as mind (mind.name)}
-          {@const connectedChannels = mind.channels.filter(ch => ch.name !== "web" && ch.name !== "volute" && ch.status === "connected")}
-          <button class="home-mind-card" onclick={() => onOpenMind(mind)}>
-            <div class="mind-card-header">
-              <span class="mind-name">{mind.name}</span>
-              <StatusBadge status={getDisplayStatus(mind)} />
-              {#if mind.stage === "seed"}
-                <span class="seed-tag">seed</span>
-              {/if}
-            </div>
-            {#if connectedChannels.length > 0}
-              <div class="channel-row">
-                {#each connectedChannels as ch (ch.name)}
-                  <span class="channel-chip">{ch.displayName || ch.name}</span>
-                {/each}
-              </div>
-            {/if}
-            <div class="mind-activity">
-              {mind.lastActiveAt ? `active ${formatRelativeTime(mind.lastActiveAt)}` : "no activity"}
-            </div>
-          </button>
-        {/each}
-      </div>
-    {/if}
-  </div>
-
-  <!-- Activity timeline -->
-  {#if timelineItems.length > 0}
-    <div class="section">
-      <div class="section-header">
-        <span class="section-title">Activity</span>
-      </div>
-      <div class="timeline">
-        {#each timelineItems as entry (`${entry.kind}-${entry.item.id}`)}
-          {#if entry.kind === "activity"}
-            {@const a = entry.item}
-            <button class="timeline-row" onclick={() => handleActivityClick(a)}>
-              <span class="timeline-dot" class:dot-started={a.type === "mind_started"} class:dot-stopped={a.type === "mind_stopped"} class:dot-active={a.type === "mind_active"} class:dot-idle={a.type === "mind_idle"} class:dot-page={a.type === "page_updated"}></span>
-              <span class="timeline-text">{a.summary}</span>
-              <span class="timeline-time">{formatRelativeTime(a.created_at)}</span>
-            </button>
-          {:else}
-            {@const c = entry.item}
-            {@const label = getConversationLabel(c.participants ?? [], c.title, username)}
-            {@const msg = c.lastMessage}
-            <button class="timeline-row" onclick={() => onSelectConversation(c.id)}>
-              <span class="timeline-dot dot-message"></span>
-              <span class="timeline-text">
-                <span class="conv-label">{label}:</span>
-                {#if msg}
-                  {msg.senderName ? `${msg.senderName}: ` : ""}{msg.text}
+  {#if feedItems.length === 0}
+    <div class="empty-hint">Nothing here yet.</div>
+  {:else}
+    <div class="feed-grid">
+      {#each feedItems as item, idx (item.kind === "note" ? `note-${item.note.slug}` : item.kind === "page" ? `page-${item.site}-${item.file}` : `msg-${item.conv.id}`)}
+        {#if item.kind === "note"}
+          <div class="feed-item">
+            <NoteCard
+              title={item.note.title}
+              author={item.note.author_username}
+              slug={item.note.slug}
+              excerpt={item.note.content.length > 120 ? `${item.note.content.slice(0, 120)}...` : item.note.content}
+              commentCount={item.note.comment_count}
+              createdAt={item.note.created_at}
+              replyTo={item.note.reply_to}
+              reactions={item.note.reactions}
+              onSelect={onSelectNote}
+            />
+          </div>
+        {:else if item.kind === "page"}
+          <div class="feed-item">
+            <PageThumbnail
+              url="/pages/{item.site}/{item.file}"
+              label="{item.site}/{item.file}"
+              sublabel={formatRelativeTime(item.modified)}
+              onclick={() => onSelectPage(item.site, item.file)}
+            />
+          </div>
+        {:else}
+          {@const conv = item.conv}
+          {@const label = getConversationLabel(conv.participants ?? [], conv.title, username, conv)}
+          {@const messages = messagesMap[conv.id] ?? []}
+          <div class="feed-item message-item">
+            <div class="msg-card">
+              <div class="msg-label">{label}</div>
+              <div class="msg-scroll" bind:this={scrollEls[conv.id]} onscroll={(e) => {
+                const el = e.currentTarget;
+                if (el.scrollTop < 10) el.scrollTop = 10;
+              }}>
+                {#if messages.length === 0}
+                  <div class="msg-empty">Loading...</div>
+                {:else}
+                  {#each messages as msg, i (msg.id)}
+                    <div class="chat-entry" class:new-sender={showSenderHeader(messages, i)}>
+                      {#if showSenderHeader(messages, i)}
+                        <div class="chat-entry-header">
+                          <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "you" : "")}</span>
+                          <span class="chat-timestamp">{formatTime(msg.created_at)}</span>
+                        </div>
+                      {/if}
+                      <div class="chat-entry-content" class:chat-user-text={msg.role === "user"}>
+                        {#if msg.role === "user"}
+                          {extractTextContent(msg.content)}
+                        {:else}
+                          <div class="markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</div>
+                        {/if}
+                      </div>
+                    </div>
+                  {/each}
                 {/if}
-              </span>
-              <span class="timeline-time">{formatRelativeTime(c.updated_at)}</span>
-            </button>
-          {/if}
-        {/each}
-      </div>
+              </div>
+              <button class="msg-open-btn" onclick={() => onSelectConversation(conv.id)}>
+                Open chat &rarr;
+              </button>
+            </div>
+          </div>
+        {/if}
+      {/each}
     </div>
   {/if}
 </div>
 
 <style>
   .home {
-    max-width: 800px;
     animation: fadeIn 0.2s ease both;
-  }
-
-  .section {
-    margin-bottom: 24px;
-  }
-
-  .section-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-  }
-
-  .section-title {
-    font-family: var(--display);
-    font-size: 17px;
-    font-weight: 300;
-    color: var(--text-2);
   }
 
   .empty-hint {
     color: var(--text-2);
     font-size: 13px;
+    padding: 40px 0;
+    text-align: center;
   }
 
-  .code-hint {
-    color: var(--text-1);
+  .feed-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
   }
 
-  .mind-row {
-    display: flex;
-    gap: 10px;
-    overflow-x: auto;
-    padding-bottom: 4px;
+  .feed-item {
+    min-width: 0;
   }
 
-  .home-mind-card {
+  /* Message card */
+  .message-item {
+    grid-column: span 1;
+  }
+
+  .msg-card {
+    background: var(--bg-0);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 10px 14px;
-    border-radius: var(--radius-lg);
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    min-width: 150px;
-    transition: border-color 0.15s;
-    flex-shrink: 0;
-    cursor: pointer;
-    text-align: left;
-    color: inherit;
-    font-size: inherit;
+    height: 240px;
+    overflow: hidden;
   }
 
-  .home-mind-card:hover {
-    border-color: var(--border-bright);
-  }
-
-  .mind-card-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .mind-name {
-    color: var(--text-0);
+  .msg-label {
+    padding: 8px 12px;
+    font-size: 13px;
     font-weight: 500;
-    font-size: 14px;
+    color: var(--text-1);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
   }
 
-  .seed-tag {
-    font-size: 9px;
-    color: var(--yellow);
+  .msg-scroll {
+    flex: 1;
+    overflow: auto;
+    padding: 8px 12px;
+    min-height: 0;
   }
 
-  .channel-row {
-    display: flex;
-    gap: 4px;
-    flex-wrap: wrap;
+  .msg-empty {
+    color: var(--text-2);
+    font-size: 13px;
+    padding: 16px 0;
+    text-align: center;
   }
 
-  .channel-chip {
-    font-size: 11px;
-    padding: 1px 5px;
-    border-radius: 3px;
+  .msg-open-btn {
+    display: block;
+    width: 100%;
+    padding: 6px;
     background: var(--accent-dim);
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border-top: 1px solid var(--border);
+    text-align: center;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+
+  .msg-open-btn:hover {
+    background: var(--accent-bg);
+  }
+
+  /* Chat entries */
+  .chat-entry {
+    padding: 1px 0;
+  }
+
+  .chat-entry.new-sender {
+    margin-top: 8px;
+  }
+
+  .chat-entry:first-child {
+    margin-top: 0;
+  }
+
+  .chat-entry-header {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-bottom: 1px;
+  }
+
+  .chat-sender {
+    font-size: 12px;
+    font-weight: 600;
     color: var(--accent);
   }
 
-  .mind-activity {
+  .chat-sender-user {
+    color: var(--blue);
+  }
+
+  .chat-timestamp {
     font-size: 11px;
     color: var(--text-2);
   }
 
-  .timeline {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .timeline-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 7px 10px;
-    border-radius: var(--radius-lg);
-    background: none;
-    border: none;
-    cursor: pointer;
-    text-align: left;
-    color: inherit;
-    font-size: 13px;
-    transition: background 0.12s;
-    width: 100%;
-  }
-
-  .timeline-row:hover {
-    background: var(--bg-2);
-  }
-
-  .timeline-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    background: var(--text-2);
-  }
-
-  .dot-started {
-    background: var(--accent);
-  }
-
-  .dot-stopped {
-    background: var(--text-2);
-  }
-
-  .dot-active {
-    background: var(--accent);
-  }
-
-  .dot-idle {
-    background: var(--text-2);
-  }
-
-  .dot-page {
-    background: var(--yellow);
-  }
-
-  .dot-message {
-    background: var(--blue, var(--accent));
-  }
-
-  .timeline-text {
-    flex: 1;
+  .chat-entry-content {
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--text-1);
+    font-family: var(--mono);
+    font-size: 13px;
   }
 
-  .timeline-text .conv-label {
+  .chat-user-text {
     color: var(--text-0);
-    font-weight: 500;
-  }
-
-  .timeline-time {
-    color: var(--text-2);
-    font-size: 11px;
-    flex-shrink: 0;
-  }
-
-  @media (max-width: 767px) {
-    .home {
-      max-width: 100%;
-    }
-
-    .home-mind-card {
-      min-width: 120px;
-    }
+    white-space: pre-wrap;
   }
 </style>

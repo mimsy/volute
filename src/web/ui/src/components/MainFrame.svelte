@@ -164,7 +164,7 @@ let contextLabel = $derived.by(() => {
       </div>
     {:else}
       <div class="frame-content padded">
-        <Home {username} {minds} {conversations} {recentPages} {activity} {onOpenMind} {onSelectPage} {onSelectConversation} />
+        <Home {username} {conversations} {sites} {onSelectPage} {onSelectConversation} {onSelectNote} />
       </div>
     {/if}
 
