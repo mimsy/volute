@@ -280,11 +280,30 @@ pre {
   font-family: "Averia Serif Libre", Georgia, serif;
 }
 
-/* Site title in nav */
+/* Site title in nav — lowercase with spiral */
 .site-title {
   font-family: "Averia Serif Libre", Georgia, serif !important;
   font-weight: 300;
   letter-spacing: 0.04em;
+  color: var(--sl-color-text) !important;
+  text-transform: lowercase;
+  gap: 0 !important;
+}
+.site-title::before {
+  content: "";
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  background: url("/volute/logo.png") center / contain no-repeat;
+  filter: invert(1);
+  margin-right: 2px;
+  vertical-align: middle;
+  opacity: 0.9;
+}
+
+/* GitHub icon — white, not accent */
+header .sl-flex[class*="astro-wy4te6ga"] {
+  color: var(--sl-color-text) !important;
 }
 
 /* Hide theme toggle (dark-only site) */
