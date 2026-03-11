@@ -55,6 +55,24 @@ let {
   onOpenRightPanel?: () => void;
 } = $props();
 
+function handleIframeNav(e: Event) {
+  const iframe = e.target as HTMLIFrameElement;
+  try {
+    const path = iframe.contentWindow?.location.pathname;
+    if (!path) return;
+    const match = path.match(/^\/pages\/([^/]+)\/(.+)$/);
+    if (!match) return;
+    const [, mind, file] = match;
+    // Only update if path actually changed
+    if (selection.kind === "mind-page" && selection.mind === mind && selection.path === file)
+      return;
+    if (selection.kind === "page" && selection.mind === mind && selection.path === file) return;
+    onSelectPage(mind, file);
+  } catch {
+    // cross-origin or security error — ignore
+  }
+}
+
 let selectedSite = $derived.by(() => {
   if (selection.kind === "site") return sites.find((s) => s.name === selection.name);
   return undefined;
@@ -124,11 +142,11 @@ let contextLabel = $derived.by(() => {
       </div>
     {:else if selection.kind === "mind-page"}
       <div class="frame-content">
-        <iframe src="/pages/{selection.mind}/{selection.path}" class="page-iframe" title="Page"></iframe>
+        <iframe src="/pages/{selection.mind}/{selection.path}" class="page-iframe" title="Page" onload={handleIframeNav}></iframe>
       </div>
     {:else if selection.kind === "page"}
       <div class="frame-content">
-        <iframe src="/pages/{selection.mind}/{selection.path}" class="page-iframe" title="Page"></iframe>
+        <iframe src="/pages/{selection.mind}/{selection.path}" class="page-iframe" title="Page" onload={handleIframeNav}></iframe>
       </div>
     {:else if selection.kind === "pages"}
       <div class="frame-content padded">

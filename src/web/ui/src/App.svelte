@@ -425,11 +425,20 @@ function handleSeedCreated(mindName: string) {
 }
 
 function handleSelectPage(mind: string, path: string) {
-  selection = { tab: "system", kind: "page", mind, path };
+  // Preserve mind-page context when navigating within a mind's pages
+  if (selection.tab === "system" && selection.kind === "mind-page") {
+    selection = { tab: "system", kind: "mind-page", mind, path };
+  } else {
+    selection = { tab: "system", kind: "page", mind, path };
+  }
 }
 
 function handleSelectSite(name: string) {
-  selection = { tab: "system", kind: "site", name };
+  if (name !== "_system") {
+    selection = { tab: "system", kind: "mind", name, section: "pages" };
+  } else {
+    selection = { tab: "system", kind: "site", name };
+  }
 }
 
 function handleSelectPages() {
