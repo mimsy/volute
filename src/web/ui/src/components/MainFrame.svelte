@@ -347,7 +347,7 @@ let contextLabel = $derived.by(() => {
     color: var(--accent);
   }
 
-  @media (max-width: 1024px) {
+  @media (max-width: 767px) {
     .mobile-header {
       display: flex;
     }

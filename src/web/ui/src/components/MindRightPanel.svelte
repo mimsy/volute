@@ -8,14 +8,14 @@ import StatusBadge from "./StatusBadge.svelte";
 
 let {
   mind: initialMind,
-  header = false,
   onClose,
-  onViewProfile,
+  onChat,
+  onProfile,
 }: {
   mind: Mind;
-  header?: boolean;
   onClose?: () => void;
-  onViewProfile?: () => void;
+  onChat?: () => void;
+  onProfile?: () => void;
 } = $props();
 
 let mind = $derived(data.minds.find((m) => m.name === initialMind.name) ?? initialMind);
@@ -31,21 +31,20 @@ function formatCreated(dateStr: string): string {
 </script>
 
 <div class="mind-panel">
-  {#if header}
-    <div class="panel-header">
-      <div class="header-top">
-        <span class="mind-name">{mind.displayName ?? mind.name}</span>
-        <div class="header-right">
-          {#if onViewProfile}
-            <button class="header-profile-btn" onclick={onViewProfile}>Profile</button>
-          {/if}
-          {#if onClose}
-            <button class="close-btn" onclick={onClose}>&#x2715;</button>
-          {/if}
-        </div>
-      </div>
+  <div class="panel-header">
+    <span class="mind-name">{mind.displayName ?? mind.name}</span>
+    <div class="header-actions">
+      {#if onChat}
+        <button class="header-btn" onclick={onChat}>Chat</button>
+      {/if}
+      {#if onProfile}
+        <button class="header-btn" onclick={onProfile}>Profile</button>
+      {/if}
+      {#if onClose}
+        <button class="close-btn" onclick={onClose}>&#x2715;</button>
+      {/if}
     </div>
-  {/if}
+  </div>
   <div class="panel-body">
     <div class="profile-section">
       {#if mind.avatar}
@@ -55,7 +54,6 @@ function formatCreated(dateStr: string): string {
           class="profile-avatar"
         />
       {/if}
-      <span class="profile-display-name">{mind.displayName ?? mind.name}</span>
       <StatusBadge status={getDisplayStatus(mind)} />
       {#if mind.description}
         <p class="profile-description">{mind.description}</p>
@@ -82,41 +80,39 @@ function formatCreated(dateStr: string): string {
   }
 
   .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
-  .header-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 16px;
+  .mind-name {
+    font-family: var(--display);
+    font-size: 22px;
+    font-weight: 300;
+    color: var(--text-0);
+    letter-spacing: 0.02em;
   }
 
-  .header-right {
+  .header-actions {
     display: flex;
     align-items: center;
     gap: 4px;
   }
 
-  .mind-name {
-    font-family: var(--display);
-    font-size: 20px;
-    font-weight: 400;
-    color: var(--text-0);
-  }
-
-  .header-profile-btn {
+  .header-btn {
     background: none;
     border: 1px solid var(--border);
     color: var(--text-2);
     font-size: 12px;
-    padding: 2px 10px;
+    padding: 3px 10px;
     border-radius: var(--radius);
     cursor: pointer;
   }
 
-  .header-profile-btn:hover {
+  .header-btn:hover {
     color: var(--text-1);
     border-color: var(--border-bright);
   }
@@ -153,13 +149,6 @@ function formatCreated(dateStr: string): string {
     height: 96px;
     border-radius: var(--radius);
     object-fit: cover;
-  }
-
-  .profile-display-name {
-    font-family: var(--display);
-    font-size: 22px;
-    font-weight: 400;
-    color: var(--text-0);
   }
 
   .profile-description {

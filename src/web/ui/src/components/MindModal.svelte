@@ -13,4 +13,4 @@ let {
 } = $props();
 </script>
 
-<MindRightPanel {mind} header {onClose} {onViewProfile} />
+<MindRightPanel {mind} {onClose} onProfile={onViewProfile} />
