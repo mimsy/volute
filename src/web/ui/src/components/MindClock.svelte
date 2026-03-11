@@ -11,7 +11,8 @@ $effect(() => {
     .then((c) => {
       clock = c;
     })
-    .catch(() => {
+    .catch((err) => {
+      console.warn("Failed to load clock status:", err);
       clock = null;
     });
 });
@@ -41,7 +42,7 @@ function formatCron(cron: string): string {
       hours.length === 1 ? fmtTime(hours[0], m) : hours.map((h) => fmtTime(h, m)).join(", ");
 
     if (dow === "*") {
-      return hours.length === 1 ? `daily at ${timeStr}` : `daily at ${timeStr}`;
+      return `daily at ${timeStr}`;
     }
     const dayStr = formatDays(dow);
     return `${dayStr} at ${timeStr}`;

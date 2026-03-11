@@ -1,6 +1,7 @@
 <script lang="ts">
-import type { ContentBlock, ConversationWithParticipants, Message } from "@volute/api";
+import type { ConversationWithParticipants, Message } from "@volute/api";
 import { fetchMindConversationMessages } from "../lib/client";
+import { extractTextContent, formatTime, showSenderHeader } from "../lib/feed-utils";
 import { renderMarkdown } from "../lib/markdown";
 import { navigate } from "../lib/navigate";
 import Modal from "./Modal.svelte";
@@ -19,6 +20,7 @@ let {
 
 let messages = $state<Message[]>([]);
 let loading = $state(true);
+let error = $state<string | null>(null);
 let scrollEl = $state<HTMLDivElement | undefined>();
 
 let label = $derived.by(() => {
@@ -32,6 +34,7 @@ let label = $derived.by(() => {
 
 $effect(() => {
   loading = true;
+  error = null;
   fetchMindConversationMessages(mindName, conversation.id, { limit: 50 })
     .then((res) => {
       messages = res.items;
@@ -39,22 +42,15 @@ $effect(() => {
         if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
       });
     })
-    .catch(() => {
+    .catch((err) => {
+      console.warn("Failed to load conversation messages:", err);
       messages = [];
+      error = "Failed to load messages.";
     })
     .finally(() => {
       loading = false;
     });
 });
-
-function formatTime(dateStr: string): string {
-  try {
-    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
-    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  } catch {
-    return "";
-  }
-}
 
 function formatDate(dateStr: string): string {
   try {
@@ -65,23 +61,9 @@ function formatDate(dateStr: string): string {
   }
 }
 
-function showSenderHeader(i: number): boolean {
-  if (i === 0) return true;
-  const prev = messages[i - 1];
-  const cur = messages[i];
-  return (prev.sender_name ?? prev.role) !== (cur.sender_name ?? cur.role);
-}
-
 function showDate(i: number): boolean {
   if (i === 0) return true;
   return formatDate(messages[i].created_at) !== formatDate(messages[i - 1].created_at);
-}
-
-function extractTextContent(content: ContentBlock[]): string {
-  return content
-    .filter((b): b is ContentBlock & { type: "text" } => b.type === "text")
-    .map((b) => b.text)
-    .join("\n\n");
 }
 </script>
 
@@ -94,6 +76,8 @@ function extractTextContent(content: ContentBlock[]): string {
   <div class="read-only-chat">
     {#if loading}
       <div class="chat-empty">Loading...</div>
+    {:else if error}
+      <div class="chat-empty">{error}</div>
     {:else if messages.length === 0}
       <div class="chat-empty">No messages.</div>
     {:else}
@@ -106,8 +90,8 @@ function extractTextContent(content: ContentBlock[]): string {
               <div class="divider-line"></div>
             </div>
           {/if}
-          <div class="chat-entry" class:new-sender={showSenderHeader(i)}>
-            {#if showSenderHeader(i)}
+          <div class="chat-entry" class:new-sender={showSenderHeader(messages, i)}>
+            {#if showSenderHeader(messages, i)}
               <div class="chat-entry-header">
                 <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : mindName)}</span>
                 <span class="chat-timestamp">{formatTime(msg.created_at)}</span>

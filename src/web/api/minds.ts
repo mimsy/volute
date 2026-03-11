@@ -39,6 +39,7 @@ import {
   addMessage,
   getMessages,
   getMessagesPaginated,
+  isConversationForMind,
   listConversationsForMind,
 } from "../../lib/events/conversations.js";
 import { onMindEvent } from "../../lib/events/mind-activity-tracker.js";
@@ -1879,8 +1880,8 @@ const app = new Hono<AuthEnv>()
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
     // Verify conversation belongs to this mind
-    const convs = await listConversationsForMind(name);
-    if (!convs.some((cv) => cv.id === convId)) {
+    const belongs = await isConversationForMind(name, convId);
+    if (!belongs) {
       return c.json({ error: "Conversation not found" }, 404);
     }
     const beforeStr = c.req.query("before");
@@ -1891,6 +1892,9 @@ const app = new Hono<AuthEnv>()
     }
     const before = beforeStr ? parseInt(beforeStr, 10) : undefined;
     const limit = limitStr ? parseInt(limitStr, 10) : undefined;
+    if ((before !== undefined && isNaN(before)) || (limit !== undefined && isNaN(limit))) {
+      return c.json({ error: "Invalid pagination parameters" }, 400);
+    }
     const result = await getMessagesPaginated(convId, { before, limit });
     return c.json({ items: result.messages, hasMore: result.hasMore });
   })

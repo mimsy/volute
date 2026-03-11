@@ -1,11 +1,7 @@
 <script lang="ts">
-import type {
-  ContentBlock,
-  ConversationWithParticipants,
-  LastMessageSummary,
-  Message,
-} from "@volute/api";
+import type { ConversationWithParticipants, LastMessageSummary, Message } from "@volute/api";
 import { fetchConversationMessages } from "../lib/client";
+import { extractTextContent, formatTime, showSenderHeader } from "../lib/feed-utils";
 import { formatRelativeTime, getConversationLabel, normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
 
@@ -54,29 +50,6 @@ $effect(() => {
       });
   }
 });
-
-function formatTime(dateStr: string): string {
-  try {
-    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
-    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  } catch {
-    return "";
-  }
-}
-
-function showSenderHeader(messages: Message[], i: number): boolean {
-  if (i === 0) return true;
-  const prev = messages[i - 1];
-  const cur = messages[i];
-  return (prev.sender_name ?? prev.role) !== (cur.sender_name ?? cur.role);
-}
-
-function extractTextContent(content: ContentBlock[]): string {
-  return content
-    .filter((b): b is ContentBlock & { type: "text" } => b.type === "text")
-    .map((b) => b.text)
-    .join("\n\n");
-}
 </script>
 
 <div class="chat-home">

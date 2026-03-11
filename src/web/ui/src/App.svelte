@@ -6,8 +6,8 @@ import ChannelMembersPanel from "./components/ChannelMembersPanel.svelte";
 import ChatSidebar from "./components/ChatSidebar.svelte";
 import LoginPage from "./components/LoginPage.svelte";
 import MainFrame from "./components/MainFrame.svelte";
-import MindModal from "./components/MindModal.svelte";
 import MindPickerModal from "./components/MindPickerModal.svelte";
+import MindRightPanel from "./components/MindRightPanel.svelte";
 import SeedModal from "./components/SeedModal.svelte";
 import SystemSidebar from "./components/SystemSidebar.svelte";
 import TabSwitcher from "./components/TabSwitcher.svelte";
@@ -272,7 +272,9 @@ $effect(() => {
     .then((me) => {
       userAvatar = me?.avatar ? `/api/auth/avatars/${me.avatar}` : null;
     })
-    .catch(() => {});
+    .catch((err) => {
+      console.warn("Failed to fetch user profile:", err);
+    });
 });
 
 // Track whether selection change came from popstate (to avoid pushing duplicate history)
@@ -705,7 +707,7 @@ function handleGlobalClick(e: MouseEvent) {
             <button class="panel-close" onclick={closeRightPanel} title="Close">&times;</button>
             {#if rightPanelMind}
               {#key rightPanelMind.name}
-                <MindModal
+                <MindRightPanel
                   mind={rightPanelMind}
                   onProfile={showRightPanelProfile ? () => {
                     selection = { tab: "system", kind: "mind", name: rightPanelMind.name };

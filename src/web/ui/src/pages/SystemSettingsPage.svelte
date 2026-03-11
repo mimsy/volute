@@ -1,9 +1,7 @@
 <script lang="ts">
-import type { Mind } from "@volute/api";
 import PublicFiles from "../components/PublicFiles.svelte";
 import SharedSkills from "../components/SharedSkills.svelte";
 import SystemLogs from "../components/SystemLogs.svelte";
-import TabBar from "../components/TabBar.svelte";
 import UserManagement from "../components/UserManagement.svelte";
 import { restartDaemon } from "../lib/client";
 import { navigate } from "../lib/navigate";
@@ -30,11 +28,16 @@ let {
 let activeTab = $derived<Tab>(TABS.includes(section as Tab) ? (section as Tab) : "settings");
 
 let restarting = $state(false);
+let restartError = $state<string | null>(null);
 
 async function handleRestart() {
   restarting = true;
+  restartError = null;
   try {
     await restartDaemon();
+  } catch (err) {
+    restartError = err instanceof Error ? err.message : "Unknown error";
+    console.warn("Failed to restart daemon:", err);
   } finally {
     restarting = false;
   }
@@ -52,11 +55,16 @@ async function handleRestart() {
         >{TAB_LABELS[tab]}</button>
       {/each}
     </div>
-    <button
-      class="restart-btn"
-      onclick={handleRestart}
-      disabled={restarting}
-    >{restarting ? "Restarting..." : "Restart Daemon"}</button>
+    <div class="restart-area">
+      {#if restartError}
+        <span class="restart-error">Failed: {restartError}</span>
+      {/if}
+      <button
+        class="restart-btn"
+        onclick={handleRestart}
+        disabled={restarting}
+      >{restarting ? "Restarting..." : "Restart Daemon"}</button>
+    </div>
   </div>
   <div class="settings-body">
     {#if activeTab === "settings"}
@@ -115,6 +123,18 @@ async function handleRestart() {
   .settings-tab.active {
     color: var(--text-0);
     border-bottom-color: var(--accent);
+  }
+
+  .restart-area {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .restart-error {
+    font-size: 12px;
+    color: var(--red, #f87171);
   }
 
   .restart-btn {

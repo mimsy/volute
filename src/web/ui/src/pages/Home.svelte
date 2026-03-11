@@ -1,12 +1,13 @@
 <script lang="ts">
-import type {
-  ContentBlock,
-  ConversationWithParticipants,
-  LastMessageSummary,
-  Message,
-  Site,
-} from "@volute/api";
+import type { ConversationWithParticipants, LastMessageSummary, Message, Site } from "@volute/api";
 import { fetchConversationMessages } from "../lib/client";
+import {
+  type ApiNote,
+  extractTextContent,
+  formatTime,
+  scaleIframe,
+  showSenderHeader,
+} from "../lib/feed-utils";
 import { formatRelativeTime, normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
 import { navigate } from "../lib/navigate";
@@ -14,17 +15,6 @@ import { navigate } from "../lib/navigate";
 type ConversationWithDetails = ConversationWithParticipants & {
   lastMessage?: LastMessageSummary;
 };
-
-interface ApiNote {
-  title: string;
-  author_username: string;
-  slug: string;
-  content: string;
-  comment_count: number;
-  created_at: string;
-  reply_to?: { author_username: string; slug: string; title: string } | null;
-  reactions?: { emoji: string; count: number }[];
-}
 
 let {
   username,
@@ -133,42 +123,6 @@ function getConvLabel(conv: ConversationWithDetails): string {
   if (names.length > 0) return names.join(", ");
   if (conv.title) return conv.title;
   return "Conversation";
-}
-
-function formatTime(dateStr: string): string {
-  try {
-    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
-    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  } catch {
-    return "";
-  }
-}
-
-function showSenderHeader(messages: Message[], i: number): boolean {
-  if (i === 0) return true;
-  const prev = messages[i - 1];
-  const cur = messages[i];
-  return (prev.sender_name ?? prev.role) !== (cur.sender_name ?? cur.role);
-}
-
-function extractTextContent(content: ContentBlock[]): string {
-  return content
-    .filter((b): b is ContentBlock & { type: "text" } => b.type === "text")
-    .map((b) => b.text)
-    .join("\n\n");
-}
-
-function scaleIframe(node: HTMLElement) {
-  const iframe = node.querySelector("iframe") as HTMLIFrameElement;
-  if (!iframe) return;
-  const update = () => {
-    const w = node.clientWidth;
-    if (w > 0) iframe.style.transform = `scale(${w / 1280})`;
-  };
-  const ro = new ResizeObserver(update);
-  ro.observe(node);
-  update();
-  return { destroy: () => ro.disconnect() };
 }
 </script>
 

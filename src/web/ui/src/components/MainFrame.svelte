@@ -57,20 +57,20 @@ let {
 
 function handleIframeNav(e: Event) {
   const iframe = e.target as HTMLIFrameElement;
+  let path: string | undefined;
   try {
-    const path = iframe.contentWindow?.location.pathname;
-    if (!path) return;
-    const match = path.match(/^\/pages\/([^/]+)\/(.+)$/);
-    if (!match) return;
-    const [, mind, file] = match;
-    // Only update if path actually changed
-    if (selection.kind === "mind-page" && selection.mind === mind && selection.path === file)
-      return;
-    if (selection.kind === "page" && selection.mind === mind && selection.path === file) return;
-    onSelectPage(mind, file);
+    path = iframe.contentWindow?.location.pathname;
   } catch {
-    // cross-origin or security error — ignore
+    return; // cross-origin or security error — expected
   }
+  if (!path) return;
+  const match = path.match(/^\/pages\/([^/]+)\/(.+)$/);
+  if (!match) return;
+  const [, mind, file] = match;
+  // Only update if path actually changed
+  if (selection.kind === "mind-page" && selection.mind === mind && selection.path === file) return;
+  if (selection.kind === "page" && selection.mind === mind && selection.path === file) return;
+  onSelectPage(mind, file);
 }
 
 let selectedSite = $derived.by(() => {

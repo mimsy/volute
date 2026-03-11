@@ -575,6 +575,41 @@ export async function listConversationsForMind(
   }));
 }
 
+export async function isConversationForMind(
+  mindName: string,
+  conversationId: string,
+): Promise<boolean> {
+  const db = await getDb();
+
+  // Check if conversation belongs to mind by mind_name
+  const byName = await db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(and(eq(conversations.id, conversationId), eq(conversations.mind_name, mindName)))
+    .get();
+  if (byName) return true;
+
+  // Check if mind is a participant
+  const mindUser = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.username, mindName), eq(users.user_type, "mind")))
+    .get();
+  if (!mindUser) return false;
+
+  const participant = await db
+    .select({ conversation_id: conversationParticipants.conversation_id })
+    .from(conversationParticipants)
+    .where(
+      and(
+        eq(conversationParticipants.conversation_id, conversationId),
+        eq(conversationParticipants.user_id, mindUser.id),
+      ),
+    )
+    .get();
+  return !!participant;
+}
+
 export async function deleteConversation(id: string): Promise<void> {
   const db = await getDb();
   await db.delete(conversations).where(eq(conversations.id, id));
