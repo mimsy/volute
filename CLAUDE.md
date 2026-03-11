@@ -136,14 +136,13 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute mind delete <name> [--force]` | Remove from registry (--force deletes directory) |
 | `volute mind list` | List all minds |
 | `volute mind status <name>` | Check mind status |
-| `volute mind logs <name> [--follow] [-n N]` | Tail mind logs |
+| `volute mind history <name> [--channel <ch>] [--limit N] [--full]` | View mind activity history |
 | `volute mind restart <name>` | Restart a mind |
 | `volute mind upgrade <name>` | Upgrade mind to latest template |
 | `volute mind sleep <name> [--wake-at <time>]` | Put a mind to sleep (pre-sleep ritual, session archive, stop process) |
 | `volute mind wake <name>` | Wake a sleeping mind |
 | `volute mind import <path> [--name <name>] [--session <path>]` | Import an OpenClaw workspace |
 | `volute chat send <target> "<msg>" [--mind]` | Send a message (DM, channel, cross-platform) |
-| `volute chat history [--mind] [--channel <ch>] [--limit N]` | View message history |
 | `volute chat read <conversation> [--mind] [--limit N]` | Read conversation messages |
 | `volute chat list [--mind]` | List conversations |
 | `volute chat create --participants u1,u2 [--mind]` | Create a conversation |
@@ -161,17 +160,17 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute mind seed <name>` | Create a minimal seed mind |
 | `volute mind sprout` | Grow a seed into a full mind |
 | `volute file <send\|accept\|list\|trust> [--mind]` | Mind-to-mind file sharing |
-| `volute auth register [--name <name>]` | Register a system on volute.systems |
-| `volute auth login [--key <key>]` | Log in with an existing API key |
-| `volute auth logout` | Remove stored credentials |
+| `volute systems status` | Show volute.systems account info |
+| `volute systems register [--name <name>]` | Register a system on volute.systems |
+| `volute systems login [--key <key>]` | Log in with an existing API key |
+| `volute systems logout` | Remove stored credentials |
 | `volute pages publish [--mind <name>] [--system]` | Publish pages (mind's or --system for shared/pages/) |
 | `volute pages status [--mind <name>] [--system]` | Show publish status (mind's or --system) |
 | `volute setup [--name N] [--system] [--service] [--dir D] [--port N] [--host H]` | Required first-run setup (interactive or non-interactive) |
 | `volute up [--port N] [--foreground] [--no-sandbox]` | Start the daemon (default: 1618) |
 | `volute down` | Stop the daemon |
 | `volute restart [--port N]` | Restart the daemon |
-| `volute service status` | Check service status |
-| `volute status` | Show daemon status, version, and minds |
+| `volute status` | Show daemon status, service info, version, and minds |
 | `volute update` | Check for updates |
 
 Mind-scoped commands (`chat`, `schedule`, `file`, `skill`, `pages`) use `--mind <name>` or `VOLUTE_MIND` env var.
@@ -225,7 +224,7 @@ Mind-scoped commands (`chat`, `schedule`, `file`, `skill`, `pages`) use `--mind 
 | `setup.ts` | Global config (`~/.volute/config.json`) with setup state (type, isolation, mindsDir, service), `isSetupComplete()`, migration for existing users |
 | `sandbox.ts` | Sandbox runtime (`@anthropic-ai/sandbox-runtime`) integration: `isSandboxEnabled()`, `initSandbox()`, `wrapForSandbox()`, deny-read list for mind isolation |
 | `service-mode.ts` | Service mode detection (manual/systemd/launchd/system-launchd), service control, health polling, daemon config reader |
-| `systems-config.ts` | Read/write `~/.volute/systems.json` (API key, system name, API URL) |
+| `systems-config.ts` | Read/write `~/.volute/system/systems.json` (API key, system name, API URL) |
 | `systems-fetch.ts` | Shared fetch wrapper for volute.systems API calls |
 | `prompt.ts` | Shared interactive terminal prompt utility |
 | `update-check.ts` | npm update check on CLI invocation |
@@ -361,7 +360,7 @@ sudo volute setup --name myserver --system --host 0.0.0.0
 
 Three isolation modes, configured via `volute setup` (stored in `~/.volute/config.json` as `setup.isolation`):
 
-- **`sandbox`** — Local installs use `@anthropic-ai/sandbox-runtime` to sandbox mind processes. Each mind can only write to its own directory; reads to other minds' dirs, system state (`volute.db`, `env.json`, `systems.json`), and sensitive user dirs (`.ssh`, `.aws`, `.gnupg`, `.config`) are blocked. Sandbox wrapping happens per-mind at spawn time. Disable at runtime with `volute up --no-sandbox` or `VOLUTE_SANDBOX=0`.
+- **`sandbox`** — Local installs use `@anthropic-ai/sandbox-runtime` to sandbox mind processes. Each mind can only write to its own directory; reads to other minds' dirs, system state (`volute.db`, `env.json`), and sensitive user dirs (`.ssh`, `.aws`, `.gnupg`, `.config`) are blocked. Sandbox wrapping happens per-mind at spawn time. Disable at runtime with `volute up --no-sandbox` or `VOLUTE_SANDBOX=0`.
 - **`user`** — System installs create per-mind OS users (`mind-<name>`, prefix configurable via `VOLUTE_USER_PREFIX`). On Linux, uses `useradd`/`runuser`; on macOS, uses `dscl`/`sudo -u`. Mind and connector processes spawn with the mind's uid/gid. Requires root.
 - **`none`** — No isolation. Used for development or when migrated from a pre-setup installation.
 

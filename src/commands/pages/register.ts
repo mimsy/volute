@@ -1,25 +1,16 @@
+import { daemonFetch } from "../../lib/daemon-client.js";
 import { parseArgs } from "../../lib/parse-args.js";
 import { promptLine } from "../../lib/prompt.js";
-import { readSystemsConfig, writeSystemsConfig } from "../../lib/systems-config.js";
-import { systemsFetch } from "../../lib/systems-fetch.js";
-
-const DEFAULT_API_URL = "https://volute.systems";
 
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
     name: { type: "string" },
   });
 
-  const existing = readSystemsConfig();
-  if (existing) {
-    console.error(`Already registered as "${existing.system}". Run "volute auth logout" first.`);
-    process.exit(1);
-  }
-
   let name = flags.name;
   if (!name) {
     if (!process.stdin.isTTY) {
-      console.error("Usage: volute auth register --name <system-name>");
+      console.error("Usage: volute systems register --name <system-name>");
       process.exit(1);
     }
     name = await promptLine("Choose a system name: ");
@@ -29,9 +20,7 @@ export async function run(args: string[]) {
     }
   }
 
-  const apiUrl = process.env.VOLUTE_SYSTEMS_URL || DEFAULT_API_URL;
-
-  const res = await systemsFetch(`${apiUrl}/api/register`, {
+  const res = await daemonFetch("/api/system/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
@@ -45,14 +34,6 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  const { apiKey, system } = (await res.json()) as { apiKey: string; system: string };
-  try {
-    writeSystemsConfig({ apiKey, system, apiUrl });
-  } catch (err) {
-    console.error(`Failed to save credentials: ${(err as Error).message}`);
-    console.error(`Your API key is: ${apiKey}`);
-    console.error(`Save it and run: volute auth login --key ${apiKey}`);
-    process.exit(1);
-  }
+  const { system } = (await res.json()) as { system: string };
   console.log(`Registered as "${system}". Credentials saved.`);
 }

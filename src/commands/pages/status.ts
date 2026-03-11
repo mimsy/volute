@@ -1,7 +1,6 @@
+import { daemonFetch } from "../../lib/daemon-client.js";
 import { parseArgs } from "../../lib/parse-args.js";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";
-import { readSystemsConfig } from "../../lib/systems-config.js";
-import { systemsFetch } from "../../lib/systems-fetch.js";
 
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
@@ -9,17 +8,9 @@ export async function run(args: string[]) {
     system: { type: "boolean" },
   });
 
-  const config = readSystemsConfig();
-  if (!config) {
-    console.error('Not logged in. Run "volute auth register" or "volute auth login" first.');
-    process.exit(1);
-  }
-
   const mindName = flags.mind || process.env.VOLUTE_MIND ? resolveMindName(flags) : "system";
 
-  const res = await systemsFetch(`${config.apiUrl}/api/pages/status/${mindName}`, {
-    headers: { Authorization: `Bearer ${config.apiKey}` },
-  });
+  const res = await daemonFetch(`/api/system/pages/status/${mindName}`);
 
   if (!res.ok) {
     if (res.status === 404) {

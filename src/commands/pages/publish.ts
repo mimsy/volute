@@ -1,23 +1,16 @@
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
+import { daemonFetch } from "../../lib/daemon-client.js";
 import { parseArgs } from "../../lib/parse-args.js";
 import { mindDir } from "../../lib/registry.js";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";
 import { sharedDir } from "../../lib/shared.js";
-import { readSystemsConfig } from "../../lib/systems-config.js";
-import { systemsFetch } from "../../lib/systems-fetch.js";
 
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
     mind: { type: "string" },
     system: { type: "boolean" },
   });
-
-  const config = readSystemsConfig();
-  if (!config) {
-    console.error('Not logged in. Run "volute auth register" or "volute auth login" first.');
-    process.exit(1);
-  }
 
   let mindName: string;
   let pagesDir: string;
@@ -46,12 +39,9 @@ export async function run(args: string[]) {
 
   console.log(`Publishing ${Object.keys(files).length} file(s) for ${mindName}...`);
 
-  const res = await systemsFetch(`${config.apiUrl}/api/pages/publish/${mindName}`, {
+  const res = await daemonFetch(`/api/system/pages/publish/${mindName}`, {
     method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ files }),
   });
 

@@ -18,21 +18,15 @@ export async function run(args: string[]) {
       await import("./delete.js").then((m) => m.run(args.slice(1)));
       break;
     case "list":
-      await import("./status.js").then((m) => m.run(args.slice(1)));
+      await import("./mind-list.js").then((m) => m.run(args.slice(1)));
       break;
-    case "status": {
-      const rest = args.slice(1);
-      if (!rest[0] && process.env.VOLUTE_MIND) {
-        rest.unshift(process.env.VOLUTE_MIND);
-      }
-      await import("./status.js").then((m) => m.run(rest));
+    case "status":
+      await import("./mind-status.js").then((m) => m.run(args.slice(1)));
       break;
-    }
-    case "logs": {
-      // Transform positional name to --mind flag for compatibility
+    case "history": {
       const rest = args.slice(1);
-      const logsArgs = transformMindFlag(rest);
-      await import("./logs.js").then((m) => m.run(logsArgs));
+      const historyArgs = transformMindFlag(rest);
+      await import("./history.js").then((m) => m.run(historyArgs));
       break;
     }
     case "upgrade":
@@ -91,7 +85,7 @@ function printUsage() {
   volute mind delete [name] [--force]
   volute mind list
   volute mind status [name]
-  volute mind logs [name] [--follow] [-n N]
+  volute mind history [name] [--channel <ch>] [--limit N] [--full]
   volute mind sprout
   volute mind sleep [name] [--wake-at <time>]
   volute mind wake [name]

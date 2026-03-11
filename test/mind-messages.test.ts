@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../src/lib/db.js";
+import { cleanExpiredLogs } from "../src/lib/history-cleanup.js";
 import { mindHistory } from "../src/lib/schema.js";
 
 describe("mind_history", () => {
@@ -180,6 +181,52 @@ describe("mind_history", () => {
       // All pages should have distinct messages
       const allIds = [...page1, ...page2, ...page3].map((r) => r.id);
       assert.equal(new Set(allIds).size, 5);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("cleanExpiredLogs removes old log entries but keeps other types", async () => {
+    await cleanup();
+    try {
+      const db = await getDb();
+      // Insert a log entry with an old timestamp
+      await db.insert(mindHistory).values({
+        mind: "mind-a",
+        type: "log",
+        content: "old log message",
+        metadata: JSON.stringify({ category: "server" }),
+        created_at: "2020-01-01 00:00:00",
+      });
+      // Insert a recent log entry
+      await db.insert(mindHistory).values({
+        mind: "mind-a",
+        type: "log",
+        content: "recent log message",
+        metadata: JSON.stringify({ category: "server" }),
+      });
+      // Insert a non-log entry with old timestamp (should be kept)
+      await db.insert(mindHistory).values({
+        mind: "mind-a",
+        type: "inbound",
+        content: "old message",
+        sender: "alice",
+        created_at: "2020-01-01 00:00:00",
+      });
+
+      await cleanExpiredLogs();
+
+      const rows = await db
+        .select()
+        .from(mindHistory)
+        .where(eq(mindHistory.mind, "mind-a"))
+        .orderBy(mindHistory.id);
+
+      assert.equal(rows.length, 2, "should keep recent log + old non-log entry");
+      assert.equal(rows[0].type, "log");
+      assert.equal(rows[0].content, "recent log message");
+      assert.equal(rows[1].type, "inbound");
+      assert.equal(rows[1].content, "old message");
     } finally {
       await cleanup();
     }

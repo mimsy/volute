@@ -9,7 +9,7 @@ import {
   uninstallSkill,
   updateSkill,
 } from "../../lib/skills.js";
-import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
+import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
 const app = new Hono<AuthEnv>()
   .get("/:name/skills", async (c) => {
@@ -23,7 +23,7 @@ const app = new Hono<AuthEnv>()
   })
   .post(
     "/:name/skills/install",
-    requireAdmin,
+    requireSelf(),
     zValidator("json", z.object({ skillId: z.string() })),
     async (c) => {
       const name = c.req.param("name");
@@ -44,7 +44,7 @@ const app = new Hono<AuthEnv>()
   )
   .post(
     "/:name/skills/update",
-    requireAdmin,
+    requireSelf(),
     zValidator("json", z.object({ skillId: z.string() })),
     async (c) => {
       const name = c.req.param("name");
@@ -65,7 +65,7 @@ const app = new Hono<AuthEnv>()
   )
   .post(
     "/:name/skills/publish",
-    requireAdmin,
+    requireSelf(),
     zValidator("json", z.object({ skillId: z.string() })),
     async (c) => {
       const name = c.req.param("name");
@@ -84,7 +84,7 @@ const app = new Hono<AuthEnv>()
       }
     },
   )
-  .delete("/:name/skills/:skill", requireAdmin, async (c) => {
+  .delete("/:name/skills/:skill", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const skillName = c.req.param("skill");
     const entry = await findMind(name);
