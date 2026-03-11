@@ -31,7 +31,10 @@ export async function run(args: string[]) {
 async function showStatus() {
   const res = await daemonFetch("/api/system/info");
   if (!res.ok) {
-    console.error("Failed to get system info");
+    const body = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
+      error: string;
+    };
+    console.error(`Failed to get system info: ${body.error}`);
     process.exit(1);
   }
   const { system } = (await res.json()) as { system: string | null };

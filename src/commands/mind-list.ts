@@ -3,7 +3,10 @@ import { daemonFetch } from "../lib/daemon-client.js";
 export async function run(_args: string[]) {
   const res = await daemonFetch("/api/minds");
   if (!res.ok) {
-    console.error("Failed to list minds");
+    const body = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
+      error: string;
+    };
+    console.error(`Failed to list minds: ${body.error}`);
     process.exit(1);
   }
 

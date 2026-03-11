@@ -33,8 +33,12 @@ function migrateIfNeeded(): void {
   ];
   for (const old of oldPaths) {
     if (old !== target && existsSync(old)) {
-      mkdirSync(voluteSystemDir(), { recursive: true });
-      renameSync(old, target);
+      try {
+        mkdirSync(voluteSystemDir(), { recursive: true });
+        renameSync(old, target);
+      } catch {
+        // Migration failed (e.g. cross-device rename) — read from old location
+      }
       return;
     }
   }

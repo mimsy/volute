@@ -13,7 +13,10 @@ export async function run(args: string[]) {
     if (res.status === 404) {
       console.error(`Mind "${name}" not found`);
     } else {
-      console.error("Failed to get mind status");
+      const body = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
+        error: string;
+      };
+      console.error(`Failed to get mind status: ${body.error}`);
     }
     process.exit(1);
   }

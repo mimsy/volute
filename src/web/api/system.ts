@@ -1,6 +1,7 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
 import { logBuffer } from "../../lib/log-buffer.js";
 import {
@@ -152,7 +153,7 @@ const app = new Hono<AuthEnv>()
         body,
       });
       const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-      return c.json(data as Record<string, unknown>, res.status as 200);
+      return c.json(data as Record<string, unknown>, res.status as ContentfulStatusCode);
     } catch (err) {
       return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
     }
@@ -166,7 +167,7 @@ const app = new Hono<AuthEnv>()
         headers: { Authorization: `Bearer ${config.apiKey}` },
       });
       const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-      return c.json(data as Record<string, unknown>, res.status as 200);
+      return c.json(data as Record<string, unknown>, res.status as ContentfulStatusCode);
     } catch (err) {
       return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
     }

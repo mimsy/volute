@@ -1,3 +1,6 @@
+// Suppress deprecation warnings from transitive dependencies (e.g. punycode via node-fetch v2)
+process.noDeprecation = true;
+
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
