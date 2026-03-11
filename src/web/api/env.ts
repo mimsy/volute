@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { loadMergedEnv, mindEnvPath, readEnv, sharedEnvPath, writeEnv } from "../../lib/env.js";
 import { findMind } from "../../lib/registry.js";
-import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
+import { type AuthEnv, requireAdmin, requireSelf } from "../middleware/auth.js";
 
 // Mind-scoped env routes (mounted at /api/minds)
 const app = new Hono<AuthEnv>()
@@ -21,7 +21,7 @@ const app = new Hono<AuthEnv>()
     if (value === undefined) return c.json({ error: "Key not found" }, 404);
     return c.json({ value });
   })
-  .put("/:name/env/:key", requireAdmin, async (c) => {
+  .put("/:name/env/:key", requireSelf(), async (c) => {
     const name = c.req.param("name");
     if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
     const key = c.req.param("key");
@@ -40,7 +40,7 @@ const app = new Hono<AuthEnv>()
     writeEnv(path, env);
     return c.json({ ok: true });
   })
-  .delete("/:name/env/:key", requireAdmin, async (c) => {
+  .delete("/:name/env/:key", requireSelf(), async (c) => {
     const name = c.req.param("name");
     if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
     const key = c.req.param("key");

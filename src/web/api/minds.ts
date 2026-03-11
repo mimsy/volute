@@ -1074,7 +1074,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ ...entry, ...mindStatus, variants: variantStatuses, hasPages });
   })
   // Start mind (supports variants) — admin only
-  .post("/:name/start", requireAdmin, async (c) => {
+  .post("/:name/start", requireSelf(), async (c) => {
     const name = c.req.param("name");
 
     const entry = await findMind(name);
@@ -1242,7 +1242,7 @@ const app = new Hono<AuthEnv>()
     }
   })
   // Stop mind (supports variants) — admin only
-  .post("/:name/stop", requireAdmin, async (c) => {
+  .post("/:name/stop", requireSelf(), async (c) => {
     const name = c.req.param("name");
 
     const entry = await findMind(name);
@@ -1261,7 +1261,7 @@ const app = new Hono<AuthEnv>()
     }
   })
   // Get sleep state
-  .get("/:name/sleep", requireAdmin, async (c) => {
+  .get("/:name/sleep", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
@@ -1273,7 +1273,7 @@ const app = new Hono<AuthEnv>()
     return c.json(sm.getState(name));
   })
   // Initiate sleep — admin only
-  .post("/:name/sleep", requireAdmin, async (c) => {
+  .post("/:name/sleep", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
@@ -1301,7 +1301,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true });
   })
   // Wake a sleeping mind — admin only
-  .post("/:name/wake", requireAdmin, async (c) => {
+  .post("/:name/wake", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
@@ -1323,7 +1323,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true });
   })
   // Flush queued sleep messages — admin only
-  .post("/:name/sleep/messages", requireAdmin, async (c) => {
+  .post("/:name/sleep/messages", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
@@ -1336,7 +1336,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true, flushed });
   })
   // Sprout a seed mind — admin only
-  .post("/:name/sprout", requireAdmin, async (c) => {
+  .post("/:name/sprout", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
@@ -1399,7 +1399,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true });
   })
   // Upgrade mind — admin only
-  .post("/:name/upgrade", requireAdmin, async (c) => {
+  .post("/:name/upgrade", requireSelf(), async (c) => {
     const mindName = c.req.param("name");
     const entry = await findMind(mindName);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
@@ -1527,7 +1527,7 @@ const app = new Hono<AuthEnv>()
           await gitExec(["commit", "-m", "Auto-commit before upgrade merge"], {
             cwd: worktreeDir,
           });
-        } catch (e) {
+        } catch {
           return c.json({ error: "Failed to auto-commit upgrade changes before merge" }, 500);
         }
       }
@@ -1907,10 +1907,10 @@ const app = new Hono<AuthEnv>()
       },
     });
   })
-  // Update mind config — admin only
+  // Update mind config
   .put(
     "/:name/config",
-    requireAdmin,
+    requireSelf(),
     zValidator(
       "json",
       z.object({
