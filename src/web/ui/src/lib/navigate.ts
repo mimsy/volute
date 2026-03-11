@@ -13,6 +13,7 @@ export type Selection =
   | { tab: "system"; kind: "pages" }
   | { tab: "system"; kind: "site"; name: string }
   | { tab: "system"; kind: "page"; mind: string; path: string }
+  | { tab: "system"; kind: "settings"; section?: string }
   | { tab: "chat"; kind: "home" }
   | { tab: "chat"; kind: "conversation"; conversationId?: string; mindName?: string };
 
@@ -23,6 +24,12 @@ export function parseSelection(): Selection {
   const search = new URLSearchParams(window.location.search);
 
   // System tab routes
+  if (path === "/settings") return { tab: "system", kind: "settings" };
+
+  const settingsSectionMatch = path.match(/^\/settings\/(.+)$/);
+  if (settingsSectionMatch)
+    return { tab: "system", kind: "settings", section: settingsSectionMatch[1] };
+
   if (path === "/notes") return { tab: "system", kind: "notes" };
 
   const noteMatch = path.match(/^\/notes\/([^/]+)\/(.+)$/);
@@ -117,6 +124,8 @@ export function selectionToPath(selection: Selection): string {
       return `/pages/${selection.name}`;
     case "page":
       return `/pages/${selection.mind}/${selection.path}`;
+    case "settings":
+      return selection.section ? `/settings/${selection.section}` : "/settings";
     case "conversation":
       if (selection.conversationId) return `/chat/${selection.conversationId}`;
       if (selection.mindName) return `/chat?mind=${selection.mindName}`;

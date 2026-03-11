@@ -14,6 +14,7 @@ import Notes from "../pages/Notes.svelte";
 import NoteView from "../pages/NoteView.svelte";
 import PagesDashboard from "../pages/PagesDashboard.svelte";
 import SiteView from "../pages/SiteView.svelte";
+import SystemSettingsPage from "../pages/SystemSettingsPage.svelte";
 import Chat from "./Chat.svelte";
 
 let {
@@ -136,6 +137,10 @@ let contextLabel = $derived.by(() => {
     {:else if selection.kind === "site" && selectedSite}
       <div class="frame-content padded">
         <SiteView site={selectedSite} {onSelectPage} />
+      </div>
+    {:else if selection.kind === "settings"}
+      <div class="frame-content">
+        <SystemSettingsPage section={selection.section} />
       </div>
     {:else if selection.kind === "notes"}
       <div class="frame-content padded">

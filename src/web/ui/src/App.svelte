@@ -1,7 +1,6 @@
 <script lang="ts">
 import type { Conversation, Mind } from "@volute/api";
 import { onMount } from "svelte";
-import AdminModal from "./components/AdminModal.svelte";
 import ChannelBrowserModal from "./components/ChannelBrowserModal.svelte";
 import ChannelMembersPanel from "./components/ChannelMembersPanel.svelte";
 import ChatSidebar from "./components/ChatSidebar.svelte";
@@ -10,13 +9,12 @@ import MainFrame from "./components/MainFrame.svelte";
 import MindModal from "./components/MindModal.svelte";
 import MindPickerModal from "./components/MindPickerModal.svelte";
 import SeedModal from "./components/SeedModal.svelte";
-import StatusBar from "./components/StatusBar.svelte";
 import SystemSidebar from "./components/SystemSidebar.svelte";
 import TabSwitcher from "./components/TabSwitcher.svelte";
 import UpdateBanner from "./components/UpdateBanner.svelte";
 import UserSettingsModal from "./components/UserSettingsModal.svelte";
-import { type AuthUser } from "./lib/auth";
-import { deleteConversation, restartDaemon } from "./lib/client";
+import { type AuthUser, fetchMe } from "./lib/auth";
+import { deleteConversation } from "./lib/client";
 import {
   navigate,
   parseSelection,
@@ -79,7 +77,7 @@ let chatUnreadCount = $derived.by(() => {
 });
 
 // Modals
-type ModalType = "newChat" | "channelBrowser" | "seed" | "admin" | "userSettings" | "mind" | null;
+type ModalType = "newChat" | "channelBrowser" | "seed" | "userSettings" | "mind" | null;
 let activeModal = $state<ModalType>(null);
 let selectedModalMind = $state<Mind | null>(null);
 
@@ -95,6 +93,10 @@ let rightPanelCollapsed = $state(false);
 
 // Responsive viewport tracking
 let narrowViewport = $state(false);
+
+// User menu
+let showUserMenu = $state(false);
+let userAvatar = $state<string | null>(null);
 
 // Auto-collapse right panel on narrow viewports
 $effect(() => {
@@ -203,6 +205,8 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
     } else if (sel.kind === "site") {
       crumbs.push({ label: "pages", action: handleSelectPages });
       crumbs.push({ label: sel.name });
+    } else if (sel.kind === "settings") {
+      crumbs.push({ label: "settings" });
     } else if (sel.kind === "notes") {
       crumbs.push({ label: "notes" });
     } else if (sel.kind === "note") {
@@ -243,6 +247,16 @@ $effect(() => {
 $effect(() => {
   if (!auth.user) return;
   requestNotificationPermission();
+});
+
+// Fetch user avatar
+$effect(() => {
+  if (!auth.user) return;
+  fetchMe()
+    .then((me) => {
+      userAvatar = me?.avatar ? `/api/auth/avatars/${me.avatar}` : null;
+    })
+    .catch(() => {});
 });
 
 // Track whether selection change came from popstate (to avoid pushing duplicate history)
@@ -440,6 +454,10 @@ function handleSelectNotes() {
   selection = { tab: "system", kind: "notes" };
 }
 
+function handleSelectSettings() {
+  selection = { tab: "system", kind: "settings" };
+}
+
 // Resize
 function handleResizeStart(e: PointerEvent) {
   resizing = true;
@@ -494,6 +512,10 @@ function handleRightResizeEnd() {
 
 function handleEscape(e: KeyboardEvent) {
   if (e.key !== "Escape") return;
+  if (showUserMenu) {
+    showUserMenu = false;
+    return;
+  }
   if (rightPanelOpen) {
     closeRightPanel();
     return;
@@ -503,9 +525,16 @@ function handleEscape(e: KeyboardEvent) {
     return;
   }
 }
+
+function handleGlobalClick(e: MouseEvent) {
+  if (showUserMenu && !(e.target as HTMLElement).closest(".user-menu-anchor")) {
+    showUserMenu = false;
+  }
+}
 </script>
 
 <svelte:window onkeydown={handleEscape} />
+<svelte:document onclick={handleGlobalClick} />
 
 {#if !auth.checked}
   <div class="app">
@@ -540,6 +569,7 @@ function handleEscape(e: KeyboardEvent) {
             onSelectMindSection={handleSelectMindSection}
             onSelectNotes={handleSelectNotes}
             onSelectPages={handleSelectPages}
+            onSelectSettings={handleSelectSettings}
             onSeed={() => (activeModal = "seed")}
           />
         {:else}
@@ -593,6 +623,22 @@ function handleEscape(e: KeyboardEvent) {
                   Chat
                 </button>
               {/if}
+              <div class="user-menu-anchor">
+                <button class="user-avatar-btn" onclick={() => { showUserMenu = !showUserMenu; }} title={auth.user?.username}>
+                  {#if userAvatar}
+                    <img src={userAvatar} alt="" class="user-avatar-img" />
+                  {:else}
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 12 0v1"/></svg>
+                  {/if}
+                </button>
+                {#if showUserMenu}
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <div class="user-dropdown">
+                    <button class="user-dropdown-item" onclick={() => { showUserMenu = false; activeModal = "userSettings"; }}>Profile</button>
+                    <button class="user-dropdown-item" onclick={() => { showUserMenu = false; handleLogout(); }}>Logout</button>
+                  </div>
+                {/if}
+              </div>
               {#if hasRightPanel && rightPanelCollapsed}
                 <button class="panel-reopen" onclick={toggleRightPanel} title="Show sidebar">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5"/><circle cx="15" cy="14" r="1.5"/><line x1="12" y1="4" x2="12" y2="8"/><circle cx="12" cy="3" r="1"/></svg>
@@ -659,16 +705,6 @@ function handleEscape(e: KeyboardEvent) {
         {/if}
       </div>
     </div>
-    <StatusBar
-      username={auth.user.username}
-      systemName={auth.systemName}
-      connectionOk={data.connectionOk}
-      isAdmin={auth.user.role === "admin"}
-      onAdminClick={() => (activeModal = "admin")}
-      onRestart={() => restartDaemon()}
-      onLogout={handleLogout}
-      onUserSettings={() => (activeModal = "userSettings")}
-    />
   </div>
 
   {#if activeModal === "newChat"}
@@ -682,9 +718,6 @@ function handleEscape(e: KeyboardEvent) {
   {/if}
   {#if activeModal === "seed"}
     <SeedModal onClose={() => (activeModal = null)} onCreated={handleSeedCreated} />
-  {/if}
-  {#if activeModal === "admin"}
-    <AdminModal onClose={() => (activeModal = null)} minds={data.minds} />
   {/if}
   {#if activeModal === "userSettings"}
     <UserSettingsModal onClose={() => (activeModal = null)} />
@@ -895,6 +928,72 @@ function handleEscape(e: KeyboardEvent) {
   .header-chat-btn svg {
     width: 14px;
     height: 14px;
+  }
+
+  .user-menu-anchor {
+    position: relative;
+  }
+
+  .user-avatar-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: none;
+    border: 1px solid var(--border);
+    padding: 0;
+    cursor: pointer;
+    overflow: hidden;
+    color: var(--text-2);
+  }
+
+  .user-avatar-btn:hover {
+    border-color: var(--border-bright);
+    color: var(--text-1);
+  }
+
+  .user-avatar-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .user-avatar-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .user-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    min-width: 120px;
+    padding: 4px 0;
+    z-index: 100;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+
+  .user-dropdown-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 6px 12px;
+    background: none;
+    color: var(--text-1);
+    font-size: 13px;
+    white-space: nowrap;
+    border: none;
+    cursor: pointer;
+  }
+
+  .user-dropdown-item:hover {
+    background: var(--bg-3);
+    color: var(--text-0);
   }
 
   .panel-reopen {

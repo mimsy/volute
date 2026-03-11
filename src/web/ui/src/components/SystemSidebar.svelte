@@ -13,6 +13,7 @@ let {
   onSelectMindSection,
   onSelectNotes,
   onSelectPages,
+  onSelectSettings,
   onSeed,
 }: {
   minds: Mind[];
@@ -23,6 +24,7 @@ let {
   onSelectMindSection: (name: string, section: string) => void;
   onSelectNotes: () => void;
   onSelectPages: () => void;
+  onSelectSettings: () => void;
   onSeed: () => void;
 } = $props();
 
@@ -81,6 +83,11 @@ const MIND_SECTIONS = [
           class:active={selection.tab === "system" && (selection.kind === "pages" || selection.kind === "site" || selection.kind === "page")}
           onclick={onSelectPages}
         >Pages</button>
+        <button
+          class="sub-item"
+          class:active={selection.tab === "system" && selection.kind === "settings"}
+          onclick={onSelectSettings}
+        >Settings</button>
       </div>
     </div>
 
