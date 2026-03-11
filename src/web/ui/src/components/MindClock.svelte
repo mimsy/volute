@@ -155,10 +155,7 @@ let hasContent = $derived(
 <style>
   .mind-clock {
     border-bottom: 1px solid var(--border);
-    padding-bottom: 10px;
-    margin: 0 -16px 0;
-    padding-left: 16px;
-    padding-right: 16px;
+    padding: 0 16px 10px;
     display: flex;
     flex-direction: column;
     gap: 6px;

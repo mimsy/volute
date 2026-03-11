@@ -1,8 +1,7 @@
 <script lang="ts">
 import type { ContentBlock, ConversationWithParticipants, Message } from "@volute/api";
-import History from "../components/History.svelte";
-import MindClock from "../components/MindClock.svelte";
 import MindInfo from "../components/MindInfo.svelte";
+import MindRightPanel from "../components/MindRightPanel.svelte";
 import MindSkills from "../components/MindSkills.svelte";
 import PublicFiles from "../components/PublicFiles.svelte";
 import ReadOnlyChatModal from "../components/ReadOnlyChatModal.svelte";
@@ -291,8 +290,9 @@ function extractTextContent(content: ContentBlock[]): string {
         </div>
 
         <div class="info-right">
-          <MindClock {name} />
-          <History {name} />
+          {#if mind}
+            <MindRightPanel {mind} />
+          {/if}
         </div>
       </div>
     {:else if section === "notes"}
@@ -370,7 +370,6 @@ function extractTextContent(content: ContentBlock[]): string {
     background: var(--bg-1);
     border-left: 1px solid var(--border);
     margin: -24px -24px -24px 0;
-    padding: 16px;
   }
 
   /* Feed grid */
@@ -612,12 +611,8 @@ function extractTextContent(content: ContentBlock[]): string {
   }
 
   @media (max-width: 1024px) {
-    .info-split {
-      flex-direction: column;
-    }
-
     .info-right {
-      width: 100%;
+      display: none;
     }
   }
 
