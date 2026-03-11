@@ -267,9 +267,11 @@ export async function updateNote(
 
   await db.update(notes).set(set).where(eq(notes.id, existing.id));
 
-  return getNote(authorUsername, slug).then((n) =>
-    n ? { ...n, comments: undefined as any } : null,
-  );
+  return getNote(authorUsername, slug).then((n) => {
+    if (!n) return null;
+    const { comments, replies, ...note } = n;
+    return note;
+  });
 }
 
 export async function deleteNote(

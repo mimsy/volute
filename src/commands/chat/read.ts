@@ -5,7 +5,7 @@ import { resolveMindName } from "../../lib/resolve-mind-name.js";
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
     mind: { type: "string" },
-    limit: { type: "string" },
+    limit: { type: "number" },
   });
 
   const conversationId = positional[0];
@@ -15,7 +15,7 @@ export async function run(args: string[]) {
   }
 
   const mindName = resolveMindName(flags);
-  const limit = flags.limit ?? "50";
+  const limit = String(flags.limit ?? 50);
 
   const res = await daemonFetch(
     `/api/minds/${encodeURIComponent(mindName)}/conversations/${encodeURIComponent(conversationId)}/messages?limit=${limit}`,

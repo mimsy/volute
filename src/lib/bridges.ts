@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import log from "./logger.js";
 import { voluteSystemDir } from "./registry.js";
 
 export interface BridgeConfig {
@@ -20,7 +21,10 @@ export function readBridgesConfig(): BridgesConfig {
   try {
     return JSON.parse(readFileSync(path, "utf-8"));
   } catch (err) {
-    console.error(`Failed to read bridges config at ${path}:`, err);
+    log.error(
+      `bridges.json is corrupt or unreadable at ${path} — all bridges disabled`,
+      log.errorData(err),
+    );
     return {};
   }
 }

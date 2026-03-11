@@ -7,7 +7,9 @@ import type {
   Site,
 } from "@volute/api";
 import type { Selection } from "../lib/navigate";
+import ChatHome from "../pages/ChatHome.svelte";
 import Home from "../pages/Home.svelte";
+import MindPage from "../pages/MindPage.svelte";
 import Notes from "../pages/Notes.svelte";
 import NoteView from "../pages/NoteView.svelte";
 import PagesDashboard from "../pages/PagesDashboard.svelte";
@@ -28,9 +30,9 @@ let {
   onSelectSite,
   onSelectPages,
   onSelectConversation,
-  onTypingNames,
   onSelectNotes,
   onSelectNote,
+  onTypingNames,
   onToggleSidebar,
   onOpenRightPanel,
 }: {
@@ -54,9 +56,10 @@ let {
   onOpenRightPanel?: () => void;
 } = $props();
 
-let selectedSite = $derived(
-  selection.kind === "site" ? sites.find((s) => s.name === selection.name) : undefined,
-);
+let selectedSite = $derived.by(() => {
+  if (selection.kind === "site") return sites.find((s) => s.name === selection.name);
+  return undefined;
+});
 
 let chatMindName = $derived.by(() => {
   if (selection.kind !== "conversation") return "";
@@ -109,49 +112,63 @@ let contextLabel = $derived.by(() => {
       <button class="context-label-btn" onclick={onOpenRightPanel}>{contextLabel}</button>
     {/if}
   </div>
-  {#if selection.kind === "page"}
-    <div class="breadcrumbs">
-      <button class="breadcrumb-link" onclick={onSelectPages}>Pages</button>
-      <span class="breadcrumb-sep">/</span>
-      <button class="breadcrumb-link" onclick={() => onSelectSite(selection.mind)}>{selection.mind}</button>
-      <span class="breadcrumb-sep">/</span>
-      <span class="breadcrumb-current">{selection.path}</span>
-    </div>
-    <div class="frame-content">
-      <iframe src="/pages/{selection.mind}/{selection.path}" class="page-iframe" title="Page"></iframe>
-    </div>
-  {:else if selection.kind === "pages"}
-    <div class="breadcrumbs">
-      <span class="breadcrumb-current">Pages</span>
-    </div>
-    <div class="frame-content padded">
-      <PagesDashboard {sites} {recentPages} {onSelectSite} {onSelectPage} />
-    </div>
-  {:else if selection.kind === "site" && selectedSite}
-    <div class="breadcrumbs">
-      <button class="breadcrumb-link" onclick={onSelectPages}>Pages</button>
-      <span class="breadcrumb-sep">/</span>
-      <span class="breadcrumb-current">{selectedSite.name}</span>
-    </div>
-    <div class="frame-content padded">
-      <SiteView site={selectedSite} {onSelectPage} />
-    </div>
-  {:else if selection.kind === "notes"}
-    <div class="breadcrumbs">
-      <span class="breadcrumb-current">Notes</span>
-    </div>
-    <div class="frame-content padded">
-      <Notes onSelectNote={onSelectNote} />
-    </div>
-  {:else if selection.kind === "note"}
-    <div class="breadcrumbs">
-      <button class="breadcrumb-link" onclick={onSelectNotes}>Notes</button>
-      <span class="breadcrumb-sep">/</span>
-      <span class="breadcrumb-current">{selection.author}/{selection.slug}</span>
-    </div>
-    <div class="frame-content padded">
-      <NoteView author={selection.author} slug={selection.slug} {username} onBack={onSelectNotes} onNavigate={onSelectNote} />
-    </div>
+
+  <!-- System tab views -->
+  {#if selection.tab === "system"}
+    {#if selection.kind === "mind"}
+      <div class="frame-content mind-frame">
+        <MindPage name={selection.name} section={selection.section} {onSelectNote} />
+      </div>
+    {:else if selection.kind === "page"}
+      <div class="breadcrumbs">
+        <button class="breadcrumb-link" onclick={onSelectPages}>Pages</button>
+        <span class="breadcrumb-sep">/</span>
+        <button class="breadcrumb-link" onclick={() => onSelectSite(selection.mind)}>{selection.mind}</button>
+        <span class="breadcrumb-sep">/</span>
+        <span class="breadcrumb-current">{selection.path}</span>
+      </div>
+      <div class="frame-content">
+        <iframe src="/pages/{selection.mind}/{selection.path}" class="page-iframe" title="Page"></iframe>
+      </div>
+    {:else if selection.kind === "pages"}
+      <div class="breadcrumbs">
+        <span class="breadcrumb-current">Pages</span>
+      </div>
+      <div class="frame-content padded">
+        <PagesDashboard {sites} {recentPages} {onSelectSite} {onSelectPage} />
+      </div>
+    {:else if selection.kind === "site" && selectedSite}
+      <div class="breadcrumbs">
+        <button class="breadcrumb-link" onclick={onSelectPages}>Pages</button>
+        <span class="breadcrumb-sep">/</span>
+        <span class="breadcrumb-current">{selectedSite.name}</span>
+      </div>
+      <div class="frame-content padded">
+        <SiteView site={selectedSite} {onSelectPage} />
+      </div>
+    {:else if selection.kind === "notes"}
+      <div class="breadcrumbs">
+        <span class="breadcrumb-current">Notes</span>
+      </div>
+      <div class="frame-content padded">
+        <Notes onSelectNote={onSelectNote} />
+      </div>
+    {:else if selection.kind === "note"}
+      <div class="breadcrumbs">
+        <button class="breadcrumb-link" onclick={onSelectNotes}>Notes</button>
+        <span class="breadcrumb-sep">/</span>
+        <span class="breadcrumb-current">{selection.author}/{selection.slug}</span>
+      </div>
+      <div class="frame-content padded">
+        <NoteView author={selection.author} slug={selection.slug} {username} onBack={onSelectNotes} onNavigate={onSelectNote} />
+      </div>
+    {:else}
+      <div class="frame-content padded">
+        <Home {username} {conversations} {sites} {onSelectPage} {onSelectConversation} {onSelectNote} />
+      </div>
+    {/if}
+
+  <!-- Chat tab views -->
   {:else if selection.kind === "conversation"}
     <div class="frame-content">
       <Chat
@@ -170,7 +187,7 @@ let contextLabel = $derived.by(() => {
     </div>
   {:else}
     <div class="frame-content padded">
-      <Home {username} {minds} {conversations} {recentPages} {activity} {onOpenMind} {onSelectPage} {onSelectConversation} />
+      <ChatHome {conversations} {username} {onSelectConversation} />
     </div>
   {/if}
 </div>
@@ -191,6 +208,11 @@ let contextLabel = $derived.by(() => {
 
   .frame-content.padded {
     padding: 24px;
+  }
+
+  .frame-content.mind-frame {
+    padding: 24px;
+    overflow: hidden;
   }
 
   .breadcrumbs {

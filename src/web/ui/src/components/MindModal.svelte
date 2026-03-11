@@ -1,26 +1,21 @@
 <script lang="ts">
 import type { Mind } from "@volute/api";
-import { formatRelativeTime, getDisplayStatus } from "../lib/format";
+import { getDisplayStatus } from "../lib/format";
 import { data } from "../lib/stores.svelte";
 import History from "./History.svelte";
-import MindInfo from "./MindInfo.svelte";
-import MindSkills from "./MindSkills.svelte";
-import PublicFiles from "./PublicFiles.svelte";
 import StatusBadge from "./StatusBadge.svelte";
-import TabBar from "./TabBar.svelte";
-import VariantList from "./VariantList.svelte";
 
-let { mind: initialMind, onClose }: { mind: Mind; onClose?: () => void } = $props();
-
-const TABS = ["Info", "Files", "Settings"] as const;
-type Tab = (typeof TABS)[number];
+let {
+  mind: initialMind,
+  onClose,
+  onViewProfile,
+}: {
+  mind: Mind;
+  onClose?: () => void;
+  onViewProfile?: () => void;
+} = $props();
 
 let mind = $derived(data.minds.find((m) => m.name === initialMind.name) ?? initialMind);
-let tab = $state<Tab>("Info");
-
-const connectedChannels = $derived(
-  mind.channels.filter((ch) => ch.name !== "web" && ch.status === "connected"),
-);
 
 function formatCreated(dateStr: string): string {
   try {
@@ -42,69 +37,30 @@ function formatCreated(dateStr: string): string {
         <button class="close-btn" onclick={onClose}>&#x2715;</button>
       {/if}
     </div>
-    <TabBar tabs={[...TABS]} active={tab} onchange={(t) => (tab = t as Tab)} />
   </div>
-  <div class="panel-body" class:panel-body-flex={tab === "Info" || tab === "Files"}>
-    {#if tab === "Info"}
-      <div class="profile-section">
-        <span class="profile-display-name">{mind.displayName ?? mind.name}</span>
-        {#if mind.avatar}
-          <img
-            src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
-            alt=""
-            class="profile-avatar"
-          />
-        {/if}
-        <StatusBadge status={getDisplayStatus(mind)} />
-        {#if mind.description}
-          <p class="profile-description">{mind.description}</p>
-        {/if}
-        <span class="profile-meta">@{mind.name} &middot; since {formatCreated(mind.created)}</span>
-      </div>
+  <div class="panel-body">
+    <div class="profile-section">
+      <span class="profile-display-name">{mind.displayName ?? mind.name}</span>
+      {#if mind.avatar}
+        <img
+          src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
+          alt=""
+          class="profile-avatar"
+        />
+      {/if}
+      <StatusBadge status={getDisplayStatus(mind)} />
+      {#if mind.description}
+        <p class="profile-description">{mind.description}</p>
+      {/if}
+      <span class="profile-meta">@{mind.name} &middot; since {formatCreated(mind.created)}</span>
+      {#if onViewProfile}
+        <button class="view-profile-btn" onclick={onViewProfile}>View full profile &rarr;</button>
+      {/if}
+    </div>
 
-      <div class="history-section">
-        <History name={mind.name} />
-      </div>
-    {:else if tab === "Files"}
-      <div class="files-section">
-        <PublicFiles name={mind.name} />
-      </div>
-    {:else if tab === "Settings"}
-      <div class="settings-content">
-        <MindInfo {mind} />
-
-        <div class="detail-section">
-          <MindSkills name={mind.name} />
-        </div>
-
-        <div class="detail-section">
-          <div class="section-title">Connections</div>
-          {#if connectedChannels.length === 0}
-            <div class="connections-empty">No active connections.</div>
-          {:else}
-            <div class="connections-list">
-              {#each connectedChannels as channel}
-                <div class="connection-row">
-                  <span class="connection-name">{channel.displayName}</span>
-                  <StatusBadge status="connected" />
-                  {#if channel.username}
-                    <span class="connection-bot">{channel.username}</span>
-                  {/if}
-                  {#if channel.connectedAt}
-                    <span class="connection-time">{formatRelativeTime(channel.connectedAt)}</span>
-                  {/if}
-                </div>
-              {/each}
-            </div>
-          {/if}
-        </div>
-
-        <div class="detail-section">
-          <div class="section-title">Variants</div>
-          <VariantList name={mind.name} />
-        </div>
-      </div>
-    {/if}
+    <div class="history-section">
+      <History name={mind.name} />
+    </div>
   </div>
 </div>
 
@@ -129,7 +85,7 @@ function formatCreated(dateStr: string): string {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 16px 0;
+    padding: 8px 16px;
   }
 
   .header-left {
@@ -160,76 +116,8 @@ function formatCreated(dateStr: string): string {
     flex: 1;
     overflow: auto;
     min-height: 0;
-  }
-
-  .settings-content {
-    padding: 16px;
-  }
-
-  .files-section {
-    flex: 1;
-    min-height: 0;
-  }
-
-  .panel-body-flex {
     display: flex;
     flex-direction: column;
-    overflow: hidden;
-  }
-
-  .detail-section {
-    margin-top: 24px;
-    padding-top: 24px;
-    border-top: 1px solid var(--border);
-  }
-
-  .section-title {
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-2);
-    margin-bottom: 8px;
-  }
-
-  .connections-empty {
-    color: var(--text-2);
-    padding: 12px 0;
-    font-size: 14px;
-  }
-
-  .connections-list {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .connection-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 0;
-    border-bottom: 1px solid var(--border);
-    font-size: 14px;
-  }
-
-  .connection-row:last-child {
-    border-bottom: none;
-  }
-
-  .connection-name {
-    font-weight: 500;
-    color: var(--text-0);
-  }
-
-  .connection-bot {
-    font-size: 13px;
-    color: var(--text-1);
-  }
-
-  .connection-time {
-    font-size: 12px;
-    color: var(--text-2);
-    margin-left: auto;
   }
 
   .profile-section {
@@ -267,6 +155,19 @@ function formatCreated(dateStr: string): string {
     font-size: 12px;
     color: var(--text-2);
     margin-top: 4px;
+  }
+
+  .view-profile-btn {
+    margin-top: 8px;
+    background: none;
+    color: var(--accent);
+    font-size: 13px;
+    padding: 4px 0;
+    cursor: pointer;
+  }
+
+  .view-profile-btn:hover {
+    text-decoration: underline;
   }
 
   .history-section {

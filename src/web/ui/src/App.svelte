@@ -4,18 +4,26 @@ import { onMount } from "svelte";
 import AdminModal from "./components/AdminModal.svelte";
 import ChannelBrowserModal from "./components/ChannelBrowserModal.svelte";
 import ChannelMembersPanel from "./components/ChannelMembersPanel.svelte";
+import ChatSidebar from "./components/ChatSidebar.svelte";
 import LoginPage from "./components/LoginPage.svelte";
 import MainFrame from "./components/MainFrame.svelte";
 import MindModal from "./components/MindModal.svelte";
 import MindPickerModal from "./components/MindPickerModal.svelte";
 import SeedModal from "./components/SeedModal.svelte";
-import Sidebar from "./components/Sidebar.svelte";
 import StatusBar from "./components/StatusBar.svelte";
+import SystemSidebar from "./components/SystemSidebar.svelte";
+import TabSwitcher from "./components/TabSwitcher.svelte";
 import UpdateBanner from "./components/UpdateBanner.svelte";
 import UserSettingsModal from "./components/UserSettingsModal.svelte";
 import { type AuthUser } from "./lib/auth";
 import { deleteConversation, restartDaemon } from "./lib/client";
-import { navigate, parseSelection, type Selection, selectionToPath } from "./lib/navigate";
+import {
+  navigate,
+  parseSelection,
+  type Selection,
+  selectionToPath,
+  type Tab,
+} from "./lib/navigate";
 import { requestNotificationPermission } from "./lib/notifications";
 import {
   auth,
@@ -37,10 +45,38 @@ import {
   sidebar,
   toggleSidebar,
   unhideConversation,
+  unreadCounts,
 } from "./lib/stores.svelte";
 
 // Selection state
 let selection = $state<Selection>(parseSelection());
+
+// Tab context memory: remember last selection per tab
+let lastSystemSelection = $state<Selection>({ tab: "system", kind: "home" });
+let lastChatSelection = $state<Selection>({ tab: "chat", kind: "home" });
+
+// Keep tab memory up to date
+$effect(() => {
+  if (selection.tab === "system") {
+    lastSystemSelection = selection;
+  } else {
+    lastChatSelection = selection;
+  }
+});
+
+// Derived
+let activeTab = $derived<Tab>(selection.tab);
+
+// Total unread for chat badge (exclude hidden conversations)
+let chatUnreadCount = $derived.by(() => {
+  let total = 0;
+  for (const [id, count] of unreadCounts.entries()) {
+    if (!hiddenConversationIds.has(id)) {
+      total += count;
+    }
+  }
+  return total;
+});
 
 // Modals
 type ModalType = "newChat" | "channelBrowser" | "seed" | "admin" | "userSettings" | "mind" | null;
@@ -56,7 +92,7 @@ let typingNames = $state<string[]>([]);
 // Right panel: hidden on mobile unless explicitly opened
 let rightPanelOpen = $state(false);
 
-// Derived
+// Chat-specific derived values
 let activeConversationId = $derived(
   selection.kind === "conversation" ? (selection.conversationId ?? null) : null,
 );
@@ -91,6 +127,14 @@ let rightPanelMind = $derived(
 );
 
 let rightPanelIsManual = $derived(!!(activeModal === "mind" && selectedModalMind));
+
+// Right panel only in chat tab
+let hasRightPanel = $derived(
+  activeTab === "chat" &&
+    (!!rightPanelMind || activeConv?.type === "channel" || activeConv?.type === "group"),
+);
+
+let showRightPanel = $derived(hasRightPanel);
 
 // Auth — one-time fetch on mount
 onMount(() => {
@@ -153,14 +197,6 @@ $effect(() => {
 });
 
 // Actions
-// Whether right panel has something to show
-let hasRightPanel = $derived(
-  !!rightPanelMind || activeConv?.type === "channel" || activeConv?.type === "group",
-);
-
-// Show right panel on desktop always, on mobile/tablet only when explicitly opened
-let showRightPanel = $derived(hasRightPanel);
-
 function openRightPanel() {
   rightPanelOpen = true;
 }
@@ -174,13 +210,19 @@ function closeRightPanel() {
 }
 
 function handleOpenMindModal(mind: Mind) {
-  selectedModalMind = mind;
-  activeModal = "mind";
-  rightPanelOpen = true;
+  // In system tab, navigate to mind page. In chat tab, show right panel.
+  if (activeTab === "system") {
+    selection = { tab: "system", kind: "mind", name: mind.name };
+    closeSidebar();
+  } else {
+    selectedModalMind = mind;
+    activeModal = "mind";
+    rightPanelOpen = true;
+  }
 }
 
 function handleSelectConversation(id: string) {
-  selection = { kind: "conversation", conversationId: id };
+  selection = { tab: "chat", kind: "conversation", conversationId: id };
   setActiveConversation(id);
   closeSidebar();
   if (activeModal === "mind") {
@@ -198,12 +240,12 @@ async function handleDeleteConversation(id: string) {
   }
   reconnectActivity();
   if (activeConversationId === id) {
-    selection = { kind: "home" };
+    selection = { tab: "chat", kind: "home" };
   }
 }
 
 function handleConversationId(id: string) {
-  selection = { kind: "conversation", conversationId: id };
+  selection = { tab: "chat", kind: "conversation", conversationId: id };
   setActiveConversation(id);
   reconnectActivity();
 }
@@ -220,13 +262,12 @@ function handleNewChatCreated(name: string) {
     return parts.some((p) => p.username === name);
   });
   if (existing) {
-    // Unhide if it was hidden
     if (hiddenConversationIds.has(existing.id)) {
       unhideConversation(existing.id);
     }
-    selection = { kind: "conversation", conversationId: existing.id };
+    selection = { tab: "chat", kind: "conversation", conversationId: existing.id };
   } else {
-    selection = { kind: "conversation", mindName: name };
+    selection = { tab: "chat", kind: "conversation", mindName: name };
   }
 }
 
@@ -235,7 +276,7 @@ function handleNewGroupCreated(conv: Conversation) {
   selectedModalMind = null;
   closeSidebar();
   reconnectActivity();
-  selection = { kind: "conversation", conversationId: conv.id };
+  selection = { tab: "chat", kind: "conversation", conversationId: conv.id };
 }
 
 function handleChannelJoined(conv: Conversation) {
@@ -243,26 +284,26 @@ function handleChannelJoined(conv: Conversation) {
   selectedModalMind = null;
   closeSidebar();
   reconnectActivity();
-  selection = { kind: "conversation", conversationId: conv.id };
+  selection = { tab: "chat", kind: "conversation", conversationId: conv.id };
 }
 
 function handleSeedCreated(mindName: string) {
   activeModal = null;
   selectedModalMind = null;
   closeSidebar();
-  selection = { kind: "conversation", mindName };
+  selection = { tab: "chat", kind: "conversation", mindName };
 }
 
 function handleSelectPage(mind: string, path: string) {
-  selection = { kind: "page", mind, path };
+  selection = { tab: "system", kind: "page", mind, path };
 }
 
 function handleSelectSite(name: string) {
-  selection = { kind: "site", name };
+  selection = { tab: "system", kind: "site", name };
 }
 
 function handleSelectPages() {
-  selection = { kind: "pages" };
+  selection = { tab: "system", kind: "pages" };
 }
 
 function onAuth(u: AuthUser) {
@@ -272,8 +313,35 @@ function onAuth(u: AuthUser) {
 function handleHideConversation(id: string) {
   hideConversation(id);
   if (activeConversationId === id) {
-    selection = { kind: "home" };
+    selection = { tab: "chat", kind: "home" };
   }
+}
+
+function handleTabSwitch(tab: Tab) {
+  if (tab === selection.tab) return;
+  selection = tab === "system" ? lastSystemSelection : lastChatSelection;
+  closeSidebar();
+}
+
+function handleSystemHome() {
+  selection = { tab: "system", kind: "home" };
+}
+
+function handleSelectMind(name: string) {
+  selection = { tab: "system", kind: "mind", name };
+  closeSidebar();
+}
+
+function handleSelectMindSection(name: string, section: string) {
+  selection = { tab: "system", kind: "mind", name, section: section as any };
+}
+
+function handleSelectNotes() {
+  selection = { tab: "system", kind: "notes" };
+}
+
+function handleSelectNote(author: string, slug: string) {
+  selection = { tab: "system", kind: "note", author, slug };
 }
 
 // Resize
@@ -358,25 +426,42 @@ function handleEscape(e: KeyboardEvent) {
     {/if}
     <div class="shell-body">
       <div class="sidebar" class:sidebar-open={layout.sidebarOpen} style:width="{sidebar.width}px">
-        <Sidebar
-          minds={data.minds}
-          conversations={data.conversations.filter((c) => !hiddenConversationIds.has(c.id))}
-          sites={data.sites}
-          {activeConversationId}
-          username={auth.user.username}
-          onSelectConversation={handleSelectConversation}
-          onDeleteConversation={handleDeleteConversation}
-          onNewChat={() => (activeModal = "newChat")}
-          onBrowseChannels={() => (activeModal = "channelBrowser")}
-          onOpenMind={handleOpenMindModal}
-          onSelectMind={handleNewChatCreated}
-          onSeed={() => (activeModal = "seed")}
-          onSelectSite={handleSelectSite}
-          onSelectPages={handleSelectPages}
-          onSelectNotes={() => { selection = { kind: "notes" }; }}
-          onHideConversation={handleHideConversation}
-          onHome={() => (selection = { kind: "home" })}
-        />
+        <button class="sidebar-header" onclick={handleSystemHome}>
+          <span class="header-logo-wrap">
+            <img src="/logo.png" alt="" class="sidebar-logo" />
+            <span class="hover-dot"></span>
+          </span>
+          <span class="sidebar-title">volute</span>
+        </button>
+        <TabSwitcher {activeTab} onSwitch={handleTabSwitch} {chatUnreadCount} />
+        {#if activeTab === "system"}
+          <SystemSidebar
+            minds={data.minds}
+            sites={data.sites}
+            {selection}
+            onHome={handleSystemHome}
+            onSelectMind={handleSelectMind}
+            onSelectMindSection={handleSelectMindSection}
+            onSelectNotes={handleSelectNotes}
+            onSelectPages={handleSelectPages}
+            onSeed={() => (activeModal = "seed")}
+          />
+        {:else}
+          <ChatSidebar
+            minds={data.minds}
+            conversations={data.conversations.filter((c) => !hiddenConversationIds.has(c.id))}
+            {activeConversationId}
+            username={auth.user.username}
+            onSelectConversation={handleSelectConversation}
+            onDeleteConversation={handleDeleteConversation}
+            onNewChat={() => (activeModal = "newChat")}
+            onBrowseChannels={() => (activeModal = "channelBrowser")}
+            onOpenMind={handleOpenMindModal}
+            onSelectMind={handleNewChatCreated}
+            onSeed={() => (activeModal = "seed")}
+            onHideConversation={handleHideConversation}
+          />
+        {/if}
       </div>
       {#if layout.sidebarOpen}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -405,8 +490,8 @@ function handleEscape(e: KeyboardEvent) {
           onSelectPage={handleSelectPage}
           onSelectSite={handleSelectSite}
           onSelectPages={handleSelectPages}
-          onSelectNotes={() => { selection = { kind: "notes" }; }}
-          onSelectNote={(author: string, slug: string) => { selection = { kind: "note", author, slug }; }}
+          onSelectNotes={handleSelectNotes}
+          onSelectNote={handleSelectNote}
           onTypingNames={(names) => { typingNames = names; }}
           onToggleSidebar={toggleSidebar}
           onOpenRightPanel={hasRightPanel ? openRightPanel : undefined}
@@ -431,6 +516,7 @@ function handleEscape(e: KeyboardEvent) {
               <MindModal
                 mind={rightPanelMind}
                 onClose={closeRightPanel}
+                onViewProfile={() => { handleSelectMind(rightPanelMind!.name); closeRightPanel(); }}
               />
             {/key}
           {:else if activeConv?.type === "channel" || activeConv?.type === "group"}
@@ -506,6 +592,72 @@ function handleEscape(e: KeyboardEvent) {
     border-right: 1px solid var(--border);
     background: var(--bg-1);
     overflow: hidden;
+  }
+
+  .sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 12px;
+    flex-shrink: 0;
+    background: none;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .header-logo-wrap {
+    position: relative;
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
+  }
+
+  .sidebar-logo {
+    width: 30px;
+    height: 30px;
+    filter: invert(1);
+    transition: opacity 0.15s;
+  }
+
+  .hover-dot {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    opacity: 0;
+    transition: opacity 0.15s;
+    animation: iridescent 3s ease-in-out infinite;
+  }
+
+  .sidebar-header:hover .sidebar-logo {
+    opacity: 0;
+  }
+
+  .sidebar-header:hover .hover-dot {
+    opacity: 1;
+  }
+
+  .sidebar-title {
+    font-family: var(--display);
+    font-size: 26px;
+    font-weight: 300;
+    color: var(--text-0);
+    letter-spacing: 0.04em;
+    margin-top: -4px;
+    margin-left: -4px;
+  }
+
+  @keyframes iridescent {
+    0%   { background: #4ade80; }
+    16%  { background: #60a5fa; }
+    33%  { background: #c084fc; }
+    50%  { background: #f472b6; }
+    66%  { background: #fbbf24; }
+    83%  { background: #34d399; }
+    100% { background: #4ade80; }
   }
 
   .resize-handle {
@@ -596,6 +748,12 @@ function handleEscape(e: KeyboardEvent) {
     }
 
     .resize-handle {
+      display: none;
+    }
+  }
+
+  @media (max-width: 1024px) {
+    .sidebar-header {
       display: none;
     }
   }

@@ -2,7 +2,10 @@
 import { onMount } from "svelte";
 import NoteCard from "../components/NoteCard.svelte";
 
-let { onSelectNote }: { onSelectNote: (author: string, slug: string) => void } = $props();
+let {
+  onSelectNote,
+  author,
+}: { onSelectNote: (author: string, slug: string) => void; author?: string } = $props();
 
 interface Note {
   title: string;
@@ -50,7 +53,8 @@ function mapNote(n: ApiNote): Note {
 
 async function loadNotes() {
   try {
-    const res = await fetch("/api/notes");
+    const url = author ? `/api/notes?author=${encodeURIComponent(author)}` : "/api/notes";
+    const res = await fetch(url);
     if (!res.ok) throw new Error("Failed to load notes");
     const raw: ApiNote[] = await res.json();
     notes = raw.map(mapNote);

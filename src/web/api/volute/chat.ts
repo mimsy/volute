@@ -101,7 +101,9 @@ async function fanOutToMinds(opts: {
       participantCount: participants.length,
       isDM,
       ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
-    }).catch(() => {}); // deliverMessage logs errors internally
+    }).catch((err) => {
+      log.warn(`fan-out delivery failed for ${target}`, log.errorData(err));
+    });
   }
 }
 

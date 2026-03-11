@@ -31,12 +31,14 @@ import type { AuthEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
 
 const inboundSchema = z.object({
-  content: z.array(
-    z.union([
-      z.object({ type: z.literal("text"), text: z.string() }),
-      z.object({ type: z.literal("image"), media_type: z.string(), data: z.string() }),
-    ]),
-  ),
+  content: z
+    .array(
+      z.union([
+        z.object({ type: z.literal("text"), text: z.string() }),
+        z.object({ type: z.literal("image"), media_type: z.string(), data: z.string() }),
+      ]),
+    )
+    .min(1),
   platformUserId: z.string(),
   displayName: z.string(),
   externalChannel: z.string(),
@@ -200,7 +202,10 @@ const app = new Hono<AuthEnv>()
     });
 
     try {
-      const daemonPort = parseInt(process.env.VOLUTE_DAEMON_PORT!, 10);
+      const daemonPort = parseInt(process.env.VOLUTE_DAEMON_PORT ?? "", 10);
+      if (isNaN(daemonPort)) {
+        return c.json({ error: "VOLUTE_DAEMON_PORT not available" }, 500);
+      }
       await manager.startBridge(platform, daemonPort);
       return c.json({ ok: true });
     } catch (err) {
