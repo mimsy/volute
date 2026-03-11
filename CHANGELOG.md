@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.27.0](https://github.com/mimsy/volute/compare/volute-v0.26.0...volute-v0.27.0) (2026-03-11)
+
+
+### Features
+
+* move infrastructure state to ~/.volute/system/ directory ([#181](https://github.com/mimsy/volute/issues/181)) ([bc23319](https://github.com/mimsy/volute/commit/bc23319a49cd4f979d989e74d5cada3a99ad4458))
+* replace per-mind connectors with system-level bridge architecture ([#184](https://github.com/mimsy/volute/issues/184)) ([f05e153](https://github.com/mimsy/volute/commit/f05e1532d9086c8d58dad805eea26b226c66659d))
+* unify minds and variants into single DB table ([#183](https://github.com/mimsy/volute/issues/183)) ([76d2280](https://github.com/mimsy/volute/commit/76d2280fb91ac38a05d6e3b3bbd06acb13229386))
+* web UI redesign, notes system, and bridge architecture ([#185](https://github.com/mimsy/volute/issues/185)) ([0304c27](https://github.com/mimsy/volute/commit/0304c27758ad52a7eb81fb39f5d11b3eeb595df6))
+
+
+### Bug Fixes
+
+* upgrade message, dreaming docs, and user-local session storage ([#177](https://github.com/mimsy/volute/issues/177)) ([1b30454](https://github.com/mimsy/volute/commit/1b3045446aacbcd32f57cca9a7ebb27a123009db))
+
 ## [0.26.0](https://github.com/mimsy/volute/compare/volute-v0.25.1...volute-v0.26.0) (2026-03-10)
 
 
