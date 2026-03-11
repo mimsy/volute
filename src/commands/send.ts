@@ -174,18 +174,6 @@ export async function run(args: string[]) {
   // Handle --file: stage file for the target mind, then send a notification message
   if (flags.file) {
     const filePath = flags.file;
-    if (!existsSync(filePath)) {
-      console.error(`File not found: ${filePath}`);
-      process.exit(1);
-    }
-    const stat = statSync(filePath);
-    const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
-    if (stat.size > MAX_FILE_SIZE) {
-      console.error(
-        `File too large (${formatFileSize(stat.size)}, max ${formatFileSize(MAX_FILE_SIZE)})`,
-      );
-      process.exit(1);
-    }
 
     // Resolve target mind name
     const parsed = parseTarget(target);
@@ -211,6 +199,19 @@ export async function run(args: string[]) {
       console.log(`File staged for ${targetName} (id: ${data.id})`);
     } else {
       // For CLI (human) senders, read file locally and stage via daemon API
+      if (!existsSync(filePath)) {
+        console.error(`File not found: ${filePath}`);
+        process.exit(1);
+      }
+      const stat = statSync(filePath);
+      const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
+      if (stat.size > MAX_FILE_SIZE) {
+        console.error(
+          `File too large (${formatFileSize(stat.size)}, max ${formatFileSize(MAX_FILE_SIZE)})`,
+        );
+        process.exit(1);
+      }
+
       const content = readFileSync(filePath);
       const filename = basename(filePath);
       const senderName = flags.sender || userInfo().username;
