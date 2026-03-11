@@ -82,7 +82,7 @@ function readConfig(): string[] {
 function writeConfig(packages: string[]): void {
   const configPath = extensionsConfigPath();
   mkdirSync(resolve(configPath, ".."), { recursive: true });
-  writeFileSync(configPath, JSON.stringify(packages, null, 2) + "\n");
+  writeFileSync(configPath, `${JSON.stringify(packages, null, 2)}\n`);
 }
 
 async function installExtension(args: string[]) {

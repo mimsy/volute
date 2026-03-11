@@ -1539,7 +1539,7 @@ const app = new Hono<AuthEnv>()
         try {
           await gitExec(["add", "-A"], { cwd: dir });
           await gitExec(["commit", "-m", "Auto-commit before upgrade merge"], { cwd: dir });
-        } catch (e) {
+        } catch (_e) {
           return c.json({ error: "Failed to auto-commit main changes before merge" }, 500);
         }
       }
