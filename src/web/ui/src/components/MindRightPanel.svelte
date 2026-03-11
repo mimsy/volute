@@ -8,14 +8,8 @@ import StatusBadge from "./StatusBadge.svelte";
 
 let {
   mind: initialMind,
-  onClose,
-  onChat,
-  onProfile,
 }: {
   mind: Mind;
-  onClose?: () => void;
-  onChat?: () => void;
-  onProfile?: () => void;
 } = $props();
 
 let mind = $derived(data.minds.find((m) => m.name === initialMind.name) ?? initialMind);
@@ -31,20 +25,6 @@ function formatCreated(dateStr: string): string {
 </script>
 
 <div class="mind-panel">
-  <div class="panel-header">
-    <span class="mind-name">{mind.displayName ?? mind.name}</span>
-    <div class="header-actions">
-      {#if onChat}
-        <button class="header-btn" onclick={onChat}>Chat</button>
-      {/if}
-      {#if onProfile}
-        <button class="header-btn" onclick={onProfile}>Profile</button>
-      {/if}
-      {#if onClose}
-        <button class="close-btn" onclick={onClose}>&#x2715;</button>
-      {/if}
-    </div>
-  </div>
   <div class="panel-body">
     <div class="profile-section">
       {#if mind.avatar}
@@ -77,55 +57,6 @@ function formatCreated(dateStr: string): string {
     background: var(--bg-1);
     width: 100%;
     overflow: hidden;
-  }
-
-  .panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 16px;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-
-  .mind-name {
-    font-family: var(--display);
-    font-size: 22px;
-    font-weight: 300;
-    color: var(--text-0);
-    letter-spacing: 0.02em;
-  }
-
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .header-btn {
-    background: none;
-    border: 1px solid var(--border);
-    color: var(--text-2);
-    font-size: 12px;
-    padding: 3px 10px;
-    border-radius: var(--radius);
-    cursor: pointer;
-  }
-
-  .header-btn:hover {
-    color: var(--text-1);
-    border-color: var(--border-bright);
-  }
-
-  .close-btn {
-    background: none;
-    color: var(--text-2);
-    font-size: 15px;
-    padding: 4px 8px;
-  }
-
-  .close-btn:hover {
-    color: var(--text-0);
   }
 
   .panel-body {

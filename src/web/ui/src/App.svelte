@@ -91,6 +91,7 @@ let typingNames = $state<string[]>([]);
 
 // Right panel: hidden on mobile unless explicitly opened
 let rightPanelOpen = $state(false);
+let rightPanelCollapsed = $state(false);
 
 // Chat-specific derived values
 let activeConversationId = $derived(
@@ -101,6 +102,7 @@ let activeConversationId = $derived(
 $effect(() => {
   setActiveConversation(activeConversationId);
   rightPanelOpen = false;
+  rightPanelCollapsed = false;
 });
 
 // Right panel: auto-show mind details for DMs, channel members for channels
@@ -134,7 +136,10 @@ let hasRightPanel = $derived(
     (!!rightPanelMind || activeConv?.type === "channel" || activeConv?.type === "group"),
 );
 
-let showRightPanel = $derived(hasRightPanel);
+let showRightPanel = $derived(hasRightPanel && !rightPanelCollapsed);
+
+// Mind header: shows across full width when chatting with a mind
+let showMindHeader = $derived(activeTab === "chat" && !!rightPanelMind);
 
 // Auth — one-time fetch on mount
 onMount(() => {
@@ -207,6 +212,11 @@ function closeRightPanel() {
     selectedModalMind = null;
   }
   rightPanelOpen = false;
+  rightPanelCollapsed = true;
+}
+
+function toggleRightPanel() {
+  rightPanelCollapsed = !rightPanelCollapsed;
 }
 
 function handleOpenMindModal(mind: Mind) {
@@ -471,59 +481,78 @@ function handleEscape(e: KeyboardEvent) {
         onpointerup={handleResizeEnd}
         onpointercancel={handleResizeEnd}
       ></div>
-      <div class="main-frame">
-        <MainFrame
-          {selection}
-          minds={data.minds}
-          conversations={data.conversations}
-          recentPages={data.recentPages}
-          sites={data.sites}
-          activity={data.activity}
-          username={auth.user.username}
-          onConversationId={handleConversationId}
-          onSelectConversation={handleSelectConversation}
-          onOpenMind={handleOpenMindModal}
-          onSelectPage={handleSelectPage}
-          onSelectSite={handleSelectSite}
-          onSelectPages={handleSelectPages}
-          onSelectNotes={handleSelectNotes}
-          onTypingNames={(names) => { typingNames = names; }}
-          onToggleSidebar={toggleSidebar}
-          onOpenRightPanel={hasRightPanel ? openRightPanel : undefined}
-        />
-      </div>
-      {#if showRightPanel}
-        {#if rightPanelOpen}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="right-panel-backdrop" onclick={closeRightPanel}></div>
+      <div class="content-area">
+        {#if showMindHeader && rightPanelMind}
+          <div class="mind-header">
+            <span class="mind-header-name">{rightPanelMind.displayName ?? rightPanelMind.name}</span>
+            <div class="mind-header-actions">
+              <button class="mind-header-btn" onclick={() => { handleSelectMind(rightPanelMind!.name); }}>Profile</button>
+              {#if rightPanelCollapsed}
+                <button class="mind-header-toggle" onclick={toggleRightPanel} title="Show sidebar">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="2"/><path d="M10 2v12"/></svg>
+                </button>
+              {:else}
+                <button class="mind-header-toggle" onclick={toggleRightPanel} title="Hide sidebar">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="2"/><path d="M10 2v12"/></svg>
+                </button>
+              {/if}
+            </div>
+          </div>
         {/if}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          class="resize-handle right-resize-handle"
-          onpointerdown={handleRightResizeStart}
-          onpointermove={handleRightResizeMove}
-          onpointerup={handleRightResizeEnd}
-          onpointercancel={handleRightResizeEnd}
-        ></div>
-        <div class="right-panel" class:right-panel-open={rightPanelOpen} style:width="{rightPanel.width}px">
-          {#if rightPanelMind}
-            {#key rightPanelMind.name}
-              <MindModal
-                mind={rightPanelMind}
-                onClose={closeRightPanel}
-                onViewProfile={() => { handleSelectMind(rightPanelMind!.name); closeRightPanel(); }}
-              />
-            {/key}
-          {:else if activeConv?.type === "channel" || activeConv?.type === "group"}
-            <ChannelMembersPanel
-              conversation={activeConv}
+        <div class="content-row">
+          <div class="main-frame">
+            <MainFrame
+              {selection}
               minds={data.minds}
-              {typingNames}
+              conversations={data.conversations}
+              recentPages={data.recentPages}
+              sites={data.sites}
+              activity={data.activity}
+              username={auth.user.username}
+              onConversationId={handleConversationId}
+              onSelectConversation={handleSelectConversation}
               onOpenMind={handleOpenMindModal}
+              onSelectPage={handleSelectPage}
+              onSelectSite={handleSelectSite}
+              onSelectPages={handleSelectPages}
+              onSelectNotes={handleSelectNotes}
+              onTypingNames={(names) => { typingNames = names; }}
+              onToggleSidebar={toggleSidebar}
+              onOpenRightPanel={hasRightPanel ? openRightPanel : undefined}
             />
+          </div>
+          {#if showRightPanel}
+            {#if rightPanelOpen}
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div class="right-panel-backdrop" onclick={closeRightPanel}></div>
+            {/if}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="resize-handle right-resize-handle"
+              onpointerdown={handleRightResizeStart}
+              onpointermove={handleRightResizeMove}
+              onpointerup={handleRightResizeEnd}
+              onpointercancel={handleRightResizeEnd}
+            ></div>
+            <div class="right-panel" class:right-panel-open={rightPanelOpen} style:width="{rightPanel.width}px">
+              {#if rightPanelMind}
+                {#key rightPanelMind.name}
+                  <MindModal
+                    mind={rightPanelMind}
+                  />
+                {/key}
+              {:else if activeConv?.type === "channel" || activeConv?.type === "group"}
+                <ChannelMembersPanel
+                  conversation={activeConv}
+                  minds={data.minds}
+                  {typingNames}
+                  onOpenMind={handleOpenMindModal}
+                />
+              {/if}
+            </div>
           {/if}
         </div>
-      {/if}
+      </div>
     </div>
     <StatusBar
       username={auth.user.username}
@@ -667,10 +696,84 @@ function handleEscape(e: KeyboardEvent) {
     background: var(--border);
   }
 
+  .content-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+  }
+
+  .content-row {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    min-height: 0;
+  }
+
   .main-frame {
     flex: 1;
     overflow: hidden;
     min-width: 0;
+  }
+
+  .mind-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    background: var(--bg-1);
+  }
+
+  .mind-header-name {
+    font-family: var(--display);
+    font-size: 22px;
+    font-weight: 300;
+    color: var(--text-0);
+    letter-spacing: 0.02em;
+  }
+
+  .mind-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .mind-header-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: var(--radius);
+    cursor: pointer;
+  }
+
+  .mind-header-btn:hover {
+    color: var(--text-1);
+    border-color: var(--border-bright);
+  }
+
+  .mind-header-toggle {
+    background: none;
+    color: var(--text-2);
+    padding: 4px;
+    cursor: pointer;
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+  }
+
+  .mind-header-toggle:hover {
+    color: var(--text-1);
+    background: var(--bg-2);
+  }
+
+  .mind-header-toggle svg {
+    width: 16px;
+    height: 16px;
   }
 
   .right-panel {

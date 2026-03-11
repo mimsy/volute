@@ -4,13 +4,9 @@ import MindRightPanel from "./MindRightPanel.svelte";
 
 let {
   mind,
-  onClose,
-  onViewProfile,
 }: {
   mind: Mind;
-  onClose?: () => void;
-  onViewProfile?: () => void;
 } = $props();
 </script>
 
-<MindRightPanel {mind} {onClose} onProfile={onViewProfile} />
+<MindRightPanel {mind} />

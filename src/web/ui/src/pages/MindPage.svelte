@@ -291,7 +291,7 @@ function extractTextContent(content: ContentBlock[]): string {
 
         <div class="info-right">
           {#if mind}
-            <MindRightPanel {mind} onChat={() => navigate(`/chat?mind=${name}`)} />
+            <MindRightPanel {mind} />
           {/if}
         </div>
       </div>
