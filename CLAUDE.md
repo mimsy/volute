@@ -22,7 +22,7 @@ Core values:
 - `src/lib/` — Shared libraries (registry, mind-manager, connector-manager, scheduler, daemon-client, arg parsing, exec wrappers, variant metadata, db, auth, conversations, channels)
 - `src/web/` — Web dashboard (Hono backend + Svelte frontend), served by the daemon
 - `src/connectors/` — Built-in connector implementations (Discord, Slack, Telegram) + shared SDK
-- `skills/` — Built-in skill definitions (memory, sessions, orientation, volute-mind), synced to the shared pool on daemon startup
+- `skills/` — Built-in skill definitions (memory, sessions, orientation, volute-mind, notes, dreaming, shared-files), synced to the shared pool on daemon startup
 - `templates/claude/` — Default template (Claude Agent SDK) copied by `volute mind create`
 - `templates/pi/` — Alternative template using pi-coding-agent for multi-provider LLM support
 - All minds live in `~/.volute/minds/<name>/` by default (overridable via `VOLUTE_MINDS_DIR`) with a centralized registry backed by the `minds` DB table in `volute.db`
@@ -157,7 +157,7 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute schedule add [--mind] --cron "..." --message/--script "..." [--id name]` | Add a cron schedule |
 | `volute schedule remove [--mind] --id <id>` | Remove a schedule |
 | `volute skill <list\|add\|remove> [--mind]` | Manage mind skills |
-| `volute shared <list\|add\|remove>` | Manage shared skill pool |
+| `volute shared <list\|add\|remove>` | Manage shared skill pool (deprecated — use shared-files skill) |
 | `volute mind seed <name>` | Create a minimal seed mind |
 | `volute mind sprout` | Grow a seed into a full mind |
 | `volute file <send\|accept\|list\|trust> [--mind]` | Mind-to-mind file sharing |
@@ -174,7 +174,7 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute status` | Show daemon status, version, and minds |
 | `volute update` | Check for updates |
 
-Mind-scoped commands (`chat`, `schedule`, `file`, `skill`, `shared`, `pages`) use `--mind <name>` or `VOLUTE_MIND` env var.
+Mind-scoped commands (`chat`, `schedule`, `file`, `skill`, `pages`) use `--mind <name>` or `VOLUTE_MIND` env var.
 
 ## Source files
 
@@ -216,7 +216,7 @@ Mind-scoped commands (`chat`, `schedule`, `file`, `skill`, `shared`, `pages`) us
 | `file-sharing.ts` | Mind-to-mind file sharing with trust system |
 | `archive.ts` | Mind archival utilities |
 | `skills.ts` | Skill installation and management |
-| `shared.ts` | Shared resource management |
+| `shared.ts` | Shared repo init, worktree management, and merge |
 | `prompts.ts` | Mind prompt management |
 | `rotating-log.ts` | Size-limited rotating log files |
 | `read-stdin.ts` | Reads piped stdin for send commands (returns undefined if TTY) |
@@ -334,7 +334,7 @@ Mind-scoped commands (`chat`, `schedule`, `file`, `skill`, `shared`, `pages`) us
 - Centralized message persistence in `mind_history` table via daemon routes (text + tool call summaries)
 - Mind process isolation: sandbox mode (local installs, `@anthropic-ai/sandbox-runtime`), per-user mode (system installs, Linux/macOS), or none. Configured via `volute setup`, stored in `config.json` as `setup.isolation`
 - `volute setup` is the required first-run command; CLI commands are gated on `isSetupComplete()` with auto-migration for existing users via `migrateSetupConfig()`
-- Built-in skills live in `skills/` at repo root and are synced to the shared pool (`~/.volute/skills/`) on daemon startup via `syncBuiltinSkills()`. Skill sets: `SEED_SKILLS` (orientation, memory) for seeds, `STANDARD_SKILLS` (volute-mind, memory, sessions) for sprouted minds. Skills are installed from the shared pool with upstream tracking (`.upstream.json`) for independent updates.
+- Built-in skills live in `skills/` at repo root and are synced to the shared pool (`~/.volute/skills/`) on daemon startup via `syncBuiltinSkills()`. Skill sets: `SEED_SKILLS` (orientation, memory) for seeds, `STANDARD_SKILLS` (volute-mind, memory, sessions, notes, dreaming, shared-files) for sprouted minds. Skills are installed from the shared pool with upstream tracking (`.upstream.json`) for independent updates.
 
 ## Deployment
 

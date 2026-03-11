@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { gitExec } from "../src/lib/exec.js";
@@ -9,10 +9,7 @@ import {
   ensureSharedRepo,
   removeSharedWorktree,
   sharedDir,
-  sharedLog,
   sharedMerge,
-  sharedPull,
-  sharedStatus,
 } from "../src/lib/shared.js";
 
 // Helper to create a fake mind directory with a git repo
@@ -184,66 +181,5 @@ describe("shared repo", () => {
 
     await removeSharedWorktree("test-conflict-a", mindDirA);
     await removeSharedWorktree("test-conflict-b", mindDirB);
-  });
-
-  it("sharedPull rebases mind branch onto main", async () => {
-    await ensureSharedRepo();
-
-    // Set up two minds
-    const mindDirA = await createFakeMind("test-pull-a");
-    const mindDirB = await createFakeMind("test-pull-b");
-    await addSharedWorktree("test-pull-a", mindDirA);
-    await addSharedWorktree("test-pull-b", mindDirB);
-
-    // Mind A creates a file and merges
-    const worktreeA = resolve(mindDirA, "home", "shared");
-    writeFileSync(resolve(worktreeA, "pages", "from-a.txt"), "from mind A");
-    await sharedMerge("test-pull-a", mindDirA, "Add from-a.txt");
-
-    // Mind B pulls to get A's changes
-    const result = await sharedPull("test-pull-b", mindDirB);
-    assert.ok(result.ok);
-
-    // Verify B can see A's file
-    const worktreeB = resolve(mindDirB, "home", "shared");
-    assert.ok(existsSync(resolve(worktreeB, "pages", "from-a.txt")));
-    assert.equal(readFileSync(resolve(worktreeB, "pages", "from-a.txt"), "utf-8"), "from mind A");
-
-    await removeSharedWorktree("test-pull-a", mindDirA);
-    await removeSharedWorktree("test-pull-b", mindDirB);
-  });
-
-  it("sharedLog shows history", async () => {
-    await ensureSharedRepo();
-    const log = await sharedLog(10);
-    assert.ok(log.includes("init shared repo"));
-  });
-
-  it("sharedStatus shows diff between main and mind branch", async () => {
-    await ensureSharedRepo();
-    const mindDir = await createFakeMind("test-status");
-    await addSharedWorktree("test-status", mindDir);
-
-    // Add a file
-    const worktreePath = resolve(mindDir, "home", "shared");
-    writeFileSync(resolve(worktreePath, "test.txt"), "hello");
-    await gitExec(["add", "-A"], { cwd: worktreePath });
-    await gitExec(["commit", "-m", "add test"], { cwd: worktreePath });
-
-    const status = await sharedStatus("test-status");
-    assert.ok(status.includes("test.txt"));
-
-    await removeSharedWorktree("test-status", mindDir);
-  });
-
-  it("sharedStatus returns empty for no changes", async () => {
-    await ensureSharedRepo();
-    const mindDir = await createFakeMind("test-status-empty");
-    await addSharedWorktree("test-status-empty", mindDir);
-
-    const status = await sharedStatus("test-status-empty");
-    assert.equal(status.trim(), "");
-
-    await removeSharedWorktree("test-status-empty", mindDir);
   });
 });

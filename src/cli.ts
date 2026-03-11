@@ -47,9 +47,6 @@ switch (command) {
   case "skill":
     await import("./commands/skill.js").then((m) => m.run(args));
     break;
-  case "shared":
-    await import("./commands/shared.js").then((m) => m.run(args));
-    break;
   case "file":
     await import("./commands/file.js").then((m) => m.run(args));
     break;
@@ -118,7 +115,6 @@ Configuration:
   skill     Browse and install skills
   env       Manage environment variables
   file      Mind-to-mind file sharing
-  shared    Collaborative shared repository
   notes     Read and write notes
   pages     Publish web pages
 
@@ -136,7 +132,7 @@ Options:
 
 Run 'volute <command> --help' for details.
 
-Mind-scoped commands (chat, schedule, file, skill, shared, pages)
+Mind-scoped commands (chat, schedule, file, skill, pages)
 use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
   default:
