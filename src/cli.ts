@@ -65,9 +65,6 @@ switch (command) {
   case "restart":
     await import("./commands/daemon-restart.js").then((m) => m.run(args));
     break;
-  case "service":
-    await import("./commands/service.js").then((m) => m.run(args));
-    break;
   case "update":
     await import("./commands/update.js").then((m) => m.run(args));
     break;
@@ -98,7 +95,6 @@ Common:
   chat send <target> "<msg>"       Send a message
   chat list / read / create        Manage conversations
   chat bridge                      Manage platform bridges
-  status                           Show system status
 
 Mind:
   mind create <name>               Create a new mind
@@ -124,9 +120,9 @@ Configuration:
 System:
   setup                            First-time setup
   up / down / restart              Daemon control
+  status                           Show daemon & service status
   login / logout                   CLI authentication
   update                           Update volute
-  service status                   Check service status
   systems register/login/logout    volute.systems account
 
 Options:

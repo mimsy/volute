@@ -282,7 +282,7 @@ On macOS or Linux (without root), include `--service` during setup:
 
 ```sh
 volute setup --name my-system --service   # local install + auto-start on login
-volute service status                     # check status
+volute status                             # check status
 ```
 
 ## Development

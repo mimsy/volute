@@ -18,16 +18,11 @@ export async function run(args: string[]) {
       await import("./delete.js").then((m) => m.run(args.slice(1)));
       break;
     case "list":
-      await import("./status.js").then((m) => m.run(args.slice(1)));
+      await import("./mind-list.js").then((m) => m.run(args.slice(1)));
       break;
-    case "status": {
-      const rest = args.slice(1);
-      if (!rest[0] && process.env.VOLUTE_MIND) {
-        rest.unshift(process.env.VOLUTE_MIND);
-      }
-      await import("./status.js").then((m) => m.run(rest));
+    case "status":
+      await import("./mind-status.js").then((m) => m.run(args.slice(1)));
       break;
-    }
     case "history": {
       const rest = args.slice(1);
       const historyArgs = transformMindFlag(rest);

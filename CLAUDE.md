@@ -170,8 +170,7 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute up [--port N] [--foreground] [--no-sandbox]` | Start the daemon (default: 1618) |
 | `volute down` | Stop the daemon |
 | `volute restart [--port N]` | Restart the daemon |
-| `volute service status` | Check service status |
-| `volute status` | Show daemon status, version, and minds |
+| `volute status` | Show daemon status, service info, version, and minds |
 | `volute update` | Check for updates |
 
 Mind-scoped commands (`chat`, `schedule`, `file`, `skill`, `shared`, `pages`) use `--mind <name>` or `VOLUTE_MIND` env var.
