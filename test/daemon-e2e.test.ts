@@ -641,6 +641,242 @@ describe("daemon e2e", { timeout: 120000 }, () => {
 
   // ── End Bridge & Chat Tests ──
 
+  // ── Clock & Schedule Integration Tests ──
+
+  it("schedule CRUD: add cron schedule, list, update, remove", async () => {
+    await ensureTestMind();
+
+    // Add a cron schedule
+    const addRes = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cron: "0 9 * * *", message: "good morning", id: "test-cron" }),
+    });
+    assert.equal(addRes.status, 201, `Add schedule: ${await addRes.clone().text()}`);
+
+    // List — should include the schedule
+    const listRes = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`);
+    assert.equal(listRes.status, 200);
+    const schedules = (await listRes.json()) as { id: string; cron?: string; message?: string }[];
+    const found = schedules.find((s) => s.id === "test-cron");
+    assert.ok(found, `Expected test-cron in schedules: ${JSON.stringify(schedules)}`);
+    assert.equal(found.cron, "0 9 * * *");
+    assert.equal(found.message, "good morning");
+
+    // Update message
+    const updateRes = await daemonRequest(`/api/minds/${TEST_MIND}/schedules/test-cron`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "updated message" }),
+    });
+    assert.equal(updateRes.status, 200, `Update: ${await updateRes.clone().text()}`);
+
+    // Verify update
+    const listRes2 = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`);
+    const schedules2 = (await listRes2.json()) as { id: string; message?: string }[];
+    assert.equal(schedules2.find((s) => s.id === "test-cron")?.message, "updated message");
+
+    // Delete
+    const delRes = await daemonRequest(`/api/minds/${TEST_MIND}/schedules/test-cron`, {
+      method: "DELETE",
+    });
+    assert.equal(delRes.status, 200);
+
+    // Verify deleted
+    const listRes3 = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`);
+    const schedules3 = (await listRes3.json()) as { id: string }[];
+    assert.ok(!schedules3.some((s) => s.id === "test-cron"), "Schedule should be removed");
+  });
+
+  it("schedule: add fireAt timer", async () => {
+    await ensureTestMind();
+
+    const futureISO = new Date(Date.now() + 3600_000).toISOString();
+    const addRes = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fireAt: futureISO, message: "timer test", id: "test-timer" }),
+    });
+    assert.equal(addRes.status, 201, `Add timer: ${await addRes.clone().text()}`);
+
+    // Verify it shows up with fireAt
+    const listRes = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`);
+    const schedules = (await listRes.json()) as { id: string; fireAt?: string }[];
+    const timer = schedules.find((s) => s.id === "test-timer");
+    assert.ok(timer, "Timer should exist");
+    assert.equal(timer.fireAt, futureISO);
+
+    // Clean up
+    await daemonRequest(`/api/minds/${TEST_MIND}/schedules/test-timer`, { method: "DELETE" });
+  });
+
+  it("schedule: whileSleeping field", async () => {
+    await ensureTestMind();
+
+    const addRes = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        cron: "0 3 * * *",
+        message: "dream",
+        id: "test-sleep-sched",
+        whileSleeping: "trigger-wake",
+        channel: "system:dream",
+      }),
+    });
+    assert.equal(addRes.status, 201, `Add: ${await addRes.clone().text()}`);
+
+    // Verify fields
+    const listRes = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`);
+    const schedules = (await listRes.json()) as {
+      id: string;
+      whileSleeping?: string;
+      channel?: string;
+    }[];
+    const sched = schedules.find((s) => s.id === "test-sleep-sched");
+    assert.ok(sched);
+    assert.equal(sched.whileSleeping, "trigger-wake");
+    assert.equal(sched.channel, "system:dream");
+
+    // Update whileSleeping
+    const updateRes = await daemonRequest(`/api/minds/${TEST_MIND}/schedules/test-sleep-sched`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ whileSleeping: "skip" }),
+    });
+    assert.equal(updateRes.status, 200);
+
+    const listRes2 = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`);
+    const schedules2 = (await listRes2.json()) as { id: string; whileSleeping?: string }[];
+    assert.equal(schedules2.find((s) => s.id === "test-sleep-sched")?.whileSleeping, "skip");
+
+    // Clean up
+    await daemonRequest(`/api/minds/${TEST_MIND}/schedules/test-sleep-sched`, { method: "DELETE" });
+  });
+
+  it("clock status endpoint", async () => {
+    await ensureTestMind();
+
+    // Add a schedule so there's something in the response
+    await daemonRequest(`/api/minds/${TEST_MIND}/schedules`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cron: "0 9 * * *", message: "status test", id: "test-status" }),
+    });
+
+    const res = await daemonRequest(`/api/minds/${TEST_MIND}/clock/status`);
+    assert.equal(res.status, 200, `Clock status: ${await res.clone().text()}`);
+
+    const body = (await res.json()) as {
+      sleep: unknown;
+      sleepConfig: unknown;
+      schedules: { id: string }[];
+      upcoming: { id: string; at: string; type: string }[];
+    };
+    assert.ok(Array.isArray(body.schedules), "schedules should be an array");
+    assert.ok(Array.isArray(body.upcoming), "upcoming should be an array");
+    assert.ok(
+      body.schedules.some((s) => s.id === "test-status"),
+      `Expected test-status in schedules: ${JSON.stringify(body.schedules)}`,
+    );
+
+    // upcoming should include the cron schedule's next fire
+    const upcomingEntry = body.upcoming.find((u) => u.id === "test-status");
+    assert.ok(upcomingEntry, "Cron schedule should appear in upcoming");
+    assert.equal(upcomingEntry.type, "cron");
+    assert.ok(upcomingEntry.at, "Should have a fire time");
+
+    // Clean up
+    await daemonRequest(`/api/minds/${TEST_MIND}/schedules/test-status`, { method: "DELETE" });
+  });
+
+  it("schedule validation errors", async () => {
+    await ensureTestMind();
+
+    // No cron or fireAt
+    const r1 = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "no trigger" }),
+    });
+    assert.equal(r1.status, 400);
+
+    // Both cron and fireAt
+    const r2 = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        cron: "0 9 * * *",
+        fireAt: new Date().toISOString(),
+        message: "both",
+      }),
+    });
+    assert.equal(r2.status, 400);
+
+    // No message or script
+    const r3 = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cron: "0 9 * * *" }),
+    });
+    assert.equal(r3.status, 400);
+
+    // Invalid cron
+    const r4 = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cron: "not-a-cron", message: "bad cron" }),
+    });
+    assert.equal(r4.status, 400);
+
+    // Invalid fireAt
+    const r5 = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fireAt: "not-a-date", message: "bad date" }),
+    });
+    assert.equal(r5.status, 400);
+
+    // Duplicate id
+    await daemonRequest(`/api/minds/${TEST_MIND}/schedules`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cron: "0 9 * * *", message: "first", id: "dup-test" }),
+    });
+    const r6 = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cron: "0 10 * * *", message: "second", id: "dup-test" }),
+    });
+    assert.equal(r6.status, 409);
+
+    // Clean up
+    await daemonRequest(`/api/minds/${TEST_MIND}/schedules/dup-test`, { method: "DELETE" });
+  });
+
+  it("delete nonexistent schedule returns 404", async () => {
+    await ensureTestMind();
+    const res = await daemonRequest(`/api/minds/${TEST_MIND}/schedules/nonexistent`, {
+      method: "DELETE",
+    });
+    assert.equal(res.status, 404);
+  });
+
+  it("clock status for nonexistent mind returns 404", async () => {
+    const res = await daemonRequest("/api/minds/nonexistent-mind-xyz/clock/status");
+    assert.equal(res.status, 404);
+  });
+
+  it("sleep state: GET returns not-sleeping for stopped mind", async () => {
+    await ensureTestMind();
+    const res = await daemonRequest(`/api/minds/${TEST_MIND}/sleep`);
+    assert.equal(res.status, 200, `Sleep state: ${await res.clone().text()}`);
+    const body = (await res.json()) as { sleeping: boolean };
+    assert.equal(body.sleeping, false);
+  });
+
+  // ── End Clock & Schedule Tests ──
+
   it("message proxy returns JSON response", async () => {
     if (!process.env.ANTHROPIC_API_KEY) {
       console.log("Skipping message test: ANTHROPIC_API_KEY not set");

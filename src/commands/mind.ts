@@ -45,9 +45,11 @@ export async function run(args: string[]) {
       await import("./sprout.js").then((m) => m.run(args.slice(1)));
       break;
     case "sleep":
+      // Legacy alias — redirect to clock sleep
       await import("./mind-sleep.js").then((m) => m.run(args.slice(1)));
       break;
     case "wake":
+      // Legacy alias — redirect to clock wake
       await import("./mind-wake.js").then((m) => m.run(args.slice(1)));
       break;
     case "split":

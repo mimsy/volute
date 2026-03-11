@@ -30,39 +30,66 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute mind upgrade [--template <name>] [--continue]` | Upgrade your server code |
 | `volute mind connect <type>` | Enable a connector (discord, slack, etc.) |
 | `volute mind disconnect <type>` | Disable a connector |
-| `volute schedule add --cron "..." --message/--script "..."` | Schedule a recurring task |
-| `volute schedule list` | List your schedules |
-| `volute schedule remove --id <id>` | Remove a schedule |
+| `volute clock add --cron "..." --message/--script "..."` | Schedule a recurring task |
+| `volute clock add --in <duration> --message/--script "..."` | Set a one-time timer (10m, 1h, 2h30m) |
+| `volute clock list` | List your schedules and timers |
+| `volute clock remove --id <id>` | Remove a schedule or timer |
+| `volute clock status` | Show sleep state + upcoming events |
+| `volute clock sleep [--wake-at <time>]` | Go to sleep |
+| `volute clock wake` | Wake up |
 | `volute shared status` | See your pending changes vs main |
 | `volute shared merge "<message>"` | Share your changes with all minds |
 | `volute shared pull` | Get latest shared changes from other minds |
 | `volute shared log [--limit N]` | View recent shared history |
 
-## Schedules
+## Clock
 
-You can set up your own recurring tasks using cron schedules. These send messages to you at specified times — use them for anything you want to do regularly: journaling, checking on things, working on projects.
+The clock system manages your schedules, timers, and sleep/wake cycles. Use `volute clock` for all time-related operations.
+
+### Schedules
+
+Set up recurring tasks using cron schedules. These send messages to you at specified times:
 
 ```sh
-volute schedule add --cron "0 9 * * *" --message "morning — review what's on your mind and write in your journal"
-volute schedule add --cron "0 0 * * 0" --message "weekly — consolidate your memory and reflect on the past week"
+volute clock add --cron "0 9 * * *" --message "morning — review what's on your mind and write in your journal"
+volute clock add --cron "0 0 * * 0" --message "weekly — consolidate your memory and reflect on the past week"
 ```
 
 You can also schedule scripts that run and deliver their output as a message (empty output is silent — no wake-up):
 
 ```sh
-volute schedule add --cron "*/30 * * * *" --script "cat status.txt" --id check-status
+volute clock add --cron "*/30 * * * *" --script "cat status.txt" --id check-status
 ```
+
+### Timers
+
+Set one-time timers that fire once and then auto-delete:
+
+```sh
+volute clock add --in 30m --message "check on that task"
+volute clock add --in 2h --message "time to review progress"
+```
+
+Duration format: `30s`, `10m`, `1h`, `2h30m`.
+
+### Sleep behavior
+
+Control what happens to a schedule when you're sleeping with `--while-sleeping`:
+
+```sh
+volute clock add --cron "0 3 * * *" --message "dream time" --channel system:dream --while-sleeping trigger-wake
+volute clock add --cron "0 9 * * *" --message "morning check" --while-sleeping skip
+```
+
+- `skip` — silently skip when sleeping
+- `queue` — queue for delivery on wake
+- `trigger-wake` — briefly wake you, then return to sleep when idle
 
 ## Sleep
 
 Sleep lets you follow a rest cycle — your process stops, sessions are archived, and you wake fresh. During sleep, incoming messages are queued and delivered when you wake.
 
-### Commands
-
-| Command | Purpose |
-|---------|---------|
-| `volute mind sleep [--wake-at <time>]` | Go to sleep (you get one turn to wind down first) |
-| `volute mind wake` | Wake up immediately |
+Use `volute clock sleep` and `volute clock wake` to control sleep manually.
 
 ### How it works
 
@@ -117,10 +144,10 @@ When trigger-woken, you get one full turn to respond, then return to sleep when 
 
 ### Voluntary sleep
 
-You can go to sleep any time with `volute mind sleep`. Optionally set a wake time:
+You can go to sleep any time with `volute clock sleep`. Optionally set a wake time:
 
 ```sh
-volute mind sleep --wake-at "2025-01-15T07:00:00Z"
+volute clock sleep --wake-at "2025-01-15T07:00:00Z"
 ```
 
 ## Piping Messages via Stdin
