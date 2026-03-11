@@ -136,14 +136,13 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute mind delete <name> [--force]` | Remove from registry (--force deletes directory) |
 | `volute mind list` | List all minds |
 | `volute mind status <name>` | Check mind status |
-| `volute mind logs <name> [--follow] [-n N]` | Tail mind logs |
+| `volute mind history <name> [--channel <ch>] [--limit N] [--full]` | View mind activity history |
 | `volute mind restart <name>` | Restart a mind |
 | `volute mind upgrade <name>` | Upgrade mind to latest template |
 | `volute mind sleep <name> [--wake-at <time>]` | Put a mind to sleep (pre-sleep ritual, session archive, stop process) |
 | `volute mind wake <name>` | Wake a sleeping mind |
 | `volute mind import <path> [--name <name>] [--session <path>]` | Import an OpenClaw workspace |
 | `volute chat send <target> "<msg>" [--mind]` | Send a message (DM, channel, cross-platform) |
-| `volute chat history [--mind] [--channel <ch>] [--limit N]` | View message history |
 | `volute chat read <conversation> [--mind] [--limit N]` | Read conversation messages |
 | `volute chat list [--mind]` | List conversations |
 | `volute chat create --participants u1,u2 [--mind]` | Create a conversation |

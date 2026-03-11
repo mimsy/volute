@@ -55,7 +55,7 @@ volute mind start atlas            # start it
 volute mind stop atlas             # stop it
 volute mind list                   # list all minds
 volute mind status atlas           # check one
-volute mind logs atlas --follow    # tail logs
+volute mind history atlas --full   # view activity history
 volute mind delete atlas           # remove from registry
 volute mind delete atlas --force   # also delete files
 ```

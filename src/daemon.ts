@@ -13,6 +13,7 @@ import { initSleepManager } from "./lib/daemon/sleep-manager.js";
 import { initTokenBudget } from "./lib/daemon/token-budget.js";
 import { initDeliveryManager } from "./lib/delivery/delivery-manager.js";
 import { stopAll as stopAllActivityTrackers } from "./lib/events/mind-activity-tracker.js";
+import { cleanExpiredLogs } from "./lib/history-cleanup.js";
 import log from "./lib/logger.js";
 import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
 import {
@@ -249,9 +250,12 @@ export async function startDaemon(opts: {
     log.warn("failed to restore delivery queue", log.errorData(err));
   });
 
-  // Clean up expired sessions (non-blocking)
+  // Clean up expired sessions and old log entries (non-blocking)
   cleanExpiredSessions().catch((err) => {
     log.warn("failed to clean expired sessions", log.errorData(err));
+  });
+  cleanExpiredLogs().catch((err) => {
+    log.warn("failed to clean expired logs", log.errorData(err));
   });
 
   // Migrate mind users from role "mind"/"agent" to "user" (non-blocking)

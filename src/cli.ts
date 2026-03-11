@@ -96,7 +96,6 @@ switch (command) {
 
 Common:
   chat send <target> "<msg>"       Send a message
-  chat history [--channel <ch>]    View activity history
   chat list / read / create        Manage conversations
   chat bridge                      Manage platform bridges
   status                           Show system status
@@ -107,7 +106,7 @@ Mind:
   mind start/stop/restart [name]   Control a mind
   mind list                        List all minds
   mind status [name]               Check a mind's status
-  mind logs [name] [--follow]      Tail mind logs
+  mind history [name] [--full]     View mind activity history
   mind sprout                      Complete orientation
   mind split/join                  Create and merge experimental splits
   mind upgrade/import/export       Lifecycle operations

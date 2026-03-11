@@ -28,11 +28,10 @@ export async function run(args: string[]) {
       await import("./status.js").then((m) => m.run(rest));
       break;
     }
-    case "logs": {
-      // Transform positional name to --mind flag for compatibility
+    case "history": {
       const rest = args.slice(1);
-      const logsArgs = transformMindFlag(rest);
-      await import("./logs.js").then((m) => m.run(logsArgs));
+      const historyArgs = transformMindFlag(rest);
+      await import("./history.js").then((m) => m.run(historyArgs));
       break;
     }
     case "upgrade":
@@ -91,7 +90,7 @@ function printUsage() {
   volute mind delete [name] [--force]
   volute mind list
   volute mind status [name]
-  volute mind logs [name] [--follow] [-n N]
+  volute mind history [name] [--channel <ch>] [--limit N] [--full]
   volute mind sprout
   volute mind sleep [name] [--wake-at <time>]
   volute mind wake [name]
