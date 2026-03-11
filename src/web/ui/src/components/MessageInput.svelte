@@ -9,7 +9,11 @@ let {
   username = "",
 }: {
   sending: boolean;
-  onSend: (message: string, images: Array<{ media_type: string; data: string }>) => void;
+  onSend: (
+    message: string,
+    images: Array<{ media_type: string; data: string }>,
+    files: Array<{ filename: string; data: string }>,
+  ) => void;
   mindName?: string;
   conversationId?: string | null;
   username?: string;
@@ -17,18 +21,22 @@ let {
 
 let input = $state("");
 let pendingImages = $state<Array<{ media_type: string; data: string; preview: string }>>([]);
+let pendingFiles = $state<Array<{ filename: string; data: string }>>([]);
 let inputEl: HTMLTextAreaElement;
 let fileEl: HTMLInputElement;
+let attachFileEl: HTMLInputElement;
 let typingTimer = 0;
 
 function handleSend() {
   const message = input.trim();
-  if (!message && pendingImages.length === 0) return;
+  if (!message && pendingImages.length === 0 && pendingFiles.length === 0) return;
   if (sending) return;
 
   const images = pendingImages.map(({ media_type, data }) => ({ media_type, data }));
+  const files = [...pendingFiles];
   input = "";
   pendingImages = [];
+  pendingFiles = [];
   if (inputEl) {
     inputEl.style.height = "auto";
     inputEl.style.overflow = "hidden";
@@ -37,7 +45,7 @@ function handleSend() {
     reportTyping(mindName, `volute:${conversationId}`, username, false);
     typingTimer = 0;
   }
-  onSend(message, images);
+  onSend(message, images, files);
 }
 
 function handleKeyDown(e: KeyboardEvent) {
@@ -83,6 +91,26 @@ function handleFiles(files: FileList | null) {
   }
 }
 
+function handleAttachFiles(files: FileList | null) {
+  if (!files) return;
+  const MAX_FILE_SIZE = 50 * 1024 * 1024;
+  for (const file of Array.from(files)) {
+    if (file.size > MAX_FILE_SIZE) continue;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as ArrayBuffer;
+      const bytes = new Uint8Array(result);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const base64 = btoa(binary);
+      pendingFiles = [...pendingFiles, { filename: file.name, data: base64 }];
+    };
+    reader.readAsArrayBuffer(file);
+  }
+}
+
 // Clear typing on unmount
 $effect(() => {
   return () => {
@@ -105,7 +133,19 @@ $effect(() => {
   </div>
 {/if}
 
-<!-- Hidden file input -->
+<!-- File preview strip -->
+{#if pendingFiles.length > 0}
+  <div class="file-strip">
+    {#each pendingFiles as file, i (file.filename + i)}
+      <div class="file-preview">
+        <span class="file-name">{file.filename}</span>
+        <button class="remove-image" onclick={() => { pendingFiles = pendingFiles.filter((_, j) => j !== i); }}>x</button>
+      </div>
+    {/each}
+  </div>
+{/if}
+
+<!-- Hidden file inputs -->
 <input
   bind:this={fileEl}
   type="file"
@@ -114,10 +154,18 @@ $effect(() => {
   style="display: none"
   onchange={(e) => handleFiles((e.currentTarget as HTMLInputElement).files)}
 />
+<input
+  bind:this={attachFileEl}
+  type="file"
+  multiple
+  style="display: none"
+  onchange={(e) => handleAttachFiles((e.currentTarget as HTMLInputElement).files)}
+/>
 
 <!-- Input area -->
 <div class="input-area">
-  <button class="attach-btn" onclick={() => fileEl?.click()}>+</button>
+  <button class="attach-btn" title="Attach image" onclick={() => fileEl?.click()}>+</button>
+  <button class="attach-btn" title="Attach file" onclick={() => attachFileEl?.click()}>&#128206;</button>
   <textarea
     bind:this={inputEl}
     bind:value={input}
@@ -130,9 +178,9 @@ $effect(() => {
   ></textarea>
   <button
     onclick={handleSend}
-    disabled={sending || (!input.trim() && pendingImages.length === 0)}
+    disabled={sending || (!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0)}
     class="send-btn"
-    class:active={!!input.trim() || pendingImages.length > 0}
+    class:active={!!input.trim() || pendingImages.length > 0 || pendingFiles.length > 0}
   >
     {sending ? "sending..." : "send"}
   </button>
@@ -174,6 +222,34 @@ $effect(() => {
     border: 1px solid var(--border);
     cursor: pointer;
     padding: 0;
+  }
+
+  .file-strip {
+    display: flex;
+    gap: 8px;
+    padding: 8px 0;
+    border-top: 1px solid var(--border);
+    overflow-x: auto;
+    flex-wrap: wrap;
+  }
+
+  .file-preview {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 4px 8px;
+    font-size: 12px;
+    color: var(--text-1);
+  }
+
+  .file-name {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .input-area {

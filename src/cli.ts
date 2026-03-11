@@ -50,9 +50,6 @@ switch (command) {
   case "skill":
     await import("./commands/skill.js").then((m) => m.run(args));
     break;
-  case "file":
-    await import("./commands/file.js").then((m) => m.run(args));
-    break;
   case "env":
     await import("./commands/env.js").then((m) => m.run(args));
     break;
@@ -108,11 +105,10 @@ Mind:
   mind upgrade/import/export       Lifecycle operations
 
 Configuration:
-  chat      Conversations, messages, and platform bridges
+  chat      Conversations, messages, files, and platform bridges
   schedule  Manage cron schedules
   skill     Browse and install skills
   env       Manage environment variables
-  file      Mind-to-mind file sharing
   notes     Read and write notes
   pages     Publish web pages
 
@@ -130,7 +126,7 @@ Options:
 
 Run 'volute <command> --help' for details.
 
-Mind-scoped commands (chat, schedule, file, skill, pages)
+Mind-scoped commands (chat, schedule, skill, pages)
 use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
   default:

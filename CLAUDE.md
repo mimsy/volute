@@ -142,7 +142,7 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute mind sleep <name> [--wake-at <time>]` | Put a mind to sleep (pre-sleep ritual, session archive, stop process) |
 | `volute mind wake <name>` | Wake a sleeping mind |
 | `volute mind import <path> [--name <name>] [--session <path>]` | Import an OpenClaw workspace |
-| `volute chat send <target> "<msg>" [--mind]` | Send a message (DM, channel, cross-platform) |
+| `volute chat send <target> "<msg>" [--mind] [--file <path>]` | Send a message (DM, channel, cross-platform, with file) |
 | `volute chat read <conversation> [--mind] [--limit N]` | Read conversation messages |
 | `volute chat list [--mind]` | List conversations |
 | `volute chat create --participants u1,u2 [--mind]` | Create a conversation |
@@ -156,10 +156,11 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute schedule add [--mind] --cron "..." --message/--script "..." [--id name]` | Add a cron schedule |
 | `volute schedule remove [--mind] --id <id>` | Remove a schedule |
 | `volute skill <list\|add\|remove> [--mind]` | Manage mind skills |
-| `volute shared <list\|add\|remove>` | Manage shared skill pool (deprecated — use shared-files skill) |
 | `volute mind seed <name>` | Create a minimal seed mind |
 | `volute mind sprout` | Grow a seed into a full mind |
-| `volute file <send\|accept\|list\|trust> [--mind]` | Mind-to-mind file sharing |
+| `volute chat files [--mind]` | List pending incoming files |
+| `volute chat accept <id> [--mind] [--dest <path>]` | Accept a pending file |
+| `volute chat reject <id> [--mind]` | Reject a pending file |
 | `volute systems status` | Show volute.systems account info |
 | `volute systems register [--name <name>]` | Register a system on volute.systems |
 | `volute systems login [--key <key>]` | Log in with an existing API key |
@@ -173,7 +174,7 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute status` | Show daemon status, service info, version, and minds |
 | `volute update` | Check for updates |
 
-Mind-scoped commands (`chat`, `schedule`, `file`, `skill`, `pages`) use `--mind <name>` or `VOLUTE_MIND` env var.
+Mind-scoped commands (`chat`, `schedule`, `skill`, `pages`) use `--mind <name>` or `VOLUTE_MIND` env var.
 
 ## Source files
 

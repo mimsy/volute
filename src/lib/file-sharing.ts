@@ -5,11 +5,6 @@ import { stateDir } from "./registry.js";
 
 // --- Types ---
 
-export type FileSharingConfig = {
-  trustedSenders?: string[];
-  inboxPath?: string;
-};
-
 export type PendingFileMetadata = {
   id: string;
   sender: string;
@@ -31,53 +26,6 @@ export function validateFilePath(filePath: string): string | null {
     return "Path traversal (..) is not allowed";
   }
   return null;
-}
-
-// --- Config ---
-
-function configPath(dir: string): string {
-  return resolve(dir, "home", ".config", "file-sharing.json");
-}
-
-export function readFileSharingConfig(dir: string): FileSharingConfig {
-  const p = configPath(dir);
-  if (!existsSync(p)) return {};
-  try {
-    return JSON.parse(readFileSync(p, "utf-8")) as FileSharingConfig;
-  } catch (err) {
-    console.warn(`[file-sharing] failed to parse config at ${p}:`, err);
-    return {};
-  }
-}
-
-export function writeFileSharingConfig(dir: string, config: FileSharingConfig): void {
-  const p = configPath(dir);
-  mkdirSync(resolve(p, ".."), { recursive: true });
-  writeFileSync(p, `${JSON.stringify(config, null, 2)}\n`);
-}
-
-// --- Trust ---
-
-export function isTrustedSender(dir: string, sender: string): boolean {
-  const config = readFileSharingConfig(dir);
-  return config.trustedSenders?.includes(sender) ?? false;
-}
-
-export function addTrust(dir: string, sender: string): void {
-  const config = readFileSharingConfig(dir);
-  const trusted = config.trustedSenders ?? [];
-  if (!trusted.includes(sender)) {
-    trusted.push(sender);
-  }
-  config.trustedSenders = trusted;
-  writeFileSharingConfig(dir, config);
-}
-
-export function removeTrust(dir: string, sender: string): void {
-  const config = readFileSharingConfig(dir);
-  const trusted = config.trustedSenders ?? [];
-  config.trustedSenders = trusted.filter((s) => s !== sender);
-  writeFileSharingConfig(dir, config);
 }
 
 // --- Pending files staging ---
@@ -200,6 +148,7 @@ export function acceptPending(
   receiver: string,
   id: string,
   receiverDir: string,
+  dest?: string,
 ): { sender: string; filename: string; destPath: string } {
   const meta = getPending(receiver, id);
   if (!meta) throw new Error(`Pending file not found: ${id}`);
@@ -207,8 +156,7 @@ export function acceptPending(
   const dataPath = resolve(pendingDir(receiver), id, "data");
   const content = readFileSync(dataPath);
 
-  const config = readFileSharingConfig(receiverDir);
-  const inboxPath = config.inboxPath ?? "inbox";
+  const inboxPath = dest ?? "inbox";
   const destPath = deliverFile(receiverDir, meta.sender, meta.filename, content, inboxPath);
 
   // Clean up staging
