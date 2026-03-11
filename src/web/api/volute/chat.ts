@@ -16,7 +16,7 @@ import {
   getParticipants,
   isParticipantOrOwner,
 } from "../../../lib/events/conversations.js";
-import { formatFileSize, stageFile } from "../../../lib/file-sharing.js";
+import { formatFileSize, stageFile, validateFilePath } from "../../../lib/file-sharing.js";
 import log from "../../../lib/logger.js";
 import { findMind, getBaseName } from "../../../lib/registry.js";
 import { buildVoluteSlug } from "../../../lib/slugify.js";
@@ -203,6 +203,8 @@ const app = new Hono<AuthEnv>()
     if (body.files && body.files.length > 0) {
       const MAX_FILE_SIZE = 50 * 1024 * 1024;
       for (const file of body.files) {
+        const pathErr = validateFilePath(file.filename);
+        if (pathErr) return c.json({ error: `Invalid filename: ${pathErr}` }, 400);
         const content = Buffer.from(file.data, "base64");
         if (content.length > MAX_FILE_SIZE) {
           return c.json(
@@ -334,6 +336,8 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
       for (const file of body.files) {
+        const pathErr = validateFilePath(file.filename);
+        if (pathErr) return c.json({ error: `Invalid filename: ${pathErr}` }, 400);
         const content = Buffer.from(file.data, "base64");
         if (content.length > MAX_FILE_SIZE) {
           return c.json(

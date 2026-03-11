@@ -302,6 +302,62 @@ describe("web file-sharing routes", () => {
     assert.equal(pending[0].filename, "test.txt");
   });
 
+  it("POST /:name/files/stage — 400 for missing fields", async () => {
+    const cookie = await setupAuth();
+    setupMinds();
+    const app = createApp();
+
+    const res = await app.request("/api/minds/fs-receiver/files/stage", {
+      method: "POST",
+      headers: reqHeaders(cookie),
+      body: JSON.stringify({ sender: "human-user" }), // missing filename and data
+    });
+
+    assert.equal(res.status, 400);
+  });
+
+  it("POST /:name/files/stage — 400 for path traversal in filename", async () => {
+    const cookie = await setupAuth();
+    setupMinds();
+    const app = createApp();
+
+    const fileData = Buffer.from("test").toString("base64");
+    const res = await app.request("/api/minds/fs-receiver/files/stage", {
+      method: "POST",
+      headers: reqHeaders(cookie),
+      body: JSON.stringify({
+        sender: "human-user",
+        filename: "../evil.txt",
+        data: fileData,
+      }),
+    });
+
+    assert.equal(res.status, 400);
+  });
+
+  it("POST /:name/files/accept — 400 for path traversal in dest", async () => {
+    const cookie = await setupAuth();
+    setupMinds();
+    const app = createApp();
+
+    // Send a file first
+    const sendRes = await app.request("/api/minds/fs-sender/files/send", {
+      method: "POST",
+      headers: reqHeaders(cookie),
+      body: JSON.stringify({ targetMind: "fs-receiver", filePath: "notes.md" }),
+    });
+    const { id } = (await sendRes.json()) as { id: string };
+
+    // Accept with path traversal dest
+    const res = await app.request("/api/minds/fs-receiver/files/accept", {
+      method: "POST",
+      headers: reqHeaders(cookie),
+      body: JSON.stringify({ id, dest: "../../etc" }),
+    });
+
+    assert.equal(res.status, 400);
+  });
+
   it("requires auth — 401 without cookie", async () => {
     setupMinds();
     const app = createApp();

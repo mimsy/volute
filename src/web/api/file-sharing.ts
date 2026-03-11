@@ -68,8 +68,12 @@ const app = new Hono<AuthEnv>()
     let content: Buffer;
     try {
       content = readFileSync(filePath);
-    } catch {
-      return c.json({ error: `File not found: ${body.filePath}` }, 404);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        return c.json({ error: `File not found: ${body.filePath}` }, 404);
+      }
+      return c.json({ error: `Failed to read file: ${code ?? (err as Error).message}` }, 500);
     }
 
     const filename = body.filePath;

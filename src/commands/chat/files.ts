@@ -1,4 +1,5 @@
 import { daemonFetch } from "../../lib/daemon-client.js";
+import { formatFileSize } from "../../lib/file-sharing.js";
 import { parseArgs } from "../../lib/parse-args.js";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";
 
@@ -37,13 +38,7 @@ export async function run(args: string[]) {
   console.log(`${"ID".padEnd(idW)}  ${"SENDER".padEnd(senderW)}  ${"FILE".padEnd(fileW)}  SIZE`);
   for (const p of pending) {
     console.log(
-      `${p.id.padEnd(idW)}  ${p.sender.padEnd(senderW)}  ${p.filename.padEnd(fileW)}  ${formatSize(p.size)}`,
+      `${p.id.padEnd(idW)}  ${p.sender.padEnd(senderW)}  ${p.filename.padEnd(fileW)}  ${formatFileSize(p.size)}`,
     );
   }
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

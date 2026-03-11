@@ -93,7 +93,9 @@ function handleFiles(files: FileList | null) {
 
 function handleAttachFiles(files: FileList | null) {
   if (!files) return;
+  const MAX_FILE_SIZE = 50 * 1024 * 1024;
   for (const file of Array.from(files)) {
+    if (file.size > MAX_FILE_SIZE) continue;
     const reader = new FileReader();
     reader.onload = () => {
       const result = reader.result as ArrayBuffer;
