@@ -136,9 +136,13 @@ let contextMind = $derived(
 );
 
 // System tab: mind for right panel when viewing a mind page
-let systemMindName = $derived(
-  selection.tab === "system" && selection.kind === "mind" ? selection.name : "",
-);
+let systemMindName = $derived.by(() => {
+  if (selection.tab !== "system") return "";
+  if (selection.kind === "mind") return selection.name;
+  if (selection.kind === "mind-note") return selection.mind;
+  if (selection.kind === "mind-page") return selection.mind;
+  return "";
+});
 let systemMind = $derived(
   systemMindName ? data.minds.find((m) => m.name === systemMindName) : undefined,
 );
