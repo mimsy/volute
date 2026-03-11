@@ -267,10 +267,10 @@ export async function run(args: string[]) {
     const targetIsMind = await isMind(targetName);
     waitMindName = targetIsMind ? targetName : undefined;
 
-    // When a mind sends to a non-mind (human), use the sender mind's context
-    // so the conversation is created under the mind (humans aren't in the registry).
-    const contextMind = mindSelf && !targetIsMind ? mindSelf : targetName;
-    const participants = mindSelf && !targetIsMind ? [targetName] : [sender];
+    // Use the sender mind's context when VOLUTE_MIND is set (so the daemon
+    // token matches), otherwise use the target mind's context.
+    const contextMind = mindSelf ?? targetName;
+    const participants = mindSelf ? [targetName] : [sender];
 
     // Create/find conversation via daemon
     const createRes = await daemonFetch(
