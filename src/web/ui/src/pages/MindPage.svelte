@@ -1,12 +1,12 @@
 <script lang="ts">
-import type { ContentBlock, Message, Mind } from "@volute/api";
+import type { ContentBlock, Message, Mind, Site } from "@volute/api";
 import History from "../components/History.svelte";
 import MindInfo from "../components/MindInfo.svelte";
 import MindSkills from "../components/MindSkills.svelte";
 import NoteCard from "../components/NoteCard.svelte";
+import PageThumbnail from "../components/PageThumbnail.svelte";
 import PublicFiles from "../components/PublicFiles.svelte";
 import StatusBadge from "../components/StatusBadge.svelte";
-import VariantList from "../components/VariantList.svelte";
 import { fetchConversationMessages } from "../lib/client";
 import { formatRelativeTime, getDisplayStatus } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
@@ -27,18 +27,12 @@ let {
 
 let mind = $derived(data.minds.find((m) => m.name === name));
 
-let connectedChannels = $derived(
-  mind ? mind.channels.filter((ch) => ch.name !== "web" && ch.status === "connected") : [],
-);
-
 let site = $derived(data.sites.find((s) => s.name === name));
 
 // Find DM conversation with this mind (check mind_name first, then participants)
 let dmConv = $derived.by(() => {
-  // Try mind_name first
   const byName = data.conversations.find((c) => c.type !== "channel" && c.mind_name === name);
   if (byName) return byName;
-  // Fall back to 2-person conversation where the other participant is this mind
   return data.conversations.find((c) => {
     if (c.type === "channel") return false;
     const parts = c.participants ?? [];
@@ -47,7 +41,6 @@ let dmConv = $derived.by(() => {
   });
 });
 
-// Recent messages from DM
 interface ApiNote {
   title: string;
   author_username: string;
@@ -61,8 +54,26 @@ interface ApiNote {
 
 let recentMessages = $state<Message[]>([]);
 let recentNotes = $state<ApiNote[]>([]);
-let recentFiles = $state<{ name: string; type: string }[]>([]);
 let chatScrollEl = $state<HTMLDivElement | undefined>();
+
+// Mixed feed of notes and pages sorted by date
+type FeedItem =
+  | { kind: "note"; note: ApiNote; date: string }
+  | { kind: "page"; file: string; modified: string; date: string };
+
+let feedItems = $derived.by(() => {
+  const items: FeedItem[] = [];
+  for (const note of recentNotes) {
+    items.push({ kind: "note", note, date: note.created_at });
+  }
+  if (site) {
+    for (const page of site.pages.slice(0, 4)) {
+      items.push({ kind: "page", file: page.file, modified: page.modified, date: page.modified });
+    }
+  }
+  items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  return items;
+});
 
 $effect(() => {
   const conv = dmConv;
@@ -73,7 +84,6 @@ $effect(() => {
   fetchConversationMessages(conv.id, { limit: 20 })
     .then((res) => {
       recentMessages = res.items.reverse();
-      // Scroll to bottom after messages load
       requestAnimationFrame(() => {
         if (chatScrollEl) chatScrollEl.scrollTop = chatScrollEl.scrollHeight;
       });
@@ -85,25 +95,13 @@ $effect(() => {
 
 $effect(() => {
   const mindName = name;
-  fetch(`/api/notes?author=${encodeURIComponent(mindName)}&limit=3`)
+  fetch(`/api/notes?author=${encodeURIComponent(mindName)}&limit=6`)
     .then((r) => (r.ok ? r.json() : []))
     .then((notes: ApiNote[]) => {
       recentNotes = notes;
     })
     .catch(() => {
       recentNotes = [];
-    });
-});
-
-$effect(() => {
-  const mindName = name;
-  fetch(`/public/${encodeURIComponent(mindName)}/`)
-    .then((r) => (r.ok ? r.json() : []))
-    .then((entries: { name: string; type: string }[]) => {
-      recentFiles = entries.filter((e) => e.type === "file").slice(0, 5);
-    })
-    .catch(() => {
-      recentFiles = [];
     });
 });
 
@@ -156,40 +154,35 @@ function extractTextContent(content: ContentBlock[]): string {
   <div class="not-found">Mind "{name}" not found.</div>
 {:else}
   <div class="mind-page">
-    <!-- Profile header -->
-    <div class="profile-header">
-      {#if mind.avatar}
-        <img
-          src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
-          alt=""
-          class="profile-avatar"
-        />
-      {/if}
-      <div class="profile-info">
-        <div class="profile-name-row">
-          <span class="profile-display-name">{mind.displayName ?? mind.name}</span>
-          <StatusBadge status={getDisplayStatus(mind)} />
-          {#if mind.stage === "seed"}
-            <span class="seed-tag">seed</span>
-          {/if}
-        </div>
-        {#if mind.description}
-          <p class="profile-description">{mind.description}</p>
-        {/if}
-        <span class="profile-meta">@{mind.name} &middot; since {formatCreated(mind.created)}</span>
-      </div>
-      <button class="chat-btn" onclick={handleChatClick}>Chat</button>
-    </div>
-
-    <!-- Section content -->
     {#if section === "info"}
       <div class="info-split">
         <div class="info-left">
-          <!-- Recent chat viewport -->
-          <div class="chat-viewport">
-            <div class="chat-viewport-header">
-              <button class="card-link" onclick={handleChatClick}>Open chat &rarr;</button>
+          <!-- Profile header -->
+          <div class="profile-header">
+            {#if mind.avatar}
+              <img
+                src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
+                alt=""
+                class="profile-avatar"
+              />
+            {/if}
+            <div class="profile-info">
+              <div class="profile-name-row">
+                <span class="profile-display-name">{mind.displayName ?? mind.name}</span>
+                <StatusBadge status={getDisplayStatus(mind)} />
+                {#if mind.stage === "seed"}
+                  <span class="seed-tag">seed</span>
+                {/if}
+              </div>
+              {#if mind.description}
+                <p class="profile-description">{mind.description}</p>
+              {/if}
+              <span class="profile-meta">@{mind.name} &middot; since {formatCreated(mind.created)}</span>
             </div>
+          </div>
+
+          <!-- Chat viewport -->
+          <div class="chat-viewport">
             {#if recentMessages.length === 0}
               <div class="chat-viewport-empty">No messages yet.</div>
             {:else}
@@ -217,98 +210,46 @@ function extractTextContent(content: ContentBlock[]): string {
                 {/each}
               </div>
             {/if}
-            <button class="chat-viewport-cta" onclick={handleChatClick}>
-              Continue conversation &rarr;
+            <button class="chat-open-btn" onclick={handleChatClick}>
+              Open chat &rarr;
             </button>
           </div>
 
-          <!-- Recent notes -->
-          {#if recentNotes.length > 0}
-            <div class="card">
-              <div class="card-header">
-                <span class="card-title">Notes</span>
-                <button class="card-link" onclick={() => navigate(`/minds/${name}/notes`)}>All notes &rarr;</button>
-              </div>
-              <div class="notes-list">
-                {#each recentNotes as note (`${note.author_username}/${note.slug}`)}
-                  <NoteCard
-                    title={note.title}
-                    author={note.author_username}
-                    slug={note.slug}
-                    excerpt={note.content.length > 120 ? `${note.content.slice(0, 120)}...` : note.content}
-                    commentCount={note.comment_count}
-                    createdAt={note.created_at}
-                    replyTo={note.reply_to}
-                    reactions={note.reactions}
-                    onSelect={onSelectNote}
-                  />
-                {/each}
-              </div>
-            </div>
-          {/if}
-
-          <!-- Recent files -->
-          {#if recentFiles.length > 0}
-            <div class="card">
-              <div class="card-header">
-                <span class="card-title">Files</span>
-                <button class="card-link" onclick={() => navigate(`/minds/${name}/files`)}>All files &rarr;</button>
-              </div>
-              <div class="file-list">
-                {#each recentFiles as file (file.name)}
-                  <div class="file-row">{file.name}</div>
-                {/each}
-              </div>
-            </div>
-          {/if}
-
-          <!-- Pages -->
-          {#if site && site.pages.length > 0}
-            <div class="card">
-              <div class="card-header">
-                <span class="card-title">Pages</span>
-                <button class="card-link" onclick={() => navigate(`/minds/${name}/pages`)}>All pages &rarr;</button>
-              </div>
-              <div class="file-list">
-                {#each site.pages.slice(0, 5) as page (page.file)}
-                  <button class="file-row clickable" onclick={() => handleSelectPage(name, page.file)}>
-                    {page.file}
-                    <span class="file-time">{formatRelativeTime(page.modified)}</span>
-                  </button>
-                {/each}
-              </div>
-            </div>
-          {/if}
-
-          <!-- Connections -->
-          {#if connectedChannels.length > 0}
-            <div class="card">
-              <div class="card-title" style="padding: 0 0 8px">Connections</div>
-              <div class="connections-list">
-                {#each connectedChannels as channel}
-                  <div class="connection-row">
-                    <span class="connection-name">{channel.displayName}</span>
-                    <StatusBadge status="connected" />
-                    {#if channel.username}
-                      <span class="connection-bot">{channel.username}</span>
-                    {/if}
+          <!-- Mixed notes & pages feed -->
+          {#if feedItems.length > 0}
+            <div class="feed-grid">
+              {#each feedItems as item (item.kind === "note" ? `note-${item.note.slug}` : `page-${item.file}`)}
+                {#if item.kind === "note"}
+                  <div class="feed-item">
+                    <NoteCard
+                      title={item.note.title}
+                      author={item.note.author_username}
+                      slug={item.note.slug}
+                      excerpt={item.note.content.length > 120 ? `${item.note.content.slice(0, 120)}...` : item.note.content}
+                      commentCount={item.note.comment_count}
+                      createdAt={item.note.created_at}
+                      replyTo={item.note.reply_to}
+                      reactions={item.note.reactions}
+                      onSelect={onSelectNote}
+                    />
                   </div>
-                {/each}
-              </div>
+                {:else}
+                  <div class="feed-item">
+                    <PageThumbnail
+                      url="/pages/{name}/{item.file}"
+                      label={item.file}
+                      sublabel={formatRelativeTime(item.modified)}
+                      onclick={() => handleSelectPage(name, item.file)}
+                    />
+                  </div>
+                {/if}
+              {/each}
             </div>
           {/if}
-
-          <!-- Variants -->
-          <div class="card">
-            <div class="card-title" style="padding: 0 0 8px">Variants</div>
-            <VariantList {name} />
-          </div>
         </div>
 
         <div class="info-right">
-          <div class="info-right-scroll">
-            <History {name} />
-          </div>
+          <History {name} />
         </div>
       </div>
     {:else if section === "notes"}
@@ -357,9 +298,7 @@ function extractTextContent(content: ContentBlock[]): string {
     display: flex;
     align-items: flex-start;
     gap: 16px;
-    padding-bottom: 20px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 20px;
+    padding-bottom: 16px;
     flex-shrink: 0;
   }
 
@@ -409,23 +348,7 @@ function extractTextContent(content: ContentBlock[]): string {
     display: block;
   }
 
-  .chat-btn {
-    flex-shrink: 0;
-    padding: 6px 16px;
-    border-radius: var(--radius);
-    background: var(--accent-dim);
-    color: var(--accent);
-    border: 1px solid var(--accent-border);
-    font-size: 13px;
-    cursor: pointer;
-    transition: border-color 0.15s;
-  }
-
-  .chat-btn:hover {
-    border-color: var(--accent);
-  }
-
-  /* Split layout */
+  /* Split layout — history on right spans full height */
   .info-split {
     display: flex;
     gap: 24px;
@@ -446,11 +369,10 @@ function extractTextContent(content: ContentBlock[]): string {
     width: 420px;
     flex-shrink: 0;
     min-height: 0;
-  }
-
-  .info-right-scroll {
-    height: 100%;
-    overflow: auto;
+    background: var(--bg-1);
+    border-left: 1px solid var(--border);
+    margin: -24px -24px -24px 0;
+    padding: 16px;
   }
 
   /* Chat viewport */
@@ -460,18 +382,9 @@ function extractTextContent(content: ContentBlock[]): string {
     border-radius: var(--radius-lg);
     display: flex;
     flex-direction: column;
-    max-height: 360px;
-    min-height: 120px;
+    max-height: 340px;
+    min-height: 80px;
     overflow: hidden;
-  }
-
-  .chat-viewport-header {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
   }
 
   .chat-viewport-scroll {
@@ -486,23 +399,26 @@ function extractTextContent(content: ContentBlock[]): string {
     font-size: 13px;
     padding: 24px 16px;
     text-align: center;
+    flex: 1;
   }
 
-  .chat-viewport-cta {
+  .chat-open-btn {
     display: block;
     width: 100%;
     padding: 8px;
-    background: var(--bg-2);
+    background: var(--accent-dim);
     color: var(--accent);
-    font-size: 12px;
+    font-size: 13px;
+    font-weight: 500;
     cursor: pointer;
     border-top: 1px solid var(--border);
     text-align: center;
     flex-shrink: 0;
+    transition: background 0.15s;
   }
 
-  .chat-viewport-cta:hover {
-    background: var(--bg-3);
+  .chat-open-btn:hover {
+    background: var(--accent-bg);
   }
 
   /* Chat entries (matching MessageEntry style) */
@@ -551,103 +467,15 @@ function extractTextContent(content: ContentBlock[]): string {
     white-space: pre-wrap;
   }
 
-  /* Cards */
-  .card {
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 14px 16px;
+  /* Mixed feed grid */
+  .feed-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px;
   }
 
-  .card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 10px;
-  }
-
-  .card-title {
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-2);
-  }
-
-  .card-link {
-    background: none;
-    color: var(--accent);
-    font-size: 12px;
-    cursor: pointer;
-    padding: 0;
-  }
-
-  .card-link:hover {
-    text-decoration: underline;
-  }
-
-
-  /* Notes */
-  .notes-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  /* Files */
-  .file-list {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .file-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 0;
-    font-size: 13px;
-    color: var(--text-1);
-    background: none;
-    text-align: left;
-    width: 100%;
-  }
-
-  .file-row.clickable {
-    cursor: pointer;
-  }
-
-  .file-row.clickable:hover {
-    color: var(--text-0);
-  }
-
-  .file-time {
-    margin-left: auto;
-    font-size: 11px;
-    color: var(--text-2);
-  }
-
-  /* Connections */
-  .connections-list {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .connection-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 0;
-    font-size: 13px;
-  }
-
-  .connection-name {
-    font-weight: 500;
-    color: var(--text-0);
-  }
-
-  .connection-bot {
-    font-size: 12px;
-    color: var(--text-1);
+  .feed-item {
+    min-width: 0;
   }
 
   /* Other sections */
