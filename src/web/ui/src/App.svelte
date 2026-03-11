@@ -159,6 +159,22 @@ let rightPanelMind = $derived(
 
 let rightPanelIsManual = $derived(!!(activeModal === "mind" && selectedModalMind));
 
+// Show chat button in right panel unless already in a DM with that mind
+let showRightPanelChat = $derived.by(() => {
+  if (!rightPanelMind) return false;
+  if (activeTab === "system") return true;
+  // In chat tab: hide if this is the natural DM context (not manually opened)
+  if (!rightPanelIsManual && activeConv?.type === "dm") return false;
+  return true;
+});
+
+// Show mind page button in right panel unless already on the mind page
+let showRightPanelProfile = $derived.by(() => {
+  if (!rightPanelMind) return false;
+  if (activeTab === "system" && systemMindName === rightPanelMind.name) return false;
+  return true;
+});
+
 let hasRightPanel = $derived(
   (activeTab === "system" && !!systemMind) ||
     (activeTab === "chat" &&
@@ -617,12 +633,6 @@ function handleGlobalClick(e: MouseEvent) {
               {/each}
             </div>
             <div class="header-actions">
-              {#if systemMindName}
-                <button class="header-chat-btn" onclick={() => { handleNewChatCreated(systemMindName); }}>
-                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                  Chat
-                </button>
-              {/if}
               <div class="user-menu-anchor">
                 <button class="user-avatar-btn" onclick={() => { showUserMenu = !showUserMenu; }} title={auth.user?.username}>
                   {#if userAvatar}
@@ -641,7 +651,7 @@ function handleGlobalClick(e: MouseEvent) {
               </div>
               {#if hasRightPanel && rightPanelCollapsed}
                 <button class="panel-reopen" onclick={toggleRightPanel} title="Show sidebar">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5"/><circle cx="15" cy="14" r="1.5"/><line x1="12" y1="4" x2="12" y2="8"/><circle cx="12" cy="3" r="1"/></svg>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
                 </button>
               {/if}
             </div>
@@ -687,10 +697,11 @@ function handleGlobalClick(e: MouseEvent) {
               {#key rightPanelMind.name}
                 <MindModal
                   mind={rightPanelMind}
-                  onProfile={() => {
+                  onProfile={showRightPanelProfile ? () => {
                     selection = { tab: "system", kind: "mind", name: rightPanelMind.name };
                     if (activeModal === "mind") { activeModal = null; selectedModalMind = null; }
-                  }}
+                  } : undefined}
+                  onChat={showRightPanelChat ? () => handleNewChatCreated(rightPanelMind.name) : undefined}
                 />
               {/key}
             {:else if activeConv?.type === "channel" || activeConv?.type === "group"}
@@ -901,33 +912,6 @@ function handleGlobalClick(e: MouseEvent) {
     display: flex;
     align-items: center;
     gap: 8px;
-  }
-
-  .header-chat-btn {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    background: none;
-    border: 1px solid var(--border);
-    color: var(--text-1);
-    padding: 4px 10px;
-    font-size: 13px;
-    cursor: pointer;
-    border-radius: var(--radius);
-    font-family: var(--display);
-    font-weight: 400;
-    letter-spacing: 0.02em;
-  }
-
-  .header-chat-btn:hover {
-    color: var(--text-0);
-    border-color: var(--border-bright);
-    background: var(--bg-2);
-  }
-
-  .header-chat-btn svg {
-    width: 14px;
-    height: 14px;
   }
 
   .user-menu-anchor {

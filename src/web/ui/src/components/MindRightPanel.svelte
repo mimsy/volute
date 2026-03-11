@@ -9,9 +9,11 @@ import StatusBadge from "./StatusBadge.svelte";
 let {
   mind: initialMind,
   onProfile,
+  onChat,
 }: {
   mind: Mind;
   onProfile?: () => void;
+  onChat?: () => void;
 } = $props();
 
 let mind = $derived(data.minds.find((m) => m.name === initialMind.name) ?? initialMind);
@@ -27,9 +29,22 @@ function formatCreated(dateStr: string): string {
 </script>
 
 <div class="mind-panel">
+  {#if onChat || onProfile}
+    <div class="floating-btns">
+      {#if onChat}
+        <button class="floating-btn" onclick={onChat} title="Chat">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+        </button>
+      {/if}
+      {#if onProfile}
+        <button class="floating-btn" onclick={onProfile} title="Mind page">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5"/><circle cx="15" cy="14" r="1.5"/><line x1="12" y1="4" x2="12" y2="8"/><circle cx="12" cy="3" r="1"/></svg>
+        </button>
+      {/if}
+    </div>
+  {/if}
   <div class="panel-body">
-    <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-    <div class="profile-section" class:profile-clickable={!!onProfile} onclick={() => onProfile?.()}>
+    <div class="profile-section">
       {#if mind.avatar}
         <img
           src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
@@ -61,6 +76,41 @@ function formatCreated(dateStr: string): string {
     background: var(--bg-1);
     width: 100%;
     overflow: hidden;
+    position: relative;
+  }
+
+  .floating-btns {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 1;
+    display: flex;
+    gap: 4px;
+  }
+
+  .floating-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+
+  .floating-btn:hover {
+    color: var(--text-0);
+    border-color: var(--border-bright);
+    background: var(--bg-3);
+  }
+
+  .floating-btn svg {
+    width: 16px;
+    height: 16px;
   }
 
   .panel-body {
@@ -108,16 +158,6 @@ function formatCreated(dateStr: string): string {
     font-size: 12px;
     color: var(--text-2);
     margin-top: 4px;
-  }
-
-  .profile-clickable {
-    cursor: pointer;
-    border-radius: var(--radius-lg);
-    transition: background 0.15s;
-  }
-
-  .profile-clickable:hover {
-    background: var(--bg-2);
   }
 
   .history-section {
