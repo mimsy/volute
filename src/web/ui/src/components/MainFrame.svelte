@@ -114,80 +114,34 @@ let contextLabel = $derived.by(() => {
   <!-- System tab views -->
   {#if selection.tab === "system"}
     {#if selection.kind === "mind"}
-      <div class="breadcrumbs">
-        <button class="breadcrumb-link" onclick={() => navigate(`/minds/${selection.name}`)}>{selection.name}</button>
-        {#if selection.section && selection.section !== "info"}
-          <span class="breadcrumb-sep">/</span>
-          <span class="breadcrumb-current">{selection.section}</span>
-        {/if}
-      </div>
       <div class="frame-content mind-frame">
         <MindPage name={selection.name} section={selection.section} />
       </div>
     {:else if selection.kind === "mind-note"}
-      <div class="breadcrumbs">
-        <button class="breadcrumb-link" onclick={() => navigate(`/minds/${selection.mind}`)}>{selection.mind}</button>
-        <span class="breadcrumb-sep">/</span>
-        <button class="breadcrumb-link" onclick={() => navigate(`/minds/${selection.mind}/notes`)}>notes</button>
-        <span class="breadcrumb-sep">/</span>
-        <span class="breadcrumb-current">{selection.slug}</span>
-      </div>
       <div class="frame-content padded">
         <NoteView author={selection.mind} slug={selection.slug} {username} onNavigate={(author, slug) => navigate(`/minds/${author}/notes/${slug}`)} />
       </div>
     {:else if selection.kind === "mind-page"}
-      <div class="breadcrumbs">
-        <button class="breadcrumb-link" onclick={() => navigate(`/minds/${selection.mind}`)}>{selection.mind}</button>
-        <span class="breadcrumb-sep">/</span>
-        <button class="breadcrumb-link" onclick={() => navigate(`/minds/${selection.mind}/pages`)}>pages</button>
-        <span class="breadcrumb-sep">/</span>
-        <span class="breadcrumb-current">{selection.path}</span>
-      </div>
       <div class="frame-content">
         <iframe src="/pages/{selection.mind}/{selection.path}" class="page-iframe" title="Page"></iframe>
       </div>
     {:else if selection.kind === "page"}
-      <div class="breadcrumbs">
-        <button class="breadcrumb-link" onclick={onSelectPages}>Pages</button>
-        <span class="breadcrumb-sep">/</span>
-        <button class="breadcrumb-link" onclick={() => onSelectSite(selection.mind)}>{selection.mind}</button>
-        <span class="breadcrumb-sep">/</span>
-        <span class="breadcrumb-current">{selection.path}</span>
-      </div>
       <div class="frame-content">
         <iframe src="/pages/{selection.mind}/{selection.path}" class="page-iframe" title="Page"></iframe>
       </div>
     {:else if selection.kind === "pages"}
-      <div class="breadcrumbs">
-        <span class="breadcrumb-current">Pages</span>
-      </div>
       <div class="frame-content padded">
         <PagesDashboard {sites} {recentPages} {onSelectSite} {onSelectPage} />
       </div>
     {:else if selection.kind === "site" && selectedSite}
-      <div class="breadcrumbs">
-        <button class="breadcrumb-link" onclick={onSelectPages}>Pages</button>
-        <span class="breadcrumb-sep">/</span>
-        <span class="breadcrumb-current">{selectedSite.name}</span>
-      </div>
       <div class="frame-content padded">
         <SiteView site={selectedSite} {onSelectPage} />
       </div>
     {:else if selection.kind === "notes"}
-      <div class="breadcrumbs">
-        <span class="breadcrumb-current">Notes</span>
-      </div>
       <div class="frame-content padded">
         <Notes />
       </div>
     {:else if selection.kind === "note"}
-      <div class="breadcrumbs">
-        <button class="breadcrumb-link" onclick={onSelectNotes}>Notes</button>
-        <span class="breadcrumb-sep">/</span>
-        <button class="breadcrumb-link" onclick={() => navigate(`/minds/${selection.author}`)}>{selection.author}</button>
-        <span class="breadcrumb-sep">/</span>
-        <span class="breadcrumb-current">{selection.slug}</span>
-      </div>
       <div class="frame-content padded">
         <NoteView author={selection.author} slug={selection.slug} {username} onNavigate={(author, slug) => navigate(`/minds/${author}/notes/${slug}`)} />
       </div>
@@ -242,43 +196,6 @@ let contextLabel = $derived.by(() => {
   .frame-content.mind-frame {
     padding: 24px;
     overflow: hidden;
-  }
-
-  .breadcrumbs {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 16px;
-    font-family: inherit;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-2);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-
-  .breadcrumb-link {
-    background: none;
-    border: none;
-    padding: 0;
-    font: inherit;
-    text-transform: inherit;
-    letter-spacing: inherit;
-    color: var(--text-1);
-    cursor: pointer;
-  }
-
-  .breadcrumb-link:hover {
-    color: var(--accent);
-  }
-
-  .breadcrumb-sep {
-    color: var(--text-2);
-  }
-
-  .breadcrumb-current {
-    color: var(--text-2);
   }
 
   .page-iframe {

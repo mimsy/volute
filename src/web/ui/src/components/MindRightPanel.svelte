@@ -34,6 +34,7 @@ function formatCreated(dateStr: string): string {
           class="profile-avatar"
         />
       {/if}
+      <span class="profile-name">{mind.displayName ?? mind.name}</span>
       <StatusBadge status={getDisplayStatus(mind)} />
       {#if mind.description}
         <p class="profile-description">{mind.description}</p>
@@ -80,6 +81,15 @@ function formatCreated(dateStr: string): string {
     height: 96px;
     border-radius: var(--radius);
     object-fit: cover;
+  }
+
+  .profile-name {
+    font-family: var(--display);
+    font-size: 20px;
+    font-weight: 300;
+    color: var(--text-0);
+    letter-spacing: 0.02em;
+    margin-top: 4px;
   }
 
   .profile-description {

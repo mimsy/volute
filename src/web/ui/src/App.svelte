@@ -138,8 +138,57 @@ let hasRightPanel = $derived(
 
 let showRightPanel = $derived(hasRightPanel && !rightPanelCollapsed);
 
-// Mind header: shows across full width when chatting with a mind
-let showMindHeader = $derived(activeTab === "chat" && !!rightPanelMind);
+// Breadcrumb label for chat conversations
+let chatBreadcrumbLabel = $derived.by(() => {
+  if (selection.kind !== "conversation") return "";
+  if (activeConv?.type === "channel" && activeConv.name) return `#${activeConv.name}`;
+  if (contextMind) return contextMind.displayName ?? contextMind.name;
+  if (contextMindName) return contextMindName;
+  return "";
+});
+
+// Page breadcrumbs
+type Breadcrumb = { label: string; action?: () => void };
+let breadcrumbs = $derived.by((): Breadcrumb[] => {
+  const sel = selection;
+  const crumbs: Breadcrumb[] = [];
+  if (sel.tab === "system") {
+    crumbs.push({ label: "system", action: handleSystemHome });
+    if (sel.kind === "mind") {
+      crumbs.push({ label: sel.name, action: () => navigate(`/minds/${sel.name}`) });
+      if (sel.section && sel.section !== "info") crumbs.push({ label: sel.section });
+    } else if (sel.kind === "mind-note") {
+      crumbs.push({ label: sel.mind, action: () => navigate(`/minds/${sel.mind}`) });
+      crumbs.push({ label: "notes", action: () => navigate(`/minds/${sel.mind}/notes`) });
+      crumbs.push({ label: sel.slug });
+    } else if (sel.kind === "mind-page") {
+      crumbs.push({ label: sel.mind, action: () => navigate(`/minds/${sel.mind}`) });
+      crumbs.push({ label: "pages", action: () => navigate(`/minds/${sel.mind}/pages`) });
+      crumbs.push({ label: sel.path });
+    } else if (sel.kind === "page") {
+      crumbs.push({ label: "pages", action: handleSelectPages });
+      crumbs.push({ label: sel.mind, action: () => handleSelectSite(sel.mind) });
+      crumbs.push({ label: sel.path });
+    } else if (sel.kind === "pages") {
+      crumbs.push({ label: "pages" });
+    } else if (sel.kind === "site") {
+      crumbs.push({ label: "pages", action: handleSelectPages });
+      crumbs.push({ label: sel.name });
+    } else if (sel.kind === "notes") {
+      crumbs.push({ label: "notes" });
+    } else if (sel.kind === "note") {
+      crumbs.push({ label: "notes", action: handleSelectNotes });
+      crumbs.push({ label: sel.author, action: () => navigate(`/minds/${sel.author}`) });
+      crumbs.push({ label: sel.slug });
+    }
+  } else {
+    crumbs.push({ label: "chat" });
+    if (sel.kind === "conversation" && chatBreadcrumbLabel) {
+      crumbs.push({ label: chatBreadcrumbLabel });
+    }
+  }
+  return crumbs;
+});
 
 // Auth — one-time fetch on mount
 onMount(() => {
@@ -482,24 +531,26 @@ function handleEscape(e: KeyboardEvent) {
         onpointercancel={handleResizeEnd}
       ></div>
       <div class="content-area">
-        {#if showMindHeader && rightPanelMind}
-          <div class="mind-header">
-            <span class="mind-header-name">{rightPanelMind.displayName ?? rightPanelMind.name}</span>
-            <div class="mind-header-actions">
-              <button class="mind-header-btn" onclick={() => { handleSelectMind(rightPanelMind!.name); }}>Profile</button>
-              {#if rightPanelCollapsed}
-                <button class="mind-header-toggle" onclick={toggleRightPanel} title="Show sidebar">
-                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="2"/><path d="M10 2v12"/></svg>
-                </button>
-              {:else}
-                <button class="mind-header-toggle" onclick={toggleRightPanel} title="Hide sidebar">
-                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="2"/><path d="M10 2v12"/></svg>
-                </button>
-              {/if}
+        <div class="main-column">
+          <div class="page-header">
+            <div class="page-breadcrumbs">
+              {#each breadcrumbs as crumb, i}
+                {#if i > 0}
+                  <span class="crumb-sep">/</span>
+                {/if}
+                {#if crumb.action && i < breadcrumbs.length - 1}
+                  <button class="crumb-link" onclick={crumb.action}>{crumb.label}</button>
+                {:else}
+                  <span class="crumb-current">{crumb.label}</span>
+                {/if}
+              {/each}
             </div>
+            {#if hasRightPanel && rightPanelCollapsed}
+              <button class="panel-reopen" onclick={toggleRightPanel} title="Show sidebar">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="2"/><path d="M10 2v12"/></svg>
+              </button>
+            {/if}
           </div>
-        {/if}
-        <div class="content-row">
           <div class="main-frame">
             <MainFrame
               {selection}
@@ -521,37 +572,38 @@ function handleEscape(e: KeyboardEvent) {
               onOpenRightPanel={hasRightPanel ? openRightPanel : undefined}
             />
           </div>
-          {#if showRightPanel}
-            {#if rightPanelOpen}
-              <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <div class="right-panel-backdrop" onclick={closeRightPanel}></div>
-            {/if}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div
-              class="resize-handle right-resize-handle"
-              onpointerdown={handleRightResizeStart}
-              onpointermove={handleRightResizeMove}
-              onpointerup={handleRightResizeEnd}
-              onpointercancel={handleRightResizeEnd}
-            ></div>
-            <div class="right-panel" class:right-panel-open={rightPanelOpen} style:width="{rightPanel.width}px">
-              {#if rightPanelMind}
-                {#key rightPanelMind.name}
-                  <MindModal
-                    mind={rightPanelMind}
-                  />
-                {/key}
-              {:else if activeConv?.type === "channel" || activeConv?.type === "group"}
-                <ChannelMembersPanel
-                  conversation={activeConv}
-                  minds={data.minds}
-                  {typingNames}
-                  onOpenMind={handleOpenMindModal}
-                />
-              {/if}
-            </div>
-          {/if}
         </div>
+        {#if showRightPanel}
+          {#if rightPanelOpen}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="right-panel-backdrop" onclick={closeRightPanel}></div>
+          {/if}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="resize-handle right-resize-handle"
+            onpointerdown={handleRightResizeStart}
+            onpointermove={handleRightResizeMove}
+            onpointerup={handleRightResizeEnd}
+            onpointercancel={handleRightResizeEnd}
+          ></div>
+          <div class="right-panel" class:right-panel-open={rightPanelOpen} style:width="{rightPanel.width}px">
+            <button class="panel-close" onclick={closeRightPanel} title="Close">&times;</button>
+            {#if rightPanelMind}
+              {#key rightPanelMind.name}
+                <MindModal
+                  mind={rightPanelMind}
+                />
+              {/key}
+            {:else if activeConv?.type === "channel" || activeConv?.type === "group"}
+              <ChannelMembersPanel
+                conversation={activeConv}
+                minds={data.minds}
+                {typingNames}
+                onOpenMind={handleOpenMindModal}
+              />
+            {/if}
+          </div>
+        {/if}
       </div>
     </div>
     <StatusBar
@@ -699,16 +751,16 @@ function handleEscape(e: KeyboardEvent) {
   .content-area {
     flex: 1;
     display: flex;
-    flex-direction: column;
     overflow: hidden;
     min-width: 0;
   }
 
-  .content-row {
+  .main-column {
     flex: 1;
     display: flex;
+    flex-direction: column;
     overflow: hidden;
-    min-height: 0;
+    min-width: 0;
   }
 
   .main-frame {
@@ -717,47 +769,51 @@ function handleEscape(e: KeyboardEvent) {
     min-width: 0;
   }
 
-  .mind-header {
+  .page-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 8px 16px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
-    background: var(--bg-1);
   }
 
-  .mind-header-name {
+  .page-breadcrumbs {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
     font-family: var(--display);
-    font-size: 22px;
+    font-size: 18px;
     font-weight: 300;
     color: var(--text-0);
     letter-spacing: 0.02em;
   }
 
-  .mind-header-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
+  .crumb-sep {
+    color: var(--text-2);
+    font-size: 14px;
   }
 
-  .mind-header-btn {
+  .crumb-link {
     background: none;
-    border: 1px solid var(--border);
+    border: none;
+    padding: 0;
+    font: inherit;
     color: var(--text-2);
-    font-size: 12px;
-    padding: 3px 10px;
-    border-radius: var(--radius);
     cursor: pointer;
   }
 
-  .mind-header-btn:hover {
-    color: var(--text-1);
-    border-color: var(--border-bright);
+  .crumb-link:hover {
+    color: var(--text-0);
   }
 
-  .mind-header-toggle {
+  .crumb-current {
+    color: var(--text-0);
+  }
+
+  .panel-reopen {
     background: none;
+    border: none;
     color: var(--text-2);
     padding: 4px;
     cursor: pointer;
@@ -766,12 +822,12 @@ function handleEscape(e: KeyboardEvent) {
     align-items: center;
   }
 
-  .mind-header-toggle:hover {
+  .panel-reopen:hover {
     color: var(--text-1);
     background: var(--bg-2);
   }
 
-  .mind-header-toggle svg {
+  .panel-reopen svg {
     width: 16px;
     height: 16px;
   }
@@ -780,6 +836,26 @@ function handleEscape(e: KeyboardEvent) {
     flex-shrink: 0;
     border-left: 1px solid var(--border);
     overflow: hidden;
+    position: relative;
+  }
+
+  .panel-close {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 1;
+    background: none;
+    border: none;
+    color: var(--text-2);
+    font-size: 18px;
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: var(--radius);
+  }
+
+  .panel-close:hover {
+    color: var(--text-0);
+    background: var(--bg-2);
   }
 
   .right-panel-backdrop {
@@ -852,6 +928,10 @@ function handleEscape(e: KeyboardEvent) {
 
   @media (max-width: 767px) {
     .sidebar-header {
+      display: none;
+    }
+
+    .page-header {
       display: none;
     }
   }
