@@ -116,7 +116,7 @@ let contextLabel = $derived.by(() => {
   <!-- System tab views -->
   {#if selection.tab === "system"}
     {#if selection.kind === "mind"}
-      <div class="frame-content padded">
+      <div class="frame-content mind-frame">
         <MindPage name={selection.name} section={selection.section} {onSelectNote} />
       </div>
     {:else if selection.kind === "page"}
@@ -208,6 +208,11 @@ let contextLabel = $derived.by(() => {
 
   .frame-content.padded {
     padding: 24px;
+  }
+
+  .frame-content.mind-frame {
+    padding: 24px;
+    overflow: hidden;
   }
 
   .breadcrumbs {
