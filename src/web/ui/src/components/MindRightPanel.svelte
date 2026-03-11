@@ -8,8 +8,10 @@ import StatusBadge from "./StatusBadge.svelte";
 
 let {
   mind: initialMind,
+  onProfile,
 }: {
   mind: Mind;
+  onProfile?: () => void;
 } = $props();
 
 let mind = $derived(data.minds.find((m) => m.name === initialMind.name) ?? initialMind);
@@ -26,7 +28,8 @@ function formatCreated(dateStr: string): string {
 
 <div class="mind-panel">
   <div class="panel-body">
-    <div class="profile-section">
+    <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+    <div class="profile-section" class:profile-clickable={!!onProfile} onclick={() => onProfile?.()}>
       {#if mind.avatar}
         <img
           src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
@@ -105,6 +108,16 @@ function formatCreated(dateStr: string): string {
     font-size: 12px;
     color: var(--text-2);
     margin-top: 4px;
+  }
+
+  .profile-clickable {
+    cursor: pointer;
+    border-radius: var(--radius-lg);
+    transition: background 0.15s;
+  }
+
+  .profile-clickable:hover {
+    background: var(--bg-2);
   }
 
   .history-section {

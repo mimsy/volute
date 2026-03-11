@@ -1,7 +1,7 @@
 <script lang="ts">
 import type { ContentBlock, ConversationWithParticipants, Message } from "@volute/api";
 import MindInfo from "../components/MindInfo.svelte";
-import MindRightPanel from "../components/MindRightPanel.svelte";
+
 import MindSkills from "../components/MindSkills.svelte";
 import PublicFiles from "../components/PublicFiles.svelte";
 import ReadOnlyChatModal from "../components/ReadOnlyChatModal.svelte";
@@ -195,106 +195,96 @@ function extractTextContent(content: ContentBlock[]): string {
 {:else}
   <div class="mind-page">
     {#if section === "info"}
-      <div class="info-split">
-        <div class="info-left">
-          <!-- Mixed feed -->
-          {#if feedItems.length === 0}
-            <div class="empty-hint">No activity yet.</div>
-          {:else}
-            <div class="feed-grid">
-              {#each feedItems as item (item.kind === "note" ? `note-${item.note.slug}` : item.kind === "page" ? `page-${item.file}` : `msg-${item.conv.id}`)}
-                {#if item.kind === "note"}
-                  {@const note = item.note}
-                  <div class="feed-item">
-                    <div class="feed-card card-note" role="button" tabindex="0" onclick={() => handleSelectNote(note.author_username, note.slug)} onkeydown={(e) => { if (e.key === 'Enter') handleSelectNote(note.author_username, note.slug); }}>
-                      <div class="feed-card-header header-note">
-                        <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h8M2 6h10M2 9h6M2 12h9"/></svg>
-                        <span class="feed-card-label">{note.title}</span>
-                        <span class="feed-card-meta">{formatRelativeTime(note.created_at)}</span>
-                      </div>
-                      <div class="feed-card-body note-body">
-                        <p class="note-excerpt">{note.content.length > 300 ? `${note.content.slice(0, 300)}...` : note.content}</p>
-                        {#if note.comment_count > 0}
-                          <span class="note-comments">{note.comment_count} {note.comment_count === 1 ? "comment" : "comments"}</span>
-                        {/if}
-                      </div>
-                    </div>
+      <!-- Mixed feed -->
+      {#if feedItems.length === 0}
+        <div class="empty-hint">No activity yet.</div>
+      {:else}
+        <div class="feed-grid">
+          {#each feedItems as item (item.kind === "note" ? `note-${item.note.slug}` : item.kind === "page" ? `page-${item.file}` : `msg-${item.conv.id}`)}
+            {#if item.kind === "note"}
+              {@const note = item.note}
+              <div class="feed-item">
+                <div class="feed-card card-note" role="button" tabindex="0" onclick={() => handleSelectNote(note.author_username, note.slug)} onkeydown={(e) => { if (e.key === 'Enter') handleSelectNote(note.author_username, note.slug); }}>
+                  <div class="feed-card-header header-note">
+                    <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h8M2 6h10M2 9h6M2 12h9"/></svg>
+                    <span class="feed-card-label">{note.title}</span>
+                    <span class="feed-card-meta">{formatRelativeTime(note.created_at)}</span>
                   </div>
-                {:else if item.kind === "page"}
-                  <div class="feed-item">
-                    <div class="feed-card card-page" role="button" tabindex="0" onclick={() => handleSelectPage(name, item.file)} onkeydown={(e) => { if (e.key === 'Enter') handleSelectPage(name, item.file); }}>
-                      <div class="feed-card-header header-page">
-                        <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M2 5.5h12"/></svg>
-                        <span class="feed-card-label">{item.file}</span>
-                        <span class="feed-card-meta">{formatRelativeTime(item.modified)}</span>
-                      </div>
-                      <div class="feed-card-body page-body" use:scaleIframe>
-                        <iframe src="/pages/{name}/{item.file}" loading="lazy" sandbox="allow-same-origin" tabindex={-1} title={item.file}></iframe>
-                      </div>
-                    </div>
+                  <div class="feed-card-body note-body">
+                    <p class="note-excerpt">{note.content.length > 300 ? `${note.content.slice(0, 300)}...` : note.content}</p>
+                    {#if note.comment_count > 0}
+                      <span class="note-comments">{note.comment_count} {note.comment_count === 1 ? "comment" : "comments"}</span>
+                    {/if}
                   </div>
-                {:else}
-                  {@const conv = item.conv}
-                  {@const label = getConvLabel(conv)}
-                  {@const messages = messagesMap[conv.id] ?? []}
-                  {@const participant = isUserParticipant(conv)}
-                  <div class="feed-item">
-                    <!-- svelte-ignore a11y_no_static_element_interactions -->
-                    <div class="feed-card card-chat" role="button" tabindex="0" onclick={() => { readOnlyConv = conv; }} onkeydown={(e) => { if (e.key === 'Enter') readOnlyConv = conv; }}>
-                      <div class="feed-card-header header-chat">
-                        <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                        <span class="feed-card-label">{label}</span>
-                        <span class="feed-card-meta">{formatRelativeTime(conv.updated_at)}</span>
-                        {#if participant}
-                          <button
-                            class="card-action-btn card-action-btn-primary"
-                            onclick={(e) => { e.stopPropagation(); navigate(`/chat/${conv.id}`); }}
-                          >
-                            Chat
-                          </button>
-                        {/if}
-                      </div>
-                      <!-- svelte-ignore a11y_no_static_element_interactions -->
-                      <div class="feed-card-body chat-body" bind:this={scrollEls[conv.id]} onscroll={(e) => {
-                        const el = e.currentTarget;
-                        if (el.scrollTop < 10) el.scrollTop = 10;
-                      }}>
-                        {#if messages.length === 0}
-                          <div class="msg-empty">Loading...</div>
-                        {:else}
-                          {#each messages as msg, i (msg.id)}
-                            <div class="chat-entry" class:new-sender={showSenderHeader(messages, i)}>
-                              {#if showSenderHeader(messages, i)}
-                                <div class="chat-entry-header">
-                                  <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : name)}</span>
-                                  <span class="chat-timestamp">{formatTime(msg.created_at)}</span>
-                                </div>
-                              {/if}
-                              <div class="chat-entry-content" class:chat-user-text={msg.role === "user"}>
-                                {#if msg.role === "user"}
-                                  {extractTextContent(msg.content)}
-                                {:else}
-                                  <div class="markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</div>
-                                {/if}
-                              </div>
+                </div>
+              </div>
+            {:else if item.kind === "page"}
+              <div class="feed-item">
+                <div class="feed-card card-page" role="button" tabindex="0" onclick={() => handleSelectPage(name, item.file)} onkeydown={(e) => { if (e.key === 'Enter') handleSelectPage(name, item.file); }}>
+                  <div class="feed-card-header header-page">
+                    <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M2 5.5h12"/></svg>
+                    <span class="feed-card-label">{item.file}</span>
+                    <span class="feed-card-meta">{formatRelativeTime(item.modified)}</span>
+                  </div>
+                  <div class="feed-card-body page-body" use:scaleIframe>
+                    <iframe src="/pages/{name}/{item.file}" loading="lazy" sandbox="allow-same-origin" tabindex={-1} title={item.file}></iframe>
+                  </div>
+                </div>
+              </div>
+            {:else}
+              {@const conv = item.conv}
+              {@const label = getConvLabel(conv)}
+              {@const messages = messagesMap[conv.id] ?? []}
+              {@const participant = isUserParticipant(conv)}
+              <div class="feed-item">
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div class="feed-card card-chat" role="button" tabindex="0" onclick={() => { readOnlyConv = conv; }} onkeydown={(e) => { if (e.key === 'Enter') readOnlyConv = conv; }}>
+                  <div class="feed-card-header header-chat">
+                    <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                    <span class="feed-card-label">{label}</span>
+                    <span class="feed-card-meta">{formatRelativeTime(conv.updated_at)}</span>
+                    {#if participant}
+                      <button
+                        class="card-action-btn card-action-btn-primary"
+                        onclick={(e) => { e.stopPropagation(); navigate(`/chat/${conv.id}`); }}
+                      >
+                        Chat
+                      </button>
+                    {/if}
+                  </div>
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <div class="feed-card-body chat-body" bind:this={scrollEls[conv.id]} onscroll={(e) => {
+                    const el = e.currentTarget;
+                    if (el.scrollTop < 10) el.scrollTop = 10;
+                  }}>
+                    {#if messages.length === 0}
+                      <div class="msg-empty">Loading...</div>
+                    {:else}
+                      {#each messages as msg, i (msg.id)}
+                        <div class="chat-entry" class:new-sender={showSenderHeader(messages, i)}>
+                          {#if showSenderHeader(messages, i)}
+                            <div class="chat-entry-header">
+                              <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : name)}</span>
+                              <span class="chat-timestamp">{formatTime(msg.created_at)}</span>
                             </div>
-                          {/each}
-                        {/if}
-                      </div>
-                    </div>
+                          {/if}
+                          <div class="chat-entry-content" class:chat-user-text={msg.role === "user"}>
+                            {#if msg.role === "user"}
+                              {extractTextContent(msg.content)}
+                            {:else}
+                              <div class="markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</div>
+                            {/if}
+                          </div>
+                        </div>
+                      {/each}
+                    {/if}
                   </div>
-                {/if}
-              {/each}
-            </div>
-          {/if}
+                </div>
+              </div>
+            {/if}
+          {/each}
         </div>
-
-        <div class="info-right">
-          {#if mind}
-            <MindRightPanel {mind} />
-          {/if}
-        </div>
-      </div>
+      {/if}
     {:else if section === "notes"}
       <div class="section-content">
         <Notes author={name} />
@@ -338,38 +328,13 @@ function extractTextContent(content: ContentBlock[]): string {
     flex-direction: column;
     height: 100%;
     min-height: 0;
+    overflow: auto;
   }
 
   .not-found {
     color: var(--text-2);
     padding: 40px;
     text-align: center;
-  }
-
-  /* Split layout — history on right spans full height */
-  .info-split {
-    display: flex;
-    gap: 24px;
-    flex: 1;
-    min-height: 0;
-  }
-
-  .info-left {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    overflow: auto;
-  }
-
-  .info-right {
-    width: 420px;
-    flex-shrink: 0;
-    min-height: 0;
-    background: var(--bg-1);
-    border-left: 1px solid var(--border);
-    margin: -24px -24px -24px 0;
   }
 
   /* Feed grid */
@@ -610,10 +575,6 @@ function extractTextContent(content: ContentBlock[]): string {
     text-align: center;
   }
 
-  @media (max-width: 1024px) {
-    .info-right {
-      display: none;
-    }
-  }
+
 
 </style>

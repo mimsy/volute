@@ -93,6 +93,18 @@ let typingNames = $state<string[]>([]);
 let rightPanelOpen = $state(false);
 let rightPanelCollapsed = $state(false);
 
+// Responsive viewport tracking
+let narrowViewport = $state(false);
+
+// Auto-collapse right panel on narrow viewports
+$effect(() => {
+  if (narrowViewport) {
+    rightPanelCollapsed = true;
+  } else {
+    rightPanelCollapsed = false;
+  }
+});
+
 // Chat-specific derived values
 let activeConversationId = $derived(
   selection.kind === "conversation" ? (selection.conversationId ?? null) : null,
@@ -102,7 +114,6 @@ let activeConversationId = $derived(
 $effect(() => {
   setActiveConversation(activeConversationId);
   rightPanelOpen = false;
-  rightPanelCollapsed = false;
 });
 
 // Right panel: auto-show mind details for DMs, channel members for channels
@@ -124,19 +135,33 @@ let contextMind = $derived(
   contextMindName ? data.minds.find((m) => m.name === contextMindName) : undefined,
 );
 
+// System tab: mind for right panel when viewing a mind page
+let systemMindName = $derived(
+  selection.tab === "system" && selection.kind === "mind" ? selection.name : "",
+);
+let systemMind = $derived(
+  systemMindName ? data.minds.find((m) => m.name === systemMindName) : undefined,
+);
+
 let rightPanelMind = $derived(
-  activeModal === "mind" && selectedModalMind ? selectedModalMind : (contextMind ?? undefined),
+  activeModal === "mind" && selectedModalMind
+    ? selectedModalMind
+    : activeTab === "system"
+      ? systemMind
+      : (contextMind ?? undefined),
 );
 
 let rightPanelIsManual = $derived(!!(activeModal === "mind" && selectedModalMind));
 
-// Right panel only in chat tab
 let hasRightPanel = $derived(
-  activeTab === "chat" &&
-    (!!rightPanelMind || activeConv?.type === "channel" || activeConv?.type === "group"),
+  (activeTab === "system" && !!systemMind) ||
+    (activeTab === "chat" &&
+      (!!rightPanelMind || activeConv?.type === "channel" || activeConv?.type === "group")),
 );
 
-let showRightPanel = $derived(hasRightPanel && !rightPanelCollapsed);
+let showRightPanel = $derived(
+  hasRightPanel && (!rightPanelCollapsed || (narrowViewport && rightPanelOpen)),
+);
 
 // Breadcrumb label for chat conversations
 let chatBreadcrumbLabel = $derived.by(() => {
@@ -193,6 +218,14 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
 // Auth — one-time fetch on mount
 onMount(() => {
   checkAuth();
+
+  const mql = window.matchMedia("(max-width: 1024px)");
+  narrowViewport = mql.matches;
+  const handler = (e: MediaQueryListEvent) => {
+    narrowViewport = e.matches;
+  };
+  mql.addEventListener("change", handler);
+  return () => mql.removeEventListener("change", handler);
 });
 
 // Data polling
@@ -265,7 +298,11 @@ function closeRightPanel() {
 }
 
 function toggleRightPanel() {
-  rightPanelCollapsed = !rightPanelCollapsed;
+  if (narrowViewport) {
+    rightPanelOpen = !rightPanelOpen;
+  } else {
+    rightPanelCollapsed = !rightPanelCollapsed;
+  }
 }
 
 function handleOpenMindModal(mind: Mind) {
@@ -545,11 +582,19 @@ function handleEscape(e: KeyboardEvent) {
                 {/if}
               {/each}
             </div>
-            {#if hasRightPanel && rightPanelCollapsed}
-              <button class="panel-reopen" onclick={toggleRightPanel} title="Show sidebar">
-                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="2"/><path d="M10 2v12"/></svg>
-              </button>
-            {/if}
+            <div class="header-actions">
+              {#if systemMindName}
+                <button class="header-chat-btn" onclick={() => { handleNewChatCreated(systemMindName); }}>
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                  Chat
+                </button>
+              {/if}
+              {#if hasRightPanel && rightPanelCollapsed}
+                <button class="panel-reopen" onclick={toggleRightPanel} title="Show sidebar">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="2"/><path d="M10 2v12"/></svg>
+                </button>
+              {/if}
+            </div>
           </div>
           <div class="main-frame">
             <MainFrame
@@ -574,7 +619,7 @@ function handleEscape(e: KeyboardEvent) {
           </div>
         </div>
         {#if showRightPanel}
-          {#if rightPanelOpen}
+          {#if narrowViewport && rightPanelOpen}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="right-panel-backdrop" onclick={closeRightPanel}></div>
           {/if}
@@ -586,12 +631,16 @@ function handleEscape(e: KeyboardEvent) {
             onpointerup={handleRightResizeEnd}
             onpointercancel={handleRightResizeEnd}
           ></div>
-          <div class="right-panel" class:right-panel-open={rightPanelOpen} style:width="{rightPanel.width}px">
+          <div class="right-panel" class:right-panel-open={narrowViewport && rightPanelOpen} style:width="{rightPanel.width}px">
             <button class="panel-close" onclick={closeRightPanel} title="Close">&times;</button>
             {#if rightPanelMind}
               {#key rightPanelMind.name}
                 <MindModal
                   mind={rightPanelMind}
+                  onProfile={() => {
+                    selection = { tab: "system", kind: "mind", name: rightPanelMind.name };
+                    if (activeModal === "mind") { activeModal = null; selectedModalMind = null; }
+                  }}
                 />
               {/key}
             {:else if activeConv?.type === "channel" || activeConv?.type === "group"}
@@ -811,6 +860,39 @@ function handleEscape(e: KeyboardEvent) {
     color: var(--text-0);
   }
 
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .header-chat-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    padding: 4px 10px;
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: var(--radius);
+    font-family: var(--display);
+    font-weight: 400;
+    letter-spacing: 0.02em;
+  }
+
+  .header-chat-btn:hover {
+    color: var(--text-0);
+    border-color: var(--border-bright);
+    background: var(--bg-2);
+  }
+
+  .header-chat-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+
   .panel-reopen {
     background: none;
     border: none;
@@ -866,14 +948,9 @@ function handleEscape(e: KeyboardEvent) {
     display: none;
   }
 
-  /* Right panel: hide on small screens, show on toggle */
+  /* Right panel: overlay on narrow viewports */
   @media (max-width: 1024px) {
     .right-panel {
-      display: none;
-    }
-
-    .right-panel.right-panel-open {
-      display: block;
       position: fixed;
       top: 0;
       right: 0;
