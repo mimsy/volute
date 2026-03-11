@@ -16,6 +16,7 @@ import {
   getParticipants,
   isParticipantOrOwner,
 } from "../../../lib/events/conversations.js";
+import { formatFileSize, stageFile } from "../../../lib/file-sharing.js";
 import log from "../../../lib/logger.js";
 import { findMind, getBaseName } from "../../../lib/registry.js";
 import { buildVoluteSlug } from "../../../lib/slugify.js";
@@ -107,6 +108,11 @@ async function fanOutToMinds(opts: {
   }
 }
 
+const fileSchema = z.object({
+  filename: z.string(),
+  data: z.string(), // base64
+});
+
 const chatSchema = z.object({
   message: z.string().optional(),
   conversationId: z.string().optional(),
@@ -119,6 +125,7 @@ const chatSchema = z.object({
       }),
     )
     .optional(),
+  files: z.array(fileSchema).optional(),
 });
 
 const app = new Hono<AuthEnv>()
@@ -130,8 +137,12 @@ const app = new Hono<AuthEnv>()
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const body = c.req.valid("json");
-    if (!body.message && (!body.images || body.images.length === 0)) {
-      return c.json({ error: "message or images required" }, 400);
+    if (
+      !body.message &&
+      (!body.images || body.images.length === 0) &&
+      (!body.files || body.files.length === 0)
+    ) {
+      return c.json({ error: "message, images, or files required" }, 400);
     }
 
     const user = c.get("user");
@@ -187,10 +198,34 @@ const app = new Hono<AuthEnv>()
     const conv = await getConversation(conversationId);
     const convTitle = conv?.title ?? null;
 
+    // Stage files if any
+    const fileNotifications: string[] = [];
+    if (body.files && body.files.length > 0) {
+      const MAX_FILE_SIZE = 50 * 1024 * 1024;
+      for (const file of body.files) {
+        const content = Buffer.from(file.data, "base64");
+        if (content.length > MAX_FILE_SIZE) {
+          return c.json(
+            {
+              error: `File too large: ${file.filename} (${formatFileSize(content.length)}, max ${formatFileSize(MAX_FILE_SIZE)})`,
+            },
+            413,
+          );
+        }
+        const { id } = stageFile(baseName, senderName, file.filename, content, file.filename);
+        fileNotifications.push(
+          `[file] ${senderName} sent ${file.filename} (${formatFileSize(content.length)}) — run: volute chat accept ${id}`,
+        );
+      }
+    }
+
     // Build content blocks
     const contentBlocks: ContentBlock[] = [];
     if (body.message) {
       contentBlocks.push({ type: "text", text: body.message });
+    }
+    for (const note of fileNotifications) {
+      contentBlocks.push({ type: "text", text: note });
     }
     if (body.images) {
       for (const img of body.images) {
@@ -262,6 +297,7 @@ const unifiedChatSchema = z.object({
   message: z.string().optional(),
   conversationId: z.string(),
   images: z.array(z.object({ media_type: z.string(), data: z.string() })).optional(),
+  files: z.array(fileSchema).optional(),
 });
 
 export const unifiedChatApp = new Hono<AuthEnv>().post(
@@ -270,8 +306,12 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
   async (c) => {
     const user = c.get("user");
     const body = c.req.valid("json");
-    if (!body.message && (!body.images || body.images.length === 0)) {
-      return c.json({ error: "message or images required" }, 400);
+    if (
+      !body.message &&
+      (!body.images || body.images.length === 0) &&
+      (!body.files || body.files.length === 0)
+    ) {
+      return c.json({ error: "message, images, or files required" }, 400);
     }
 
     const conv = await getConversation(body.conversationId);
@@ -283,9 +323,47 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
 
     const senderName = user.username;
 
+    // Determine the target mind for file staging
+    // For conversations, stage files to all mind participants
+    const fileNotifications: string[] = [];
+    if (body.files && body.files.length > 0) {
+      const participants = await getParticipants(body.conversationId);
+      const mindParticipants = participants.filter(
+        (p) => p.userType === "mind" && p.username !== senderName,
+      );
+      const MAX_FILE_SIZE = 50 * 1024 * 1024;
+
+      for (const file of body.files) {
+        const content = Buffer.from(file.data, "base64");
+        if (content.length > MAX_FILE_SIZE) {
+          return c.json(
+            {
+              error: `File too large: ${file.filename} (${formatFileSize(content.length)}, max ${formatFileSize(MAX_FILE_SIZE)})`,
+            },
+            413,
+          );
+        }
+        for (const mind of mindParticipants) {
+          const { id } = stageFile(
+            mind.username,
+            senderName,
+            file.filename,
+            content,
+            file.filename,
+          );
+          fileNotifications.push(
+            `[file] ${senderName} sent ${file.filename} (${formatFileSize(content.length)}) — run: volute chat accept ${id}`,
+          );
+        }
+      }
+    }
+
     // Build content blocks
     const contentBlocks: ContentBlock[] = [];
     if (body.message) contentBlocks.push({ type: "text", text: body.message });
+    for (const note of fileNotifications) {
+      contentBlocks.push({ type: "text", text: note });
+    }
     if (body.images) {
       for (const img of body.images) {
         contentBlocks.push({ type: "image", media_type: img.media_type, data: img.data });

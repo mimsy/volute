@@ -21,17 +21,31 @@ export async function run(args: string[]) {
     case "bridge":
       await import("./chat/bridge.js").then((m) => m.run(subArgs));
       break;
+    case "files":
+      await import("./chat/files.js").then((m) => m.run(subArgs));
+      break;
+    case "accept":
+      await import("./chat/accept.js").then((m) => m.run(subArgs));
+      break;
+    case "reject":
+      await import("./chat/reject.js").then((m) => m.run(subArgs));
+      break;
     case "--help":
     case "-h":
     case undefined:
-      console.log(`volute chat — conversations and bridges
+      console.log(`volute chat — conversations, files, and bridges
 
 Messages:
-  send <target> "<msg>"          Send a message
+  send <target> "<msg>"          Send a message (--image, --file)
   history [--mind] [--limit N]   View activity history
   list                           List conversations
   read <conversation> [--limit]  Read conversation messages
   create --participants u1,u2    Create a conversation
+
+Files:
+  files [--mind <name>]              List pending incoming files
+  accept <id> [--mind] [--dest]      Accept a pending file
+  reject <id> [--mind]               Reject a pending file
 
 Bridges:
   bridge add <platform>          Set up a bridge

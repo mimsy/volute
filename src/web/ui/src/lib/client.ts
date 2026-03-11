@@ -146,11 +146,13 @@ export function sendChat(
   message: string,
   conversationId?: string,
   images?: Array<{ media_type: string; data: string }>,
+  files?: Array<{ filename: string; data: string }>,
 ): Promise<{ ok: boolean; conversationId: string }> {
   return post(`${V1}/minds/${enc(name)}/chat`, {
     message: message || undefined,
     conversationId,
     images: images && images.length > 0 ? images : undefined,
+    files: files && files.length > 0 ? files : undefined,
   });
 }
 
@@ -158,11 +160,13 @@ export function sendChatUnified(
   conversationId: string,
   message: string,
   images?: Array<{ media_type: string; data: string }>,
+  files?: Array<{ filename: string; data: string }>,
 ): Promise<{ ok: boolean; conversationId: string }> {
   return post(`${V1}/chat`, {
     message: message || undefined,
     conversationId,
     images: images && images.length > 0 ? images : undefined,
+    files: files && files.length > 0 ? files : undefined,
   });
 }
 

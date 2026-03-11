@@ -1,9 +1,10 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
-import { extname } from "node:path";
+import { basename, extname } from "node:path";
 import { getClient, urlOf } from "../lib/api-client.js";
 import type { ImageAttachment } from "../lib/channels.js";
 import { daemonFetch } from "../lib/daemon-client.js";
+import { formatFileSize } from "../lib/file-sharing.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { parseTarget } from "../lib/parse-target.js";
 import { readStdin } from "../lib/read-stdin.js";
@@ -133,6 +134,7 @@ export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
     mind: { type: "string" },
     image: { type: "string" },
+    file: { type: "string" },
     wait: { type: "boolean" },
     timeout: { type: "number" },
     sender: { type: "string" },
@@ -143,9 +145,9 @@ export async function run(args: string[]) {
 
   const images = flags.image ? [loadImage(flags.image)] : undefined;
 
-  if (!target || (!message && !images)) {
+  if (!target || (!message && !images && !flags.file)) {
     console.error(
-      'Usage: volute chat send <target> "<message>" [--mind <name>] [--image <path>] [--wait]',
+      'Usage: volute chat send <target> "<message>" [--mind <name>] [--image <path>] [--file <path>] [--wait]',
     );
     console.error('       echo "message" | volute chat send <target> [--mind <name>]');
     console.error("");
@@ -155,6 +157,7 @@ export async function run(args: string[]) {
     console.error('  volute chat send discord:server/channel "hello"');
     console.error('  volute chat send @mind "check this out" --image photo.png');
     console.error("  volute chat send @mind --image photo.png");
+    console.error('  volute chat send @mind "check this out" --file notes.txt');
     console.error('  volute chat send @mind "hello" --wait');
     process.exit(1);
   }
@@ -166,6 +169,73 @@ export async function run(args: string[]) {
         'To reply to a person, use their username from the message prefix (e.g. volute chat send @username "msg").',
     );
     process.exit(1);
+  }
+
+  // Handle --file: stage file for the target mind, then send a notification message
+  if (flags.file) {
+    const filePath = flags.file;
+    if (!existsSync(filePath)) {
+      console.error(`File not found: ${filePath}`);
+      process.exit(1);
+    }
+    const stat = statSync(filePath);
+    const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
+    if (stat.size > MAX_FILE_SIZE) {
+      console.error(
+        `File too large (${formatFileSize(stat.size)}, max ${formatFileSize(MAX_FILE_SIZE)})`,
+      );
+      process.exit(1);
+    }
+
+    // Resolve target mind name
+    const parsed = parseTarget(target);
+    const targetName =
+      parsed.isDM && parsed.platform === "volute"
+        ? parsed.identifier.slice(1) // strip @
+        : parsed.identifier;
+
+    // For mind senders, use the daemon file-send API (reads from mind's home/)
+    const mindSelf = process.env.VOLUTE_MIND;
+    if (mindSelf) {
+      const res = await daemonFetch(`/api/minds/${encodeURIComponent(mindSelf)}/files/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetMind: targetName, filePath }),
+      });
+      if (!res.ok) {
+        const data = (await res.json()) as { error?: string };
+        console.error(data.error ?? `Failed to send file: ${res.status}`);
+        process.exit(1);
+      }
+      const data = (await res.json()) as { id: string };
+      console.log(`File staged for ${targetName} (id: ${data.id})`);
+    } else {
+      // For CLI (human) senders, read file locally and stage via daemon API
+      const content = readFileSync(filePath);
+      const filename = basename(filePath);
+      const senderName = flags.sender || userInfo().username;
+
+      // Stage the file directly via the daemon's accept-raw endpoint
+      const res = await daemonFetch(`/api/minds/${encodeURIComponent(targetName)}/files/stage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sender: senderName,
+          filename,
+          data: content.toString("base64"),
+        }),
+      });
+      if (!res.ok) {
+        const data = (await res.json()) as { error?: string };
+        console.error(data.error ?? `Failed to stage file: ${res.status}`);
+        process.exit(1);
+      }
+      const data = (await res.json()) as { id: string };
+      console.log(`File staged for ${targetName} (id: ${data.id})`);
+    }
+
+    // If there's also a text message, send it through the normal chat flow
+    if (!message) return;
   }
 
   let parsed = parseTarget(target);

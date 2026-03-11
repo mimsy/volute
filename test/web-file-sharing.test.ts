@@ -1,15 +1,11 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { Hono } from "hono";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
-import {
-  listPending,
-  readFileSharingConfig,
-  writeFileSharingConfig,
-} from "../src/lib/file-sharing.js";
+import { listPending } from "../src/lib/file-sharing.js";
 import { addMind, mindDir, removeMind, stateDir } from "../src/lib/registry.js";
 import { sessions, users } from "../src/lib/schema.js";
 import fileSharing from "../src/web/api/file-sharing.js";
@@ -76,7 +72,7 @@ describe("web file-sharing routes", () => {
   beforeEach(cleanup);
   afterEach(cleanup);
 
-  it("POST /:name/files/send — stages file for untrusted sender", async () => {
+  it("POST /:name/files/send — always stages file", async () => {
     const cookie = await setupAuth();
     setupMinds();
     const app = createApp();
@@ -97,29 +93,6 @@ describe("web file-sharing routes", () => {
     assert.equal(pending.length, 1);
     assert.equal(pending[0].sender, "fs-sender");
     assert.equal(pending[0].filename, "notes.md");
-  });
-
-  it("POST /:name/files/send — delivers directly for trusted sender", async () => {
-    const cookie = await setupAuth();
-    setupMinds();
-    writeFileSharingConfig(mindDir("fs-receiver"), { trustedSenders: ["fs-sender"] });
-    const app = createApp();
-
-    const res = await app.request("/api/minds/fs-sender/files/send", {
-      method: "POST",
-      headers: reqHeaders(cookie),
-      body: JSON.stringify({ targetMind: "fs-receiver", filePath: "notes.md" }),
-    });
-
-    assert.equal(res.status, 200);
-    const body = (await res.json()) as { status: string; destPath: string };
-    assert.equal(body.status, "delivered");
-    assert.equal(body.destPath, "inbox/fs-sender/notes.md");
-
-    // File should exist in receiver's inbox
-    const deliveredPath = resolve(mindDir("fs-receiver"), "home", "inbox", "fs-sender", "notes.md");
-    assert.ok(existsSync(deliveredPath));
-    assert.equal(readFileSync(deliveredPath, "utf-8"), "# Notes\nHello from sender");
   });
 
   it("POST /:name/files/send — 404 for nonexistent sender", async () => {
@@ -233,6 +206,32 @@ describe("web file-sharing routes", () => {
     assert.equal(listPending("fs-receiver").length, 0);
   });
 
+  it("POST /:name/files/accept — accepts with custom dest", async () => {
+    const cookie = await setupAuth();
+    setupMinds();
+    const app = createApp();
+
+    // Send a file
+    const sendRes = await app.request("/api/minds/fs-sender/files/send", {
+      method: "POST",
+      headers: reqHeaders(cookie),
+      body: JSON.stringify({ targetMind: "fs-receiver", filePath: "notes.md" }),
+    });
+    const { id } = (await sendRes.json()) as { id: string };
+
+    // Accept with custom dest
+    const res = await app.request("/api/minds/fs-receiver/files/accept", {
+      method: "POST",
+      headers: reqHeaders(cookie),
+      body: JSON.stringify({ id, dest: "custom/incoming" }),
+    });
+
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { ok: boolean; destPath: string };
+    assert.ok(body.ok);
+    assert.equal(body.destPath, "custom/incoming/fs-sender/notes.md");
+  });
+
   it("POST /:name/files/reject — rejects pending file", async () => {
     const cookie = await setupAuth();
     setupMinds();
@@ -275,36 +274,32 @@ describe("web file-sharing routes", () => {
     assert.equal(res.status, 404);
   });
 
-  it("POST /:name/files/trust — adds trusted sender", async () => {
+  it("POST /:name/files/stage — stages file from external sender", async () => {
     const cookie = await setupAuth();
     setupMinds();
     const app = createApp();
 
-    const res = await app.request("/api/minds/fs-receiver/files/trust", {
+    const fileData = Buffer.from("test file content").toString("base64");
+    const res = await app.request("/api/minds/fs-receiver/files/stage", {
       method: "POST",
       headers: reqHeaders(cookie),
-      body: JSON.stringify({ sender: "fs-sender" }),
+      body: JSON.stringify({
+        sender: "human-user",
+        filename: "test.txt",
+        data: fileData,
+      }),
     });
 
     assert.equal(res.status, 200);
-    const config = readFileSharingConfig(mindDir("fs-receiver"));
-    assert.ok(config.trustedSenders?.includes("fs-sender"));
-  });
+    const body = (await res.json()) as { status: string; id: string };
+    assert.equal(body.status, "pending");
+    assert.ok(body.id);
 
-  it("DELETE /:name/files/trust/:sender — removes trusted sender", async () => {
-    const cookie = await setupAuth();
-    setupMinds();
-    writeFileSharingConfig(mindDir("fs-receiver"), { trustedSenders: ["fs-sender"] });
-    const app = createApp();
-
-    const res = await app.request("/api/minds/fs-receiver/files/trust/fs-sender", {
-      method: "DELETE",
-      headers: reqHeaders(cookie, false),
-    });
-
-    assert.equal(res.status, 200);
-    const config = readFileSharingConfig(mindDir("fs-receiver"));
-    assert.ok(!config.trustedSenders?.includes("fs-sender"));
+    // Verify it's in pending
+    const pending = listPending("fs-receiver");
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0].sender, "human-user");
+    assert.equal(pending[0].filename, "test.txt");
   });
 
   it("requires auth — 401 without cookie", async () => {

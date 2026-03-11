@@ -172,12 +172,19 @@ $effect(() => {
   };
 });
 
-async function handleSend(message: string, images: Array<{ media_type: string; data: string }>) {
+async function handleSend(
+  message: string,
+  images: Array<{ media_type: string; data: string }>,
+  files: Array<{ filename: string; data: string }>,
+) {
   // Build user blocks for optimistic UI
   const userBlocks: ContentBlock[] = [];
   if (message) userBlocks.push({ type: "text", text: message });
   for (const img of images) {
     userBlocks.push({ type: "image", media_type: img.media_type, data: img.data });
+  }
+  for (const file of files) {
+    userBlocks.push({ type: "text", text: `[file] ${file.filename}` });
   }
 
   entries = [
@@ -200,6 +207,7 @@ async function handleSend(message: string, images: Array<{ media_type: string; d
         currentConvId,
         message,
         images.length > 0 ? images : undefined,
+        files.length > 0 ? files : undefined,
       );
       resultConvId = result.conversationId;
     } else {
@@ -208,6 +216,7 @@ async function handleSend(message: string, images: Array<{ media_type: string; d
         message,
         currentConvId ?? undefined,
         images.length > 0 ? images : undefined,
+        files.length > 0 ? files : undefined,
       );
       resultConvId = result.conversationId;
     }
