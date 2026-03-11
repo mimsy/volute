@@ -3,17 +3,7 @@ import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
-
-type Schedule = {
-  id: string;
-  cron?: string;
-  fireAt?: string;
-  message?: string;
-  script?: string;
-  enabled: boolean;
-  whileSleeping?: string;
-  channel?: string;
-};
+import type { Schedule } from "../lib/volute-config.js";
 
 type SleepState = {
   sleeping: boolean;
@@ -81,7 +71,7 @@ Duration format for --in: 30s, 10m, 1h, 2h30m`);
 }
 
 function parseDuration(input: string): number | null {
-  const parts = input.match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+  const parts = input.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
   if (!parts || parts[0] !== input) return null;
   const hours = parseInt(parts[1] || "0", 10);
   const minutes = parseInt(parts[2] || "0", 10);
@@ -233,7 +223,7 @@ async function addSchedule(args: string[]) {
   }
 
   if (flags.in) {
-    const durationMs = parseDuration(flags.in as string);
+    const durationMs = parseDuration(flags.in);
     if (!durationMs) {
       console.error(`Invalid duration: ${flags.in} (expected format: 30s, 10m, 1h, 2h30m)`);
       process.exit(1);
@@ -245,7 +235,14 @@ async function addSchedule(args: string[]) {
   if (flags.script) body.script = flags.script;
   if (flags.id) body.id = flags.id;
   if (flags.channel) body.channel = flags.channel;
-  if (flags["while-sleeping"]) body.whileSleeping = flags["while-sleeping"] as string;
+  if (flags["while-sleeping"]) {
+    const ws = flags["while-sleeping"] as string;
+    if (!["skip", "queue", "trigger-wake"].includes(ws)) {
+      console.error(`Invalid --while-sleeping value: ${ws} (must be skip, queue, or trigger-wake)`);
+      process.exit(1);
+    }
+    body.whileSleeping = ws;
+  }
 
   const client = getClient();
   const res = await daemonFetch(

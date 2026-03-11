@@ -59,7 +59,7 @@ const app = new Hono<AuthEnv>()
             upcoming.push({ id: s.id, at: next.toISOString(), type: "cron" });
           }
         } catch {
-          // skip invalid cron
+          slog.warn(`invalid cron "${s.cron}" for schedule "${s.id}" of ${name}`);
         }
       }
     }
@@ -104,6 +104,14 @@ const app = new Hono<AuthEnv>()
     }
     if (body.fireAt && Number.isNaN(new Date(body.fireAt).getTime())) {
       return c.json({ error: `Invalid fireAt date: ${body.fireAt}` }, 400);
+    }
+    if (body.whileSleeping && !["skip", "queue", "trigger-wake"].includes(body.whileSleeping)) {
+      return c.json(
+        {
+          error: `Invalid whileSleeping value: ${body.whileSleeping} (must be skip, queue, or trigger-wake)`,
+        },
+        400,
+      );
     }
 
     const schedules = readSchedules(name);
@@ -161,6 +169,14 @@ const app = new Hono<AuthEnv>()
     if (body.script !== undefined) {
       schedules[idx].script = body.script;
       delete schedules[idx].message;
+    }
+    if (body.whileSleeping && !["skip", "queue", "trigger-wake"].includes(body.whileSleeping)) {
+      return c.json(
+        {
+          error: `Invalid whileSleeping value: ${body.whileSleeping} (must be skip, queue, or trigger-wake)`,
+        },
+        400,
+      );
     }
     if (body.enabled !== undefined) schedules[idx].enabled = body.enabled;
     if (body.channel !== undefined) schedules[idx].channel = body.channel || undefined;

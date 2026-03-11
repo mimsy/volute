@@ -44,6 +44,21 @@ export async function recordInbound(
 }
 
 /**
+ * Determine what to do with a message for a sleeping mind.
+ * Returns the action to take: "skip", "queue", or "queue-and-wake".
+ */
+export function resolveSleepAction(
+  sleepBehavior: string | undefined,
+  wokenByTrigger: boolean,
+  wakeTriggerMatches: boolean,
+): "skip" | "queue" | "queue-and-wake" {
+  if (sleepBehavior === "skip") return "skip";
+  if (sleepBehavior === "trigger-wake" && !wokenByTrigger) return "queue-and-wake";
+  if (!sleepBehavior && wakeTriggerMatches) return "queue-and-wake";
+  return "queue";
+}
+
+/**
  * Deliver a message to a mind via the delivery manager (routes, batches, gates).
  * Fire-and-forget — logs errors but does not throw.
  */
@@ -62,34 +77,26 @@ export async function deliverMessage(mindName: string, payload: DeliveryPayload)
     // Check if mind is sleeping — handle based on whileSleeping or wake triggers
     const sleepManager = getSleepManagerIfReady();
     if (sleepManager?.isSleeping(baseName)) {
-      const sleepBehavior = payload.whileSleeping;
       const sleepState = sleepManager.getState(baseName);
+      const action = resolveSleepAction(
+        payload.whileSleeping,
+        sleepState.wokenByTrigger,
+        sleepManager.checkWakeTrigger(baseName, payload),
+      );
 
-      if (sleepBehavior === "skip") {
-        // Schedule says skip entirely when sleeping
+      if (action === "skip") {
+        dlog.info(
+          `skipped delivery to ${baseName} (sleeping, whileSleeping=skip, channel=${payload.channel})`,
+        );
         return;
       }
 
-      if (sleepBehavior === "trigger-wake" && !sleepState.wokenByTrigger) {
-        // Schedule wants to briefly wake the mind
-        await sleepManager.queueSleepMessage(baseName, payload);
-        sleepManager
-          .initiateWake(baseName, { trigger: { channel: payload.channel } })
-          .catch((err) => dlog.warn(`failed to trigger-wake ${baseName}`, log.errorData(err)));
-        return;
-      }
-
-      // External messages (no whileSleeping) check wake triggers
-      if (!sleepBehavior && sleepManager.checkWakeTrigger(baseName, payload)) {
-        await sleepManager.queueSleepMessage(baseName, payload);
-        sleepManager
-          .initiateWake(baseName, { trigger: { channel: payload.channel } })
-          .catch((err) => dlog.warn(`failed to trigger-wake ${baseName}`, log.errorData(err)));
-        return;
-      }
-
-      // Default: queue the message
       await sleepManager.queueSleepMessage(baseName, payload);
+      if (action === "queue-and-wake") {
+        sleepManager
+          .initiateWake(baseName, { trigger: { channel: payload.channel } })
+          .catch((err) => dlog.warn(`failed to trigger-wake ${baseName}`, log.errorData(err)));
+      }
       return;
     }
 

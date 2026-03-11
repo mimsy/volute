@@ -267,7 +267,7 @@ describe("scheduler fireAt", () => {
 describe("parseDuration", () => {
   // Import dynamically since it's in clock.ts — test the regex logic directly
   function parseDuration(input: string): number | null {
-    const parts = input.match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+    const parts = input.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
     if (!parts || parts[0] !== input) return null;
     const hours = parseInt(parts[1] || "0", 10);
     const minutes = parseInt(parts[2] || "0", 10);

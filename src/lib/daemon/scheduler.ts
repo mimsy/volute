@@ -163,6 +163,17 @@ export class Scheduler {
   }
 
   private removeSchedule(mindName: string, scheduleId: string): void {
+    // Remove from in-memory schedules immediately to prevent re-firing on config write failure
+    const memSchedules = this.schedules.get(mindName);
+    if (memSchedules) {
+      const filtered = memSchedules.filter((s) => s.id !== scheduleId);
+      if (filtered.length > 0) {
+        this.schedules.set(mindName, filtered);
+      } else {
+        this.schedules.delete(mindName);
+      }
+    }
+
     try {
       const dir = mindDir(mindName);
       const config = readVoluteConfig(dir);
@@ -170,10 +181,12 @@ export class Scheduler {
       config.schedules = config.schedules.filter((s) => s.id !== scheduleId);
       if (config.schedules.length === 0) config.schedules = undefined;
       writeVoluteConfig(dir, config);
-      this.loadSchedules(mindName);
       slog.info(`removed one-time schedule "${scheduleId}" for ${mindName}`);
     } catch (err) {
-      slog.warn(`failed to remove schedule "${scheduleId}" for ${mindName}`, log.errorData(err));
+      slog.error(
+        `failed to persist removal of schedule "${scheduleId}" for ${mindName} (removed from memory)`,
+        log.errorData(err),
+      );
     }
   }
 
