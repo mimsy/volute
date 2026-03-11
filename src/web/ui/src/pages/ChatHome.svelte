@@ -128,6 +128,7 @@ function extractTextContent(content: ContentBlock[]): string {
   .chat-home {
     animation: fadeIn 0.2s ease both;
     height: 100%;
+    overflow: auto;
   }
 
   .empty {
@@ -142,7 +143,7 @@ function extractTextContent(content: ContentBlock[]): string {
     grid-template-columns: repeat(2, 1fr);
     gap: 16px;
     height: 100%;
-    grid-template-rows: repeat(3, 1fr);
+    grid-template-rows: repeat(3, minmax(200px, 1fr));
   }
 
   .viewport-card {
@@ -151,7 +152,7 @@ function extractTextContent(content: ContentBlock[]): string {
     border-radius: var(--radius-lg);
     display: flex;
     flex-direction: column;
-    min-height: 0;
+    min-height: 200px;
     overflow: hidden;
   }
 
