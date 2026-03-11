@@ -67,6 +67,6 @@ export async function run(args: string[]) {
   const variantMindName = `${mindName}-${data.variant}`;
   console.log(`\nUpgrade variant running on port ${data.port}`);
   console.log(`\nNext steps:`);
-  console.log(`  volute mind join ${variantMindName}                 # chat with upgraded variant`);
+  console.log(`  volute chat send @${variantMindName} "hello"    # chat with upgraded variant`);
   console.log(`  volute mind upgrade ${mindName} --accept            # accept the upgrade`);
 }

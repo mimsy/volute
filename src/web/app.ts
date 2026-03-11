@@ -6,8 +6,8 @@ import log from "../lib/logger.js";
 import { checkForUpdateCached, getCurrentVersion } from "../lib/update-check.js";
 import activityRoutes from "./api/activity.js";
 import auth from "./api/auth.js";
+import bridges from "./api/bridges.js";
 import channels from "./api/channels.js";
-import connectors from "./api/connectors.js";
 import envRoutes, { sharedEnvApp } from "./api/env.js";
 import fileSharing from "./api/file-sharing.js";
 import files from "./api/files.js";
@@ -102,6 +102,7 @@ app.use("/api/env/*", authMiddleware);
 app.use("/api/prompts/*", authMiddleware);
 app.use("/api/skills/*", authMiddleware);
 app.use("/api/notes/*", authMiddleware);
+app.use("/api/bridges/*", authMiddleware);
 
 // v1 API auth
 app.use("/api/v1/*", authMiddleware);
@@ -119,7 +120,6 @@ const routes = app
   .route("/api/system", update)
   .route("/api/minds", minds)
   .route("/api/minds", chat)
-  .route("/api/minds", connectors)
   .route("/api/minds", schedules)
   .route("/api/minds", logs)
   .route("/api/minds", typing)
@@ -138,6 +138,7 @@ const routes = app
   .route("/api/conversations", userConversations)
   .route("/api/volute/channels", voluteChannels)
   .route("/api/volute", unifiedChatApp)
+  .route("/api/bridges", bridges)
   // v1 API routes
   .route("/api/v1/conversations", v1Conversations)
   .route("/api/v1/events", v1Events)
@@ -150,7 +151,6 @@ app.route("/api/v1/minds", variants);
 app.route("/api/v1/minds", files);
 app.route("/api/v1/minds", envRoutes);
 app.route("/api/v1/minds", mindSkills);
-app.route("/api/v1/minds", connectors);
 app.route("/api/v1/minds", schedules);
 app.route("/api/v1/minds", logs);
 app.route("/api/v1/system", system);

@@ -35,17 +35,11 @@ switch (command) {
   case "mind":
     await import("./commands/mind.js").then((m) => m.run(args));
     break;
-  case "send":
-    await import("./commands/send.js").then((m) => m.run(args));
-    break;
-  case "history":
-    await import("./commands/history.js").then((m) => m.run(args));
+  case "chat":
+    await import("./commands/chat.js").then((m) => m.run(args));
     break;
   case "variant":
     await import("./commands/variant.js").then((m) => m.run(args));
-    break;
-  case "channel":
-    await import("./commands/channel.js").then((m) => m.run(args));
     break;
   case "schedule":
     await import("./commands/schedule.js").then((m) => m.run(args));
@@ -101,8 +95,10 @@ switch (command) {
     console.log(`volute — create and manage AI minds
 
 Common:
-  send <target> "<msg>"            Send a message
-  history [--channel <ch>]         View activity history
+  chat send <target> "<msg>"       Send a message
+  chat history [--channel <ch>]    View activity history
+  chat list / read / create        Manage conversations
+  chat bridge                      Manage platform bridges
   status                           Show system status
 
 Mind:
@@ -111,14 +107,13 @@ Mind:
   mind start/stop/restart [name]   Control a mind
   mind list                        List all minds
   mind status [name]               Check a mind's status
-  mind connect/disconnect <type>   Manage connectors
   mind logs [name] [--follow]      Tail mind logs
   mind sprout                      Complete orientation
   mind split/join                  Create and merge experimental splits
   mind upgrade/import/export       Lifecycle operations
 
 Configuration:
-  channel   Read, list, and manage channels
+  chat      Conversations, messages, and platform bridges
   schedule  Manage cron schedules
   skill     Browse and install skills
   env       Manage environment variables
@@ -141,7 +136,7 @@ Options:
 
 Run 'volute <command> --help' for details.
 
-Mind-scoped commands (send, history, schedule, channel, file, skill, shared, pages)
+Mind-scoped commands (chat, schedule, file, skill, shared, pages)
 use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
   default:

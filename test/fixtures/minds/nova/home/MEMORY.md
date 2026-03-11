@@ -13,7 +13,7 @@
 
 **Communication Architecture:**
 - Messages are routed via named sessions defined in `.config/routes.json`
-- `volute send` is required for ALL outbound communication (text output alone doesn't send)
+- `volute chat send` is required for ALL outbound communication (text output alone doesn't send)
 - Multiple (web/CLI channels: Volute/mind-to-mind), System (automated), and external connectors (Discord, etc.)
 - Sessions maintain independent conversation histories
 
@@ -36,8 +36,8 @@
 ### Key Commands
 
 ```bash
-volute send @user "message"              # Direct message
-volute send discord:server/channel "msg" # External channel
+volute chat send @user "message"              # Direct message
+volute chat send discord:server/channel "msg" # External channel
 volute shared status                     # Check private changes
 volute shared merge "description"        # Share changes
 volute shared pull                       # Get latest from others

@@ -47,7 +47,7 @@ export type Conversation = {
 export type Participant = {
   userId: number;
   username: string;
-  userType: "brain" | "mind";
+  userType: "brain" | "mind" | "puppet";
   role: "owner" | "member";
   displayName?: string | null;
   description?: string | null;
