@@ -1,6 +1,3 @@
-import { daemonEmit } from "./daemon-client.js";
-import { filterEvent, loadTransparencyPreset } from "./transparency.js";
-
 type LogLevel = "debug" | "info" | "warn" | "error";
 
 const LEVELS: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
@@ -9,18 +6,6 @@ let minLevel = LEVELS.info;
 // VOLUTE_DEBUG=1 overrides to debug level
 if (process.env.VOLUTE_DEBUG === "1") {
   minLevel = LEVELS.debug;
-}
-
-// Loaded once at startup — mind restarts on config changes
-const preset = loadTransparencyPreset();
-
-function truncate(str: string, maxLen = 200): string {
-  return str.length > maxLen ? `${str.slice(0, maxLen)}...` : str;
-}
-
-/** Whether debug-level output is active (disables truncation). */
-export function isDebug(): boolean {
-  return minLevel <= LEVELS.debug;
 }
 
 /** Set the minimum log level. */
@@ -33,22 +18,6 @@ export function setLevel(level: LogLevel): void {
   minLevel = LEVELS[level];
 }
 
-function shouldTruncate(): boolean {
-  return minLevel > LEVELS.debug;
-}
-
-function emit(category: string, args: unknown[]): void {
-  const message = args
-    .map((a) => (a instanceof Error ? a.message : typeof a === "string" ? a : JSON.stringify(a)))
-    .join(" ");
-  const filtered = filterEvent(preset, {
-    type: "log",
-    content: message,
-    metadata: { category },
-  });
-  if (filtered) daemonEmit(filtered).catch(() => {});
-}
-
 function write(level: LogLevel, category: string, ...args: unknown[]): void {
   if (LEVELS[level] < minLevel) return;
   const ts = new Date().toLocaleString();
@@ -57,7 +26,6 @@ function write(level: LogLevel, category: string, ...args: unknown[]): void {
   } catch (err: any) {
     if (err?.code !== "EPIPE") throw err;
   }
-  emit(category, args);
 }
 
 export function log(category: string, ...args: unknown[]) {
@@ -74,12 +42,6 @@ export function warn(category: string, ...args: unknown[]) {
 
 export function error(category: string, ...args: unknown[]) {
   write("error", category, ...args);
-}
-
-export function logMessage(direction: "in" | "out", content: string, channel?: string) {
-  const arrow = direction === "in" ? "<<" : ">>";
-  const channelStr = channel ? ` [${channel}]` : "";
-  log("msg", `${arrow}${channelStr}`, shouldTruncate() ? truncate(content) : content);
 }
 
 // Prevent EPIPE on stderr from crashing the process (detached variant mode)
