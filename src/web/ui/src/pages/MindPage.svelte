@@ -1,17 +1,17 @@
 <script lang="ts">
-import type { ContentBlock, ConversationWithParticipants, Message, Mind, Site } from "@volute/api";
+import type { ContentBlock, ConversationWithParticipants, Message } from "@volute/api";
 import History from "../components/History.svelte";
+import MindClock from "../components/MindClock.svelte";
 import MindInfo from "../components/MindInfo.svelte";
 import MindSkills from "../components/MindSkills.svelte";
 import PublicFiles from "../components/PublicFiles.svelte";
 import ReadOnlyChatModal from "../components/ReadOnlyChatModal.svelte";
-import StatusBadge from "../components/StatusBadge.svelte";
 import {
   fetchConversationMessages,
   fetchMindConversationMessages,
   fetchMindConversations,
 } from "../lib/client";
-import { formatRelativeTime, getDisplayStatus, normalizeTimestamp } from "../lib/format";
+import { formatRelativeTime, normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
 import { navigate } from "../lib/navigate";
 import { auth, data } from "../lib/stores.svelte";
@@ -21,11 +21,9 @@ import SiteView from "./SiteView.svelte";
 let {
   name,
   section = "info",
-  onSelectNote,
 }: {
   name: string;
   section?: "info" | "notes" | "pages" | "files" | "settings";
-  onSelectNote: (author: string, slug: string) => void;
 } = $props();
 
 let mind = $derived(data.minds.find((m) => m.name === name));
@@ -148,15 +146,6 @@ $effect(() => {
     });
 });
 
-function formatCreated(dateStr: string): string {
-  try {
-    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
-    return d.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
-  } catch {
-    return dateStr;
-  }
-}
-
 function formatTime(dateStr: string): string {
   try {
     const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
@@ -167,7 +156,11 @@ function formatTime(dateStr: string): string {
 }
 
 function handleSelectPage(mind: string, path: string) {
-  navigate(`/pages/${mind}/${path}`);
+  navigate(`/minds/${mind}/pages/${path}`);
+}
+
+function handleSelectNote(author: string, slug: string) {
+  navigate(`/minds/${author}/notes/${slug}`);
 }
 
 function showSenderHeader(messages: Message[], i: number): boolean {
@@ -205,30 +198,6 @@ function extractTextContent(content: ContentBlock[]): string {
     {#if section === "info"}
       <div class="info-split">
         <div class="info-left">
-          <!-- Profile header -->
-          <div class="profile-header">
-            {#if mind.avatar}
-              <img
-                src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
-                alt=""
-                class="profile-avatar"
-              />
-            {/if}
-            <div class="profile-info">
-              <div class="profile-name-row">
-                <span class="profile-display-name">{mind.displayName ?? mind.name}</span>
-                <StatusBadge status={getDisplayStatus(mind)} />
-                {#if mind.stage === "seed"}
-                  <span class="seed-tag">seed</span>
-                {/if}
-              </div>
-              {#if mind.description}
-                <p class="profile-description">{mind.description}</p>
-              {/if}
-              <span class="profile-meta">@{mind.name} &middot; since {formatCreated(mind.created)}</span>
-            </div>
-          </div>
-
           <!-- Mixed feed -->
           {#if feedItems.length === 0}
             <div class="empty-hint">No activity yet.</div>
@@ -238,7 +207,7 @@ function extractTextContent(content: ContentBlock[]): string {
                 {#if item.kind === "note"}
                   {@const note = item.note}
                   <div class="feed-item">
-                    <div class="feed-card card-note" role="button" tabindex="0" onclick={() => onSelectNote(note.author_username, note.slug)} onkeydown={(e) => { if (e.key === 'Enter') onSelectNote(note.author_username, note.slug); }}>
+                    <div class="feed-card card-note" role="button" tabindex="0" onclick={() => handleSelectNote(note.author_username, note.slug)} onkeydown={(e) => { if (e.key === 'Enter') handleSelectNote(note.author_username, note.slug); }}>
                       <div class="feed-card-header header-note">
                         <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h8M2 6h10M2 9h6M2 12h9"/></svg>
                         <span class="feed-card-label">{note.title}</span>
@@ -322,12 +291,13 @@ function extractTextContent(content: ContentBlock[]): string {
         </div>
 
         <div class="info-right">
+          <MindClock {name} />
           <History {name} />
         </div>
       </div>
     {:else if section === "notes"}
       <div class="section-content">
-        <Notes {onSelectNote} author={name} />
+        <Notes onSelectNote={handleSelectNote} author={name} />
       </div>
     {:else if section === "pages"}
       <div class="section-content">
@@ -374,60 +344,6 @@ function extractTextContent(content: ContentBlock[]): string {
     color: var(--text-2);
     padding: 40px;
     text-align: center;
-  }
-
-  .profile-header {
-    display: flex;
-    align-items: flex-start;
-    gap: 16px;
-    padding-bottom: 16px;
-    flex-shrink: 0;
-  }
-
-  .profile-avatar {
-    width: 80px;
-    height: 80px;
-    border-radius: var(--radius-lg);
-    object-fit: cover;
-    flex-shrink: 0;
-  }
-
-  .profile-info {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .profile-name-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 4px;
-  }
-
-  .profile-display-name {
-    font-family: var(--display);
-    font-size: 24px;
-    font-weight: 400;
-    color: var(--text-0);
-  }
-
-  .seed-tag {
-    font-size: 10px;
-    color: var(--yellow);
-  }
-
-  .profile-description {
-    font-size: 14px;
-    color: var(--text-1);
-    line-height: 1.4;
-    margin: 4px 0 0;
-  }
-
-  .profile-meta {
-    font-size: 12px;
-    color: var(--text-2);
-    margin-top: 4px;
-    display: block;
   }
 
   /* Split layout — history on right spans full height */
@@ -705,15 +621,4 @@ function extractTextContent(content: ContentBlock[]): string {
     }
   }
 
-  @media (max-width: 767px) {
-    .profile-header {
-      flex-direction: column;
-      align-items: center;
-      text-align: center;
-    }
-
-    .profile-name-row {
-      justify-content: center;
-    }
-  }
 </style>

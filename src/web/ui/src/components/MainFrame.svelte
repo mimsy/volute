@@ -6,7 +6,7 @@ import type {
   RecentPage,
   Site,
 } from "@volute/api";
-import type { Selection } from "../lib/navigate";
+import { navigate, type Selection } from "../lib/navigate";
 import ChatHome from "../pages/ChatHome.svelte";
 import Home from "../pages/Home.svelte";
 import MindPage from "../pages/MindPage.svelte";
@@ -116,8 +116,37 @@ let contextLabel = $derived.by(() => {
   <!-- System tab views -->
   {#if selection.tab === "system"}
     {#if selection.kind === "mind"}
+      <div class="breadcrumbs">
+        <button class="breadcrumb-link" onclick={() => navigate(`/minds/${selection.name}`)}>{selection.name}</button>
+        {#if selection.section && selection.section !== "info"}
+          <span class="breadcrumb-sep">/</span>
+          <span class="breadcrumb-current">{selection.section}</span>
+        {/if}
+      </div>
       <div class="frame-content mind-frame">
-        <MindPage name={selection.name} section={selection.section} {onSelectNote} />
+        <MindPage name={selection.name} section={selection.section} />
+      </div>
+    {:else if selection.kind === "mind-note"}
+      <div class="breadcrumbs">
+        <button class="breadcrumb-link" onclick={() => navigate(`/minds/${selection.mind}`)}>{selection.mind}</button>
+        <span class="breadcrumb-sep">/</span>
+        <button class="breadcrumb-link" onclick={() => navigate(`/minds/${selection.mind}/notes`)}>notes</button>
+        <span class="breadcrumb-sep">/</span>
+        <span class="breadcrumb-current">{selection.slug}</span>
+      </div>
+      <div class="frame-content padded">
+        <NoteView author={selection.mind} slug={selection.slug} {username} onBack={() => navigate(`/minds/${selection.mind}/notes`)} onNavigate={(author, slug) => navigate(`/minds/${author}/notes/${slug}`)} />
+      </div>
+    {:else if selection.kind === "mind-page"}
+      <div class="breadcrumbs">
+        <button class="breadcrumb-link" onclick={() => navigate(`/minds/${selection.mind}`)}>{selection.mind}</button>
+        <span class="breadcrumb-sep">/</span>
+        <button class="breadcrumb-link" onclick={() => navigate(`/minds/${selection.mind}/pages`)}>pages</button>
+        <span class="breadcrumb-sep">/</span>
+        <span class="breadcrumb-current">{selection.path}</span>
+      </div>
+      <div class="frame-content">
+        <iframe src="/pages/{selection.mind}/{selection.path}" class="page-iframe" title="Page"></iframe>
       </div>
     {:else if selection.kind === "page"}
       <div class="breadcrumbs">

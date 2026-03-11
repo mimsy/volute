@@ -1,6 +1,5 @@
 <script lang="ts">
 import type { HistoryMessage, HistorySession } from "@volute/api";
-import { onMount } from "svelte";
 import { fetchHistory, fetchHistoryChannels, fetchHistorySessions } from "../lib/client";
 import HistoryEvent from "./HistoryEvent.svelte";
 import HistoryFilters, { type FilterState } from "./HistoryFilters.svelte";
@@ -109,19 +108,27 @@ async function loadMeta() {
   }
 }
 
-// Initial load
-onMount(() => {
-  loadMeta();
-  load(0);
-});
-
-// Reload when channel or session filter changes
+// Reload when name, channel, or session filter changes
+let prevName = "";
 let prevChannel = "";
 let prevSession = "";
 $effect(() => {
+  const n = name;
   const ch = filters.channel;
   const sess = filters.session;
-  if (ch !== prevChannel || sess !== prevSession) {
+  if (n !== prevName || ch !== prevChannel || sess !== prevSession) {
+    if (n !== prevName) {
+      // Mind changed — reset filters and metadata
+      filters = { channel: "", session: "", types: new Set(ALL_TYPES) };
+      channels = [];
+      sessions = [];
+      sessionMap = new Map();
+      messages = [];
+      hasMore = true;
+      nextSseId = -1;
+      loadMeta();
+    }
+    prevName = n;
     prevChannel = ch;
     prevSession = sess;
     load(0);
@@ -295,15 +302,12 @@ function handleFilterChange(next: FilterState) {
     flex: 1;
     overflow-x: hidden;
     overflow-y: auto;
-    display: flex;
-    flex-direction: column;
   }
 
   .timeline-rail {
     position: relative;
     padding-left: 4px;
     margin-left: 3px;
-    flex: 1;
     min-height: 100%;
   }
   .timeline-rail::before {
