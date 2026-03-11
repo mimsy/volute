@@ -75,8 +75,9 @@ export async function sendToBridge(
 
     return (await res.json()) as { ok: boolean; error?: string; conversationId?: string };
   } catch (err) {
-    console.error(`Failed to send bridge message: ${err}`);
-    return { ok: false, error: "Failed to reach daemon" };
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error(`Failed to send bridge message: ${detail}`);
+    return { ok: false, error: `Failed to reach daemon: ${detail}` };
   }
 }
 

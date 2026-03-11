@@ -75,7 +75,10 @@ export class BridgeManager {
           } else {
             existing.child.kill("SIGTERM");
           }
-        } catch {
+        } catch (err: unknown) {
+          if (err instanceof Error && (err as NodeJS.ErrnoException).code !== "ESRCH") {
+            blog.warn(`failed to stop existing bridge ${platform}`, log.errorData(err));
+          }
           res();
         }
         setTimeout(() => {
@@ -85,7 +88,9 @@ export class BridgeManager {
             } else {
               existing.child.kill("SIGKILL");
             }
-          } catch {}
+          } catch {
+            // SIGKILL cleanup — process likely already exited
+          }
           res();
         }, 3000);
       });
@@ -195,7 +200,10 @@ export class BridgeManager {
         } else {
           tracked.child.kill("SIGTERM");
         }
-      } catch {
+      } catch (err: unknown) {
+        if (err instanceof Error && (err as NodeJS.ErrnoException).code !== "ESRCH") {
+          blog.warn(`failed to stop bridge ${platform}`, log.errorData(err));
+        }
         resolve();
       }
       setTimeout(() => {
@@ -205,7 +213,9 @@ export class BridgeManager {
           } else {
             tracked.child.kill("SIGKILL");
           }
-        } catch {}
+        } catch {
+          // SIGKILL cleanup — process likely already exited
+        }
         resolve();
       }, 5000);
     });
@@ -251,8 +261,10 @@ export class BridgeManager {
   private removeBridgePid(platform: string): void {
     try {
       unlinkSync(this.bridgePidPath(platform));
-    } catch {
-      // PID file may not exist
+    } catch (err: unknown) {
+      if (err instanceof Error && (err as NodeJS.ErrnoException).code !== "ENOENT") {
+        blog.warn(`failed to remove PID file for bridge ${platform}`, log.errorData(err));
+      }
     }
   }
 
@@ -265,17 +277,25 @@ export class BridgeManager {
         try {
           process.kill(-pid, "SIGTERM");
         } catch {
-          process.kill(pid, "SIGTERM");
+          try {
+            process.kill(pid, "SIGTERM");
+          } catch {
+            // Process already gone
+          }
         }
         blog.warn(`killed orphan bridge ${platform} (pid ${pid})`);
       }
-    } catch {
-      // Process may not exist
+    } catch (err: unknown) {
+      if (err instanceof Error && (err as NodeJS.ErrnoException).code !== "ESRCH") {
+        blog.debug(`orphan bridge ${platform} cleanup: ${err}`);
+      }
     }
     try {
       unlinkSync(pidPath);
-    } catch {
-      // Best-effort cleanup
+    } catch (err: unknown) {
+      if (err instanceof Error && (err as NodeJS.ErrnoException).code !== "ENOENT") {
+        blog.warn(`failed to clean up PID file for orphan bridge ${platform}`, log.errorData(err));
+      }
     }
   }
 

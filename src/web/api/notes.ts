@@ -1,6 +1,7 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
+import log from "../../lib/logger.js";
 import {
   addComment,
   createNote,
@@ -77,7 +78,9 @@ const app = new Hono<AuthEnv>()
 
     // Announce to #system
     const replyInfo = reply_to ? ` (in reply to ${reply_to})` : "";
-    announceToSystem(`${actor.username} published a note: ${title}${replyInfo}`).catch(() => {});
+    announceToSystem(`${actor.username} published a note: ${title}${replyInfo}`).catch((err) => {
+      log.warn("failed to announce note to #system", log.errorData(err));
+    });
 
     return c.json(note, 201);
   })

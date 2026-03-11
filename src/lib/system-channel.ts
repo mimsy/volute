@@ -64,7 +64,9 @@ export async function announceToSystem(text: string): Promise<void> {
         name: SYSTEM_CHANNEL_NAME,
         type: "group",
       });
-    } catch {}
+    } catch (err) {
+      log.warn(`failed to write channel entry for ${mind.username}`, log.errorData(err));
+    }
     deliverMessage(mind.username, {
       content: [{ type: "text", text }],
       channel,
@@ -73,6 +75,8 @@ export async function announceToSystem(text: string): Promise<void> {
       participants: participants.map((p) => p.username),
       participantCount: participants.length,
       isDM: false,
-    }).catch(() => {});
+    }).catch((err) => {
+      log.warn(`failed to deliver system announcement to ${mind.username}`, log.errorData(err));
+    });
   }
 }
