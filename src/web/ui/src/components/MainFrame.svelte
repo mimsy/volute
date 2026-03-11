@@ -192,7 +192,7 @@ let contextLabel = $derived.by(() => {
       />
     </div>
   {:else}
-    <div class="frame-content padded">
+    <div class="frame-content">
       <ChatHome {conversations} {username} {onSelectConversation} />
     </div>
   {/if}

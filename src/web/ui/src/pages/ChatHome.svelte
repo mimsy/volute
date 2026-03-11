@@ -6,7 +6,7 @@ import type {
   Message,
 } from "@volute/api";
 import { fetchConversationMessages } from "../lib/client";
-import { getConversationLabel, normalizeTimestamp } from "../lib/format";
+import { formatRelativeTime, getConversationLabel, normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
 
 type ConversationWithDetails = ConversationWithParticipants & {
@@ -31,7 +31,7 @@ let topConversations = $derived(
       const bTime = new Date(normalizeTimestamp(b.updated_at)).getTime();
       return bTime - aTime;
     })
-    .slice(0, 6),
+    .slice(0, 12),
 );
 
 let messagesMap = $state<Record<string, Message[]>>({});
@@ -83,18 +83,29 @@ function extractTextContent(content: ContentBlock[]): string {
   {#if topConversations.length === 0}
     <div class="empty">No conversations yet.</div>
   {:else}
-    <div class="viewport-grid">
+    <div class="feed-grid">
       {#each topConversations as conv (conv.id)}
         {@const label = getConversationLabel(conv.participants ?? [], conv.title, username, conv)}
         {@const messages = messagesMap[conv.id] ?? []}
-        <div class="viewport-card">
-          <div class="viewport-label">{label}</div>
-          <div class="viewport-scroll" bind:this={scrollEls[conv.id]} onscroll={(e) => {
+        <div class="feed-card" role="button" tabindex="0" onclick={() => onSelectConversation(conv.id)} onkeydown={(e) => { if (e.key === 'Enter') onSelectConversation(conv.id); }}>
+          <div class="feed-card-header">
+            <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+            <span class="feed-card-label">{label}</span>
+            <span class="feed-card-meta">{formatRelativeTime(conv.updated_at)}</span>
+            <button
+              class="card-action-btn"
+              onclick={(e) => { e.stopPropagation(); onSelectConversation(conv.id); }}
+            >
+              Chat
+            </button>
+          </div>
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="feed-card-body" bind:this={scrollEls[conv.id]} onscroll={(e) => {
             const el = e.currentTarget;
             if (el.scrollTop < 10) el.scrollTop = 10;
           }}>
             {#if messages.length === 0}
-              <div class="viewport-empty">Loading...</div>
+              <div class="msg-empty">Loading...</div>
             {:else}
               {#each messages as msg, i (msg.id)}
                 <div class="chat-entry" class:new-sender={showSenderHeader(messages, i)}>
@@ -115,9 +126,6 @@ function extractTextContent(content: ContentBlock[]): string {
               {/each}
             {/if}
           </div>
-          <button class="viewport-open-btn" onclick={() => onSelectConversation(conv.id)}>
-            Open chat &rarr;
-          </button>
         </div>
       {/each}
     </div>
@@ -129,6 +137,7 @@ function extractTextContent(content: ContentBlock[]): string {
     animation: fadeIn 0.2s ease both;
     height: 100%;
     overflow: auto;
+    padding: 24px;
   }
 
   .empty {
@@ -138,64 +147,91 @@ function extractTextContent(content: ContentBlock[]): string {
     text-align: center;
   }
 
-  .viewport-grid {
+  .feed-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
     gap: 16px;
-    height: 100%;
-    grid-template-rows: repeat(3, minmax(200px, 1fr));
   }
 
-  .viewport-card {
+  .feed-card {
     background: var(--bg-0);
-    border: 1px solid var(--border);
+    border: 1px solid color-mix(in srgb, var(--blue) 25%, var(--border));
     border-radius: var(--radius-lg);
     display: flex;
     flex-direction: column;
-    min-height: 200px;
+    height: 240px;
     overflow: hidden;
+    transition: border-color 0.15s;
+    cursor: pointer;
   }
 
-  .viewport-label {
-    padding: 8px 12px;
+  .feed-card:hover {
+    border-color: color-mix(in srgb, var(--blue) 50%, var(--border));
+  }
+
+  .feed-card-header {
+    padding: 6px 8px 6px 10px;
     font-size: 13px;
     font-weight: 500;
     color: var(--text-1);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid color-mix(in srgb, var(--blue) 25%, var(--border));
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
 
-  .viewport-scroll {
+  .feed-card-icon {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    color: var(--blue);
+  }
+
+  .feed-card-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .feed-card-meta {
+    font-size: 11px;
+    color: var(--text-2);
+    font-weight: 400;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+
+  .feed-card-body {
     flex: 1;
     overflow: auto;
     padding: 8px 12px;
     min-height: 0;
   }
 
-  .viewport-empty {
+  .card-action-btn {
+    font-size: 12px;
+    padding: 2px 10px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    flex-shrink: 0;
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    color: var(--bg-0);
+    transition: opacity 0.15s;
+  }
+
+  .card-action-btn:hover {
+    opacity: 0.85;
+  }
+
+  .msg-empty {
     color: var(--text-2);
     font-size: 13px;
     padding: 16px 0;
     text-align: center;
-  }
-
-  .viewport-open-btn {
-    display: block;
-    width: 100%;
-    padding: 6px;
-    background: var(--accent-dim);
-    color: var(--accent);
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    border-top: 1px solid var(--border);
-    text-align: center;
-    flex-shrink: 0;
-    transition: background 0.15s;
-  }
-
-  .viewport-open-btn:hover {
-    background: var(--accent-bg);
   }
 
   /* Chat entries */
@@ -245,13 +281,8 @@ function extractTextContent(content: ContentBlock[]): string {
   }
 
   @media (max-width: 767px) {
-    .viewport-grid {
-      grid-template-columns: 1fr;
-      grid-template-rows: auto;
-    }
-
-    .viewport-card {
-      max-height: 250px;
+    .chat-home {
+      padding: 16px;
     }
   }
 </style>
