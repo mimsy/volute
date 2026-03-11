@@ -3,7 +3,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  rmSync,
   statSync,
   symlinkSync,
   unlinkSync,
@@ -12,17 +11,21 @@ import {
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { after, afterEach, before, beforeEach, describe, it, mock } from "node:test";
+import { after, afterEach, before, describe, it } from "node:test";
 import { collectFiles } from "../src/commands/pages/publish.js";
-import { addMind, mindDir, removeMind, voluteHome } from "../src/lib/registry.js";
+import { approveUser, createUser } from "../src/lib/auth.js";
+import { getDb } from "../src/lib/db.js";
+import { addMind, removeMind, voluteHome, voluteSystemDir } from "../src/lib/registry.js";
+import { sessions, users } from "../src/lib/schema.js";
 import {
   deleteSystemsConfig,
   readSystemsConfig,
   writeSystemsConfig,
 } from "../src/lib/systems-config.js";
+import { createSession } from "../src/web/middleware/auth.js";
 
 function configPath() {
-  return resolve(voluteHome(), "systems.json");
+  return resolve(voluteSystemDir(), "systems.json");
 }
 
 // ---------------------------------------------------------------------------
@@ -38,6 +41,25 @@ describe("systems-config", () => {
 
   it("readSystemsConfig returns null when no config exists", () => {
     assert.equal(readSystemsConfig(), null);
+  });
+
+  it("migrates systems.json from old voluteHome location", () => {
+    // Write config to old location (voluteHome root)
+    const oldPath = resolve(voluteHome(), "systems.json");
+    mkdirSync(voluteHome(), { recursive: true });
+    writeFileSync(
+      oldPath,
+      JSON.stringify({ apiKey: "vp_old", system: "migrated", apiUrl: "https://volute.systems" }),
+    );
+
+    // readSystemsConfig should migrate and return the config
+    const config = readSystemsConfig();
+    assert.equal(config?.apiKey, "vp_old");
+    assert.equal(config?.system, "migrated");
+
+    // Old file should be gone, new file should exist
+    assert.ok(!existsSync(oldPath));
+    assert.ok(existsSync(configPath()));
   });
 
   it("writeSystemsConfig + readSystemsConfig roundtrips", () => {
@@ -65,25 +87,25 @@ describe("systems-config", () => {
   });
 
   it("readSystemsConfig returns null for invalid JSON", () => {
-    mkdirSync(voluteHome(), { recursive: true });
+    mkdirSync(voluteSystemDir(), { recursive: true });
     writeFileSync(configPath(), "not json");
     assert.equal(readSystemsConfig(), null);
   });
 
   it("readSystemsConfig returns null if apiKey is missing", () => {
-    mkdirSync(voluteHome(), { recursive: true });
+    mkdirSync(voluteSystemDir(), { recursive: true });
     writeFileSync(configPath(), JSON.stringify({ system: "test" }));
     assert.equal(readSystemsConfig(), null);
   });
 
   it("readSystemsConfig returns null if system is missing", () => {
-    mkdirSync(voluteHome(), { recursive: true });
+    mkdirSync(voluteSystemDir(), { recursive: true });
     writeFileSync(configPath(), JSON.stringify({ apiKey: "vp_key" }));
     assert.equal(readSystemsConfig(), null);
   });
 
   it("readSystemsConfig defaults apiUrl when missing", () => {
-    mkdirSync(voluteHome(), { recursive: true });
+    mkdirSync(voluteSystemDir(), { recursive: true });
     writeFileSync(configPath(), JSON.stringify({ apiKey: "vp_key", system: "test" }));
     const config = readSystemsConfig();
     assert.equal(config?.apiUrl, "https://volute.systems");
@@ -173,17 +195,8 @@ describe("collectFiles", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Mock server + CLI command integration tests
+// Daemon API tests for systems management
 // ---------------------------------------------------------------------------
-
-/** Sentinel error thrown by our mocked process.exit */
-class ExitError extends Error {
-  code: number;
-  constructor(code: number) {
-    super(`process.exit(${code})`);
-    this.code = code;
-  }
-}
 
 /** Collect body from an IncomingMessage */
 function readBody(req: IncomingMessage): Promise<string> {
@@ -196,16 +209,38 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-describe("pages CLI commands", () => {
+/** Helper to build request headers that pass auth + CSRF */
+function adminHeaders(cookie: string) {
+  return {
+    Cookie: `volute_session=${cookie}`,
+    Origin: "http://localhost",
+    "Content-Type": "application/json",
+  };
+}
+
+describe("system API routes", () => {
   let server: Server;
   let baseUrl: string;
   let handler: (req: IncomingMessage, res: ServerResponse) => void;
+  let sessionId: string;
   const MIND_NAME = "pages-test-mind";
-  const originalPagesUrl = process.env.VOLUTE_SYSTEMS_URL;
-  const originalMind = process.env.VOLUTE_MIND;
+  const originalSystemsUrl = process.env.VOLUTE_SYSTEMS_URL;
+
+  async function cleanupAuth() {
+    const db = await getDb();
+    await db.delete(sessions);
+    await db.delete(users);
+  }
+
+  async function setupAuth(): Promise<string> {
+    const user = await createUser("pages-admin", "pass");
+    await approveUser(user.id);
+    sessionId = await createSession(user.id);
+    return sessionId;
+  }
 
   before(async () => {
-    // Start mock HTTP server
+    // Start mock HTTP server to act as volute.systems
     server = createServer((req, res) => handler(req, res));
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const addr = server.address();
@@ -213,39 +248,32 @@ describe("pages CLI commands", () => {
     baseUrl = `http://127.0.0.1:${addr.port}`;
     process.env.VOLUTE_SYSTEMS_URL = baseUrl;
 
-    // Register a test mind so mindDir() works
     addMind(MIND_NAME, 14900);
   });
 
   after(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    if (originalPagesUrl === undefined) delete process.env.VOLUTE_SYSTEMS_URL;
-    else process.env.VOLUTE_SYSTEMS_URL = originalPagesUrl;
-    if (originalMind === undefined) delete process.env.VOLUTE_MIND;
-    else process.env.VOLUTE_MIND = originalMind;
+    if (originalSystemsUrl === undefined) delete process.env.VOLUTE_SYSTEMS_URL;
+    else process.env.VOLUTE_SYSTEMS_URL = originalSystemsUrl;
     removeMind(MIND_NAME);
   });
 
-  beforeEach(() => {
-    // Reset handler to a 404 default
+  afterEach(async () => {
+    try {
+      unlinkSync(configPath());
+    } catch {}
     handler = (_req, res) => {
       res.writeHead(404);
       res.end(JSON.stringify({ error: "not found" }));
     };
-  });
-
-  afterEach(() => {
-    try {
-      unlinkSync(configPath());
-    } catch {}
-    mock.restoreAll();
+    await cleanupAuth();
   });
 
   // -----------------------------------------------------------------------
   // register
   // -----------------------------------------------------------------------
   describe("register", () => {
-    it("registers successfully and saves config", async () => {
+    it("POST /api/system/register registers and saves config", async () => {
       handler = async (req, res) => {
         assert.equal(req.method, "POST");
         assert.equal(req.url, "/api/register");
@@ -255,51 +283,33 @@ describe("pages CLI commands", () => {
         res.end(JSON.stringify({ apiKey: "vp_newkey", system: "my-system" }));
       };
 
-      const { run } = await import("../src/commands/pages/register.js");
-      await run(["--name", "my-system"]);
+      const cookie = await setupAuth();
+      const { default: app } = await import("../src/web/app.js");
+      const res = await app.request("http://localhost/api/system/register", {
+        method: "POST",
+        headers: adminHeaders(cookie),
+        body: JSON.stringify({ name: "my-system" }),
+      });
+
+      assert.equal(res.status, 200);
+      const data = (await res.json()) as { system: string };
+      assert.equal(data.system, "my-system");
 
       const config = readSystemsConfig();
       assert.equal(config?.apiKey, "vp_newkey");
       assert.equal(config?.system, "my-system");
-      assert.equal(config?.apiUrl, baseUrl);
     });
 
-    it("exits if already registered", async () => {
+    it("POST /api/system/register returns 400 if already registered", async () => {
       writeSystemsConfig({ apiKey: "vp_existing", system: "existing", apiUrl: baseUrl });
-
-      const exitMock = mock.method(process, "exit", (code: number) => {
-        throw new ExitError(code);
+      const cookie = await setupAuth();
+      const { default: app } = await import("../src/web/app.js");
+      const res = await app.request("http://localhost/api/system/register", {
+        method: "POST",
+        headers: adminHeaders(cookie),
+        body: JSON.stringify({ name: "new-name" }),
       });
-
-      const { run } = await import("../src/commands/pages/register.js");
-      await assert.rejects(() => run(["--name", "new-name"]), ExitError);
-      assert.equal(exitMock.mock.calls[0]?.arguments[0], 1);
-    });
-
-    it("exits on API conflict (name taken)", async () => {
-      handler = (_req, res) => {
-        res.writeHead(409, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Name already taken" }));
-      };
-
-      const exitMock = mock.method(process, "exit", (code: number) => {
-        throw new ExitError(code);
-      });
-
-      const { run } = await import("../src/commands/pages/register.js");
-      await assert.rejects(() => run(["--name", "taken-name"]), ExitError);
-      assert.equal(exitMock.mock.calls[0]?.arguments[0], 1);
-    });
-
-    it("exits when no --name and not a TTY", async () => {
-      const exitMock = mock.method(process, "exit", (code: number) => {
-        throw new ExitError(code);
-      });
-
-      const { run } = await import("../src/commands/pages/register.js");
-      // stdin.isTTY is undefined in test env (not a TTY)
-      await assert.rejects(() => run([]), ExitError);
-      assert.equal(exitMock.mock.calls[0]?.arguments[0], 1);
+      assert.equal(res.status, 400);
     });
   });
 
@@ -307,7 +317,7 @@ describe("pages CLI commands", () => {
   // login
   // -----------------------------------------------------------------------
   describe("login", () => {
-    it("validates key via whoami and saves config", async () => {
+    it("POST /api/system/login validates key and saves config", async () => {
       handler = (req, res) => {
         assert.equal(req.method, "GET");
         assert.equal(req.url, "/api/whoami");
@@ -316,186 +326,134 @@ describe("pages CLI commands", () => {
         res.end(JSON.stringify({ system: "test-system" }));
       };
 
-      const { run } = await import("../src/commands/pages/login.js");
-      await run(["--key", "vp_mykey"]);
+      const cookie = await setupAuth();
+      const { default: app } = await import("../src/web/app.js");
+      const res = await app.request("http://localhost/api/system/login", {
+        method: "POST",
+        headers: adminHeaders(cookie),
+        body: JSON.stringify({ key: "vp_mykey" }),
+      });
 
+      assert.equal(res.status, 200);
       const config = readSystemsConfig();
       assert.equal(config?.apiKey, "vp_mykey");
       assert.equal(config?.system, "test-system");
     });
 
-    it("exits if already logged in", async () => {
+    it("POST /api/system/login returns 400 if already logged in", async () => {
       writeSystemsConfig({ apiKey: "vp_existing", system: "existing", apiUrl: baseUrl });
-
-      const exitMock = mock.method(process, "exit", (code: number) => {
-        throw new ExitError(code);
+      const cookie = await setupAuth();
+      const { default: app } = await import("../src/web/app.js");
+      const res = await app.request("http://localhost/api/system/login", {
+        method: "POST",
+        headers: adminHeaders(cookie),
+        body: JSON.stringify({ key: "vp_newkey" }),
       });
-
-      const { run } = await import("../src/commands/pages/login.js");
-      await assert.rejects(() => run(["--key", "vp_newkey"]), ExitError);
-      assert.equal(exitMock.mock.calls[0]?.arguments[0], 1);
-    });
-
-    it("exits on invalid key (401)", async () => {
-      handler = (_req, res) => {
-        res.writeHead(401, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Invalid API key" }));
-      };
-
-      const exitMock = mock.method(process, "exit", (code: number) => {
-        throw new ExitError(code);
-      });
-
-      const { run } = await import("../src/commands/pages/login.js");
-      await assert.rejects(() => run(["--key", "vp_badkey"]), ExitError);
-      assert.equal(exitMock.mock.calls[0]?.arguments[0], 1);
-    });
-
-    it("exits when no --key and not a TTY", async () => {
-      const exitMock = mock.method(process, "exit", (code: number) => {
-        throw new ExitError(code);
-      });
-
-      const { run } = await import("../src/commands/pages/login.js");
-      await assert.rejects(() => run([]), ExitError);
-      assert.equal(exitMock.mock.calls[0]?.arguments[0], 1);
+      assert.equal(res.status, 400);
     });
   });
 
   // -----------------------------------------------------------------------
-  // publish
+  // logout
   // -----------------------------------------------------------------------
-  describe("publish", () => {
-    it("publishes files from pages/ directory", async () => {
+  describe("logout", () => {
+    it("POST /api/system/logout removes credentials", async () => {
+      writeSystemsConfig({ apiKey: "vp_key", system: "test", apiUrl: baseUrl });
+      assert.ok(existsSync(configPath()));
+
+      const cookie = await setupAuth();
+      const { default: app } = await import("../src/web/app.js");
+      const res = await app.request("http://localhost/api/system/logout", {
+        method: "POST",
+        headers: { Cookie: `volute_session=${cookie}`, Origin: "http://localhost" },
+      });
+
+      assert.equal(res.status, 200);
+      assert.ok(!existsSync(configPath()));
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // info
+  // -----------------------------------------------------------------------
+  describe("info", () => {
+    it("GET /api/system/info returns system name when configured", async () => {
+      writeSystemsConfig({ apiKey: "vp_key", system: "my-system", apiUrl: baseUrl });
+      const cookie = await setupAuth();
+      const { default: app } = await import("../src/web/app.js");
+      const res = await app.request("/api/system/info", {
+        headers: { Cookie: `volute_session=${cookie}` },
+      });
+
+      assert.equal(res.status, 200);
+      const data = (await res.json()) as { system: string | null };
+      assert.equal(data.system, "my-system");
+    });
+
+    it("GET /api/system/info returns null when not configured", async () => {
+      const cookie = await setupAuth();
+      const { default: app } = await import("../src/web/app.js");
+      const res = await app.request("/api/system/info", {
+        headers: { Cookie: `volute_session=${cookie}` },
+      });
+
+      assert.equal(res.status, 200);
+      const data = (await res.json()) as { system: string | null };
+      assert.equal(data.system, null);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // pages publish proxy
+  // -----------------------------------------------------------------------
+  describe("pages publish", () => {
+    it("PUT /api/system/pages/publish proxies to volute.systems", async () => {
       writeSystemsConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
-      process.env.VOLUTE_MIND = MIND_NAME;
 
-      // Create pages/ directory in the mind's home
-      const pagesDir = resolve(mindDir(MIND_NAME), "home", "public", "pages");
-      mkdirSync(pagesDir, { recursive: true });
-      writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hi</h1>");
-
-      let receivedBody: { files: Record<string, string> } | undefined;
+      let receivedAuth: string | undefined;
       handler = async (req, res) => {
         assert.equal(req.method, "PUT");
         assert.equal(req.url, `/api/pages/publish/${MIND_NAME}`);
-        assert.equal(req.headers.authorization, "Bearer vp_pub");
-        receivedBody = JSON.parse(await readBody(req));
+        receivedAuth = req.headers.authorization;
+        const body = JSON.parse(await readBody(req));
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
-          JSON.stringify({
-            url: `https://my-system.volute.systems/~${MIND_NAME}/`,
-            fileCount: 1,
-          }),
+          JSON.stringify({ url: "https://example.com", fileCount: Object.keys(body.files).length }),
         );
       };
 
-      const { run } = await import("../src/commands/pages/publish.js");
-      await run(["--mind", MIND_NAME]);
-
-      assert.ok(receivedBody);
-      assert.equal(Object.keys(receivedBody.files).length, 1);
-      assert.ok("index.html" in receivedBody.files);
-      assert.equal(
-        Buffer.from(receivedBody.files["index.html"], "base64").toString(),
-        "<h1>Hi</h1>",
-      );
-    });
-
-    it("exits if not logged in", async () => {
-      const exitMock = mock.method(process, "exit", (code: number) => {
-        throw new ExitError(code);
+      const cookie = await setupAuth();
+      const { default: app } = await import("../src/web/app.js");
+      const res = await app.request(`http://localhost/api/system/pages/publish/${MIND_NAME}`, {
+        method: "PUT",
+        headers: adminHeaders(cookie),
+        body: JSON.stringify({ files: { "index.html": "PGgxPkhlbGxvPC9oMT4=" } }),
       });
 
-      const { run } = await import("../src/commands/pages/publish.js");
-      await assert.rejects(() => run(["--mind", MIND_NAME]), ExitError);
-      assert.equal(exitMock.mock.calls[0]?.arguments[0], 1);
+      assert.equal(res.status, 200);
+      assert.equal(receivedAuth, "Bearer vp_pub");
+      const data = (await res.json()) as { url: string; fileCount: number };
+      assert.equal(data.fileCount, 1);
     });
 
-    it("exits if pages/ directory does not exist", async () => {
-      writeSystemsConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
-
-      const exitMock = mock.method(process, "exit", (code: number) => {
-        throw new ExitError(code);
+    it("PUT /api/system/pages/publish returns 400 when not configured", async () => {
+      const cookie = await setupAuth();
+      const { default: app } = await import("../src/web/app.js");
+      const res = await app.request(`http://localhost/api/system/pages/publish/${MIND_NAME}`, {
+        method: "PUT",
+        headers: adminHeaders(cookie),
+        body: JSON.stringify({ files: {} }),
       });
-
-      const { run } = await import("../src/commands/pages/publish.js");
-      await assert.rejects(() => run(["--mind", "nonexistent-mind"]), ExitError);
-      assert.equal(exitMock.mock.calls[0]?.arguments[0], 1);
-    });
-
-    it("exits if pages/ directory is empty", async () => {
-      writeSystemsConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
-
-      const pagesDir = resolve(mindDir(MIND_NAME), "home", "public", "pages");
-      rmSync(pagesDir, { recursive: true, force: true });
-      mkdirSync(pagesDir, { recursive: true });
-
-      const exitMock = mock.method(process, "exit", (code: number) => {
-        throw new ExitError(code);
-      });
-
-      const { run } = await import("../src/commands/pages/publish.js");
-      await assert.rejects(() => run(["--mind", MIND_NAME]), ExitError);
-      assert.equal(exitMock.mock.calls[0]?.arguments[0], 1);
-    });
-
-    it("exits on API error", async () => {
-      writeSystemsConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
-
-      const pagesDir = resolve(mindDir(MIND_NAME), "home", "public", "pages");
-      mkdirSync(pagesDir, { recursive: true });
-      writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hi</h1>");
-
-      handler = (_req, res) => {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Internal server error" }));
-      };
-
-      const exitMock = mock.method(process, "exit", (code: number) => {
-        throw new ExitError(code);
-      });
-
-      const { run } = await import("../src/commands/pages/publish.js");
-      await assert.rejects(() => run(["--mind", MIND_NAME]), ExitError);
-      assert.equal(exitMock.mock.calls[0]?.arguments[0], 1);
-    });
-
-    it("publishes multiple files including nested paths", async () => {
-      writeSystemsConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
-
-      const pagesDir = resolve(mindDir(MIND_NAME), "home", "public", "pages");
-      mkdirSync(resolve(pagesDir, "css"), { recursive: true });
-      mkdirSync(resolve(pagesDir, "img"), { recursive: true });
-      writeFileSync(resolve(pagesDir, "index.html"), "<h1>Home</h1>");
-      writeFileSync(resolve(pagesDir, "css", "style.css"), "body {}");
-      writeFileSync(resolve(pagesDir, "img", "logo.png"), "fakepng");
-
-      let receivedFiles: Record<string, string> = {};
-      handler = async (req, res) => {
-        const body = JSON.parse(await readBody(req));
-        receivedFiles = body.files;
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ url: "https://example.com", fileCount: 3 }));
-      };
-
-      const { run } = await import("../src/commands/pages/publish.js");
-      await run(["--mind", MIND_NAME]);
-
-      assert.equal(Object.keys(receivedFiles).length, 3);
-      assert.ok("index.html" in receivedFiles);
-      assert.ok("css/style.css" in receivedFiles);
-      assert.ok("img/logo.png" in receivedFiles);
+      assert.equal(res.status, 400);
     });
   });
 
   // -----------------------------------------------------------------------
-  // status
+  // pages status proxy
   // -----------------------------------------------------------------------
-  describe("status", () => {
-    it("displays status from API", async () => {
+  describe("pages status", () => {
+    it("GET /api/system/pages/status proxies to volute.systems", async () => {
       writeSystemsConfig({ apiKey: "vp_stat", system: "my-system", apiUrl: baseUrl });
-      process.env.VOLUTE_MIND = MIND_NAME;
 
       handler = (req, res) => {
         assert.equal(req.method, "GET");
@@ -504,157 +462,31 @@ describe("pages CLI commands", () => {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({
-            url: `https://my-system.volute.systems/~${MIND_NAME}/`,
+            url: "https://example.com",
             fileCount: 5,
             deployedAt: "2026-01-15T12:00:00Z",
           }),
         );
       };
 
-      const logged: string[] = [];
-      const logMock = mock.method(console, "log", (msg: string) => logged.push(msg));
-
-      const { run } = await import("../src/commands/pages/status.js");
-      await run(["--mind", MIND_NAME]);
-
-      logMock.mock.restore();
-      assert.ok(logged.some((l) => l.includes("my-system.volute.systems")));
-      assert.ok(logged.some((l) => l.includes("5")));
-      assert.ok(logged.some((l) => l.includes("2026-01-15")));
-    });
-
-    it("handles 404 (not published yet)", async () => {
-      writeSystemsConfig({ apiKey: "vp_stat", system: "my-system", apiUrl: baseUrl });
-
-      handler = (_req, res) => {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "not found" }));
-      };
-
-      const logged: string[] = [];
-      const logMock = mock.method(console, "log", (msg: string) => logged.push(msg));
-
-      const { run } = await import("../src/commands/pages/status.js");
-      await run(["--mind", MIND_NAME]);
-
-      logMock.mock.restore();
-      assert.ok(logged.some((l) => l.includes("has not been published yet")));
-    });
-
-    it("exits if not logged in", async () => {
-      const exitMock = mock.method(process, "exit", (code: number) => {
-        throw new ExitError(code);
+      const cookie = await setupAuth();
+      const { default: app } = await import("../src/web/app.js");
+      const res = await app.request(`/api/system/pages/status/${MIND_NAME}`, {
+        headers: { Cookie: `volute_session=${cookie}` },
       });
 
-      const { run } = await import("../src/commands/pages/status.js");
-      await assert.rejects(() => run(["--mind", MIND_NAME]), ExitError);
-      assert.equal(exitMock.mock.calls[0]?.arguments[0], 1);
+      assert.equal(res.status, 200);
+      const data = (await res.json()) as { url: string; fileCount: number; deployedAt: string };
+      assert.equal(data.fileCount, 5);
     });
 
-    it("exits on API error", async () => {
-      writeSystemsConfig({ apiKey: "vp_stat", system: "my-system", apiUrl: baseUrl });
-
-      handler = (_req, res) => {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "server error" }));
-      };
-
-      const exitMock = mock.method(process, "exit", (code: number) => {
-        throw new ExitError(code);
+    it("GET /api/system/pages/status returns 400 when not configured", async () => {
+      const cookie = await setupAuth();
+      const { default: app } = await import("../src/web/app.js");
+      const res = await app.request(`/api/system/pages/status/${MIND_NAME}`, {
+        headers: { Cookie: `volute_session=${cookie}` },
       });
-
-      const { run } = await import("../src/commands/pages/status.js");
-      await assert.rejects(() => run(["--mind", MIND_NAME]), ExitError);
-      assert.equal(exitMock.mock.calls[0]?.arguments[0], 1);
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // logout
-  // -----------------------------------------------------------------------
-  describe("logout", () => {
-    it("removes credentials when logged in", async () => {
-      writeSystemsConfig({ apiKey: "vp_key", system: "test", apiUrl: baseUrl });
-      assert.ok(existsSync(configPath()));
-
-      const logged: string[] = [];
-      const logMock = mock.method(console, "log", (msg: string) => logged.push(msg));
-
-      const { run } = await import("../src/commands/pages/logout.js");
-      await run();
-
-      logMock.mock.restore();
-      assert.ok(!existsSync(configPath()));
-      assert.ok(logged.some((l) => l.includes("Logged out")));
-    });
-
-    it("prints message when not logged in", async () => {
-      const logged: string[] = [];
-      const logMock = mock.method(console, "log", (msg: string) => logged.push(msg));
-
-      const { run } = await import("../src/commands/pages/logout.js");
-      await run();
-
-      logMock.mock.restore();
-      assert.ok(logged.some((l) => l.includes("Not logged in")));
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // network errors
-  // -----------------------------------------------------------------------
-  describe("network errors", () => {
-    it("shows friendly error on connection refused", async () => {
-      // Point at a port that nothing is listening on
-      writeSystemsConfig({
-        apiKey: "vp_key",
-        system: "test",
-        apiUrl: "http://127.0.0.1:1",
-      });
-
-      const exitMock = mock.method(process, "exit", (code: number) => {
-        throw new ExitError(code);
-      });
-      const errors: string[] = [];
-      const errMock = mock.method(console, "error", (msg: string) => errors.push(msg));
-
-      const { run } = await import("../src/commands/pages/status.js");
-      await assert.rejects(() => run(["--mind", MIND_NAME]), ExitError);
-
-      errMock.mock.restore();
-      assert.equal(exitMock.mock.calls[0]?.arguments[0], 1);
-      assert.ok(errors.some((e) => e.includes("127.0.0.1:1")));
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // non-JSON error response
-  // -----------------------------------------------------------------------
-  describe("non-JSON error responses", () => {
-    it("handles plain text error response gracefully", async () => {
-      writeSystemsConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
-
-      const pagesDir = resolve(mindDir(MIND_NAME), "home", "public", "pages");
-      mkdirSync(pagesDir, { recursive: true });
-      writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hi</h1>");
-
-      handler = (_req, res) => {
-        res.writeHead(502, { "Content-Type": "text/plain" });
-        res.end("Bad Gateway");
-      };
-
-      const exitMock = mock.method(process, "exit", (code: number) => {
-        throw new ExitError(code);
-      });
-      const errors: string[] = [];
-      const errMock = mock.method(console, "error", (msg: string) => errors.push(msg));
-
-      const { run } = await import("../src/commands/pages/publish.js");
-      await assert.rejects(() => run(["--mind", MIND_NAME]), ExitError);
-
-      errMock.mock.restore();
-      assert.equal(exitMock.mock.calls[0]?.arguments[0], 1);
-      assert.ok(errors.some((e) => e.includes("Publish failed")));
+      assert.equal(res.status, 400);
     });
   });
 });

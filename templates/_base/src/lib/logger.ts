@@ -14,9 +14,6 @@ if (process.env.VOLUTE_DEBUG === "1") {
 // Loaded once at startup — mind restarts on config changes
 const preset = loadTransparencyPreset();
 
-/** Categories whose log() calls are also emitted as daemon events. */
-const EMIT_CATEGORIES = new Set(["mind", "server", "auto-commit"]);
-
 function truncate(str: string, maxLen = 200): string {
   return str.length > maxLen ? `${str.slice(0, maxLen)}...` : str;
 }
@@ -41,7 +38,6 @@ function shouldTruncate(): boolean {
 }
 
 function emit(category: string, args: unknown[]): void {
-  if (!EMIT_CATEGORIES.has(category)) return;
   const message = args
     .map((a) => (a instanceof Error ? a.message : typeof a === "string" ? a : JSON.stringify(a)))
     .join(" ");

@@ -18,7 +18,7 @@ import { spawnServer } from "../../lib/spawn-server.js";
 import { cleanupVariant } from "../../lib/variant-cleanup.js";
 import { validateBranchName } from "../../lib/variants.js";
 import { verify } from "../../lib/verify.js";
-import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
+import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
 const app = new Hono<AuthEnv>()
   .get("/:name/variants", async (c) => {
@@ -51,7 +51,7 @@ const app = new Hono<AuthEnv>()
     return c.json(results);
   })
   // Create variant — admin only
-  .post("/:name/variants", requireAdmin, async (c) => {
+  .post("/:name/variants", requireSelf(), async (c) => {
     const mindName = c.req.param("name");
     const entry = await findMind(mindName);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
@@ -138,7 +138,7 @@ const app = new Hono<AuthEnv>()
     });
   })
   // Merge variant — admin only
-  .post("/:name/variants/:variant/merge", requireAdmin, async (c) => {
+  .post("/:name/variants/:variant/merge", requireSelf(), async (c) => {
     const mindName = c.req.param("name");
     const variantName = c.req.param("variant");
 
@@ -289,7 +289,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true, ...(restartWarning && { warning: restartWarning }) });
   })
   // Delete variant — admin only
-  .delete("/:name/variants/:variant", requireAdmin, async (c) => {
+  .delete("/:name/variants/:variant", requireSelf(), async (c) => {
     const mindName = c.req.param("name");
     const variantName = c.req.param("variant");
 

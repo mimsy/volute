@@ -5,7 +5,7 @@ import log from "../../lib/logger.js";
 import { findMind, mindDir } from "../../lib/registry.js";
 import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../../lib/volute-config.js";
 import { fireWebhook } from "../../lib/webhook.js";
-import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
+import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
 const slog = log.child("schedules");
 
@@ -33,8 +33,8 @@ const app = new Hono<AuthEnv>()
     if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
     return c.json(readSchedules(name));
   })
-  // Add schedule — admin only
-  .post("/:name/schedules", requireAdmin, async (c) => {
+  // Add schedule
+  .post("/:name/schedules", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
@@ -73,8 +73,8 @@ const app = new Hono<AuthEnv>()
     writeSchedules(name, schedules);
     return c.json({ ok: true, id }, 201);
   })
-  // Update schedule — admin only
-  .put("/:name/schedules/:id", requireAdmin, async (c) => {
+  // Update schedule
+  .put("/:name/schedules/:id", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const id = c.req.param("id");
     if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
@@ -109,8 +109,8 @@ const app = new Hono<AuthEnv>()
     writeSchedules(name, schedules);
     return c.json({ ok: true });
   })
-  // Delete schedule — admin only
-  .delete("/:name/schedules/:id", requireAdmin, async (c) => {
+  // Delete schedule
+  .delete("/:name/schedules/:id", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const id = c.req.param("id");
     if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);

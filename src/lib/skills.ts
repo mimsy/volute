@@ -23,7 +23,14 @@ const VALID_SKILL_ID = /^[a-zA-Z0-9_-]+$/;
 export const SEED_SKILLS = ["orientation", "memory"];
 
 /** Skills installed for fully sprouted minds */
-export const STANDARD_SKILLS = ["volute-mind", "memory", "sessions", "notes", "dreaming"];
+export const STANDARD_SKILLS = [
+  "volute-mind",
+  "memory",
+  "sessions",
+  "notes",
+  "dreaming",
+  "shared-files",
+];
 
 function validateSkillId(id: string): void {
   if (!id || !VALID_SKILL_ID.test(id)) {

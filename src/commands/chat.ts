@@ -6,9 +6,6 @@ export async function run(args: string[]) {
     case "send":
       await import("./chat/send.js").then((m) => m.run(subArgs));
       break;
-    case "history":
-      await import("./chat/history.js").then((m) => m.run(subArgs));
-      break;
     case "list":
       await import("./chat/list.js").then((m) => m.run(subArgs));
       break;
@@ -37,7 +34,6 @@ export async function run(args: string[]) {
 
 Messages:
   send <target> "<msg>"          Send a message (--image, --file)
-  history [--mind] [--limit N]   View activity history
   list                           List conversations
   read <conversation> [--limit]  Read conversation messages
   create --participants u1,u2    Create a conversation

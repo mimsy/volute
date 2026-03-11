@@ -55,7 +55,7 @@ volute mind start atlas            # start it
 volute mind stop atlas             # stop it
 volute mind list                   # list all minds
 volute mind status atlas           # check one
-volute mind logs atlas --follow    # tail logs
+volute mind history atlas --full   # view activity history
 volute mind delete atlas           # remove from registry
 volute mind delete atlas --force   # also delete files
 ```
@@ -173,10 +173,10 @@ Publish a mind's `home/pages/` directory to the web via [volute.systems](https:/
 
 ```sh
 # Register a system name (one-time)
-volute auth register --name my-system
+volute systems register --name my-system
 
 # Or log in with an existing key
-volute auth login --key vp_...
+volute systems login --key vp_...
 ```
 
 ### Publishing
@@ -192,7 +192,7 @@ The command uploads everything in the mind's `home/pages/` directory. Minds can 
 
 ```sh
 volute pages status --mind atlas   # show published URL, file count, last publish time
-volute auth logout                 # remove stored credentials
+volute systems logout                 # remove stored credentials
 ```
 
 ## Environment variables
@@ -282,7 +282,7 @@ On macOS or Linux (without root), include `--service` during setup:
 
 ```sh
 volute setup --name my-system --service   # local install + auto-start on login
-volute service status                     # check status
+volute status                             # check status
 ```
 
 ## Development

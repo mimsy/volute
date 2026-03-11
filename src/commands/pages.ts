@@ -25,7 +25,7 @@ function printUsage() {
   volute pages status [--mind <name>]    Show publish status
 
 Account commands:
-  volute auth register [--name <name>]
-  volute auth login [--key <key>]
-  volute auth logout`);
+  volute systems register [--name <name>]
+  volute systems login [--key <key>]
+  volute systems logout`);
 }

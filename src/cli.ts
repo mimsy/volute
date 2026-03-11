@@ -1,3 +1,6 @@
+// Suppress deprecation warnings from transitive dependencies (e.g. punycode via node-fetch v2)
+process.noDeprecation = true;
+
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
@@ -47,9 +50,6 @@ switch (command) {
   case "skill":
     await import("./commands/skill.js").then((m) => m.run(args));
     break;
-  case "shared":
-    await import("./commands/shared.js").then((m) => m.run(args));
-    break;
   case "env":
     await import("./commands/env.js").then((m) => m.run(args));
     break;
@@ -61,9 +61,6 @@ switch (command) {
     break;
   case "restart":
     await import("./commands/daemon-restart.js").then((m) => m.run(args));
-    break;
-  case "service":
-    await import("./commands/service.js").then((m) => m.run(args));
     break;
   case "update":
     await import("./commands/update.js").then((m) => m.run(args));
@@ -77,8 +74,8 @@ switch (command) {
   case "pages":
     await import("./commands/pages.js").then((m) => m.run(args));
     break;
-  case "auth":
-    await import("./commands/auth.js").then((m) => m.run(args));
+  case "systems":
+    await import("./commands/systems.js").then((m) => m.run(args));
     break;
   case "login":
     await import("./commands/login.js").then((m) => m.run(args));
@@ -93,10 +90,8 @@ switch (command) {
 
 Common:
   chat send <target> "<msg>"       Send a message
-  chat history [--channel <ch>]    View activity history
   chat list / read / create        Manage conversations
   chat bridge                      Manage platform bridges
-  status                           Show system status
 
 Mind:
   mind create <name>               Create a new mind
@@ -104,7 +99,7 @@ Mind:
   mind start/stop/restart [name]   Control a mind
   mind list                        List all minds
   mind status [name]               Check a mind's status
-  mind logs [name] [--follow]      Tail mind logs
+  mind history [name] [--full]     View mind activity history
   mind sprout                      Complete orientation
   mind split/join                  Create and merge experimental splits
   mind upgrade/import/export       Lifecycle operations
@@ -114,17 +109,16 @@ Configuration:
   schedule  Manage cron schedules
   skill     Browse and install skills
   env       Manage environment variables
-  shared    Collaborative shared repository
   notes     Read and write notes
   pages     Publish web pages
 
 System:
   setup                            First-time setup
   up / down / restart              Daemon control
+  status                           Show daemon & service status
   login / logout                   CLI authentication
   update                           Update volute
-  service status                   Check service status
-  auth register/login/logout       volute.systems account
+  systems register/login/logout    volute.systems account
 
 Options:
   --version, -v                    Show version number
@@ -132,7 +126,7 @@ Options:
 
 Run 'volute <command> --help' for details.
 
-Mind-scoped commands (chat, schedule, skill, shared, pages)
+Mind-scoped commands (chat, schedule, skill, pages)
 use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
   default:
