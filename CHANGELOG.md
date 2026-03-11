@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.28.0](https://github.com/mimsy/volute/compare/volute-v0.27.0...volute-v0.28.0) (2026-03-11)
+
+
+### Features
+
+* improve CLI for minds — self-ops, history, systems, status ([#189](https://github.com/mimsy/volute/issues/189)) ([279faeb](https://github.com/mimsy/volute/commit/279faebdba05f843ad546e530f5e039144144fff))
+* move file transfer into volute chat ([#188](https://github.com/mimsy/volute/issues/188)) ([a8964b4](https://github.com/mimsy/volute/commit/a8964b4ff682bd196bd180ae8deebb89448a29e4))
+* replace volute shared CLI with shared-files skill ([#186](https://github.com/mimsy/volute/issues/186)) ([24eacfb](https://github.com/mimsy/volute/commit/24eacfb219399566749d713ac4884500779f0aec))
+
 ## [0.27.0](https://github.com/mimsy/volute/compare/volute-v0.26.0...volute-v0.27.0) (2026-03-11)
 
 
