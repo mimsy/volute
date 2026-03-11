@@ -43,7 +43,7 @@ $effect(() => {
     if (messagesMap[conv.id]) continue;
     fetchConversationMessages(conv.id, { limit: 20 })
       .then((res) => {
-        messagesMap[conv.id] = res.items.reverse();
+        messagesMap[conv.id] = res.items;
         requestAnimationFrame(() => {
           const el = scrollEls[conv.id];
           if (el) el.scrollTop = el.scrollHeight;

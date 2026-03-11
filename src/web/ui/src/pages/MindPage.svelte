@@ -83,7 +83,7 @@ $effect(() => {
   }
   fetchConversationMessages(conv.id, { limit: 20 })
     .then((res) => {
-      recentMessages = res.items.reverse();
+      recentMessages = res.items;
       requestAnimationFrame(() => {
         if (chatScrollEl) chatScrollEl.scrollTop = chatScrollEl.scrollHeight;
       });
