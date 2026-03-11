@@ -1,6 +1,6 @@
 import type { query } from "@anthropic-ai/claude-agent-sdk";
 import { daemonEmit, type EventType } from "./daemon-client.js";
-import { log, logText, logThinking, logToolUse, warn } from "./logger.js";
+import { log, warn } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
 import type { VoluteEvent } from "./types.js";
 
@@ -60,15 +60,12 @@ export async function consumeStream(
       for (const b of msg.message.content) {
         if (b.type === "thinking" && "thinking" in b && b.thinking) {
           const text = b.thinking as string;
-          logThinking(text);
           emit(session, { type: "thinking", content: text });
         } else if (b.type === "text") {
           const text = (b as { text: string }).text;
-          logText(text);
           emit(session, { type: "text", content: text });
         } else if (b.type === "tool_use") {
           const tb = b as { name: string; input: unknown };
-          logToolUse(tb.name, tb.input);
           emit(session, {
             type: "tool_use",
             content: JSON.stringify(tb.input),

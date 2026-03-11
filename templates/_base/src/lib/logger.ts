@@ -76,26 +76,6 @@ export function error(category: string, ...args: unknown[]) {
   write("error", category, ...args);
 }
 
-export function logThinking(thinking: string) {
-  log("thinking", shouldTruncate() ? truncate(thinking) : thinking);
-}
-
-export function logToolUse(name: string, input: unknown) {
-  const inputStr = shouldTruncate()
-    ? truncate(JSON.stringify(input), 100)
-    : JSON.stringify(input, null, 2);
-  log("tool", `${name}: ${inputStr}`);
-}
-
-export function logToolResult(name: string, output: string, isError?: boolean) {
-  const prefix = isError ? "error" : "result";
-  log("tool", `${name} ${prefix}: ${shouldTruncate() ? truncate(output) : output}`);
-}
-
-export function logText(text: string) {
-  log("text", shouldTruncate() ? truncate(text) : text);
-}
-
 export function logMessage(direction: "in" | "out", content: string, channel?: string) {
   const arrow = direction === "in" ? "<<" : ">>";
   const channelStr = channel ? ` [${channel}]` : "";
