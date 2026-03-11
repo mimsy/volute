@@ -9,13 +9,13 @@ import auth from "./api/auth.js";
 import bridges from "./api/bridges.js";
 import channels from "./api/channels.js";
 import envRoutes, { sharedEnvApp } from "./api/env.js";
+import extensionsRoutes from "./api/extensions.js";
 import fileSharing from "./api/file-sharing.js";
 import files from "./api/files.js";
 import keys from "./api/keys.js";
 import logs from "./api/logs.js";
 import mindSkills from "./api/mind-skills.js";
 import minds from "./api/minds.js";
-import notesRoutes from "./api/notes.js";
 import pages from "./api/pages.js";
 import prompts from "./api/prompts.js";
 import publicFiles from "./api/public-files.js";
@@ -101,7 +101,7 @@ app.use("/api/system/*", authMiddleware);
 app.use("/api/env/*", authMiddleware);
 app.use("/api/prompts/*", authMiddleware);
 app.use("/api/skills/*", authMiddleware);
-app.use("/api/notes/*", authMiddleware);
+app.use("/api/extensions/*", authMiddleware);
 app.use("/api/bridges/*", authMiddleware);
 
 // v1 API auth
@@ -132,13 +132,13 @@ const routes = app
   .route("/api/minds", mindSkills)
   .route("/api/minds", conversations)
   .route("/api/env", sharedEnvApp)
-  .route("/api/notes", notesRoutes)
   .route("/api/prompts", prompts)
   .route("/api/skills", skills)
   .route("/api/conversations", userConversations)
   .route("/api/volute/channels", voluteChannels)
   .route("/api/volute", unifiedChatApp)
   .route("/api/bridges", bridges)
+  .route("/api/extensions", extensionsRoutes)
   // v1 API routes
   .route("/api/v1/conversations", v1Conversations)
   .route("/api/v1/events", v1Events)

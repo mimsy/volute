@@ -78,6 +78,9 @@ switch (command) {
   case "pages":
     await import("./commands/pages.js").then((m) => m.run(args));
     break;
+  case "extension":
+    await import("./commands/extension.js").then((m) => m.run(args));
+    break;
   case "systems":
     await import("./commands/systems.js").then((m) => m.run(args));
     break;
@@ -120,6 +123,7 @@ System:
   setup                            First-time setup
   up / down / restart              Daemon control
   status                           Show daemon & service status
+  extension list/install/uninstall Manage extensions
   login / logout                   CLI authentication
   update                           Update volute
   systems register/login/logout    volute.systems account

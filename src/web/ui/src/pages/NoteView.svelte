@@ -65,7 +65,7 @@ let emojiInput = $state("");
 let showEmojiInput = $state(false);
 
 function noteUrl(path = "") {
-  return `/api/notes/${encodeURIComponent(author)}/${encodeURIComponent(slug)}${path}`;
+  return `/api/ext/notes/${encodeURIComponent(author)}/${encodeURIComponent(slug)}${path}`;
 }
 
 async function fetchNote() {

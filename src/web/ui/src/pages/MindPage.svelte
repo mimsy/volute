@@ -21,7 +21,7 @@ let {
   onSelectNote,
 }: {
   name: string;
-  section?: "info" | "notes" | "pages" | "files" | "settings";
+  section?: string;
   onSelectNote: (author: string, slug: string) => void;
 } = $props();
 
@@ -95,7 +95,7 @@ $effect(() => {
 
 $effect(() => {
   const mindName = name;
-  fetch(`/api/notes?author=${encodeURIComponent(mindName)}&limit=6`)
+  fetch(`/api/ext/notes?author=${encodeURIComponent(mindName)}&limit=6`)
     .then((r) => (r.ok ? r.json() : []))
     .then((notes: ApiNote[]) => {
       recentNotes = notes;
@@ -263,6 +263,11 @@ function extractTextContent(content: ContentBlock[]): string {
         {:else}
           <div class="empty-hint">No published pages.</div>
         {/if}
+      </div>
+    {:else if section?.startsWith("ext:")}
+      {@const extParts = section.split(":")}
+      <div class="section-content">
+        <iframe src="/ext/{extParts[1]}/mind/{name}/" class="ext-iframe" title="Extension"></iframe>
       </div>
     {:else if section === "files"}
       <div class="section-content files-section">
@@ -493,6 +498,13 @@ function extractTextContent(content: ContentBlock[]): string {
     margin-top: 24px;
     padding-top: 24px;
     border-top: 1px solid var(--border);
+  }
+
+  .ext-iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: var(--bg-0);
   }
 
   .empty-hint {

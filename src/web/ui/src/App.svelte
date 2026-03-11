@@ -344,6 +344,11 @@ function handleSelectNote(author: string, slug: string) {
   selection = { tab: "system", kind: "note", author, slug };
 }
 
+function handleSelectExtension(extensionId: string) {
+  selection = { tab: "system", kind: "extension", extensionId, path: "" };
+  closeSidebar();
+}
+
 // Resize
 function handleResizeStart(e: PointerEvent) {
   resizing = true;
@@ -438,12 +443,14 @@ function handleEscape(e: KeyboardEvent) {
           <SystemSidebar
             minds={data.minds}
             sites={data.sites}
+            extensions={data.extensions}
             {selection}
             onHome={handleSystemHome}
             onSelectMind={handleSelectMind}
             onSelectMindSection={handleSelectMindSection}
             onSelectNotes={handleSelectNotes}
             onSelectPages={handleSelectPages}
+            onSelectExtension={handleSelectExtension}
             onSeed={() => (activeModal = "seed")}
           />
         {:else}

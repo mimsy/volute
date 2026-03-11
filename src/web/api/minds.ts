@@ -85,7 +85,7 @@ import {
 } from "../../lib/registry.js";
 import { conversations, mindHistory } from "../../lib/schema.js";
 import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
-import { installSkill, SEED_SKILLS, STANDARD_SKILLS } from "../../lib/skills.js";
+import { getStandardSkillsWithExtensions, installSkill, SEED_SKILLS } from "../../lib/skills.js";
 import { announceToSystem } from "../../lib/system-channel.js";
 import { readSystemsConfig } from "../../lib/systems-config.js";
 import {
@@ -530,7 +530,7 @@ async function importFromHomeOnlyArchive(
     }
 
     // 12. Install skills based on stage
-    const skillSet = manifest.stage === "seed" ? SEED_SKILLS : STANDARD_SKILLS;
+    const skillSet = manifest.stage === "seed" ? SEED_SKILLS : getStandardSkillsWithExtensions();
     const skillWarnings: string[] = [];
     for (const skillId of skillSet) {
       try {
@@ -774,7 +774,8 @@ const app = new Hono<AuthEnv>()
       }
 
       // Install skills from shared pool (after git init so installSkill can commit)
-      const skillSet = body.skills ?? (body.stage === "seed" ? SEED_SKILLS : STANDARD_SKILLS);
+      const skillSet =
+        body.skills ?? (body.stage === "seed" ? SEED_SKILLS : getStandardSkillsWithExtensions());
       const skillWarnings: string[] = [];
       for (const skillId of skillSet) {
         try {

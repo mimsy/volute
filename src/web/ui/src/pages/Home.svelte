@@ -6,11 +6,13 @@ import type {
   Message,
   Site,
 } from "@volute/api";
+import ExtensionFeedCard from "../components/ExtensionFeedCard.svelte";
 import NoteCard from "../components/NoteCard.svelte";
 import PageThumbnail from "../components/PageThumbnail.svelte";
 import { fetchConversationMessages } from "../lib/client";
 import { formatRelativeTime, getConversationLabel, normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
+import { data as storeData } from "../lib/stores.svelte";
 
 type ConversationWithDetails = ConversationWithParticipants & {
   lastMessage?: LastMessageSummary;
@@ -45,8 +47,20 @@ let {
 
 let recentNotes = $state<ApiNote[]>([]);
 
+type ExtFeedItem = {
+  id: string;
+  title: string;
+  url: string;
+  date: string;
+  author?: string;
+  bodyHtml: string;
+  extensionId: string;
+};
+
+let extensionFeedItems = $state<ExtFeedItem[]>([]);
+
 $effect(() => {
-  fetch("/api/notes?limit=8")
+  fetch("/api/ext/notes?limit=8")
     .then((r) => (r.ok ? r.json() : []))
     .then((notes: ApiNote[]) => {
       recentNotes = notes;
@@ -54,6 +68,29 @@ $effect(() => {
     .catch(() => {
       recentNotes = [];
     });
+});
+
+// Fetch extension feed items
+$effect(() => {
+  const extensions = storeData.extensions;
+  const items: ExtFeedItem[] = [];
+  const promises = extensions
+    .filter((ext) => ext.feedSource)
+    .map(async (ext) => {
+      try {
+        const res = await fetch(ext.feedSource!.endpoint);
+        if (!res.ok) return;
+        const feedItems = await res.json();
+        for (const item of feedItems) {
+          items.push({ ...item, extensionId: ext.id });
+        }
+      } catch {
+        // skip
+      }
+    });
+  Promise.all(promises).then(() => {
+    extensionFeedItems = items;
+  });
 });
 
 // Get one message card per recent conversation (top 6)
@@ -93,7 +130,8 @@ $effect(() => {
 type FeedItem =
   | { kind: "note"; note: ApiNote; date: string }
   | { kind: "page"; site: string; file: string; modified: string; date: string }
-  | { kind: "message"; conv: ConversationWithDetails; date: string };
+  | { kind: "message"; conv: ConversationWithDetails; date: string }
+  | { kind: "extension"; item: ExtFeedItem; date: string };
 
 let feedItems = $derived.by(() => {
   const items: FeedItem[] = [];
@@ -113,6 +151,9 @@ let feedItems = $derived.by(() => {
   }
   for (const conv of topConversations) {
     items.push({ kind: "message", conv, date: conv.updated_at });
+  }
+  for (const extItem of extensionFeedItems) {
+    items.push({ kind: "extension", item: extItem, date: extItem.date });
   }
   items.sort((a, b) => {
     const aTime = new Date(normalizeTimestamp(a.date)).getTime();
@@ -151,7 +192,7 @@ function extractTextContent(content: ContentBlock[]): string {
     <div class="empty-hint">Nothing here yet.</div>
   {:else}
     <div class="feed-grid">
-      {#each feedItems as item, idx (item.kind === "note" ? `note-${item.note.slug}` : item.kind === "page" ? `page-${item.site}-${item.file}` : `msg-${item.conv.id}`)}
+      {#each feedItems as item, idx (item.kind === "note" ? `note-${item.note.slug}` : item.kind === "page" ? `page-${item.site}-${item.file}` : item.kind === "extension" ? `ext-${item.item.id}` : `msg-${item.conv.id}`)}
         {#if item.kind === "note"}
           <div class="feed-item">
             <NoteCard
@@ -173,6 +214,16 @@ function extractTextContent(content: ContentBlock[]): string {
               label="{item.site}/{item.file}"
               sublabel={formatRelativeTime(item.modified)}
               onclick={() => onSelectPage(item.site, item.file)}
+            />
+          </div>
+        {:else if item.kind === "extension"}
+          <div class="feed-item">
+            <ExtensionFeedCard
+              title={item.item.title}
+              url={item.item.url}
+              date={item.item.date}
+              author={item.item.author}
+              bodyHtml={item.item.bodyHtml}
             />
           </div>
         {:else}

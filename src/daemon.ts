@@ -13,6 +13,11 @@ import { initSleepManager } from "./lib/daemon/sleep-manager.js";
 import { initTokenBudget } from "./lib/daemon/token-budget.js";
 import { initDeliveryManager } from "./lib/delivery/delivery-manager.js";
 import { stopAll as stopAllActivityTrackers } from "./lib/events/mind-activity-tracker.js";
+import {
+  loadAllExtensions,
+  notifyExtensionsDaemonStart,
+  notifyExtensionsDaemonStop,
+} from "./lib/extensions.js";
 import { cleanExpiredLogs } from "./lib/history-cleanup.js";
 import log from "./lib/logger.js";
 import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
@@ -36,7 +41,8 @@ import { ensureSharedRepo } from "./lib/shared.js";
 import { syncBuiltinSkills } from "./lib/skills.js";
 import { ensureSystemChannel } from "./lib/system-channel.js";
 import { initWebhook } from "./lib/webhook.js";
-import { cleanExpiredSessions } from "./web/middleware/auth.js";
+import app from "./web/app.js";
+import { authMiddleware, cleanExpiredSessions } from "./web/middleware/auth.js";
 import { startServer } from "./web/server.js";
 
 if (!process.env.VOLUTE_HOME) {
@@ -107,6 +113,14 @@ export async function startDaemon(opts: {
     await syncBuiltinSkills();
   } catch (err) {
     log.error("failed to sync built-in skills", log.errorData(err));
+  }
+
+  // Load extensions (non-fatal)
+  try {
+    await loadAllExtensions(app, authMiddleware);
+    notifyExtensionsDaemonStart();
+  } catch (err) {
+    log.error("failed to load extensions", log.errorData(err));
   }
 
   // Ensure #system channel exists (non-fatal)
@@ -300,6 +314,7 @@ export async function startDaemon(opts: {
       }
     };
     try {
+      safe("notifyExtensionsDaemonStop", notifyExtensionsDaemonStop);
       safe("stopAllWatchers", stopAllWatchers);
       safe("stopAllActivityTrackers", stopAllActivityTrackers);
       safe("unsubscribeWebhook", unsubscribeWebhook);

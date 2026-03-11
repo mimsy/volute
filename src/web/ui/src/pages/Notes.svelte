@@ -53,7 +53,7 @@ function mapNote(n: ApiNote): Note {
 
 async function loadNotes() {
   try {
-    const url = author ? `/api/notes?author=${encodeURIComponent(author)}` : "/api/notes";
+    const url = author ? `/api/ext/notes?author=${encodeURIComponent(author)}` : "/api/ext/notes";
     const res = await fetch(url);
     if (!res.ok) throw new Error("Failed to load notes");
     const raw: ApiNote[] = await res.json();
@@ -71,7 +71,7 @@ async function submitNote(e: Event) {
   if (!title.trim() || !content.trim() || submitting) return;
   submitting = true;
   try {
-    const res = await fetch("/api/notes", {
+    const res = await fetch("/api/ext/notes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: title.trim(), content: content.trim() }),

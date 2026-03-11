@@ -1,0 +1,87 @@
+import type { Hono } from "hono";
+
+export type Database = {
+  exec(sql: string): void;
+  prepare(sql: string): {
+    run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint };
+    get(...params: unknown[]): unknown;
+    all(...params: unknown[]): unknown[];
+  };
+  close(): void;
+};
+
+export type ActivityEvent = {
+  type: string;
+  [key: string]: unknown;
+};
+
+export type User = {
+  id: number;
+  username: string;
+  role: string;
+  user_type: string;
+  display_name: string | null;
+  description: string | null;
+  avatar: string | null;
+};
+
+export type ExtensionContext = {
+  db: Database;
+  authMiddleware: unknown;
+  resolveUser: (c: unknown) => User | null;
+  getUser: (id: number) => Promise<User | null>;
+  getUserByUsername: (username: string) => Promise<User | null>;
+  publishActivity: (event: ActivityEvent) => void;
+  getMindDir: (name: string) => string | null;
+  dataDir: string;
+};
+
+export type SystemSection = {
+  id: string;
+  label: string;
+  urlPatterns?: string[];
+};
+
+export type MindSection = {
+  id: string;
+  label: string;
+  defaultPath?: string;
+};
+
+export type FeedSource = {
+  endpoint: string;
+  kind?: string;
+};
+
+export type ExtensionFeedItem = {
+  id: string;
+  title: string;
+  url: string;
+  date: string;
+  author?: string;
+  icon?: string;
+  color?: string;
+  bodyHtml: string;
+};
+
+export type ExtensionManifest = {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  routes: (ctx: ExtensionContext) => Hono;
+  publicRoutes?: (ctx: ExtensionContext) => Hono;
+  ui?: {
+    assetsDir?: string;
+    systemSections?: SystemSection[];
+    mindSections?: MindSection[];
+    feedSource?: FeedSource;
+  };
+  skillDir?: string;
+  standardSkill?: boolean;
+  initDb?: (db: Database) => void;
+  onDaemonStart?: () => void;
+  onDaemonStop?: () => void;
+  onMindStart?: (mindName: string) => void;
+  onMindStop?: (mindName: string) => void;
+};

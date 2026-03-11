@@ -3,7 +3,7 @@ import { parseArgs } from "../lib/parse-args.js";
 import { readStdin } from "../lib/read-stdin.js";
 
 function apiUrl(path: string): string {
-  return `/api/notes${path}`;
+  return `/api/ext/notes${path}`;
 }
 
 async function list(args: string[]) {

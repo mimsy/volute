@@ -23,14 +23,20 @@ const VALID_SKILL_ID = /^[a-zA-Z0-9_-]+$/;
 export const SEED_SKILLS = ["orientation", "memory"];
 
 /** Skills installed for fully sprouted minds */
-export const STANDARD_SKILLS = [
-  "volute-mind",
-  "memory",
-  "sessions",
-  "notes",
-  "dreaming",
-  "shared-files",
-];
+export const STANDARD_SKILLS = ["volute-mind", "memory", "sessions", "dreaming", "shared-files"];
+
+/** Returns STANDARD_SKILLS plus any extension-contributed standard skills */
+export function getStandardSkillsWithExtensions(): string[] {
+  try {
+    // Dynamic import to avoid circular dependency — extensions module may not be loaded yet
+    const { getExtensionStandardSkills } = require("./extensions.js") as {
+      getExtensionStandardSkills: () => string[];
+    };
+    return [...STANDARD_SKILLS, ...getExtensionStandardSkills()];
+  } catch {
+    return [...STANDARD_SKILLS];
+  }
+}
 
 function validateSkillId(id: string): void {
   if (!id || !VALID_SKILL_ID.test(id)) {

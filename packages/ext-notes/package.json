@@ -1,0 +1,17 @@
+{
+  "name": "@volute/ext-notes",
+  "version": "0.1.0",
+  "description": "Notes extension for Volute",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@volute/extension-sdk": "*"
+  },
+  "peerDependencies": {
+    "hono": "^4.0.0"
+  }
+}

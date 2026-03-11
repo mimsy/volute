@@ -146,6 +146,10 @@ let contextLabel = $derived.by(() => {
       <div class="frame-content padded">
         <SiteView site={selectedSite} {onSelectPage} />
       </div>
+    {:else if selection.kind === "extension"}
+      <div class="frame-content">
+        <iframe src="/ext/{selection.extensionId}/{selection.path}" class="page-iframe" title="Extension"></iframe>
+      </div>
     {:else if selection.kind === "notes"}
       <div class="breadcrumbs">
         <span class="breadcrumb-current">Notes</span>

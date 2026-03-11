@@ -4,13 +4,14 @@ export type Selection =
       tab: "system";
       kind: "mind";
       name: string;
-      section?: "info" | "notes" | "pages" | "files" | "settings";
+      section?: string;
     }
   | { tab: "system"; kind: "notes" }
   | { tab: "system"; kind: "note"; author: string; slug: string }
   | { tab: "system"; kind: "pages" }
   | { tab: "system"; kind: "site"; name: string }
   | { tab: "system"; kind: "page"; mind: string; path: string }
+  | { tab: "system"; kind: "extension"; extensionId: string; path: string }
   | { tab: "chat"; kind: "home" }
   | { tab: "chat"; kind: "conversation"; conversationId?: string; mindName?: string };
 
@@ -25,6 +26,11 @@ export function parseSelection(): Selection {
 
   const noteMatch = path.match(/^\/notes\/([^/]+)\/(.+)$/);
   if (noteMatch) return { tab: "system", kind: "note", author: noteMatch[1], slug: noteMatch[2] };
+
+  // Extension routes (/ext/<id>/... → extension iframe)
+  const extMatch = path.match(/^\/ext\/([^/]+)(?:\/(.*))?$/);
+  if (extMatch)
+    return { tab: "system", kind: "extension", extensionId: extMatch[1], path: extMatch[2] ?? "" };
 
   // Mind detail pages
   const mindSectionMatch = path.match(/^\/minds\/([^/]+)\/(.+)$/);
@@ -101,6 +107,10 @@ export function selectionToPath(selection: Selection): string {
       return `/pages/${selection.name}`;
     case "page":
       return `/pages/${selection.mind}/${selection.path}`;
+    case "extension":
+      return selection.path
+        ? `/ext/${selection.extensionId}/${selection.path}`
+        : `/ext/${selection.extensionId}`;
     case "conversation":
       if (selection.conversationId) return `/chat/${selection.conversationId}`;
       if (selection.mindName) return `/chat?mind=${selection.mindName}`;

@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { Mind, Site } from "@volute/api";
+import type { ExtensionInfo } from "../lib/extensions";
 import { mindDotColor } from "../lib/format";
 import type { Selection } from "../lib/navigate";
 import { activeMinds } from "../lib/stores.svelte";
@@ -7,22 +8,26 @@ import { activeMinds } from "../lib/stores.svelte";
 let {
   minds,
   sites,
+  extensions,
   selection,
   onHome,
   onSelectMind,
   onSelectMindSection,
   onSelectNotes,
   onSelectPages,
+  onSelectExtension,
   onSeed,
 }: {
   minds: Mind[];
   sites: Site[];
+  extensions: ExtensionInfo[];
   selection: Selection;
   onHome: () => void;
   onSelectMind: (name: string) => void;
   onSelectMindSection: (name: string, section: string) => void;
   onSelectNotes: () => void;
   onSelectPages: () => void;
+  onSelectExtension: (extensionId: string) => void;
   onSeed: () => void;
 } = $props();
 
@@ -43,13 +48,22 @@ let activeMindSection = $derived(
   selection.tab === "system" && selection.kind === "mind" ? (selection.section ?? "info") : null,
 );
 
-const MIND_SECTIONS = [
+const CORE_MIND_SECTIONS = [
   { key: "info", label: "Info" },
   { key: "notes", label: "Notes" },
   { key: "pages", label: "Pages" },
   { key: "files", label: "Files" },
   { key: "settings", label: "Settings" },
 ] as const;
+
+let allMindSections = $derived([
+  ...CORE_MIND_SECTIONS,
+  ...extensions
+    .filter((e) => e.id !== "notes" && e.id !== "pages")
+    .flatMap((ext) =>
+      (ext.mindSections ?? []).map((s) => ({ key: `ext:${ext.id}:${s.id}`, label: s.label })),
+    ),
+]);
 </script>
 
 <div class="sidebar-inner">
@@ -74,6 +88,17 @@ const MIND_SECTIONS = [
           class:active={selection.tab === "system" && (selection.kind === "pages" || selection.kind === "site" || selection.kind === "page")}
           onclick={onSelectPages}
         >Pages</button>
+        {#each extensions.filter((e) => e.id !== "notes" && e.id !== "pages") as ext}
+          {#if ext.systemSections}
+            {#each ext.systemSections as section}
+              <button
+                class="sub-item"
+                class:active={selection.tab === "system" && selection.kind === "extension" && selection.extensionId === ext.id}
+                onclick={() => onSelectExtension(ext.id)}
+              >{section.label}</button>
+            {/each}
+          {/if}
+        {/each}
       </div>
     </div>
 
@@ -100,7 +125,7 @@ const MIND_SECTIONS = [
             </button>
             {#if activeMindName === mind.name}
               <div class="mind-sub-items">
-                {#each MIND_SECTIONS as sec}
+                {#each allMindSections as sec}
                   <button
                     class="mind-sub-item"
                     class:active={activeMindSection === sec.key}
