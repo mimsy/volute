@@ -1,3 +1,5 @@
+import type { ExtensionInfo } from "./extensions";
+
 export type Selection =
   | { tab: "system"; kind: "home" }
   | {
@@ -13,7 +15,66 @@ export type Selection =
 
 export type Tab = Selection["tab"];
 
-export function parseSelection(): Selection {
+/**
+ * Convert a urlPattern like "/notes/:author/:slug" to a regex.
+ * Named params (`:param`) match one path segment; `*` matches the rest.
+ */
+function patternToRegex(pattern: string): RegExp {
+  const parts = pattern.split("/").filter(Boolean);
+  const regexParts = parts.map((p) => {
+    if (p === "*") return "(.*)";
+    if (p.startsWith(":")) return "([^/]+)";
+    return p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  });
+  return new RegExp(`^/${regexParts.join("/")}(?:/(.*))?$`);
+}
+
+/**
+ * Try to match a path against extension system section urlPatterns.
+ * Returns the extensionId and captured subpath, or null.
+ */
+function matchExtensionUrl(
+  path: string,
+  extensions: ExtensionInfo[],
+): { extensionId: string; path: string } | null {
+  for (const ext of extensions) {
+    if (!ext.systemSections) continue;
+    for (const section of ext.systemSections) {
+      if (!section.urlPatterns) continue;
+      for (const pattern of section.urlPatterns) {
+        const regex = patternToRegex(pattern);
+        const match = path.match(regex);
+        if (match) {
+          // Reconstruct the subpath from everything after the first segment
+          const firstSegment = pattern.split("/").filter(Boolean)[0];
+          const subpath = path.replace(`/${firstSegment}`, "").replace(/^\//, "");
+          return { extensionId: ext.id, path: subpath };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Check if a mind section ID corresponds to an extension's mindSection.
+ */
+function resolveExtensionMindSection(
+  sectionId: string,
+  extensions: ExtensionInfo[],
+): string | null {
+  for (const ext of extensions) {
+    if (!ext.mindSections) continue;
+    for (const ms of ext.mindSections) {
+      if (ms.id === sectionId) {
+        return `ext:${ext.id}:${ms.id}`;
+      }
+    }
+  }
+  return null;
+}
+
+export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
   const path = window.location.pathname;
   const search = new URLSearchParams(window.location.search);
 
@@ -24,82 +85,38 @@ export function parseSelection(): Selection {
   if (settingsSectionMatch)
     return { tab: "system", kind: "settings", section: settingsSectionMatch[1] };
 
-  // Notes → extension
-  if (path === "/notes")
-    return { tab: "system", kind: "extension", extensionId: "notes", path: "" };
-
-  const noteMatch = path.match(/^\/notes\/([^/]+)\/(.+)$/);
-  if (noteMatch)
-    return {
-      tab: "system",
-      kind: "extension",
-      extensionId: "notes",
-      path: `${noteMatch[1]}/${noteMatch[2]}`,
-    };
-
   // Extension routes (/ext/<id>/... → extension iframe)
   const extMatch = path.match(/^\/ext\/([^/]+)(?:\/(.*))?$/);
   if (extMatch)
     return { tab: "system", kind: "extension", extensionId: extMatch[1], path: extMatch[2] ?? "" };
 
-  // Mind-scoped note: /minds/:name/notes/:slug → mind page with notes section
-  const mindNoteMatch = path.match(/^\/minds\/([^/]+)\/notes\/(.+)$/);
-  if (mindNoteMatch)
-    return { tab: "system", kind: "mind", name: mindNoteMatch[1], section: "ext:notes:notes" };
+  // Mind detail pages — must be checked before extension URL patterns
+  // because /minds/:name/:section could overlap
+  const mindSubpathMatch = path.match(/^\/minds\/([^/]+)\/([^/]+)\/(.+)$/);
+  if (mindSubpathMatch) {
+    const [, name, sectionId] = mindSubpathMatch;
+    const extSection = resolveExtensionMindSection(sectionId, extensions);
+    return { tab: "system", kind: "mind", name, section: extSection ?? sectionId };
+  }
 
-  // Mind-scoped page: /minds/:name/pages/:path → mind page with pages section
-  const mindPageMatch = path.match(/^\/minds\/([^/]+)\/pages\/(.+)$/);
-  if (mindPageMatch)
-    return { tab: "system", kind: "mind", name: mindPageMatch[1], section: "ext:pages:pages" };
-
-  // Mind detail pages
   const mindSectionMatch = path.match(/^\/minds\/([^/]+)\/([^/]+)$/);
   if (mindSectionMatch) {
-    const rawSection = mindSectionMatch[2];
-    // Map legacy "notes" and "pages" sections to extension sections
-    const section =
-      rawSection === "notes"
-        ? "ext:notes:notes"
-        : rawSection === "pages"
-          ? "ext:pages:pages"
-          : rawSection;
-    return { tab: "system", kind: "mind", name: mindSectionMatch[1], section };
+    const [, name, sectionId] = mindSectionMatch;
+    const extSection = resolveExtensionMindSection(sectionId, extensions);
+    return { tab: "system", kind: "mind", name, section: extSection ?? sectionId };
   }
 
   const mindMatch = path.match(/^\/minds\/([^/]+)$/);
   if (mindMatch) return { tab: "system", kind: "mind", name: mindMatch[1] };
 
-  // Pages → extension
-  if (path === "/pages")
-    return { tab: "system", kind: "extension", extensionId: "pages", path: "" };
-
-  const newSiteMatch = path.match(/^\/pages\/([^/]+)$/);
-  if (newSiteMatch)
-    return { tab: "system", kind: "extension", extensionId: "pages", path: newSiteMatch[1] };
-
-  const newPageMatch = path.match(/^\/pages\/([^/]+)\/(.+)$/);
-  if (newPageMatch)
+  // Dynamic extension URL pattern matching (e.g. /notes, /pages/:site)
+  const extUrlMatch = matchExtensionUrl(path, extensions);
+  if (extUrlMatch)
     return {
       tab: "system",
       kind: "extension",
-      extensionId: "pages",
-      path: `${newPageMatch[1]}/${newPageMatch[2]}`,
-    };
-
-  // Legacy /page URLs → same as /pages
-  if (path === "/page") return { tab: "system", kind: "extension", extensionId: "pages", path: "" };
-
-  const legacySiteMatch = path.match(/^\/page\/([^/]+)$/);
-  if (legacySiteMatch)
-    return { tab: "system", kind: "extension", extensionId: "pages", path: legacySiteMatch[1] };
-
-  const legacyPageMatch = path.match(/^\/page\/([^/]+)\/(.+)$/);
-  if (legacyPageMatch)
-    return {
-      tab: "system",
-      kind: "extension",
-      extensionId: "pages",
-      path: `${legacyPageMatch[1]}/${legacyPageMatch[2]}`,
+      extensionId: extUrlMatch.extensionId,
+      path: extUrlMatch.path,
     };
 
   // Chat tab routes

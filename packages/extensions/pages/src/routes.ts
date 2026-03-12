@@ -34,7 +34,7 @@ async function getPagesWatcher() {
   return _pagesWatcher;
 }
 
-export function createRoutes(_ctx: ExtensionContext): Hono {
+export function createRoutes(ctx: ExtensionContext): Hono {
   return new Hono()
     .get("/", async (c) => {
       const pw = await getPagesWatcher();
@@ -51,23 +51,71 @@ export function createRoutes(_ctx: ExtensionContext): Hono {
         recentPages.slice(0, limit).map((p: any) => ({
           id: `page-${p.mind}-${p.file}`,
           title: `${p.mind}/${p.file}`,
-          url: `/pages/${p.mind}/${p.file}`,
+          url: `/ext/pages/public/${p.mind}/${p.file}`,
           date: p.modified,
           author: p.mind,
           bodyHtml: `<p>Page updated</p>`,
         })),
       );
+    })
+    .put("/publish/:name", async (c) => {
+      const config = ctx.getSystemsConfig();
+      if (!config) return c.json({ error: "Not connected to volute.systems" }, 400);
+      const name = c.req.param("name");
+      const body = await c.req.text();
+      try {
+        const res = await fetch(`${config.apiUrl}/api/pages/publish/${name}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${config.apiKey}`,
+          },
+          body,
+        });
+        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        return c.json(data as Record<string, unknown>, res.status as any);
+      } catch (err) {
+        return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
+      }
+    })
+    .get("/status/:name", async (c) => {
+      const config = ctx.getSystemsConfig();
+      if (!config) return c.json({ error: "Not connected to volute.systems" }, 400);
+      const name = c.req.param("name");
+      try {
+        const res = await fetch(`${config.apiUrl}/api/pages/status/${name}`, {
+          headers: { Authorization: `Bearer ${config.apiKey}` },
+        });
+        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        return c.json(data as Record<string, unknown>, res.status as any);
+      } catch (err) {
+        return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
+      }
     });
+}
+
+// Lazy-loaded reference to voluteHome for system pages
+let _voluteHome: (() => string) | null = null;
+async function getVoluteHome(): Promise<string> {
+  if (_voluteHome) return _voluteHome();
+  const mod = await import("../../../../src/lib/registry.js");
+  _voluteHome = mod.voluteHome;
+  return _voluteHome();
 }
 
 export function createPublicRoutes(ctx: ExtensionContext): Hono {
   return new Hono().get("/:name/*", async (c) => {
     const name = c.req.param("name");
 
-    const mindDirPath = ctx.getMindDir(name);
-    if (!mindDirPath) return c.text("Not found", 404);
-
-    const pagesRoot = resolve(mindDirPath, "home", "public", "pages");
+    let pagesRoot: string;
+    if (name === "_system") {
+      const home = await getVoluteHome();
+      pagesRoot = resolve(home, "shared", "pages");
+    } else {
+      const mindDirPath = ctx.getMindDir(name);
+      if (!mindDirPath) return c.text("Not found", 404);
+      pagesRoot = resolve(mindDirPath, "home", "public", "pages");
+    }
     const prefix = `/public/${name}`;
     const idx = c.req.path.indexOf(prefix);
     const wildcard = idx >= 0 ? c.req.path.slice(idx + prefix.length) : "/";

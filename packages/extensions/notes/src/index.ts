@@ -5,6 +5,7 @@ import { initDb } from "./db.js";
 import { createRoutes } from "./routes.js";
 
 const assetsDir = resolve(import.meta.dirname, "../dist/ui");
+const skillDir = resolve(import.meta.dirname, "../skill");
 
 export default createExtension({
   id: "notes",
@@ -13,9 +14,13 @@ export default createExtension({
   description: "Public notes for sharing thoughts, reflections, and ideas",
   routes: (ctx) => createRoutes(ctx),
   initDb,
+  skillDir,
+  standardSkill: true,
   ui: {
     assetsDir,
-    systemSections: [{ id: "notes", label: "Notes" }],
+    systemSections: [
+      { id: "notes", label: "Notes", urlPatterns: ["/notes", "/notes/:author/:slug"] },
+    ],
     mindSections: [{ id: "notes", label: "Notes" }],
     feedSource: {
       endpoint: "/api/ext/notes/feed",

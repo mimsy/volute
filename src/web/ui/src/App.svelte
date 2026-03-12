@@ -47,7 +47,7 @@ import {
 } from "./lib/stores.svelte";
 
 // Selection state
-let selection = $state<Selection>(parseSelection());
+let selection = $state<Selection>(parseSelection(data.extensions));
 
 // Tab context memory: remember last selection per tab
 let lastSystemSelection = $state<Selection>({ tab: "system", kind: "home" });
@@ -262,7 +262,7 @@ let fromPopstate = $state(false);
 $effect(() => {
   const handler = () => {
     fromPopstate = true;
-    selection = parseSelection();
+    selection = parseSelection(data.extensions);
   };
   window.addEventListener("popstate", handler);
   // Intercept internal link clicks for SPA navigation

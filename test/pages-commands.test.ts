@@ -1,20 +1,11 @@
 import assert from "node:assert/strict";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  statSync,
-  symlinkSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { after, afterEach, before, describe, it } from "node:test";
-import { collectFiles } from "../src/commands/pages/publish.js";
 import { approveUser, createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
+import { loadAllExtensions } from "../src/lib/extensions.js";
 import { addMind, removeMind, voluteHome, voluteSystemDir } from "../src/lib/registry.js";
 import { sessions, users } from "../src/lib/schema.js";
 import {
@@ -22,7 +13,7 @@ import {
   readSystemsConfig,
   writeSystemsConfig,
 } from "../src/lib/systems-config.js";
-import { createSession } from "../src/web/middleware/auth.js";
+import { authMiddleware, createSession } from "../src/web/middleware/auth.js";
 
 function configPath() {
   return resolve(voluteSystemDir(), "systems.json");
@@ -139,62 +130,6 @@ describe("systems-config", () => {
 });
 
 // ---------------------------------------------------------------------------
-// collectFiles unit tests
-// ---------------------------------------------------------------------------
-
-describe("collectFiles", () => {
-  it("collects files recursively with base64 encoding", () => {
-    const tmp = mkdtempSync(resolve(tmpdir(), "volute-pages-test-"));
-    writeFileSync(resolve(tmp, "index.html"), "<h1>Hello</h1>");
-    mkdirSync(resolve(tmp, "css"));
-    writeFileSync(resolve(tmp, "css", "style.css"), "body { color: red; }");
-
-    const files = collectFiles(tmp);
-    assert.equal(Object.keys(files).length, 2);
-    assert.ok("index.html" in files);
-    assert.ok("css/style.css" in files);
-    assert.equal(Buffer.from(files["index.html"], "base64").toString(), "<h1>Hello</h1>");
-    assert.equal(Buffer.from(files["css/style.css"], "base64").toString(), "body { color: red; }");
-  });
-
-  it("returns empty object for empty directory", () => {
-    const tmp = mkdtempSync(resolve(tmpdir(), "volute-pages-empty-"));
-    const files = collectFiles(tmp);
-    assert.deepEqual(files, {});
-  });
-
-  it("handles deeply nested directories", () => {
-    const tmp = mkdtempSync(resolve(tmpdir(), "volute-pages-deep-"));
-    mkdirSync(resolve(tmp, "a", "b", "c"), { recursive: true });
-    writeFileSync(resolve(tmp, "a", "b", "c", "deep.txt"), "deep content");
-
-    const files = collectFiles(tmp);
-    assert.equal(Object.keys(files).length, 1);
-    assert.ok("a/b/c/deep.txt" in files);
-  });
-
-  it("handles binary files", () => {
-    const tmp = mkdtempSync(resolve(tmpdir(), "volute-pages-bin-"));
-    const binary = Buffer.from([0x00, 0xff, 0x89, 0x50, 0x4e, 0x47]);
-    writeFileSync(resolve(tmp, "image.png"), binary);
-
-    const files = collectFiles(tmp);
-    assert.deepEqual(Buffer.from(files["image.png"], "base64"), binary);
-  });
-
-  it("skips symlinks", () => {
-    const tmp = mkdtempSync(resolve(tmpdir(), "volute-pages-symlink-"));
-    writeFileSync(resolve(tmp, "real.txt"), "real content");
-    symlinkSync(resolve(tmp, "real.txt"), resolve(tmp, "link.txt"));
-
-    const files = collectFiles(tmp);
-    assert.equal(Object.keys(files).length, 1);
-    assert.ok("real.txt" in files);
-    assert.ok(!("link.txt" in files));
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Daemon API tests for systems management
 // ---------------------------------------------------------------------------
 
@@ -249,6 +184,10 @@ describe("system API routes", () => {
     process.env.VOLUTE_SYSTEMS_URL = baseUrl;
 
     addMind(MIND_NAME, 14900);
+
+    // Load extensions into the app so /api/ext/pages/* routes are available
+    const { default: app } = await import("../src/web/app.js");
+    await loadAllExtensions(app, authMiddleware);
   });
 
   after(async () => {
@@ -404,10 +343,10 @@ describe("system API routes", () => {
   });
 
   // -----------------------------------------------------------------------
-  // pages publish proxy
+  // pages publish via extension
   // -----------------------------------------------------------------------
   describe("pages publish", () => {
-    it("PUT /api/system/pages/publish proxies to volute.systems", async () => {
+    it("PUT /api/ext/pages/publish proxies to volute.systems", async () => {
       writeSystemsConfig({ apiKey: "vp_pub", system: "my-system", apiUrl: baseUrl });
 
       let receivedAuth: string | undefined;
@@ -424,7 +363,7 @@ describe("system API routes", () => {
 
       const cookie = await setupAuth();
       const { default: app } = await import("../src/web/app.js");
-      const res = await app.request(`http://localhost/api/system/pages/publish/${MIND_NAME}`, {
+      const res = await app.request(`http://localhost/api/ext/pages/publish/${MIND_NAME}`, {
         method: "PUT",
         headers: adminHeaders(cookie),
         body: JSON.stringify({ files: { "index.html": "PGgxPkhlbGxvPC9oMT4=" } }),
@@ -436,10 +375,10 @@ describe("system API routes", () => {
       assert.equal(data.fileCount, 1);
     });
 
-    it("PUT /api/system/pages/publish returns 400 when not configured", async () => {
+    it("PUT /api/ext/pages/publish returns 400 when not configured", async () => {
       const cookie = await setupAuth();
       const { default: app } = await import("../src/web/app.js");
-      const res = await app.request(`http://localhost/api/system/pages/publish/${MIND_NAME}`, {
+      const res = await app.request(`http://localhost/api/ext/pages/publish/${MIND_NAME}`, {
         method: "PUT",
         headers: adminHeaders(cookie),
         body: JSON.stringify({ files: {} }),
@@ -449,10 +388,10 @@ describe("system API routes", () => {
   });
 
   // -----------------------------------------------------------------------
-  // pages status proxy
+  // pages status via extension
   // -----------------------------------------------------------------------
   describe("pages status", () => {
-    it("GET /api/system/pages/status proxies to volute.systems", async () => {
+    it("GET /api/ext/pages/status proxies to volute.systems", async () => {
       writeSystemsConfig({ apiKey: "vp_stat", system: "my-system", apiUrl: baseUrl });
 
       handler = (req, res) => {
@@ -471,7 +410,7 @@ describe("system API routes", () => {
 
       const cookie = await setupAuth();
       const { default: app } = await import("../src/web/app.js");
-      const res = await app.request(`/api/system/pages/status/${MIND_NAME}`, {
+      const res = await app.request(`/api/ext/pages/status/${MIND_NAME}`, {
         headers: { Cookie: `volute_session=${cookie}` },
       });
 
@@ -480,10 +419,10 @@ describe("system API routes", () => {
       assert.equal(data.fileCount, 5);
     });
 
-    it("GET /api/system/pages/status returns 400 when not configured", async () => {
+    it("GET /api/ext/pages/status returns 400 when not configured", async () => {
       const cookie = await setupAuth();
       const { default: app } = await import("../src/web/app.js");
-      const res = await app.request(`/api/system/pages/status/${MIND_NAME}`, {
+      const res = await app.request(`/api/ext/pages/status/${MIND_NAME}`, {
         headers: { Cookie: `volute_session=${cookie}` },
       });
       assert.equal(res.status, 400);

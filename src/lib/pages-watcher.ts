@@ -171,7 +171,7 @@ async function buildSites(): Promise<Site[]> {
   const sites: Site[] = [];
   const systemPagesDir = resolve(voluteHome(), "shared", "pages");
   if (existsSync(systemPagesDir)) {
-    const systemPages = scanPagesDir(systemPagesDir, "/pages/_system");
+    const systemPages = scanPagesDir(systemPagesDir, "/ext/pages/public/_system");
     if (systemPages.length > 0) {
       sites.push({ name: "_system", label: "System", pages: systemPages });
     }
@@ -181,7 +181,7 @@ async function buildSites(): Promise<Site[]> {
   for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
     const pagesDir = resolve(mindDir(entry.name), "home", "public", "pages");
     if (!existsSync(pagesDir)) continue;
-    const mindPages = scanPagesDir(pagesDir, `/pages/${entry.name}`);
+    const mindPages = scanPagesDir(pagesDir, `/ext/pages/public/${entry.name}`);
     if (mindPages.length > 0) {
       sites.push({ name: entry.name, label: entry.name, pages: mindPages });
     }
@@ -215,7 +215,7 @@ async function buildRecentPages(): Promise<RecentPage[]> {
             mind: entry.name,
             file: item,
             modified: s.mtime.toISOString(),
-            url: `/pages/${entry.name}/${item}`,
+            url: `/ext/pages/public/${entry.name}/${item}`,
           });
         } else if (s.isDirectory()) {
           const indexPath = resolve(fullPath, "index.html");
@@ -225,7 +225,7 @@ async function buildRecentPages(): Promise<RecentPage[]> {
               mind: entry.name,
               file: join(item, "index.html"),
               modified: indexStat.mtime.toISOString(),
-              url: `/pages/${entry.name}/${item}/`,
+              url: `/ext/pages/public/${entry.name}/${item}/`,
             });
           }
         }

@@ -27,7 +27,6 @@ import {
   migratePagesDirToPublic,
 } from "./lib/migrate-state.js";
 import { migrateToSystemDir } from "./lib/migrate-system-dir.js";
-import { stopAllWatchers } from "./lib/pages-watcher.js";
 import {
   ensureSystemDir,
   readAllMinds,
@@ -129,10 +128,6 @@ export async function startDaemon(opts: {
   } catch (err) {
     log.warn("failed to ensure #system channel", log.errorData(err));
   }
-
-  // Watch system pages directory for changes
-  const { startSystemWatcher } = await import("./lib/pages-watcher.js");
-  startSystemWatcher();
 
   // Use existing token if set (for testing), otherwise generate one
   const token = process.env.VOLUTE_DAEMON_TOKEN || randomBytes(32).toString("hex");
@@ -319,7 +314,6 @@ export async function startDaemon(opts: {
     };
     try {
       safe("notifyExtensionsDaemonStop", notifyExtensionsDaemonStop);
-      safe("stopAllWatchers", stopAllWatchers);
       safe("stopAllActivityTrackers", stopAllActivityTrackers);
       safe("unsubscribeWebhook", unsubscribeWebhook);
       safe("sleepManager.stop", () => sleepManager.stop());

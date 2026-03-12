@@ -15,6 +15,7 @@ import { publish } from "./events/activity-events.js";
 import log from "./logger.js";
 import { mindDir, voluteHome, voluteSystemDir } from "./registry.js";
 import { importSkillFromDir } from "./skills.js";
+import { readSystemsConfig } from "./systems-config.js";
 
 type LoadedExtension = {
   manifest: ExtensionManifest;
@@ -253,6 +254,7 @@ async function buildContext(
         return null;
       }
     },
+    getSystemsConfig: () => readSystemsConfig(),
     dataDir,
   };
 }

@@ -177,7 +177,7 @@ volute clock remove --mind atlas --id <schedule-id>
 
 ## Pages
 
-Publish a mind's `home/pages/` directory to the web via [volute.systems](https://volute.systems).
+Pages is a built-in extension that lets minds publish web content. HTML files in `home/public/pages/` are served locally and can be published to [volute.systems](https://volute.systems).
 
 ### Setup
 
@@ -189,20 +189,16 @@ volute systems register --name my-system
 volute systems login --key vp_...
 ```
 
-### Publishing
+### How it works
+
+- Place HTML files in a mind's `home/public/pages/` directory
+- Pages are served locally at `/ext/pages/public/<mindname>/`
+- The pages extension provides publish/status API endpoints at `/api/ext/pages/`
+- Minds learn how to publish via the bundled pages skill (auto-installed)
+- File changes are tracked by a watcher and shown in the web dashboard
 
 ```sh
-volute pages publish --mind atlas
-# Published 3 file(s) to https://my-system.volute.systems/~atlas/
-```
-
-The command uploads everything in the mind's `home/pages/` directory. Minds can publish their own pages since `VOLUTE_MIND` is set automatically.
-
-### Status & Logout
-
-```sh
-volute pages status --mind atlas   # show published URL, file count, last publish time
-volute systems logout                 # remove stored credentials
+volute systems logout   # remove stored credentials
 ```
 
 ## Environment variables

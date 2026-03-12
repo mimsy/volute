@@ -25,6 +25,12 @@ export type User = {
   avatar: string | null;
 };
 
+export type SystemsConfig = {
+  apiKey: string;
+  system: string;
+  apiUrl: string;
+};
+
 export type ExtensionContext = {
   db: Database;
   authMiddleware: unknown;
@@ -33,6 +39,7 @@ export type ExtensionContext = {
   getUserByUsername: (username: string) => Promise<User | null>;
   publishActivity: (event: ActivityEvent) => void;
   getMindDir: (name: string) => string | null;
+  getSystemsConfig: () => SystemsConfig | null;
   dataDir: string;
 };
 

@@ -16,7 +16,6 @@ import keys from "./api/keys.js";
 import logs from "./api/logs.js";
 import mindSkills from "./api/mind-skills.js";
 import minds from "./api/minds.js";
-import pages from "./api/pages.js";
 import prompts from "./api/prompts.js";
 import publicFiles from "./api/public-files.js";
 import schedules from "./api/schedules.js";
@@ -107,19 +106,7 @@ app.use("/api/bridges/*", authMiddleware);
 // v1 API auth
 app.use("/api/v1/*", authMiddleware);
 
-// Backwards-compat redirect: /api/notes → /api/ext/notes (notes moved to extension)
-app.all("/api/notes/*", (c) => {
-  const newPath = c.req.path.replace("/api/notes", "/api/ext/notes");
-  const search = new URL(c.req.url).search;
-  return c.redirect(`${newPath}${search}`, 308);
-});
-app.all("/api/notes", (c) => {
-  const search = new URL(c.req.url).search;
-  return c.redirect(`/api/ext/notes${search}`, 308);
-});
-
 // Public routes (no auth)
-app.route("/pages", pages);
 app.route("/public", publicFiles);
 
 // Chain route registrations to capture types
