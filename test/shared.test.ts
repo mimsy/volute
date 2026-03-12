@@ -11,17 +11,19 @@ import {
   sharedDir,
   sharedMerge,
 } from "../src/lib/shared.js";
+import { cleanGitEnv } from "./helpers/test-git-env.js";
 
 // Helper to create a fake mind directory with a git repo
 async function createFakeMind(name: string): Promise<string> {
   const dir = resolve(voluteHome(), "minds", name);
   const homeDir = resolve(dir, "home");
   mkdirSync(homeDir, { recursive: true });
-  await gitExec(["init"], { cwd: dir });
-  await gitExec(["checkout", "-b", "main"], { cwd: dir });
+  const env = cleanGitEnv();
+  await gitExec(["init"], { cwd: dir, env });
+  await gitExec(["checkout", "-b", "main"], { cwd: dir, env });
   writeFileSync(resolve(homeDir, "SOUL.md"), "test");
-  await gitExec(["add", "-A"], { cwd: dir });
-  await gitExec(["commit", "-m", "init"], { cwd: dir });
+  await gitExec(["add", "-A"], { cwd: dir, env });
+  await gitExec(["commit", "-m", "init"], { cwd: dir, env });
   return dir;
 }
 
