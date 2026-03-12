@@ -377,20 +377,25 @@ async function handleReset(key: string) {
         </div>
         {#if oauthUrl}
           <div class="oauth-modal">
-            <span class="system-label">Authorize at:</span>
-            <a href={oauthUrl} target="_blank" rel="noopener" class="oauth-link">{oauthUrl}</a>
             {#if oauthNeedsCode}
-              <span class="dim">After authorizing, you'll be redirected to a page that may not load. Copy the URL or code from the address bar and paste it below.</span>
-              <form class="system-form" onsubmit={(e) => { e.preventDefault(); handleOAuthCodeSubmit(); }} style="margin-top: 6px;">
+              <div class="oauth-steps">
+                <div class="oauth-step">1. Open the link below and authorize</div>
+                <div class="oauth-step">2. You'll be redirected to a page that won't load — this is expected</div>
+                <div class="oauth-step">3. Copy the URL from your browser's address bar and paste it below</div>
+              </div>
+              <a href={oauthUrl} target="_blank" rel="noopener" class="oauth-link">{oauthUrl}</a>
+              <form class="system-form" onsubmit={(e) => { e.preventDefault(); handleOAuthCodeSubmit(); }} style="margin-top: 4px;">
                 <input
                   type="text"
                   bind:value={oauthCodeInput}
-                  placeholder="Paste authorization code or redirect URL"
+                  placeholder="Paste the redirect URL from your address bar"
                   class="system-input"
                 />
                 <button type="submit" class="btn btn-save" disabled={!oauthCodeInput.trim()}>Submit</button>
               </form>
             {:else}
+              <span class="system-label">Authorize at:</span>
+              <a href={oauthUrl} target="_blank" rel="noopener" class="oauth-link">{oauthUrl}</a>
               <span class="dim">{oauthPolling ? "Waiting for authorization..." : ""}</span>
             {/if}
           </div>
@@ -761,6 +766,18 @@ async function handleReset(key: string) {
     color: var(--accent);
     font-size: 13px;
     word-break: break-all;
+  }
+
+  .oauth-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 6px;
+  }
+
+  .oauth-step {
+    font-size: 13px;
+    color: var(--text-1);
   }
 
   .dim {
