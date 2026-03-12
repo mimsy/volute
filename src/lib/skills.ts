@@ -25,10 +25,20 @@ export const SEED_SKILLS = ["orientation", "memory"];
 /** Skills installed for fully sprouted minds */
 export const STANDARD_SKILLS = ["volute-mind", "memory", "sessions", "dreaming", "shared-files"];
 
-/** Returns STANDARD_SKILLS plus any extension-contributed standard skills */
+/**
+ * Returns the configured default skills for new minds.
+ * Reads from config.json `defaultSkills` if set, otherwise falls back to
+ * STANDARD_SKILLS + extension-contributed standard skills.
+ */
 export function getStandardSkillsWithExtensions(): string[] {
+  const { readGlobalConfig } = require("./setup.js") as {
+    readGlobalConfig: () => { defaultSkills?: string[] };
+  };
+  const config = readGlobalConfig();
+  if (config.defaultSkills) return [...config.defaultSkills];
+
+  // Fallback: hardcoded + extension skills (before initDefaultSkills has run)
   try {
-    // Dynamic import to avoid circular dependency — extensions module may not be loaded yet
     const { getExtensionStandardSkills } = require("./extensions.js") as {
       getExtensionStandardSkills: () => string[];
     };
@@ -36,6 +46,33 @@ export function getStandardSkillsWithExtensions(): string[] {
   } catch {
     return [...STANDARD_SKILLS];
   }
+}
+
+/**
+ * Initialize defaultSkills in config if not already set.
+ * Called on daemon startup after extensions are loaded, so extension standard skills are included.
+ */
+export function initDefaultSkills(): void {
+  const { readGlobalConfig, writeGlobalConfig } = require("./setup.js") as {
+    readGlobalConfig: () => { defaultSkills?: string[]; [k: string]: unknown };
+    writeGlobalConfig: (c: Record<string, unknown>) => void;
+  };
+  const config = readGlobalConfig();
+  if (config.defaultSkills) return; // already configured
+
+  let extensionSkills: string[] = [];
+  try {
+    const { getExtensionStandardSkills } = require("./extensions.js") as {
+      getExtensionStandardSkills: () => string[];
+    };
+    extensionSkills = getExtensionStandardSkills();
+  } catch {
+    /* extensions not loaded */
+  }
+
+  const defaults = [...STANDARD_SKILLS, ...extensionSkills];
+  writeGlobalConfig({ ...config, defaultSkills: defaults });
+  log.info(`initialized default skills: ${defaults.join(", ")}`);
 }
 
 function validateSkillId(id: string): void {

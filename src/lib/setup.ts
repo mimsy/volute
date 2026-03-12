@@ -17,6 +17,8 @@ export type GlobalConfig = {
   hostname?: string;
   port?: number;
   setup?: SetupConfig;
+  /** Skill IDs installed by default when a mind is created/sprouted */
+  defaultSkills?: string[];
 };
 
 export function configPath(): string {

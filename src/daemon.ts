@@ -37,7 +37,7 @@ import {
 } from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
 import { ensureSharedRepo } from "./lib/shared.js";
-import { syncBuiltinSkills } from "./lib/skills.js";
+import { initDefaultSkills, syncBuiltinSkills } from "./lib/skills.js";
 import { ensureSystemChannel } from "./lib/system-channel.js";
 import { initWebhook } from "./lib/webhook.js";
 import app from "./web/app.js";
@@ -121,6 +121,9 @@ export async function startDaemon(opts: {
   } catch (err) {
     log.error("failed to load extensions", log.errorData(err));
   }
+
+  // Initialize default skills config if not set (after extensions load so their skills are included)
+  initDefaultSkills();
 
   // Ensure #system channel exists (non-fatal)
   try {

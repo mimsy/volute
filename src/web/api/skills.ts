@@ -3,8 +3,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import AdmZip from "adm-zip";
 import { Hono } from "hono";
+import { readGlobalConfig, writeGlobalConfig } from "../../lib/setup.js";
 import {
   getSharedSkill,
+  getStandardSkillsWithExtensions,
   importSkillFromDir,
   listFilesRecursive,
   listSharedSkills,
@@ -18,14 +20,43 @@ const app = new Hono<AuthEnv>()
     const skills = await listSharedSkills();
     return c.json(skills);
   })
-  .get("/:id", async (c) => {
-    const id = c.req.param("id");
-    const skill = await getSharedSkill(id);
-    if (!skill) return c.json({ error: "Skill not found" }, 404);
-
-    const dir = join(sharedSkillsDir(), id);
-    const files = listFilesRecursive(dir);
-    return c.json({ ...skill, files });
+  // Defaults routes must come before /:id to avoid being caught by the param route
+  .get("/defaults/list", async (c) => {
+    return c.json({ skills: getStandardSkillsWithExtensions() });
+  })
+  .put("/defaults/list", requireAdmin, async (c) => {
+    const body = await c.req.json<{ skills: string[] }>();
+    if (!Array.isArray(body.skills) || !body.skills.every((s) => typeof s === "string")) {
+      return c.json({ error: "body.skills must be a string array" }, 400);
+    }
+    const config = readGlobalConfig();
+    writeGlobalConfig({ ...config, defaultSkills: body.skills });
+    return c.json({ skills: body.skills });
+  })
+  .post("/defaults/list", requireAdmin, async (c) => {
+    const body = await c.req.json<{ skill: string }>();
+    if (typeof body.skill !== "string" || !body.skill) {
+      return c.json({ error: "body.skill must be a non-empty string" }, 400);
+    }
+    const current = getStandardSkillsWithExtensions();
+    if (current.includes(body.skill)) {
+      return c.json({ error: `"${body.skill}" is already a default skill` }, 409);
+    }
+    const config = readGlobalConfig();
+    const updated = [...current, body.skill];
+    writeGlobalConfig({ ...config, defaultSkills: updated });
+    return c.json({ skills: updated });
+  })
+  .delete("/defaults/list/:skill", requireAdmin, async (c) => {
+    const skill = c.req.param("skill");
+    const current = getStandardSkillsWithExtensions();
+    if (!current.includes(skill)) {
+      return c.json({ error: `"${skill}" is not a default skill` }, 404);
+    }
+    const config = readGlobalConfig();
+    const updated = current.filter((s) => s !== skill);
+    writeGlobalConfig({ ...config, defaultSkills: updated });
+    return c.json({ skills: updated });
   })
   .post("/upload", requireAdmin, async (c) => {
     const body = await c.req.parseBody();
@@ -82,6 +113,15 @@ const app = new Hono<AuthEnv>()
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }
+  })
+  .get("/:id", async (c) => {
+    const id = c.req.param("id");
+    const skill = await getSharedSkill(id);
+    if (!skill) return c.json({ error: "Skill not found" }, 404);
+
+    const dir = join(sharedSkillsDir(), id);
+    const files = listFilesRecursive(dir);
+    return c.json({ ...skill, files });
   })
   .delete("/:id", requireAdmin, async (c) => {
     const id = c.req.param("id");
