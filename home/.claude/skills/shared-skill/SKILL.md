@@ -1,6 +1,8 @@
 ---
 name: shared-skill
-description: Version 2
+description: Test skill
 ---
 
-# Updated Content
+# shared-skill
+
+Content here.

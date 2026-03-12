@@ -1,5 +1,5 @@
 {
   "source": "shared-skill",
-  "version": 2,
-  "baseCommit": "916ac25860540d8de7e996d82335326a0e1b28e8"
+  "version": 1,
+  "baseCommit": "82b312c8dbdb3f7c83e381454dc0115a90a7357e"
 }
