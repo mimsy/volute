@@ -1,84 +1,39 @@
 <script lang="ts">
 import CommentSection from "../components/CommentSection.svelte";
-
-interface Comment {
-  id: number;
-  author_username: string;
-  author_display_name: string | null;
-  content: string;
-  created_at: string;
-}
-
-interface Reaction {
-  emoji: string;
-  count: number;
-  usernames: string[];
-}
-
-interface ReplyRef {
-  author_username: string;
-  slug: string;
-  title: string;
-}
-
-interface NoteReply {
-  author_username: string;
-  slug: string;
-  title: string;
-  created_at: string;
-}
-
-interface Note {
-  id: number;
-  title: string;
-  content: string;
-  author_username: string;
-  author_display_name: string | null;
-  slug: string;
-  created_at: string;
-  updated_at: string;
-  comments: Comment[];
-  reactions?: Reaction[];
-  reply_to?: ReplyRef | null;
-  replies?: NoteReply[];
-}
+import { type ApiNote, addComment, deleteComment, fetchNote, toggleReaction } from "../lib/api";
 
 let {
   author,
   slug,
   username,
   onNavigate,
+  onBack,
 }: {
   author: string;
   slug: string;
   username: string;
   onNavigate: (author: string, slug: string) => void;
+  onBack: () => void;
 } = $props();
 
-let note: Note | null = $state(null);
+let note: ApiNote | null = $state(null);
 let loading = $state(true);
 let notFound = $state(false);
 let error = $state("");
 let emojiInput = $state("");
 let showEmojiInput = $state(false);
 
-function noteUrl(path = "") {
-  return `/api/ext/notes/${encodeURIComponent(author)}/${encodeURIComponent(slug)}${path}`;
-}
-
-async function fetchNote() {
+async function load() {
   loading = true;
   notFound = false;
   error = "";
   note = null;
   try {
-    const res = await fetch(noteUrl());
-    if (res.status === 404) {
+    const result = await fetchNote(author, slug);
+    if (!result) {
       notFound = true;
-    } else if (res.ok) {
-      note = await res.json();
     } else {
-      error = `Failed to load note (${res.status})`;
+      note = result;
     }
   } catch {
     error = "Network error — could not load note";
@@ -90,53 +45,36 @@ async function fetchNote() {
 $effect(() => {
   void author;
   void slug;
-  fetchNote();
+  load();
 });
 
 async function handleComment(content: string) {
   try {
-    const res = await fetch(noteUrl("/comments"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
-    });
-    if (!res.ok) {
-      error = `Failed to add comment (${res.status})`;
-      return;
-    }
+    await addComment(author, slug, content);
   } catch {
-    error = "Network error — could not add comment";
+    error = "Failed to add comment";
     return;
   }
-  await fetchNote();
+  await load();
 }
 
 async function handleDeleteComment(commentId: number) {
   try {
-    const res = await fetch(noteUrl(`/comments/${commentId}`), { method: "DELETE" });
-    if (!res.ok) {
-      error = `Failed to delete comment (${res.status})`;
-      return;
-    }
+    await deleteComment(author, slug, commentId);
   } catch {
-    error = "Network error — could not delete comment";
+    error = "Failed to delete comment";
     return;
   }
-  await fetchNote();
+  await load();
 }
 
-async function toggleReaction(emoji: string) {
+async function handleToggleReaction(emoji: string) {
   try {
-    const res = await fetch(noteUrl("/reactions"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ emoji }),
-    });
-    if (!res.ok) return;
+    await toggleReaction(author, slug, emoji);
   } catch {
     return;
   }
-  await fetchNote();
+  await load();
 }
 
 async function submitEmoji(e: Event) {
@@ -145,27 +83,25 @@ async function submitEmoji(e: Event) {
   if (!emoji) return;
   emojiInput = "";
   showEmojiInput = false;
-  await toggleReaction(emoji);
-}
-
-function parseDate(s: string): Date {
-  return new Date(`${s.replace(" ", "T")}Z`);
+  await handleToggleReaction(emoji);
 }
 
 function formatDate(iso: string): string {
-  return parseDate(iso).toLocaleDateString(undefined, {
+  return new Date(`${iso.replace(" ", "T")}Z`).toLocaleDateString(undefined, {
     year: "numeric",
     month: "long",
     day: "numeric",
   });
 }
 
-function hasReacted(reaction: Reaction): boolean {
+function hasReacted(reaction: { usernames: string[] }): boolean {
   return reaction.usernames.includes(username);
 }
 </script>
 
 <div class="note-view">
+  <button class="back-btn" onclick={onBack}>&larr; Back</button>
+
   {#if error}
     <div class="error">{error}</div>
   {/if}
@@ -191,7 +127,6 @@ function hasReacted(reaction: Reaction): boolean {
       </div>
 
       <div class="divider"></div>
-
       <div class="content">{note.content}</div>
 
       <div class="reactions-bar">
@@ -200,7 +135,7 @@ function hasReacted(reaction: Reaction): boolean {
             <button
               class="reaction-pill"
               class:active={hasReacted(reaction)}
-              onclick={() => toggleReaction(reaction.emoji)}
+              onclick={() => handleToggleReaction(reaction.emoji)}
             >
               {reaction.emoji} {reaction.count}
             </button>
@@ -208,12 +143,7 @@ function hasReacted(reaction: Reaction): boolean {
         {/if}
         {#if showEmojiInput}
           <form class="emoji-form" onsubmit={submitEmoji}>
-            <input
-              class="emoji-input"
-              bind:value={emojiInput}
-              placeholder="emoji"
-              maxlength="32"
-            />
+            <input class="emoji-input" bind:value={emojiInput} placeholder="emoji" maxlength="32" />
           </form>
         {:else}
           <button class="reaction-pill add-reaction" onclick={() => { showEmojiInput = true; }}>+</button>
@@ -235,7 +165,7 @@ function hasReacted(reaction: Reaction): boolean {
 
     <div class="comments-section">
       <CommentSection
-        comments={note.comments}
+        comments={note.comments ?? []}
         onComment={handleComment}
         onDelete={handleDeleteComment}
         currentUsername={username}
@@ -248,12 +178,23 @@ function hasReacted(reaction: Reaction): boolean {
   .note-view {
     max-width: 640px;
     margin: 0 auto;
-    animation: fadeIn 0.2s ease both;
   }
+
+  .back-btn {
+    background: none;
+    border: none;
+    color: var(--text-2);
+    font-size: 13px;
+    cursor: pointer;
+    padding: 0;
+    margin-bottom: 16px;
+  }
+
+  .back-btn:hover { color: var(--text-1); }
 
   .error {
     font-size: 13px;
-    color: var(--red, #e55);
+    color: var(--red);
     margin-bottom: 12px;
   }
 
@@ -264,9 +205,7 @@ function hasReacted(reaction: Reaction): boolean {
     text-align: center;
   }
 
-  .note {
-    margin-bottom: 32px;
-  }
+  .note { margin-bottom: 32px; }
 
   .reply-to-link {
     background: none;
@@ -280,22 +219,10 @@ function hasReacted(reaction: Reaction): boolean {
     text-align: left;
   }
 
-  .reply-to-link:hover {
-    color: var(--accent);
-  }
-
-  .reply-arrow {
-    opacity: 0.6;
-  }
-
-  .reply-ref {
-    color: var(--text-1);
-    font-style: italic;
-  }
-
-  .reply-to-link:hover .reply-ref {
-    color: var(--accent);
-  }
+  .reply-to-link:hover { color: var(--accent); }
+  .reply-arrow { opacity: 0.6; }
+  .reply-ref { color: var(--text-1); font-style: italic; }
+  .reply-to-link:hover .reply-ref { color: var(--accent); }
 
   .title {
     font-family: var(--display);
@@ -311,30 +238,12 @@ function hasReacted(reaction: Reaction): boolean {
     display: flex;
     align-items: baseline;
     gap: 6px;
-    margin-bottom: 0;
   }
 
-  .author {
-    font-size: 14px;
-    color: var(--text-1);
-    font-weight: 500;
-  }
-
-  .sep {
-    color: var(--text-2);
-    font-size: 12px;
-  }
-
-  .date {
-    font-size: 13px;
-    color: var(--text-2);
-  }
-
-  .divider {
-    height: 1px;
-    background: var(--border);
-    margin: 16px 0 20px;
-  }
+  .author { font-size: 14px; color: var(--text-1); font-weight: 500; }
+  .sep { color: var(--text-2); font-size: 12px; }
+  .date { font-size: 13px; color: var(--text-2); }
+  .divider { height: 1px; background: var(--border); margin: 16px 0 20px; }
 
   .content {
     font-size: 15px;
@@ -363,23 +272,10 @@ function hasReacted(reaction: Reaction): boolean {
     transition: all 0.15s;
   }
 
-  .reaction-pill:hover {
-    border-color: var(--border-bright);
-  }
-
-  .reaction-pill.active {
-    border-color: var(--accent-border);
-    background: var(--accent-dim);
-  }
-
-  .add-reaction {
-    color: var(--text-2);
-    font-size: 14px;
-  }
-
-  .emoji-form {
-    display: inline-flex;
-  }
+  .reaction-pill:hover { border-color: var(--border-bright); }
+  .reaction-pill.active { border-color: var(--accent-border); background: var(--accent-dim); }
+  .add-reaction { color: var(--text-2); font-size: 14px; }
+  .emoji-form { display: inline-flex; }
 
   .emoji-input {
     width: 60px;
@@ -392,9 +288,7 @@ function hasReacted(reaction: Reaction): boolean {
     outline: none;
   }
 
-  .emoji-input:focus {
-    border-color: var(--accent);
-  }
+  .emoji-input:focus { border-color: var(--accent); }
 
   .replies-section {
     border-top: 1px solid var(--border);
@@ -424,21 +318,9 @@ function hasReacted(reaction: Reaction): boolean {
     transition: border-color 0.15s;
   }
 
-  .reply-card:hover {
-    border-color: var(--border-bright);
-  }
-
-  .reply-title {
-    font-size: 14px;
-    color: var(--text-0);
-    display: block;
-    margin-bottom: 2px;
-  }
-
-  .reply-meta {
-    font-size: 12px;
-    color: var(--text-2);
-  }
+  .reply-card:hover { border-color: var(--border-bright); }
+  .reply-title { font-size: 14px; color: var(--text-0); display: block; margin-bottom: 2px; }
+  .reply-meta { font-size: 12px; color: var(--text-2); }
 
   .comments-section {
     border-top: 1px solid var(--border);

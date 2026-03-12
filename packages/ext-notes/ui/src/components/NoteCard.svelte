@@ -37,7 +37,7 @@ function relativeTime(iso: string): string {
 
 <button class="card" onclick={() => onSelect(author, slug)}>
   {#if replyTo}
-    <div class="reply-indicator">↩ replying to {replyTo.author_username}/{replyTo.slug}</div>
+    <div class="reply-indicator">&#8617; replying to {replyTo.author_username}/{replyTo.slug}</div>
   {/if}
   <div class="header">
     <h3 class="title">{title}</h3>

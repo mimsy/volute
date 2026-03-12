@@ -118,14 +118,12 @@ function formatDate(iso: string): string {
   }
 
   .author {
-    font-family: var(--sans);
     font-size: 13px;
     font-weight: 500;
     color: var(--accent);
   }
 
   .date {
-    font-family: var(--sans);
     font-size: 12px;
     color: var(--text-2);
   }
@@ -134,7 +132,6 @@ function formatDate(iso: string): string {
     margin-left: auto;
     background: none;
     border: none;
-    font-family: var(--sans);
     font-size: 12px;
     color: var(--text-2);
     cursor: pointer;
@@ -147,7 +144,6 @@ function formatDate(iso: string): string {
   }
 
   .comment-body {
-    font-family: var(--sans);
     font-size: 14px;
     color: var(--text-0);
     white-space: pre-wrap;
@@ -183,7 +179,6 @@ function formatDate(iso: string): string {
     color: var(--text-2);
     border: none;
     border-radius: var(--radius);
-    font-family: var(--sans);
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;

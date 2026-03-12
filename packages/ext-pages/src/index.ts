@@ -1,6 +1,9 @@
+import { resolve } from "node:path";
 import { createExtension } from "@volute/extension-sdk";
 
 import { createPublicRoutes, createRoutes } from "./routes.js";
+
+const assetsDir = resolve(import.meta.dirname, "../dist/ui");
 
 export default createExtension({
   id: "pages",
@@ -10,7 +13,11 @@ export default createExtension({
   routes: (ctx) => createRoutes(ctx),
   publicRoutes: (ctx) => createPublicRoutes(ctx),
   ui: {
+    assetsDir,
     systemSections: [{ id: "pages", label: "Pages" }],
     mindSections: [{ id: "pages", label: "Pages" }],
+    feedSource: {
+      endpoint: "/api/ext/pages/feed",
+    },
   },
 });

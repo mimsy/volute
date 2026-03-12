@@ -7,6 +7,9 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "scripts": {
+    "build:ui": "vite build --config ui/vite.config.ts"
+  },
   "license": "MIT",
   "dependencies": {
     "@volute/extension-sdk": "*"

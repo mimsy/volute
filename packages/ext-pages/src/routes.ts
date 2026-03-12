@@ -20,9 +20,44 @@ const MIME_TYPES: Record<string, string> = {
   ".xml": "application/xml",
 };
 
+// Lazy-loaded reference to core pages-watcher (available in daemon process)
+let _pagesWatcher: {
+  getCachedSites: () => Promise<any[]>;
+  getCachedRecentPages: () => Promise<any[]>;
+} | null = null;
+
+async function getPagesWatcher() {
+  if (_pagesWatcher) return _pagesWatcher;
+  // Built-in extension: import from core at runtime (bundled by tsup)
+  const mod = await import("../../../src/lib/pages-watcher.js");
+  _pagesWatcher = mod;
+  return _pagesWatcher;
+}
+
 export function createRoutes(_ctx: ExtensionContext): Hono {
-  // Authenticated API routes — sites listing is handled by the core pages-watcher for now
-  return new Hono();
+  return new Hono()
+    .get("/", async (c) => {
+      const pw = await getPagesWatcher();
+      const sites = await pw.getCachedSites();
+      const recentPages = await pw.getCachedRecentPages();
+      return c.json({ sites, recentPages });
+    })
+    .get("/feed", async (c) => {
+      const pw = await getPagesWatcher();
+      const recentPages = await pw.getCachedRecentPages();
+      const rawLimit = c.req.query("limit");
+      const limit = rawLimit ? parseInt(rawLimit, 10) : 8;
+      return c.json(
+        recentPages.slice(0, limit).map((p: any) => ({
+          id: `page-${p.mind}-${p.file}`,
+          title: `${p.mind}/${p.file}`,
+          url: `/pages/${p.mind}/${p.file}`,
+          date: p.modified,
+          author: p.mind,
+          bodyHtml: `<p>Page updated</p>`,
+        })),
+      );
+    });
 }
 
 export function createPublicRoutes(ctx: ExtensionContext): Hono {

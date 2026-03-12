@@ -1,0 +1,109 @@
+/* Shared theme for extension iframes */
+:root {
+  --bg-0: #0a0c0f;
+  --bg-1: #11141a;
+  --bg-2: #181c24;
+  --bg-3: #1f2430;
+  --border: #2a3040;
+  --border-bright: #3a4560;
+  --text-0: #e8ecf4;
+  --text-1: #a0aabb;
+  --text-2: #6a7588;
+  --accent: #e0a860;
+  --accent-dim: #5c4428;
+  --accent-bg: rgba(224, 168, 96, 0.08);
+  --accent-border: rgba(224, 168, 96, 0.2);
+  --red: #f87171;
+  --red-dim: #7f1d1d;
+  --yellow: #fbbf24;
+  --yellow-dim: #78350f;
+  --blue: #60a5fa;
+  --purple: #c084fc;
+  --overlay: rgba(0, 0, 0, 0.6);
+  --yellow-bg: rgba(251, 191, 36, 0.08);
+  --blue-bg: rgba(96, 165, 250, 0.08);
+  --red-bg: rgba(248, 113, 113, 0.08);
+  --muted-bg: rgba(106, 117, 136, 0.08);
+  --red-border: rgba(248, 113, 113, 0.2);
+  --timeline-rail: #333;
+  --mono: "Fira Code", "SF Mono", monospace;
+  --sans: "Averia Sans Libre", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --display: "Averia Serif Libre", Georgia, serif;
+  --radius: 6px;
+  --radius-lg: 10px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  background: var(--bg-0);
+  color: var(--text-0);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-bright);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+input,
+select,
+textarea,
+button {
+  font-family: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+}
+
+button:focus {
+  outline: none;
+}
+
+button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

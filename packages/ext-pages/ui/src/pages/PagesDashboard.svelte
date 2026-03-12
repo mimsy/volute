@@ -1,7 +1,19 @@
 <script lang="ts">
-import type { RecentPage, Site } from "@volute/api";
 import PageThumbnail from "../components/PageThumbnail.svelte";
-import { formatRelativeTime } from "../lib/format";
+import type { RecentPage, Site } from "../lib/api";
+
+function formatRelativeTime(iso: string): string {
+  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return `${months}mo ago`;
+}
 
 let {
   sites,
@@ -58,34 +70,10 @@ let {
 </div>
 
 <style>
-  .dashboard {
-    max-width: 1200px;
-    animation: fadeIn 0.2s ease both;
-  }
-
-  .section {
-    margin-bottom: 24px;
-  }
-
-  .section-header {
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 12px;
-  }
-
-  .section-title {
-    color: var(--text-2);
-  }
-
-  .thumbnail-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 16px;
-  }
-
-  .empty {
-    color: var(--text-2);
-    font-size: 13px;
-  }
+  .dashboard { max-width: 1200px; }
+  .section { margin-bottom: 24px; }
+  .section-header { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
+  .section-title { color: var(--text-2); }
+  .thumbnail-grid { display: flex; flex-wrap: wrap; gap: 16px; }
+  .empty { color: var(--text-2); font-size: 13px; }
 </style>

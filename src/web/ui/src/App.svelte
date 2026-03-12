@@ -141,8 +141,6 @@ let contextMind = $derived(
 let systemMindName = $derived.by(() => {
   if (selection.tab !== "system") return "";
   if (selection.kind === "mind") return selection.name;
-  if (selection.kind === "mind-note") return selection.mind;
-  if (selection.kind === "mind-page") return selection.mind;
   return "";
 });
 let systemMind = $derived(
@@ -204,31 +202,11 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
     if (sel.kind === "mind") {
       crumbs.push({ label: sel.name, action: () => navigate(`/minds/${sel.name}`) });
       if (sel.section && sel.section !== "info") crumbs.push({ label: sel.section });
-    } else if (sel.kind === "mind-note") {
-      crumbs.push({ label: sel.mind, action: () => navigate(`/minds/${sel.mind}`) });
-      crumbs.push({ label: "notes", action: () => navigate(`/minds/${sel.mind}/notes`) });
-      crumbs.push({ label: sel.slug });
-    } else if (sel.kind === "mind-page") {
-      crumbs.push({ label: sel.mind, action: () => navigate(`/minds/${sel.mind}`) });
-      crumbs.push({ label: "pages", action: () => navigate(`/minds/${sel.mind}/pages`) });
-      crumbs.push({ label: sel.path });
-    } else if (sel.kind === "page") {
-      crumbs.push({ label: "pages", action: handleSelectPages });
-      crumbs.push({ label: sel.mind, action: () => handleSelectSite(sel.mind) });
-      crumbs.push({ label: sel.path });
-    } else if (sel.kind === "pages") {
-      crumbs.push({ label: "pages" });
-    } else if (sel.kind === "site") {
-      crumbs.push({ label: "pages", action: handleSelectPages });
-      crumbs.push({ label: sel.name });
+    } else if (sel.kind === "extension") {
+      const ext = data.extensions.find((e) => e.id === sel.extensionId);
+      crumbs.push({ label: ext?.name ?? sel.extensionId });
     } else if (sel.kind === "settings") {
       crumbs.push({ label: "settings" });
-    } else if (sel.kind === "notes") {
-      crumbs.push({ label: "notes" });
-    } else if (sel.kind === "note") {
-      crumbs.push({ label: "notes", action: handleSelectNotes });
-      crumbs.push({ label: sel.author, action: () => navigate(`/minds/${sel.author}`) });
-      crumbs.push({ label: sel.slug });
     }
   } else {
     crumbs.push({ label: "chat" });
@@ -426,27 +404,6 @@ function handleSeedCreated(mindName: string) {
   selection = { tab: "chat", kind: "conversation", mindName };
 }
 
-function handleSelectPage(mind: string, path: string) {
-  // Preserve mind-page context when navigating within a mind's pages
-  if (selection.tab === "system" && selection.kind === "mind-page") {
-    selection = { tab: "system", kind: "mind-page", mind, path };
-  } else {
-    selection = { tab: "system", kind: "page", mind, path };
-  }
-}
-
-function handleSelectSite(name: string) {
-  if (name !== "_system") {
-    selection = { tab: "system", kind: "mind", name, section: "pages" };
-  } else {
-    selection = { tab: "system", kind: "site", name };
-  }
-}
-
-function handleSelectPages() {
-  selection = { tab: "system", kind: "pages" };
-}
-
 function onAuth(u: AuthUser) {
   handleAuth(u);
 }
@@ -475,10 +432,6 @@ function handleSelectMind(name: string) {
 
 function handleSelectMindSection(name: string, section: string) {
   selection = { tab: "system", kind: "mind", name, section: section as any };
-}
-
-function handleSelectNotes() {
-  selection = { tab: "system", kind: "notes" };
 }
 
 function handleSelectSettings() {
@@ -594,14 +547,11 @@ function handleGlobalClick(e: MouseEvent) {
         {#if activeTab === "system"}
           <SystemSidebar
             minds={data.minds}
-            sites={data.sites}
             extensions={data.extensions}
             {selection}
             onHome={handleSystemHome}
             onSelectMind={handleSelectMind}
             onSelectMindSection={handleSelectMindSection}
-            onSelectNotes={handleSelectNotes}
-            onSelectPages={handleSelectPages}
             onSelectExtension={handleSelectExtension}
             onSelectSettings={handleSelectSettings}
             onSeed={() => (activeModal = "seed")}
@@ -680,17 +630,10 @@ function handleGlobalClick(e: MouseEvent) {
               {selection}
               minds={data.minds}
               conversations={data.conversations}
-              recentPages={data.recentPages}
-              sites={data.sites}
-              activity={data.activity}
               username={auth.user.username}
               onConversationId={handleConversationId}
               onSelectConversation={handleSelectConversation}
               onOpenMind={handleOpenMindModal}
-              onSelectPage={handleSelectPage}
-              onSelectSite={handleSelectSite}
-              onSelectPages={handleSelectPages}
-              onSelectNotes={handleSelectNotes}
               onTypingNames={(names) => { typingNames = names; }}
               onToggleSidebar={toggleSidebar}
               onOpenRightPanel={hasRightPanel ? openRightPanel : undefined}

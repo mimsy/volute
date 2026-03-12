@@ -1,10 +1,4 @@
-import type {
-  ActivityItem,
-  ConversationWithParticipants,
-  Mind,
-  RecentPage,
-  Site,
-} from "@volute/api";
+import type { ActivityItem, ConversationWithParticipants, Mind } from "@volute/api";
 import type { SSEEvent } from "@volute/api/events";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import { type AuthUser, fetchMe, logout } from "./auth";
@@ -59,8 +53,6 @@ export async function handleAuth(u: AuthUser) {
 export const data = $state({
   minds: [] as Mind[],
   conversations: [] as ConversationWithParticipants[],
-  recentPages: [] as RecentPage[],
-  sites: [] as Site[],
   activity: [] as ActivityItem[],
   extensions: [] as ExtensionInfo[],
   connectionOk: true,
@@ -101,8 +93,6 @@ function handleSSEEvent(event: SSEEvent) {
   if (event.event === "snapshot") {
     data.conversations = event.conversations ?? [];
     data.activity = event.activity ?? [];
-    data.sites = event.sites ?? [];
-    data.recentPages = event.recentPages ?? [];
     activeMinds.clear();
     if (Array.isArray(event.activeMinds)) {
       for (const name of event.activeMinds) activeMinds.add(name);

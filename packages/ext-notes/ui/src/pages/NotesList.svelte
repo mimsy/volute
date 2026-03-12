@@ -1,13 +1,12 @@
 <script lang="ts">
 import { onMount } from "svelte";
 import NoteCard from "../components/NoteCard.svelte";
-import { navigate } from "../lib/navigate";
+import { type ApiNote, createNote, fetchNotes } from "../lib/api";
 
-let { author }: { author?: string } = $props();
-
-function handleSelectNote(noteAuthor: string, slug: string) {
-  navigate(`/minds/${noteAuthor}/notes/${slug}`);
-}
+let {
+  author,
+  onSelectNote,
+}: { author?: string; onSelectNote: (author: string, slug: string) => void } = $props();
 
 interface Note {
   title: string;
@@ -17,17 +16,6 @@ interface Note {
   commentCount: number;
   createdAt: string;
   replyTo?: { author_username: string; slug: string; title: string } | null;
-  reactions?: { emoji: string; count: number }[];
-}
-
-interface ApiNote {
-  title: string;
-  author_username: string;
-  slug: string;
-  content: string;
-  comment_count: number;
-  created_at: string;
-  reply_to?: { author_username: string; slug: string; title: string } | null;
   reactions?: { emoji: string; count: number }[];
 }
 
@@ -55,10 +43,7 @@ function mapNote(n: ApiNote): Note {
 
 async function loadNotes() {
   try {
-    const url = author ? `/api/ext/notes?author=${encodeURIComponent(author)}` : "/api/ext/notes";
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("Failed to load notes");
-    const raw: ApiNote[] = await res.json();
+    const raw = await fetchNotes({ author });
     notes = raw.map(mapNote);
     error = "";
   } catch (e) {
@@ -73,12 +58,7 @@ async function submitNote(e: Event) {
   if (!title.trim() || !content.trim() || submitting) return;
   submitting = true;
   try {
-    const res = await fetch("/api/ext/notes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: title.trim(), content: content.trim() }),
-    });
-    if (!res.ok) throw new Error("Failed to create note");
+    await createNote(title.trim(), content.trim());
     title = "";
     content = "";
     showForm = false;
@@ -107,24 +87,10 @@ onMount(() => {
 
   {#if showForm}
     <form class="note-form" onsubmit={submitNote}>
-      <input
-        type="text"
-        class="form-input"
-        placeholder="Title"
-        bind:value={title}
-      />
-      <textarea
-        class="form-textarea"
-        placeholder="Write your note..."
-        rows="6"
-        bind:value={content}
-      ></textarea>
+      <input type="text" class="form-input" placeholder="Title" bind:value={title} />
+      <textarea class="form-textarea" placeholder="Write your note..." rows="6" bind:value={content}></textarea>
       <div class="form-actions">
-        <button
-          type="submit"
-          class="btn btn-submit"
-          disabled={submitting || !title.trim() || !content.trim()}
-        >
+        <button type="submit" class="btn btn-submit" disabled={submitting || !title.trim() || !content.trim()}>
           {submitting ? "Publishing..." : "Publish"}
         </button>
       </div>
@@ -151,7 +117,7 @@ onMount(() => {
           createdAt={note.createdAt}
           replyTo={note.replyTo}
           reactions={note.reactions}
-          onSelect={handleSelectNote}
+          onSelect={onSelectNote}
         />
       {/each}
     </div>
@@ -162,7 +128,6 @@ onMount(() => {
   .notes-page {
     max-width: 700px;
     margin: 0 auto;
-    animation: fadeIn 0.2s ease both;
   }
 
   .page-header {
@@ -198,15 +163,12 @@ onMount(() => {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     color: var(--text-0);
-    font-family: var(--sans);
     font-size: 14px;
     outline: none;
     box-sizing: border-box;
   }
 
-  .form-input:focus {
-    border-color: var(--accent);
-  }
+  .form-input:focus { border-color: var(--accent); }
 
   .form-textarea {
     width: 100%;
@@ -215,7 +177,6 @@ onMount(() => {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     color: var(--text-0);
-    font-family: var(--sans);
     font-size: 14px;
     line-height: 1.5;
     resize: vertical;
@@ -223,9 +184,7 @@ onMount(() => {
     box-sizing: border-box;
   }
 
-  .form-textarea:focus {
-    border-color: var(--accent);
-  }
+  .form-textarea:focus { border-color: var(--accent); }
 
   .form-actions {
     display: flex;
@@ -233,7 +192,6 @@ onMount(() => {
   }
 
   .btn {
-    font-family: var(--sans);
     font-size: 13px;
     padding: 6px 14px;
     border-radius: var(--radius);
@@ -242,10 +200,7 @@ onMount(() => {
     transition: opacity 0.15s;
   }
 
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .btn-write {
     background: var(--accent-dim);
@@ -253,9 +208,7 @@ onMount(() => {
     border-color: var(--accent-border);
   }
 
-  .btn-write:hover {
-    border-color: var(--accent);
-  }
+  .btn-write:hover { border-color: var(--accent); }
 
   .btn-submit {
     background: var(--accent-dim);
@@ -263,9 +216,7 @@ onMount(() => {
     border-color: var(--accent-border);
   }
 
-  .btn-submit:hover:not(:disabled) {
-    border-color: var(--accent);
-  }
+  .btn-submit:hover:not(:disabled) { border-color: var(--accent); }
 
   .error {
     color: var(--red);
@@ -273,14 +224,7 @@ onMount(() => {
     margin-bottom: 16px;
   }
 
-  .loading {
-    color: var(--text-2);
-    font-size: 13px;
-    padding: 40px 0;
-    text-align: center;
-  }
-
-  .empty {
+  .loading, .empty {
     color: var(--text-2);
     font-size: 13px;
     padding: 40px 0;

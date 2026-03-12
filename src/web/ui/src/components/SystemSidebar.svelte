@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Mind, Site } from "@volute/api";
+import type { Mind } from "@volute/api";
 import type { ExtensionInfo } from "../lib/extensions";
 import { mindDotColor } from "../lib/format";
 import type { Selection } from "../lib/navigate";
@@ -7,27 +7,21 @@ import { activeMinds } from "../lib/stores.svelte";
 
 let {
   minds,
-  sites,
   extensions,
   selection,
   onHome,
   onSelectMind,
   onSelectMindSection,
-  onSelectNotes,
-  onSelectPages,
   onSelectExtension,
   onSelectSettings,
   onSeed,
 }: {
   minds: Mind[];
-  sites: Site[];
   extensions: ExtensionInfo[];
   selection: Selection;
   onHome: () => void;
   onSelectMind: (name: string) => void;
   onSelectMindSection: (name: string, section: string) => void;
-  onSelectNotes: () => void;
-  onSelectPages: () => void;
   onSelectExtension: (extensionId: string) => void;
   onSelectSettings: () => void;
   onSeed: () => void;
@@ -45,33 +39,26 @@ let sortedMinds = $derived(
 let activeMindName = $derived.by(() => {
   if (selection.tab !== "system") return null;
   if (selection.kind === "mind") return selection.name;
-  if (selection.kind === "mind-note" || selection.kind === "mind-page") return selection.mind;
   return null;
 });
 
 let activeMindSection = $derived.by(() => {
   if (selection.tab !== "system") return null;
   if (selection.kind === "mind") return selection.section ?? "info";
-  if (selection.kind === "mind-note") return "notes";
-  if (selection.kind === "mind-page") return "pages";
   return null;
 });
 
 const CORE_MIND_SECTIONS = [
   { key: "info", label: "Info" },
-  { key: "notes", label: "Notes" },
-  { key: "pages", label: "Pages" },
   { key: "files", label: "Files" },
   { key: "settings", label: "Settings" },
 ] as const;
 
 let allMindSections = $derived([
   ...CORE_MIND_SECTIONS,
-  ...extensions
-    .filter((e) => e.id !== "notes" && e.id !== "pages")
-    .flatMap((ext) =>
-      (ext.mindSections ?? []).map((s) => ({ key: `ext:${ext.id}:${s.id}`, label: s.label })),
-    ),
+  ...extensions.flatMap((ext) =>
+    (ext.mindSections ?? []).map((s) => ({ key: `ext:${ext.id}:${s.id}`, label: s.label })),
+  ),
 ]);
 </script>
 
@@ -87,17 +74,7 @@ let allMindSections = $derived([
         <span>System</span>
       </button>
       <div class="sub-items">
-        <button
-          class="sub-item"
-          class:active={selection.tab === "system" && (selection.kind === "notes" || selection.kind === "note")}
-          onclick={onSelectNotes}
-        >Notes</button>
-        <button
-          class="sub-item"
-          class:active={selection.tab === "system" && (selection.kind === "pages" || selection.kind === "site" || selection.kind === "page")}
-          onclick={onSelectPages}
-        >Pages</button>
-        {#each extensions.filter((e) => e.id !== "notes" && e.id !== "pages") as ext}
+        {#each extensions as ext}
           {#if ext.systemSections}
             {#each ext.systemSections as section}
               <button
