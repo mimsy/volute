@@ -108,6 +108,9 @@ async function toggleDefault(id: string) {
     <div class="empty">No shared skills yet.</div>
   {:else}
     <div class="skill-list">
+      <div class="column-header">
+        <span class="column-label">Default</span>
+      </div>
       {#each skills as skill (skill.id)}
         <div class="skill-row">
           <label class="default-toggle" title={defaults.includes(skill.id) ? "Installed on new minds" : "Not installed on new minds"}>
@@ -164,6 +167,7 @@ async function toggleDefault(id: string) {
     align-items: center;
     justify-content: space-between;
     padding: 0 0 12px;
+    max-width: 720px;
   }
 
   .section-title {
@@ -200,6 +204,19 @@ async function toggleDefault(id: string) {
   .skill-list {
     display: flex;
     flex-direction: column;
+    max-width: 720px;
+  }
+
+  .column-header {
+    padding: 0 0 4px;
+  }
+
+  .column-label {
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-3);
   }
 
   .skill-row {
