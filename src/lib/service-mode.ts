@@ -137,10 +137,23 @@ export async function startService(mode: ManagedServiceMode): Promise<void> {
       await execInherit("systemctl", ["--user", "start", "volute"]);
       break;
     case "system-launchd":
-      await execInherit("sudo", ["launchctl", "load", SYSTEM_LAUNCHD_PLIST_PATH]);
+      try {
+        await execInherit("sudo", ["launchctl", "bootout", `system/${LAUNCHD_PLIST_LABEL}`]);
+      } catch {
+        // May not be loaded — ignore
+      }
+      await execInherit("sudo", ["launchctl", "bootstrap", "system", SYSTEM_LAUNCHD_PLIST_PATH]);
       break;
     case "user-launchd":
-      await execInherit("launchctl", ["load", LAUNCHD_PLIST_PATH]);
+      try {
+        await execInherit("launchctl", [
+          "bootout",
+          `gui/${process.getuid!()}/${LAUNCHD_PLIST_LABEL}`,
+        ]);
+      } catch {
+        // May not be loaded — ignore
+      }
+      await execInherit("launchctl", ["bootstrap", `gui/${process.getuid!()}`, LAUNCHD_PLIST_PATH]);
       break;
   }
 }
@@ -154,10 +167,13 @@ export async function stopService(mode: ManagedServiceMode): Promise<void> {
       await execInherit("systemctl", ["--user", "stop", "volute"]);
       break;
     case "system-launchd":
-      await execInherit("sudo", ["launchctl", "unload", SYSTEM_LAUNCHD_PLIST_PATH]);
+      await execInherit("sudo", ["launchctl", "bootout", `system/${LAUNCHD_PLIST_LABEL}`]);
       break;
     case "user-launchd":
-      await execInherit("launchctl", ["unload", LAUNCHD_PLIST_PATH]);
+      await execInherit("launchctl", [
+        "bootout",
+        `gui/${process.getuid!()}/${LAUNCHD_PLIST_LABEL}`,
+      ]);
       break;
   }
 }
@@ -172,26 +188,26 @@ export async function restartService(mode: ManagedServiceMode): Promise<void> {
       break;
     case "system-launchd":
       try {
-        await execInherit("sudo", ["launchctl", "unload", SYSTEM_LAUNCHD_PLIST_PATH]);
+        await execInherit("sudo", ["launchctl", "bootout", `system/${LAUNCHD_PLIST_LABEL}`]);
       } catch (err) {
         console.warn(
-          `Warning: launchctl unload failed: ${err instanceof Error ? err.message : err}`,
+          `Warning: launchctl bootout failed: ${err instanceof Error ? err.message : err}`,
         );
       }
-      await execInherit("sudo", ["launchctl", "load", SYSTEM_LAUNCHD_PLIST_PATH]);
+      await execInherit("sudo", ["launchctl", "bootstrap", "system", SYSTEM_LAUNCHD_PLIST_PATH]);
       break;
-    case "user-launchd":
-      // launchd doesn't have a "restart" — unload then load
+    case "user-launchd": {
+      const uid = `gui/${process.getuid!()}`;
       try {
-        await execInherit("launchctl", ["unload", LAUNCHD_PLIST_PATH]);
+        await execInherit("launchctl", ["bootout", `${uid}/${LAUNCHD_PLIST_LABEL}`]);
       } catch (err) {
-        // May not be loaded — warn but continue to load
         console.warn(
-          `Warning: launchctl unload failed: ${err instanceof Error ? err.message : err}`,
+          `Warning: launchctl bootout failed: ${err instanceof Error ? err.message : err}`,
         );
       }
-      await execInherit("launchctl", ["load", LAUNCHD_PLIST_PATH]);
+      await execInherit("launchctl", ["bootstrap", uid, LAUNCHD_PLIST_PATH]);
       break;
+    }
   }
 }
 

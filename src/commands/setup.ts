@@ -178,7 +178,13 @@ async function installUserService(
       mkdirSync(resolve(homedir(), "Library", "LaunchAgents"), { recursive: true });
       writeFileSync(LAUNCHD_PLIST_PATH, generatePlist(voluteBin, { port, host }));
       console.log(`  Wrote ${LAUNCHD_PLIST_PATH}`);
-      await execFileAsync("launchctl", ["load", LAUNCHD_PLIST_PATH]);
+      const uid = `gui/${process.getuid!()}`;
+      try {
+        await execFileAsync("launchctl", ["bootout", `${uid}/${LAUNCHD_PLIST_LABEL}`]);
+      } catch {
+        // May not be loaded — ignore
+      }
+      await execFileAsync("launchctl", ["bootstrap", uid, LAUNCHD_PLIST_PATH]);
       console.log("  Service installed (launchd)");
       return true;
     } else if (platform === "linux") {
@@ -206,14 +212,21 @@ function installSystemService(voluteBin: string, port?: number, host?: string): 
     );
     console.log(`  Wrote ${SYSTEM_LAUNCHD_PLIST_PATH}`);
     try {
-      execFileSync("launchctl", ["load", SYSTEM_LAUNCHD_PLIST_PATH]);
+      try {
+        execFileSync("launchctl", ["bootout", `system/${LAUNCHD_PLIST_LABEL}`]);
+      } catch {
+        // May not be loaded — ignore
+      }
+      execFileSync("launchctl", ["bootstrap", "system", SYSTEM_LAUNCHD_PLIST_PATH]);
       console.log("  Service installed (LaunchDaemon)");
       return true;
     } catch (err) {
       console.warn(
         `  Warning: failed to load LaunchDaemon: ${err instanceof Error ? err.message : err}`,
       );
-      console.warn("  Try: sudo launchctl load /Library/LaunchDaemons/com.volute.daemon.plist");
+      console.warn(
+        "  Try: sudo launchctl bootstrap system /Library/LaunchDaemons/com.volute.daemon.plist",
+      );
       return false;
     }
   } else if (platform === "linux") {
