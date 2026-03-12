@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import type { Database as ExtDb, User } from "@volute/extension-sdk";
+import type { Database as ExtDb, User } from "@volute/extensions";
 import Database from "libsql";
-import { initDb } from "../packages/ext-notes/src/db.js";
+import { initDb } from "../packages/extensions/notes/src/db.js";
 import {
   addComment,
   createNote,
@@ -15,7 +15,7 @@ import {
   resolveNoteId,
   toggleReaction,
   updateNote,
-} from "../packages/ext-notes/src/notes.js";
+} from "../packages/extensions/notes/src/notes.js";
 import { createUser } from "../src/lib/auth.js";
 
 let db: ExtDb;

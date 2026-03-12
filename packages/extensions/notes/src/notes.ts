@@ -1,4 +1,4 @@
-import type { Database, ExtensionContext } from "@volute/extension-sdk";
+import type { Database, ExtensionContext } from "@volute/extensions";
 
 export type Note = {
   id: number;

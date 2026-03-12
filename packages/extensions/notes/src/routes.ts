@@ -1,4 +1,4 @@
-import type { ExtensionContext } from "@volute/extension-sdk";
+import type { ExtensionContext } from "@volute/extensions";
 import { Hono } from "hono";
 
 import {

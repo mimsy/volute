@@ -1,5 +1,5 @@
 {
-  "name": "@volute/ext-pages",
+  "name": "@volute/pages",
   "version": "0.1.0",
   "description": "Pages extension for Volute — publish and serve web pages",
   "type": "module",
@@ -12,7 +12,7 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@volute/extension-sdk": "*"
+    "@volute/extensions": "*"
   },
   "peerDependencies": {
     "hono": "^4.0.0"

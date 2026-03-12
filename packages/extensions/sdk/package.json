@@ -1,5 +1,5 @@
 {
-  "name": "@volute/extension-sdk",
+  "name": "@volute/extensions",
   "version": "0.1.0",
   "description": "SDK for building Volute extensions",
   "type": "module",

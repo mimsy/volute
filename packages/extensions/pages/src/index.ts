@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { createExtension } from "@volute/extension-sdk";
+import { createExtension } from "@volute/extensions";
 
 import { createPublicRoutes, createRoutes } from "./routes.js";
 

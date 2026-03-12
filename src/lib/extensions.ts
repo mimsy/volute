@@ -1,14 +1,14 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import extNotes from "@volute/ext-notes";
-import extPages from "@volute/ext-pages";
 import type {
   ExtensionContext,
   ExtensionManifest,
   FeedSource,
   MindSection,
   SystemSection,
-} from "@volute/extension-sdk";
+} from "@volute/extensions";
+import extNotes from "@volute/notes";
+import extPages from "@volute/pages";
 import type { Hono } from "hono";
 import { getUser, getUserByUsername } from "./auth.js";
 import { publish } from "./events/activity-events.js";

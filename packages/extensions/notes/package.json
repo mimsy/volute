@@ -1,5 +1,5 @@
 {
-  "name": "@volute/ext-notes",
+  "name": "@volute/notes",
   "version": "0.1.0",
   "description": "Notes extension for Volute",
   "type": "module",
@@ -12,7 +12,7 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@volute/extension-sdk": "*"
+    "@volute/extensions": "*"
   },
   "peerDependencies": {
     "hono": "^4.0.0"

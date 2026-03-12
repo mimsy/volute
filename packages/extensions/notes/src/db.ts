@@ -1,4 +1,4 @@
-import type { Database } from "@volute/extension-sdk";
+import type { Database } from "@volute/extensions";
 
 export function initDb(db: Database): void {
   db.exec(`

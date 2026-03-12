@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
-import type { ExtensionContext } from "@volute/extension-sdk";
+import type { ExtensionContext } from "@volute/extensions";
 import { Hono } from "hono";
 
 const MIME_TYPES: Record<string, string> = {
@@ -29,7 +29,7 @@ let _pagesWatcher: {
 async function getPagesWatcher() {
   if (_pagesWatcher) return _pagesWatcher;
   // Built-in extension: import from core at runtime (bundled by tsup)
-  const mod = await import("../../../src/lib/pages-watcher.js");
+  const mod = await import("../../../../src/lib/pages-watcher.js");
   _pagesWatcher = mod;
   return _pagesWatcher;
 }
