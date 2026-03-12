@@ -1,6 +1,6 @@
 ---
 name: shared-skill
-description: Test skill
+description: V1
 ---
 
 # shared-skill
