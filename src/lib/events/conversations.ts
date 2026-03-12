@@ -20,6 +20,46 @@ import { publish } from "./conversation-events.js";
 
 export type { ContentBlock, Conversation, LastMessageSummary, Message, Participant };
 
+/** Migrate group DMs to channels. Converts type='group' conversations and type='dm' conversations
+ *  with 3+ participants to type='channel', generating a name from the title or ID. */
+export async function migrateGroupDMsToChannels(): Promise<void> {
+  const db = await getDb();
+
+  // Find DM conversations with 3+ participants
+  const overloadedDMs = await db
+    .select({
+      conversationId: conversationParticipants.conversation_id,
+      count: sql<number>`COUNT(*)`,
+    })
+    .from(conversationParticipants)
+    .innerJoin(conversations, eq(conversationParticipants.conversation_id, conversations.id))
+    .where(eq(conversations.type, "dm"))
+    .groupBy(conversationParticipants.conversation_id)
+    .having(sql`COUNT(*) > 2`);
+
+  const dmIds = overloadedDMs.map((r) => r.conversationId);
+
+  // Update explicit group conversations
+  await db
+    .update(conversations)
+    .set({
+      type: "channel",
+      name: sql`COALESCE(${conversations.name}, ${conversations.title}, ${conversations.id})`,
+    })
+    .where(eq(conversations.type, "group"));
+
+  // Update overloaded DMs
+  if (dmIds.length > 0) {
+    await db
+      .update(conversations)
+      .set({
+        type: "channel",
+        name: sql`COALESCE(${conversations.name}, ${conversations.title}, ${conversations.id})`,
+      })
+      .where(inArray(conversations.id, dmIds));
+  }
+}
+
 export async function createConversation(
   mindName: string | null,
   channel: string,
@@ -27,7 +67,7 @@ export async function createConversation(
     userId?: number;
     title?: string;
     participantIds?: number[];
-    type?: "dm" | "group" | "channel";
+    type?: "dm" | "channel";
     name?: string;
   },
 ): Promise<Conversation> {

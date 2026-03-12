@@ -29,7 +29,7 @@ async function fanOutToMinds(opts: {
   senderName: string;
   convTitle: string | null;
   isDM?: boolean;
-  channelEntryType?: "dm" | "group";
+  channelEntryType?: "dm" | "channel";
   slugExtra?: Partial<SlugOpts>;
   targetName?: (username: string) => string;
 }): Promise<void> {
@@ -37,7 +37,7 @@ async function fanOutToMinds(opts: {
   const mindParticipants = participants.filter((p) => p.userType === "mind");
   const participantNames = participants.map((p) => p.username);
   const isDM = opts.isDM ?? participants.length === 2;
-  const channelEntryType = opts.channelEntryType ?? (isDM ? "dm" : "group");
+  const channelEntryType = opts.channelEntryType ?? (isDM ? "dm" : "channel");
 
   const { getMindManager } = await import("../../../lib/daemon/mind-manager.js");
   const { getSleepManagerIfReady } = await import("../../../lib/daemon/sleep-manager.js");
@@ -62,7 +62,7 @@ async function fanOutToMinds(opts: {
     });
   }
 
-  const channelEntry = {
+  const channelEntry: import("../../../connectors/sdk.js").ChannelEntry = {
     platformId: opts.conversationId,
     platform: "volute",
     name: opts.convTitle ?? undefined,
@@ -185,8 +185,10 @@ const app = new Hono<AuthEnv>()
       senderName,
       convTitle,
       isDM,
-      channelEntryType: conv?.type === "channel" ? "group" : isDM ? "dm" : "group",
-      slugExtra: conv ? { convType: conv.type, convName: conv.name } : undefined,
+      channelEntryType: isDM ? "dm" : "channel",
+      slugExtra: conv
+        ? { convType: conv.type as "dm" | "channel", convName: conv.name }
+        : undefined,
       targetName: (username) => (username === baseName ? name : username),
     });
 
@@ -256,8 +258,8 @@ const app = new Hono<AuthEnv>()
       senderName,
       convTitle: conv.title,
       isDM,
-      channelEntryType: conv.type === "channel" ? "group" : isDM ? "dm" : "group",
-      slugExtra: { convType: conv.type, convName: conv.name },
+      channelEntryType: isDM ? "dm" : "channel",
+      slugExtra: { convType: conv.type as "dm" | "channel", convName: conv.name },
     });
 
     return c.json({ ok: true, conversationId: body.conversationId });

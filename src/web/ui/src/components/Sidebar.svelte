@@ -13,7 +13,6 @@ let {
   username,
   onSelectConversation,
   onDeleteConversation,
-  onNewChat,
   onBrowseChannels,
   onOpenMind,
   onSelectMind,
@@ -31,7 +30,6 @@ let {
   username: string;
   onSelectConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
-  onNewChat: () => void;
   onBrowseChannels: () => void;
   onOpenMind: (mind: Mind) => void;
   onSelectMind: (name: string) => void;
@@ -43,7 +41,7 @@ let {
   onHome: () => void;
 } = $props();
 
-type Section = "minds" | "groups" | "channels" | "pages";
+type Section = "minds" | "channels" | "pages";
 
 function loadCollapsed(): Set<Section> {
   try {
@@ -83,16 +81,6 @@ let sortedMinds = $derived(
     const bActive = activeMinds.has(b.name) ? 0 : b.status === "running" ? 1 : 2;
     if (aActive !== bActive) return aActive - bActive;
     return a.name.localeCompare(b.name);
-  }),
-);
-
-let groupConversations = $derived(
-  conversations.filter((c) => {
-    if (c.type === "channel") return false;
-    const parts = c.participants ?? [];
-    if (parts.length !== 2) return true;
-    const other = parts.find((p) => p.username !== username);
-    return other ? !mindNames.has(other.username) : true;
   }),
 );
 
@@ -162,32 +150,6 @@ function toggleSection(section: Section) {
         </div>
       {/if}
     </div>
-
-    <!-- Groups -->
-    {#if groupConversations.length > 0}
-      <div class="section">
-        <div class="section-header-row">
-          <button class="section-toggle" onclick={() => toggleSection("groups")}>
-            <span class="toggle-icon">{collapsed.has("groups") ? "\u25B8" : "\u25BE"}</span>
-            <span>Groups</span>
-          </button>
-          <button class="section-add" onclick={onNewChat} title="New group">+</button>
-        </div>
-        {#if !collapsed.has("groups")}
-          <ConversationList
-            conversations={groupConversations}
-            {minds}
-            activeId={activeConversationId}
-            {username}
-            mode="dms"
-            onSelect={onSelectConversation}
-            onDelete={onDeleteConversation}
-            {onOpenMind}
-            onHide={onHideConversation}
-          />
-        {/if}
-      </div>
-    {/if}
 
     <!-- Channels -->
     <div class="section">

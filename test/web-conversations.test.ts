@@ -9,7 +9,6 @@ import {
   createConversation,
   deleteConversation,
   getMessages,
-  getParticipants,
 } from "../src/lib/events/conversations.js";
 import {
   conversationParticipants,
@@ -227,7 +226,7 @@ describe("web conversations routes", () => {
     await deleteConversation(conv.id);
   });
 
-  it("POST /:name/conversations — creates group conversation", async () => {
+  it("POST /:name/conversations — rejects group conversations (3+ participants)", async () => {
     const cookie = await setupAuth();
     const app = createApp();
 
@@ -246,19 +245,9 @@ describe("web conversations routes", () => {
         title: "Test Group",
       }),
     });
-    assert.equal(res.status, 201);
+    assert.equal(res.status, 400);
     const body = await res.json();
-    assert.ok(body.id);
-    assert.equal(body.title, "Test Group");
-
-    // Verify participants include current user, mind user, and specified user
-    const participants = await getParticipants(body.id);
-    assert.ok(participants.length >= 3);
-    assert.ok(participants.some((p) => p.username === "conv-admin"));
-    assert.ok(participants.some((p) => p.username === "test-mind"));
-    assert.ok(participants.some((p) => p.username === "group-member"));
-
-    await deleteConversation(body.id);
+    assert.ok(body.error.includes("channels"));
   });
 
   it("POST /:name/conversations — validates participant IDs", async () => {

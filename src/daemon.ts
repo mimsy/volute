@@ -98,6 +98,10 @@ export async function startDaemon(opts: {
   const { migrateRegistryToDb } = await import("./lib/migrate-registry-to-db.js");
   migrateRegistryToDb();
 
+  // Migrate group DMs to channels (idempotent)
+  const { migrateGroupDMsToChannels } = await import("./lib/events/conversations.js");
+  await migrateGroupDMsToChannels();
+
   // Initialize sandbox runtime for mind process isolation
   const { initSandbox } = await import("./lib/sandbox.js");
   await initSandbox();

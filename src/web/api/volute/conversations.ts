@@ -92,6 +92,11 @@ const app = new Hono<AuthEnv>()
 
     const participantIds = [...participantSet];
 
+    // Reject group DMs — use channels for 3+ participants
+    if (participantIds.length > 2) {
+      return c.json({ error: "Use channels for multi-participant conversations" }, 400);
+    }
+
     // DM reuse: if exactly 2 participants, return existing conversation if found
     if (participantIds.length === 2) {
       const existingId = await findDMConversation(name, participantIds as [number, number]);
