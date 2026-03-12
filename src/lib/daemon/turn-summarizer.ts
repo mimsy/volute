@@ -4,6 +4,7 @@ import { getDb } from "../db.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { summarizeTool } from "../format-tool.js";
 import log from "../logger.js";
+import { getPrompt } from "../prompts.js";
 import { mindHistory } from "../schema.js";
 
 const sLog = log.child("turn-summarizer");
@@ -172,10 +173,8 @@ export async function summarizeTurn(
 
   const transcript = buildTranscript(events);
   if (transcript.trim()) {
-    const aiResult = await aiComplete(
-      "Summarize what this AI mind did in this turn in 1-2 concise sentences. Focus on what was accomplished, not the mechanics.",
-      transcript,
-    );
+    const summaryPrompt = await getPrompt("turn_summary");
+    const aiResult = await aiComplete(summaryPrompt, transcript);
     if (aiResult) {
       summaryText = aiResult;
       deterministic = false;
