@@ -1,8 +1,8 @@
 ---
 name: shared-skill
-description: Original
+description: Test skill
 ---
 
-# Local Change
+# shared-skill
 
-My custom content.
+Content here.
