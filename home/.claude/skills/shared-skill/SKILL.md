@@ -1,8 +1,6 @@
 ---
 name: shared-skill
-description: V1
+description: V2
 ---
 
-# shared-skill
-
-Content here.
+# V2 content
