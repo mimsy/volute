@@ -227,32 +227,41 @@ const app = new Hono<AuthEnv>()
     if (!oauthProvider) {
       return c.json({ error: `OAuth not supported for provider: ${body.provider}` }, 400);
     }
-    // Providers that use a local callback server (redirect to localhost) won't work
-    // from the web UI when accessed remotely. Direct the user to the CLI instead.
-    if (oauthProvider.usesCallbackServer) {
-      return c.json(
-        {
-          error: `${oauthProvider.name} OAuth requires a local browser redirect and can't be completed from the web UI. Use \`volute ai config --provider ${body.provider} --model <model> --oauth\` from the CLI on the server instead.`,
-        },
-        400,
-      );
-    }
 
     const flowId = crypto.randomUUID();
-    const flow = {
-      status: "pending" as "pending" | "complete" | "error",
-      error: undefined as string | undefined,
+    const needsManualCode = !!oauthProvider.usesCallbackServer;
+    const flow: OAuthFlow = {
+      status: "pending",
+      needsManualCode,
     };
     oauthFlows.set(flowId, flow);
 
-    // Run login in background (device code flow — no callback server needed)
+    // For callback-based providers, onPrompt resolves with the code the user pastes.
+    // We store a resolver so the POST /ai/oauth/code endpoint can fulfill it.
+    let resolvePrompt: ((value: string) => void) | undefined;
+    const promptPromise = needsManualCode
+      ? new Promise<string>((resolve) => {
+          resolvePrompt = resolve;
+          flow.resolveCode = resolve;
+        })
+      : undefined;
+
     oauthProvider
       .login({
         onAuth: (info) => {
           const existing = oauthFlows.get(flowId);
           if (existing) Object.assign(existing, { url: info.url, instructions: info.instructions });
         },
-        onPrompt: async () => "",
+        onPrompt: async (prompt) => {
+          if (promptPromise) {
+            // Wait for user to paste the code via the web UI
+            const existing = oauthFlows.get(flowId);
+            if (existing) existing.waitingForCode = true;
+            return promptPromise;
+          }
+          return "";
+        },
+        onManualCodeInput: needsManualCode ? () => promptPromise! : undefined,
       })
       .then((credentials) => {
         saveAiConfig({ provider: body.provider, model: body.model, oauth: credentials });
@@ -269,14 +278,32 @@ const app = new Hono<AuthEnv>()
 
     // Wait briefly for onAuth to fire with URL
     await new Promise((resolve) => setTimeout(resolve, 2000));
-    const state = oauthFlows.get(flowId) as any;
-    return c.json({ flowId, url: state?.url, instructions: state?.instructions });
+    const state = oauthFlows.get(flowId)!;
+    return c.json({
+      flowId,
+      url: (state as any).url,
+      instructions: (state as any).instructions,
+      needsManualCode,
+    });
+  })
+  .post("/ai/oauth/code/:flowId", requireAdmin, async (c) => {
+    const flowId = c.req.param("flowId");
+    const flow = oauthFlows.get(flowId);
+    if (!flow) return c.json({ error: "Flow not found" }, 404);
+    if (!flow.resolveCode) return c.json({ error: "Flow does not accept manual code" }, 400);
+    const body = (await c.req.json()) as { code: string };
+    if (!body.code?.trim()) return c.json({ error: "Code is required" }, 400);
+    flow.resolveCode(body.code.trim());
+    return c.json({ ok: true });
   })
   .get("/ai/oauth/status/:flowId", requireAdmin, (c) => {
     const flowId = c.req.param("flowId");
     const flow = oauthFlows.get(flowId);
     if (!flow) return c.json({ error: "Flow not found" }, 404);
-    const result: Record<string, unknown> = { status: flow.status };
+    const result: Record<string, unknown> = {
+      status: flow.status,
+      waitingForCode: flow.waitingForCode,
+    };
     if (flow.error) result.error = flow.error;
     if (flow.status !== "pending") {
       oauthFlows.delete(flowId); // Clean up
@@ -285,6 +312,13 @@ const app = new Hono<AuthEnv>()
   });
 
 // In-memory OAuth flow tracking
-const oauthFlows = new Map<string, { status: "pending" | "complete" | "error"; error?: string }>();
+type OAuthFlow = {
+  status: "pending" | "complete" | "error";
+  error?: string;
+  needsManualCode?: boolean;
+  waitingForCode?: boolean;
+  resolveCode?: (code: string) => void;
+};
+const oauthFlows = new Map<string, OAuthFlow>();
 
 export default app;

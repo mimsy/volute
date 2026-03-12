@@ -12,6 +12,7 @@ import {
   resetPrompt,
   saveAiConfig,
   startAiOAuth,
+  submitAiOAuthCode,
   systemLogin,
   systemLogout,
   systemRegister,
@@ -43,6 +44,10 @@ let aiApiKey = $state("");
 let aiSaving = $state(false);
 let oauthUrl = $state("");
 let oauthPolling = $state(false);
+let oauthFlowId = $state("");
+let oauthNeedsCode = $state(false);
+let oauthWaitingForCode = $state(false);
+let oauthCodeInput = $state("");
 
 let selectedProviderInfo = $derived(aiProviders.find((p) => p.id === aiProvider));
 
@@ -103,6 +108,10 @@ function cancelAiEdit() {
   aiEditing = false;
   oauthUrl = "";
   oauthPolling = false;
+  oauthFlowId = "";
+  oauthNeedsCode = false;
+  oauthWaitingForCode = false;
+  oauthCodeInput = "";
   aiError = "";
 }
 
@@ -133,6 +142,8 @@ async function handleAiOAuth() {
     const result = await startAiOAuth(aiProvider.trim(), aiModel.trim());
     if (result.url) {
       oauthUrl = result.url;
+      oauthFlowId = result.flowId;
+      oauthNeedsCode = !!result.needsManualCode;
       oauthPolling = true;
       // Poll for completion
       const poll = async () => {
@@ -140,9 +151,10 @@ async function handleAiOAuth() {
           await new Promise((r) => setTimeout(r, 2500));
           try {
             const status = await pollAiOAuthStatus(result.flowId);
+            if (status.waitingForCode) oauthWaitingForCode = true;
             if (status.status === "complete") {
               oauthPolling = false;
-              oauthUrl = "";
+              cancelAiEdit();
               aiEditing = false;
               await loadAi();
               return;
@@ -163,6 +175,19 @@ async function handleAiOAuth() {
     aiError = err instanceof Error ? err.message : "OAuth failed";
   } finally {
     aiSaving = false;
+  }
+}
+
+async function handleOAuthCodeSubmit() {
+  if (!oauthCodeInput.trim() || !oauthFlowId) return;
+  aiError = "";
+  try {
+    await submitAiOAuthCode(oauthFlowId, oauthCodeInput.trim());
+    oauthCodeInput = "";
+    oauthWaitingForCode = false;
+    // Poll will pick up the completion
+  } catch (err) {
+    aiError = err instanceof Error ? err.message : "Failed to submit code";
   }
 }
 
@@ -343,21 +368,31 @@ async function handleReset(key: string) {
           <button class="btn btn-save" onclick={handleAiSave} disabled={aiSaving || !aiProvider.trim() || !aiModel.trim()}>
             {aiSaving ? "..." : "Save"}
           </button>
-          {#if selectedProviderInfo?.oauth && !selectedProviderInfo.usesCallbackServer}
+          {#if selectedProviderInfo?.oauth}
             <button class="btn btn-edit" onclick={handleAiOAuth} disabled={aiSaving || !aiProvider.trim() || !aiModel.trim()}>
               OAuth
             </button>
           {/if}
           <button class="btn btn-cancel" onclick={cancelAiEdit}>Cancel</button>
         </div>
-        {#if selectedProviderInfo?.oauth && selectedProviderInfo.usesCallbackServer}
-          <div class="dim" style="margin-top: 6px;">OAuth for {selectedProviderInfo.oauthName ?? aiProvider} requires a local redirect. Use <code>volute ai config --oauth</code> from the CLI on the server.</div>
-        {/if}
         {#if oauthUrl}
           <div class="oauth-modal">
             <span class="system-label">Authorize at:</span>
             <a href={oauthUrl} target="_blank" rel="noopener" class="oauth-link">{oauthUrl}</a>
-            <span class="dim">{oauthPolling ? "Waiting for authorization..." : ""}</span>
+            {#if oauthNeedsCode}
+              <span class="dim">After authorizing, you'll be redirected to a page that may not load. Copy the URL or code from the address bar and paste it below.</span>
+              <form class="system-form" onsubmit={(e) => { e.preventDefault(); handleOAuthCodeSubmit(); }} style="margin-top: 6px;">
+                <input
+                  type="text"
+                  bind:value={oauthCodeInput}
+                  placeholder="Paste authorization code or redirect URL"
+                  class="system-input"
+                />
+                <button type="submit" class="btn btn-save" disabled={!oauthCodeInput.trim()}>Submit</button>
+              </form>
+            {:else}
+              <span class="dim">{oauthPolling ? "Waiting for authorization..." : ""}</span>
+            {/if}
           </div>
         {/if}
       </div>

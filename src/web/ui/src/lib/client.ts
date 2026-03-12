@@ -419,14 +419,18 @@ export function removeAiConfig(): Promise<void> {
 export function startAiOAuth(
   provider: string,
   model: string,
-): Promise<{ flowId: string; url?: string; instructions?: string }> {
+): Promise<{ flowId: string; url?: string; instructions?: string; needsManualCode?: boolean }> {
   return post(`${V1}/system/ai/oauth/start`, { provider, model });
 }
 
 export function pollAiOAuthStatus(
   flowId: string,
-): Promise<{ status: "pending" | "complete" | "error"; error?: string }> {
+): Promise<{ status: "pending" | "complete" | "error"; error?: string; waitingForCode?: boolean }> {
   return get(`${V1}/system/ai/oauth/status/${enc(flowId)}`);
+}
+
+export function submitAiOAuthCode(flowId: string, code: string): Promise<void> {
+  return post(`${V1}/system/ai/oauth/code/${enc(flowId)}`, { code });
 }
 
 // --- Auth (these stay on /api/ since they're not mind-scoped) ---
