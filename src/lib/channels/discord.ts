@@ -149,7 +149,7 @@ export async function listConversations(
       id: slug,
       platformId: dm.id,
       name: recipients.join(", ") || "DM",
-      type: dm.type === 1 ? "dm" : "group",
+      type: dm.type === 1 ? "dm" : "channel",
     });
   }
 

@@ -156,7 +156,7 @@ export interface ChannelEntry {
   platform: string;
   name?: string;
   server?: string;
-  type?: "channel" | "dm" | "group";
+  type?: "channel" | "dm";
 }
 
 export function buildChannelSlug(platform: string, meta: ChannelSlugMeta): string {

@@ -292,7 +292,7 @@ async function fanOutToBridgedMinds(opts: {
       writeChannelEntry(mindName, channel, {
         platformId: opts.conversationId,
         platform: "volute",
-        type: opts.isDM ? "dm" : "group",
+        type: opts.isDM ? "dm" : "channel",
       });
     } catch (err) {
       log.warn(`failed to write channel entry for ${mindName}`, log.errorData(err));

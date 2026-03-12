@@ -6,7 +6,6 @@ import ChannelMembersPanel from "./components/ChannelMembersPanel.svelte";
 import ChatSidebar from "./components/ChatSidebar.svelte";
 import LoginPage from "./components/LoginPage.svelte";
 import MainFrame from "./components/MainFrame.svelte";
-import MindPickerModal from "./components/MindPickerModal.svelte";
 import MindRightPanel from "./components/MindRightPanel.svelte";
 import SeedModal from "./components/SeedModal.svelte";
 import SystemSidebar from "./components/SystemSidebar.svelte";
@@ -77,7 +76,7 @@ let chatUnreadCount = $derived.by(() => {
 });
 
 // Modals
-type ModalType = "newChat" | "channelBrowser" | "seed" | "userSettings" | "mind" | null;
+type ModalType = "channelBrowser" | "seed" | "userSettings" | "mind" | null;
 let activeModal = $state<ModalType>(null);
 let selectedModalMind = $state<Mind | null>(null);
 
@@ -129,7 +128,7 @@ let activeConv = $derived.by(() => {
 let contextMindName = $derived.by(() => {
   if (selection.kind !== "conversation") return "";
   if (selection.mindName) return selection.mindName;
-  if (!activeConv || activeConv.type === "channel" || activeConv.type === "group") return "";
+  if (!activeConv || activeConv.type === "channel") return "";
   return activeConv.mind_name ?? "";
 });
 
@@ -177,8 +176,7 @@ let showRightPanelProfile = $derived.by(() => {
 
 let hasRightPanel = $derived(
   (activeTab === "system" && !!systemMind) ||
-    (activeTab === "chat" &&
-      (!!rightPanelMind || activeConv?.type === "channel" || activeConv?.type === "group")),
+    (activeTab === "chat" && (!!rightPanelMind || activeConv?.type === "channel")),
 );
 
 let showRightPanel = $derived(
@@ -403,14 +401,6 @@ function handleNewChatCreated(name: string) {
   }
 }
 
-function handleNewGroupCreated(conv: Conversation) {
-  activeModal = null;
-  selectedModalMind = null;
-  closeSidebar();
-  reconnectActivity();
-  selection = { tab: "chat", kind: "conversation", conversationId: conv.id };
-}
-
 function handleChannelJoined(conv: Conversation) {
   activeModal = null;
   selectedModalMind = null;
@@ -607,7 +597,6 @@ function handleGlobalClick(e: MouseEvent) {
             username={auth.user.username}
             onSelectConversation={handleSelectConversation}
             onDeleteConversation={handleDeleteConversation}
-            onNewChat={() => (activeModal = "newChat")}
             onBrowseChannels={() => (activeModal = "channelBrowser")}
             onOpenMind={handleOpenMindModal}
             onSelectMind={handleNewChatCreated}
@@ -716,7 +705,7 @@ function handleGlobalClick(e: MouseEvent) {
                   onChat={showRightPanelChat ? () => handleNewChatCreated(rightPanelMind.name) : undefined}
                 />
               {/key}
-            {:else if activeConv?.type === "channel" || activeConv?.type === "group"}
+            {:else if activeConv?.type === "channel"}
               <ChannelMembersPanel
                 conversation={activeConv}
                 minds={data.minds}
@@ -730,9 +719,6 @@ function handleGlobalClick(e: MouseEvent) {
     </div>
   </div>
 
-  {#if activeModal === "newChat"}
-    <MindPickerModal minds={data.minds} onClose={() => (activeModal = null)} onPick={handleNewChatCreated} onGroupCreated={handleNewGroupCreated} />
-  {/if}
   {#if activeModal === "channelBrowser"}
     <ChannelBrowserModal
       onClose={() => (activeModal = null)}

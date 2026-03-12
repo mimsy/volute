@@ -36,7 +36,7 @@ export type Conversation = {
   id: string;
   mind_name: string | null;
   channel: string;
-  type: "dm" | "group" | "channel";
+  type: "dm" | "channel";
   name: string | null;
   user_id: number | null;
   title: string | null;
