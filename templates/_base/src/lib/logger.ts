@@ -14,29 +14,6 @@ if (process.env.VOLUTE_DEBUG === "1") {
 // Loaded once at startup — mind restarts on config changes
 const preset = loadTransparencyPreset();
 
-function truncate(str: string, maxLen = 200): string {
-  return str.length > maxLen ? `${str.slice(0, maxLen)}...` : str;
-}
-
-/** Whether debug-level output is active (disables truncation). */
-export function isDebug(): boolean {
-  return minLevel <= LEVELS.debug;
-}
-
-/** Set the minimum log level. */
-export function setLevel(level: LogLevel): void {
-  if (!(level in LEVELS)) {
-    console.error(`[logger] unknown log level "${level}", defaulting to info`);
-    minLevel = LEVELS.info;
-    return;
-  }
-  minLevel = LEVELS[level];
-}
-
-function shouldTruncate(): boolean {
-  return minLevel > LEVELS.debug;
-}
-
 function emit(category: string, args: unknown[]): void {
   const message = args
     .map((a) => (a instanceof Error ? a.message : typeof a === "string" ? a : JSON.stringify(a)))
@@ -47,6 +24,16 @@ function emit(category: string, args: unknown[]): void {
     metadata: { category },
   });
   if (filtered) daemonEmit(filtered).catch(() => {});
+}
+
+/** Set the minimum log level. */
+export function setLevel(level: LogLevel): void {
+  if (!(level in LEVELS)) {
+    console.error(`[logger] unknown log level "${level}", defaulting to info`);
+    minLevel = LEVELS.info;
+    return;
+  }
+  minLevel = LEVELS[level];
 }
 
 function write(level: LogLevel, category: string, ...args: unknown[]): void {
@@ -74,32 +61,6 @@ export function warn(category: string, ...args: unknown[]) {
 
 export function error(category: string, ...args: unknown[]) {
   write("error", category, ...args);
-}
-
-export function logThinking(thinking: string) {
-  log("thinking", shouldTruncate() ? truncate(thinking) : thinking);
-}
-
-export function logToolUse(name: string, input: unknown) {
-  const inputStr = shouldTruncate()
-    ? truncate(JSON.stringify(input), 100)
-    : JSON.stringify(input, null, 2);
-  log("tool", `${name}: ${inputStr}`);
-}
-
-export function logToolResult(name: string, output: string, isError?: boolean) {
-  const prefix = isError ? "error" : "result";
-  log("tool", `${name} ${prefix}: ${shouldTruncate() ? truncate(output) : output}`);
-}
-
-export function logText(text: string) {
-  log("text", shouldTruncate() ? truncate(text) : text);
-}
-
-export function logMessage(direction: "in" | "out", content: string, channel?: string) {
-  const arrow = direction === "in" ? "<<" : ">>";
-  const channelStr = channel ? ` [${channel}]` : "";
-  log("msg", `${arrow}${channelStr}`, shouldTruncate() ? truncate(content) : content);
 }
 
 // Prevent EPIPE on stderr from crashing the process (detached variant mode)

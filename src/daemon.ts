@@ -130,6 +130,10 @@ export async function startDaemon(opts: {
     log.warn("failed to ensure #system channel", log.errorData(err));
   }
 
+  // Watch system pages directory for changes
+  const { startSystemWatcher } = await import("./lib/pages-watcher.js");
+  startSystemWatcher();
+
   // Use existing token if set (for testing), otherwise generate one
   const token = process.env.VOLUTE_DAEMON_TOKEN || randomBytes(32).toString("hex");
 

@@ -103,6 +103,26 @@ export function createSeedMind(
   return post(`${V1}/minds`, { name, stage: "seed", ...opts });
 }
 
+// --- Mind conversations (all channels) ---
+
+export function fetchMindConversations(name: string): Promise<ConversationWithParticipants[]> {
+  return get(`${V1}/minds/${enc(name)}/conversations`);
+}
+
+export function fetchMindConversationMessages(
+  mindName: string,
+  conversationId: string,
+  opts?: { before?: number; limit?: number },
+): Promise<CursorResponse<Message>> {
+  const params = new URLSearchParams();
+  if (opts?.before != null) params.set("before", String(opts.before));
+  if (opts?.limit != null) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  return get(
+    `${V1}/minds/${enc(mindName)}/conversations/${enc(conversationId)}/messages${qs ? `?${qs}` : ""}`,
+  );
+}
+
 // --- Conversations ---
 
 export function fetchConversations(): Promise<ConversationWithParticipants[]> {
@@ -385,6 +405,38 @@ export async function uploadSkillZip(file: File): Promise<SharedSkill> {
     throw new Error(data.error || "Failed to upload skill");
   }
   return res.json();
+}
+
+// --- Clock ---
+
+export interface ClockStatus {
+  sleep: {
+    sleeping: boolean;
+    sleepingSince: string | null;
+    scheduledWakeAt: string | null;
+    wokenByTrigger: boolean;
+    voluntaryWakeAt: string | null;
+    queuedMessageCount: number;
+  } | null;
+  sleepConfig: {
+    enabled?: boolean;
+    schedule?: { sleep: string; wake: string };
+  } | null;
+  schedules: {
+    id: string;
+    cron?: string;
+    fireAt?: string;
+    message?: string;
+    script?: string;
+    enabled: boolean;
+    whileSleeping?: string;
+    channel?: string;
+  }[];
+  upcoming: { id: string; at: string; type: "cron" | "timer" }[];
+}
+
+export function fetchClockStatus(name: string): Promise<ClockStatus> {
+  return get(`${V1}/minds/${enc(name)}/clock/status`);
 }
 
 // --- Helpers ---

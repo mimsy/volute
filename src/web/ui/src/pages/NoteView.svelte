@@ -47,13 +47,11 @@ let {
   author,
   slug,
   username,
-  onBack,
   onNavigate,
 }: {
   author: string;
   slug: string;
   username: string;
-  onBack: () => void;
   onNavigate: (author: string, slug: string) => void;
 } = $props();
 
@@ -168,8 +166,6 @@ function hasReacted(reaction: Reaction): boolean {
 </script>
 
 <div class="note-view">
-  <button class="back-link" onclick={onBack}>&larr; Back to Notes</button>
-
   {#if error}
     <div class="error">{error}</div>
   {/if}
@@ -182,14 +178,20 @@ function hasReacted(reaction: Reaction): boolean {
     <article class="note">
       {#if note.reply_to}
         <button class="reply-to-link" onclick={() => onNavigate(note!.reply_to!.author_username, note!.reply_to!.slug)}>
-          ↩ In reply to: {note.reply_to.author_username}/{note.reply_to.slug} — {note.reply_to.title}
+          <span class="reply-arrow">&#8617;</span> In reply to <span class="reply-ref">{note.reply_to.title}</span>
         </button>
       {/if}
+
       <h1 class="title">{note.title}</h1>
+
       <div class="meta">
         <span class="author">{note.author_display_name ?? note.author_username}</span>
+        <span class="sep">&middot;</span>
         <span class="date">{formatDate(note.created_at)}</span>
       </div>
+
+      <div class="divider"></div>
+
       <div class="content">{note.content}</div>
 
       <div class="reactions-bar">
@@ -221,17 +223,17 @@ function hasReacted(reaction: Reaction): boolean {
 
     {#if note.replies && note.replies.length > 0}
       <div class="replies-section">
-        <h3 class="section-title">Replies ({note.replies.length})</h3>
+        <h3 class="section-title">Replies</h3>
         {#each note.replies as reply}
-          <button class="reply-link" onclick={() => onNavigate(reply.author_username, reply.slug)}>
+          <button class="reply-card" onclick={() => onNavigate(reply.author_username, reply.slug)}>
             <span class="reply-title">{reply.title}</span>
-            <span class="reply-meta">{reply.author_username} · {formatDate(reply.created_at)}</span>
+            <span class="reply-meta">{reply.author_username} &middot; {formatDate(reply.created_at)}</span>
           </button>
         {/each}
       </div>
     {/if}
 
-    <div class="comments">
+    <div class="comments-section">
       <CommentSection
         comments={note.comments}
         onComment={handleComment}
@@ -244,31 +246,12 @@ function hasReacted(reaction: Reaction): boolean {
 
 <style>
   .note-view {
-    max-width: 700px;
+    max-width: 640px;
     margin: 0 auto;
-    padding: 24px 16px;
     animation: fadeIn 0.2s ease both;
   }
 
-  .back-link {
-    background: none;
-    border: none;
-    font-family: var(--sans);
-    font-size: 13px;
-    color: var(--accent);
-    cursor: pointer;
-    padding: 0;
-    margin-bottom: 24px;
-    display: inline-block;
-    transition: opacity 0.15s;
-  }
-
-  .back-link:hover {
-    opacity: 0.8;
-  }
-
   .error {
-    font-family: var(--sans);
     font-size: 13px;
     color: var(--red, #e55);
     margin-bottom: 12px;
@@ -276,7 +259,6 @@ function hasReacted(reaction: Reaction): boolean {
 
   .status {
     color: var(--text-2);
-    font-family: var(--sans);
     font-size: 14px;
     padding: 32px 0;
     text-align: center;
@@ -289,14 +271,12 @@ function hasReacted(reaction: Reaction): boolean {
   .reply-to-link {
     background: none;
     border: none;
-    font-family: var(--sans);
     font-size: 13px;
     color: var(--text-2);
     cursor: pointer;
     padding: 0;
-    margin-bottom: 12px;
+    margin-bottom: 16px;
     display: block;
-    transition: color 0.15s;
     text-align: left;
   }
 
@@ -304,40 +284,62 @@ function hasReacted(reaction: Reaction): boolean {
     color: var(--accent);
   }
 
+  .reply-arrow {
+    opacity: 0.6;
+  }
+
+  .reply-ref {
+    color: var(--text-1);
+    font-style: italic;
+  }
+
+  .reply-to-link:hover .reply-ref {
+    color: var(--accent);
+  }
+
   .title {
     font-family: var(--display);
-    font-size: 28px;
-    font-weight: 600;
+    font-size: 26px;
+    font-weight: 400;
     color: var(--text-0);
-    margin: 0 0 8px 0;
+    margin: 0 0 10px 0;
     line-height: 1.3;
+    letter-spacing: -0.01em;
   }
 
   .meta {
     display: flex;
     align-items: baseline;
-    gap: 8px;
-    margin-bottom: 20px;
+    gap: 6px;
+    margin-bottom: 0;
   }
 
   .author {
-    font-family: var(--sans);
     font-size: 14px;
-    color: var(--accent);
+    color: var(--text-1);
     font-weight: 500;
   }
 
+  .sep {
+    color: var(--text-2);
+    font-size: 12px;
+  }
+
   .date {
-    font-family: var(--sans);
     font-size: 13px;
     color: var(--text-2);
   }
 
+  .divider {
+    height: 1px;
+    background: var(--border);
+    margin: 16px 0 20px;
+  }
+
   .content {
-    font-family: var(--sans);
     font-size: 15px;
     color: var(--text-0);
-    line-height: 1.6;
+    line-height: 1.7;
     white-space: pre-wrap;
     word-break: break-word;
   }
@@ -345,7 +347,7 @@ function hasReacted(reaction: Reaction): boolean {
   .reactions-bar {
     display: flex;
     gap: 6px;
-    margin-top: 16px;
+    margin-top: 20px;
     flex-wrap: wrap;
     align-items: center;
   }
@@ -358,7 +360,6 @@ function hasReacted(reaction: Reaction): boolean {
     border-radius: 14px;
     color: var(--text-1);
     cursor: pointer;
-    font-family: var(--sans);
     transition: all 0.15s;
   }
 
@@ -387,7 +388,6 @@ function hasReacted(reaction: Reaction): boolean {
     border: 1px solid var(--border);
     border-radius: 14px;
     color: var(--text-0);
-    font-family: var(--sans);
     font-size: 13px;
     outline: none;
   }
@@ -398,38 +398,41 @@ function hasReacted(reaction: Reaction): boolean {
 
   .replies-section {
     border-top: 1px solid var(--border);
-    padding-top: 16px;
+    padding-top: 20px;
     margin-bottom: 24px;
   }
 
   .section-title {
-    font-family: var(--sans);
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 500;
-    color: var(--text-1);
-    margin: 0 0 10px;
+    color: var(--text-2);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin: 0 0 12px;
   }
 
-  .reply-link {
+  .reply-card {
     display: block;
     width: 100%;
     text-align: left;
-    background: none;
-    border: none;
-    padding: 8px 0;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 14px;
     cursor: pointer;
-    font-family: var(--sans);
-    transition: opacity 0.15s;
+    margin-bottom: 6px;
+    transition: border-color 0.15s;
   }
 
-  .reply-link:hover {
-    opacity: 0.8;
+  .reply-card:hover {
+    border-color: var(--border-bright);
   }
 
   .reply-title {
     font-size: 14px;
-    color: var(--accent);
+    color: var(--text-0);
     display: block;
+    margin-bottom: 2px;
   }
 
   .reply-meta {
@@ -437,7 +440,7 @@ function hasReacted(reaction: Reaction): boolean {
     color: var(--text-2);
   }
 
-  .comments {
+  .comments-section {
     border-top: 1px solid var(--border);
     padding-top: 20px;
   }

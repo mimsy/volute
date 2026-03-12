@@ -6,12 +6,15 @@ export type Selection =
       name: string;
       section?: string;
     }
+  | { tab: "system"; kind: "mind-note"; mind: string; slug: string }
+  | { tab: "system"; kind: "mind-page"; mind: string; path: string }
   | { tab: "system"; kind: "notes" }
   | { tab: "system"; kind: "note"; author: string; slug: string }
   | { tab: "system"; kind: "pages" }
   | { tab: "system"; kind: "site"; name: string }
   | { tab: "system"; kind: "page"; mind: string; path: string }
   | { tab: "system"; kind: "extension"; extensionId: string; path: string }
+  | { tab: "system"; kind: "settings"; section?: string }
   | { tab: "chat"; kind: "home" }
   | { tab: "chat"; kind: "conversation"; conversationId?: string; mindName?: string };
 
@@ -22,6 +25,12 @@ export function parseSelection(): Selection {
   const search = new URLSearchParams(window.location.search);
 
   // System tab routes
+  if (path === "/settings") return { tab: "system", kind: "settings" };
+
+  const settingsSectionMatch = path.match(/^\/settings\/(.+)$/);
+  if (settingsSectionMatch)
+    return { tab: "system", kind: "settings", section: settingsSectionMatch[1] };
+
   if (path === "/notes") return { tab: "system", kind: "notes" };
 
   const noteMatch = path.match(/^\/notes\/([^/]+)\/(.+)$/);
@@ -32,8 +41,18 @@ export function parseSelection(): Selection {
   if (extMatch)
     return { tab: "system", kind: "extension", extensionId: extMatch[1], path: extMatch[2] ?? "" };
 
+  // Mind-scoped note: /minds/:name/notes/:slug
+  const mindNoteMatch = path.match(/^\/minds\/([^/]+)\/notes\/(.+)$/);
+  if (mindNoteMatch)
+    return { tab: "system", kind: "mind-note", mind: mindNoteMatch[1], slug: mindNoteMatch[2] };
+
+  // Mind-scoped page: /minds/:name/pages/:path
+  const mindPageMatch = path.match(/^\/minds\/([^/]+)\/pages\/(.+)$/);
+  if (mindPageMatch)
+    return { tab: "system", kind: "mind-page", mind: mindPageMatch[1], path: mindPageMatch[2] };
+
   // Mind detail pages
-  const mindSectionMatch = path.match(/^\/minds\/([^/]+)\/(.+)$/);
+  const mindSectionMatch = path.match(/^\/minds\/([^/]+)\/([^/]+)$/);
   if (mindSectionMatch) {
     const section = mindSectionMatch[2] as "info" | "notes" | "pages" | "files" | "settings";
     return { tab: "system", kind: "mind", name: mindSectionMatch[1], section };
@@ -97,6 +116,10 @@ export function selectionToPath(selection: Selection): string {
       return selection.section && selection.section !== "info"
         ? `/minds/${selection.name}/${selection.section}`
         : `/minds/${selection.name}`;
+    case "mind-note":
+      return `/minds/${selection.mind}/notes/${selection.slug}`;
+    case "mind-page":
+      return `/minds/${selection.mind}/pages/${selection.path}`;
     case "notes":
       return "/notes";
     case "note":
@@ -111,6 +134,8 @@ export function selectionToPath(selection: Selection): string {
       return selection.path
         ? `/ext/${selection.extensionId}/${selection.path}`
         : `/ext/${selection.extensionId}`;
+    case "settings":
+      return selection.section ? `/settings/${selection.section}` : "/settings";
     case "conversation":
       if (selection.conversationId) return `/chat/${selection.conversationId}`;
       if (selection.mindName) return `/chat?mind=${selection.mindName}`;

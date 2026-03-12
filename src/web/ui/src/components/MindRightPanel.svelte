@@ -3,16 +3,17 @@ import type { Mind } from "@volute/api";
 import { getDisplayStatus } from "../lib/format";
 import { data } from "../lib/stores.svelte";
 import History from "./History.svelte";
+import MindClock from "./MindClock.svelte";
 import StatusBadge from "./StatusBadge.svelte";
 
 let {
   mind: initialMind,
-  onClose,
-  onViewProfile,
+  onProfile,
+  onChat,
 }: {
   mind: Mind;
-  onClose?: () => void;
-  onViewProfile?: () => void;
+  onProfile?: () => void;
+  onChat?: () => void;
 } = $props();
 
 let mind = $derived(data.minds.find((m) => m.name === initialMind.name) ?? initialMind);
@@ -28,19 +29,22 @@ function formatCreated(dateStr: string): string {
 </script>
 
 <div class="mind-panel">
-  <div class="panel-header">
-    <div class="header-top">
-      <div class="header-left">
-        <span class="mind-name">{mind.displayName ?? mind.name}</span>
-      </div>
-      {#if onClose}
-        <button class="close-btn" onclick={onClose}>&#x2715;</button>
+  {#if onChat || onProfile}
+    <div class="floating-btns">
+      {#if onChat}
+        <button class="floating-btn" onclick={onChat} title="Chat">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+        </button>
+      {/if}
+      {#if onProfile}
+        <button class="floating-btn" onclick={onProfile} title="Mind page">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5"/><circle cx="15" cy="14" r="1.5"/><line x1="12" y1="4" x2="12" y2="8"/><circle cx="12" cy="3" r="1"/></svg>
+        </button>
       {/if}
     </div>
-  </div>
+  {/if}
   <div class="panel-body">
     <div class="profile-section">
-      <span class="profile-display-name">{mind.displayName ?? mind.name}</span>
       {#if mind.avatar}
         <img
           src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
@@ -48,15 +52,15 @@ function formatCreated(dateStr: string): string {
           class="profile-avatar"
         />
       {/if}
+      <span class="profile-name">{mind.displayName ?? mind.name}</span>
       <StatusBadge status={getDisplayStatus(mind)} />
       {#if mind.description}
         <p class="profile-description">{mind.description}</p>
       {/if}
       <span class="profile-meta">@{mind.name} &middot; since {formatCreated(mind.created)}</span>
-      {#if onViewProfile}
-        <button class="view-profile-btn" onclick={onViewProfile}>View full profile &rarr;</button>
-      {/if}
     </div>
+
+    <MindClock name={mind.name} />
 
     <div class="history-section">
       <History name={mind.name} />
@@ -72,44 +76,41 @@ function formatCreated(dateStr: string): string {
     background: var(--bg-1);
     width: 100%;
     overflow: hidden;
+    position: relative;
   }
 
-  .panel-header {
+  .floating-btns {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 1;
     display: flex;
-    flex-direction: column;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
+    gap: 4px;
   }
 
-  .header-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 16px;
-  }
-
-  .header-left {
+  .floating-btn {
     display: flex;
     align-items: center;
-    gap: 10px;
-  }
-
-  .mind-name {
-    font-family: var(--display);
-    font-size: 20px;
-    font-weight: 400;
-    color: var(--text-0);
-  }
-
-  .close-btn {
-    background: none;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
     color: var(--text-2);
-    font-size: 15px;
-    padding: 4px 8px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
   }
 
-  .close-btn:hover {
+  .floating-btn:hover {
     color: var(--text-0);
+    border-color: var(--border-bright);
+    background: var(--bg-3);
+  }
+
+  .floating-btn svg {
+    width: 16px;
+    height: 16px;
   }
 
   .panel-body {
@@ -125,7 +126,7 @@ function formatCreated(dateStr: string): string {
     flex-direction: column;
     align-items: center;
     gap: 4px;
-    padding: 0 16px 16px;
+    padding: 12px 16px 16px;
   }
 
   .profile-avatar {
@@ -135,11 +136,13 @@ function formatCreated(dateStr: string): string {
     object-fit: cover;
   }
 
-  .profile-display-name {
+  .profile-name {
     font-family: var(--display);
-    font-size: 24px;
-    font-weight: 400;
+    font-size: 20px;
+    font-weight: 300;
     color: var(--text-0);
+    letter-spacing: 0.02em;
+    margin-top: 4px;
   }
 
   .profile-description {
@@ -157,29 +160,10 @@ function formatCreated(dateStr: string): string {
     margin-top: 4px;
   }
 
-  .view-profile-btn {
-    margin-top: 8px;
-    background: none;
-    color: var(--accent);
-    font-size: 13px;
-    padding: 4px 0;
-    cursor: pointer;
-  }
-
-  .view-profile-btn:hover {
-    text-decoration: underline;
-  }
-
   .history-section {
     flex: 1;
     min-height: 0;
     padding: 0 16px;
     border-top: 1px solid var(--border);
-  }
-
-  @media (max-width: 1024px) {
-    .mind-panel {
-      width: 100%;
-    }
   }
 </style>

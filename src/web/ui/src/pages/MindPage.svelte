@@ -1,65 +1,74 @@
 <script lang="ts">
-import type { ContentBlock, Message, Mind, Site } from "@volute/api";
-import History from "../components/History.svelte";
+import type { ConversationWithParticipants, Message } from "@volute/api";
 import MindInfo from "../components/MindInfo.svelte";
+
 import MindSkills from "../components/MindSkills.svelte";
-import NoteCard from "../components/NoteCard.svelte";
-import PageThumbnail from "../components/PageThumbnail.svelte";
 import PublicFiles from "../components/PublicFiles.svelte";
-import StatusBadge from "../components/StatusBadge.svelte";
-import { fetchConversationMessages } from "../lib/client";
-import { formatRelativeTime, getDisplayStatus } from "../lib/format";
+import ReadOnlyChatModal from "../components/ReadOnlyChatModal.svelte";
+import {
+  fetchConversationMessages,
+  fetchMindConversationMessages,
+  fetchMindConversations,
+} from "../lib/client";
+import {
+  type ApiNote,
+  extractTextContent,
+  formatTime,
+  scaleIframe,
+  showSenderHeader,
+} from "../lib/feed-utils";
+import { formatRelativeTime, normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
 import { navigate } from "../lib/navigate";
-import { data } from "../lib/stores.svelte";
+import { auth, data } from "../lib/stores.svelte";
 import Notes from "./Notes.svelte";
 import SiteView from "./SiteView.svelte";
 
 let {
   name,
   section = "info",
-  onSelectNote,
 }: {
   name: string;
   section?: string;
-  onSelectNote: (author: string, slug: string) => void;
 } = $props();
 
 let mind = $derived(data.minds.find((m) => m.name === name));
 
 let site = $derived(data.sites.find((s) => s.name === name));
 
-// Find DM conversation with this mind (check mind_name first, then participants)
-let dmConv = $derived.by(() => {
-  const byName = data.conversations.find((c) => c.type !== "channel" && c.mind_name === name);
-  if (byName) return byName;
-  return data.conversations.find((c) => {
-    if (c.type === "channel") return false;
-    const parts = c.participants ?? [];
-    if (parts.length !== 2) return false;
-    return parts.some((p) => p.username === name);
-  });
-});
+let mindConversations = $state<ConversationWithParticipants[]>([]);
+let recentNotes = $state<ApiNote[]>([]);
+let messagesMap = $state<Record<string, Message[]>>({});
+let scrollEls = $state<Record<string, HTMLDivElement>>({});
+let readOnlyConv = $state<ConversationWithParticipants | null>(null);
 
-interface ApiNote {
-  title: string;
-  author_username: string;
-  slug: string;
-  content: string;
-  comment_count: number;
-  created_at: string;
-  reply_to?: { author_username: string; slug: string; title: string } | null;
-  reactions?: { emoji: string; count: number }[];
+let currentUsername = $derived(auth.user?.username ?? "");
+
+function isUserParticipant(conv: ConversationWithParticipants): boolean {
+  if (!currentUsername) return false;
+  return (conv.participants ?? []).some((p) => p.username === currentUsername);
 }
 
-let recentMessages = $state<Message[]>([]);
-let recentNotes = $state<ApiNote[]>([]);
-let chatScrollEl = $state<HTMLDivElement | undefined>();
+function getConvLabel(conv: ConversationWithParticipants): string {
+  if (conv.type === "channel" && conv.name) return `#${conv.name}`;
+  const parts = conv.participants ?? [];
+  // For a DM, show the non-mind participant
+  if (conv.type === "dm" && parts.length === 2) {
+    const other = parts.find((p) => p.username !== name);
+    if (other) return `@${other.username}`;
+  }
+  // For groups, show non-mind participants
+  const others = parts.filter((p) => p.username !== name);
+  if (others.length > 0) return others.map((p) => `@${p.username}`).join(", ");
+  if (conv.title) return conv.title;
+  return "Conversation";
+}
 
-// Mixed feed of notes and pages sorted by date
+// Mixed feed of notes, pages, and conversations sorted by date
 type FeedItem =
   | { kind: "note"; note: ApiNote; date: string }
-  | { kind: "page"; file: string; modified: string; date: string };
+  | { kind: "page"; file: string; modified: string; date: string }
+  | { kind: "message"; conv: ConversationWithParticipants; date: string };
 
 let feedItems = $derived.by(() => {
   const items: FeedItem[] = [];
@@ -71,26 +80,55 @@ let feedItems = $derived.by(() => {
       items.push({ kind: "page", file: page.file, modified: page.modified, date: page.modified });
     }
   }
-  items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  for (const conv of mindConversations) {
+    if ((conv as any).lastMessage) {
+      items.push({ kind: "message", conv, date: conv.updated_at });
+    }
+  }
+  items.sort((a, b) => {
+    const aTime = new Date(normalizeTimestamp(a.date)).getTime();
+    const bTime = new Date(normalizeTimestamp(b.date)).getTime();
+    return bTime - aTime;
+  });
   return items;
 });
 
+// Fetch mind conversations
 $effect(() => {
-  const conv = dmConv;
-  if (!conv) {
-    recentMessages = [];
-    return;
-  }
-  fetchConversationMessages(conv.id, { limit: 10 })
-    .then((res) => {
-      recentMessages = res.items;
-      requestAnimationFrame(() => {
-        if (chatScrollEl) chatScrollEl.scrollTop = chatScrollEl.scrollHeight;
-      });
+  const mindName = name;
+  messagesMap = {};
+  fetchMindConversations(mindName)
+    .then((convs) => {
+      mindConversations = convs;
     })
-    .catch(() => {
-      recentMessages = [];
+    .catch((err) => {
+      console.warn("Failed to load mind conversations:", err);
+      mindConversations = [];
     });
+});
+
+// Fetch messages for each conversation
+$effect(() => {
+  const convs = mindConversations;
+  for (const conv of convs) {
+    if (messagesMap[conv.id]) continue;
+    const isParticipant = isUserParticipant(conv);
+    const fetchFn = isParticipant
+      ? fetchConversationMessages(conv.id, { limit: 10 })
+      : fetchMindConversationMessages(name, conv.id, { limit: 10 });
+    fetchFn
+      .then((res) => {
+        messagesMap[conv.id] = res.items;
+        requestAnimationFrame(() => {
+          const el = scrollEls[conv.id];
+          if (el) el.scrollTop = el.scrollHeight;
+        });
+      })
+      .catch((err) => {
+        console.warn(`Failed to load messages for conversation ${conv.id}:`, err);
+        messagesMap[conv.id] = [];
+      });
+  }
 });
 
 $effect(() => {
@@ -105,48 +143,12 @@ $effect(() => {
     });
 });
 
-function formatCreated(dateStr: string): string {
-  try {
-    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
-    return d.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
-  } catch {
-    return dateStr;
-  }
-}
-
-function formatTime(dateStr: string): string {
-  try {
-    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
-    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  } catch {
-    return "";
-  }
-}
-
-function handleChatClick() {
-  if (dmConv) {
-    navigate(`/chat/${dmConv.id}`);
-  } else {
-    navigate(`/chat?mind=${name}`);
-  }
-}
-
 function handleSelectPage(mind: string, path: string) {
-  navigate(`/pages/${mind}/${path}`);
+  navigate(`/minds/${mind}/pages/${path}`);
 }
 
-function showSenderHeader(i: number): boolean {
-  if (i === 0) return true;
-  const prev = recentMessages[i - 1];
-  const cur = recentMessages[i];
-  return (prev.sender_name ?? prev.role) !== (cur.sender_name ?? cur.role);
-}
-
-function extractTextContent(content: ContentBlock[]): string {
-  return content
-    .filter((b): b is ContentBlock & { type: "text" } => b.type === "text")
-    .map((b) => b.text)
-    .join("\n\n");
+function handleSelectNote(author: string, slug: string) {
+  navigate(`/minds/${author}/notes/${slug}`);
 }
 </script>
 
@@ -155,106 +157,99 @@ function extractTextContent(content: ContentBlock[]): string {
 {:else}
   <div class="mind-page">
     {#if section === "info"}
-      <div class="info-split">
-        <div class="info-left">
-          <!-- Profile header -->
-          <div class="profile-header">
-            {#if mind.avatar}
-              <img
-                src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
-                alt=""
-                class="profile-avatar"
-              />
-            {/if}
-            <div class="profile-info">
-              <div class="profile-name-row">
-                <span class="profile-display-name">{mind.displayName ?? mind.name}</span>
-                <StatusBadge status={getDisplayStatus(mind)} />
-                {#if mind.stage === "seed"}
-                  <span class="seed-tag">seed</span>
-                {/if}
-              </div>
-              {#if mind.description}
-                <p class="profile-description">{mind.description}</p>
-              {/if}
-              <span class="profile-meta">@{mind.name} &middot; since {formatCreated(mind.created)}</span>
-            </div>
-          </div>
-
-          <!-- Chat viewport -->
-          <div class="chat-viewport">
-            {#if recentMessages.length === 0}
-              <div class="chat-viewport-empty">No messages yet.</div>
-            {:else}
-              <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <div class="chat-viewport-scroll" bind:this={chatScrollEl} onscroll={(e) => {
-                const el = e.currentTarget;
-                if (el.scrollTop < 10) el.scrollTop = 10;
-              }}>
-                {#each recentMessages as msg, i (msg.id)}
-                  <div class="chat-entry" class:new-sender={showSenderHeader(i)}>
-                    {#if showSenderHeader(i)}
-                      <div class="chat-entry-header">
-                        <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "you" : name)}</span>
-                        <span class="chat-timestamp">{formatTime(msg.created_at)}</span>
-                      </div>
+      <!-- Mixed feed -->
+      {#if feedItems.length === 0}
+        <div class="empty-hint">No activity yet.</div>
+      {:else}
+        <div class="feed-grid">
+          {#each feedItems as item (item.kind === "note" ? `note-${item.note.slug}` : item.kind === "page" ? `page-${item.file}` : `msg-${item.conv.id}`)}
+            {#if item.kind === "note"}
+              {@const note = item.note}
+              <div class="feed-item">
+                <div class="feed-card card-note" role="button" tabindex="0" onclick={() => handleSelectNote(note.author_username, note.slug)} onkeydown={(e) => { if (e.key === 'Enter') handleSelectNote(note.author_username, note.slug); }}>
+                  <div class="feed-card-header header-note">
+                    <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h8M2 6h10M2 9h6M2 12h9"/></svg>
+                    <span class="feed-card-label">{note.title}</span>
+                    <span class="feed-card-meta">{formatRelativeTime(note.created_at)}</span>
+                  </div>
+                  <div class="feed-card-body note-body">
+                    <p class="note-excerpt">{note.content.length > 300 ? `${note.content.slice(0, 300)}...` : note.content}</p>
+                    {#if note.comment_count > 0}
+                      <span class="note-comments">{note.comment_count} {note.comment_count === 1 ? "comment" : "comments"}</span>
                     {/if}
-                    <div class="chat-entry-content" class:chat-user-text={msg.role === "user"}>
-                      {#if msg.role === "user"}
-                        {extractTextContent(msg.content)}
-                      {:else}
-                        <div class="markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</div>
-                      {/if}
-                    </div>
                   </div>
-                {/each}
+                </div>
+              </div>
+            {:else if item.kind === "page"}
+              <div class="feed-item">
+                <div class="feed-card card-page" role="button" tabindex="0" onclick={() => handleSelectPage(name, item.file)} onkeydown={(e) => { if (e.key === 'Enter') handleSelectPage(name, item.file); }}>
+                  <div class="feed-card-header header-page">
+                    <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M2 5.5h12"/></svg>
+                    <span class="feed-card-label">{item.file}</span>
+                    <span class="feed-card-meta">{formatRelativeTime(item.modified)}</span>
+                  </div>
+                  <div class="feed-card-body page-body" use:scaleIframe>
+                    <iframe src="/pages/{name}/{item.file}" loading="lazy" sandbox="allow-same-origin" tabindex={-1} title={item.file}></iframe>
+                  </div>
+                </div>
+              </div>
+            {:else}
+              {@const conv = item.conv}
+              {@const label = getConvLabel(conv)}
+              {@const messages = messagesMap[conv.id] ?? []}
+              {@const participant = isUserParticipant(conv)}
+              <div class="feed-item">
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div class="feed-card card-chat" role="button" tabindex="0" onclick={() => { readOnlyConv = conv; }} onkeydown={(e) => { if (e.key === 'Enter') readOnlyConv = conv; }}>
+                  <div class="feed-card-header header-chat">
+                    <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                    <span class="feed-card-label">{label}</span>
+                    <span class="feed-card-meta">{formatRelativeTime(conv.updated_at)}</span>
+                    {#if participant}
+                      <button
+                        class="card-action-btn card-action-btn-primary"
+                        onclick={(e) => { e.stopPropagation(); navigate(`/chat/${conv.id}`); }}
+                      >
+                        Chat
+                      </button>
+                    {/if}
+                  </div>
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <div class="feed-card-body chat-body" bind:this={scrollEls[conv.id]} onscroll={(e) => {
+                    const el = e.currentTarget;
+                    if (el.scrollTop < 10) el.scrollTop = 10;
+                  }}>
+                    {#if messages.length === 0}
+                      <div class="msg-empty">Loading...</div>
+                    {:else}
+                      {#each messages as msg, i (msg.id)}
+                        <div class="chat-entry" class:new-sender={showSenderHeader(messages, i)}>
+                          {#if showSenderHeader(messages, i)}
+                            <div class="chat-entry-header">
+                              <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : name)}</span>
+                              <span class="chat-timestamp">{formatTime(msg.created_at)}</span>
+                            </div>
+                          {/if}
+                          <div class="chat-entry-content" class:chat-user-text={msg.role === "user"}>
+                            {#if msg.role === "user"}
+                              {extractTextContent(msg.content)}
+                            {:else}
+                              <div class="markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</div>
+                            {/if}
+                          </div>
+                        </div>
+                      {/each}
+                    {/if}
+                  </div>
+                </div>
               </div>
             {/if}
-            <button class="chat-open-btn" onclick={handleChatClick}>
-              Open chat &rarr;
-            </button>
-          </div>
-
-          <!-- Mixed notes & pages feed -->
-          {#if feedItems.length > 0}
-            <div class="feed-grid">
-              {#each feedItems as item (item.kind === "note" ? `note-${item.note.slug}` : `page-${item.file}`)}
-                {#if item.kind === "note"}
-                  <div class="feed-item">
-                    <NoteCard
-                      title={item.note.title}
-                      author={item.note.author_username}
-                      slug={item.note.slug}
-                      excerpt={item.note.content.length > 120 ? `${item.note.content.slice(0, 120)}...` : item.note.content}
-                      commentCount={item.note.comment_count}
-                      createdAt={item.note.created_at}
-                      replyTo={item.note.reply_to}
-                      reactions={item.note.reactions}
-                      onSelect={onSelectNote}
-                    />
-                  </div>
-                {:else}
-                  <div class="feed-item">
-                    <PageThumbnail
-                      url="/pages/{name}/{item.file}"
-                      label={item.file}
-                      sublabel={formatRelativeTime(item.modified)}
-                      onclick={() => handleSelectPage(name, item.file)}
-                    />
-                  </div>
-                {/if}
-              {/each}
-            </div>
-          {/if}
+          {/each}
         </div>
-
-        <div class="info-right">
-          <History {name} />
-        </div>
-      </div>
+      {/if}
     {:else if section === "notes"}
       <div class="section-content">
-        <Notes {onSelectNote} author={name} />
+        <Notes author={name} />
       </div>
     {:else if section === "pages"}
       <div class="section-content">
@@ -284,6 +279,15 @@ function extractTextContent(content: ContentBlock[]): string {
   </div>
 {/if}
 
+{#if readOnlyConv}
+  <ReadOnlyChatModal
+    mindName={name}
+    conversation={readOnlyConv}
+    canChat={isUserParticipant(readOnlyConv)}
+    onClose={() => { readOnlyConv = null; }}
+  />
+{/if}
+
 <style>
   .mind-page {
     animation: fadeIn 0.2s ease both;
@@ -291,6 +295,7 @@ function extractTextContent(content: ContentBlock[]): string {
     flex-direction: column;
     height: 100%;
     min-height: 0;
+    overflow: auto;
   }
 
   .not-found {
@@ -299,140 +304,181 @@ function extractTextContent(content: ContentBlock[]): string {
     text-align: center;
   }
 
-  .profile-header {
-    display: flex;
-    align-items: flex-start;
+  /* Feed grid */
+  .feed-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
     gap: 16px;
-    padding-bottom: 16px;
-    flex-shrink: 0;
   }
 
-  .profile-avatar {
-    width: 80px;
-    height: 80px;
-    border-radius: var(--radius-lg);
-    object-fit: cover;
-    flex-shrink: 0;
-  }
-
-  .profile-info {
-    flex: 1;
+  .feed-item {
     min-width: 0;
   }
 
-  .profile-name-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 4px;
-  }
-
-  .profile-display-name {
-    font-family: var(--display);
-    font-size: 24px;
-    font-weight: 400;
-    color: var(--text-0);
-  }
-
-  .seed-tag {
-    font-size: 10px;
-    color: var(--yellow);
-  }
-
-  .profile-description {
-    font-size: 14px;
-    color: var(--text-1);
-    line-height: 1.4;
-    margin: 4px 0 0;
-  }
-
-  .profile-meta {
-    font-size: 12px;
-    color: var(--text-2);
-    margin-top: 4px;
-    display: block;
-  }
-
-  /* Split layout — history on right spans full height */
-  .info-split {
-    display: flex;
-    gap: 24px;
-    flex: 1;
-    min-height: 0;
-  }
-
-  .info-left {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    overflow: auto;
-  }
-
-  .info-right {
-    width: 420px;
-    flex-shrink: 0;
-    min-height: 0;
-    background: var(--bg-1);
-    border-left: 1px solid var(--border);
-    margin: -24px -24px -24px 0;
-    padding: 16px;
-  }
-
-  /* Chat viewport */
-  .chat-viewport {
+  /* Unified card */
+  .feed-card {
     background: var(--bg-0);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     display: flex;
     flex-direction: column;
-    max-height: 340px;
-    min-height: 80px;
+    height: 240px;
     overflow: hidden;
+    transition: border-color 0.15s;
   }
 
-  .chat-viewport-scroll {
+  .feed-card[role="button"] {
+    cursor: pointer;
+  }
+
+  .feed-card-header {
+    padding: 6px 8px 6px 10px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-1);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .feed-card-icon {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+  }
+
+  .card-note .feed-card-icon { color: var(--yellow); }
+  .card-page .feed-card-icon { color: var(--purple); }
+  .card-chat .feed-card-icon { color: var(--blue); }
+
+  .card-note { border-color: color-mix(in srgb, var(--yellow) 25%, var(--border)); }
+  .card-page { border-color: color-mix(in srgb, var(--purple) 25%, var(--border)); }
+  .card-chat { border-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
+
+  .card-note .feed-card-header { border-bottom-color: color-mix(in srgb, var(--yellow) 25%, var(--border)); }
+  .card-page .feed-card-header { border-bottom-color: color-mix(in srgb, var(--purple) 25%, var(--border)); }
+  .card-chat .feed-card-header { border-bottom-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
+
+  .card-note:hover { border-color: color-mix(in srgb, var(--yellow) 50%, var(--border)); }
+  .card-page:hover { border-color: color-mix(in srgb, var(--purple) 50%, var(--border)); }
+  .card-chat:hover { border-color: color-mix(in srgb, var(--blue) 50%, var(--border)); }
+
+  .feed-card-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .feed-card-meta {
+    font-size: 11px;
+    color: var(--text-2);
+    font-weight: 400;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+
+  .feed-card-body {
     flex: 1;
     overflow: auto;
-    padding: 12px 16px;
+    padding: 10px 12px;
     min-height: 0;
   }
 
-  .chat-viewport-empty {
+  /* Card action button (chat cards) */
+  .card-action-btn {
+    font-size: 12px;
+    padding: 2px 10px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    flex-shrink: 0;
+    background: none;
+    border: 1px solid var(--border);
     color: var(--text-2);
+    transition: color 0.15s, border-color 0.15s;
+  }
+
+  .card-action-btn:hover {
+    color: var(--text-1);
+    border-color: var(--border-bright);
+  }
+
+  .card-action-btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg-0);
+  }
+
+  .card-action-btn-primary:hover {
+    opacity: 0.85;
+    color: var(--bg-0);
+    border-color: var(--accent);
+  }
+
+  /* Note card body */
+  .note-body {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  .note-excerpt {
     font-size: 13px;
-    padding: 24px 16px;
-    text-align: center;
+    color: var(--text-1);
+    margin: 0;
+    overflow: hidden;
+    line-height: 1.5;
     flex: 1;
   }
 
-  .chat-open-btn {
-    display: block;
-    width: 100%;
-    padding: 8px;
-    background: var(--accent-dim);
-    color: var(--accent);
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    border-top: 1px solid var(--border);
-    text-align: center;
+  .note-comments {
+    font-size: 11px;
+    color: var(--text-2);
     flex-shrink: 0;
-    transition: background 0.15s;
+    margin-top: 6px;
   }
 
-  .chat-open-btn:hover {
-    background: var(--accent-bg);
+  /* Page card body */
+  .page-body {
+    padding: 0;
+    overflow: hidden;
+    position: relative;
   }
 
-  /* Chat entries (matching MessageEntry style) */
+  .page-body iframe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1280px;
+    height: 960px;
+    transform-origin: top left;
+    pointer-events: none;
+    border: none;
+    background: white;
+  }
+
+  /* Chat card body */
+  .chat-body {
+    padding: 8px 12px;
+  }
+
+  .msg-empty {
+    color: var(--text-2);
+    font-size: 13px;
+    padding: 16px 0;
+    text-align: center;
+  }
+
+  /* Chat entries */
   .chat-entry {
-    padding: 2px 0;
+    padding: 1px 0;
   }
 
   .chat-entry.new-sender {
-    margin-top: 12px;
+    margin-top: 8px;
   }
 
   .chat-entry:first-child {
@@ -442,12 +488,12 @@ function extractTextContent(content: ContentBlock[]): string {
   .chat-entry-header {
     display: flex;
     align-items: baseline;
-    gap: 8px;
-    margin-bottom: 2px;
+    gap: 6px;
+    margin-bottom: 1px;
   }
 
   .chat-sender {
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--accent);
   }
@@ -457,30 +503,19 @@ function extractTextContent(content: ContentBlock[]): string {
   }
 
   .chat-timestamp {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-2);
   }
 
   .chat-entry-content {
     min-width: 0;
     font-family: var(--mono);
-    font-size: 14px;
+    font-size: 13px;
   }
 
   .chat-user-text {
     color: var(--text-0);
     white-space: pre-wrap;
-  }
-
-  /* Mixed feed grid */
-  .feed-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: 16px;
-  }
-
-  .feed-item {
-    min-width: 0;
   }
 
   /* Other sections */
@@ -514,25 +549,6 @@ function extractTextContent(content: ContentBlock[]): string {
     text-align: center;
   }
 
-  @media (max-width: 1024px) {
-    .info-split {
-      flex-direction: column;
-    }
 
-    .info-right {
-      width: 100%;
-    }
-  }
 
-  @media (max-width: 767px) {
-    .profile-header {
-      flex-direction: column;
-      align-items: center;
-      text-align: center;
-    }
-
-    .profile-name-row {
-      justify-content: center;
-    }
-  }
 </style>

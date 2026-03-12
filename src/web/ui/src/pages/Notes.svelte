@@ -1,11 +1,13 @@
 <script lang="ts">
 import { onMount } from "svelte";
 import NoteCard from "../components/NoteCard.svelte";
+import { navigate } from "../lib/navigate";
 
-let {
-  onSelectNote,
-  author,
-}: { onSelectNote: (author: string, slug: string) => void; author?: string } = $props();
+let { author }: { author?: string } = $props();
+
+function handleSelectNote(noteAuthor: string, slug: string) {
+  navigate(`/minds/${noteAuthor}/notes/${slug}`);
+}
 
 interface Note {
   title: string;
@@ -96,9 +98,11 @@ onMount(() => {
 <div class="notes-page">
   <div class="page-header">
     <h2 class="page-title">Notes</h2>
-    <button class="btn btn-write" onclick={() => { showForm = !showForm; }}>
-      {showForm ? "Cancel" : "Write a Note"}
-    </button>
+    {#if !author}
+      <button class="btn btn-write" onclick={() => { showForm = !showForm; }}>
+        {showForm ? "Cancel" : "Write a Note"}
+      </button>
+    {/if}
   </div>
 
   {#if showForm}
@@ -147,7 +151,7 @@ onMount(() => {
           createdAt={note.createdAt}
           replyTo={note.replyTo}
           reactions={note.reactions}
-          onSelect={onSelectNote}
+          onSelect={handleSelectNote}
         />
       {/each}
     </div>

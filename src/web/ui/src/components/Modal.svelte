@@ -5,11 +5,13 @@ let {
   onClose,
   size = "full",
   title,
+  headerActions,
   children,
 }: {
   onClose: () => void;
   size?: "full" | string;
   title?: string;
+  headerActions?: Snippet;
   children: Snippet;
 } = $props();
 
@@ -35,10 +37,15 @@ function handleKeydown(e: KeyboardEvent) {
     onclick={(e) => e.stopPropagation()}
     onkeydown={() => {}}
   >
-    {#if title}
+    {#if title || headerActions}
       <div class="modal-header">
-        <span class="title">{title}</span>
-        <button class="close-btn" onclick={onClose}>&#x2715;</button>
+        <span class="title">{title ?? ""}</span>
+        <div class="header-right">
+          {#if headerActions}
+            {@render headerActions()}
+          {/if}
+          <button class="close-btn" onclick={onClose}>&#x2715;</button>
+        </div>
       </div>
     {/if}
     {@render children()}
@@ -86,6 +93,12 @@ function handleKeydown(e: KeyboardEvent) {
     font-size: 14px;
     font-weight: 600;
     color: var(--text-0);
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
   .close-btn {
