@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import type {
   ExtensionContext,
   ExtensionManifest,
@@ -280,16 +280,59 @@ async function loadExtension(
     app.route(`/ext/${manifest.id}/public`, publicApp);
   }
 
-  // Serve static UI assets
-  if (manifest.ui?.assetsDir && existsSync(manifest.ui.assetsDir)) {
-    const { serveStatic } = await import("@hono/node-server/serve-static");
-    app.use(
-      `/ext/${manifest.id}/*`,
-      serveStatic({
-        root: manifest.ui.assetsDir,
-        rewriteRequestPath: (path) => path.replace(`/ext/${manifest.id}`, ""),
-      }),
-    );
+  // Serve static UI assets with SPA fallback for client-side routing
+  // Resolve assetsDir: try direct path first, then search from project root
+  // (import.meta.dirname changes after tsup bundling)
+  let resolvedAssetsDir = manifest.ui?.assetsDir ?? "";
+  if (resolvedAssetsDir && !existsSync(resolvedAssetsDir)) {
+    let searchDir = dirname(new URL(import.meta.url).pathname);
+    for (let i = 0; i < 5; i++) {
+      const candidate = resolve(searchDir, "packages", "extensions", manifest.id, "dist", "ui");
+      if (existsSync(candidate)) {
+        resolvedAssetsDir = candidate;
+        break;
+      }
+      searchDir = dirname(searchDir);
+    }
+  }
+  if (resolvedAssetsDir && existsSync(resolvedAssetsDir)) {
+    const assetsDir = resolvedAssetsDir;
+    const { readFile, stat: fsStat } = await import("node:fs/promises");
+    const { extname: ext } = await import("node:path");
+    const mimeTypes: Record<string, string> = {
+      ".html": "text/html",
+      ".js": "application/javascript",
+      ".css": "text/css",
+      ".json": "application/json",
+      ".svg": "image/svg+xml",
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".ico": "image/x-icon",
+      ".woff": "font/woff",
+      ".woff2": "font/woff2",
+    };
+    const prefix = `/ext/${manifest.id}`;
+    const indexPath = resolve(assetsDir, "index.html");
+    const serveExtAssets = async (c: any) => {
+      const urlPath = new URL(c.req.url).pathname;
+      const relativePath = urlPath.slice(prefix.length).replace(/^\//, "") || "index.html";
+      const filePath = resolve(assetsDir, relativePath);
+      if (!filePath.startsWith(assetsDir)) return c.text("Forbidden", 403);
+      const s = await fsStat(filePath).catch(() => null);
+      if (s?.isFile()) {
+        const mime = mimeTypes[ext(filePath)] || "application/octet-stream";
+        const body = await readFile(filePath);
+        return c.body(body, 200, { "Content-Type": mime });
+      }
+      // SPA fallback: serve extension's index.html
+      if (existsSync(indexPath)) {
+        const body = await readFile(indexPath, "utf-8");
+        return c.html(body);
+      }
+      return c.text("Not found", 404);
+    };
+    app.get(`${prefix}/*`, serveExtAssets);
+    app.get(prefix, serveExtAssets);
   }
 
   // Sync skill if declared

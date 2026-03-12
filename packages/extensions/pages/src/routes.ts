@@ -51,7 +51,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
         recentPages.slice(0, limit).map((p: any) => ({
           id: `page-${p.mind}-${p.file}`,
           title: `${p.mind}/${p.file}`,
-          url: `/ext/pages/public/${p.mind}/${p.file}`,
+          url: p.url ?? `/minds/${p.mind}/pages/${p.file}`,
           date: p.modified,
           author: p.mind,
           bodyHtml: `<p>Page updated</p>`,

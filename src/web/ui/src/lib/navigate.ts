@@ -30,6 +30,19 @@ function patternToRegex(pattern: string): RegExp {
 }
 
 /**
+ * Get the base URL prefix for an extension from its urlPatterns.
+ * E.g. for patterns ["/notes", "/notes/:author/:slug"], returns "/notes".
+ */
+function getExtensionBaseUrl(ext: ExtensionInfo): string | null {
+  const patterns = ext.systemSections?.flatMap((s) => s.urlPatterns ?? []);
+  if (!patterns?.length) return null;
+  // Use the first static segment from the shortest pattern
+  const first = patterns[0];
+  const firstSegment = first.split("/").filter(Boolean)[0];
+  return firstSegment ? `/${firstSegment}` : null;
+}
+
+/**
  * Try to match a path against extension system section urlPatterns.
  * Returns the extensionId and captured subpath, or null.
  */
@@ -84,11 +97,6 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
   const settingsSectionMatch = path.match(/^\/settings\/(.+)$/);
   if (settingsSectionMatch)
     return { tab: "system", kind: "settings", section: settingsSectionMatch[1] };
-
-  // Extension routes (/ext/<id>/... → extension iframe)
-  const extMatch = path.match(/^\/ext\/([^/]+)(?:\/(.*))?$/);
-  if (extMatch)
-    return { tab: "system", kind: "extension", extensionId: extMatch[1], path: extMatch[2] ?? "" };
 
   // Mind detail pages — must be checked before extension URL patterns
   // because /minds/:name/:section could overlap
@@ -146,18 +154,37 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
   return { tab: "system", kind: "home" };
 }
 
-export function selectionToPath(selection: Selection): string {
+/**
+ * Convert a Selection to a URL path.
+ * For extensions, uses pretty URLs derived from urlPatterns (e.g. /notes, /pages)
+ * rather than /ext/<id> paths.
+ */
+export function selectionToPath(selection: Selection, extensions: ExtensionInfo[] = []): string {
   switch (selection.kind) {
     case "home":
       return selection.tab === "chat" ? "/chat" : "/";
-    case "mind":
-      return selection.section && selection.section !== "info"
-        ? `/minds/${selection.name}/${selection.section}`
+    case "mind": {
+      let section = selection.section;
+      // Convert ext:pages:pages → pages for clean URLs
+      if (section?.startsWith("ext:")) {
+        const parts = section.split(":");
+        section = parts[2] ?? parts[1];
+      }
+      return section && section !== "info"
+        ? `/minds/${selection.name}/${section}`
         : `/minds/${selection.name}`;
-    case "extension":
+    }
+    case "extension": {
+      const ext = extensions.find((e) => e.id === selection.extensionId);
+      const base = ext ? getExtensionBaseUrl(ext) : null;
+      if (base) {
+        return selection.path ? `${base}/${selection.path}` : base;
+      }
+      // Fallback for extensions without urlPatterns
       return selection.path
         ? `/ext/${selection.extensionId}/${selection.path}`
         : `/ext/${selection.extensionId}`;
+    }
     case "settings":
       return selection.section ? `/settings/${selection.section}` : "/settings";
     case "conversation":

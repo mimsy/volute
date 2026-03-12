@@ -3,6 +3,7 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   root: __dirname,
+  base: "/ext/pages/",
   plugins: [svelte()],
   build: {
     outDir: "../dist/ui",
