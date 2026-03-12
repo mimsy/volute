@@ -144,13 +144,6 @@ export function fetchConversationParticipants(conversationId: string): Promise<P
   return get(`${V1}/conversations/${enc(conversationId)}/participants`);
 }
 
-export function createConversation(
-  participantNames: string[],
-  title?: string,
-): Promise<Conversation> {
-  return post(`${V1}/conversations`, { participantNames, title });
-}
-
 export function deleteConversation(conversationId: string): Promise<void> {
   return del(`${V1}/conversations/${enc(conversationId)}`);
 }

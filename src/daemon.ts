@@ -98,9 +98,13 @@ export async function startDaemon(opts: {
   const { migrateRegistryToDb } = await import("./lib/migrate-registry-to-db.js");
   migrateRegistryToDb();
 
-  // Migrate group DMs to channels (idempotent)
-  const { migrateGroupDMsToChannels } = await import("./lib/events/conversations.js");
-  await migrateGroupDMsToChannels();
+  // Migrate group DMs to channels (idempotent, non-fatal)
+  try {
+    const { migrateGroupDMsToChannels } = await import("./lib/events/conversations.js");
+    await migrateGroupDMsToChannels();
+  } catch (err) {
+    log.error("failed to migrate group DMs to channels", log.errorData(err));
+  }
 
   // Initialize sandbox runtime for mind process isolation
   const { initSandbox } = await import("./lib/sandbox.js");

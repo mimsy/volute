@@ -8,7 +8,7 @@ export function slugify(text: string): string {
 
 /**
  * Build a volute channel slug for a conversation.
- * DMs use `volute:@other-username`, groups use `volute:title`, fallback to `volute:conversationId`.
+ * Channels use `volute:#name`, DMs use `volute:@other-username`, fallback to `volute:conversationId`.
  */
 export function buildVoluteSlug(opts: {
   participants: { username: string }[];
