@@ -3,6 +3,6 @@ name: shared-skill
 description: Original
 ---
 
-# shared-skill
+# Local Change
 
-Content here.
+My custom content.
