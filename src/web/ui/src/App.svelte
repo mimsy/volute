@@ -255,6 +255,17 @@ $effect(() => {
     });
 });
 
+// Re-parse selection when extensions load (handles /notes, /pages URLs that
+// couldn't match before extensions were fetched)
+$effect(() => {
+  if (data.extensions.length > 0) {
+    const fresh = parseSelection(data.extensions);
+    if (fresh.kind === "extension" && selection.kind === "home") {
+      selection = fresh;
+    }
+  }
+});
+
 // Track whether selection change came from popstate (to avoid pushing duplicate history)
 let fromPopstate = $state(false);
 
@@ -288,10 +299,21 @@ $effect(() => {
   const expected = selectionToPath(selection);
   const current = window.location.pathname + window.location.search;
   if (current !== expected) {
-    if (fromPopstate) {
-      window.history.replaceState(null, "", expected);
-    } else {
-      window.history.pushState(null, "", expected);
+    // Don't rewrite URLs that already resolve to the same extension
+    // (e.g. /notes → ext:notes, keep /notes instead of rewriting to /ext/notes)
+    const currentSelection = parseSelection(data.extensions);
+    const same =
+      selection.kind === currentSelection.kind &&
+      selection.tab === currentSelection.tab &&
+      (selection.kind !== "extension" ||
+        (currentSelection.kind === "extension" &&
+          selection.extensionId === currentSelection.extensionId));
+    if (!same) {
+      if (fromPopstate) {
+        window.history.replaceState(null, "", expected);
+      } else {
+        window.history.pushState(null, "", expected);
+      }
     }
   }
   fromPopstate = false;
