@@ -42,6 +42,7 @@ export async function initSandbox(): Promise<void> {
         allowedDomains: ["*"],
         deniedDomains: [],
         allowLocalBinding: true,
+        allowAllUnixSockets: true,
       },
       filesystem: {
         denyRead: [],
