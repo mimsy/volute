@@ -22,7 +22,7 @@ Core values:
 - `src/lib/` — Shared libraries (registry, mind-manager, connector-manager, scheduler, daemon-client, arg parsing, exec wrappers, variant metadata, db, auth, conversations, channels)
 - `src/web/` — Web dashboard (Hono backend + Svelte frontend), served by the daemon
 - `src/connectors/` — Built-in connector implementations (Discord, Slack, Telegram) + shared SDK
-- `skills/` — Built-in skill definitions (memory, sessions, orientation, volute-mind, dreaming, shared-files), synced to the shared pool on daemon startup. Extension-contributed skills (notes, pages) are synced via extension `skillDir` + `standardSkill` manifest fields.
+- `skills/` — Built-in skill definitions (memory, sessions, orientation, volute-mind, dreaming, imagegen, resonance, shared-files), synced to the shared pool on daemon startup. Extensions contribute additional skills via `skillsDir` in their manifest (e.g., notes and pages extensions each bundle their own skill).
 - `templates/claude/` — Default template (Claude Agent SDK) copied by `volute mind create`
 - `templates/pi/` — Alternative template using pi-coding-agent for multi-provider LLM support
 - All minds live in `~/.volute/minds/<name>/` by default (overridable via `VOLUTE_MINDS_DIR`) with a centralized registry backed by the `minds` DB table in `volute.db`
@@ -120,7 +120,7 @@ Templates have a `.init/` directory containing identity and config files. On `vo
 
 The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 
-- **Backend** (`src/web/`): Hono API routes for auth, minds, chat, conversations, logs, variants, files, connectors, schedules, channels, env, keys, pages, prompts, skills, file-sharing
+- **Backend** (`src/web/`): Hono API routes for auth, minds, chat, conversations, logs, variants, files, connectors, schedules, channels, env, keys, prompts, skills, file-sharing
 - **Frontend** (`src/web/ui/`): Svelte SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs)
 - **Auth**: Cookie-based (`volute_session`), in-memory session map, first user auto-admin
 - **Database**: libSQL at `~/.volute/volute.db` for users, conversations, messages, mind_history, minds
@@ -140,8 +140,9 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 - `ui.systemSections?` — sidebar items in the system view
 - `ui.mindSections?` — tab items in mind detail views
 - `ui.feedSource?` — endpoint for home/mind feed cards
-- `skillDir?` — directory containing a skill to sync on load
-- `standardSkill?` — if true, skill is auto-installed for new sprouted minds (like `STANDARD_SKILLS`)
+- `skillsDir?` — directory containing skills to sync on load (each subdirectory is a skill with a `SKILL.md`)
+- `standardSkill?` — if true, skills are added to the default skill set for new minds
+- `ui.systemSections[].urlPatterns?` — URL patterns for system-level routing (e.g., `["/notes", "/notes/:author/:slug"]`)
 - `initDb?(db)` — called on load to create tables; extension gets its own SQLite DB at `~/.volute/system/extension-data/{id}/data.db`
 - `onDaemonStart?()`, `onDaemonStop?()`, `onMindStart?(name)`, `onMindStop?(name)` — lifecycle hooks
 
@@ -204,6 +205,7 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 | `volute clock add [--mind] --cron/--in "..." --message/--script "..." [--id name] [--while-sleeping skip\|queue\|trigger-wake]` | Add a schedule or timer |
 | `volute clock remove [--mind] --id <id>` | Remove a schedule or timer |
 | `volute skill <list\|add\|remove> [--mind]` | Manage mind skills |
+| `volute skill defaults <list\|add\|remove>` | Manage default skill set for new minds |
 | `volute mind seed <name>` | Create a minimal seed mind |
 | `volute mind sprout` | Grow a seed into a full mind |
 | `volute chat files [--mind]` | List pending incoming files |
@@ -272,7 +274,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `read-stdin.ts` | Reads piped stdin for send commands (returns undefined if TTY) |
 | `resolve-mind-name.ts` | Resolves mind name from `--mind` flag or `VOLUTE_MIND` env var |
 | `typing.ts` | Typing indicator tracking |
-| `setup.ts` | Global config (`~/.volute/config.json`) with setup state (type, isolation, mindsDir, service), `isSetupComplete()`, migration for existing users |
+| `setup.ts` | Global config (`~/.volute/system/config.json`) with setup state, `defaultSkills` array, `isSetupComplete()`, migration for existing users |
 | `sandbox.ts` | Sandbox runtime (`@anthropic-ai/sandbox-runtime`) integration: `isSandboxEnabled()`, `initSandbox()`, `wrapForSandbox()`, deny-read list for mind isolation |
 | `service-mode.ts` | Service mode detection (manual/systemd/launchd/system-launchd), service control, health polling, daemon config reader |
 | `systems-config.ts` | Read/write `~/.volute/system/systems.json` (API key, system name, API URL) |
@@ -332,7 +334,6 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `api/keys.ts` | API key management |
 | `api/logs.ts` | Log streaming |
 | `api/mind-skills.ts` | Per-mind skill management |
-| `api/pages.ts` | Pages publishing |
 | `api/prompts.ts` | Mind prompt management |
 | `api/schedules.ts` | CRUD schedules + webhook endpoint |
 | `api/shared.ts` | Shared resource endpoints |
@@ -384,7 +385,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 - Centralized message persistence in `mind_history` table via daemon routes (text + tool call summaries)
 - Mind process isolation: sandbox mode (local installs, `@anthropic-ai/sandbox-runtime`), per-user mode (system installs, Linux/macOS), or none. Configured via `volute setup`, stored in `config.json` as `setup.isolation`
 - `volute setup` is the required first-run command; CLI commands are gated on `isSetupComplete()` with auto-migration for existing users via `migrateSetupConfig()`
-- Built-in skills live in `skills/` at repo root and are synced to the shared pool (`~/.volute/skills/`) on daemon startup via `syncBuiltinSkills()`. Skill sets: `SEED_SKILLS` (orientation, memory) for seeds, `STANDARD_SKILLS` (volute-mind, memory, sessions, dreaming, shared-files) for sprouted minds. Extensions can contribute additional standard skills via `skillDir` + `standardSkill: true` in their manifest (e.g., notes and pages extensions). Skills are installed from the shared pool with upstream tracking (`.upstream.json`) for independent updates.
+- Built-in skills live in `skills/` at repo root and are synced to the shared pool (`~/.volute/skills/`) on daemon startup via `syncBuiltinSkills()`. Extensions contribute skills via `skillsDir` in their manifest; skills with `standardSkill: true` are added to the configurable default skill set. The default skill set is stored in `~/.volute/system/config.json` (`defaultSkills` array) and initialized on first daemon start from `STANDARD_SKILLS` + extension standard skills. Admins can manage defaults via the web UI (Settings → Skills) or `volute skill defaults` CLI. `SEED_SKILLS` (orientation, memory) are installed for seed minds. Skills are installed from the shared pool with upstream tracking (`.upstream.json`) for independent updates.
 
 ## Deployment
 
