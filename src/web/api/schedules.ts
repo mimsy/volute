@@ -82,6 +82,9 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Seed minds cannot use schedules — sprout first" }, 403);
 
     const body = (await c.req.json()) as Partial<Schedule>;
+    if (!body.id) {
+      return c.json({ error: "id is required (a descriptive name for this schedule)" }, 400);
+    }
     if (!body.cron && !body.fireAt) {
       return c.json({ error: "cron or fireAt is required" }, 400);
     }
@@ -112,10 +115,6 @@ const app = new Hono<AuthEnv>()
         },
         400,
       );
-    }
-
-    if (!body.id) {
-      return c.json({ error: "id is required (a descriptive name for this schedule)" }, 400);
     }
 
     const schedules = readSchedules(name);
