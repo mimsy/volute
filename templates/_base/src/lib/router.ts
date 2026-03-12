@@ -1,5 +1,5 @@
 import { formatPrefix, formatTypingSuffix } from "./format-prefix.js";
-import { log, logMessage } from "./logger.js";
+import { log } from "./logger.js";
 import {
   type BatchConfig,
   loadRoutingConfig,
@@ -269,12 +269,6 @@ export function createRouter(options: {
     meta: ChannelMeta,
     listener?: Listener,
   ): { messageId: string; unsubscribe: () => void } {
-    const text = content
-      .filter((p): p is { type: "text"; text: string } => p.type === "text")
-      .map((p) => p.text)
-      .join(" ");
-    logMessage("in", text, meta.channel);
-
     const messageId = generateMessageId();
     const noop = () => {};
     const safeListener = listener ?? noop;
@@ -303,12 +297,10 @@ export function createRouter(options: {
     meta: ChannelMeta,
     listener?: Listener,
   ): { messageId: string; unsubscribe: () => void } {
-    // Log incoming message
     const text = content
       .filter((p): p is { type: "text"; text: string } => p.type === "text")
       .map((p) => p.text)
       .join(" ");
-    logMessage("in", text, meta.channel);
 
     // Resolve route from config (re-read on each request for hot-reload)
     const config = options.configPath ? loadRoutingConfig(options.configPath) : {};
