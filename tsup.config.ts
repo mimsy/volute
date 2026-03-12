@@ -13,6 +13,7 @@ export default defineConfig([
     outDir: "dist",
     splitting: true,
     clean: true,
+    external: ["libsql"],
     banner: { js: "#!/usr/bin/env node" },
   },
   {

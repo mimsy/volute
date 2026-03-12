@@ -1,5 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import extNotes from "@volute/ext-notes";
+import extPages from "@volute/ext-pages";
 import type {
   ExtensionContext,
   ExtensionManifest,
@@ -50,29 +52,44 @@ function readExtensionsConfig(): string[] {
   }
 }
 
-function openExtensionDb(_id: string, dataDir: string): ExtensionContext["db"] {
+let _LibsqlDatabase: (new (path: string) => ExtensionContext["db"]) | null = null;
+
+async function getLibsqlDatabase(): Promise<new (path: string) => ExtensionContext["db"]> {
+  if (_LibsqlDatabase) return _LibsqlDatabase;
+  const mod = await import("libsql");
+  _LibsqlDatabase = (mod.default ?? mod) as new (path: string) => ExtensionContext["db"];
+  return _LibsqlDatabase;
+}
+
+async function openExtensionDb(_id: string, dataDir: string): Promise<ExtensionContext["db"]> {
   const dbPath = resolve(dataDir, "data.db");
-  // Use libsql's synchronous Database
-  const LibsqlDatabase = (
-    globalThis as unknown as { __libsqlDatabase?: new (path: string) => ExtensionContext["db"] }
-  ).__libsqlDatabase;
-  if (LibsqlDatabase) {
-    return new LibsqlDatabase(dbPath);
-  }
-  // Dynamic require for libsql
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const Database = require("libsql") as new (path: string) => ExtensionContext["db"];
+  const Database = await getLibsqlDatabase();
   return new Database(dbPath);
 }
 
-function buildContext(manifest: ExtensionManifest, dataDir: string): ExtensionContext {
-  const db = openExtensionDb(manifest.id, dataDir);
+async function buildContext(
+  manifest: ExtensionManifest,
+  dataDir: string,
+): Promise<ExtensionContext> {
+  // Only open DB if the extension declares initDb (otherwise it doesn't need one)
+  let db: ExtensionContext["db"] | null = null;
   if (manifest.initDb) {
+    db = await openExtensionDb(manifest.id, dataDir);
     manifest.initDb(db);
   }
 
   return {
-    db,
+    db:
+      db ??
+      ({
+        exec() {
+          throw new Error("No database configured for this extension");
+        },
+        prepare() {
+          throw new Error("No database configured for this extension");
+        },
+        close() {},
+      } as ExtensionContext["db"]),
     authMiddleware: null, // Set by mountExtensions
     resolveUser: (c: unknown) => {
       const ctx = c as { get: (key: string) => unknown };
@@ -107,7 +124,7 @@ async function loadExtension(
   const dataDir = resolve(extensionsBaseDir(), manifest.id);
   mkdirSync(dataDir, { recursive: true });
 
-  const context = buildContext(manifest, dataDir);
+  const context = await buildContext(manifest, dataDir);
   context.authMiddleware = authMw;
 
   // Mount authenticated API routes
@@ -147,24 +164,9 @@ async function loadExtension(
   log.info(`loaded extension: ${manifest.id} v${manifest.version}`);
 }
 
-async function discoverBuiltinExtensions(): Promise<ExtensionManifest[]> {
-  const manifests: ExtensionManifest[] = [];
-
-  // Try importing built-in extension packages (packages/ext-*)
-  const builtinPackages = ["@volute/ext-notes", "@volute/ext-pages"];
-  for (const pkg of builtinPackages) {
-    try {
-      const mod = await import(pkg);
-      const manifest = mod.default ?? mod.extension ?? mod;
-      if (manifest?.id && manifest?.routes) {
-        manifests.push(manifest);
-      }
-    } catch {
-      // Package not available — skip
-    }
-  }
-
-  return manifests;
+function discoverBuiltinExtensions(): ExtensionManifest[] {
+  // Built-in extensions imported statically so tsup bundles them
+  return [extNotes, extPages];
 }
 
 async function discoverInstalledExtensions(): Promise<ExtensionManifest[]> {
@@ -189,7 +191,7 @@ async function discoverInstalledExtensions(): Promise<ExtensionManifest[]> {
 }
 
 export async function loadAllExtensions(app: Hono, authMw: unknown): Promise<void> {
-  const builtins = await discoverBuiltinExtensions();
+  const builtins = discoverBuiltinExtensions();
   const installed = await discoverInstalledExtensions();
   const all = [...builtins, ...installed];
 
