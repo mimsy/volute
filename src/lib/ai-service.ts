@@ -43,19 +43,21 @@ export function getAiConfig(): AiConfig | null {
 }
 
 export function saveProviderConfig(providerId: string, providerConfig: AiProviderConfig): void {
-  const config = readGlobalConfig();
-  const ai = (config.ai as AiConfig) ?? { providers: {} };
+  const ai = getAiConfig() ?? { providers: {} };
   ai.providers[providerId] = providerConfig;
+  const config = readGlobalConfig();
   writeGlobalConfig({ ...config, ai });
 }
 
 export function removeProviderConfig(providerId: string): void {
-  const config = readGlobalConfig();
-  const ai = config.ai;
+  const ai = getAiConfig();
   if (!ai) return;
   delete ai.providers[providerId];
+  const config = readGlobalConfig();
   if (Object.keys(ai.providers).length === 0) {
     delete config.ai;
+  } else {
+    config.ai = ai;
   }
   writeGlobalConfig(config);
 }
@@ -101,9 +103,9 @@ export function getEnabledModels(): string[] {
 
 /** Set the list of enabled model IDs. */
 export function setEnabledModels(modelIds: string[]): void {
-  const config = readGlobalConfig();
-  const ai = (config.ai as AiConfig) ?? { providers: {} };
+  const ai = getAiConfig() ?? { providers: {} };
   ai.models = modelIds.length > 0 ? modelIds : undefined;
+  const config = readGlobalConfig();
   writeGlobalConfig({ ...config, ai });
 }
 
