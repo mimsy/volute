@@ -67,7 +67,7 @@ $effect(() => {
   const extensions = storeData.extensions;
   const items: ExtFeedItem[] = [];
   const promises = extensions
-    .filter((ext) => ext.feedSource)
+    .filter((ext) => ext.feedSource && ext.id !== "notes")
     .map(async (ext) => {
       try {
         const res = await fetch(ext.feedSource!.endpoint);
@@ -215,6 +215,7 @@ function getConvLabel(conv: ConversationWithDetails): string {
               date={item.item.date}
               author={item.item.author}
               bodyHtml={item.item.bodyHtml}
+              onclick={() => navigate(item.item.url)}
             />
           </div>
         {:else}

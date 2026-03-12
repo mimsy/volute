@@ -110,9 +110,13 @@ app.use("/api/v1/*", authMiddleware);
 // Backwards-compat redirect: /api/notes → /api/ext/notes (notes moved to extension)
 app.all("/api/notes/*", (c) => {
   const newPath = c.req.path.replace("/api/notes", "/api/ext/notes");
-  return c.redirect(newPath, 308);
+  const search = new URL(c.req.url).search;
+  return c.redirect(`${newPath}${search}`, 308);
 });
-app.all("/api/notes", (c) => c.redirect("/api/ext/notes", 308));
+app.all("/api/notes", (c) => {
+  const search = new URL(c.req.url).search;
+  return c.redirect(`/api/ext/notes${search}`, 308);
+});
 
 // Public routes (no auth)
 app.route("/pages", pages);
