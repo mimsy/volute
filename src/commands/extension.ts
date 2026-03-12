@@ -74,7 +74,10 @@ function readConfig(): string[] {
   try {
     const data = JSON.parse(readFileSync(configPath, "utf-8"));
     return Array.isArray(data) ? data : [];
-  } catch {
+  } catch (err) {
+    console.error(
+      `Warning: failed to read extensions config at ${configPath}: ${(err as Error).message}`,
+    );
     return [];
   }
 }

@@ -47,7 +47,11 @@ function readExtensionsConfig(): string[] {
   try {
     const data = JSON.parse(readFileSync(configPath, "utf-8"));
     return Array.isArray(data) ? data : [];
-  } catch {
+  } catch (err) {
+    log.warn("failed to read extensions config, ignoring installed extensions", {
+      path: configPath,
+      error: (err as Error).message,
+    });
     return [];
   }
 }
@@ -80,7 +84,12 @@ async function migrateNotesFromCoreDb(extDb: ExtensionContext["db"]): Promise<vo
   const coreDb = new Database(coreDbPath);
 
   try {
-    // Check if core DB has notes table with data
+    // Check if core DB has notes table
+    const tableExists = coreDb
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='notes'")
+      .get();
+    if (!tableExists) return;
+
     const coreNotes = coreDb
       .prepare(
         "SELECT id, author_id, title, slug, content, reply_to_id, created_at, updated_at FROM notes ORDER BY id",
@@ -100,23 +109,6 @@ async function migrateNotesFromCoreDb(extDb: ExtensionContext["db"]): Promise<vo
 
     log.info(`migrating ${coreNotes.length} notes from core DB to extension DB`);
 
-    for (const note of coreNotes) {
-      extDb
-        .prepare(
-          "INSERT OR IGNORE INTO notes (id, author_id, title, slug, content, reply_to_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .run(
-          note.id,
-          note.author_id,
-          note.title,
-          note.slug,
-          note.content,
-          note.reply_to_id,
-          note.created_at,
-          note.updated_at,
-        );
-    }
-
     // Migrate comments
     const coreComments = coreDb
       .prepare("SELECT id, note_id, author_id, content, created_at FROM note_comments ORDER BY id")
@@ -127,14 +119,6 @@ async function migrateNotesFromCoreDb(extDb: ExtensionContext["db"]): Promise<vo
       content: string;
       created_at: string;
     }[];
-
-    for (const comment of coreComments) {
-      extDb
-        .prepare(
-          "INSERT OR IGNORE INTO note_comments (id, note_id, author_id, content, created_at) VALUES (?, ?, ?, ?, ?)",
-        )
-        .run(comment.id, comment.note_id, comment.author_id, comment.content, comment.created_at);
-    }
 
     // Migrate reactions
     const coreReactions = coreDb
@@ -147,12 +131,52 @@ async function migrateNotesFromCoreDb(extDb: ExtensionContext["db"]): Promise<vo
       created_at: string;
     }[];
 
-    for (const reaction of coreReactions) {
-      extDb
-        .prepare(
-          "INSERT OR IGNORE INTO note_reactions (id, note_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?, ?)",
-        )
-        .run(reaction.id, reaction.note_id, reaction.user_id, reaction.emoji, reaction.created_at);
+    // Wrap all inserts in a transaction for atomicity
+    extDb.exec("BEGIN TRANSACTION");
+    try {
+      for (const note of coreNotes) {
+        extDb
+          .prepare(
+            "INSERT OR IGNORE INTO notes (id, author_id, title, slug, content, reply_to_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          )
+          .run(
+            note.id,
+            note.author_id,
+            note.title,
+            note.slug,
+            note.content,
+            note.reply_to_id,
+            note.created_at,
+            note.updated_at,
+          );
+      }
+
+      for (const comment of coreComments) {
+        extDb
+          .prepare(
+            "INSERT OR IGNORE INTO note_comments (id, note_id, author_id, content, created_at) VALUES (?, ?, ?, ?, ?)",
+          )
+          .run(comment.id, comment.note_id, comment.author_id, comment.content, comment.created_at);
+      }
+
+      for (const reaction of coreReactions) {
+        extDb
+          .prepare(
+            "INSERT OR IGNORE INTO note_reactions (id, note_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?, ?)",
+          )
+          .run(
+            reaction.id,
+            reaction.note_id,
+            reaction.user_id,
+            reaction.emoji,
+            reaction.created_at,
+          );
+      }
+
+      extDb.exec("COMMIT");
+    } catch (txErr) {
+      extDb.exec("ROLLBACK");
+      throw txErr;
     }
 
     log.info(
@@ -168,12 +192,18 @@ async function migrateNotesFromCoreDb(extDb: ExtensionContext["db"]): Promise<vo
 async function buildContext(
   manifest: ExtensionManifest,
   dataDir: string,
+  authMw: unknown,
 ): Promise<ExtensionContext> {
   // Only open DB if the extension declares initDb (otherwise it doesn't need one)
   let db: ExtensionContext["db"] | null = null;
   if (manifest.initDb) {
     db = await openExtensionDb(manifest.id, dataDir);
-    manifest.initDb(db);
+    try {
+      manifest.initDb(db);
+    } catch (err) {
+      db.close();
+      throw new Error(`initDb failed for extension ${manifest.id}: ${(err as Error).message}`);
+    }
 
     // One-time migration for built-in extensions extracted from core
     if (manifest.id === "notes") {
@@ -193,7 +223,7 @@ async function buildContext(
         },
         close() {},
       } as ExtensionContext["db"]),
-    authMiddleware: null, // Set by mountExtensions
+    authMiddleware: authMw,
     resolveUser: (c: unknown) => {
       const ctx = c as { get: (key: string) => unknown };
       const user = ctx.get("user");
@@ -211,7 +241,11 @@ async function buildContext(
       try {
         const dir = mindDir(name);
         return existsSync(dir) ? dir : null;
-      } catch {
+      } catch (err) {
+        log.warn(
+          `extension ${manifest.id}: failed to resolve mind dir for ${name}`,
+          log.errorData(err),
+        );
         return null;
       }
     },
@@ -227,8 +261,7 @@ async function loadExtension(
   const dataDir = resolve(extensionsBaseDir(), manifest.id);
   mkdirSync(dataDir, { recursive: true });
 
-  const context = await buildContext(manifest, dataDir);
-  context.authMiddleware = authMw;
+  const context = await buildContext(manifest, dataDir, authMw);
 
   // Mount authenticated API routes
   const routesApp = manifest.routes(context);
@@ -341,13 +374,19 @@ export function notifyExtensionsDaemonStart(): void {
 }
 
 export function notifyExtensionsDaemonStop(): void {
-  for (const { manifest } of loaded) {
+  for (const { manifest, context } of loaded) {
     try {
       manifest.onDaemonStop?.();
     } catch (err) {
       log.error(`extension ${manifest.id}: onDaemonStop failed`, log.errorData(err));
     }
+    try {
+      context.db.close();
+    } catch {
+      // ignore — stub db or already closed
+    }
   }
+  loaded.length = 0;
 }
 
 export function notifyExtensionsMindStart(mindName: string): void {

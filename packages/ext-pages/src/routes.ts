@@ -33,7 +33,9 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
     if (!mindDirPath) return c.text("Not found", 404);
 
     const pagesRoot = resolve(mindDirPath, "home", "public", "pages");
-    const wildcard = c.req.path.replace(new RegExp(`^.*/public/${name}`), "") || "/";
+    const prefix = `/public/${name}`;
+    const idx = c.req.path.indexOf(prefix);
+    const wildcard = idx >= 0 ? c.req.path.slice(idx + prefix.length) : "/";
     const requestedPath = resolve(pagesRoot, wildcard.slice(1));
 
     if (!requestedPath.startsWith(pagesRoot)) return c.text("Forbidden", 403);

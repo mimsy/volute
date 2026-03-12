@@ -29,8 +29,16 @@ export function createRoutes(ctx: ExtensionContext): Hono {
     // List notes
     .get("/", async (c) => {
       const author = c.req.query("author");
-      const limit = c.req.query("limit") ? parseInt(c.req.query("limit")!, 10) : undefined;
-      const offset = c.req.query("offset") ? parseInt(c.req.query("offset")!, 10) : undefined;
+      const rawLimit = c.req.query("limit");
+      const rawOffset = c.req.query("offset");
+      const limit = rawLimit ? parseInt(rawLimit, 10) : undefined;
+      const offset = rawOffset ? parseInt(rawOffset, 10) : undefined;
+      if (
+        (limit !== undefined && Number.isNaN(limit)) ||
+        (offset !== undefined && Number.isNaN(offset))
+      ) {
+        return c.json({ error: "Invalid limit or offset parameter" }, 400);
+      }
       const result = await listNotes(db, getUser, getUserByUsername, {
         authorUsername: author,
         limit,
@@ -149,7 +157,9 @@ export function createRoutes(ctx: ExtensionContext): Hono {
 
     // Feed endpoint — returns recent notes as ExtensionFeedItems
     .get("/feed", async (c) => {
-      const limit = c.req.query("limit") ? parseInt(c.req.query("limit")!, 10) : 8;
+      const rawFeedLimit = c.req.query("limit");
+      const limit = rawFeedLimit ? parseInt(rawFeedLimit, 10) : 8;
+      if (Number.isNaN(limit)) return c.json({ error: "Invalid limit parameter" }, 400);
       const notes = await listNotes(db, getUser, getUserByUsername, { limit });
       return c.json(
         notes.map((n) => ({

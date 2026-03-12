@@ -15,6 +15,15 @@ let {
   onclick?: () => void;
 } = $props();
 
+function sanitizeHtml(html: string): string {
+  // Strip script tags, event handlers, and dangerous attributes
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/\bon\w+\s*=\s*"[^"]*"/gi, "")
+    .replace(/\bon\w+\s*=\s*'[^']*'/gi, "")
+    .replace(/javascript:/gi, "");
+}
+
 function relativeTime(iso: string): string {
   const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
   if (seconds < 60) return "just now";
@@ -34,7 +43,7 @@ function relativeTime(iso: string): string {
     <h3 class="title">{title}</h3>
     <span class="date">{relativeTime(date)}</span>
   </div>
-  <div class="body">{@html bodyHtml}</div>
+  <div class="body">{@html sanitizeHtml(bodyHtml)}</div>
   {#if author}
     <div class="meta">
       <span class="author">{author}</span>

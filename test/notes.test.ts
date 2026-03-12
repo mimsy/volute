@@ -14,6 +14,7 @@ import {
   listNotes,
   resolveNoteId,
   toggleReaction,
+  updateNote,
 } from "../packages/ext-notes/src/notes.js";
 import { createUser } from "../src/lib/auth.js";
 
@@ -164,6 +165,74 @@ describe("notes", () => {
     await addComment(db, getUser, note.id, userId, "Comment 2");
     const all = await listNotes(db, getUser, getUserByUsername);
     assert.equal(all[0].comment_count, 2);
+  });
+
+  it("listNotes respects limit and offset", async () => {
+    await createNote(db, getUser, userId, "A", "1");
+    await createNote(db, getUser, userId, "B", "2");
+    await createNote(db, getUser, userId, "C", "3");
+    const page1 = await listNotes(db, getUser, getUserByUsername, { limit: 2 });
+    assert.equal(page1.length, 2);
+    assert.equal(page1[0].title, "C");
+    const page2 = await listNotes(db, getUser, getUserByUsername, { limit: 2, offset: 2 });
+    assert.equal(page2.length, 1);
+    assert.equal(page2[0].title, "A");
+  });
+
+  it("getNote returns null for non-existent author", async () => {
+    await createNote(db, getUser, userId, "Exists", "...");
+    const note = await getNote(db, getUser, getUserByUsername, "nonexistent-user", "exists");
+    assert.equal(note, null);
+  });
+
+  it("createNote handles empty title with untitled slug", async () => {
+    const note = await createNote(db, getUser, userId, "!!!", "special chars only");
+    assert.equal(note.slug, "untitled");
+  });
+
+  it("updateNote updates title only", async () => {
+    const note = await createNote(db, getUser, userId, "Original Title", "Original Content");
+    const updated = await updateNote(db, getUser, getUserByUsername, username, note.slug, {
+      title: "New Title",
+    });
+    assert.ok(updated);
+    assert.equal(updated!.title, "New Title");
+    assert.equal(updated!.content, "Original Content");
+  });
+
+  it("updateNote updates content only", async () => {
+    const note = await createNote(db, getUser, userId, "Keep Title", "Old Content");
+    const updated = await updateNote(db, getUser, getUserByUsername, username, note.slug, {
+      content: "New Content",
+    });
+    assert.ok(updated);
+    assert.equal(updated!.title, "Keep Title");
+    assert.equal(updated!.content, "New Content");
+  });
+
+  it("updateNote updates both title and content", async () => {
+    const note = await createNote(db, getUser, userId, "Both", "Both");
+    const updated = await updateNote(db, getUser, getUserByUsername, username, note.slug, {
+      title: "New Both",
+      content: "New Both Content",
+    });
+    assert.ok(updated);
+    assert.equal(updated!.title, "New Both");
+    assert.equal(updated!.content, "New Both Content");
+  });
+
+  it("updateNote returns null for nonexistent note", async () => {
+    const result = await updateNote(db, getUser, getUserByUsername, username, "no-such-note", {
+      title: "x",
+    });
+    assert.equal(result, null);
+  });
+
+  it("updateNote returns null for nonexistent author", async () => {
+    const result = await updateNote(db, getUser, getUserByUsername, "nobody", "whatever", {
+      title: "x",
+    });
+    assert.equal(result, null);
   });
 });
 

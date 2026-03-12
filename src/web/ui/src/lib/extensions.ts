@@ -3,9 +3,9 @@ export type ExtensionInfo = {
   name: string;
   version: string;
   description?: string;
-  systemSections?: { id: string; label: string; urlPatterns: string[] }[];
+  systemSections?: { id: string; label: string; urlPatterns?: string[] }[];
   mindSections?: { id: string; label: string; defaultPath?: string }[];
-  feedSource?: { endpoint: string; kind: string };
+  feedSource?: { endpoint: string; kind?: string };
 };
 
 export async function fetchExtensions(): Promise<ExtensionInfo[]> {
