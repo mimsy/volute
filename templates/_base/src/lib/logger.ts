@@ -1,3 +1,6 @@
+import { daemonEmit } from "./daemon-client.js";
+import { filterEvent, loadTransparencyPreset } from "./transparency.js";
+
 type LogLevel = "debug" | "info" | "warn" | "error";
 
 const LEVELS: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
@@ -6,6 +9,21 @@ let minLevel = LEVELS.info;
 // VOLUTE_DEBUG=1 overrides to debug level
 if (process.env.VOLUTE_DEBUG === "1") {
   minLevel = LEVELS.debug;
+}
+
+// Loaded once at startup — mind restarts on config changes
+const preset = loadTransparencyPreset();
+
+function emit(category: string, args: unknown[]): void {
+  const message = args
+    .map((a) => (a instanceof Error ? a.message : typeof a === "string" ? a : JSON.stringify(a)))
+    .join(" ");
+  const filtered = filterEvent(preset, {
+    type: "log",
+    content: message,
+    metadata: { category },
+  });
+  if (filtered) daemonEmit(filtered).catch(() => {});
 }
 
 /** Set the minimum log level. */
@@ -26,6 +44,7 @@ function write(level: LogLevel, category: string, ...args: unknown[]): void {
   } catch (err: any) {
     if (err?.code !== "EPIPE") throw err;
   }
+  emit(category, args);
 }
 
 export function log(category: string, ...args: unknown[]) {
