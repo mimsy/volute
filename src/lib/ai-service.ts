@@ -90,7 +90,21 @@ export function getConfiguredProviders(): string[] {
 }
 
 export function isAiConfigured(): boolean {
-  return getConfiguredProviders().length > 0;
+  return getEnabledModels().length > 0;
+}
+
+/** Get the admin-configured list of enabled model IDs. */
+export function getEnabledModels(): string[] {
+  const ai = getAiConfig();
+  return ai?.models ?? [];
+}
+
+/** Set the list of enabled model IDs. */
+export function setEnabledModels(modelIds: string[]): void {
+  const config = readGlobalConfig();
+  const ai = (config.ai as AiConfig) ?? { providers: {} };
+  ai.models = modelIds.length > 0 ? modelIds : undefined;
+  writeGlobalConfig({ ...config, ai });
 }
 
 /** Returns all models from configured providers. */
@@ -156,12 +170,15 @@ function findModel(modelId: string): Model<Api> | undefined {
   return undefined;
 }
 
-/** Pick the cheapest available model for system tasks. */
+/** Pick from admin-enabled models. Uses first enabled model. */
 function autoSelectModel(): Model<Api> | undefined {
-  const models = getAvailableModels();
-  if (models.length === 0) return undefined;
-  // Sort by total cost (input + output) ascending
-  return models.sort((a, b) => a.cost.input + a.cost.output - (b.cost.input + b.cost.output))[0];
+  const enabled = getEnabledModels();
+  if (enabled.length === 0) return undefined;
+  for (const id of enabled) {
+    const model = findModel(id);
+    if (model) return model;
+  }
+  return undefined;
 }
 
 export async function aiComplete(

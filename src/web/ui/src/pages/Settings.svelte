@@ -2,12 +2,15 @@
 import type { Prompt } from "@volute/api";
 import { onMount } from "svelte";
 import {
+  type AiModel,
   type AiProvider,
+  fetchAiModels,
   fetchAiProviders,
   fetchPrompts,
   pollAiOAuthStatus,
   removeProviderConfig,
   resetPrompt,
+  saveEnabledModels,
   saveProviderConfig,
   startAiOAuth,
   submitAiOAuthCode,
@@ -33,15 +36,21 @@ let systemSaving = $state(false);
 
 // AI Service state
 let aiProviders = $state<AiProvider[]>([]);
+let aiModels = $state<AiModel[]>([]);
 let aiError = $state("");
 let aiSaving = $state(false);
-let editingProvider = $state<string | null>(null);
+let addingProvider = $state(false);
+let selectedProvider = $state("");
 let apiKeyInput = $state("");
 let oauthUrl = $state("");
 let oauthPolling = $state(false);
 let oauthFlowId = $state("");
 let oauthNeedsCode = $state(false);
 let oauthCodeInput = $state("");
+
+let configuredProviders = $derived(aiProviders.filter((p) => p.configured));
+let unconfiguredProviders = $derived(aiProviders.filter((p) => !p.configured));
+let selectedProviderInfo = $derived(aiProviders.find((p) => p.id === selectedProvider));
 
 let isRemote = $derived(
   typeof location !== "undefined" &&
@@ -84,6 +93,7 @@ async function load() {
 async function loadAi() {
   try {
     aiProviders = await fetchAiProviders();
+    aiModels = await fetchAiModels();
   } catch {
     // Non-critical
   }
@@ -94,8 +104,9 @@ onMount(() => {
   loadAi();
 });
 
-function startProviderEdit(id: string) {
-  editingProvider = id;
+function openAddProvider() {
+  addingProvider = true;
+  selectedProvider = "";
   apiKeyInput = "";
   oauthUrl = "";
   oauthPolling = false;
@@ -105,19 +116,19 @@ function startProviderEdit(id: string) {
   aiError = "";
 }
 
-function cancelProviderEdit() {
-  editingProvider = null;
+function closeAddProvider() {
+  addingProvider = false;
   oauthPolling = false;
   aiError = "";
 }
 
-async function handleApiKeySave(providerId: string) {
-  if (!apiKeyInput.trim() || aiSaving) return;
+async function handleApiKeySave() {
+  if (!selectedProvider || !apiKeyInput.trim() || aiSaving) return;
   aiSaving = true;
   aiError = "";
   try {
-    await saveProviderConfig(providerId, apiKeyInput.trim());
-    editingProvider = null;
+    await saveProviderConfig(selectedProvider, apiKeyInput.trim());
+    closeAddProvider();
     await loadAi();
   } catch (err) {
     aiError = err instanceof Error ? err.message : "Failed to save";
@@ -139,12 +150,12 @@ async function handleProviderRemove(providerId: string) {
   }
 }
 
-async function handleOAuth(providerId: string) {
-  if (aiSaving) return;
+async function handleOAuth() {
+  if (!selectedProvider || aiSaving) return;
   aiSaving = true;
   aiError = "";
   try {
-    const result = await startAiOAuth(providerId);
+    const result = await startAiOAuth(selectedProvider);
     if (result.url) {
       oauthUrl = result.url;
       oauthFlowId = result.flowId;
@@ -157,7 +168,7 @@ async function handleOAuth(providerId: string) {
             const status = await pollAiOAuthStatus(result.flowId);
             if (status.status === "complete") {
               oauthPolling = false;
-              cancelProviderEdit();
+              closeAddProvider();
               await loadAi();
               return;
             } else if (status.status === "error") {
@@ -188,6 +199,17 @@ async function handleOAuthCodeSubmit() {
     oauthCodeInput = "";
   } catch (err) {
     aiError = err instanceof Error ? err.message : "Failed to submit code";
+  }
+}
+
+async function toggleModel(modelId: string, enabled: boolean) {
+  const current = aiModels.filter((m) => m.enabled).map((m) => m.id);
+  const updated = enabled ? [...current, modelId] : current.filter((id) => id !== modelId);
+  try {
+    await saveEnabledModels(updated);
+    aiModels = aiModels.map((m) => (m.id === modelId ? { ...m, enabled } : m));
+  } catch (err) {
+    aiError = err instanceof Error ? err.message : "Failed to update models";
   }
 }
 
@@ -333,33 +355,38 @@ function authMethodLabel(method: string | null): string {
       <span class="section-subtitle">Credentials for turn summaries, scripts, and mind tools</span>
     </div>
 
-    {#each aiProviders as provider (provider.id)}
+    {#if configuredProviders.length === 0 && !addingProvider}
+      <div class="empty-state">
+        <span class="system-label">No AI providers configured. Add one to enable turn summaries and AI features.</span>
+      </div>
+    {/if}
+
+    {#each configuredProviders as provider (provider.id)}
       <div class="provider-card">
         <div class="provider-row">
           <span class="provider-name">{provider.id}</span>
-          {#if provider.configured}
-            <span class="custom-badge">{authMethodLabel(provider.authMethod)}</span>
-          {/if}
+          <span class="custom-badge">{authMethodLabel(provider.authMethod)}</span>
           <div class="provider-actions">
-            {#if provider.configured && editingProvider !== provider.id}
-              <button class="btn btn-reset" onclick={() => handleProviderRemove(provider.id)} disabled={aiSaving}>
-                Remove
-              </button>
-            {/if}
-            {#if !provider.configured && editingProvider !== provider.id}
-              <button class="btn btn-edit" onclick={() => startProviderEdit(provider.id)}>
-                Configure
-              </button>
-            {/if}
-            {#if editingProvider === provider.id}
-              <button class="btn btn-cancel" onclick={cancelProviderEdit}>Cancel</button>
-            {/if}
+            <button class="btn btn-reset" onclick={() => handleProviderRemove(provider.id)} disabled={aiSaving}>
+              Remove
+            </button>
           </div>
         </div>
+      </div>
+    {/each}
 
-        {#if editingProvider === provider.id}
+    {#if addingProvider}
+      <div class="provider-card add-card">
+        <select bind:value={selectedProvider} class="system-input">
+          <option value="">Select provider...</option>
+          {#each unconfiguredProviders as p (p.id)}
+            <option value={p.id}>{p.id}</option>
+          {/each}
+        </select>
+
+        {#if selectedProvider}
           <div class="provider-config">
-            <form class="system-form" onsubmit={(e) => { e.preventDefault(); handleApiKeySave(provider.id); }}>
+            <form class="system-form" onsubmit={(e) => { e.preventDefault(); handleApiKeySave(); }}>
               <input
                 type="password"
                 bind:value={apiKeyInput}
@@ -370,9 +397,9 @@ function authMethodLabel(method: string | null): string {
                 {aiSaving ? "..." : "Save"}
               </button>
             </form>
-            {#if provider.oauth}
-              <button class="btn btn-edit" onclick={() => handleOAuth(provider.id)} disabled={aiSaving} style="margin-top: 6px;">
-                {provider.oauthName ? `Sign in with ${provider.oauthName}` : "OAuth"}
+            {#if selectedProviderInfo?.oauth}
+              <button class="btn btn-edit" onclick={handleOAuth} disabled={aiSaving} style="margin-top: 6px;">
+                {selectedProviderInfo.oauthName ? `Sign in with ${selectedProviderInfo.oauthName}` : "OAuth"}
               </button>
             {/if}
             {#if oauthUrl}
@@ -410,12 +437,45 @@ function authMethodLabel(method: string | null): string {
             {/if}
           </div>
         {/if}
+
+        <div class="actions" style="margin-top: 8px;">
+          <button class="btn btn-cancel" onclick={closeAddProvider}>Cancel</button>
+        </div>
       </div>
-    {/each}
+    {:else}
+      <button class="btn btn-edit" onclick={openAddProvider} style="margin-top: 6px;">
+        Add provider
+      </button>
+    {/if}
+
     {#if aiError}
       <div class="error">{aiError}</div>
     {/if}
   </div>
+
+  <!-- AI Models -->
+  {#if aiModels.length > 0}
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Enabled Models</span>
+        <span class="section-subtitle">Models available for system AI tasks</span>
+      </div>
+
+      <div class="models-list">
+        {#each aiModels as model (model.id)}
+          <label class="model-row">
+            <input
+              type="checkbox"
+              checked={model.enabled}
+              onchange={() => toggleModel(model.id, !model.enabled)}
+            />
+            <span class="model-id">{model.id}</span>
+            <span class="dim">{model.provider}</span>
+          </label>
+        {/each}
+      </div>
+    </div>
+  {/if}
 
   <!-- Prompts -->
   {#if error}
@@ -529,12 +589,25 @@ function authMethodLabel(method: string | null): string {
     color: var(--text-2);
   }
 
+  .empty-state {
+    padding: 16px;
+    text-align: center;
+    background: var(--bg-2);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-lg);
+    margin-bottom: 8px;
+  }
+
   .provider-card {
     background: var(--bg-2);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     padding: 10px 16px;
     margin-bottom: 6px;
+  }
+
+  .add-card {
+    padding: 14px 16px;
   }
 
   .provider-row {
@@ -559,6 +632,31 @@ function authMethodLabel(method: string | null): string {
     margin-top: 8px;
     padding-top: 8px;
     border-top: 1px solid var(--border);
+  }
+
+  .models-list {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 8px 0;
+  }
+
+  .model-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 16px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  .model-row:hover {
+    background: var(--bg-3);
+  }
+
+  .model-id {
+    color: var(--text-0);
+    flex: 1;
   }
 
   .prompt-card {

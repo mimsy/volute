@@ -24,6 +24,7 @@ export type AiProviderConfig = {
 
 export type AiConfig = {
   providers: Record<string, AiProviderConfig>;
+  models?: string[];
 };
 
 export type GlobalConfig = {

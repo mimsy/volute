@@ -8,9 +8,11 @@ import {
   getAiConfig,
   getAvailableModels,
   getConfiguredProviders,
+  getEnabledModels,
   removeAiConfig,
   removeProviderConfig,
   saveProviderConfig,
+  setEnabledModels,
 } from "../../lib/ai-service.js";
 import { logBuffer } from "../../lib/log-buffer.js";
 import {
@@ -209,6 +211,7 @@ const app = new Hono<AuthEnv>()
   })
   .get("/ai/models", requireAdmin, (c) => {
     const models = getAvailableModels();
+    const enabled = new Set(getEnabledModels());
     return c.json(
       models.map((m) => ({
         id: m.id,
@@ -216,9 +219,20 @@ const app = new Hono<AuthEnv>()
         provider: m.provider,
         contextWindow: m.contextWindow,
         maxTokens: m.maxTokens,
+        enabled: enabled.has(m.id),
       })),
     );
   })
+  .put(
+    "/ai/models",
+    requireAdmin,
+    zValidator("json", z.object({ models: z.array(z.string()) })),
+    (c) => {
+      const { models } = c.req.valid("json");
+      setEnabledModels(models);
+      return c.json({ ok: true });
+    },
+  )
   .put(
     "/ai/providers/:id",
     requireAdmin,

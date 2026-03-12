@@ -397,6 +397,7 @@ export type AiModel = {
   provider: string;
   contextWindow: number;
   maxTokens: number;
+  enabled: boolean;
 };
 
 export function fetchAiProviders(): Promise<AiProvider[]> {
@@ -429,6 +430,10 @@ export function pollAiOAuthStatus(
 
 export function submitAiOAuthCode(flowId: string, code: string): Promise<void> {
   return post(`${V1}/system/ai/oauth/code/${enc(flowId)}`, { code });
+}
+
+export function saveEnabledModels(models: string[]): Promise<void> {
+  return put(`${V1}/system/ai/models`, { models });
 }
 
 // --- Auth (these stay on /api/ since they're not mind-scoped) ---
