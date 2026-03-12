@@ -1,5 +1,5 @@
 import { zValidator } from "@hono/zod-validator";
-import { getOAuthProvider } from "@mariozechner/pi-ai";
+import { getOAuthProvider, getOAuthProviders, getProviders } from "@mariozechner/pi-ai";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -175,6 +175,21 @@ const app = new Hono<AuthEnv>()
     }
   })
   // --- AI Service config ---
+  .get("/ai/providers", requireAdmin, (c) => {
+    const allProviders = getProviders();
+    const oauthProviders = getOAuthProviders();
+    const oauthMap = new Map(oauthProviders.map((p) => [p.id, p]));
+    const result = allProviders.map((id) => {
+      const oauth = oauthMap.get(id);
+      return {
+        id,
+        oauth: !!oauth,
+        oauthName: oauth?.name,
+        usesCallbackServer: !!oauth?.usesCallbackServer,
+      };
+    });
+    return c.json(result);
+  })
   .get("/ai", requireAdmin, (c) => {
     const config = getAiConfig();
     if (!config) return c.json({ configured: false });
@@ -212,6 +227,16 @@ const app = new Hono<AuthEnv>()
     if (!oauthProvider) {
       return c.json({ error: `OAuth not supported for provider: ${body.provider}` }, 400);
     }
+    // Providers that use a local callback server (redirect to localhost) won't work
+    // from the web UI when accessed remotely. Direct the user to the CLI instead.
+    if (oauthProvider.usesCallbackServer) {
+      return c.json(
+        {
+          error: `${oauthProvider.name} OAuth requires a local browser redirect and can't be completed from the web UI. Use \`volute ai config --provider ${body.provider} --model <model> --oauth\` from the CLI on the server instead.`,
+        },
+        400,
+      );
+    }
 
     const flowId = crypto.randomUUID();
     const flow = {
@@ -220,7 +245,7 @@ const app = new Hono<AuthEnv>()
     };
     oauthFlows.set(flowId, flow);
 
-    // Run login in background
+    // Run login in background (device code flow — no callback server needed)
     oauthProvider
       .login({
         onAuth: (info) => {

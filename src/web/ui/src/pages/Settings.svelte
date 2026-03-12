@@ -2,8 +2,10 @@
 import type { Prompt } from "@volute/api";
 import { onMount } from "svelte";
 import {
+  type AiProvider,
   type AiStatus,
   fetchAiConfig,
+  fetchAiProviders,
   fetchPrompts,
   pollAiOAuthStatus,
   removeAiConfig,
@@ -32,6 +34,7 @@ let systemSaving = $state(false);
 
 // AI Service state
 let aiConfig = $state<AiStatus>({ configured: false });
+let aiProviders = $state<AiProvider[]>([]);
 let aiError = $state("");
 let aiEditing = $state(false);
 let aiProvider = $state("");
@@ -40,6 +43,8 @@ let aiApiKey = $state("");
 let aiSaving = $state(false);
 let oauthUrl = $state("");
 let oauthPolling = $state(false);
+
+let selectedProviderInfo = $derived(aiProviders.find((p) => p.id === aiProvider));
 
 const categoryMeta: Record<string, { label: string; subtitle: string }> = {
   creation: { label: "Creation Prompts", subtitle: "Used when creating new minds" },
@@ -75,7 +80,7 @@ async function load() {
 
 async function loadAi() {
   try {
-    aiConfig = await fetchAiConfig();
+    [aiConfig, aiProviders] = await Promise.all([fetchAiConfig(), fetchAiProviders()]);
   } catch {
     // Non-critical
   }
@@ -325,7 +330,12 @@ async function handleReset(key: string) {
     {:else if aiEditing}
       <div class="system-card" style="flex-direction: column; align-items: stretch;">
         <div class="ai-form">
-          <input bind:value={aiProvider} placeholder="Provider (anthropic, openai, ...)" class="system-input" />
+          <select bind:value={aiProvider} class="system-input">
+            <option value="">Select provider...</option>
+            {#each aiProviders as p (p.id)}
+              <option value={p.id}>{p.id}</option>
+            {/each}
+          </select>
           <input bind:value={aiModel} placeholder="Model ID" class="system-input" />
           <input type="password" bind:value={aiApiKey} placeholder="API key (optional)" class="system-input" />
         </div>
@@ -333,11 +343,16 @@ async function handleReset(key: string) {
           <button class="btn btn-save" onclick={handleAiSave} disabled={aiSaving || !aiProvider.trim() || !aiModel.trim()}>
             {aiSaving ? "..." : "Save"}
           </button>
-          <button class="btn btn-edit" onclick={handleAiOAuth} disabled={aiSaving || !aiProvider.trim() || !aiModel.trim()}>
-            OAuth
-          </button>
+          {#if selectedProviderInfo?.oauth && !selectedProviderInfo.usesCallbackServer}
+            <button class="btn btn-edit" onclick={handleAiOAuth} disabled={aiSaving || !aiProvider.trim() || !aiModel.trim()}>
+              OAuth
+            </button>
+          {/if}
           <button class="btn btn-cancel" onclick={cancelAiEdit}>Cancel</button>
         </div>
+        {#if selectedProviderInfo?.oauth && selectedProviderInfo.usesCallbackServer}
+          <div class="dim" style="margin-top: 6px;">OAuth for {selectedProviderInfo.oauthName ?? aiProvider} requires a local redirect. Use <code>volute ai config --oauth</code> from the CLI on the server.</div>
+        {/if}
         {#if oauthUrl}
           <div class="oauth-modal">
             <span class="system-label">Authorize at:</span>

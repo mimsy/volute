@@ -389,6 +389,17 @@ export type AiStatus = {
   authMethod?: "api_key" | "oauth" | "env_var";
 };
 
+export type AiProvider = {
+  id: string;
+  oauth: boolean;
+  oauthName?: string;
+  usesCallbackServer: boolean;
+};
+
+export function fetchAiProviders(): Promise<AiProvider[]> {
+  return get(`${V1}/system/ai/providers`);
+}
+
 export function fetchAiConfig(): Promise<AiStatus> {
   return get(`${V1}/system/ai`);
 }
