@@ -168,6 +168,7 @@ async function toggleDefault(id: string) {
     justify-content: space-between;
     padding: 0 0 12px;
     max-width: 720px;
+    margin: 0 auto;
   }
 
   .section-title {
@@ -205,6 +206,7 @@ async function toggleDefault(id: string) {
     display: flex;
     flex-direction: column;
     max-width: 720px;
+    margin: 0 auto;
   }
 
   .column-header {
