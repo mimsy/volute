@@ -1,8 +1,6 @@
 ---
 name: shared-skill
-description: Version 1
+description: Version 2
 ---
 
-# shared-skill
-
-Content here.
+# Updated Content
