@@ -32,6 +32,11 @@ export type NoteReply = {
   created_at: string;
 };
 
+export type NoteDetail = Note & {
+  comments: NoteComment[];
+  replies: NoteReply[];
+};
+
 function slugify(text: string): string {
   return text
     .toLowerCase()
@@ -96,7 +101,7 @@ export async function getNote(
   getUserByUsername: UserByUsernameLookup,
   authorUsername: string,
   slug: string,
-): Promise<(Note & { comments: NoteComment[]; replies: NoteReply[] }) | null> {
+): Promise<NoteDetail | null> {
   const author = await getUserByUsername(authorUsername);
   if (!author) return null;
 

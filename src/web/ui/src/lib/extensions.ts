@@ -10,6 +10,9 @@ export type ExtensionInfo = {
 
 export async function fetchExtensions(): Promise<ExtensionInfo[]> {
   const res = await fetch("/api/extensions");
-  if (!res.ok) return [];
+  if (!res.ok) {
+    console.warn(`Failed to fetch extensions: HTTP ${res.status}`);
+    return [];
+  }
   return res.json();
 }

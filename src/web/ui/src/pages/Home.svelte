@@ -49,8 +49,8 @@ $effect(() => {
         for (const item of feedItems) {
           items.push({ ...item, extensionId: ext.id });
         }
-      } catch {
-        // skip
+      } catch (err) {
+        console.warn(`Failed to fetch ${ext.id} feed:`, err);
       }
     });
   Promise.all(promises).then(() => {

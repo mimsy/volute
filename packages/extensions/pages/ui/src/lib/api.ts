@@ -24,6 +24,9 @@ export async function fetchPagesData(): Promise<{
   recentPages: RecentPage[];
 }> {
   const res = await fetch(API_BASE);
-  if (!res.ok) return { sites: [], recentPages: [] };
+  if (!res.ok) {
+    console.warn(`Failed to fetch pages data: HTTP ${res.status}`);
+    return { sites: [], recentPages: [] };
+  }
   return res.json();
 }

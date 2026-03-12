@@ -244,6 +244,7 @@ onMount(() => {
 
   // Listen for navigation messages from extension iframes
   const messageHandler = (e: MessageEvent) => {
+    if (e.origin !== window.location.origin) return;
     if (e.data?.type === "navigate" && typeof e.data.path === "string") {
       navigate(e.data.path);
     }

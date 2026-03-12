@@ -46,21 +46,27 @@ export default createExtension({
   onDaemonStart: () => {
     getWatcher()
       .then((w) => w.startSystemWatcher())
-      .catch(() => {});
+      .catch((err) =>
+        console.error("[pages] failed to start system watcher:", (err as Error).message),
+      );
   },
   onDaemonStop: () => {
     getWatcher()
       .then((w) => w.stopAllWatchers())
-      .catch(() => {});
+      .catch((err) => console.error("[pages] failed to stop watchers:", (err as Error).message));
   },
   onMindStart: (mindName: string) => {
     getWatcher()
       .then((w) => w.startWatcher(mindName))
-      .catch(() => {});
+      .catch((err) =>
+        console.error(`[pages] failed to start watcher for ${mindName}:`, (err as Error).message),
+      );
   },
   onMindStop: (mindName: string) => {
     getWatcher()
       .then((w) => w.stopWatcher(mindName))
-      .catch(() => {});
+      .catch((err) =>
+        console.error(`[pages] failed to stop watcher for ${mindName}:`, (err as Error).message),
+      );
   },
 });

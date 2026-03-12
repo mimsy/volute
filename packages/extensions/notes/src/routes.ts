@@ -14,6 +14,14 @@ import {
   updateNote,
 } from "./notes.js";
 
+async function parseJson<T>(c: { req: { json: () => Promise<unknown> } }): Promise<T | null> {
+  try {
+    return (await c.req.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 function resolveUserId(c: {
   get: (key: string) => unknown;
 }): { id: number; username: string } | null {
@@ -23,7 +31,9 @@ function resolveUserId(c: {
 }
 
 export function createRoutes(ctx: ExtensionContext): Hono {
-  const { db, getUser, getUserByUsername } = ctx;
+  if (!ctx.db) throw new Error("Notes extension requires a database");
+  const db = ctx.db;
+  const { getUser, getUserByUsername } = ctx;
 
   const app = new Hono()
     // List notes
@@ -52,7 +62,8 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       const actor = resolveUserId(c);
       if (!actor) return c.json({ error: "Unauthorized" }, 401);
 
-      const body = await c.req.json<{ title?: string; content?: string; reply_to?: string }>();
+      const body = await parseJson<{ title?: string; content?: string; reply_to?: string }>(c);
+      if (!body) return c.json({ error: "Invalid JSON body" }, 400);
       if (!body.title || !body.content) {
         return c.json({ error: "title and content are required" }, 400);
       }
@@ -92,7 +103,8 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       const { author, slug } = c.req.param();
       if (actor.username !== author) return c.json({ error: "Forbidden" }, 403);
 
-      const body = await c.req.json<{ title?: string; content?: string }>();
+      const body = await parseJson<{ title?: string; content?: string }>(c);
+      if (!body) return c.json({ error: "Invalid JSON body" }, 400);
       const note = await updateNote(db, getUser, getUserByUsername, author, slug, body);
       if (!note) return c.json({ error: "Note not found" }, 404);
       return c.json(note);
@@ -118,7 +130,8 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       const note = await getNote(db, getUser, getUserByUsername, author, slug);
       if (!note) return c.json({ error: "Note not found" }, 404);
 
-      const body = await c.req.json<{ emoji?: string }>();
+      const body = await parseJson<{ emoji?: string }>(c);
+      if (!body) return c.json({ error: "Invalid JSON body" }, 400);
       if (!body.emoji) return c.json({ error: "emoji is required" }, 400);
 
       const result = toggleReaction(db, note.id, actor.id, body.emoji);
@@ -135,7 +148,8 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       const note = await getNote(db, getUser, getUserByUsername, author, slug);
       if (!note) return c.json({ error: "Note not found" }, 404);
 
-      const body = await c.req.json<{ content?: string }>();
+      const body = await parseJson<{ content?: string }>(c);
+      if (!body) return c.json({ error: "Invalid JSON body" }, 400);
       if (!body.content) return c.json({ error: "content is required" }, 400);
 
       const comment = await addComment(db, getUser, note.id, actor.id, body.content);

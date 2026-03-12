@@ -1,4 +1,4 @@
-import type { Hono } from "hono";
+import type { Context, Hono, MiddlewareHandler } from "hono";
 
 export type Database = {
   exec(sql: string): void;
@@ -12,7 +12,9 @@ export type Database = {
 
 export type ActivityEvent = {
   type: string;
-  [key: string]: unknown;
+  mindName?: string;
+  title?: string;
+  data?: Record<string, unknown>;
 };
 
 export type User = {
@@ -32,9 +34,9 @@ export type SystemsConfig = {
 };
 
 export type ExtensionContext = {
-  db: Database;
-  authMiddleware: unknown;
-  resolveUser: (c: unknown) => User | null;
+  db: Database | null;
+  authMiddleware: MiddlewareHandler;
+  resolveUser: (c: Context) => User | null;
   getUser: (id: number) => Promise<User | null>;
   getUserByUsername: (username: string) => Promise<User | null>;
   publishActivity: (event: ActivityEvent) => void;

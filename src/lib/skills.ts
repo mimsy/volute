@@ -31,6 +31,7 @@ export const STANDARD_SKILLS = ["volute-mind", "memory", "sessions", "dreaming",
  * STANDARD_SKILLS + extension-contributed standard skills.
  */
 export function getStandardSkillsWithExtensions(): string[] {
+  // require() breaks circular dep: skills.ts ↔ setup.ts ↔ extensions.ts (tsup bundles to CJS)
   const { readGlobalConfig } = require("./setup.js") as {
     readGlobalConfig: () => { defaultSkills?: string[] };
   };
@@ -43,7 +44,8 @@ export function getStandardSkillsWithExtensions(): string[] {
       getExtensionStandardSkills: () => string[];
     };
     return [...new Set([...STANDARD_SKILLS, ...getExtensionStandardSkills()])];
-  } catch {
+  } catch (err) {
+    log.warn("failed to load extension standard skills, using defaults", log.errorData(err));
     return [...STANDARD_SKILLS];
   }
 }
@@ -53,6 +55,7 @@ export function getStandardSkillsWithExtensions(): string[] {
  * Called on daemon startup after extensions are loaded, so extension standard skills are included.
  */
 export function initDefaultSkills(): void {
+  // require() breaks circular dep: skills.ts ↔ setup.ts ↔ extensions.ts (tsup bundles to CJS)
   const { readGlobalConfig, writeGlobalConfig } = require("./setup.js") as {
     readGlobalConfig: () => { defaultSkills?: string[]; [k: string]: unknown };
     writeGlobalConfig: (c: Record<string, unknown>) => void;
@@ -66,8 +69,8 @@ export function initDefaultSkills(): void {
       getExtensionStandardSkills: () => string[];
     };
     extensionSkills = getExtensionStandardSkills();
-  } catch {
-    /* extensions not loaded */
+  } catch (err) {
+    log.warn("failed to load extension standard skills during init", log.errorData(err));
   }
 
   const defaults = [...new Set([...STANDARD_SKILLS, ...extensionSkills])];

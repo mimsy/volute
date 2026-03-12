@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type {
+  Database,
   ExtensionContext,
   ExtensionManifest,
   FeedSource,
@@ -9,7 +10,7 @@ import type {
 } from "@volute/extensions";
 import extNotes from "@volute/notes";
 import extPages from "@volute/pages";
-import type { Hono } from "hono";
+import type { Hono, MiddlewareHandler } from "hono";
 import { getUser, getUserByUsername } from "./auth.js";
 import { publish } from "./events/activity-events.js";
 import log from "./logger.js";
@@ -61,23 +62,23 @@ function readExtensionsConfig(): string[] {
   }
 }
 
-let _LibsqlDatabase: (new (path: string) => ExtensionContext["db"]) | null = null;
+let _LibsqlDatabase: (new (path: string) => Database) | null = null;
 
-async function getLibsqlDatabase(): Promise<new (path: string) => ExtensionContext["db"]> {
+async function getLibsqlDatabase(): Promise<new (path: string) => Database> {
   if (_LibsqlDatabase) return _LibsqlDatabase;
   const mod = await import("libsql");
-  _LibsqlDatabase = (mod.default ?? mod) as new (path: string) => ExtensionContext["db"];
+  _LibsqlDatabase = (mod.default ?? mod) as new (path: string) => Database;
   return _LibsqlDatabase;
 }
 
-async function openExtensionDb(_id: string, dataDir: string): Promise<ExtensionContext["db"]> {
+async function openExtensionDb(_id: string, dataDir: string): Promise<Database> {
   const dbPath = resolve(dataDir, "data.db");
   const Database = await getLibsqlDatabase();
   return new Database(dbPath);
 }
 
 /** Migrate notes data from core volute.db to the extension's own DB (one-time). */
-async function migrateNotesFromCoreDb(extDb: ExtensionContext["db"]): Promise<void> {
+async function migrateNotesFromCoreDb(extDb: Database): Promise<void> {
   const coreDbPath = process.env.VOLUTE_DB_PATH || resolve(voluteSystemDir(), "volute.db");
   if (!existsSync(coreDbPath)) return;
 
@@ -197,41 +198,31 @@ async function migrateNotesFromCoreDb(extDb: ExtensionContext["db"]): Promise<vo
 async function buildContext(
   manifest: ExtensionManifest,
   dataDir: string,
-  authMw: unknown,
+  authMw: MiddlewareHandler,
 ): Promise<ExtensionContext> {
   // Only open DB if the extension declares initDb (otherwise it doesn't need one)
-  let db: ExtensionContext["db"] | null = null;
+  let db: ExtensionContext["db"] = null;
   if (manifest.initDb) {
-    db = await openExtensionDb(manifest.id, dataDir);
+    const realDb = await openExtensionDb(manifest.id, dataDir);
     try {
-      manifest.initDb(db);
+      manifest.initDb(realDb);
     } catch (err) {
-      db.close();
+      realDb.close();
       throw new Error(`initDb failed for extension ${manifest.id}: ${(err as Error).message}`);
     }
 
     // One-time migration for built-in extensions extracted from core
     if (manifest.id === "notes") {
-      await migrateNotesFromCoreDb(db);
+      await migrateNotesFromCoreDb(realDb);
     }
+    db = realDb;
   }
 
   return {
-    db:
-      db ??
-      ({
-        exec() {
-          throw new Error("No database configured for this extension");
-        },
-        prepare() {
-          throw new Error("No database configured for this extension");
-        },
-        close() {},
-      } as ExtensionContext["db"]),
+    db,
     authMiddleware: authMw,
-    resolveUser: (c: unknown) => {
-      const ctx = c as { get: (key: string) => unknown };
-      const user = ctx.get("user");
+    resolveUser: (c) => {
+      const user = c.get("user");
       if (!user || typeof user !== "object") return null;
       return user as ReturnType<ExtensionContext["resolveUser"]>;
     },
@@ -262,7 +253,7 @@ async function buildContext(
 async function loadExtension(
   manifest: ExtensionManifest,
   app: Hono,
-  authMw: unknown,
+  authMw: MiddlewareHandler,
 ): Promise<void> {
   const dataDir = extensionDataDir(manifest.id);
   mkdirSync(dataDir, { recursive: true });
@@ -271,7 +262,7 @@ async function loadExtension(
 
   // Mount authenticated API routes
   const routesApp = manifest.routes(context);
-  app.use(`/api/ext/${manifest.id}/*`, authMw as any);
+  app.use(`/api/ext/${manifest.id}/*`, authMw);
   app.route(`/api/ext/${manifest.id}`, routesApp);
 
   // Mount public routes (no auth)
@@ -351,6 +342,10 @@ async function loadExtension(
     }
   }
 
+  if (manifest.standardSkill && !manifest.skillsDir) {
+    log.warn(`extension ${manifest.id}: standardSkill is true but no skillsDir declared`);
+  }
+
   loaded.push({ manifest, context });
   log.info(`loaded extension: ${manifest.id} v${manifest.version}`);
 }
@@ -390,7 +385,7 @@ async function discoverInstalledExtensions(): Promise<ExtensionManifest[]> {
     try {
       const mod = await import(pkg);
       const manifest = mod.default ?? mod.extension ?? mod;
-      if (manifest?.id && manifest?.routes) {
+      if (manifest?.id && typeof manifest?.routes === "function") {
         manifests.push(manifest);
       } else {
         log.warn(`extension package ${pkg} does not export a valid manifest`);
@@ -413,7 +408,8 @@ async function discoverLocalExtensions(): Promise<ExtensionManifest[]> {
     entries = readdirSync(baseDir, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name);
-  } catch {
+  } catch (err) {
+    log.error("failed to read local extensions directory", log.errorData(err));
     return [];
   }
 
@@ -432,7 +428,7 @@ async function discoverLocalExtensions(): Promise<ExtensionManifest[]> {
     try {
       const mod = await import(entryPoint);
       const manifest = mod.default ?? mod.extension ?? mod;
-      if (manifest?.id && manifest?.routes) {
+      if (manifest?.id && typeof manifest?.routes === "function") {
         manifests.push(manifest);
         log.info(`discovered local extension: ${manifest.id} from ${extDir}`);
       } else {
@@ -446,7 +442,7 @@ async function discoverLocalExtensions(): Promise<ExtensionManifest[]> {
   return manifests;
 }
 
-export async function loadAllExtensions(app: Hono, authMw: unknown): Promise<void> {
+export async function loadAllExtensions(app: Hono, authMw: MiddlewareHandler): Promise<void> {
   const builtins = discoverBuiltinExtensions();
   const installed = await discoverInstalledExtensions();
   const local = await discoverLocalExtensions();
@@ -490,8 +486,8 @@ export function getExtensionStandardSkills(): string[] {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         if (entry.isDirectory()) skills.push(entry.name);
       }
-    } catch {
-      // skip
+    } catch (err) {
+      log.warn(`failed to read skills dir for extension ${manifest.id}`, log.errorData(err));
     }
   }
   return skills;
@@ -515,9 +511,9 @@ export function notifyExtensionsDaemonStop(): void {
       log.error(`extension ${manifest.id}: onDaemonStop failed`, log.errorData(err));
     }
     try {
-      context.db.close();
-    } catch {
-      // ignore — stub db or already closed
+      context.db?.close();
+    } catch (err) {
+      log.warn(`extension ${manifest.id}: failed to close db`, log.errorData(err));
     }
   }
   loaded.length = 0;

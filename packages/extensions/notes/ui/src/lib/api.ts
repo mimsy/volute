@@ -101,7 +101,10 @@ export async function toggleReaction(author: string, slug: string, emoji: string
 
 export async function fetchCurrentUsername(): Promise<string> {
   const res = await fetch("/api/auth/me");
-  if (!res.ok) return "";
+  if (!res.ok) {
+    console.warn(`Failed to fetch current user: HTTP ${res.status}`);
+    return "";
+  }
   const data = await res.json();
   return data?.username ?? "";
 }
