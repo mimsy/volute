@@ -380,6 +380,44 @@ export function systemLogout(): Promise<void> {
   return post(`${V1}/system/logout`);
 }
 
+// --- AI Service ---
+
+export type AiStatus = {
+  configured: boolean;
+  provider?: string;
+  model?: string;
+  authMethod?: "api_key" | "oauth" | "env_var";
+};
+
+export function fetchAiConfig(): Promise<AiStatus> {
+  return get(`${V1}/system/ai`);
+}
+
+export function saveAiConfig(data: {
+  provider: string;
+  model: string;
+  apiKey?: string;
+}): Promise<void> {
+  return put(`${V1}/system/ai`, data);
+}
+
+export function removeAiConfig(): Promise<void> {
+  return del(`${V1}/system/ai`);
+}
+
+export function startAiOAuth(
+  provider: string,
+  model: string,
+): Promise<{ flowId: string; url?: string; instructions?: string }> {
+  return post(`${V1}/system/ai/oauth/start`, { provider, model });
+}
+
+export function pollAiOAuthStatus(
+  flowId: string,
+): Promise<{ status: "pending" | "complete" | "error"; error?: string }> {
+  return get(`${V1}/system/ai/oauth/status/${enc(flowId)}`);
+}
+
 // --- Auth (these stay on /api/ since they're not mind-scoped) ---
 
 export function fetchAvailableUsers(type?: string): Promise<AvailableUser[]> {

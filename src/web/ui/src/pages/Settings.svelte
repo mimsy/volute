@@ -2,8 +2,14 @@
 import type { Prompt } from "@volute/api";
 import { onMount } from "svelte";
 import {
+  type AiStatus,
+  fetchAiConfig,
   fetchPrompts,
+  pollAiOAuthStatus,
+  removeAiConfig,
   resetPrompt,
+  saveAiConfig,
+  startAiOAuth,
   systemLogin,
   systemLogout,
   systemRegister,
@@ -23,6 +29,17 @@ let systemError = $state("");
 let systemAction = $state<"none" | "register" | "login">("none");
 let systemInput = $state("");
 let systemSaving = $state(false);
+
+// AI Service state
+let aiConfig = $state<AiStatus>({ configured: false });
+let aiError = $state("");
+let aiEditing = $state(false);
+let aiProvider = $state("");
+let aiModel = $state("");
+let aiApiKey = $state("");
+let aiSaving = $state(false);
+let oauthUrl = $state("");
+let oauthPolling = $state(false);
 
 const categoryMeta: Record<string, { label: string; subtitle: string }> = {
   creation: { label: "Creation Prompts", subtitle: "Used when creating new minds" },
@@ -56,9 +73,106 @@ async function load() {
   }
 }
 
+async function loadAi() {
+  try {
+    aiConfig = await fetchAiConfig();
+  } catch {
+    // Non-critical
+  }
+}
+
 onMount(() => {
   load();
+  loadAi();
 });
+
+function startAiEdit() {
+  aiEditing = true;
+  aiProvider = aiConfig.provider ?? "";
+  aiModel = aiConfig.model ?? "";
+  aiApiKey = "";
+  aiError = "";
+}
+
+function cancelAiEdit() {
+  aiEditing = false;
+  oauthUrl = "";
+  oauthPolling = false;
+  aiError = "";
+}
+
+async function handleAiSave() {
+  if (!aiProvider.trim() || !aiModel.trim() || aiSaving) return;
+  aiSaving = true;
+  aiError = "";
+  try {
+    await saveAiConfig({
+      provider: aiProvider.trim(),
+      model: aiModel.trim(),
+      ...(aiApiKey.trim() ? { apiKey: aiApiKey.trim() } : {}),
+    });
+    aiEditing = false;
+    await loadAi();
+  } catch (err) {
+    aiError = err instanceof Error ? err.message : "Failed to save";
+  } finally {
+    aiSaving = false;
+  }
+}
+
+async function handleAiOAuth() {
+  if (!aiProvider.trim() || !aiModel.trim() || aiSaving) return;
+  aiSaving = true;
+  aiError = "";
+  try {
+    const result = await startAiOAuth(aiProvider.trim(), aiModel.trim());
+    if (result.url) {
+      oauthUrl = result.url;
+      oauthPolling = true;
+      // Poll for completion
+      const poll = async () => {
+        while (oauthPolling) {
+          await new Promise((r) => setTimeout(r, 2500));
+          try {
+            const status = await pollAiOAuthStatus(result.flowId);
+            if (status.status === "complete") {
+              oauthPolling = false;
+              oauthUrl = "";
+              aiEditing = false;
+              await loadAi();
+              return;
+            } else if (status.status === "error") {
+              oauthPolling = false;
+              oauthUrl = "";
+              aiError = status.error ?? "OAuth failed";
+              return;
+            }
+          } catch {
+            // Retry
+          }
+        }
+      };
+      poll();
+    }
+  } catch (err) {
+    aiError = err instanceof Error ? err.message : "OAuth failed";
+  } finally {
+    aiSaving = false;
+  }
+}
+
+async function handleAiRemove() {
+  aiSaving = true;
+  aiError = "";
+  try {
+    await removeAiConfig();
+    aiConfig = { configured: false };
+  } catch (err) {
+    aiError = err instanceof Error ? err.message : "Failed to remove";
+  } finally {
+    aiSaving = false;
+  }
+}
 
 async function handleSystemAction() {
   if (!systemInput.trim() || systemSaving) return;
@@ -185,6 +299,63 @@ async function handleReset(key: string) {
     {/if}
     {#if systemError}
       <div class="error">{systemError}</div>
+    {/if}
+  </div>
+
+  <!-- AI Service -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">AI Service</span>
+      <span class="section-subtitle">System-level AI for turn summaries and scripts</span>
+    </div>
+
+    {#if aiConfig.configured && !aiEditing}
+      <div class="system-card">
+        <div class="system-info">
+          <span class="system-label">{aiConfig.provider} / {aiConfig.model}</span>
+          <span class="custom-badge">{aiConfig.authMethod === "api_key" ? "API key" : aiConfig.authMethod === "oauth" ? "OAuth" : "env var"}</span>
+        </div>
+        <div class="system-actions">
+          <button class="btn btn-edit" onclick={startAiEdit}>Edit</button>
+          <button class="btn btn-reset" onclick={handleAiRemove} disabled={aiSaving}>
+            {aiSaving ? "..." : "Remove"}
+          </button>
+        </div>
+      </div>
+    {:else if aiEditing}
+      <div class="system-card" style="flex-direction: column; align-items: stretch;">
+        <div class="ai-form">
+          <input bind:value={aiProvider} placeholder="Provider (anthropic, openai, ...)" class="system-input" />
+          <input bind:value={aiModel} placeholder="Model ID" class="system-input" />
+          <input type="password" bind:value={aiApiKey} placeholder="API key (optional)" class="system-input" />
+        </div>
+        <div class="actions" style="margin-top: 8px;">
+          <button class="btn btn-save" onclick={handleAiSave} disabled={aiSaving || !aiProvider.trim() || !aiModel.trim()}>
+            {aiSaving ? "..." : "Save"}
+          </button>
+          <button class="btn btn-edit" onclick={handleAiOAuth} disabled={aiSaving || !aiProvider.trim() || !aiModel.trim()}>
+            OAuth
+          </button>
+          <button class="btn btn-cancel" onclick={cancelAiEdit}>Cancel</button>
+        </div>
+        {#if oauthUrl}
+          <div class="oauth-modal">
+            <span class="system-label">Authorize at:</span>
+            <a href={oauthUrl} target="_blank" rel="noopener" class="oauth-link">{oauthUrl}</a>
+            <span class="dim">{oauthPolling ? "Waiting for authorization..." : ""}</span>
+          </div>
+        {/if}
+      </div>
+    {:else}
+      <div class="system-card">
+        <div class="system-info">
+          <span class="system-label">Not configured</span>
+        </div>
+        <button class="btn btn-edit" onclick={startAiEdit}>Configure</button>
+      </div>
+    {/if}
+    {#if aiError}
+      <div class="error">{aiError}</div>
     {/if}
   </div>
 
@@ -512,5 +683,38 @@ async function handleReset(key: string) {
 
   .system-input:focus {
     border-color: var(--border-bright);
+  }
+
+  .ai-form {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .ai-form .system-input {
+    flex: 1;
+    min-width: 120px;
+  }
+
+  .oauth-modal {
+    margin-top: 8px;
+    padding: 10px 12px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .oauth-link {
+    color: var(--accent);
+    font-size: 13px;
+    word-break: break-all;
+  }
+
+  .dim {
+    color: var(--text-2);
+    font-size: 12px;
   }
 </style>

@@ -1,8 +1,10 @@
 import { zValidator } from "@hono/zod-validator";
+import { getOAuthProvider } from "@mariozechner/pi-ai";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
+import { getAiConfig, removeAiConfig, saveAiConfig } from "../../lib/ai-service.js";
 import { logBuffer } from "../../lib/log-buffer.js";
 import {
   deleteSystemsConfig,
@@ -171,6 +173,93 @@ const app = new Hono<AuthEnv>()
     } catch (err) {
       return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
     }
+  })
+  // --- AI Service config ---
+  .get("/ai", requireAdmin, (c) => {
+    const config = getAiConfig();
+    if (!config) return c.json({ configured: false });
+    return c.json({
+      configured: true,
+      provider: config.provider,
+      model: config.model,
+      authMethod: config.oauth ? "oauth" : config.apiKey ? "api_key" : "env_var",
+    });
+  })
+  .put(
+    "/ai",
+    requireAdmin,
+    zValidator(
+      "json",
+      z.object({
+        provider: z.string().min(1),
+        model: z.string().min(1),
+        apiKey: z.string().optional(),
+      }),
+    ),
+    (c) => {
+      const { provider, model, apiKey } = c.req.valid("json");
+      saveAiConfig({ provider, model, ...(apiKey ? { apiKey } : {}) });
+      return c.json({ ok: true });
+    },
+  )
+  .delete("/ai", requireAdmin, (c) => {
+    removeAiConfig();
+    return c.json({ ok: true });
+  })
+  .post("/ai/oauth/start", requireAdmin, async (c) => {
+    const body = (await c.req.json()) as { provider: string; model: string };
+    const oauthProvider = getOAuthProvider(body.provider);
+    if (!oauthProvider) {
+      return c.json({ error: `OAuth not supported for provider: ${body.provider}` }, 400);
+    }
+
+    const flowId = crypto.randomUUID();
+    const flow = {
+      status: "pending" as "pending" | "complete" | "error",
+      error: undefined as string | undefined,
+    };
+    oauthFlows.set(flowId, flow);
+
+    // Run login in background
+    oauthProvider
+      .login({
+        onAuth: (info) => {
+          const existing = oauthFlows.get(flowId);
+          if (existing) Object.assign(existing, { url: info.url, instructions: info.instructions });
+        },
+        onPrompt: async () => "",
+      })
+      .then((credentials) => {
+        saveAiConfig({ provider: body.provider, model: body.model, oauth: credentials });
+        const existing = oauthFlows.get(flowId);
+        if (existing) existing.status = "complete";
+      })
+      .catch((err) => {
+        const existing = oauthFlows.get(flowId);
+        if (existing) {
+          existing.status = "error";
+          existing.error = err instanceof Error ? err.message : String(err);
+        }
+      });
+
+    // Wait briefly for onAuth to fire with URL
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const state = oauthFlows.get(flowId) as any;
+    return c.json({ flowId, url: state?.url, instructions: state?.instructions });
+  })
+  .get("/ai/oauth/status/:flowId", requireAdmin, (c) => {
+    const flowId = c.req.param("flowId");
+    const flow = oauthFlows.get(flowId);
+    if (!flow) return c.json({ error: "Flow not found" }, 404);
+    const result: Record<string, unknown> = { status: flow.status };
+    if (flow.error) result.error = flow.error;
+    if (flow.status !== "pending") {
+      oauthFlows.delete(flowId); // Clean up
+    }
+    return c.json(result);
   });
+
+// In-memory OAuth flow tracking
+const oauthFlows = new Map<string, { status: "pending" | "complete" | "error"; error?: string }>();
 
 export default app;

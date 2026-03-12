@@ -30,6 +30,7 @@ import {
   stopMindFull as stopMindFullService,
 } from "../../lib/daemon/mind-service.js";
 import { getTokenBudget } from "../../lib/daemon/token-budget.js";
+import { summarizeTurn } from "../../lib/daemon/turn-summarizer.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
 import { extractTextContent } from "../../lib/delivery/delivery-router.js";
@@ -2009,6 +2010,22 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Failed to retrieve pending messages" }, 500);
     }
   })
+  // AI completion proxy for minds
+  .post("/:name/ai/complete", requireSelf(), async (c) => {
+    const body = (await c.req.json()) as { systemPrompt: string; message: string };
+    if (!body.systemPrompt || !body.message) {
+      return c.json({ error: "systemPrompt and message required" }, 400);
+    }
+    const { aiComplete: aiCompleteFn, isAiConfigured } = await import("../../lib/ai-service.js");
+    if (!isAiConfigured()) {
+      return c.json({ error: "AI service not configured" }, 503);
+    }
+    const text = await aiCompleteFn(body.systemPrompt, body.message);
+    if (text == null) {
+      return c.json({ error: "AI completion failed" }, 502);
+    }
+    return c.json({ text });
+  })
   // Receive events from mind, persist to mind_history, publish to pub-sub
   .post("/:name/events", requireSelf(), async (c) => {
     const name = c.req.param("name");
@@ -2034,16 +2051,21 @@ const app = new Hono<AuthEnv>()
 
     // Persist to mind_history
     const db = await getDb();
+    let insertedId: number | undefined;
     try {
-      await db.insert(mindHistory).values({
-        mind: baseName,
-        type: body.type,
-        session: body.session ?? null,
-        channel: body.channel ?? null,
-        message_id: body.messageId ?? null,
-        content: body.content ?? null,
-        metadata: body.metadata ? JSON.stringify(body.metadata) : null,
-      });
+      const result = await db
+        .insert(mindHistory)
+        .values({
+          mind: baseName,
+          type: body.type,
+          session: body.session ?? null,
+          channel: body.channel ?? null,
+          message_id: body.messageId ?? null,
+          content: body.content ?? null,
+          metadata: body.metadata ? JSON.stringify(body.metadata) : null,
+        })
+        .returning({ id: mindHistory.id });
+      insertedId = result[0]?.id;
     } catch (err) {
       log.error(`failed to persist event for ${baseName}`, log.errorData(err));
       // Continue — persistence is best-effort, don't block real-time streaming
@@ -2085,6 +2107,12 @@ const app = new Hono<AuthEnv>()
         if (!(err instanceof Error && err.message.includes("not initialized"))) {
           log.error(`delivery manager sessionDone failed for ${baseName}`, log.errorData(err));
         }
+      }
+      // Fire-and-forget turn summarization
+      if (insertedId != null) {
+        summarizeTurn(baseName, body.session, body.channel, insertedId).catch((err) => {
+          log.error("turn summarization failed", log.errorData(err));
+        });
       }
     }
 
@@ -2247,9 +2275,9 @@ const app = new Hono<AuthEnv>()
     if (session) {
       conditions.push(eq(mindHistory.session, session));
     }
-    // Default to conversation view (inbound/outbound only)
+    // Default to conversation view (inbound/outbound + summaries)
     if (!full) {
-      conditions.push(sql`${mindHistory.type} IN ('inbound', 'outbound')`);
+      conditions.push(sql`${mindHistory.type} IN ('inbound', 'outbound', 'summary')`);
     }
 
     const rows = await db
