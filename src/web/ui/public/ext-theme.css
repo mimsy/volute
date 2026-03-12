@@ -1,4 +1,6 @@
 /* Shared theme for extension iframes */
+@import url("https://fonts.googleapis.com/css2?family=Averia+Serif+Libre:wght@300;400;700&family=Fira+Code:wght@300;400;500;600&family=Averia+Sans+Libre:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap");
+
 :root {
   --bg-0: #0a0c0f;
   --bg-1: #11141a;
