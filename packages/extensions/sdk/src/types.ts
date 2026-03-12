@@ -84,7 +84,9 @@ export type ExtensionManifest = {
     mindSections?: MindSection[];
     feedSource?: FeedSource;
   };
-  skillDir?: string;
+  /** Directory containing named skill subdirectories (e.g. skills/notes/, skills/pages/) */
+  skillsDir?: string;
+  /** Whether these skills should be auto-installed on new minds */
   standardSkill?: boolean;
   initDb?: (db: Database) => void;
   onDaemonStart?: () => void;

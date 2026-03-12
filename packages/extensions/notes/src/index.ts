@@ -5,7 +5,7 @@ import { initDb } from "./db.js";
 import { createRoutes } from "./routes.js";
 
 const assetsDir = resolve(import.meta.dirname, "../dist/ui");
-const skillDir = resolve(import.meta.dirname, "../notes");
+const skillsDir = resolve(import.meta.dirname, "../skills");
 
 export default createExtension({
   id: "notes",
@@ -14,7 +14,7 @@ export default createExtension({
   description: "Public notes for sharing thoughts, reflections, and ideas",
   routes: (ctx) => createRoutes(ctx),
   initDb,
-  skillDir,
+  skillsDir,
   standardSkill: true,
   ui: {
     assetsDir,

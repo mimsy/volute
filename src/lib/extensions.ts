@@ -335,14 +335,19 @@ async function loadExtension(
     app.get(prefix, serveExtAssets);
   }
 
-  // Sync skill if declared
-  const skillDir = resolveSkillDir(manifest);
-  if (skillDir) {
+  // Sync skills if declared
+  const skillsDir = resolveSkillsDir(manifest);
+  if (skillsDir) {
     try {
-      await importSkillFromDir(skillDir, `ext:${manifest.id}`);
-      log.info(`synced skill for extension: ${manifest.id}`);
+      const entries = readdirSync(skillsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const skillPath = resolve(skillsDir, entry.name);
+        await importSkillFromDir(skillPath, `ext:${manifest.id}`);
+        log.info(`synced skill "${entry.name}" for extension: ${manifest.id}`);
+      }
     } catch (err) {
-      log.error(`failed to sync skill for extension ${manifest.id}`, log.errorData(err));
+      log.error(`failed to sync skills for extension ${manifest.id}`, log.errorData(err));
     }
   }
 
@@ -351,22 +356,22 @@ async function loadExtension(
 }
 
 /**
- * Resolve the skill directory for an extension.
- * The manifest's skillDir may be wrong when bundled by tsup (import.meta.dirname
+ * Resolve the skills directory for an extension.
+ * The manifest's skillsDir may be wrong when bundled by tsup (import.meta.dirname
  * resolves to the dist/ directory). Fall back to searching from the project root.
  */
-function resolveSkillDir(manifest: ExtensionManifest): string | null {
-  if (!manifest.skillDir) return null;
+function resolveSkillsDir(manifest: ExtensionManifest): string | null {
+  if (!manifest.skillsDir) return null;
   // Direct path works (dev mode or correctly resolved)
-  if (existsSync(manifest.skillDir)) return manifest.skillDir;
+  if (existsSync(manifest.skillsDir)) return manifest.skillsDir;
   // Search up from the daemon entry point to find project root
   let searchDir = dirname(new URL(import.meta.url).pathname);
   for (let i = 0; i < 5; i++) {
-    const candidate = resolve(searchDir, "packages", "extensions", manifest.id, manifest.id);
+    const candidate = resolve(searchDir, "packages", "extensions", manifest.id, "skills");
     if (existsSync(candidate)) return candidate;
     searchDir = dirname(searchDir);
   }
-  log.warn(`skill dir not found for extension ${manifest.id}: ${manifest.skillDir}`);
+  log.warn(`skills dir not found for extension ${manifest.id}: ${manifest.skillsDir}`);
   return null;
 }
 
@@ -474,7 +479,20 @@ export function getLoadedExtensions(): ExtensionInfo[] {
 }
 
 export function getExtensionStandardSkills(): string[] {
-  return loaded.filter((e) => e.manifest.standardSkill).map((e) => e.manifest.id);
+  const skills: string[] = [];
+  for (const { manifest } of loaded) {
+    if (!manifest.standardSkill) continue;
+    const dir = resolveSkillsDir(manifest);
+    if (!dir) continue;
+    try {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.isDirectory()) skills.push(entry.name);
+      }
+    } catch {
+      // skip
+    }
+  }
+  return skills;
 }
 
 export function notifyExtensionsDaemonStart(): void {

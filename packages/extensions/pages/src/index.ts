@@ -4,7 +4,7 @@ import { createExtension } from "@volute/extensions";
 import { createPublicRoutes, createRoutes } from "./routes.js";
 
 const assetsDir = resolve(import.meta.dirname, "../dist/ui");
-const skillDir = resolve(import.meta.dirname, "../pages");
+const skillsDir = resolve(import.meta.dirname, "../skills");
 
 // Lazy-loaded pages-watcher from core (built-in extension can import core modules)
 let _watcher: {
@@ -27,7 +27,7 @@ export default createExtension({
   description: "Publish and serve web pages from mind directories",
   routes: (ctx) => createRoutes(ctx),
   publicRoutes: (ctx) => createPublicRoutes(ctx),
-  skillDir,
+  skillsDir,
   standardSkill: true,
   ui: {
     assetsDir,
