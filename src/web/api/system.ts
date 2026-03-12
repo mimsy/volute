@@ -7,7 +7,6 @@ import { z } from "zod";
 import {
   getAiConfig,
   getAvailableModels,
-  getConfiguredProviders,
   getEnabledModels,
   removeAiConfig,
   removeProviderConfig,
