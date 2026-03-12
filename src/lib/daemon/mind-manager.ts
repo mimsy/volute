@@ -144,7 +144,11 @@ export class MindManager {
     if (isIsolationEnabled()) {
       [spawnCmd, spawnArgs] = await wrapForIsolation(tsxBin, tsxArgs, name);
     } else if (isSandboxEnabled()) {
-      [spawnCmd, spawnArgs] = await wrapForSandbox(tsxBin, tsxArgs, dir, name);
+      [spawnCmd, spawnArgs] = await wrapForSandbox(tsxBin, tsxArgs, dir, name, [
+        dir,
+        mindStateDir,
+        "/tmp",
+      ]);
     } else {
       spawnCmd = tsxBin;
       spawnArgs = tsxArgs;
