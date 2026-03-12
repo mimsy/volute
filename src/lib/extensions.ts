@@ -336,9 +336,10 @@ async function loadExtension(
   }
 
   // Sync skill if declared
-  if (manifest.skillDir && existsSync(manifest.skillDir)) {
+  const skillDir = resolveSkillDir(manifest);
+  if (skillDir) {
     try {
-      await importSkillFromDir(manifest.skillDir, `ext:${manifest.id}`);
+      await importSkillFromDir(skillDir, `ext:${manifest.id}`);
       log.info(`synced skill for extension: ${manifest.id}`);
     } catch (err) {
       log.error(`failed to sync skill for extension ${manifest.id}`, log.errorData(err));
@@ -347,6 +348,26 @@ async function loadExtension(
 
   loaded.push({ manifest, context });
   log.info(`loaded extension: ${manifest.id} v${manifest.version}`);
+}
+
+/**
+ * Resolve the skill directory for an extension.
+ * The manifest's skillDir may be wrong when bundled by tsup (import.meta.dirname
+ * resolves to the dist/ directory). Fall back to searching from the project root.
+ */
+function resolveSkillDir(manifest: ExtensionManifest): string | null {
+  if (!manifest.skillDir) return null;
+  // Direct path works (dev mode or correctly resolved)
+  if (existsSync(manifest.skillDir)) return manifest.skillDir;
+  // Search up from the daemon entry point to find project root
+  let searchDir = dirname(new URL(import.meta.url).pathname);
+  for (let i = 0; i < 5; i++) {
+    const candidate = resolve(searchDir, "packages", "extensions", manifest.id, manifest.id);
+    if (existsSync(candidate)) return candidate;
+    searchDir = dirname(searchDir);
+  }
+  log.warn(`skill dir not found for extension ${manifest.id}: ${manifest.skillDir}`);
+  return null;
 }
 
 function discoverBuiltinExtensions(): ExtensionManifest[] {

@@ -5,7 +5,7 @@ import { initDb } from "./db.js";
 import { createRoutes } from "./routes.js";
 
 const assetsDir = resolve(import.meta.dirname, "../dist/ui");
-const skillDir = resolve(import.meta.dirname, "../skill");
+const skillDir = resolve(import.meta.dirname, "../notes");
 
 export default createExtension({
   id: "notes",

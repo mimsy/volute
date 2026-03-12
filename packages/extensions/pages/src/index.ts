@@ -4,7 +4,7 @@ import { createExtension } from "@volute/extensions";
 import { createPublicRoutes, createRoutes } from "./routes.js";
 
 const assetsDir = resolve(import.meta.dirname, "../dist/ui");
-const skillDir = resolve(import.meta.dirname, "../skill");
+const skillDir = resolve(import.meta.dirname, "../pages");
 
 // Lazy-loaded pages-watcher from core (built-in extension can import core modules)
 let _watcher: {
