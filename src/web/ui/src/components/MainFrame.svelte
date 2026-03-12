@@ -91,7 +91,7 @@ let contextLabel = $derived.by(() => {
       </div>
     {:else if selection.kind === "extension"}
       <div class="frame-content">
-        <iframe src="/ext/{selection.extensionId}/{selection.path}" class="page-iframe" title="Extension"></iframe>
+        <iframe src="/ext/{selection.extensionId}/#{selection.path ? '/' + selection.path : ''}" class="page-iframe" title="Extension"></iframe>
       </div>
     {:else if selection.kind === "settings"}
       <div class="frame-content">

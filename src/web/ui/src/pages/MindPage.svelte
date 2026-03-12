@@ -228,7 +228,7 @@ $effect(() => {
     {:else if section?.startsWith("ext:")}
       {@const extParts = section.split(":")}
       <div class="section-content">
-        <iframe src="/ext/{extParts[1]}/mind/{name}/" class="ext-iframe" title="Extension"></iframe>
+        <iframe src="/ext/{extParts[1]}/#/mind/{name}" class="ext-iframe" title="Extension"></iframe>
       </div>
     {:else if section === "files"}
       <div class="section-content files-section">

@@ -201,7 +201,15 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
     crumbs.push({ label: "system", action: handleSystemHome });
     if (sel.kind === "mind") {
       crumbs.push({ label: sel.name, action: () => navigate(`/minds/${sel.name}`) });
-      if (sel.section && sel.section !== "info") crumbs.push({ label: sel.section });
+      if (sel.section && sel.section !== "info") {
+        // Strip ext: prefix for display (e.g. "ext:notes:notes" → "notes")
+        let sectionLabel = sel.section;
+        if (sectionLabel.startsWith("ext:")) {
+          const parts = sectionLabel.split(":");
+          sectionLabel = parts[2] ?? parts[1];
+        }
+        crumbs.push({ label: sectionLabel });
+      }
     } else if (sel.kind === "extension") {
       const ext = data.extensions.find((e) => e.id === sel.extensionId);
       crumbs.push({ label: ext?.name ?? sel.extensionId });
@@ -223,11 +231,23 @@ onMount(() => {
 
   const mql = window.matchMedia("(max-width: 1024px)");
   narrowViewport = mql.matches;
-  const handler = (e: MediaQueryListEvent) => {
+  const mqlHandler = (e: MediaQueryListEvent) => {
     narrowViewport = e.matches;
   };
-  mql.addEventListener("change", handler);
-  return () => mql.removeEventListener("change", handler);
+  mql.addEventListener("change", mqlHandler);
+
+  // Listen for navigation messages from extension iframes
+  const messageHandler = (e: MessageEvent) => {
+    if (e.data?.type === "navigate" && typeof e.data.path === "string") {
+      navigate(e.data.path);
+    }
+  };
+  window.addEventListener("message", messageHandler);
+
+  return () => {
+    mql.removeEventListener("change", mqlHandler);
+    window.removeEventListener("message", messageHandler);
+  };
 });
 
 // Data polling
@@ -255,12 +275,23 @@ $effect(() => {
     });
 });
 
-// Re-parse selection when extensions load (handles /notes, /pages URLs that
-// couldn't match before extensions were fetched)
+// Re-parse selection when extensions load (handles /notes, /pages URLs and
+// mind section URLs that couldn't resolve before extensions were fetched)
 $effect(() => {
   if (data.extensions.length > 0) {
     const fresh = parseSelection(data.extensions);
+    // Extension URLs that initially parsed as "home"
     if (fresh.kind === "extension" && selection.kind === "home") {
+      selection = fresh;
+    }
+    // Mind section URLs that couldn't resolve ext: prefix without extensions
+    if (
+      fresh.kind === "mind" &&
+      selection.kind === "mind" &&
+      fresh.section?.startsWith("ext:") &&
+      selection.section &&
+      !selection.section.startsWith("ext:")
+    ) {
       selection = fresh;
     }
   }
