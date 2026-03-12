@@ -1,4 +1,5 @@
 <script lang="ts">
+import DefaultSkills from "../components/DefaultSkills.svelte";
 import PublicFiles from "../components/PublicFiles.svelte";
 import SharedSkills from "../components/SharedSkills.svelte";
 import SystemLogs from "../components/SystemLogs.svelte";
@@ -74,6 +75,8 @@ async function handleRestart() {
         <PublicFiles name="_system" rootLabel="shared" />
       </div>
     {:else if activeTab === "skills"}
+      <DefaultSkills />
+      <div class="skills-divider"></div>
       <SharedSkills />
     {:else if activeTab === "logs"}
       <SystemLogs />
@@ -166,5 +169,10 @@ async function handleRestart() {
   .files-container {
     height: 100%;
     margin: -16px;
+  }
+
+  .skills-divider {
+    border-top: 1px solid var(--border);
+    margin: 16px 0;
   }
 </style>

@@ -337,6 +337,24 @@ export function removeSharedSkill(id: string): Promise<void> {
   return del(`${V1}/skills/${enc(id)}`);
 }
 
+export function fetchDefaultSkills(): Promise<string[]> {
+  return get<{ skills: string[] }>(`${V1}/skills/defaults/list`).then((r) => r.skills);
+}
+
+export function addDefaultSkill(skill: string): Promise<string[]> {
+  return post<{ skills: string[] }>(`${V1}/skills/defaults/list`, { skill }).then((r) => r.skills);
+}
+
+export async function removeDefaultSkill(skill: string): Promise<string[]> {
+  const res = await fetch(`${V1}/skills/defaults/list/${enc(skill)}`, { method: "DELETE" });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || `Request failed: ${res.status}`);
+  }
+  const body = (await res.json()) as { skills: string[] };
+  return body.skills;
+}
+
 // --- Prompts ---
 
 export function fetchPrompts(): Promise<Prompt[]> {
