@@ -1,6 +1,6 @@
 ---
 name: updatable
-description: Test skill
+description: Updated
 ---
 
-# updatable
+# V2
