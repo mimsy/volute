@@ -18,14 +18,26 @@ onMount(() => {
   return () => window.removeEventListener("hashchange", handler);
 });
 
-type Route = { view: "list"; author?: string } | { view: "detail"; author: string; slug: string };
+type Route =
+  | { view: "list"; author?: string; mindContext?: string }
+  | { view: "detail"; author: string; slug: string; mindContext?: string };
 
 let route = $derived.by((): Route => {
   const h = hash.replace(/^#\/?/, "");
 
-  // #/mind/{name} → filtered list
-  const mindMatch = h.match(/^mind\/([^/]+)/);
-  if (mindMatch) return { view: "list", author: mindMatch[1] };
+  // #/mind/{name} → filtered list (mind context)
+  // #/mind/{name}/{slug} → detail in mind context
+  const mindMatch = h.match(/^mind\/([^/]+)(?:\/(.+))?/);
+  if (mindMatch) {
+    if (mindMatch[2])
+      return {
+        view: "detail",
+        author: mindMatch[1],
+        slug: mindMatch[2],
+        mindContext: mindMatch[1],
+      };
+    return { view: "list", author: mindMatch[1], mindContext: mindMatch[1] };
+  }
 
   // #/{author}/{slug} → detail
   const detailMatch = h.match(/^([^/]+)\/(.+)/);
@@ -42,6 +54,11 @@ function navigateHash(path: string) {
 function navigateParent(path: string) {
   window.parent.postMessage({ type: "navigate", path }, "*");
 }
+
+function noteUrl(slug: string): string {
+  if (route.mindContext) return `/minds/${route.mindContext}/notes/${slug}`;
+  return `/notes/${slug}`;
+}
 </script>
 
 <div class="ext-app">
@@ -50,13 +67,13 @@ function navigateParent(path: string) {
       author={route.author}
       slug={route.slug}
       {username}
-      onNavigate={(author, slug) => navigateParent(`/notes/${author}/${slug}`)}
-      onBack={() => navigateHash("")}
+      onNavigate={(_author, slug) => navigateParent(noteUrl(slug))}
+      onBack={() => route.mindContext ? navigateParent(`/minds/${route.mindContext}/notes`) : navigateHash("")}
     />
   {:else}
     <NotesList
       author={route.author}
-      onSelectNote={(author, slug) => navigateParent(`/notes/${author}/${slug}`)}
+      onSelectNote={(_author, slug) => navigateParent(noteUrl(slug))}
     />
   {/if}
 </div>

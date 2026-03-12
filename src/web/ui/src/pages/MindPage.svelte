@@ -230,10 +230,10 @@ $effect(() => {
     {:else if section?.startsWith("ext:")}
       {@const extParts = section.split(":")}
       <div class="section-content">
-        {#if subpath}
+        {#if subpath && extParts[1] === "pages"}
           <iframe src="/ext/{extParts[1]}/public/{name}/{subpath}" class="ext-iframe page-content-iframe" title="Page content"></iframe>
         {:else}
-          <iframe src="/ext/{extParts[1]}/#/mind/{name}" class="ext-iframe" title="Extension"></iframe>
+          <iframe src="/ext/{extParts[1]}/#/mind/{name}{subpath ? '/' + subpath : ''}" class="ext-iframe" title="Extension"></iframe>
         {/if}
       </div>
     {:else if section === "files"}
