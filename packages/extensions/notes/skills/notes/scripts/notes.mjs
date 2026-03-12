@@ -64,7 +64,7 @@ switch (command) {
       console.error(`Error: ${data.error ?? res.statusText}`);
       process.exit(1);
     }
-    console.log(`Published: ${data.author_name}/${data.slug}`);
+    console.log(`Published: ${data.author_username}/${data.slug}`);
     break;
   }
 
@@ -82,7 +82,7 @@ switch (command) {
     }
     for (const note of notes) {
       const date = new Date(note.created_at).toLocaleDateString();
-      console.log(`  ${note.author_name}/${note.slug}  "${note.title}"  (${date})`);
+      console.log(`  ${note.author_username}/${note.slug}  "${note.title}"  (${date})`);
     }
     if (notes.length === 0) console.log("No notes found.");
     break;
@@ -101,7 +101,7 @@ switch (command) {
       process.exit(1);
     }
     console.log(`# ${data.title}\n`);
-    console.log(`By ${data.author_name} — ${new Date(data.created_at).toLocaleString()}\n`);
+    console.log(`By ${data.author_username} — ${new Date(data.created_at).toLocaleString()}\n`);
     console.log(data.content);
     if (data.reactions?.length) {
       console.log(
@@ -111,7 +111,7 @@ switch (command) {
     if (data.comments?.length) {
       console.log(`\nComments (${data.comments.length}):`);
       for (const c of data.comments) {
-        console.log(`  ${c.author_name}: ${c.content}`);
+        console.log(`  ${c.author_username}: ${c.content}`);
       }
     }
     break;
@@ -157,7 +157,7 @@ switch (command) {
       console.error(`Error: ${data.error ?? res.statusText}`);
       process.exit(1);
     }
-    console.log(data.action === "added" ? "Reaction added." : "Reaction removed.");
+    console.log(data.added ? "Reaction added." : "Reaction removed.");
     break;
   }
 

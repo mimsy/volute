@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { daemonFetch } from "../lib/daemon-client.js";
+import { exec } from "../lib/exec.js";
 
 export async function run(args: string[]) {
   const subcommand = args[0];
@@ -101,9 +102,17 @@ async function installExtension(args: string[]) {
     return;
   }
 
+  console.log(`Installing "${pkg}"...`);
+  try {
+    await exec("npm", ["install", pkg]);
+  } catch (err) {
+    console.error(`Failed to install "${pkg}": ${(err as Error).message}`);
+    process.exit(1);
+  }
+
   packages.push(pkg);
   writeConfig(packages);
-  console.log(`Added "${pkg}" to extensions config.`);
+  console.log(`Installed "${pkg}".`);
   console.log("Restart the daemon (`volute restart`) to load the extension.");
 }
 
@@ -123,6 +132,13 @@ async function uninstallExtension(args: string[]) {
 
   packages.splice(idx, 1);
   writeConfig(packages);
-  console.log(`Removed "${pkg}" from extensions config.`);
+
+  try {
+    await exec("npm", ["uninstall", pkg]);
+  } catch {
+    // Non-fatal — package may have been manually removed
+  }
+
+  console.log(`Removed "${pkg}".`);
   console.log("Restart the daemon (`volute restart`) to unload the extension.");
 }

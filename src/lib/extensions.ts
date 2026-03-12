@@ -15,7 +15,7 @@ import { getUser, getUserByUsername } from "./auth.js";
 import { publish } from "./events/activity-events.js";
 import log from "./logger.js";
 import { mindDir, voluteHome, voluteSystemDir } from "./registry.js";
-import { importSkillFromDir } from "./skills.js";
+import { hashSkillDir, importSkillFromDir, sharedSkillsDir } from "./skills.js";
 import { readSystemsConfig } from "./systems-config.js";
 
 type LoadedExtension = {
@@ -326,7 +326,7 @@ async function loadExtension(
     app.get(prefix, serveExtAssets);
   }
 
-  // Sync skills if declared
+  // Sync skills if declared (only when content has changed, like syncBuiltinSkills)
   const skillsDir = resolveSkillsDir(manifest);
   if (skillsDir) {
     try {
@@ -334,6 +334,12 @@ async function loadExtension(
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
         const skillPath = resolve(skillsDir, entry.name);
+        const sourceHash = hashSkillDir(skillPath);
+        const destDir = resolve(sharedSkillsDir(), entry.name);
+        if (existsSync(destDir)) {
+          const destHash = hashSkillDir(destDir);
+          if (sourceHash === destHash) continue;
+        }
         await importSkillFromDir(skillPath, `ext:${manifest.id}`);
         log.info(`synced skill "${entry.name}" for extension: ${manifest.id}`);
       }
