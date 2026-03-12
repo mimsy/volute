@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.29.0](https://github.com/mimsy/volute/compare/volute-v0.28.0...volute-v0.29.0) (2026-03-12)
+
+
+### Features
+
+* remove group DMs, simplify to DMs + channels ([#195](https://github.com/mimsy/volute/issues/195)) ([79ec21f](https://github.com/mimsy/volute/commit/79ec21f0bb12f0698b2205f0be6f5f37da9ae95a))
+* unified mind view with feed cards, right panel, and settings ([#192](https://github.com/mimsy/volute/issues/192)) ([4db32d9](https://github.com/mimsy/volute/commit/4db32d959edb344717c40a26089a1e6b4f8ea5fb))
+* unify scheduling and sleep into `volute clock` ([#190](https://github.com/mimsy/volute/issues/190)) ([bc3ef49](https://github.com/mimsy/volute/commit/bc3ef491e904e036e684640d800d83abdc3cfe58))
+
+
+### Bug Fixes
+
+* stop logging thinking/text/tool calls to mind logs ([#193](https://github.com/mimsy/volute/issues/193)) ([987ba06](https://github.com/mimsy/volute/commit/987ba0682b672bafc8ba24a7a274ea6277eaee94))
+
 ## [0.28.0](https://github.com/mimsy/volute/compare/volute-v0.27.0...volute-v0.28.0) (2026-03-11)
 
 
