@@ -154,7 +154,7 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute mind disconnect <type> [--mind]` | Disable a connector for a mind |
 | `volute clock status [--mind]` | Show sleep state + upcoming schedule fires |
 | `volute clock list [--mind]` | List schedules and timers for a mind |
-| `volute clock add [--mind] --cron/--in "..." --message/--script "..." [--id name] [--while-sleeping skip\|queue\|trigger-wake]` | Add a schedule or timer |
+| `volute clock add [--mind] --id <name> --cron/--in "..." --message/--script "..." [--while-sleeping skip\|queue\|trigger-wake]` | Add a schedule or timer |
 | `volute clock remove [--mind] --id <id>` | Remove a schedule or timer |
 | `volute skill <list\|add\|remove> [--mind]` | Manage mind skills |
 | `volute mind seed <name>` | Create a minimal seed mind |

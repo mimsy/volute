@@ -91,6 +91,20 @@ function formatUpcoming(iso: string): string {
   }
 }
 
+function formatAction(s: {
+  message?: string;
+  script?: string;
+  channel?: string;
+  whileSleeping?: string;
+}): string {
+  const lines: string[] = [];
+  if (s.script) lines.push(`Script: ${s.script}`);
+  else if (s.message) lines.push(`Message: ${s.message}`);
+  if (s.channel) lines.push(`Channel: ${s.channel}`);
+  if (s.whileSleeping) lines.push(`While sleeping: ${s.whileSleeping}`);
+  return lines.join("\n");
+}
+
 function formatSleepTime(iso: string): string {
   try {
     return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
@@ -125,7 +139,7 @@ let hasContent = $derived(
     {#if clock.schedules.length > 0}
       <div class="schedule-list">
         {#each clock.schedules as s (s.id)}
-          <div class="clock-row" class:disabled={!s.enabled}>
+          <div class="clock-row" class:disabled={!s.enabled} title={formatAction(s)}>
             <svg class="clock-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l3 2"/></svg>
             <span class="clock-label">{s.id}</span>
             <span class="clock-detail">

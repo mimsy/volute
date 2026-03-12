@@ -39,8 +39,8 @@ export async function run(args: string[]) {
 function printUsage() {
   console.log(`Usage:
   volute schedule list [--mind <name>]
-  volute schedule add [--mind <name>] --cron "..." --message "..." [--id name]
-  volute schedule add [--mind <name>] --cron "..." --script "..." [--id name]
+  volute schedule add [--mind <name>] --id <name> --cron "..." --message "..."
+  volute schedule add [--mind <name>] --id <name> --cron "..." --script "..."
   volute schedule remove [--mind <name>] --id <id>`);
 }
 
@@ -89,6 +89,11 @@ async function addSchedule(args: string[]) {
   });
 
   const mind = resolveMindName(flags);
+
+  if (!flags.id) {
+    console.error("--id is required (a descriptive name for this schedule)");
+    process.exit(1);
+  }
 
   if (!flags.cron) {
     console.error("--cron is required");

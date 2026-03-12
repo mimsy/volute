@@ -793,11 +793,19 @@ describe("daemon e2e", { timeout: 120000 }, () => {
   it("schedule validation errors", async () => {
     await ensureTestMind();
 
+    // No id
+    const r0 = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cron: "0 9 * * *", message: "no id" }),
+    });
+    assert.equal(r0.status, 400);
+
     // No cron or fireAt
     const r1 = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "no trigger" }),
+      body: JSON.stringify({ id: "val-test-1", message: "no trigger" }),
     });
     assert.equal(r1.status, 400);
 
@@ -806,6 +814,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        id: "val-test-2",
         cron: "0 9 * * *",
         fireAt: new Date().toISOString(),
         message: "both",
@@ -817,7 +826,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     const r3 = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cron: "0 9 * * *" }),
+      body: JSON.stringify({ id: "val-test-3", cron: "0 9 * * *" }),
     });
     assert.equal(r3.status, 400);
 
@@ -825,7 +834,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     const r4 = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cron: "not-a-cron", message: "bad cron" }),
+      body: JSON.stringify({ id: "val-test-4", cron: "not-a-cron", message: "bad cron" }),
     });
     assert.equal(r4.status, 400);
 
@@ -833,7 +842,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     const r5 = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fireAt: "not-a-date", message: "bad date" }),
+      body: JSON.stringify({ id: "val-test-5", fireAt: "not-a-date", message: "bad date" }),
     });
     assert.equal(r5.status, 400);
 
