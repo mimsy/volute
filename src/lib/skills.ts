@@ -42,7 +42,7 @@ export function getStandardSkillsWithExtensions(): string[] {
     const { getExtensionStandardSkills } = require("./extensions.js") as {
       getExtensionStandardSkills: () => string[];
     };
-    return [...STANDARD_SKILLS, ...getExtensionStandardSkills()];
+    return [...new Set([...STANDARD_SKILLS, ...getExtensionStandardSkills()])];
   } catch {
     return [...STANDARD_SKILLS];
   }
@@ -70,7 +70,7 @@ export function initDefaultSkills(): void {
     /* extensions not loaded */
   }
 
-  const defaults = [...STANDARD_SKILLS, ...extensionSkills];
+  const defaults = [...new Set([...STANDARD_SKILLS, ...extensionSkills])];
   writeGlobalConfig({ ...config, defaultSkills: defaults });
   log.info(`initialized default skills: ${defaults.join(", ")}`);
 }

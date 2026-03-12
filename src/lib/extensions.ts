@@ -362,15 +362,17 @@ async function loadExtension(
  */
 function resolveSkillsDir(manifest: ExtensionManifest): string | null {
   if (!manifest.skillsDir) return null;
-  // Direct path works (dev mode or correctly resolved)
-  if (existsSync(manifest.skillsDir)) return manifest.skillsDir;
-  // Search up from the daemon entry point to find project root
+  // Search from daemon entry point for extension-specific skills directory first.
+  // This is needed because tsup bundling makes import.meta.dirname resolve to dist/,
+  // so relative paths like "../skills" can accidentally hit the repo root skills/ dir.
   let searchDir = dirname(new URL(import.meta.url).pathname);
   for (let i = 0; i < 5; i++) {
     const candidate = resolve(searchDir, "packages", "extensions", manifest.id, "skills");
     if (existsSync(candidate)) return candidate;
     searchDir = dirname(searchDir);
   }
+  // Fall back to the declared path (works in dev mode where import.meta.dirname is correct)
+  if (existsSync(manifest.skillsDir)) return manifest.skillsDir;
   log.warn(`skills dir not found for extension ${manifest.id}: ${manifest.skillsDir}`);
   return null;
 }
