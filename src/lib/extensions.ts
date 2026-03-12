@@ -13,7 +13,7 @@ import type { Hono } from "hono";
 import { getUser, getUserByUsername } from "./auth.js";
 import { publish } from "./events/activity-events.js";
 import log from "./logger.js";
-import { mindDir, voluteHome } from "./registry.js";
+import { mindDir, voluteHome, voluteSystemDir } from "./registry.js";
 import { importSkillFromDir } from "./skills.js";
 
 type LoadedExtension = {
@@ -67,6 +67,104 @@ async function openExtensionDb(_id: string, dataDir: string): Promise<ExtensionC
   return new Database(dbPath);
 }
 
+/** Migrate notes data from core volute.db to the extension's own DB (one-time). */
+async function migrateNotesFromCoreDb(extDb: ExtensionContext["db"]): Promise<void> {
+  const coreDbPath = process.env.VOLUTE_DB_PATH || resolve(voluteSystemDir(), "volute.db");
+  if (!existsSync(coreDbPath)) return;
+
+  // Check if extension DB already has notes (migration already ran)
+  const existing = extDb.prepare("SELECT COUNT(*) as c FROM notes").get() as { c: number };
+  if (existing.c > 0) return;
+
+  const Database = await getLibsqlDatabase();
+  const coreDb = new Database(coreDbPath);
+
+  try {
+    // Check if core DB has notes table with data
+    const coreNotes = coreDb
+      .prepare(
+        "SELECT id, author_id, title, slug, content, reply_to_id, created_at, updated_at FROM notes ORDER BY id",
+      )
+      .all() as {
+      id: number;
+      author_id: number;
+      title: string;
+      slug: string;
+      content: string;
+      reply_to_id: number | null;
+      created_at: string;
+      updated_at: string;
+    }[];
+
+    if (coreNotes.length === 0) return;
+
+    log.info(`migrating ${coreNotes.length} notes from core DB to extension DB`);
+
+    for (const note of coreNotes) {
+      extDb
+        .prepare(
+          "INSERT OR IGNORE INTO notes (id, author_id, title, slug, content, reply_to_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          note.id,
+          note.author_id,
+          note.title,
+          note.slug,
+          note.content,
+          note.reply_to_id,
+          note.created_at,
+          note.updated_at,
+        );
+    }
+
+    // Migrate comments
+    const coreComments = coreDb
+      .prepare("SELECT id, note_id, author_id, content, created_at FROM note_comments ORDER BY id")
+      .all() as {
+      id: number;
+      note_id: number;
+      author_id: number;
+      content: string;
+      created_at: string;
+    }[];
+
+    for (const comment of coreComments) {
+      extDb
+        .prepare(
+          "INSERT OR IGNORE INTO note_comments (id, note_id, author_id, content, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(comment.id, comment.note_id, comment.author_id, comment.content, comment.created_at);
+    }
+
+    // Migrate reactions
+    const coreReactions = coreDb
+      .prepare("SELECT id, note_id, user_id, emoji, created_at FROM note_reactions ORDER BY id")
+      .all() as {
+      id: number;
+      note_id: number;
+      user_id: number;
+      emoji: string;
+      created_at: string;
+    }[];
+
+    for (const reaction of coreReactions) {
+      extDb
+        .prepare(
+          "INSERT OR IGNORE INTO note_reactions (id, note_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(reaction.id, reaction.note_id, reaction.user_id, reaction.emoji, reaction.created_at);
+    }
+
+    log.info(
+      `migrated ${coreNotes.length} notes, ${coreComments.length} comments, ${coreReactions.length} reactions`,
+    );
+  } catch (err) {
+    log.error("failed to migrate notes from core DB", log.errorData(err));
+  } finally {
+    coreDb.close();
+  }
+}
+
 async function buildContext(
   manifest: ExtensionManifest,
   dataDir: string,
@@ -76,6 +174,11 @@ async function buildContext(
   if (manifest.initDb) {
     db = await openExtensionDb(manifest.id, dataDir);
     manifest.initDb(db);
+
+    // One-time migration for built-in extensions extracted from core
+    if (manifest.id === "notes") {
+      await migrateNotesFromCoreDb(db);
+    }
   }
 
   return {

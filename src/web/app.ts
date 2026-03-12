@@ -107,6 +107,13 @@ app.use("/api/bridges/*", authMiddleware);
 // v1 API auth
 app.use("/api/v1/*", authMiddleware);
 
+// Backwards-compat redirect: /api/notes → /api/ext/notes (notes moved to extension)
+app.all("/api/notes/*", (c) => {
+  const newPath = c.req.path.replace("/api/notes", "/api/ext/notes");
+  return c.redirect(newPath, 308);
+});
+app.all("/api/notes", (c) => c.redirect("/api/ext/notes", 308));
+
 // Public routes (no auth)
 app.route("/pages", pages);
 app.route("/public", publicFiles);

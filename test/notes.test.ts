@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { createUser } from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
+import type { Database as ExtDb, User } from "@volute/extension-sdk";
+import Database from "libsql";
+import { initDb } from "../packages/ext-notes/src/db.js";
 import {
   addComment,
   createNote,
@@ -13,28 +14,37 @@ import {
   listNotes,
   resolveNoteId,
   toggleReaction,
-} from "../src/lib/notes.js";
-import {
-  conversationParticipants,
-  conversations,
-  messages,
-  noteComments,
-  noteReactions,
-  notes,
-  sessions,
-  users,
-} from "../src/lib/schema.js";
+} from "../packages/ext-notes/src/notes.js";
+import { createUser } from "../src/lib/auth.js";
 
-async function cleanup() {
-  const db = await getDb();
-  await db.delete(noteReactions);
-  await db.delete(noteComments);
-  await db.delete(notes);
-  await db.delete(messages);
-  await db.delete(conversationParticipants);
-  await db.delete(sessions);
-  await db.delete(conversations);
-  await db.delete(users);
+let db: ExtDb;
+let userMap: Map<number, User>;
+let usernameMap: Map<string, User>;
+let testId = 0;
+
+function uniqueName(base: string): string {
+  return `${base}-${Date.now()}-${++testId}`;
+}
+
+async function getUser(id: number): Promise<User | null> {
+  return userMap.get(id) ?? null;
+}
+async function getUserByUsername(username: string): Promise<User | null> {
+  return usernameMap.get(username) ?? null;
+}
+
+function registerUser(id: number, username: string): void {
+  const user: User = {
+    id,
+    username,
+    role: "admin",
+    user_type: "brain",
+    display_name: null,
+    description: null,
+    avatar: null,
+  };
+  userMap.set(id, user);
+  usernameMap.set(username, user);
 }
 
 describe("notes", () => {
@@ -42,15 +52,19 @@ describe("notes", () => {
   let username: string;
 
   beforeEach(async () => {
-    await cleanup();
-    const user = await createUser("writer", "pass123");
+    db = new Database(":memory:") as unknown as ExtDb;
+    initDb(db);
+    userMap = new Map();
+    usernameMap = new Map();
+    const user = await createUser(uniqueName("writer"), "pass123");
     userId = user.id;
     username = user.username;
+    registerUser(userId, username);
   });
-  afterEach(cleanup);
+  afterEach(() => db.close());
 
   it("createNote creates a note with slug", async () => {
-    const note = await createNote(userId, "My First Note", "Hello world");
+    const note = await createNote(db, getUser, userId, "My First Note", "Hello world");
     assert.equal(note.title, "My First Note");
     assert.equal(note.slug, "my-first-note");
     assert.equal(note.content, "Hello world");
@@ -59,15 +73,15 @@ describe("notes", () => {
   });
 
   it("createNote handles slug collisions", async () => {
-    const note1 = await createNote(userId, "Same Title", "Content 1");
-    const note2 = await createNote(userId, "Same Title", "Content 2");
+    const note1 = await createNote(db, getUser, userId, "Same Title", "Content 1");
+    const note2 = await createNote(db, getUser, userId, "Same Title", "Content 2");
     assert.equal(note1.slug, "same-title");
     assert.equal(note2.slug, "same-title-2");
   });
 
   it("getNote returns note with comments", async () => {
-    const created = await createNote(userId, "Test Note", "Content here");
-    const note = await getNote(username, created.slug);
+    const created = await createNote(db, getUser, userId, "Test Note", "Content here");
+    const note = await getNote(db, getUser, getUserByUsername, username, created.slug);
     assert.ok(note);
     assert.equal(note.title, "Test Note");
     assert.equal(note.content, "Content here");
@@ -75,77 +89,80 @@ describe("notes", () => {
   });
 
   it("getNote returns null for non-existent note", async () => {
-    const note = await getNote(username, "nonexistent");
+    const note = await getNote(db, getUser, getUserByUsername, username, "nonexistent");
     assert.equal(note, null);
   });
 
   it("listNotes returns notes in reverse chronological order", async () => {
-    await createNote(userId, "First", "A");
-    await createNote(userId, "Second", "B");
-    const all = await listNotes();
+    await createNote(db, getUser, userId, "First", "A");
+    await createNote(db, getUser, userId, "Second", "B");
+    const all = await listNotes(db, getUser, getUserByUsername);
     assert.equal(all.length, 2);
     assert.equal(all[0].title, "Second");
     assert.equal(all[1].title, "First");
   });
 
   it("listNotes filters by author", async () => {
-    const other = await createUser("other", "pass123");
-    await createNote(userId, "Mine", "A");
-    await createNote(other.id, "Theirs", "B");
+    const other = await createUser(uniqueName("other"), "pass123");
+    registerUser(other.id, other.username);
+    await createNote(db, getUser, userId, "Mine", "A");
+    await createNote(db, getUser, other.id, "Theirs", "B");
 
-    const mine = await listNotes({ authorUsername: username });
+    const mine = await listNotes(db, getUser, getUserByUsername, { authorUsername: username });
     assert.equal(mine.length, 1);
     assert.equal(mine[0].title, "Mine");
   });
 
   it("deleteNote removes note", async () => {
-    const note = await createNote(userId, "To Delete", "Bye");
-    const deleted = await deleteNote(username, note.slug, userId);
+    const note = await createNote(db, getUser, userId, "To Delete", "Bye");
+    const deleted = await deleteNote(db, getUserByUsername, username, note.slug, userId);
     assert.ok(deleted);
-    const check = await getNote(username, note.slug);
+    const check = await getNote(db, getUser, getUserByUsername, username, note.slug);
     assert.equal(check, null);
   });
 
   it("deleteNote rejects non-author", async () => {
-    const other = await createUser("other2", "pass123");
-    const note = await createNote(userId, "Protected", "No");
-    const deleted = await deleteNote(username, note.slug, other.id);
+    const other = await createUser(uniqueName("other2"), "pass123");
+    registerUser(other.id, other.username);
+    const note = await createNote(db, getUser, userId, "Protected", "No");
+    const deleted = await deleteNote(db, getUserByUsername, username, note.slug, other.id);
     assert.equal(deleted, false);
   });
 
   it("addComment and getComments work", async () => {
-    const note = await createNote(userId, "Commentable", "...");
-    const comment = await addComment(note.id, userId, "Great note!");
+    const note = await createNote(db, getUser, userId, "Commentable", "...");
+    const comment = await addComment(db, getUser, note.id, userId, "Great note!");
     assert.equal(comment.content, "Great note!");
     assert.equal(comment.author_username, username);
 
-    const comments = await getComments(note.id);
+    const comments = await getComments(db, getUser, note.id);
     assert.equal(comments.length, 1);
     assert.equal(comments[0].content, "Great note!");
   });
 
   it("deleteComment removes own comment", async () => {
-    const note = await createNote(userId, "Note", "...");
-    const comment = await addComment(note.id, userId, "My comment");
-    const deleted = await deleteComment(comment.id, userId);
+    const note = await createNote(db, getUser, userId, "Note", "...");
+    const comment = await addComment(db, getUser, note.id, userId, "My comment");
+    const deleted = await deleteComment(db, comment.id, userId);
     assert.ok(deleted);
-    const remaining = await getComments(note.id);
+    const remaining = await getComments(db, getUser, note.id);
     assert.equal(remaining.length, 0);
   });
 
   it("deleteComment rejects non-author", async () => {
-    const other = await createUser("other3", "pass123");
-    const note = await createNote(userId, "Note2", "...");
-    const comment = await addComment(note.id, userId, "My comment");
-    const deleted = await deleteComment(comment.id, other.id);
+    const other = await createUser(uniqueName("other3"), "pass123");
+    registerUser(other.id, other.username);
+    const note = await createNote(db, getUser, userId, "Note2", "...");
+    const comment = await addComment(db, getUser, note.id, userId, "My comment");
+    const deleted = await deleteComment(db, comment.id, other.id);
     assert.equal(deleted, false);
   });
 
   it("listNotes includes comment counts", async () => {
-    const note = await createNote(userId, "With Comments", "...");
-    await addComment(note.id, userId, "Comment 1");
-    await addComment(note.id, userId, "Comment 2");
-    const all = await listNotes();
+    const note = await createNote(db, getUser, userId, "With Comments", "...");
+    await addComment(db, getUser, note.id, userId, "Comment 1");
+    await addComment(db, getUser, note.id, userId, "Comment 2");
+    const all = await listNotes(db, getUser, getUserByUsername);
     assert.equal(all[0].comment_count, 2);
   });
 });
@@ -157,22 +174,27 @@ describe("note reactions", () => {
   let otherUsername: string;
 
   beforeEach(async () => {
-    await cleanup();
-    const user = await createUser("reactor", "pass123");
+    db = new Database(":memory:") as unknown as ExtDb;
+    initDb(db);
+    userMap = new Map();
+    usernameMap = new Map();
+    const user = await createUser(uniqueName("reactor"), "pass123");
     userId = user.id;
     username = user.username;
-    const other = await createUser("reactor2", "pass123");
+    registerUser(userId, username);
+    const other = await createUser(uniqueName("reactor2"), "pass123");
     otherUserId = other.id;
     otherUsername = other.username;
+    registerUser(otherUserId, otherUsername);
   });
-  afterEach(cleanup);
+  afterEach(() => db.close());
 
   it("toggleReaction adds a reaction", async () => {
-    const note = await createNote(userId, "React to me", "...");
-    const result = await toggleReaction(note.id, userId, "❤️");
+    const note = await createNote(db, getUser, userId, "React to me", "...");
+    const result = toggleReaction(db, note.id, userId, "❤️");
     assert.equal(result.added, true);
 
-    const reactions = await getReactions(note.id);
+    const reactions = await getReactions(db, getUser, note.id);
     assert.equal(reactions.length, 1);
     assert.equal(reactions[0].emoji, "❤️");
     assert.equal(reactions[0].count, 1);
@@ -180,21 +202,21 @@ describe("note reactions", () => {
   });
 
   it("toggleReaction removes on second call", async () => {
-    const note = await createNote(userId, "Toggle me", "...");
-    await toggleReaction(note.id, userId, "🔥");
-    const result = await toggleReaction(note.id, userId, "🔥");
+    const note = await createNote(db, getUser, userId, "Toggle me", "...");
+    toggleReaction(db, note.id, userId, "🔥");
+    const result = toggleReaction(db, note.id, userId, "🔥");
     assert.equal(result.added, false);
 
-    const reactions = await getReactions(note.id);
+    const reactions = await getReactions(db, getUser, note.id);
     assert.equal(reactions.length, 0);
   });
 
   it("multiple users can react with same emoji", async () => {
-    const note = await createNote(userId, "Popular", "...");
-    await toggleReaction(note.id, userId, "👍");
-    await toggleReaction(note.id, otherUserId, "👍");
+    const note = await createNote(db, getUser, userId, "Popular", "...");
+    toggleReaction(db, note.id, userId, "👍");
+    toggleReaction(db, note.id, otherUserId, "👍");
 
-    const reactions = await getReactions(note.id);
+    const reactions = await getReactions(db, getUser, note.id);
     assert.equal(reactions.length, 1);
     assert.equal(reactions[0].count, 2);
     assert.ok(reactions[0].usernames.includes(username));
@@ -202,21 +224,21 @@ describe("note reactions", () => {
   });
 
   it("multiple emojis on same note", async () => {
-    const note = await createNote(userId, "Multi react", "...");
-    await toggleReaction(note.id, userId, "❤️");
-    await toggleReaction(note.id, userId, "🤔");
+    const note = await createNote(db, getUser, userId, "Multi react", "...");
+    toggleReaction(db, note.id, userId, "❤️");
+    toggleReaction(db, note.id, userId, "🤔");
 
-    const reactions = await getReactions(note.id);
+    const reactions = await getReactions(db, getUser, note.id);
     assert.equal(reactions.length, 2);
   });
 
   it("listNotes includes reaction summary", async () => {
-    const note = await createNote(userId, "With Reactions", "...");
-    await toggleReaction(note.id, userId, "❤️");
-    await toggleReaction(note.id, otherUserId, "❤️");
-    await toggleReaction(note.id, userId, "🌱");
+    const note = await createNote(db, getUser, userId, "With Reactions", "...");
+    toggleReaction(db, note.id, userId, "❤️");
+    toggleReaction(db, note.id, otherUserId, "❤️");
+    toggleReaction(db, note.id, userId, "🌱");
 
-    const all = await listNotes();
+    const all = await listNotes(db, getUser, getUserByUsername);
     assert.ok(all[0].reactions);
     assert.ok(all[0].reactions!.length > 0);
     const heart = all[0].reactions!.find((r) => r.emoji === "❤️");
@@ -225,10 +247,10 @@ describe("note reactions", () => {
   });
 
   it("getNote includes full reactions", async () => {
-    const note = await createNote(userId, "Full reactions", "...");
-    await toggleReaction(note.id, userId, "🌊");
+    const note = await createNote(db, getUser, userId, "Full reactions", "...");
+    toggleReaction(db, note.id, userId, "🌊");
 
-    const fetched = await getNote(username, note.slug);
+    const fetched = await getNote(db, getUser, getUserByUsername, username, note.slug);
     assert.ok(fetched);
     assert.ok(fetched.reactions);
     assert.equal(fetched.reactions!.length, 1);
@@ -237,11 +259,11 @@ describe("note reactions", () => {
   });
 
   it("deleting a note cascades reactions", async () => {
-    const note = await createNote(userId, "Will delete", "...");
-    await toggleReaction(note.id, userId, "❤️");
-    await deleteNote(username, note.slug, userId);
+    const note = await createNote(db, getUser, userId, "Will delete", "...");
+    toggleReaction(db, note.id, userId, "❤️");
+    await deleteNote(db, getUserByUsername, username, note.slug, userId);
 
-    const reactions = await getReactions(note.id);
+    const reactions = await getReactions(db, getUser, note.id);
     assert.equal(reactions.length, 0);
   });
 });
@@ -251,19 +273,23 @@ describe("note replies", () => {
   let username: string;
 
   beforeEach(async () => {
-    await cleanup();
-    const user = await createUser("replier", "pass123");
+    db = new Database(":memory:") as unknown as ExtDb;
+    initDb(db);
+    userMap = new Map();
+    usernameMap = new Map();
+    const user = await createUser(uniqueName("replier"), "pass123");
     userId = user.id;
     username = user.username;
+    registerUser(userId, username);
   });
-  afterEach(cleanup);
+  afterEach(() => db.close());
 
   it("createNote with replyToId links to parent", async () => {
-    const parent = await createNote(userId, "Original", "The original note");
-    const reply = await createNote(userId, "My Reply", "Replying here", parent.id);
+    const parent = await createNote(db, getUser, userId, "Original", "The original note");
+    const reply = await createNote(db, getUser, userId, "My Reply", "Replying here", parent.id);
     assert.ok(reply.id !== parent.id);
 
-    const fetched = await getNote(username, reply.slug);
+    const fetched = await getNote(db, getUser, getUserByUsername, username, reply.slug);
     assert.ok(fetched);
     assert.ok(fetched.reply_to);
     assert.equal(fetched.reply_to!.slug, "original");
@@ -271,11 +297,11 @@ describe("note replies", () => {
   });
 
   it("getNote includes replies list on parent", async () => {
-    const parent = await createNote(userId, "Parent Note", "...");
-    await createNote(userId, "Reply One", "First reply", parent.id);
-    await createNote(userId, "Reply Two", "Second reply", parent.id);
+    const parent = await createNote(db, getUser, userId, "Parent Note", "...");
+    await createNote(db, getUser, userId, "Reply One", "First reply", parent.id);
+    await createNote(db, getUser, userId, "Reply Two", "Second reply", parent.id);
 
-    const fetched = await getNote(username, parent.slug);
+    const fetched = await getNote(db, getUser, getUserByUsername, username, parent.slug);
     assert.ok(fetched);
     assert.ok(fetched.replies);
     assert.equal(fetched.replies.length, 2);
@@ -284,10 +310,10 @@ describe("note replies", () => {
   });
 
   it("listNotes includes reply_to summary", async () => {
-    const parent = await createNote(userId, "Listed Parent", "...");
-    await createNote(userId, "Listed Reply", "...", parent.id);
+    const parent = await createNote(db, getUser, userId, "Listed Parent", "...");
+    await createNote(db, getUser, userId, "Listed Reply", "...", parent.id);
 
-    const all = await listNotes();
+    const all = await listNotes(db, getUser, getUserByUsername);
     const reply = all.find((n) => n.title === "Listed Reply");
     assert.ok(reply);
     assert.ok(reply!.reply_to);
@@ -295,22 +321,22 @@ describe("note replies", () => {
   });
 
   it("resolveNoteId resolves author/slug to id", async () => {
-    const note = await createNote(userId, "Resolvable", "...");
-    const id = await resolveNoteId(`${username}/${note.slug}`);
+    const note = await createNote(db, getUser, userId, "Resolvable", "...");
+    const id = await resolveNoteId(db, getUserByUsername, `${username}/${note.slug}`);
     assert.equal(id, note.id);
   });
 
   it("resolveNoteId returns null for nonexistent", async () => {
-    const id = await resolveNoteId("nobody/nothing");
+    const id = await resolveNoteId(db, getUserByUsername, "nobody/nothing");
     assert.equal(id, null);
   });
 
   it("deleting parent sets reply_to to null", async () => {
-    const parent = await createNote(userId, "To be deleted", "...");
-    const reply = await createNote(userId, "Orphan reply", "...", parent.id);
-    await deleteNote(username, parent.slug, userId);
+    const parent = await createNote(db, getUser, userId, "To be deleted", "...");
+    const reply = await createNote(db, getUser, userId, "Orphan reply", "...", parent.id);
+    await deleteNote(db, getUserByUsername, username, parent.slug, userId);
 
-    const fetched = await getNote(username, reply.slug);
+    const fetched = await getNote(db, getUser, getUserByUsername, username, reply.slug);
     assert.ok(fetched);
     assert.equal(fetched.reply_to, null);
   });
