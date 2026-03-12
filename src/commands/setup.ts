@@ -51,20 +51,23 @@ function generatePlist(
     ? "/var/lib/volute/system/daemon.log"
     : resolve(homedir(), ".volute", "system", "daemon.log");
 
-  const envEntries: string[] = [];
+  const envEntries: string[] = [
+    "  <key>EnvironmentVariables</key>",
+    "  <dict>",
+    `    <key>PATH</key>`,
+    `    <string>${escapeXml(buildServicePath(voluteBin))}</string>`,
+  ];
   if (opts.system) {
     envEntries.push(
-      "  <key>EnvironmentVariables</key>",
-      "  <dict>",
       "    <key>VOLUTE_HOME</key>",
       "    <string>/var/lib/volute</string>",
       "    <key>VOLUTE_MINDS_DIR</key>",
       "    <string>/minds</string>",
       "    <key>VOLUTE_ISOLATION</key>",
       "    <string>user</string>",
-      "  </dict>",
     );
   }
+  envEntries.push("  </dict>");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -76,7 +79,8 @@ function generatePlist(
   <array>
     ${[voluteBin, ...args].map((a) => `<string>${escapeXml(a)}</string>`).join("\n    ")}
   </array>
-${envEntries.length > 0 ? envEntries.join("\n") + "\n" : ""}  <key>RunAtLoad</key>
+${envEntries.join("\n")}
+  <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
   <true/>
