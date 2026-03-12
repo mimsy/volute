@@ -87,7 +87,7 @@ let contextLabel = $derived.by(() => {
   {#if selection.tab === "system"}
     {#if selection.kind === "mind"}
       <div class="frame-content mind-frame">
-        <MindPage name={selection.name} section={selection.section} />
+        <MindPage name={selection.name} section={selection.section} subpath={selection.subpath} />
       </div>
     {:else if selection.kind === "extension"}
       <div class="frame-content">

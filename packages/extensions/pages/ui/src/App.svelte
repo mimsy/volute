@@ -53,7 +53,7 @@ function navigateParent(path: string) {
 }
 
 function handleSelectPage(mind: string, path: string) {
-  navigateParent(`/pages/${mind}/${path}`);
+  navigateParent(`/minds/${mind}/pages/${path}`);
 }
 
 function handleSelectSite(name: string) {

@@ -7,6 +7,7 @@ export type Selection =
       kind: "mind";
       name: string;
       section?: string;
+      subpath?: string;
     }
   | { tab: "system"; kind: "extension"; extensionId: string; path: string }
   | { tab: "system"; kind: "settings"; section?: string }
@@ -102,9 +103,9 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
   // because /minds/:name/:section could overlap
   const mindSubpathMatch = path.match(/^\/minds\/([^/]+)\/([^/]+)\/(.+)$/);
   if (mindSubpathMatch) {
-    const [, name, sectionId] = mindSubpathMatch;
+    const [, name, sectionId, subpath] = mindSubpathMatch;
     const extSection = resolveExtensionMindSection(sectionId, extensions);
-    return { tab: "system", kind: "mind", name, section: extSection ?? sectionId };
+    return { tab: "system", kind: "mind", name, section: extSection ?? sectionId, subpath };
   }
 
   const mindSectionMatch = path.match(/^\/minds\/([^/]+)\/([^/]+)$/);
@@ -170,9 +171,11 @@ export function selectionToPath(selection: Selection, extensions: ExtensionInfo[
         const parts = section.split(":");
         section = parts[2] ?? parts[1];
       }
-      return section && section !== "info"
-        ? `/minds/${selection.name}/${section}`
-        : `/minds/${selection.name}`;
+      const base =
+        section && section !== "info"
+          ? `/minds/${selection.name}/${section}`
+          : `/minds/${selection.name}`;
+      return selection.subpath ? `${base}/${selection.subpath}` : base;
     }
     case "extension": {
       const ext = extensions.find((e) => e.id === selection.extensionId);

@@ -19,9 +19,11 @@ import { auth, data } from "../lib/stores.svelte";
 let {
   name,
   section = "info",
+  subpath,
 }: {
   name: string;
   section?: string;
+  subpath?: string;
 } = $props();
 
 let mind = $derived(data.minds.find((m) => m.name === name));
@@ -228,7 +230,11 @@ $effect(() => {
     {:else if section?.startsWith("ext:")}
       {@const extParts = section.split(":")}
       <div class="section-content">
-        <iframe src="/ext/{extParts[1]}/#/mind/{name}" class="ext-iframe" title="Extension"></iframe>
+        {#if subpath}
+          <iframe src="/ext/{extParts[1]}/public/{name}/{subpath}" class="ext-iframe" title="Page content"></iframe>
+        {:else}
+          <iframe src="/ext/{extParts[1]}/#/mind/{name}" class="ext-iframe" title="Extension"></iframe>
+        {/if}
       </div>
     {:else if section === "files"}
       <div class="section-content files-section">

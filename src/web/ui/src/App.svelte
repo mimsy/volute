@@ -208,7 +208,13 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
           const parts = sectionLabel.split(":");
           sectionLabel = parts[2] ?? parts[1];
         }
-        crumbs.push({ label: sectionLabel });
+        crumbs.push({
+          label: sectionLabel,
+          action: sel.subpath ? () => navigate(`/minds/${sel.name}/${sectionLabel}`) : undefined,
+        });
+        if (sel.subpath) {
+          crumbs.push({ label: sel.subpath });
+        }
       }
     } else if (sel.kind === "extension") {
       const ext = data.extensions.find((e) => e.id === sel.extensionId);
