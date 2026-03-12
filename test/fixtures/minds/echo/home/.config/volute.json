@@ -1,6 +1,0 @@
-{
-  "identity": {
-    "privateKey": ".mind/identity/private.pem",
-    "publicKey": ".mind/identity/public.pem"
-  }
-}

@@ -1,8 +1,0 @@
-{
-  "rename": {
-    "package.json.tmpl": "package.json",
-    "biome.json.tmpl": "biome.json",
-    "home/.config/config.json.tmpl": "home/.config/config.json"
-  },
-  "substitute": ["package.json", ".init/SOUL.md", "home/.config/routes.json"]
-}
