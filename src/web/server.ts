@@ -44,17 +44,6 @@ export async function startServer({
       const urlPath = new URL(c.req.url).pathname;
       // Never serve SPA for API or extension routes
       if (urlPath.startsWith("/api/") || urlPath.startsWith("/ext/")) return c.notFound();
-      // Rewrite mind file requests to extension public route
-      // e.g. /minds/luna/pages/index.html → /ext/pages/public/luna/index.html
-      const mindFileMatch = urlPath.match(/^\/minds\/([^/]+)\/([^/]+)\/(.+\..+)$/);
-      if (mindFileMatch) {
-        const [, mindName, sectionId, filePath] = mindFileMatch;
-        const rewrittenPath = `/ext/${sectionId}/public/${mindName}/${filePath}`;
-        const rewrittenUrl = new URL(c.req.url);
-        rewrittenUrl.pathname = rewrittenPath;
-        const resp = await app.fetch(new Request(rewrittenUrl.toString(), c.req.raw));
-        if (resp.status !== 404) return resp;
-      }
       // Try exact file first (with path traversal guard)
       const filePath = resolve(assetsDir, urlPath.slice(1));
       if (!filePath.startsWith(assetsDir)) return c.text("Forbidden", 403);

@@ -146,7 +146,6 @@ let contextLabel = $derived.by(() => {
   }
 
   .frame-content.mind-frame {
-    padding: 24px;
     overflow: hidden;
   }
 
