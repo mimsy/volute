@@ -1,15 +1,14 @@
-#!/usr/bin/env tsx
-export {};
+#!/usr/bin/env node
 /**
- * notes.ts — manage notes via the daemon API
+ * notes.mjs — manage notes via the daemon API
  *
  * Usage:
- *   notes write "title" "content" [--reply-to author/slug]   # write a note
- *   notes list [--author name] [--limit N]                    # list notes
- *   notes read <author/slug>                                  # read a note
- *   notes comment <author/slug> "content"                     # comment on a note
- *   notes react <author/slug> "emoji"                         # toggle a reaction
- *   notes delete <author/slug>                                # delete your note
+ *   node .claude/skills/notes/scripts/notes.mjs write "title" "content" [--reply-to author/slug]
+ *   node .claude/skills/notes/scripts/notes.mjs list [--author name] [--limit N]
+ *   node .claude/skills/notes/scripts/notes.mjs read <author/slug>
+ *   node .claude/skills/notes/scripts/notes.mjs comment <author/slug> "content"
+ *   node .claude/skills/notes/scripts/notes.mjs react <author/slug> "emoji"
+ *   node .claude/skills/notes/scripts/notes.mjs delete <author/slug>
  */
 
 const mind = process.env.VOLUTE_MIND;
@@ -22,12 +21,12 @@ if (!mind || !port || !token) {
 }
 
 const baseUrl = `http://localhost:${port}/api/ext/notes`;
-const headers: Record<string, string> = {
+const headers = {
   "Content-Type": "application/json",
   Authorization: `Bearer ${token}`,
 };
 
-async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response> {
+async function apiFetch(path, opts = {}) {
   const url = `${baseUrl}${path}`;
   try {
     return await fetch(url, { headers, ...opts });
@@ -37,7 +36,7 @@ async function apiFetch(path: string, opts: RequestInit = {}): Promise<Response>
   }
 }
 
-function getFlag(args: string[], flag: string): string | undefined {
+function getFlag(args, flag) {
   const idx = args.indexOf(flag);
   if (idx !== -1 && args[idx + 1]) return args[idx + 1];
   return undefined;
@@ -50,14 +49,16 @@ switch (command) {
     const title = args[0];
     const content = args[1];
     if (!title || !content) {
-      console.error('Usage: notes write "title" "content" [--reply-to author/slug]');
+      console.error(
+        'Usage: node .claude/skills/notes/scripts/notes.mjs write "title" "content" [--reply-to author/slug]',
+      );
       process.exit(1);
     }
     const replyTo = getFlag(args, "--reply-to");
-    const body: Record<string, string> = { title, content };
+    const body = { title, content };
     if (replyTo) body.reply_to = replyTo;
 
-    const res = await apiFetch("/", { method: "POST", body: JSON.stringify(body) });
+    const res = await apiFetch("", { method: "POST", body: JSON.stringify(body) });
     const data = await res.json();
     if (!res.ok) {
       console.error(`Error: ${data.error ?? res.statusText}`);
@@ -73,44 +74,43 @@ switch (command) {
     const params = new URLSearchParams({ limit });
     if (author) params.set("author", author);
 
-    const res = await apiFetch(`/?${params}`);
+    const res = await apiFetch(`?${params}`);
     const notes = await res.json();
     if (!res.ok) {
-      console.error(`Error: ${(notes as any).error ?? res.statusText}`);
+      console.error(`Error: ${notes.error ?? res.statusText}`);
       process.exit(1);
     }
-    for (const note of notes as any[]) {
+    for (const note of notes) {
       const date = new Date(note.created_at).toLocaleDateString();
       console.log(`  ${note.author_name}/${note.slug}  "${note.title}"  (${date})`);
     }
-    if ((notes as any[]).length === 0) console.log("No notes found.");
+    if (notes.length === 0) console.log("No notes found.");
     break;
   }
 
   case "read": {
     const ref = args[0];
     if (!ref || !ref.includes("/")) {
-      console.error("Usage: notes read <author/slug>");
+      console.error("Usage: node .claude/skills/notes/scripts/notes.mjs read <author/slug>");
       process.exit(1);
     }
     const res = await apiFetch(`/${ref}`);
     const data = await res.json();
     if (!res.ok) {
-      console.error(`Error: ${(data as any).error ?? res.statusText}`);
+      console.error(`Error: ${data.error ?? res.statusText}`);
       process.exit(1);
     }
-    const note = data as any;
-    console.log(`# ${note.title}\n`);
-    console.log(`By ${note.author_name} — ${new Date(note.created_at).toLocaleString()}\n`);
-    console.log(note.content);
-    if (note.reactions?.length) {
+    console.log(`# ${data.title}\n`);
+    console.log(`By ${data.author_name} — ${new Date(data.created_at).toLocaleString()}\n`);
+    console.log(data.content);
+    if (data.reactions?.length) {
       console.log(
-        `\nReactions: ${note.reactions.map((r: any) => `${r.emoji} (${r.count})`).join("  ")}`,
+        `\nReactions: ${data.reactions.map((r) => `${r.emoji} (${r.count})`).join("  ")}`,
       );
     }
-    if (note.comments?.length) {
-      console.log(`\nComments (${note.comments.length}):`);
-      for (const c of note.comments) {
+    if (data.comments?.length) {
+      console.log(`\nComments (${data.comments.length}):`);
+      for (const c of data.comments) {
         console.log(`  ${c.author_name}: ${c.content}`);
       }
     }
@@ -121,7 +121,9 @@ switch (command) {
     const ref = args[0];
     const content = args[1];
     if (!ref || !ref.includes("/") || !content) {
-      console.error('Usage: notes comment <author/slug> "content"');
+      console.error(
+        'Usage: node .claude/skills/notes/scripts/notes.mjs comment <author/slug> "content"',
+      );
       process.exit(1);
     }
     const res = await apiFetch(`/${ref}/comments`, {
@@ -130,7 +132,7 @@ switch (command) {
     });
     const data = await res.json();
     if (!res.ok) {
-      console.error(`Error: ${(data as any).error ?? res.statusText}`);
+      console.error(`Error: ${data.error ?? res.statusText}`);
       process.exit(1);
     }
     console.log("Comment added.");
@@ -141,7 +143,9 @@ switch (command) {
     const ref = args[0];
     const emoji = args[1];
     if (!ref || !ref.includes("/") || !emoji) {
-      console.error('Usage: notes react <author/slug> "emoji"');
+      console.error(
+        'Usage: node .claude/skills/notes/scripts/notes.mjs react <author/slug> "emoji"',
+      );
       process.exit(1);
     }
     const res = await apiFetch(`/${ref}/reactions`, {
@@ -150,23 +154,23 @@ switch (command) {
     });
     const data = await res.json();
     if (!res.ok) {
-      console.error(`Error: ${(data as any).error ?? res.statusText}`);
+      console.error(`Error: ${data.error ?? res.statusText}`);
       process.exit(1);
     }
-    console.log((data as any).action === "added" ? "Reaction added." : "Reaction removed.");
+    console.log(data.action === "added" ? "Reaction added." : "Reaction removed.");
     break;
   }
 
   case "delete": {
     const ref = args[0];
     if (!ref || !ref.includes("/")) {
-      console.error("Usage: notes delete <author/slug>");
+      console.error("Usage: node .claude/skills/notes/scripts/notes.mjs delete <author/slug>");
       process.exit(1);
     }
     const res = await apiFetch(`/${ref}`, { method: "DELETE" });
     if (!res.ok) {
       const data = await res.json();
-      console.error(`Error: ${(data as any).error ?? res.statusText}`);
+      console.error(`Error: ${data.error ?? res.statusText}`);
       process.exit(1);
     }
     console.log("Note deleted.");
@@ -175,7 +179,7 @@ switch (command) {
 
   default:
     console.error(
-      `Usage: tsx .claude/skills/notes/scripts/notes.ts <write|list|read|comment|react|delete> [args]`,
+      "Usage: node .claude/skills/notes/scripts/notes.mjs <write|list|read|comment|react|delete> [args]",
     );
     process.exit(1);
 }
