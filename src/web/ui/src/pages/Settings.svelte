@@ -202,12 +202,39 @@ async function handleOAuthCodeSubmit() {
   }
 }
 
-async function toggleModel(modelId: string, enabled: boolean) {
-  const current = aiModels.filter((m) => m.enabled).map((m) => m.id);
-  const updated = enabled ? [...current, modelId] : current.filter((id) => id !== modelId);
+// Model search state
+let modelSearch = $state("");
+let modelSearchFocused = $state(false);
+let enabledModels = $derived(aiModels.filter((m) => m.enabled));
+let modelSuggestions = $derived(
+  modelSearch.trim()
+    ? aiModels
+        .filter(
+          (m) =>
+            !m.enabled &&
+            (m.id.toLowerCase().includes(modelSearch.toLowerCase()) ||
+              m.provider.toLowerCase().includes(modelSearch.toLowerCase())),
+        )
+        .slice(0, 12)
+    : [],
+);
+
+async function addModel(modelId: string) {
+  const updated = [...enabledModels.map((m) => m.id), modelId];
   try {
     await saveEnabledModels(updated);
-    aiModels = aiModels.map((m) => (m.id === modelId ? { ...m, enabled } : m));
+    aiModels = aiModels.map((m) => (m.id === modelId ? { ...m, enabled: true } : m));
+    modelSearch = "";
+  } catch (err) {
+    aiError = err instanceof Error ? err.message : "Failed to update models";
+  }
+}
+
+async function removeModel(modelId: string) {
+  const updated = enabledModels.map((m) => m.id).filter((id) => id !== modelId);
+  try {
+    await saveEnabledModels(updated);
+    aiModels = aiModels.map((m) => (m.id === modelId ? { ...m, enabled: false } : m));
   } catch (err) {
     aiError = err instanceof Error ? err.message : "Failed to update models";
   }
@@ -461,18 +488,36 @@ function authMethodLabel(method: string | null): string {
         <span class="section-subtitle">Models available for system AI tasks</span>
       </div>
 
-      <div class="models-list">
-        {#each aiModels as model (model.id)}
-          <label class="model-row">
-            <input
-              type="checkbox"
-              checked={model.enabled}
-              onchange={() => toggleModel(model.id, !model.enabled)}
-            />
-            <span class="model-id">{model.id}</span>
-            <span class="dim">{model.provider}</span>
-          </label>
-        {/each}
+      {#if enabledModels.length > 0}
+        <div class="model-tags">
+          {#each enabledModels as model (model.id)}
+            <span class="model-tag">
+              {model.id}
+              <button class="model-tag-remove" onclick={() => removeModel(model.id)}>x</button>
+            </span>
+          {/each}
+        </div>
+      {/if}
+
+      <div class="model-search-wrap">
+        <input
+          type="text"
+          bind:value={modelSearch}
+          placeholder="Search models..."
+          class="system-input"
+          onfocus={() => { modelSearchFocused = true; }}
+          onblur={() => { setTimeout(() => { modelSearchFocused = false; }, 150); }}
+        />
+        {#if modelSearchFocused && modelSuggestions.length > 0}
+          <div class="model-dropdown">
+            {#each modelSuggestions as model (model.id)}
+              <button class="model-option" onmousedown={() => addModel(model.id)}>
+                <span class="model-id">{model.id}</span>
+                <span class="dim">{model.provider}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
       </div>
     </div>
   {/if}
@@ -634,23 +679,72 @@ function authMethodLabel(method: string | null): string {
     border-top: 1px solid var(--border);
   }
 
-  .models-list {
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 8px 0;
+  .model-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
   }
 
-  .model-row {
+  .model-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    padding: 3px 8px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-0);
+  }
+
+  .model-tag-remove {
+    background: none;
+    border: none;
+    color: var(--text-2);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 0 2px;
+    line-height: 1;
+  }
+
+  .model-tag-remove:hover {
+    color: var(--red);
+  }
+
+  .model-search-wrap {
+    position: relative;
+  }
+
+  .model-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-top: 2px;
+    max-height: 240px;
+    overflow-y: auto;
+    z-index: 10;
+  }
+
+  .model-option {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 5px 16px;
+    width: 100%;
+    padding: 6px 12px;
     font-size: 13px;
+    background: none;
+    border: none;
+    color: var(--text-0);
     cursor: pointer;
+    text-align: left;
   }
 
-  .model-row:hover {
+  .model-option:hover {
     background: var(--bg-3);
   }
 

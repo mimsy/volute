@@ -188,22 +188,22 @@ const app = new Hono<AuthEnv>()
     const allProviders = getProviders();
     const oauthProviders = getOAuthProviders();
     const oauthMap = new Map(oauthProviders.map((p) => [p.id, p]));
-    const configuredSet = new Set(getConfiguredProviders());
     const ai = getAiConfig();
 
     const result = allProviders.map((id) => {
       const oauth = oauthMap.get(id);
       const providerConfig = ai?.providers[id];
+      // Only show as configured if explicitly set up (not just env var)
+      const configured = !!(providerConfig?.apiKey || providerConfig?.oauth);
       let authMethod: string | null = null;
       if (providerConfig?.oauth) authMethod = "oauth";
       else if (providerConfig?.apiKey) authMethod = "api_key";
-      else if (configuredSet.has(id) && !providerConfig) authMethod = "env_var";
       return {
         id,
         oauth: !!oauth,
         oauthName: oauth?.name,
         usesCallbackServer: !!oauth?.usesCallbackServer,
-        configured: configuredSet.has(id),
+        configured,
         authMethod,
       };
     });
