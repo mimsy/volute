@@ -126,6 +126,51 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 - **Database**: libSQL at `~/.volute/volute.db` for users, conversations, messages, mind_history, minds
 - **Build**: `vite build` → `dist/web-assets/`
 
+### Extensions
+
+Extensions add functionality to Volute — custom UI sections, API routes, database tables, feed sources, and mind lifecycle hooks. Built-in extensions (Notes, Pages) ship with Volute; third-party and local extensions can be added.
+
+**SDK** (`@volute/extensions`): Provides `ExtensionManifest`, `ExtensionContext`, and `createExtension()` helper.
+
+**Extension manifest** — an object with:
+- `id`, `name`, `version`, `description` — metadata
+- `routes(ctx)` — Hono app mounted at `/api/ext/{id}/` (authenticated)
+- `publicRoutes?(ctx)` — Hono app mounted at `/ext/{id}/public/` (no auth)
+- `ui.assetsDir?` — directory of built UI assets, served at `/ext/{id}/`
+- `ui.systemSections?` — sidebar items in the system view
+- `ui.mindSections?` — tab items in mind detail views
+- `ui.feedSource?` — endpoint for home/mind feed cards
+- `skillDir?` — directory containing a skill to sync on load
+- `initDb?(db)` — called on load to create tables; extension gets its own SQLite DB at `~/.volute/system/extension-data/{id}/data.db`
+- `onDaemonStart?()`, `onDaemonStop?()`, `onMindStart?(name)`, `onMindStop?(name)` — lifecycle hooks
+
+**Extension context** — provided to `routes()` and `publicRoutes()`:
+- `db` — SQLite database instance
+- `authMiddleware` — Hono middleware for auth
+- `resolveUser(c)` — extract user from Hono context
+- `getUser(id)` / `getUserByUsername(name)` — user lookup
+- `publishActivity(event)` — emit activity events
+- `getMindDir(name)` — resolve mind directory path
+- `dataDir` — extension-specific data directory
+
+**Extension UI** — standalone Svelte apps built with Vite, served as static assets at `/ext/{id}/`, rendered in iframes by the main app. Uses hash routing internally; communicates navigation to parent via `window.parent.postMessage({ type: "navigate", path })`.
+
+**Three ways to install extensions:**
+
+1. **Built-in** — statically imported in `src/lib/extensions.ts` (`discoverBuiltinExtensions`)
+2. **npm packages** — listed in `~/.volute/system/extensions.json`, loaded via dynamic import (`discoverInstalledExtensions`). Install with `volute extension install <package>`
+3. **Local directories** — placed in `~/.volute/extensions/{dir}/` with an entry point (`src/index.ts`, `src/index.js`, `index.ts`, or `index.js`). Auto-discovered on daemon start (`discoverLocalExtensions`)
+
+**Built-in extension packages:**
+- `packages/extensions/sdk/` (`@volute/extensions`) — shared types and helpers
+- `packages/extensions/notes/` (`@volute/notes`) — notes extension
+- `packages/extensions/pages/` (`@volute/pages`) — pages extension
+
+**Key files:**
+- `src/lib/extensions.ts` — extension loader: discovery, context building, route mounting, lifecycle
+- `src/commands/extension.ts` — CLI: `volute extension list|install|uninstall`
+- `packages/extensions/sdk/src/types.ts` — all extension types
+
 ## Commands
 
 | Command | Purpose |
@@ -168,6 +213,9 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute systems logout` | Remove stored credentials |
 | `volute pages publish [--mind <name>] [--system]` | Publish pages (mind's or --system for shared/pages/) |
 | `volute pages status [--mind <name>] [--system]` | Show publish status (mind's or --system) |
+| `volute extension list` | List installed extensions |
+| `volute extension install <package>` | Install a third-party extension (npm package) |
+| `volute extension uninstall <package>` | Uninstall a third-party extension |
 | `volute setup [--name N] [--system] [--service] [--dir D] [--port N] [--host H]` | Required first-run setup (interactive or non-interactive) |
 | `volute up [--port N] [--foreground] [--no-sandbox]` | Start the daemon (default: 1618) |
 | `volute down` | Stop the daemon |
@@ -217,6 +265,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`, `pages`) use `--mind <name>` or 
 | `file-sharing.ts` | Mind-to-mind file sharing with trust system |
 | `archive.ts` | Mind archival utilities |
 | `skills.ts` | Skill installation and management |
+| `extensions.ts` | Extension discovery (built-in, npm, local), context building, route mounting, lifecycle |
 | `shared.ts` | Shared repo init, worktree management, and merge |
 | `prompts.ts` | Mind prompt management |
 | `rotating-log.ts` | Size-limited rotating log files |

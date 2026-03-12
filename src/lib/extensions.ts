@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type {
   ExtensionContext,
@@ -35,6 +35,10 @@ export type ExtensionInfo = {
 
 function extensionsBaseDir(): string {
   return resolve(voluteHome(), "extensions");
+}
+
+function extensionDataDir(id: string): string {
+  return resolve(voluteSystemDir(), "extension-data", id);
 }
 
 function extensionsConfigPath(): string {
@@ -258,7 +262,7 @@ async function loadExtension(
   app: Hono,
   authMw: unknown,
 ): Promise<void> {
-  const dataDir = resolve(extensionsBaseDir(), manifest.id);
+  const dataDir = extensionDataDir(manifest.id);
   mkdirSync(dataDir, { recursive: true });
 
   const context = await buildContext(manifest, dataDir, authMw);
@@ -326,10 +330,54 @@ async function discoverInstalledExtensions(): Promise<ExtensionManifest[]> {
   return manifests;
 }
 
+async function discoverLocalExtensions(): Promise<ExtensionManifest[]> {
+  const baseDir = extensionsBaseDir();
+  if (!existsSync(baseDir)) return [];
+
+  const manifests: ExtensionManifest[] = [];
+  let entries: string[];
+  try {
+    entries = readdirSync(baseDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+  } catch {
+    return [];
+  }
+
+  for (const dir of entries) {
+    const extDir = resolve(baseDir, dir);
+    // Look for an entry point: index.ts, index.js, src/index.ts, src/index.js
+    const candidates = [
+      resolve(extDir, "src", "index.ts"),
+      resolve(extDir, "src", "index.js"),
+      resolve(extDir, "index.ts"),
+      resolve(extDir, "index.js"),
+    ];
+    const entryPoint = candidates.find((p) => existsSync(p));
+    if (!entryPoint) continue;
+
+    try {
+      const mod = await import(entryPoint);
+      const manifest = mod.default ?? mod.extension ?? mod;
+      if (manifest?.id && manifest?.routes) {
+        manifests.push(manifest);
+        log.info(`discovered local extension: ${manifest.id} from ${extDir}`);
+      } else {
+        log.warn(`local extension at ${extDir} does not export a valid manifest`);
+      }
+    } catch (err) {
+      log.error(`failed to load local extension from ${extDir}`, log.errorData(err));
+    }
+  }
+
+  return manifests;
+}
+
 export async function loadAllExtensions(app: Hono, authMw: unknown): Promise<void> {
   const builtins = discoverBuiltinExtensions();
   const installed = await discoverInstalledExtensions();
-  const all = [...builtins, ...installed];
+  const local = await discoverLocalExtensions();
+  const all = [...builtins, ...installed, ...local];
 
   // Deduplicate by ID
   const seen = new Set<string>();

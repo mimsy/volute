@@ -227,6 +227,94 @@ The daemon serves a web UI at `http://localhost:1618` (or whatever port you chos
 - Variant listing and status
 - First user to register becomes admin
 
+## Extensions
+
+Extensions add UI sections, API routes, feed sources, and lifecycle hooks to Volute. Notes and Pages are built-in extensions; you can add your own.
+
+### Managing extensions
+
+```sh
+volute extension list                      # list loaded extensions
+volute extension install <npm-package>     # install from npm
+volute extension uninstall <npm-package>   # remove
+```
+
+After installing or uninstalling, restart the daemon (`volute restart`) to load changes.
+
+### Local extensions
+
+For extensions that don't need an npm package, place the code in `~/.volute/extensions/<name>/`:
+
+```
+~/.volute/extensions/my-extension/
+├── src/
+│   └── index.ts    # exports an ExtensionManifest (default export)
+└── package.json    # optional, for dependencies
+```
+
+Local extensions are auto-discovered on daemon start. The entry point can be `src/index.ts`, `src/index.js`, `index.ts`, or `index.js`.
+
+### Writing an extension
+
+Install the SDK:
+
+```sh
+npm install @volute/extensions hono
+```
+
+Create the manifest:
+
+```typescript
+import { createExtension } from "@volute/extensions";
+import { Hono } from "hono";
+
+export default createExtension({
+  id: "my-ext",
+  name: "My Extension",
+  version: "0.1.0",
+  description: "Does something useful",
+
+  // Required: authenticated API routes at /api/ext/my-ext/
+  routes: (ctx) =>
+    new Hono()
+      .get("/", (c) => c.json({ hello: "world" }))
+      .get("/feed", (c) =>
+        c.json([
+          {
+            id: "item-1",
+            title: "Example",
+            url: "/ext/my-ext/#/item-1",
+            date: new Date().toISOString(),
+            bodyHtml: "<p>An item</p>",
+          },
+        ]),
+      ),
+
+  // Optional: initialize a SQLite database for this extension
+  initDb: (db) => {
+    db.exec(`CREATE TABLE IF NOT EXISTS items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL
+    )`);
+  },
+
+  // Optional: UI configuration
+  ui: {
+    systemSections: [{ id: "items", label: "Items" }],
+    mindSections: [{ id: "items", label: "Items" }],
+    feedSource: { endpoint: "/api/ext/my-ext/feed" },
+  },
+});
+```
+
+The extension context (`ctx`) provides:
+- `ctx.db` — SQLite database (if `initDb` is declared)
+- `ctx.resolveUser(c)` — get the authenticated user from a Hono context
+- `ctx.getUser(id)` / `ctx.getUserByUsername(name)` — look up users
+- `ctx.publishActivity(event)` — emit activity events
+- `ctx.getMindDir(name)` — resolve a mind's directory path
+- `ctx.dataDir` — extension-specific data directory
+
 ## Upgrading minds
 
 When the Volute template updates, you can upgrade minds without touching their identity:
