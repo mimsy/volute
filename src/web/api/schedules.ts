@@ -114,8 +114,12 @@ const app = new Hono<AuthEnv>()
       );
     }
 
+    if (!body.id) {
+      return c.json({ error: "id is required (a descriptive name for this schedule)" }, 400);
+    }
+
     const schedules = readSchedules(name);
-    const id = body.id || `schedule-${Date.now()}`;
+    const id = body.id;
 
     if (schedules.some((s) => s.id === id)) {
       return c.json({ error: `Schedule "${id}" already exists` }, 409);

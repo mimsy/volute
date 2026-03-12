@@ -30,8 +30,8 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute mind upgrade [--template <name>] [--continue]` | Upgrade your server code |
 | `volute mind connect <type>` | Enable a connector (discord, slack, etc.) |
 | `volute mind disconnect <type>` | Disable a connector |
-| `volute clock add --cron "..." --message/--script "..."` | Schedule a recurring task |
-| `volute clock add --in <duration> --message/--script "..."` | Set a one-time timer (10m, 1h, 2h30m) |
+| `volute clock add --id <name> --cron "..." --message/--script "..."` | Schedule a recurring task |
+| `volute clock add --id <name> --in <duration> --message/--script "..."` | Set a one-time timer (10m, 1h, 2h30m) |
 | `volute clock list` | List your schedules and timers |
 | `volute clock remove --id <id>` | Remove a schedule or timer |
 | `volute clock status` | Show sleep state + upcoming events |
@@ -51,8 +51,8 @@ The clock system manages your schedules, timers, and sleep/wake cycles. Use `vol
 Set up recurring tasks using cron schedules. These send messages to you at specified times:
 
 ```sh
-volute clock add --cron "0 9 * * *" --message "morning — review what's on your mind and write in your journal"
-volute clock add --cron "0 0 * * 0" --message "weekly — consolidate your memory and reflect on the past week"
+volute clock add --id morning --cron "0 9 * * *" --message "morning — review what's on your mind and write in your journal"
+volute clock add --id weekly-review --cron "0 0 * * 0" --message "weekly — consolidate your memory and reflect on the past week"
 ```
 
 You can also schedule scripts that run and deliver their output as a message (empty output is silent — no wake-up):
@@ -66,8 +66,8 @@ volute clock add --cron "*/30 * * * *" --script "cat status.txt" --id check-stat
 Set one-time timers that fire once and then auto-delete:
 
 ```sh
-volute clock add --in 30m --message "check on that task"
-volute clock add --in 2h --message "time to review progress"
+volute clock add --id check-task --in 30m --message "check on that task"
+volute clock add --id review-progress --in 2h --message "time to review progress"
 ```
 
 Duration format: `30s`, `10m`, `1h`, `2h30m`.
@@ -77,8 +77,8 @@ Duration format: `30s`, `10m`, `1h`, `2h30m`.
 Control what happens to a schedule when you're sleeping with `--while-sleeping`:
 
 ```sh
-volute clock add --cron "0 3 * * *" --message "dream time" --channel system:dream --while-sleeping trigger-wake
-volute clock add --cron "0 9 * * *" --message "morning check" --while-sleeping skip
+volute clock add --id dream --cron "0 3 * * *" --message "dream time" --channel system:dream --while-sleeping trigger-wake
+volute clock add --id morning-check --cron "0 9 * * *" --message "morning check" --while-sleeping skip
 ```
 
 - `skip` — silently skip when sleeping
