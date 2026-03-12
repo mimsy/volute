@@ -382,45 +382,43 @@ export function systemLogout(): Promise<void> {
 
 // --- AI Service ---
 
-export type AiStatus = {
-  configured: boolean;
-  provider?: string;
-  model?: string;
-  authMethod?: "api_key" | "oauth" | "env_var";
-};
-
 export type AiProvider = {
   id: string;
   oauth: boolean;
   oauthName?: string;
   usesCallbackServer: boolean;
+  configured: boolean;
+  authMethod: "api_key" | "oauth" | "env_var" | null;
+};
+
+export type AiModel = {
+  id: string;
+  name: string;
+  provider: string;
+  contextWindow: number;
+  maxTokens: number;
 };
 
 export function fetchAiProviders(): Promise<AiProvider[]> {
   return get(`${V1}/system/ai/providers`);
 }
 
-export function fetchAiConfig(): Promise<AiStatus> {
-  return get(`${V1}/system/ai`);
+export function fetchAiModels(): Promise<AiModel[]> {
+  return get(`${V1}/system/ai/models`);
 }
 
-export function saveAiConfig(data: {
-  provider: string;
-  model: string;
-  apiKey?: string;
-}): Promise<void> {
-  return put(`${V1}/system/ai`, data);
+export function saveProviderConfig(providerId: string, apiKey: string): Promise<void> {
+  return put(`${V1}/system/ai/providers/${enc(providerId)}`, { apiKey });
 }
 
-export function removeAiConfig(): Promise<void> {
-  return del(`${V1}/system/ai`);
+export function removeProviderConfig(providerId: string): Promise<void> {
+  return del(`${V1}/system/ai/providers/${enc(providerId)}`);
 }
 
 export function startAiOAuth(
   provider: string,
-  model: string,
 ): Promise<{ flowId: string; url?: string; instructions?: string; needsManualCode?: boolean }> {
-  return post(`${V1}/system/ai/oauth/start`, { provider, model });
+  return post(`${V1}/system/ai/oauth/start`, { provider });
 }
 
 export function pollAiOAuthStatus(

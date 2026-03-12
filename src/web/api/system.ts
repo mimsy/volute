@@ -4,7 +4,14 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
-import { getAiConfig, removeAiConfig, saveAiConfig } from "../../lib/ai-service.js";
+import {
+  getAiConfig,
+  getAvailableModels,
+  getConfiguredProviders,
+  removeAiConfig,
+  removeProviderConfig,
+  saveProviderConfig,
+} from "../../lib/ai-service.js";
 import { logBuffer } from "../../lib/log-buffer.js";
 import {
   deleteSystemsConfig,
@@ -179,50 +186,61 @@ const app = new Hono<AuthEnv>()
     const allProviders = getProviders();
     const oauthProviders = getOAuthProviders();
     const oauthMap = new Map(oauthProviders.map((p) => [p.id, p]));
+    const configuredSet = new Set(getConfiguredProviders());
+    const ai = getAiConfig();
+
     const result = allProviders.map((id) => {
       const oauth = oauthMap.get(id);
+      const providerConfig = ai?.providers[id];
+      let authMethod: string | null = null;
+      if (providerConfig?.oauth) authMethod = "oauth";
+      else if (providerConfig?.apiKey) authMethod = "api_key";
+      else if (configuredSet.has(id) && !providerConfig) authMethod = "env_var";
       return {
         id,
         oauth: !!oauth,
         oauthName: oauth?.name,
         usesCallbackServer: !!oauth?.usesCallbackServer,
+        configured: configuredSet.has(id),
+        authMethod,
       };
     });
     return c.json(result);
   })
-  .get("/ai", requireAdmin, (c) => {
-    const config = getAiConfig();
-    if (!config) return c.json({ configured: false });
-    return c.json({
-      configured: true,
-      provider: config.provider,
-      model: config.model,
-      authMethod: config.oauth ? "oauth" : config.apiKey ? "api_key" : "env_var",
-    });
+  .get("/ai/models", requireAdmin, (c) => {
+    const models = getAvailableModels();
+    return c.json(
+      models.map((m) => ({
+        id: m.id,
+        name: m.name,
+        provider: m.provider,
+        contextWindow: m.contextWindow,
+        maxTokens: m.maxTokens,
+      })),
+    );
   })
   .put(
-    "/ai",
+    "/ai/providers/:id",
     requireAdmin,
-    zValidator(
-      "json",
-      z.object({
-        provider: z.string().min(1),
-        model: z.string().min(1),
-        apiKey: z.string().optional(),
-      }),
-    ),
+    zValidator("json", z.object({ apiKey: z.string().min(1) })),
     (c) => {
-      const { provider, model, apiKey } = c.req.valid("json");
-      saveAiConfig({ provider, model, ...(apiKey ? { apiKey } : {}) });
+      const id = c.req.param("id");
+      const { apiKey } = c.req.valid("json");
+      saveProviderConfig(id, { apiKey });
       return c.json({ ok: true });
     },
   )
+  .delete("/ai/providers/:id", requireAdmin, (c) => {
+    const id = c.req.param("id");
+    removeProviderConfig(id);
+    return c.json({ ok: true });
+  })
   .delete("/ai", requireAdmin, (c) => {
     removeAiConfig();
     return c.json({ ok: true });
   })
   .post("/ai/oauth/start", requireAdmin, async (c) => {
-    const body = (await c.req.json()) as { provider: string; model: string };
+    const body = (await c.req.json()) as { provider: string };
     const oauthProvider = getOAuthProvider(body.provider);
     if (!oauthProvider) {
       return c.json({ error: `OAuth not supported for provider: ${body.provider}` }, 400);
@@ -238,10 +256,8 @@ const app = new Hono<AuthEnv>()
 
     // For callback-based providers, onPrompt resolves with the code the user pastes.
     // We store a resolver so the POST /ai/oauth/code endpoint can fulfill it.
-    let resolvePrompt: ((value: string) => void) | undefined;
     const promptPromise = needsManualCode
       ? new Promise<string>((resolve) => {
-          resolvePrompt = resolve;
           flow.resolveCode = resolve;
         })
       : undefined;
@@ -252,9 +268,8 @@ const app = new Hono<AuthEnv>()
           const existing = oauthFlows.get(flowId);
           if (existing) Object.assign(existing, { url: info.url, instructions: info.instructions });
         },
-        onPrompt: async (prompt) => {
+        onPrompt: async (_prompt) => {
           if (promptPromise) {
-            // Wait for user to paste the code via the web UI
             const existing = oauthFlows.get(flowId);
             if (existing) existing.waitingForCode = true;
             return promptPromise;
@@ -264,7 +279,7 @@ const app = new Hono<AuthEnv>()
         onManualCodeInput: needsManualCode ? () => promptPromise! : undefined,
       })
       .then((credentials) => {
-        saveAiConfig({ provider: body.provider, model: body.model, oauth: credentials });
+        saveProviderConfig(body.provider, { oauth: credentials });
         const existing = oauthFlows.get(flowId);
         if (existing) existing.status = "complete";
       })

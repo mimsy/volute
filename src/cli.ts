@@ -54,9 +54,6 @@ switch (command) {
   case "skill":
     await import("./commands/skill.js").then((m) => m.run(args));
     break;
-  case "ai":
-    await import("./commands/ai.js").then((m) => m.run(args));
-    break;
   case "env":
     await import("./commands/env.js").then((m) => m.run(args));
     break;
@@ -112,7 +109,6 @@ Mind:
   mind upgrade/import/export       Lifecycle operations
 
 Configuration:
-  ai        Configure system AI service
   chat      Conversations, messages, files, and platform bridges
   clock     Schedules, timers, and sleep/wake cycles
   skill     Browse and install skills

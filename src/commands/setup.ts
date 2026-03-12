@@ -429,25 +429,22 @@ export async function run(args: string[]) {
 
   writeGlobalConfig(config);
 
-  // Optional AI configuration (interactive only)
+  // Optional AI provider configuration (interactive only)
   if (isInteractive) {
-    const wantAi = (
-      await promptLine("\nConfigure AI service for turn summaries? (optional) [y/N]: ")
-    )
+    const wantAi = (await promptLine("\nConfigure an AI provider? (optional) [y/N]: "))
       .trim()
       .toLowerCase();
     if (wantAi === "y" || wantAi === "yes") {
       const aiProvider = (await promptLine("Provider (anthropic, openai, google, etc.): ")).trim();
-      const aiModel = (await promptLine("Model ID: ")).trim();
-      if (aiProvider && aiModel) {
+      if (aiProvider) {
         const aiApiKey = (await promptLine("API key (leave empty to use env var): ")).trim();
-        const { saveAiConfig } = await import("../lib/ai-service.js");
-        saveAiConfig({
-          provider: aiProvider,
-          model: aiModel,
-          ...(aiApiKey ? { apiKey: aiApiKey } : {}),
-        });
-        console.log(`  AI service configured: ${aiProvider} / ${aiModel}`);
+        if (aiApiKey) {
+          const { saveProviderConfig } = await import("../lib/ai-service.js");
+          saveProviderConfig(aiProvider, { apiKey: aiApiKey });
+          console.log(`  AI provider configured: ${aiProvider}`);
+        } else {
+          console.log(`  Using env var for ${aiProvider} (no explicit key saved)`);
+        }
       }
     }
   }

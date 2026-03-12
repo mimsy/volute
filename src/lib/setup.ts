@@ -12,9 +12,7 @@ export type SetupConfig = {
   service: boolean;
 };
 
-export type AiConfig = {
-  provider: string;
-  model: string;
+export type AiProviderConfig = {
   apiKey?: string;
   oauth?: {
     refresh: string;
@@ -22,6 +20,10 @@ export type AiConfig = {
     expires: number;
     [key: string]: unknown;
   };
+};
+
+export type AiConfig = {
+  providers: Record<string, AiProviderConfig>;
 };
 
 export type GlobalConfig = {

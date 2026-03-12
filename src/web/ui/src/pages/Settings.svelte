@@ -3,14 +3,12 @@ import type { Prompt } from "@volute/api";
 import { onMount } from "svelte";
 import {
   type AiProvider,
-  type AiStatus,
-  fetchAiConfig,
   fetchAiProviders,
   fetchPrompts,
   pollAiOAuthStatus,
-  removeAiConfig,
+  removeProviderConfig,
   resetPrompt,
-  saveAiConfig,
+  saveProviderConfig,
   startAiOAuth,
   submitAiOAuthCode,
   systemLogin,
@@ -34,22 +32,22 @@ let systemInput = $state("");
 let systemSaving = $state(false);
 
 // AI Service state
-let aiConfig = $state<AiStatus>({ configured: false });
 let aiProviders = $state<AiProvider[]>([]);
 let aiError = $state("");
-let aiEditing = $state(false);
-let aiProvider = $state("");
-let aiModel = $state("");
-let aiApiKey = $state("");
 let aiSaving = $state(false);
+let editingProvider = $state<string | null>(null);
+let apiKeyInput = $state("");
 let oauthUrl = $state("");
 let oauthPolling = $state(false);
 let oauthFlowId = $state("");
 let oauthNeedsCode = $state(false);
-let oauthWaitingForCode = $state(false);
 let oauthCodeInput = $state("");
 
-let selectedProviderInfo = $derived(aiProviders.find((p) => p.id === aiProvider));
+let isRemote = $derived(
+  typeof location !== "undefined" &&
+    location.hostname !== "localhost" &&
+    location.hostname !== "127.0.0.1",
+);
 
 const categoryMeta: Record<string, { label: string; subtitle: string }> = {
   creation: { label: "Creation Prompts", subtitle: "Used when creating new minds" },
@@ -85,7 +83,7 @@ async function load() {
 
 async function loadAi() {
   try {
-    [aiConfig, aiProviders] = await Promise.all([fetchAiConfig(), fetchAiProviders()]);
+    aiProviders = await fetchAiProviders();
   } catch {
     // Non-critical
   }
@@ -96,36 +94,30 @@ onMount(() => {
   loadAi();
 });
 
-function startAiEdit() {
-  aiEditing = true;
-  aiProvider = aiConfig.provider ?? "";
-  aiModel = aiConfig.model ?? "";
-  aiApiKey = "";
-  aiError = "";
-}
-
-function cancelAiEdit() {
-  aiEditing = false;
+function startProviderEdit(id: string) {
+  editingProvider = id;
+  apiKeyInput = "";
   oauthUrl = "";
   oauthPolling = false;
   oauthFlowId = "";
   oauthNeedsCode = false;
-  oauthWaitingForCode = false;
   oauthCodeInput = "";
   aiError = "";
 }
 
-async function handleAiSave() {
-  if (!aiProvider.trim() || !aiModel.trim() || aiSaving) return;
+function cancelProviderEdit() {
+  editingProvider = null;
+  oauthPolling = false;
+  aiError = "";
+}
+
+async function handleApiKeySave(providerId: string) {
+  if (!apiKeyInput.trim() || aiSaving) return;
   aiSaving = true;
   aiError = "";
   try {
-    await saveAiConfig({
-      provider: aiProvider.trim(),
-      model: aiModel.trim(),
-      ...(aiApiKey.trim() ? { apiKey: aiApiKey.trim() } : {}),
-    });
-    aiEditing = false;
+    await saveProviderConfig(providerId, apiKeyInput.trim());
+    editingProvider = null;
     await loadAi();
   } catch (err) {
     aiError = err instanceof Error ? err.message : "Failed to save";
@@ -134,28 +126,38 @@ async function handleAiSave() {
   }
 }
 
-async function handleAiOAuth() {
-  if (!aiProvider.trim() || !aiModel.trim() || aiSaving) return;
+async function handleProviderRemove(providerId: string) {
   aiSaving = true;
   aiError = "";
   try {
-    const result = await startAiOAuth(aiProvider.trim(), aiModel.trim());
+    await removeProviderConfig(providerId);
+    await loadAi();
+  } catch (err) {
+    aiError = err instanceof Error ? err.message : "Failed to remove";
+  } finally {
+    aiSaving = false;
+  }
+}
+
+async function handleOAuth(providerId: string) {
+  if (aiSaving) return;
+  aiSaving = true;
+  aiError = "";
+  try {
+    const result = await startAiOAuth(providerId);
     if (result.url) {
       oauthUrl = result.url;
       oauthFlowId = result.flowId;
       oauthNeedsCode = !!result.needsManualCode;
       oauthPolling = true;
-      // Poll for completion
       const poll = async () => {
         while (oauthPolling) {
           await new Promise((r) => setTimeout(r, 2500));
           try {
             const status = await pollAiOAuthStatus(result.flowId);
-            if (status.waitingForCode) oauthWaitingForCode = true;
             if (status.status === "complete") {
               oauthPolling = false;
-              cancelAiEdit();
-              aiEditing = false;
+              cancelProviderEdit();
               await loadAi();
               return;
             } else if (status.status === "error") {
@@ -184,23 +186,8 @@ async function handleOAuthCodeSubmit() {
   try {
     await submitAiOAuthCode(oauthFlowId, oauthCodeInput.trim());
     oauthCodeInput = "";
-    oauthWaitingForCode = false;
-    // Poll will pick up the completion
   } catch (err) {
     aiError = err instanceof Error ? err.message : "Failed to submit code";
-  }
-}
-
-async function handleAiRemove() {
-  aiSaving = true;
-  aiError = "";
-  try {
-    await removeAiConfig();
-    aiConfig = { configured: false };
-  } catch (err) {
-    aiError = err instanceof Error ? err.message : "Failed to remove";
-  } finally {
-    aiSaving = false;
   }
 }
 
@@ -271,6 +258,13 @@ async function handleReset(key: string) {
     saving = false;
   }
 }
+
+function authMethodLabel(method: string | null): string {
+  if (method === "api_key") return "API key";
+  if (method === "oauth") return "OAuth";
+  if (method === "env_var") return "env var";
+  return "";
+}
 </script>
 
 <div class="settings">
@@ -332,83 +326,92 @@ async function handleReset(key: string) {
     {/if}
   </div>
 
-  <!-- AI Service -->
+  <!-- AI Providers -->
   <div class="section">
     <div class="section-header">
-      <span class="section-title">AI Service</span>
-      <span class="section-subtitle">System-level AI for turn summaries and scripts</span>
+      <span class="section-title">AI Providers</span>
+      <span class="section-subtitle">Credentials for turn summaries, scripts, and mind tools</span>
     </div>
 
-    {#if aiConfig.configured && !aiEditing}
-      <div class="system-card">
-        <div class="system-info">
-          <span class="system-label">{aiConfig.provider} / {aiConfig.model}</span>
-          <span class="custom-badge">{aiConfig.authMethod === "api_key" ? "API key" : aiConfig.authMethod === "oauth" ? "OAuth" : "env var"}</span>
-        </div>
-        <div class="system-actions">
-          <button class="btn btn-edit" onclick={startAiEdit}>Edit</button>
-          <button class="btn btn-reset" onclick={handleAiRemove} disabled={aiSaving}>
-            {aiSaving ? "..." : "Remove"}
-          </button>
-        </div>
-      </div>
-    {:else if aiEditing}
-      <div class="system-card" style="flex-direction: column; align-items: stretch;">
-        <div class="ai-form">
-          <select bind:value={aiProvider} class="system-input">
-            <option value="">Select provider...</option>
-            {#each aiProviders as p (p.id)}
-              <option value={p.id}>{p.id}</option>
-            {/each}
-          </select>
-          <input bind:value={aiModel} placeholder="Model ID" class="system-input" />
-          <input type="password" bind:value={aiApiKey} placeholder="API key (optional)" class="system-input" />
-        </div>
-        <div class="actions" style="margin-top: 8px;">
-          <button class="btn btn-save" onclick={handleAiSave} disabled={aiSaving || !aiProvider.trim() || !aiModel.trim()}>
-            {aiSaving ? "..." : "Save"}
-          </button>
-          {#if selectedProviderInfo?.oauth}
-            <button class="btn btn-edit" onclick={handleAiOAuth} disabled={aiSaving || !aiProvider.trim() || !aiModel.trim()}>
-              OAuth
-            </button>
+    {#each aiProviders as provider (provider.id)}
+      <div class="provider-card">
+        <div class="provider-row">
+          <span class="provider-name">{provider.id}</span>
+          {#if provider.configured}
+            <span class="custom-badge">{authMethodLabel(provider.authMethod)}</span>
           {/if}
-          <button class="btn btn-cancel" onclick={cancelAiEdit}>Cancel</button>
+          <div class="provider-actions">
+            {#if provider.configured && editingProvider !== provider.id}
+              <button class="btn btn-reset" onclick={() => handleProviderRemove(provider.id)} disabled={aiSaving}>
+                Remove
+              </button>
+            {/if}
+            {#if !provider.configured && editingProvider !== provider.id}
+              <button class="btn btn-edit" onclick={() => startProviderEdit(provider.id)}>
+                Configure
+              </button>
+            {/if}
+            {#if editingProvider === provider.id}
+              <button class="btn btn-cancel" onclick={cancelProviderEdit}>Cancel</button>
+            {/if}
+          </div>
         </div>
-        {#if oauthUrl}
-          <div class="oauth-modal">
-            {#if oauthNeedsCode}
-              <div class="oauth-steps">
-                <div class="oauth-step">1. Open the link below and authorize</div>
-                <div class="oauth-step">2. You'll be redirected to a page that won't load — this is expected</div>
-                <div class="oauth-step">3. Copy the URL from your browser's address bar and paste it below</div>
+
+        {#if editingProvider === provider.id}
+          <div class="provider-config">
+            <form class="system-form" onsubmit={(e) => { e.preventDefault(); handleApiKeySave(provider.id); }}>
+              <input
+                type="password"
+                bind:value={apiKeyInput}
+                placeholder="API key"
+                class="system-input"
+              />
+              <button type="submit" class="btn btn-save" disabled={aiSaving || !apiKeyInput.trim()}>
+                {aiSaving ? "..." : "Save"}
+              </button>
+            </form>
+            {#if provider.oauth}
+              <button class="btn btn-edit" onclick={() => handleOAuth(provider.id)} disabled={aiSaving} style="margin-top: 6px;">
+                {provider.oauthName ? `Sign in with ${provider.oauthName}` : "OAuth"}
+              </button>
+            {/if}
+            {#if oauthUrl}
+              <div class="oauth-modal">
+                {#if oauthNeedsCode}
+                  {#if isRemote}
+                    <div class="oauth-steps">
+                      <div class="oauth-step">1. Open the link below and authorize</div>
+                      <div class="oauth-step">2. You'll be redirected to a page that won't load — this is expected</div>
+                      <div class="oauth-step">3. Copy the URL from your browser's address bar and paste it below</div>
+                    </div>
+                  {:else}
+                    <span class="system-label">Open the link below to authorize:</span>
+                  {/if}
+                  <a href={oauthUrl} target="_blank" rel="noopener" class="oauth-link">{oauthUrl}</a>
+                  {#if isRemote}
+                    <form class="system-form" onsubmit={(e) => { e.preventDefault(); handleOAuthCodeSubmit(); }} style="margin-top: 4px;">
+                      <input
+                        type="text"
+                        bind:value={oauthCodeInput}
+                        placeholder="Paste the redirect URL from your address bar"
+                        class="system-input"
+                      />
+                      <button type="submit" class="btn btn-save" disabled={!oauthCodeInput.trim()}>Submit</button>
+                    </form>
+                  {:else}
+                    <span class="dim">{oauthPolling ? "Waiting for authorization..." : ""}</span>
+                  {/if}
+                {:else}
+                  <span class="system-label">Authorize at:</span>
+                  <a href={oauthUrl} target="_blank" rel="noopener" class="oauth-link">{oauthUrl}</a>
+                  <span class="dim">{oauthPolling ? "Waiting for authorization..." : ""}</span>
+                {/if}
               </div>
-              <a href={oauthUrl} target="_blank" rel="noopener" class="oauth-link">{oauthUrl}</a>
-              <form class="system-form" onsubmit={(e) => { e.preventDefault(); handleOAuthCodeSubmit(); }} style="margin-top: 4px;">
-                <input
-                  type="text"
-                  bind:value={oauthCodeInput}
-                  placeholder="Paste the redirect URL from your address bar"
-                  class="system-input"
-                />
-                <button type="submit" class="btn btn-save" disabled={!oauthCodeInput.trim()}>Submit</button>
-              </form>
-            {:else}
-              <span class="system-label">Authorize at:</span>
-              <a href={oauthUrl} target="_blank" rel="noopener" class="oauth-link">{oauthUrl}</a>
-              <span class="dim">{oauthPolling ? "Waiting for authorization..." : ""}</span>
             {/if}
           </div>
         {/if}
       </div>
-    {:else}
-      <div class="system-card">
-        <div class="system-info">
-          <span class="system-label">Not configured</span>
-        </div>
-        <button class="btn btn-edit" onclick={startAiEdit}>Configure</button>
-      </div>
-    {/if}
+    {/each}
     {#if aiError}
       <div class="error">{aiError}</div>
     {/if}
@@ -524,6 +527,38 @@ async function handleReset(key: string) {
   .section-subtitle {
     font-size: 12px;
     color: var(--text-2);
+  }
+
+  .provider-card {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 10px 16px;
+    margin-bottom: 6px;
+  }
+
+  .provider-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .provider-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-0);
+    flex: 1;
+  }
+
+  .provider-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .provider-config {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
   }
 
   .prompt-card {
@@ -738,17 +773,6 @@ async function handleReset(key: string) {
 
   .system-input:focus {
     border-color: var(--border-bright);
-  }
-
-  .ai-form {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-
-  .ai-form .system-input {
-    flex: 1;
-    min-width: 120px;
   }
 
   .oauth-modal {

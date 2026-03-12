@@ -2012,7 +2012,7 @@ const app = new Hono<AuthEnv>()
   })
   // AI completion proxy for minds
   .post("/:name/ai/complete", requireSelf(), async (c) => {
-    const body = (await c.req.json()) as { systemPrompt: string; message: string };
+    const body = (await c.req.json()) as { systemPrompt: string; message: string; model?: string };
     if (!body.systemPrompt || !body.message) {
       return c.json({ error: "systemPrompt and message required" }, 400);
     }
@@ -2020,7 +2020,7 @@ const app = new Hono<AuthEnv>()
     if (!isAiConfigured()) {
       return c.json({ error: "AI service not configured" }, 503);
     }
-    const text = await aiCompleteFn(body.systemPrompt, body.message);
+    const text = await aiCompleteFn(body.systemPrompt, body.message, body.model);
     if (text == null) {
       return c.json({ error: "AI completion failed" }, 502);
     }

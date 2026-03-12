@@ -2,37 +2,52 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   getAiConfig,
-  isAiConfigured,
   removeAiConfig,
-  saveAiConfig,
+  removeProviderConfig,
+  saveProviderConfig,
 } from "../src/lib/ai-service.js";
 
 describe("ai-service config", () => {
   it("returns null when not configured", () => {
+    removeAiConfig(); // Ensure clean state
     assert.equal(getAiConfig(), null);
-    assert.equal(isAiConfigured(), false);
   });
 
-  it("saves and reads config", () => {
-    saveAiConfig({ provider: "anthropic", model: "claude-haiku-4-5-20251001" });
+  it("saves and reads provider config", () => {
+    saveProviderConfig("anthropic", { apiKey: "sk-test" });
     const config = getAiConfig();
-    assert.equal(config?.provider, "anthropic");
-    assert.equal(config?.model, "claude-haiku-4-5-20251001");
-    assert.equal(isAiConfigured(), true);
+    assert.ok(config);
+    assert.equal(config.providers.anthropic?.apiKey, "sk-test");
   });
 
-  it("saves config with API key", () => {
-    saveAiConfig({ provider: "openai", model: "gpt-4o-mini", apiKey: "sk-test" });
+  it("saves multiple providers", () => {
+    saveProviderConfig("anthropic", { apiKey: "sk-ant" });
+    saveProviderConfig("openai", { apiKey: "sk-oai" });
     const config = getAiConfig();
-    assert.equal(config?.provider, "openai");
-    assert.equal(config?.apiKey, "sk-test");
+    assert.ok(config);
+    assert.equal(config.providers.anthropic?.apiKey, "sk-ant");
+    assert.equal(config.providers.openai?.apiKey, "sk-oai");
   });
 
-  it("removes config", () => {
-    saveAiConfig({ provider: "anthropic", model: "claude-haiku-4-5-20251001" });
-    assert.equal(isAiConfigured(), true);
+  it("removes a single provider", () => {
+    saveProviderConfig("anthropic", { apiKey: "sk-ant" });
+    saveProviderConfig("openai", { apiKey: "sk-oai" });
+    removeProviderConfig("anthropic");
+    const config = getAiConfig();
+    assert.ok(config);
+    assert.equal(config.providers.anthropic, undefined);
+    assert.equal(config.providers.openai?.apiKey, "sk-oai");
+  });
+
+  it("removes all config", () => {
+    saveProviderConfig("anthropic", { apiKey: "sk-test" });
     removeAiConfig();
-    assert.equal(isAiConfigured(), false);
+    assert.equal(getAiConfig(), null);
+  });
+
+  it("cleans up ai key when last provider removed", () => {
+    saveProviderConfig("anthropic", { apiKey: "sk-test" });
+    removeProviderConfig("anthropic");
     assert.equal(getAiConfig(), null);
   });
 });
