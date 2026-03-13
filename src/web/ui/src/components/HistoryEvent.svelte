@@ -409,6 +409,11 @@ async function handleClick() {
     bottom: 12px;
     background: var(--border);
   }
+  /* Highlight connector when hovering the summary header */
+  .event:has(.summary-header:hover) .turn-connector,
+  .event:has(.summary-header:hover) .turn-connector::after {
+    background: var(--green);
+  }
   /* Horizontal connector from main rail dot to sub-rail */
   .turn-connector::after {
     content: "";
