@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { execInherit } from "./exec.js";
+import { exec, execInherit } from "./exec.js";
 import { voluteHome, voluteSystemDir } from "./registry.js";
 
 // --- Constants ---
@@ -137,24 +137,18 @@ export async function startService(mode: ManagedServiceMode): Promise<void> {
       await execInherit("systemctl", ["--user", "start", "volute"]);
       break;
     case "system-launchd":
-      try {
-        await execInherit("sudo", ["launchctl", "bootout", `system/${LAUNCHD_PLIST_LABEL}`]);
-      } catch {
-        // May not be loaded — ignore
-      }
+      await exec("sudo", ["launchctl", "bootout", `system/${LAUNCHD_PLIST_LABEL}`]).catch(() => {});
       await execInherit("sudo", ["launchctl", "bootstrap", "system", SYSTEM_LAUNCHD_PLIST_PATH]);
+      await execInherit("sudo", ["launchctl", "kickstart", `system/${LAUNCHD_PLIST_LABEL}`]);
       break;
-    case "user-launchd":
-      try {
-        await execInherit("launchctl", [
-          "bootout",
-          `gui/${process.getuid!()}/${LAUNCHD_PLIST_LABEL}`,
-        ]);
-      } catch {
-        // May not be loaded — ignore
-      }
-      await execInherit("launchctl", ["bootstrap", `gui/${process.getuid!()}`, LAUNCHD_PLIST_PATH]);
+    case "user-launchd": {
+      const uid = `gui/${process.getuid!()}`;
+      await exec("launchctl", ["bootout", `${uid}/${LAUNCHD_PLIST_LABEL}`]).catch(() => {});
+      await execInherit("launchctl", ["bootstrap", uid, LAUNCHD_PLIST_PATH]);
+      // kickstart ensures the job actually runs (RunAtLoad isn't always honored after bootout/bootstrap)
+      await execInherit("launchctl", ["kickstart", `${uid}/${LAUNCHD_PLIST_LABEL}`]);
       break;
+    }
   }
 }
 
@@ -187,25 +181,15 @@ export async function restartService(mode: ManagedServiceMode): Promise<void> {
       await execInherit("systemctl", ["--user", "restart", "volute"]);
       break;
     case "system-launchd":
-      try {
-        await execInherit("sudo", ["launchctl", "bootout", `system/${LAUNCHD_PLIST_LABEL}`]);
-      } catch (err) {
-        console.warn(
-          `Warning: launchctl bootout failed: ${err instanceof Error ? err.message : err}`,
-        );
-      }
+      await exec("sudo", ["launchctl", "bootout", `system/${LAUNCHD_PLIST_LABEL}`]).catch(() => {});
       await execInherit("sudo", ["launchctl", "bootstrap", "system", SYSTEM_LAUNCHD_PLIST_PATH]);
+      await execInherit("sudo", ["launchctl", "kickstart", `system/${LAUNCHD_PLIST_LABEL}`]);
       break;
     case "user-launchd": {
       const uid = `gui/${process.getuid!()}`;
-      try {
-        await execInherit("launchctl", ["bootout", `${uid}/${LAUNCHD_PLIST_LABEL}`]);
-      } catch (err) {
-        console.warn(
-          `Warning: launchctl bootout failed: ${err instanceof Error ? err.message : err}`,
-        );
-      }
+      await exec("launchctl", ["bootout", `${uid}/${LAUNCHD_PLIST_LABEL}`]).catch(() => {});
       await execInherit("launchctl", ["bootstrap", uid, LAUNCHD_PLIST_PATH]);
+      await execInherit("launchctl", ["kickstart", `${uid}/${LAUNCHD_PLIST_LABEL}`]);
       break;
     }
   }
