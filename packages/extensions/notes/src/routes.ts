@@ -179,7 +179,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
         notes.map((n) => ({
           id: `note-${n.author_username}-${n.slug}`,
           title: n.title,
-          url: `/notes/${n.author_username}/${n.slug}`,
+          url: `/minds/${n.author_username}/notes/${n.slug}`,
           date: n.created_at,
           author: n.author_username,
           bodyHtml: n.content,
