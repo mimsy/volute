@@ -384,31 +384,23 @@ async function handleClick() {
     margin-top: 4px;
     margin-left: -13px;
     padding-left: 9px;
-    padding-bottom: 4px;
+    padding-bottom: 8px;
   }
   /* Sub-rail vertical line — extends up to connect with summary dot */
   .turn-branch::before {
     content: "";
     position: absolute;
     left: 7px;
-    top: -14px;
-    bottom: 4px;
+    top: -13px;
+    bottom: 6px;
     width: 2px;
     background: var(--border);
-  }
-  /* Highlight inner rail + connectors on hover */
-  .turn-branch:hover::before,
-  .turn-branch:hover::after {
-    background: var(--green);
-  }
-  .turn-branch:hover .branch-return {
-    background: var(--green);
   }
   /* Horizontal connector from main rail dot to sub-rail */
   .turn-branch::after {
     content: "";
     position: absolute;
-    top: -14px;
+    top: -13px;
     left: -8px;
     width: 17px;
     height: 2px;
@@ -416,13 +408,12 @@ async function handleClick() {
   }
   /* Return connector from sub-rail back to main rail */
   .branch-return {
-    position: relative;
-    height: 2px;
-    margin-left: -2px;
-    margin-right: auto;
+    position: absolute;
+    bottom: 6px;
+    left: -8px;
     width: 17px;
+    height: 2px;
     background: var(--border);
-    transform: translateX(-8px);
   }
 
   .branch-summary {
