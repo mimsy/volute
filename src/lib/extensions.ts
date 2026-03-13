@@ -18,6 +18,8 @@ import { mindDir, voluteHome, voluteSystemDir } from "./registry.js";
 import { hashSkillDir, importSkillFromDir, sharedSkillsDir } from "./skills.js";
 import { readSystemsConfig } from "./systems-config.js";
 
+const VALID_EXTENSION_ID = /^[a-z0-9][a-z0-9_-]*$/;
+
 type LoadedExtension = {
   manifest: ExtensionManifest;
   context: ExtensionContext;
@@ -255,6 +257,10 @@ async function loadExtension(
   app: Hono,
   authMw: MiddlewareHandler,
 ): Promise<void> {
+  if (!VALID_EXTENSION_ID.test(manifest.id)) {
+    log.error(`invalid extension ID "${manifest.id}", skipping (must match ${VALID_EXTENSION_ID})`);
+    return;
+  }
   const dataDir = extensionDataDir(manifest.id);
   mkdirSync(dataDir, { recursive: true });
 
@@ -267,7 +273,7 @@ async function loadExtension(
   app.use(`${extApiPath}/*`, authMw);
   app.route(extApiPath, routesApp);
 
-  // Mount public routes (no auth)
+  // Mount public routes (no auth) — registered before static assets so Hono matches these first
   if (manifest.publicRoutes) {
     const publicApp = manifest.publicRoutes(context);
     app.route(`/ext/${manifest.id}/public`, publicApp);
@@ -310,7 +316,10 @@ async function loadExtension(
       const urlPath = new URL(c.req.url).pathname;
       const relativePath = urlPath.slice(prefix.length).replace(/^\//, "") || "index.html";
       const filePath = resolve(assetsDir, relativePath);
-      if (!filePath.startsWith(assetsDir)) return c.text("Forbidden", 403);
+      // Boundary-aware check: assetsDir must be followed by "/" to prevent
+      // prefix confusion (e.g. /path/assets-evil matching /path/assets)
+      if (filePath !== assetsDir && !filePath.startsWith(assetsDir + "/"))
+        return c.text("Forbidden", 403);
       const s = await fsStat(filePath).catch(() => null);
       if (s?.isFile()) {
         const mime = mimeTypes[ext(filePath)] || "application/octet-stream";
@@ -331,10 +340,16 @@ async function loadExtension(
   // Sync skills if declared (only when content has changed, like syncBuiltinSkills)
   const skillsDir = resolveSkillsDir(manifest);
   if (skillsDir) {
+    let entries: import("node:fs").Dirent[];
     try {
-      const entries = readdirSync(skillsDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
+      entries = readdirSync(skillsDir, { withFileTypes: true });
+    } catch (err) {
+      log.error(`failed to read skills dir for extension ${manifest.id}`, log.errorData(err));
+      entries = [];
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      try {
         const skillPath = resolve(skillsDir, entry.name);
         const sourceHash = hashSkillDir(skillPath);
         const destDir = resolve(sharedSkillsDir(), entry.name);
@@ -344,9 +359,12 @@ async function loadExtension(
         }
         await importSkillFromDir(skillPath, `ext:${manifest.id}`);
         log.info(`synced skill "${entry.name}" for extension: ${manifest.id}`);
+      } catch (err) {
+        log.error(
+          `failed to sync skill "${entry.name}" for extension ${manifest.id}`,
+          log.errorData(err),
+        );
       }
-    } catch (err) {
-      log.error(`failed to sync skills for extension ${manifest.id}`, log.errorData(err));
     }
   }
 
@@ -405,17 +423,43 @@ async function discoverInstalledExtensions(): Promise<ExtensionManifest[]> {
       }
       const mod = await import(resolved);
       const manifest = mod.default ?? mod.extension ?? mod;
-      if (manifest?.id && typeof manifest?.routes === "function") {
-        manifests.push(manifest);
-      } else {
-        log.warn(`extension package ${pkg} does not export a valid manifest`);
-      }
+      if (!validateManifest(manifest, `package ${pkg}`)) continue;
+      manifests.push(manifest);
     } catch (err) {
       log.error(`failed to load extension package: ${pkg}`, log.errorData(err));
     }
   }
 
   return manifests;
+}
+
+function validateManifest(manifest: unknown, source: string): manifest is ExtensionManifest {
+  if (!manifest || typeof manifest !== "object") {
+    log.warn(`extension from ${source} does not export a valid manifest`);
+    return false;
+  }
+  const m = manifest as Record<string, unknown>;
+  if (!m.id || typeof m.id !== "string") {
+    log.warn(`extension from ${source} is missing a valid id`);
+    return false;
+  }
+  if (!VALID_EXTENSION_ID.test(m.id)) {
+    log.warn(`extension from ${source} has invalid id "${m.id}"`);
+    return false;
+  }
+  if (typeof m.routes !== "function") {
+    log.warn(`extension from ${source} is missing a routes function`);
+    return false;
+  }
+  if (!m.name || typeof m.name !== "string") {
+    log.warn(`extension "${m.id}" from ${source} is missing a name`);
+    return false;
+  }
+  if (!m.version || typeof m.version !== "string") {
+    log.warn(`extension "${m.id}" from ${source} is missing a version`);
+    return false;
+  }
+  return true;
 }
 
 async function discoverLocalExtensions(): Promise<ExtensionManifest[]> {
@@ -426,7 +470,7 @@ async function discoverLocalExtensions(): Promise<ExtensionManifest[]> {
   let entries: string[];
   try {
     entries = readdirSync(baseDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
+      .filter((d) => d.isDirectory() && d.name !== "_npm")
       .map((d) => d.name);
   } catch (err) {
     log.error("failed to read local extensions directory", log.errorData(err));
@@ -443,12 +487,9 @@ async function discoverLocalExtensions(): Promise<ExtensionManifest[]> {
     try {
       const mod = await import(entryPoint);
       const manifest = mod.default ?? mod.extension ?? mod;
-      if (manifest?.id && typeof manifest?.routes === "function") {
-        manifests.push(manifest);
-        log.info(`discovered local extension: ${manifest.id} from ${extDir}`);
-      } else {
-        log.warn(`local extension at ${extDir} does not export a valid manifest`);
-      }
+      if (!validateManifest(manifest, `local dir ${extDir}`)) continue;
+      manifests.push(manifest);
+      log.info(`discovered local extension: ${manifest.id} from ${extDir}`);
     } catch (err) {
       log.error(`failed to load local extension from ${extDir}`, log.errorData(err));
     }

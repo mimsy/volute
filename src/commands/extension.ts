@@ -156,8 +156,10 @@ async function uninstallExtension(args: string[]) {
 
   try {
     await exec("npm", ["uninstall", pkg], { cwd: extensionsNpmDir() });
-  } catch {
-    // Non-fatal — package may have been manually removed
+  } catch (err) {
+    console.warn(
+      `  Warning: npm uninstall failed (package may have been manually removed): ${(err as Error).message}`,
+    );
   }
 
   console.log(`Removed "${pkg}".`);
@@ -195,7 +197,7 @@ async function cleanupExtensionSkills(pkg: string): Promise<void> {
       }).catch(() => {});
       console.log(`  Removed skill: ${skillId}`);
     }
-  } catch {
-    // Best-effort — don't block uninstall if skill cleanup fails
+  } catch (err) {
+    console.warn(`  Warning: could not clean up skills for "${pkg}": ${(err as Error).message}`);
   }
 }

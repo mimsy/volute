@@ -207,7 +207,8 @@ export function readUpstream(skillDir: string): UpstreamInfo | null {
       return null;
     }
     return data as UpstreamInfo;
-  } catch {
+  } catch (err) {
+    log.warn(`corrupt .upstream.json in ${skillDir}`, log.errorData(err));
     return null;
   }
 }
