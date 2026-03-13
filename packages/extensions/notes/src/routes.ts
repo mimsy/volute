@@ -182,18 +182,10 @@ export function createRoutes(ctx: ExtensionContext): Hono {
           url: `/notes/${n.author_username}/${n.slug}`,
           date: n.created_at,
           author: n.author_username,
-          bodyHtml: `<p>${escapeHtml(n.content.length > 150 ? `${n.content.slice(0, 150)}...` : n.content)}</p>`,
+          bodyHtml: n.content,
         })),
       );
     });
 
   return app;
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }

@@ -1,5 +1,6 @@
 <script lang="ts">
 import { formatRelativeTime } from "../lib/format";
+import { renderMarkdown } from "../lib/markdown";
 
 let {
   title,
@@ -19,13 +20,7 @@ let {
   onclick?: () => void;
 } = $props();
 
-function sanitizeHtml(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/\bon\w+\s*=\s*"[^"]*"/gi, "")
-    .replace(/\bon\w+\s*=\s*'[^']*'/gi, "")
-    .replace(/javascript:/gi, "");
-}
+let renderedBody = $derived(renderMarkdown(bodyHtml));
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -48,7 +43,7 @@ function sanitizeHtml(html: string): string {
         onpointerdown={(e) => e.preventDefault()}
       ></iframe>
     {:else}
-      <div class="body-html">{@html sanitizeHtml(bodyHtml)}</div>
+      <div class="body-html markdown-body">{@html renderedBody}</div>
     {/if}
   </div>
 </div>
@@ -111,14 +106,12 @@ function sanitizeHtml(html: string): string {
   }
 
   .body-html {
-    padding: 10px 12px;
-    font-size: 14px;
+    padding: 8px 12px;
+    font-size: 13px;
     color: var(--text-1);
     line-height: 1.5;
-    display: -webkit-box;
-    -webkit-line-clamp: 6;
-    -webkit-box-orient: vertical;
     overflow: hidden;
+    height: 100%;
   }
 
   .page-preview {
@@ -126,5 +119,6 @@ function sanitizeHtml(html: string): string {
     height: 100%;
     border: none;
     pointer-events: none;
+    background: white;
   }
 </style>
