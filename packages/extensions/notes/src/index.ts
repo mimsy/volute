@@ -18,9 +18,7 @@ export default createExtension({
   standardSkill: true,
   ui: {
     assetsDir,
-    systemSections: [
-      { id: "notes", label: "Notes", urlPatterns: ["/notes", "/notes/:author/:slug"] },
-    ],
+    systemSection: { id: "notes", label: "Notes", urlPatterns: ["/notes", "/notes/:author/:slug"] },
     mindSections: [{ id: "notes", label: "Notes" }],
     feedSource: {
       endpoint: "/api/ext/notes/feed",

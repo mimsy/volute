@@ -216,7 +216,7 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
       }
     } else if (sel.kind === "extension") {
       const ext = data.extensions.find((e) => e.id === sel.extensionId);
-      const extBase = ext?.systemSections?.flatMap((s) => s.urlPatterns ?? [])?.[0];
+      const extBase = ext?.systemSection?.urlPatterns?.[0];
       crumbs.push({
         label: ext?.name ?? sel.extensionId,
         action: sel.path ? () => navigate(extBase ?? `/ext/${sel.extensionId}`) : undefined,
@@ -494,16 +494,16 @@ function handleSelectMind(name: string) {
   closeSidebar();
 }
 
-function handleSelectMindSection(name: string, section: string) {
-  selection = { tab: "system", kind: "mind", name, section: section as any };
+function handleSelectMindSection(name: string, section: string, defaultPath?: string) {
+  selection = { tab: "system", kind: "mind", name, section: section as any, subpath: defaultPath };
 }
 
 function handleSelectSettings() {
   selection = { tab: "system", kind: "settings" };
 }
 
-function handleSelectExtension(extensionId: string) {
-  selection = { tab: "system", kind: "extension", extensionId, path: "" };
+function handleSelectExtension(extensionId: string, path?: string) {
+  selection = { tab: "system", kind: "extension", extensionId, path: path ?? "" };
   closeSidebar();
 }
 

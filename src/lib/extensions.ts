@@ -30,7 +30,7 @@ export type ExtensionInfo = {
   name: string;
   version: string;
   description?: string;
-  systemSections?: SystemSection[];
+  systemSection?: SystemSection;
   mindSections?: MindSection[];
   feedSource?: FeedSource;
 };
@@ -421,21 +421,15 @@ async function discoverLocalExtensions(): Promise<ExtensionManifest[]> {
 
   for (const dir of entries) {
     const extDir = resolve(baseDir, dir);
-    // Look for an entry point — prefer .js; skip .ts in production (no TS loader)
-    const jsCandidates = [resolve(extDir, "src", "index.js"), resolve(extDir, "index.js")];
-    const tsCandidates = [resolve(extDir, "src", "index.ts"), resolve(extDir, "index.ts")];
-    const entryPoint = jsCandidates.find((p) => existsSync(p));
-    if (!entryPoint) {
-      const tsEntry = tsCandidates.find((p) => existsSync(p));
-      if (tsEntry) {
-        log.warn(
-          `local extension at ${extDir} has a .ts entry point but no .js — ` +
-            `build the extension or run the daemon with tsx`,
-        );
-        continue;
-      }
-      continue;
-    }
+    // Look for an entry point — prefer .js over .ts
+    const candidates = [
+      resolve(extDir, "src", "index.js"),
+      resolve(extDir, "index.js"),
+      resolve(extDir, "src", "index.ts"),
+      resolve(extDir, "index.ts"),
+    ];
+    const entryPoint = candidates.find((p) => existsSync(p));
+    if (!entryPoint) continue;
 
     try {
       const mod = await import(entryPoint);
@@ -482,7 +476,7 @@ export function getLoadedExtensions(): ExtensionInfo[] {
     name: manifest.name,
     version: manifest.version,
     description: manifest.description,
-    systemSections: manifest.ui?.systemSections,
+    systemSection: manifest.ui?.systemSection,
     mindSections: manifest.ui?.mindSections,
     feedSource: manifest.ui?.feedSource,
   }));

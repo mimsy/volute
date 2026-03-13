@@ -3,7 +3,7 @@ export type ExtensionInfo = {
   name: string;
   version: string;
   description?: string;
-  systemSections?: { id: string; label: string; urlPatterns?: string[] }[];
+  systemSection?: { id: string; label: string; urlPatterns?: string[] };
   mindSections?: { id: string; label: string; defaultPath?: string }[];
   feedSource?: { endpoint: string; kind?: string };
 };

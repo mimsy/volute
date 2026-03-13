@@ -31,13 +31,11 @@ export default createExtension({
   standardSkill: true,
   ui: {
     assetsDir,
-    systemSections: [
-      {
-        id: "pages",
-        label: "Pages",
-        urlPatterns: ["/pages", "/pages/:site", "/pages/:site/:path"],
-      },
-    ],
+    systemSection: {
+      id: "pages",
+      label: "Pages",
+      urlPatterns: ["/pages", "/pages/:site", "/pages/:site/:path"],
+    },
     mindSections: [{ id: "pages", label: "Pages" }],
     feedSource: {
       endpoint: "/api/ext/pages/feed",

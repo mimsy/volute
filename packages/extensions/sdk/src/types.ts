@@ -83,7 +83,7 @@ export type ExtensionManifest = {
   publicRoutes?: (ctx: ExtensionContext) => Hono;
   ui?: {
     assetsDir?: string;
-    systemSections?: SystemSection[];
+    systemSection?: SystemSection;
     mindSections?: MindSection[];
     feedSource?: FeedSource;
   };

@@ -35,11 +35,9 @@ function patternToRegex(pattern: string): RegExp {
  * E.g. for patterns ["/notes", "/notes/:author/:slug"], returns "/notes".
  */
 function getExtensionBaseUrl(ext: ExtensionInfo): string | null {
-  const patterns = ext.systemSections?.flatMap((s) => s.urlPatterns ?? []);
+  const patterns = ext.systemSection?.urlPatterns;
   if (!patterns?.length) return null;
-  // Use the first static segment from the shortest pattern
-  const first = patterns[0];
-  const firstSegment = first.split("/").filter(Boolean)[0];
+  const firstSegment = patterns[0].split("/").filter(Boolean)[0];
   return firstSegment ? `/${firstSegment}` : null;
 }
 
@@ -52,18 +50,15 @@ function matchExtensionUrl(
   extensions: ExtensionInfo[],
 ): { extensionId: string; path: string } | null {
   for (const ext of extensions) {
-    if (!ext.systemSections) continue;
-    for (const section of ext.systemSections) {
-      if (!section.urlPatterns) continue;
-      for (const pattern of section.urlPatterns) {
-        const regex = patternToRegex(pattern);
-        const match = path.match(regex);
-        if (match) {
-          // Reconstruct the subpath from everything after the first segment
-          const firstSegment = pattern.split("/").filter(Boolean)[0];
-          const subpath = path.replace(`/${firstSegment}`, "").replace(/^\//, "");
-          return { extensionId: ext.id, path: subpath };
-        }
+    const section = ext.systemSection;
+    if (!section?.urlPatterns) continue;
+    for (const pattern of section.urlPatterns) {
+      const regex = patternToRegex(pattern);
+      const match = path.match(regex);
+      if (match) {
+        const firstSegment = pattern.split("/").filter(Boolean)[0];
+        const subpath = path.replace(`/${firstSegment}`, "").replace(/^\//, "");
+        return { extensionId: ext.id, path: subpath };
       }
     }
   }
