@@ -8,19 +8,6 @@ import SessionDivider from "./SessionDivider.svelte";
 let { name }: { name: string } = $props();
 
 const PAGE_SIZE = 100;
-const ALL_TYPES = new Set([
-  "inbound",
-  "outbound",
-  "summary",
-  "text",
-  "tool_use",
-  "tool_result",
-  "thinking",
-  "usage",
-  "session_start",
-  "done",
-  "log",
-]);
 
 let messages = $state<HistoryMessage[]>([]);
 let channels = $state<string[]>([]);
@@ -32,7 +19,7 @@ let error = $state("");
 let filters = $state<FilterState>({
   channel: "",
   session: "",
-  types: new Set(ALL_TYPES),
+  preset: "summary",
 });
 
 let scrollContainer: HTMLDivElement | undefined = $state();
@@ -40,20 +27,42 @@ let userScrolledUp = $state(false);
 let eventSource: EventSource | null = null;
 let nextSseId = -1;
 
-// Filtered messages (type filter is client-side)
-let filtered = $derived(messages.filter((m) => filters.types.has(m.type)));
+// Summary mode: group messages by session, sorted by most recent event timestamp
+type SessionGroup = { session: string; events: HistoryMessage[] };
 
-// Build session groups for dividers
+let sessionGroups = $derived.by(() => {
+  if (filters.preset !== "summary") return [];
+  const groups = new Map<string, HistoryMessage[]>();
+  for (const m of messages) {
+    const key = m.session ?? "";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(m);
+  }
+  const result: SessionGroup[] = [];
+  for (const [session, events] of groups) {
+    result.push({ session, events });
+  }
+  // Sort by most recent event timestamp ascending (most recent group last, at bottom)
+  result.sort((a, b) => {
+    const aTime = a.events[a.events.length - 1]?.created_at ?? "";
+    const bTime = b.events[b.events.length - 1]?.created_at ?? "";
+    return aTime < bTime ? -1 : aTime > bTime ? 1 : 0;
+  });
+  return result;
+});
+
+// Non-summary mode: build timeline with session dividers
 type TimelineItem =
   | { kind: "divider"; session: HistorySession; key: string }
   | { kind: "event"; event: HistoryMessage; key: string };
 
 let timeline = $derived.by(() => {
+  if (filters.preset === "summary") return [];
   const items: TimelineItem[] = [];
   let lastSession: string | null = null;
   let divIdx = 0;
 
-  for (const ev of filtered) {
+  for (const ev of messages) {
     if (ev.session && ev.session !== lastSession) {
       const sess = sessionMap.get(ev.session);
       if (sess) {
@@ -74,11 +83,11 @@ async function load(offset: number) {
     const rows = await fetchHistory(name, {
       channel: filters.channel || undefined,
       session: filters.session || undefined,
-      full: true,
+      preset: filters.preset,
       limit: PAGE_SIZE,
       offset,
     });
-    // API returns DESC — reverse for chronological
+    // API returns DESC -- reverse for chronological
     const chronological = [...rows].reverse();
     if (offset === 0) {
       messages = chronological;
@@ -109,18 +118,20 @@ async function loadMeta() {
   }
 }
 
-// Reload when name, channel, or session filter changes
+// Reload when name, channel, session, or preset filter changes
 let prevName = "";
 let prevChannel = "";
 let prevSession = "";
+let prevPreset = "";
 $effect(() => {
   const n = name;
   const ch = filters.channel;
   const sess = filters.session;
-  if (n !== prevName || ch !== prevChannel || sess !== prevSession) {
+  const preset = filters.preset;
+  if (n !== prevName || ch !== prevChannel || sess !== prevSession || preset !== prevPreset) {
     if (n !== prevName) {
-      // Mind changed — reset filters and metadata
-      filters = { channel: "", session: "", types: new Set(ALL_TYPES) };
+      // Mind changed -- reset filters and metadata
+      filters = { channel: "", session: "", preset: "summary" };
       channels = [];
       sessions = [];
       sessionMap = new Map();
@@ -132,11 +143,12 @@ $effect(() => {
     prevName = n;
     prevChannel = ch;
     prevSession = sess;
+    prevPreset = preset;
     load(0);
   }
 });
 
-// SSE live mode — always on.
+// SSE live mode -- always on.
 // Reads filters.channel/session inside connectSSE(), so Svelte re-runs on filter changes.
 $effect(() => {
   connectSSE();
@@ -150,6 +162,8 @@ function connectSSE() {
   if (filters.session) params.set("session", filters.session);
   const qs = params.toString();
   const url = `/api/minds/${encodeURIComponent(name)}/events${qs ? `?${qs}` : ""}`;
+
+  const currentPreset = filters.preset;
 
   const es = new EventSource(url);
   es.onmessage = (e) => {
@@ -172,6 +186,10 @@ function connectSSE() {
       metadata: data.metadata ? JSON.stringify(data.metadata) : null,
       created_at: (data.createdAt as string) ?? new Date().toISOString(),
     };
+
+    // In summary mode, only append summary events
+    if (currentPreset === "summary" && event.type !== "summary") return;
+
     messages = [...messages, event];
 
     // Update session map if new session
@@ -223,6 +241,10 @@ function jumpToLatest() {
 function handleFilterChange(next: FilterState) {
   filters = next;
 }
+
+function handleSessionClick(session: string) {
+  filters = { ...filters, session };
+}
 </script>
 
 <div class="history">
@@ -251,25 +273,35 @@ function handleFilterChange(next: FilterState) {
 
     {#if error}
       <div class="error">{error}</div>
-    {:else if filtered.length === 0 && !loading}
+    {:else if messages.length === 0 && !loading}
       <div class="empty">No events found.</div>
     {/if}
 
-    <div class="timeline-rail">
-      {#each timeline as item (item.key)}
-        {#if item.kind === "divider"}
-          <SessionDivider
-            session={item.session.session}
-            startedAt={item.session.started_at}
-            eventCount={item.session.event_count}
-            messageCount={item.session.message_count}
-            toolCount={item.session.tool_count}
-          />
-        {:else}
-          <HistoryEvent event={item.event} mindName={name} />
-        {/if}
-      {/each}
-    </div>
+    {#if filters.preset === 'summary'}
+      <div class="timeline-rail">
+        {#each sessionGroups as group (group.session)}
+          <button class="session-group-header" onclick={() => handleSessionClick(group.session)}>
+            {group.session || "no session"}
+          </button>
+          {#each group.events as ev (ev.id)}
+            <HistoryEvent event={ev} mindName={name} expandable onsessionclick={handleSessionClick} />
+          {/each}
+        {/each}
+      </div>
+    {:else}
+      <div class="timeline-rail">
+        {#each timeline as item (item.key)}
+          {#if item.kind === "divider"}
+            <SessionDivider
+              session={item.session.session}
+              startedAt={item.session.started_at}
+            />
+          {:else}
+            <HistoryEvent event={item.event} mindName={name} />
+          {/if}
+        {/each}
+      </div>
+    {/if}
 
     {#if loading && messages.length > 0}
       <div class="loading-more">loading...</div>
@@ -278,7 +310,7 @@ function handleFilterChange(next: FilterState) {
 
   {#if userScrolledUp}
     <button class="jump-btn" onclick={jumpToLatest}>
-      ↓ jump to latest
+      jump to latest
     </button>
   {/if}
 </div>
@@ -319,6 +351,27 @@ function handleFilterChange(next: FilterState) {
     bottom: 0;
     width: 2px;
     background: var(--timeline-rail);
+  }
+
+  .session-group-header {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 8px 4px 20px;
+    margin-top: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-2);
+    background: none;
+    border: none;
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+  .session-group-header:first-child {
+    margin-top: 0;
+  }
+  .session-group-header:hover {
+    color: var(--accent);
   }
 
   .error {
