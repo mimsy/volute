@@ -283,8 +283,7 @@ function handleSessionClick(session: string) {
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="session-divider" onclick={() => handleSessionClick(group.session)}>
-            <div class="session-dot"></div>
-            <div class="session-divider-line"></div>
+            <div class="session-divider-line line-left"></div>
             <span class="session-divider-label">{group.session || "no session"}</span>
             <div class="session-divider-line"></div>
           </div>
@@ -369,11 +368,17 @@ function handleSessionClick(session: string) {
   .session-divider:first-child {
     padding-top: 4px;
   }
-  .session-dot {
+  .session-divider::before {
+    content: "";
     position: absolute;
     left: -4px;
-    top: 17px;
+    /* Center vertically: padding-top varies (12px normal, 4px first-child)
+       but content height is consistent, so use the flex center */
+    top: 0;
+    bottom: 0;
     width: 6px;
+    margin-top: auto;
+    margin-bottom: auto;
     height: 6px;
     border-radius: 50%;
     background: var(--border-bright);
@@ -383,7 +388,7 @@ function handleSessionClick(session: string) {
     flex: 1;
     border-top: 1px solid var(--border);
   }
-  .session-divider-line:first-of-type {
+  .line-left {
     margin-left: -6px;
   }
   .session-divider-label {
@@ -401,7 +406,7 @@ function handleSessionClick(session: string) {
     content: "";
     position: absolute;
     left: -2px;
-    top: 20px;
+    top: 50%;
     bottom: -16px;
     width: 2px;
     background: var(--accent);
