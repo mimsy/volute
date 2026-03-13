@@ -1,1 +1,0 @@
-UPDATE `users` SET `user_type` = 'brain' WHERE `user_type` = 'human';

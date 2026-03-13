@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { exec, execInherit } from "./exec.js";
-import { voluteHome, voluteSystemDir } from "./registry.js";
+import { voluteSystemDir } from "./registry.js";
 
 // --- Constants ---
 
@@ -218,10 +218,7 @@ export function readDaemonConfig(): {
   internalPort?: number;
   token?: string;
 } {
-  // Check new location first, fall back to old location for transition period
-  const newPath = resolve(voluteSystemDir(), "daemon.json");
-  const legacyPath = resolve(voluteHome(), "daemon.json");
-  const configPath = existsSync(newPath) ? newPath : legacyPath;
+  const configPath = resolve(voluteSystemDir(), "daemon.json");
   if (!existsSync(configPath)) return { hostname: "127.0.0.1", port: 1618 };
   try {
     const config = JSON.parse(readFileSync(configPath, "utf-8"));

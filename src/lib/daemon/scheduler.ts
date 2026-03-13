@@ -141,9 +141,7 @@ export class Scheduler {
         return;
       }
 
-      // Resolve sleep behavior: whileSleeping takes precedence, fall back to legacy skipWhenSleeping
-      const whileSleeping =
-        schedule.whileSleeping ?? (schedule.skipWhenSleeping ? "skip" : undefined);
+      const whileSleeping = schedule.whileSleeping;
 
       await this.deliver(mindName, {
         content: [{ type: "text", text }],

@@ -1,13 +1,6 @@
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { voluteHome, voluteSystemDir, voluteUserHome } from "./registry.js";
+import { voluteSystemDir } from "./registry.js";
 
 export type SystemsConfig = {
   apiKey: string;
@@ -21,31 +14,7 @@ function configPath(): string {
   return resolve(voluteSystemDir(), "systems.json");
 }
 
-/** Migrate systems.json from old locations to the system directory. */
-function migrateIfNeeded(): void {
-  const target = configPath();
-  if (existsSync(target)) return;
-
-  // Check old locations: ~/.volute/systems.json and VOLUTE_HOME/systems.json
-  const oldPaths = [
-    resolve(voluteUserHome(), "systems.json"),
-    resolve(voluteHome(), "systems.json"),
-  ];
-  for (const old of oldPaths) {
-    if (old !== target && existsSync(old)) {
-      try {
-        mkdirSync(voluteSystemDir(), { recursive: true });
-        renameSync(old, target);
-      } catch {
-        // Migration failed (e.g. cross-device rename) — read from old location
-      }
-      return;
-    }
-  }
-}
-
 export function readSystemsConfig(): SystemsConfig | null {
-  migrateIfNeeded();
   const path = configPath();
   if (!existsSync(path)) return null;
   const raw = readFileSync(path, "utf-8");

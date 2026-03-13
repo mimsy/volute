@@ -198,19 +198,6 @@ describe("scheduler", () => {
     assert.equal(scheduler.deliveries[0].payload.whileSleeping, "trigger-wake");
   });
 
-  it("fire maps legacy skipWhenSleeping to whileSleeping skip", async () => {
-    const scheduler = new TestScheduler();
-    await (scheduler as any).fire("test-mind", {
-      id: "legacy-sched",
-      cron: "* * * * *",
-      message: "hello",
-      enabled: true,
-      skipWhenSleeping: true,
-    });
-    assert.equal(scheduler.deliveries.length, 1);
-    assert.equal(scheduler.deliveries[0].payload.whileSleeping, "skip");
-  });
-
   it("fire delivers fireAt schedule", async () => {
     const scheduler = new TestScheduler();
     await (scheduler as any).fire("test-mind", {

@@ -6,7 +6,6 @@ import { voluteSystemDir } from "../src/lib/registry.js";
 import {
   type GlobalConfig,
   isSetupComplete,
-  migrateSetupConfig,
   readGlobalConfig,
   writeGlobalConfig,
 } from "../src/lib/setup.js";
@@ -81,54 +80,5 @@ describe("setup config", () => {
       setup: { type: "local", mindsDir: "/tmp", isolation: "sandbox", service: false },
     });
     assert.equal(isSetupComplete(), true);
-  });
-});
-
-describe("migrateSetupConfig", () => {
-  afterEach(cleanup);
-
-  it("does nothing when no minds.json exists (fresh install)", () => {
-    migrateSetupConfig();
-    assert.equal(isSetupComplete(), false);
-  });
-
-  it("does nothing when setup is already configured", () => {
-    writeGlobalConfig({
-      name: "existing",
-      setup: { type: "system", mindsDir: "/minds", isolation: "user", service: true },
-    });
-    mkdirSync(voluteSystemDir(), { recursive: true });
-    writeFileSync(registryPath(), "[]");
-    migrateSetupConfig();
-    // Should not overwrite existing config
-    const config = readGlobalConfig();
-    assert.equal(config.name, "existing");
-    assert.equal(config.setup?.type, "system");
-  });
-
-  it("auto-populates setup for existing users with minds.json", () => {
-    mkdirSync(voluteSystemDir(), { recursive: true });
-    writeFileSync(registryPath(), JSON.stringify([{ name: "alice", port: 4100 }]));
-    migrateSetupConfig();
-    const config = readGlobalConfig();
-    assert.ok(config.setup);
-    assert.equal(config.setup.type, "local");
-    assert.equal(config.setup.isolation, "none");
-  });
-
-  it("detects system isolation from env", () => {
-    const orig = process.env.VOLUTE_ISOLATION;
-    process.env.VOLUTE_ISOLATION = "user";
-    try {
-      mkdirSync(voluteSystemDir(), { recursive: true });
-      writeFileSync(registryPath(), "[]");
-      migrateSetupConfig();
-      const config = readGlobalConfig();
-      assert.equal(config.setup?.type, "system");
-      assert.equal(config.setup?.isolation, "user");
-    } finally {
-      if (orig === undefined) delete process.env.VOLUTE_ISOLATION;
-      else process.env.VOLUTE_ISOLATION = orig;
-    }
   });
 });

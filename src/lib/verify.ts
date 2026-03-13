@@ -1,4 +1,4 @@
-import { checkHealth } from "./variants.js";
+import { checkHealth } from "./health.js";
 
 /**
  * Verify a server by checking health and sending a test message.

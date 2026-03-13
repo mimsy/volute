@@ -9,9 +9,6 @@ import { type DeliveryPayload, extractTextContent } from "./delivery-router.js";
 
 const dlog = log.child("delivery");
 
-// Re-export from delivery-router for backwards compatibility
-export { type DeliveryPayload, extractTextContent } from "./delivery-router.js";
-
 /**
  * Record an inbound message: persist to mind_history and publish to the live event stream.
  * Both the connector `/message` endpoint and `deliverMessage()` use this to avoid drift.

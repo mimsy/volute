@@ -80,19 +80,6 @@ export function resolveChannelMapping(platform: string, externalChannel: string)
 }
 
 /**
- * Find the external channel mapped to a Volute channel name for a given platform.
- * Returns the first matching external channel, or null.
- */
-export function resolveReverseMapping(platform: string, voluteChannel: string): string | null {
-  const bridge = getBridgeConfig(platform);
-  if (!bridge) return null;
-  for (const [external, volute] of Object.entries(bridge.channelMappings)) {
-    if (volute === voluteChannel) return external;
-  }
-  return null;
-}
-
-/**
  * Check if a conversation name is bridged to any platform.
  * Returns the platform and external channel if found.
  */

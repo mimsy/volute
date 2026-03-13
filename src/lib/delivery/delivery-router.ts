@@ -25,8 +25,6 @@ export type BatchConfig = {
 };
 
 export type SessionConfig = {
-  batch?: number | BatchConfig;
-  interrupt?: boolean;
   instructions?: string;
   delivery?: DeliveryMode;
 };
@@ -140,8 +138,7 @@ export function getRoutingConfig(mindName: string): RoutingConfig {
   }
 
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf-8"));
-    const config: RoutingConfig = Array.isArray(parsed) ? { rules: parsed } : parsed;
+    const config: RoutingConfig = JSON.parse(readFileSync(path, "utf-8"));
     configCache.set(mindName, { config, mtime });
     return config;
   } catch (err) {
@@ -286,48 +283,27 @@ export function resolveDeliveryMode(
 
   for (const [pattern, sessionConfig] of Object.entries(config.sessions)) {
     if (globMatch(pattern, sessionName)) {
-      // Resolve delivery mode: new `delivery` field takes precedence over legacy `batch`
       let delivery: ResolvedDeliveryMode;
 
-      if (sessionConfig.delivery != null) {
-        if (sessionConfig.delivery === "immediate") {
-          delivery = { mode: "immediate" };
-        } else if (sessionConfig.delivery === "batch") {
-          delivery = {
-            mode: "batch",
-            debounce: DEFAULT_BATCH_DEBOUNCE,
-            maxWait: DEFAULT_BATCH_MAX_WAIT,
-          };
-        } else {
-          delivery = {
-            mode: "batch",
-            debounce: sessionConfig.delivery.debounce ?? DEFAULT_BATCH_DEBOUNCE,
-            maxWait: sessionConfig.delivery.maxWait ?? DEFAULT_BATCH_MAX_WAIT,
-          };
-        }
-      } else if (sessionConfig.batch != null) {
-        // Legacy: map batch config to delivery mode
-        const batch = normalizeBatchConfig(sessionConfig.batch);
-        delivery = {
-          mode: "batch",
-          debounce: batch.debounce ?? DEFAULT_BATCH_DEBOUNCE,
-          maxWait: batch.maxWait ?? DEFAULT_BATCH_MAX_WAIT,
-          triggers: batch.triggers,
-        };
-      } else if (sessionConfig.interrupt === false) {
-        // Legacy: interrupt: false implies batch mode
+      if (sessionConfig.delivery == null || sessionConfig.delivery === "immediate") {
+        delivery = { mode: "immediate" };
+      } else if (sessionConfig.delivery === "batch") {
         delivery = {
           mode: "batch",
           debounce: DEFAULT_BATCH_DEBOUNCE,
           maxWait: DEFAULT_BATCH_MAX_WAIT,
         };
       } else {
-        delivery = { mode: "immediate" };
+        delivery = {
+          mode: "batch",
+          debounce: sessionConfig.delivery.debounce ?? DEFAULT_BATCH_DEBOUNCE,
+          maxWait: sessionConfig.delivery.maxWait ?? DEFAULT_BATCH_MAX_WAIT,
+        };
       }
 
       return {
         delivery,
-        interrupt: sessionConfig.interrupt ?? true,
+        interrupt: true,
         instructions: sessionConfig.instructions,
       };
     }

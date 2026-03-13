@@ -13,7 +13,6 @@ import {
   removeBridgeConfig,
   removeChannelMapping,
   resolveChannelMapping,
-  resolveReverseMapping,
   setBridgeConfig,
   setChannelMapping,
   writeBridgesConfig,
@@ -109,19 +108,6 @@ describe("bridges config", () => {
     });
     assert.equal(resolveChannelMapping("discord", "my-server/general"), "general");
     assert.equal(resolveChannelMapping("discord", "unknown"), null);
-  });
-
-  it("resolveReverseMapping finds external channel from volute name", () => {
-    setBridgeConfig("discord", {
-      enabled: true,
-      defaultMind: "luna",
-      channelMappings: {
-        "my-server/general": "general",
-        "my-server/creative": "creative",
-      },
-    });
-    assert.equal(resolveReverseMapping("discord", "general"), "my-server/general");
-    assert.equal(resolveReverseMapping("discord", "unknown"), null);
   });
 
   it("findBridgeForChannel finds bridge for a volute channel name", () => {

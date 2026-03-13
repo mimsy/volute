@@ -6,7 +6,7 @@ import { after, afterEach, before, describe, it } from "node:test";
 import { approveUser, createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
 import { loadAllExtensions } from "../src/lib/extensions.js";
-import { addMind, removeMind, voluteHome, voluteSystemDir } from "../src/lib/registry.js";
+import { addMind, removeMind, voluteSystemDir } from "../src/lib/registry.js";
 import { sessions, users } from "../src/lib/schema.js";
 import {
   deleteSystemsConfig,
@@ -32,25 +32,6 @@ describe("systems-config", () => {
 
   it("readSystemsConfig returns null when no config exists", () => {
     assert.equal(readSystemsConfig(), null);
-  });
-
-  it("migrates systems.json from old voluteHome location", () => {
-    // Write config to old location (voluteHome root)
-    const oldPath = resolve(voluteHome(), "systems.json");
-    mkdirSync(voluteHome(), { recursive: true });
-    writeFileSync(
-      oldPath,
-      JSON.stringify({ apiKey: "vp_old", system: "migrated", apiUrl: "https://volute.systems" }),
-    );
-
-    // readSystemsConfig should migrate and return the config
-    const config = readSystemsConfig();
-    assert.equal(config?.apiKey, "vp_old");
-    assert.equal(config?.system, "migrated");
-
-    // Old file should be gone, new file should exist
-    assert.ok(!existsSync(oldPath));
-    assert.ok(existsSync(configPath()));
   });
 
   it("writeSystemsConfig + readSystemsConfig roundtrips", () => {

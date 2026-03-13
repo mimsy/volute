@@ -134,18 +134,6 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
       : { tab: "chat", kind: "home" };
   }
 
-  // Legacy /chats URLs
-  const legacyChatIdMatch = path.match(/^\/chats\/(.+)$/);
-  if (legacyChatIdMatch)
-    return { tab: "chat", kind: "conversation", conversationId: legacyChatIdMatch[1] };
-
-  if (path === "/chats") {
-    const mind = search.get("mind");
-    return mind
-      ? { tab: "chat", kind: "conversation", mindName: mind }
-      : { tab: "chat", kind: "home" };
-  }
-
   // Default: system home
   return { tab: "system", kind: "home" };
 }
