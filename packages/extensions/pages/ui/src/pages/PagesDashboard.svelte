@@ -37,7 +37,7 @@ let {
       <div class="thumbnail-grid">
         {#each sites as site}
           <PageThumbnail
-            url={site.pages[0]?.url ?? "about:blank"}
+            url={site.pages[0] ? `/ext/pages/public/${site.name}/${site.pages[0].file}` : "about:blank"}
             label={site.label}
             onclick={() => onSelectSite(site.name)}
           />
@@ -54,7 +54,7 @@ let {
       <div class="thumbnail-grid">
         {#each recentPages as page}
           <PageThumbnail
-            url={page.url}
+            url={`/ext/pages/public/${page.mind}/${page.file}`}
             label={page.file}
             sublabel="{page.mind} · {formatRelativeTime(page.modified)}"
             onclick={() => onSelectPage(page.mind, page.file)}

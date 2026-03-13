@@ -17,6 +17,7 @@ onMount(() => {
 type Route =
   | { view: "dashboard" }
   | { view: "site"; name: string }
+  | { view: "page"; name: string; path: string }
   | { view: "mind"; name: string };
 
 let route = $derived.by((): Route => {
@@ -25,6 +26,10 @@ let route = $derived.by((): Route => {
   // #/mind/{name} → mind-scoped site
   const mindMatch = h.match(/^mind\/([^/]+)/);
   if (mindMatch) return { view: "mind", name: mindMatch[1] };
+
+  // #/{name}/{path...} → individual page view
+  const pageMatch = h.match(/^([^/]+)\/(.+)$/);
+  if (pageMatch) return { view: "page", name: pageMatch[1], path: pageMatch[2] };
 
   // #/{name} → site view
   if (h && !h.includes("/")) return { view: "site", name: h };
@@ -53,20 +58,30 @@ function navigateParent(path: string) {
 }
 
 function handleSelectPage(mind: string, path: string) {
-  navigateParent(`/minds/${mind}/pages/${path}`);
+  if (mind === "_system") {
+    navigateParent(`/pages/_system/${path}`);
+  } else {
+    navigateParent(`/minds/${mind}/pages/${path}`);
+  }
 }
 
 function handleSelectSite(name: string) {
-  if (name !== "_system") {
-    navigateParent(`/minds/${name}/pages`);
+  if (name === "_system") {
+    navigateParent(`/pages/_system`);
   } else {
-    window.location.hash = `#/${name}`;
+    navigateParent(`/minds/${name}/pages`);
   }
 }
 </script>
 
-<div class="ext-app">
-  {#if (route.view === "site" || route.view === "mind") && selectedSite}
+<div class="ext-app" class:full-page={route.view === "page"}>
+  {#if route.view === "page"}
+    <iframe
+      src="/ext/pages/public/{route.name}/{route.path}"
+      class="full-page-iframe"
+      title="{route.name}/{route.path}"
+    ></iframe>
+  {:else if (route.view === "site" || route.view === "mind") && selectedSite}
     <SiteView site={selectedSite} onSelectPage={handleSelectPage} />
   {:else}
     <PagesDashboard {sites} {recentPages} onSelectSite={handleSelectSite} onSelectPage={handleSelectPage} />
@@ -79,5 +94,17 @@ function handleSelectSite(name: string) {
     max-width: 100%;
     min-height: 100%;
     animation: fadeIn 0.2s ease both;
+  }
+
+  .ext-app.full-page {
+    padding: 0;
+    height: 100%;
+  }
+
+  .full-page-iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: white;
   }
 </style>

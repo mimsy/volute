@@ -10,12 +10,14 @@ let {
   sublabel?: string;
   onclick?: () => void;
 } = $props();
+
+let loaded = $state(false);
 </script>
 
 <button class="thumbnail-card" {onclick}>
   <div class="thumbnail-frame">
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-    <iframe src={url} loading="lazy" sandbox="allow-same-origin" tabindex={-1} title={label}></iframe>
+    <iframe src={url} loading="lazy" sandbox="allow-same-origin" tabindex={-1} title={label} class:loaded onload={() => loaded = true}></iframe>
   </div>
   <div class="thumbnail-label">{label}</div>
   {#if sublabel}<div class="thumbnail-sublabel">{sublabel}</div>{/if}
@@ -55,6 +57,12 @@ let {
     pointer-events: none;
     border: none;
     background: white;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  iframe.loaded {
+    opacity: 1;
   }
 
   .thumbnail-label {

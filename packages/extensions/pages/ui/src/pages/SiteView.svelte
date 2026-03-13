@@ -33,7 +33,7 @@ let {
   <div class="thumbnail-grid">
     {#each site.pages as page}
       <PageThumbnail
-        url={page.url}
+        url={`/ext/pages/public/${site.name}/${page.file}`}
         label={page.file}
         sublabel={formatRelativeTime(page.modified)}
         onclick={() => onSelectPage(site.name, page.file)}

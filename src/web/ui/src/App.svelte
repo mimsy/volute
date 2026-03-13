@@ -216,7 +216,22 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
       }
     } else if (sel.kind === "extension") {
       const ext = data.extensions.find((e) => e.id === sel.extensionId);
-      crumbs.push({ label: ext?.name ?? sel.extensionId });
+      const extBase = ext?.systemSections?.flatMap((s) => s.urlPatterns ?? [])?.[0];
+      crumbs.push({
+        label: ext?.name ?? sel.extensionId,
+        action: sel.path ? () => navigate(extBase ?? `/ext/${sel.extensionId}`) : undefined,
+      });
+      if (sel.path) {
+        const pathParts = sel.path.split("/");
+        for (let i = 0; i < pathParts.length; i++) {
+          const isLast = i === pathParts.length - 1;
+          const partialPath = pathParts.slice(0, i + 1).join("/");
+          crumbs.push({
+            label: pathParts[i],
+            action: !isLast && extBase ? () => navigate(`${extBase}/${partialPath}`) : undefined,
+          });
+        }
+      }
     } else if (sel.kind === "settings") {
       crumbs.push({ label: "settings" });
     }

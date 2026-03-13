@@ -26,6 +26,7 @@ let {
 
 let renderedBody = $derived(renderMarkdown(bodyHtml));
 let cardColor = $derived(color ? `var(--${color})` : "var(--text-2)");
+let iframeLoaded = $state(false);
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -53,9 +54,11 @@ let cardColor = $derived(color ? `var(--${color})` : "var(--text-2)");
       <iframe
         src={iframeUrl}
         class="page-preview"
+        class:loaded={iframeLoaded}
         title={title}
         sandbox="allow-same-origin"
         onpointerdown={(e) => e.preventDefault()}
+        onload={() => iframeLoaded = true}
       ></iframe>
     {:else}
       <div class="body-html markdown-body">{@html renderedBody}</div>
@@ -145,5 +148,11 @@ let cardColor = $derived(color ? `var(--${color})` : "var(--text-2)");
     border: none;
     pointer-events: none;
     background: white;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  .page-preview.loaded {
+    opacity: 1;
   }
 </style>
