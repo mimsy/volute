@@ -9,6 +9,8 @@ let {
   author,
   bodyHtml,
   iframeUrl,
+  icon,
+  color,
   onclick,
 }: {
   title: string;
@@ -17,15 +19,28 @@ let {
   author?: string;
   bodyHtml: string;
   iframeUrl?: string;
+  icon?: string;
+  color?: string;
   onclick?: () => void;
 } = $props();
 
 let renderedBody = $derived(renderMarkdown(bodyHtml));
+let cardColor = $derived(color ? `var(--${color})` : "var(--text-2)");
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="feed-card" role="button" tabindex="0" onclick={onclick} onkeydown={(e) => { if (e.key === 'Enter') onclick?.(); }}>
-  <div class="feed-card-header">
+<div
+  class="feed-card"
+  role="button"
+  tabindex="0"
+  onclick={onclick}
+  onkeydown={(e) => { if (e.key === 'Enter') onclick?.(); }}
+  style:border-color="color-mix(in srgb, {cardColor} 25%, var(--border))"
+>
+  <div class="feed-card-header" style:border-bottom-color="color-mix(in srgb, {cardColor} 25%, var(--border))">
+    {#if icon}
+      <span class="feed-card-icon" style:color={cardColor}>{@html icon}</span>
+    {/if}
     <span class="feed-card-label">{title}</span>
     {#if author}
       <span class="feed-card-author">{author}</span>
@@ -75,6 +90,16 @@ let renderedBody = $derived(renderMarkdown(bodyHtml));
     display: flex;
     align-items: center;
     gap: 6px;
+  }
+
+  .feed-card-icon {
+    display: flex;
+    flex-shrink: 0;
+  }
+
+  .feed-card-icon :global(svg) {
+    width: 14px;
+    height: 14px;
   }
 
   .feed-card-label {
