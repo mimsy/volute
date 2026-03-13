@@ -372,13 +372,11 @@ function handleSessionClick(session: string) {
     content: "";
     position: absolute;
     left: -4px;
-    /* Center vertically: padding-top varies (12px normal, 4px first-child)
-       but content height is consistent, so use the flex center */
     top: 0;
     bottom: 0;
     width: 6px;
     margin-top: auto;
-    margin-bottom: auto;
+    margin-bottom: 14.5px;
     height: 6px;
     border-radius: 50%;
     background: var(--border-bright);
