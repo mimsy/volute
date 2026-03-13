@@ -55,6 +55,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
           date: p.modified,
           author: p.mind,
           bodyHtml: `<p>Page updated</p>`,
+          iframeUrl: `/ext/pages/public/${p.mind}/${p.file}`,
         })),
       );
     })

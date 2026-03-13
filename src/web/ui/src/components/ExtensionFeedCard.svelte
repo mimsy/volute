@@ -1,10 +1,13 @@
 <script lang="ts">
+import { formatRelativeTime } from "../lib/format";
+
 let {
   title,
   url,
   date,
   author,
   bodyHtml,
+  iframeUrl,
   onclick,
 }: {
   title: string;
@@ -12,105 +15,116 @@ let {
   date: string;
   author?: string;
   bodyHtml: string;
+  iframeUrl?: string;
   onclick?: () => void;
 } = $props();
 
 function sanitizeHtml(html: string): string {
-  // Strip script tags, event handlers, and dangerous attributes
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/\bon\w+\s*=\s*"[^"]*"/gi, "")
     .replace(/\bon\w+\s*=\s*'[^']*'/gi, "")
     .replace(/javascript:/gi, "");
 }
-
-function relativeTime(iso: string): string {
-  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  const months = Math.floor(days / 30);
-  return `${months}mo ago`;
-}
 </script>
 
-<button class="card" {onclick}>
-  <div class="header">
-    <h3 class="title">{title}</h3>
-    <span class="date">{relativeTime(date)}</span>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="feed-card" role="button" tabindex="0" onclick={onclick} onkeydown={(e) => { if (e.key === 'Enter') onclick?.(); }}>
+  <div class="feed-card-header">
+    <span class="feed-card-label">{title}</span>
+    {#if author}
+      <span class="feed-card-author">{author}</span>
+    {/if}
+    <span class="feed-card-meta">{formatRelativeTime(date)}</span>
   </div>
-  <div class="body">{@html sanitizeHtml(bodyHtml)}</div>
-  {#if author}
-    <div class="meta">
-      <span class="author">{author}</span>
-    </div>
-  {/if}
-</button>
+  <div class="feed-card-body">
+    {#if iframeUrl}
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <iframe
+        src={iframeUrl}
+        class="page-preview"
+        title={title}
+        sandbox="allow-same-origin"
+        onpointerdown={(e) => e.preventDefault()}
+      ></iframe>
+    {:else}
+      <div class="body-html">{@html sanitizeHtml(bodyHtml)}</div>
+    {/if}
+  </div>
+</div>
 
 <style>
-  .card {
-    display: block;
-    width: 100%;
-    padding: 20px;
-    background: var(--bg-2);
+  .feed-card {
+    background: var(--bg-0);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
+    display: flex;
+    flex-direction: column;
+    height: 240px;
+    overflow: hidden;
+    transition: border-color 0.15s;
     cursor: pointer;
-    transition: all 0.15s ease;
-    text-align: left;
-    font-family: var(--sans);
   }
 
-  .card:hover {
+  .feed-card:hover {
     border-color: var(--border-bright);
   }
 
-  .header {
+  .feed-card-header {
+    padding: 6px 8px 6px 10px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-1);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 8px;
+    align-items: center;
+    gap: 6px;
   }
 
-  .title {
-    font-family: var(--display);
-    font-size: 17px;
-    font-weight: 400;
-    color: var(--text-0);
-    margin: 0;
-  }
-
-  .date {
-    font-size: 12px;
-    color: var(--text-2);
+  .feed-card-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .feed-card-author {
+    font-size: 11px;
+    color: var(--accent);
     flex-shrink: 0;
   }
 
-  .body {
+  .feed-card-meta {
+    font-size: 11px;
+    color: var(--text-2);
+    font-weight: 400;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+
+  .feed-card-body {
+    flex: 1;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .body-html {
+    padding: 10px 12px;
     font-size: 14px;
     color: var(--text-1);
-    margin: 0 0 12px;
+    line-height: 1.5;
     display: -webkit-box;
-    -webkit-line-clamp: 3;
+    -webkit-line-clamp: 6;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    line-height: 1.5;
   }
 
-  .meta {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    font-size: 13px;
-  }
-
-  .author {
-    color: var(--accent);
+  .page-preview {
+    width: 100%;
+    height: 100%;
+    border: none;
+    pointer-events: none;
   }
 </style>

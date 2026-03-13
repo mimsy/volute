@@ -61,6 +61,7 @@ type ExtFeedItem = {
   date: string;
   author?: string;
   bodyHtml: string;
+  iframeUrl?: string;
   extensionId: string;
 };
 
@@ -170,6 +171,7 @@ $effect(() => {
                   date={item.item.date}
                   author={item.item.author}
                   bodyHtml={item.item.bodyHtml}
+                  iframeUrl={item.item.iframeUrl}
                   onclick={() => navigate(item.item.url)}
                 />
               </div>

@@ -71,6 +71,7 @@ export type ExtensionFeedItem = {
   icon?: string;
   color?: string;
   bodyHtml: string;
+  iframeUrl?: string;
 };
 
 export type ExtensionManifest = {

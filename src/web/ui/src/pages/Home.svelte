@@ -30,6 +30,7 @@ type ExtFeedItem = {
   date: string;
   author?: string;
   bodyHtml: string;
+  iframeUrl?: string;
   extensionId: string;
 };
 
@@ -139,6 +140,7 @@ function getConvLabel(conv: ConversationWithDetails): string {
               date={item.item.date}
               author={item.item.author}
               bodyHtml={item.item.bodyHtml}
+              iframeUrl={item.item.iframeUrl}
               onclick={() => navigate(item.item.url)}
             />
           </div>
