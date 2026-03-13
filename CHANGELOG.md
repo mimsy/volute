@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.1](https://github.com/mimsy/volute/compare/volute-v0.30.0...volute-v0.30.1) (2026-03-13)
+
+
+### Bug Fixes
+
+* move @mariozechner/pi-ai to dependencies for system installs ([#203](https://github.com/mimsy/volute/issues/203)) ([5880407](https://github.com/mimsy/volute/commit/588040715f0a638b180ac4797ec1a1600361625f))
+
 ## [0.30.0](https://github.com/mimsy/volute/compare/volute-v0.29.0...volute-v0.30.0) (2026-03-13)
 
 
