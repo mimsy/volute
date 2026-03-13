@@ -99,21 +99,26 @@ async function handleClick() {
   style:--type-color={color}
 >
   <div class="marker" style:background={color}></div>
+  {#if event.type === "summary" && turnExpanded}
+    <div class="turn-connector"></div>
+  {/if}
 
   {#if event.type === "summary"}
-    <div class="event-header">
-      {#if meta?.from_time && meta?.to_time}
-        <span class="time">{formatTime(meta.from_time)} – {formatTime(meta.to_time)}</span>
-      {:else}
-        <span class="time">{formatTime(event.created_at)}</span>
-      {/if}
+    <div class="summary-header" class:expanded={turnExpanded}>
+      <div class="summary-header-line">
+        {#if meta?.from_time && meta?.to_time}
+          <span class="time">{formatTime(meta.from_time)} – {formatTime(meta.to_time)}</span>
+        {:else}
+          <span class="time">{formatTime(event.created_at)}</span>
+        {/if}
+        {#if expandable}
+          <span class="chevron">{turnExpanded ? "▼" : "▶"}</span>
+        {/if}
+      </div>
       {#if event.session}
         <button class="session-tag" onclick={(e) => { e.stopPropagation(); onsessionclick?.(event.session!); }}>
           {event.session}
         </button>
-      {/if}
-      {#if expandable}
-        <span class="chevron">{turnExpanded ? "▼" : "▶"}</span>
       {/if}
     </div>
 
@@ -128,6 +133,10 @@ async function handleClick() {
             {/each}
           {/if}
           <div class="branch-summary">
+            <div class="event-header">
+              <span class="time">{formatTime(event.created_at)}</span>
+              <span class="type-badge" style:background="{color}15" style:color={color}>summary</span>
+            </div>
             <span class="summary-text">{event.content}</span>
           </div>
           <div class="branch-return"></div>
@@ -229,6 +238,18 @@ async function handleClick() {
   }
   .event.collapsible {
     cursor: pointer;
+  }
+
+  .summary-header {
+    margin-bottom: 4px;
+  }
+  .summary-header.expanded {
+    margin-left: 14px;
+  }
+  .summary-header-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
   .marker {
@@ -379,39 +400,38 @@ async function handleClick() {
     font-style: italic;
   }
 
-  .turn-branch {
-    position: relative;
-    margin-top: 4px;
-    margin-left: -13px;
-    padding-left: 9px;
-    padding-bottom: 8px;
-  }
-  /* Sub-rail vertical line — extends up to connect with summary dot */
-  .turn-branch::before {
-    content: "";
+  /* Sub-rail: vertical line from dot to event bottom, at sub-rail X position */
+  .turn-connector {
     position: absolute;
-    left: 7px;
-    top: -13px;
-    bottom: 6px;
+    top: 15px;
+    left: 22px;
     width: 2px;
+    bottom: 12px;
     background: var(--border);
   }
   /* Horizontal connector from main rail dot to sub-rail */
-  .turn-branch::after {
+  .turn-connector::after {
     content: "";
     position: absolute;
-    top: -13px;
-    left: -8px;
-    width: 17px;
+    top: 0;
+    left: -23px;
+    width: 23px;
     height: 2px;
     background: var(--border);
+  }
+
+  .turn-branch {
+    position: relative;
+    margin-left: -5px;
+    padding-left: 9px;
+    padding-bottom: 8px;
   }
   /* Return connector from sub-rail back to main rail */
   .branch-return {
     position: absolute;
     bottom: 6px;
-    left: -8px;
-    width: 17px;
+    left: -16px;
+    width: 24px;
     height: 2px;
     background: var(--border);
   }
@@ -431,5 +451,24 @@ async function handleClick() {
     border-radius: 50%;
     background: var(--green);
     z-index: 1;
+  }
+  /* Hover track highlight on sub-rail for summary */
+  .branch-summary::after {
+    content: "";
+    position: absolute;
+    left: -2px;
+    top: 12px;
+    bottom: -2px;
+    width: 2px;
+    background: var(--green);
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 1;
+  }
+  .branch-summary:hover::after {
+    opacity: 1;
+  }
+  .branch-summary:hover ~ .branch-return {
+    background: var(--green);
   }
 </style>
