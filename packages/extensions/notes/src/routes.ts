@@ -174,7 +174,11 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       const rawFeedLimit = c.req.query("limit");
       const limit = rawFeedLimit ? parseInt(rawFeedLimit, 10) : 8;
       if (Number.isNaN(limit)) return c.json({ error: "Invalid limit parameter" }, 400);
-      const notes = await listNotes(db, getUser, getUserByUsername, { limit });
+      const mind = c.req.query("mind");
+      const notes = await listNotes(db, getUser, getUserByUsername, {
+        limit,
+        ...(mind ? { authorUsername: mind } : {}),
+      });
       return c.json(
         notes.map((n) => ({
           id: `note-${n.author_username}-${n.slug}`,

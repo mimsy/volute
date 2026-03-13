@@ -44,7 +44,9 @@ export function createRoutes(ctx: ExtensionContext): Hono {
     })
     .get("/feed", async (c) => {
       const pw = await getPagesWatcher();
-      const recentPages = await pw.getCachedRecentPages();
+      let recentPages = await pw.getCachedRecentPages();
+      const mind = c.req.query("mind");
+      if (mind) recentPages = recentPages.filter((p: any) => p.mind === mind);
       const rawLimit = c.req.query("limit");
       const limit = rawLimit ? parseInt(rawLimit, 10) : 8;
       return c.json(

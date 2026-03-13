@@ -421,15 +421,21 @@ async function discoverLocalExtensions(): Promise<ExtensionManifest[]> {
 
   for (const dir of entries) {
     const extDir = resolve(baseDir, dir);
-    // Look for an entry point: index.ts, index.js, src/index.ts, src/index.js
-    const candidates = [
-      resolve(extDir, "src", "index.ts"),
-      resolve(extDir, "src", "index.js"),
-      resolve(extDir, "index.ts"),
-      resolve(extDir, "index.js"),
-    ];
-    const entryPoint = candidates.find((p) => existsSync(p));
-    if (!entryPoint) continue;
+    // Look for an entry point — prefer .js; skip .ts in production (no TS loader)
+    const jsCandidates = [resolve(extDir, "src", "index.js"), resolve(extDir, "index.js")];
+    const tsCandidates = [resolve(extDir, "src", "index.ts"), resolve(extDir, "index.ts")];
+    const entryPoint = jsCandidates.find((p) => existsSync(p));
+    if (!entryPoint) {
+      const tsEntry = tsCandidates.find((p) => existsSync(p));
+      if (tsEntry) {
+        log.warn(
+          `local extension at ${extDir} has a .ts entry point but no .js — ` +
+            `build the extension or run the daemon with tsx`,
+        );
+        continue;
+      }
+      continue;
+    }
 
     try {
       const mod = await import(entryPoint);
