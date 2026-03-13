@@ -55,9 +55,9 @@ function navigateParent(path: string) {
   window.parent.postMessage({ type: "navigate", path }, "*");
 }
 
-function noteUrl(slug: string): string {
+function noteUrl(author: string, slug: string): string {
   if (route.mindContext) return `/minds/${route.mindContext}/notes/${slug}`;
-  return `/notes/${slug}`;
+  return `/notes/${author}/${slug}`;
 }
 </script>
 
@@ -67,13 +67,13 @@ function noteUrl(slug: string): string {
       author={route.author}
       slug={route.slug}
       {username}
-      onNavigate={(_author, slug) => navigateParent(noteUrl(slug))}
+      onNavigate={(author, slug) => navigateParent(noteUrl(author, slug))}
       onBack={() => route.mindContext ? navigateParent(`/minds/${route.mindContext}/notes`) : navigateHash("")}
     />
   {:else}
     <NotesList
       author={route.author}
-      onSelectNote={(_author, slug) => navigateParent(noteUrl(slug))}
+      onSelectNote={(author, slug) => navigateParent(noteUrl(author, slug))}
     />
   {/if}
 </div>
