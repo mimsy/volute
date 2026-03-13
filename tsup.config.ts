@@ -14,6 +14,11 @@ export default defineConfig([
     splitting: true,
     clean: true,
     banner: { js: "#!/usr/bin/env node" },
+    external: [
+      "@mariozechner/pi-ai",
+      "@mariozechner/pi-coding-agent",
+      "@anthropic-ai/claude-agent-sdk",
+    ],
   },
   {
     entry: { api: "src/api.ts" },

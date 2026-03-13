@@ -18,6 +18,7 @@ const typeColors: Record<string, string> = {
   log: "var(--text-2)",
   session_start: "var(--accent)",
   done: "var(--text-2)",
+  summary: "var(--green)",
 };
 
 let color = $derived(typeColors[event.type] ?? "var(--text-2)");
@@ -118,6 +119,11 @@ function formatArgs(args: unknown): string {
       <span class="dim">session started</span>
       {#if event.session}
         <span class="session-id">{event.session}</span>
+      {/if}
+    {:else if event.type === "summary"}
+      <span class="summary-text">{event.content}</span>
+      {#if meta?.from_time && meta?.to_time}
+        <span class="time-range">{formatTime(meta.from_time)} – {formatTime(meta.to_time)}</span>
       {/if}
     {:else if event.type === "done"}
       <span class="dim">processing complete</span>
@@ -275,5 +281,14 @@ function formatArgs(args: unknown): string {
     color: var(--text-1);
     font-weight: 600;
     margin-left: 4px;
+  }
+  .summary-text {
+    font-size: 13px;
+    color: var(--green);
+  }
+  .time-range {
+    font-size: 11px;
+    color: var(--text-2);
+    margin-left: 8px;
   }
 </style>

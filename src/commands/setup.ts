@@ -429,5 +429,25 @@ export async function run(args: string[]) {
 
   writeGlobalConfig(config);
 
+  // Optional AI provider configuration (interactive only)
+  if (isInteractive) {
+    const wantAi = (await promptLine("\nConfigure an AI provider? (optional) [y/N]: "))
+      .trim()
+      .toLowerCase();
+    if (wantAi === "y" || wantAi === "yes") {
+      const aiProvider = (await promptLine("Provider (anthropic, openai, google, etc.): ")).trim();
+      if (aiProvider) {
+        const aiApiKey = (await promptLine("API key (leave empty to use env var): ")).trim();
+        if (aiApiKey) {
+          const { saveProviderConfig } = await import("../lib/ai-service.js");
+          saveProviderConfig(aiProvider, { apiKey: aiApiKey });
+          console.log(`  AI provider configured: ${aiProvider}`);
+        } else {
+          console.log(`  Using env var for ${aiProvider} (no explicit key saved)`);
+        }
+      }
+    }
+  }
+
   console.log(`\nDone! Use \`volute mind create <name>\` to create your first mind.`);
 }

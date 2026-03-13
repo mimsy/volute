@@ -11,6 +11,7 @@ const PAGE_SIZE = 100;
 const ALL_TYPES = new Set([
   "inbound",
   "outbound",
+  "summary",
   "text",
   "tool_use",
   "tool_result",

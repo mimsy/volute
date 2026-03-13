@@ -12,11 +12,27 @@ export type SetupConfig = {
   service: boolean;
 };
 
+export type AiProviderConfig = {
+  apiKey?: string;
+  oauth?: {
+    refresh: string;
+    access: string;
+    expires: number;
+    [key: string]: unknown;
+  };
+};
+
+export type AiConfig = {
+  providers: Record<string, AiProviderConfig>;
+  models?: string[];
+};
+
 export type GlobalConfig = {
   name?: string;
   hostname?: string;
   port?: number;
   setup?: SetupConfig;
+  ai?: AiConfig;
 };
 
 export function configPath(): string {
