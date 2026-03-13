@@ -22,9 +22,7 @@ if (command === "--version" || command === "-v") {
 // Gate commands on setup — skip for setup itself, help, version, and update
 const ungatedCommands = new Set(["setup", "--help", "-h", "--version", "-v", "update", undefined]);
 if (!ungatedCommands.has(command)) {
-  const { isSetupComplete, migrateSetupConfig } = await import("./lib/setup.js");
-  // Auto-migrate existing users so they're never blocked
-  migrateSetupConfig();
+  const { isSetupComplete } = await import("./lib/setup.js");
   if (!isSetupComplete()) {
     console.error("Volute is not set up. Run `volute setup` first.");
     process.exit(1);

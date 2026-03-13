@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { voluteHome, voluteSystemDir } from "./registry.js";
+import { voluteSystemDir } from "./registry.js";
 
 export type SetupType = "local" | "system";
 export type IsolationMode = "sandbox" | "user" | "none";
@@ -45,13 +45,11 @@ export function configPath(): string {
 
 export function readGlobalConfig(): GlobalConfig {
   const path = configPath();
-  const legacyPath = resolve(voluteHome(), "config.json");
-  const effectivePath = existsSync(path) ? path : legacyPath;
-  if (!existsSync(effectivePath)) return {};
+  if (!existsSync(path)) return {};
   try {
-    return JSON.parse(readFileSync(effectivePath, "utf-8"));
+    return JSON.parse(readFileSync(path, "utf-8"));
   } catch (err) {
-    console.error(`Failed to parse ${effectivePath}: ${err instanceof Error ? err.message : err}`);
+    console.error(`Failed to parse ${path}: ${err instanceof Error ? err.message : err}`);
     return {};
   }
 }
@@ -66,61 +64,4 @@ export function writeGlobalConfig(config: GlobalConfig): void {
 export function isSetupComplete(): boolean {
   const config = readGlobalConfig();
   return config.setup != null;
-}
-
-/**
- * For existing users who have ~/.volute/minds.json but no setup config,
- * auto-populate setup state so they're never blocked.
- */
-export function migrateSetupConfig(): void {
-  const config = readGlobalConfig();
-  if (config.setup) return; // already configured
-
-  const home = voluteHome();
-  const systemDir = voluteSystemDir();
-  const registryPath = resolve(systemDir, "minds.json");
-  const legacyRegistryPath = resolve(home, "minds.json");
-  if (!existsSync(registryPath) && !existsSync(legacyRegistryPath)) return; // truly fresh install, no migration needed
-
-  // Existing user — infer setup state
-  const isSystem = process.env.VOLUTE_ISOLATION === "user";
-  const mindsDir = process.env.VOLUTE_MINDS_DIR || resolve(home, "minds");
-
-  // Detect if a service is installed
-  let hasService = false;
-  try {
-    // Check macOS launchd
-    if (process.platform === "darwin") {
-      const plistPath = resolve(
-        process.env.HOME || "",
-        "Library",
-        "LaunchAgents",
-        "com.volute.daemon.plist",
-      );
-      if (existsSync(plistPath)) hasService = true;
-    }
-    // Check Linux systemd
-    if (process.platform === "linux") {
-      if (existsSync("/etc/systemd/system/volute.service")) hasService = true;
-      const userUnit = resolve(
-        process.env.HOME || "",
-        ".config",
-        "systemd",
-        "user",
-        "volute.service",
-      );
-      if (existsSync(userUnit)) hasService = true;
-    }
-  } catch {
-    // Detection is best-effort
-  }
-
-  const setup: SetupConfig = {
-    type: isSystem ? "system" : "local",
-    isolation: isSystem ? "user" : "none",
-    mindsDir,
-    service: hasService,
-  };
-
-  writeGlobalConfig({ ...config, setup });
 }

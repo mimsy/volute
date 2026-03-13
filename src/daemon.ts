@@ -3,7 +3,6 @@ import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { format } from "node:util";
-import { migrateMindRoles } from "./lib/auth.js";
 import { initBridgeManager } from "./lib/daemon/bridge-manager.js";
 import { initMailPoller } from "./lib/daemon/mail-poller.js";
 import { initMindManager } from "./lib/daemon/mind-manager.js";
@@ -20,17 +19,9 @@ import {
 } from "./lib/extensions.js";
 import { cleanExpiredLogs } from "./lib/history-cleanup.js";
 import log from "./lib/logger.js";
-import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
-import {
-  migrateDotVoluteDir,
-  migrateMindState,
-  migratePagesDirToPublic,
-} from "./lib/migrate-state.js";
-import { migrateToSystemDir } from "./lib/migrate-system-dir.js";
 import {
   ensureSystemDir,
   readAllMinds,
-  readRegistry,
   setMindRunning,
   voluteHome,
   voluteSystemDir,
@@ -83,12 +74,6 @@ export async function startDaemon(opts: {
   mkdirSync(home, { recursive: true });
   ensureSystemDir();
 
-  // One-time migration: move infrastructure files to system/ subdirectory
-  migrateToSystemDir();
-
-  // One-time migration: agents.json → minds.json, agents/ → minds/
-  migrateAgentsToMinds();
-
   // Initialize shared repo for inter-mind collaboration (non-fatal)
   try {
     await ensureSharedRepo();
@@ -98,18 +83,6 @@ export async function startDaemon(opts: {
 
   // Initialize database (runs drizzle migrations + creates raw connection)
   await (await import("./lib/db.js")).getDb();
-
-  // Migrate minds.json + variants.json into DB (idempotent)
-  const { migrateRegistryToDb } = await import("./lib/migrate-registry-to-db.js");
-  migrateRegistryToDb();
-
-  // Migrate group DMs to channels (idempotent, non-fatal)
-  try {
-    const { migrateGroupDMsToChannels } = await import("./lib/events/conversations.js");
-    await migrateGroupDMsToChannels();
-  } catch (err) {
-    log.error("failed to migrate group DMs to channels", log.errorData(err));
-  }
 
   // Initialize sandbox runtime for mind process isolation
   const { initSandbox } = await import("./lib/sandbox.js");
@@ -197,18 +170,6 @@ export async function startDaemon(opts: {
   sleepManager.start();
   const unsubscribeWebhook = initWebhook();
 
-  // Migrate .volute/ → .mind/ and system state for all registered minds
-  const registry = await readRegistry();
-  for (const entry of registry) {
-    for (const migrate of [migrateDotVoluteDir, migrateMindState, migratePagesDirToPublic]) {
-      try {
-        migrate(entry.name);
-      } catch (err) {
-        log.warn(`failed to migrate state for ${entry.name}`, log.errorData(err));
-      }
-    }
-  }
-
   // Start all minds + variants that were previously running (parallel, concurrency limit of 5)
   // Skip sleeping minds — they only need connectors, not the mind process
   const allMinds = await readAllMinds();
@@ -280,11 +241,6 @@ export async function startDaemon(opts: {
   });
   cleanExpiredLogs().catch((err) => {
     log.warn("failed to clean expired logs", log.errorData(err));
-  });
-
-  // Migrate mind users from role "mind"/"agent" to "user" (non-blocking)
-  migrateMindRoles().catch((err) => {
-    log.warn("failed to migrate mind roles", log.errorData(err));
   });
 
   log.info(`running on ${hostname}:${port}, pid ${myPid}`);
