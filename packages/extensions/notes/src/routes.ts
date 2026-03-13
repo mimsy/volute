@@ -184,7 +184,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
           author: n.author_username,
           bodyHtml: n.content,
           icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>',
-          color: "orange",
+          color: "yellow",
         })),
       );
     });
