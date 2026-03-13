@@ -280,9 +280,14 @@ function handleSessionClick(session: string) {
     {#if filters.preset === 'summary'}
       <div class="timeline-rail">
         {#each sessionGroups as group (group.session)}
-          <button class="session-group-header" onclick={() => handleSessionClick(group.session)}>
-            {group.session || "no session"}
-          </button>
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="session-divider" onclick={() => handleSessionClick(group.session)}>
+            <div class="session-dot"></div>
+            <div class="session-divider-line"></div>
+            <span class="session-divider-label">{group.session || "no session"}</span>
+            <div class="session-divider-line"></div>
+          </div>
           {#each group.events as ev (ev.id)}
             <HistoryEvent event={ev} mindName={name} expandable onsessionclick={handleSessionClick} />
           {/each}
@@ -353,25 +358,58 @@ function handleSessionClick(session: string) {
     background: var(--timeline-rail);
   }
 
-  .session-group-header {
-    display: block;
-    width: 100%;
-    text-align: left;
-    padding: 8px 8px 4px 20px;
-    margin-top: 12px;
+  .session-divider {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 8px 8px 8px;
+    cursor: pointer;
+  }
+  .session-divider:first-child {
+    padding-top: 4px;
+  }
+  .session-dot {
+    position: absolute;
+    left: -4px;
+    top: 17px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--border-bright);
+    z-index: 1;
+  }
+  .session-divider-line {
+    flex: 1;
+    border-top: 1px solid var(--border);
+  }
+  .session-divider-line:first-of-type {
+    margin-left: -6px;
+  }
+  .session-divider-label {
     font-size: 12px;
     font-weight: 600;
     color: var(--text-2);
-    background: none;
-    border: none;
-    cursor: pointer;
+    white-space: nowrap;
     transition: color 0.15s;
   }
-  .session-group-header:first-child {
-    margin-top: 0;
-  }
-  .session-group-header:hover {
+  .session-divider:hover .session-divider-label {
     color: var(--accent);
+  }
+  /* Hover: highlight main rail from session dot to next item */
+  .session-divider::after {
+    content: "";
+    position: absolute;
+    left: -2px;
+    top: 20px;
+    bottom: -16px;
+    width: 2px;
+    background: var(--accent);
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .session-divider:hover::after {
+    opacity: 1;
   }
 
   .error {

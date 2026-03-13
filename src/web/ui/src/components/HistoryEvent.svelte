@@ -131,7 +131,7 @@ async function handleClick() {
           <span class="chevron">{turnExpanded ? "▼" : "▶"}</span>
         {/if}
       </div>
-      {#if event.session}
+      {#if event.session && !expandable}
         <button class="session-tag" onclick={(e) => { e.stopPropagation(); onsessionclick?.(event.session!); }}>
           {event.session}
         </button>
@@ -238,7 +238,7 @@ async function handleClick() {
     position: absolute;
     left: -2px;
     top: 12px;
-    bottom: -12px;
+    bottom: -24px;
     width: 2px;
     background: var(--type-color);
     opacity: 0;
