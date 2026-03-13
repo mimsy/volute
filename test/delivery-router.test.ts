@@ -69,18 +69,6 @@ describe("getRoutingConfig", () => {
 
     removeMind(name);
   });
-
-  it("normalizes flat array to { rules: [...] }", () => {
-    const name = createMindWithRoutes([
-      { channel: "system", session: "system" },
-      { channel: "web", session: "web" },
-    ]);
-
-    const config = getRoutingConfig(name);
-    assert.equal(config.rules?.length, 2);
-
-    removeMind(name);
-  });
 });
 
 describe("resolveRoute (daemon-side)", () => {
@@ -169,7 +157,7 @@ describe("resolveDeliveryMode", () => {
 
   it("returns immediate when no sessions match", () => {
     const config: RoutingConfig = {
-      sessions: { discord: { interrupt: false } },
+      sessions: { discord: { delivery: "batch" } },
     };
     const r = resolveDeliveryMode(config, "slack");
     assert.equal(r.delivery.mode, "immediate");
@@ -201,54 +189,6 @@ describe("resolveDeliveryMode", () => {
     assert.equal(r.delivery.mode, "batch");
     assert.equal((r.delivery as any).debounce, 10);
     assert.equal((r.delivery as any).maxWait, 60);
-  });
-
-  it("maps legacy batch config to delivery mode", () => {
-    const config: RoutingConfig = {
-      sessions: { discord: { batch: { debounce: 20, maxWait: 120, triggers: ["@bot"] } } },
-    };
-    const r = resolveDeliveryMode(config, "discord");
-    assert.equal(r.delivery.mode, "batch");
-    const batch = r.delivery as {
-      mode: "batch";
-      debounce: number;
-      maxWait: number;
-      triggers?: string[];
-    };
-    assert.equal(batch.debounce, 20);
-    assert.equal(batch.maxWait, 120);
-    assert.deepEqual(batch.triggers, ["@bot"]);
-  });
-
-  it("maps legacy batch number (minutes) to delivery mode", () => {
-    const config: RoutingConfig = {
-      sessions: { discord: { batch: 15 } },
-    };
-    const r = resolveDeliveryMode(config, "discord");
-    assert.equal(r.delivery.mode, "batch");
-    assert.equal((r.delivery as any).maxWait, 900); // 15 * 60
-  });
-
-  it("maps legacy interrupt: false to batch mode", () => {
-    const config: RoutingConfig = {
-      sessions: { discord: { interrupt: false } },
-    };
-    const r = resolveDeliveryMode(config, "discord");
-    assert.equal(r.delivery.mode, "batch");
-    assert.equal(r.interrupt, false);
-  });
-
-  it("delivery field takes precedence over legacy batch", () => {
-    const config: RoutingConfig = {
-      sessions: {
-        main: {
-          delivery: "immediate",
-          batch: { debounce: 20, maxWait: 120 },
-        },
-      },
-    };
-    const r = resolveDeliveryMode(config, "main");
-    assert.equal(r.delivery.mode, "immediate");
   });
 
   it("matches glob session patterns", () => {

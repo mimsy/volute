@@ -21,25 +21,7 @@ const aiLog = log.child("ai-service");
 
 export function getAiConfig(): AiConfig | null {
   const config = readGlobalConfig();
-  if (!config.ai) return null;
-
-  // Migrate old single-provider format
-  const ai = config.ai as Record<string, unknown>;
-  if ("provider" in ai && !("providers" in ai)) {
-    const old = ai as { provider: string; apiKey?: string; oauth?: AiProviderConfig["oauth"] };
-    const migrated: AiConfig = {
-      providers: {
-        [old.provider]: {
-          ...(old.apiKey ? { apiKey: old.apiKey } : {}),
-          ...(old.oauth ? { oauth: old.oauth } : {}),
-        },
-      },
-    };
-    writeGlobalConfig({ ...config, ai: migrated });
-    return migrated;
-  }
-
-  return config.ai;
+  return config.ai ?? null;
 }
 
 export function saveProviderConfig(providerId: string, providerConfig: AiProviderConfig): void {

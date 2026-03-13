@@ -5,7 +5,6 @@ import { getOrCreateMindUser, getUserByUsername } from "../../../lib/auth.js";
 import {
   createConversation,
   deleteConversationForUser,
-  getMessages,
   getMessagesPaginated,
   getParticipants,
   isParticipantOrOwner,
@@ -36,13 +35,6 @@ const app = new Hono<AuthEnv>()
 
     const beforeStr = c.req.query("before");
     const limitStr = c.req.query("limit");
-
-    // If no cursor params, return all messages (backwards compat)
-    if (!beforeStr && !limitStr) {
-      const msgs = await getMessages(id);
-      return c.json({ items: msgs, hasMore: false });
-    }
-
     const before = beforeStr ? parseInt(beforeStr, 10) : undefined;
     const limit = limitStr ? parseInt(limitStr, 10) : undefined;
     if (

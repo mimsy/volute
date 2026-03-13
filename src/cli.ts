@@ -45,10 +45,6 @@ switch (command) {
   case "clock":
     await import("./commands/clock.js").then((m) => m.run(args));
     break;
-  case "schedule":
-    // Legacy alias — redirect to clock
-    await import("./commands/clock.js").then((m) => m.run(args));
-    break;
   case "skill":
     await import("./commands/skill.js").then((m) => m.run(args));
     break;

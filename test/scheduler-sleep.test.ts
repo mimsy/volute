@@ -72,30 +72,4 @@ describe("scheduler whileSleeping", () => {
     assert.equal(scheduler.deliveries.length, 1);
     assert.equal(scheduler.deliveries[0].payload.whileSleeping, "queue");
   });
-
-  it("maps legacy skipWhenSleeping: true to whileSleeping: skip", async () => {
-    const scheduler = new TestScheduler();
-    await (scheduler as any).fire("test-mind", {
-      id: "legacy-skip",
-      cron: "* * * * *",
-      message: "hello",
-      enabled: true,
-      skipWhenSleeping: true,
-    });
-    assert.equal(scheduler.deliveries.length, 1);
-    assert.equal(scheduler.deliveries[0].payload.whileSleeping, "skip");
-  });
-
-  it("does not map skipWhenSleeping: false", async () => {
-    const scheduler = new TestScheduler();
-    await (scheduler as any).fire("test-mind", {
-      id: "legacy-no-skip",
-      cron: "* * * * *",
-      message: "hello",
-      enabled: true,
-      skipWhenSleeping: false,
-    });
-    assert.equal(scheduler.deliveries.length, 1);
-    assert.equal(scheduler.deliveries[0].payload.whileSleeping, undefined);
-  });
 });

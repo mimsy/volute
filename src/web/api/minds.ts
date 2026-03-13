@@ -701,7 +701,7 @@ const app = new Hono<AuthEnv>()
               message:
                 "A quiet moment. You might write something — a note, a journal entry, a page. You could explore a topic that interests you, check in on #system, or just think. No obligations, just time.",
               enabled: true,
-              skipWhenSleeping: true,
+              whileSleeping: "skip",
             },
           ];
         }

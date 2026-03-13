@@ -20,6 +20,11 @@ describe("volute server HTTP contract", () => {
       calls.push({ content, channel: meta?.channel, sender: meta?.sender });
       return { messageId: `msg-${Date.now()}`, unsubscribe: () => {} };
     },
+    dispatch(content, _session, meta) {
+      calls.push({ content, channel: meta?.channel, sender: meta?.sender });
+      return { messageId: `msg-${Date.now()}`, unsubscribe: () => {} };
+    },
+    dispatchBatch() {},
     close() {},
   };
 

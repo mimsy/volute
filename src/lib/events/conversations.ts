@@ -191,16 +191,7 @@ export async function isParticipantOrOwner(
   conversationId: string,
   userId: number,
 ): Promise<boolean> {
-  // Check participant table first
-  if (await isParticipant(conversationId, userId)) return true;
-  // Fall back to legacy user_id column
-  const db = await getDb();
-  const row = await db
-    .select()
-    .from(conversations)
-    .where(and(eq(conversations.id, conversationId), eq(conversations.user_id, userId)))
-    .get();
-  return row != null;
+  return isParticipant(conversationId, userId);
 }
 
 export async function deleteConversationForUser(id: string, userId: number): Promise<boolean> {

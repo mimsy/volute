@@ -30,16 +30,14 @@ export function loadConfig(): {
   compaction?: { maxContextTokens?: number };
   subagents?: Record<string, SubagentConfig>;
 } {
-  // Mind-own config lives in config.json; fall back to volute.json for older minds
-  for (const file of ["home/.config/config.json", "home/.config/volute.json"]) {
-    try {
-      return JSON.parse(readFileSync(resolve(file), "utf-8"));
-    } catch (err: any) {
-      if (err?.code === "ENOENT") continue;
-      log("startup", `failed to parse ${file}:`, err);
+  try {
+    return JSON.parse(readFileSync(resolve("home/.config/config.json"), "utf-8"));
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") {
+      log("startup", "failed to parse config.json:", err);
     }
+    return {};
   }
-  return {};
 }
 
 function loadFile(path: string): string {

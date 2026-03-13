@@ -6,13 +6,11 @@ import {
   type ImageAttachment,
   resolveChannelId,
 } from "../channels.js";
-import { voluteHome, voluteSystemDir } from "../registry.js";
+import { voluteSystemDir } from "../registry.js";
 import { buildVoluteSlug } from "../slugify.js";
 
 function getDaemonConfig(): { url: string; token?: string } {
-  const newPath = resolve(voluteSystemDir(), "daemon.json");
-  const legacyPath = resolve(voluteHome(), "daemon.json");
-  const configPath = existsSync(newPath) ? newPath : legacyPath;
+  const configPath = resolve(voluteSystemDir(), "daemon.json");
   if (!existsSync(configPath)) {
     throw new Error("Volute daemon is not running");
   }
