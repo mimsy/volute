@@ -1,8 +1,8 @@
 import { syncMindProfile } from "../auth.js";
 import { publish as publishActivity } from "../events/activity-events.js";
 import { markIdle } from "../events/mind-activity-tracker.js";
+import { notifyExtensionsMindStart, notifyExtensionsMindStop } from "../extensions.js";
 import log from "../logger.js";
-import { startWatcher, stopWatcher } from "../pages-watcher.js";
 import { findMind, getBaseName, mindDir } from "../registry.js";
 import { joinSystemChannelForMind } from "../system-channel.js";
 import { readVoluteConfig } from "../volute-config.js";
@@ -61,7 +61,7 @@ export async function startMindFull(name: string): Promise<void> {
     );
   }
 
-  startWatcher(baseName);
+  notifyExtensionsMindStart(baseName);
 }
 
 /**
@@ -99,7 +99,7 @@ export async function stopMindFull(name: string): Promise<void> {
   const isBase = baseName === name;
 
   if (isBase) {
-    stopWatcher(baseName);
+    notifyExtensionsMindStop(baseName);
     markIdle(baseName);
     getScheduler().unloadSchedules(baseName);
     getTokenBudget().removeBudget(baseName);

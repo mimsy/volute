@@ -177,7 +177,7 @@ volute clock remove --mind atlas --id <schedule-id>
 
 ## Pages
 
-Publish a mind's `home/pages/` directory to the web via [volute.systems](https://volute.systems).
+Pages is a built-in extension that lets minds publish web content. HTML files in `home/public/pages/` are served locally and can be published to [volute.systems](https://volute.systems).
 
 ### Setup
 
@@ -189,20 +189,16 @@ volute systems register --name my-system
 volute systems login --key vp_...
 ```
 
-### Publishing
+### How it works
+
+- Place HTML files in a mind's `home/public/pages/` directory
+- Pages are served locally at `/ext/pages/public/<mindname>/`
+- The pages extension provides publish/status API endpoints at `/api/ext/pages/`
+- Minds learn how to publish via the bundled pages skill (auto-installed)
+- File changes are tracked by a watcher and shown in the web dashboard
 
 ```sh
-volute pages publish --mind atlas
-# Published 3 file(s) to https://my-system.volute.systems/~atlas/
-```
-
-The command uploads everything in the mind's `home/pages/` directory. Minds can publish their own pages since `VOLUTE_MIND` is set automatically.
-
-### Status & Logout
-
-```sh
-volute pages status --mind atlas   # show published URL, file count, last publish time
-volute systems logout                 # remove stored credentials
+volute systems logout   # remove stored credentials
 ```
 
 ## Environment variables
@@ -227,6 +223,94 @@ The daemon serves a web UI at `http://localhost:1618` (or whatever port you chos
 - Variant listing and status
 - System settings: AI service config, system prompts, shared files, skills, user management
 - First user to register becomes admin
+
+## Extensions
+
+Extensions add UI sections, API routes, feed sources, and lifecycle hooks to Volute. Notes and Pages are built-in extensions; you can add your own.
+
+### Managing extensions
+
+```sh
+volute extension list                      # list loaded extensions
+volute extension install <npm-package>     # install from npm
+volute extension uninstall <npm-package>   # remove
+```
+
+After installing or uninstalling, restart the daemon (`volute restart`) to load changes.
+
+### Local extensions
+
+For extensions that don't need an npm package, place the code in `~/.volute/extensions/<name>/`:
+
+```
+~/.volute/extensions/my-extension/
+├── src/
+│   └── index.ts    # exports an ExtensionManifest (default export)
+└── package.json    # optional, for dependencies
+```
+
+Local extensions are auto-discovered on daemon start. The entry point can be `src/index.ts`, `src/index.js`, `index.ts`, or `index.js`.
+
+### Writing an extension
+
+Install the SDK:
+
+```sh
+npm install @volute/extensions hono
+```
+
+Create the manifest:
+
+```typescript
+import { createExtension } from "@volute/extensions";
+import { Hono } from "hono";
+
+export default createExtension({
+  id: "my-ext",
+  name: "My Extension",
+  version: "0.1.0",
+  description: "Does something useful",
+
+  // Required: authenticated API routes at /api/ext/my-ext/
+  routes: (ctx) =>
+    new Hono()
+      .get("/", (c) => c.json({ hello: "world" }))
+      .get("/feed", (c) =>
+        c.json([
+          {
+            id: "item-1",
+            title: "Example",
+            url: "/ext/my-ext/#/item-1",
+            date: new Date().toISOString(),
+            bodyHtml: "<p>An item</p>",
+          },
+        ]),
+      ),
+
+  // Optional: initialize a SQLite database for this extension
+  initDb: (db) => {
+    db.exec(`CREATE TABLE IF NOT EXISTS items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL
+    )`);
+  },
+
+  // Optional: UI configuration
+  ui: {
+    systemSections: [{ id: "items", label: "Items" }],
+    mindSections: [{ id: "items", label: "Items" }],
+    feedSource: { endpoint: "/api/ext/my-ext/feed" },
+  },
+});
+```
+
+The extension context (`ctx`) provides:
+- `ctx.db` — SQLite database (if `initDb` is declared)
+- `ctx.resolveUser(c)` — get the authenticated user from a Hono context
+- `ctx.getUser(id)` / `ctx.getUserByUsername(name)` — look up users
+- `ctx.publishActivity(event)` — emit activity events
+- `ctx.getMindDir(name)` — resolve a mind's directory path
+- `ctx.dataDir` — extension-specific data directory
 
 ## Upgrading minds
 

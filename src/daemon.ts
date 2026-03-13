@@ -13,6 +13,11 @@ import { initSleepManager } from "./lib/daemon/sleep-manager.js";
 import { initTokenBudget } from "./lib/daemon/token-budget.js";
 import { initDeliveryManager } from "./lib/delivery/delivery-manager.js";
 import { stopAll as stopAllActivityTrackers } from "./lib/events/mind-activity-tracker.js";
+import {
+  loadAllExtensions,
+  notifyExtensionsDaemonStart,
+  notifyExtensionsDaemonStop,
+} from "./lib/extensions.js";
 import { cleanExpiredLogs } from "./lib/history-cleanup.js";
 import log from "./lib/logger.js";
 import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
@@ -22,7 +27,6 @@ import {
   migratePagesDirToPublic,
 } from "./lib/migrate-state.js";
 import { migrateToSystemDir } from "./lib/migrate-system-dir.js";
-import { stopAllWatchers } from "./lib/pages-watcher.js";
 import {
   ensureSystemDir,
   readAllMinds,
@@ -33,10 +37,11 @@ import {
 } from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
 import { ensureSharedRepo } from "./lib/shared.js";
-import { syncBuiltinSkills } from "./lib/skills.js";
+import { initDefaultSkills, syncBuiltinSkills } from "./lib/skills.js";
 import { ensureSystemChannel } from "./lib/system-channel.js";
 import { initWebhook } from "./lib/webhook.js";
-import { cleanExpiredSessions } from "./web/middleware/auth.js";
+import app from "./web/app.js";
+import { authMiddleware, cleanExpiredSessions } from "./web/middleware/auth.js";
 import { startServer } from "./web/server.js";
 
 if (!process.env.VOLUTE_HOME) {
@@ -117,16 +122,23 @@ export async function startDaemon(opts: {
     log.error("failed to sync built-in skills", log.errorData(err));
   }
 
+  // Load extensions (non-fatal)
+  try {
+    await loadAllExtensions(app, authMiddleware);
+    notifyExtensionsDaemonStart();
+  } catch (err) {
+    log.error("failed to load extensions", log.errorData(err));
+  }
+
+  // Initialize default skills config if not set (after extensions load so their skills are included)
+  await initDefaultSkills();
+
   // Ensure #system channel exists (non-fatal)
   try {
     await ensureSystemChannel();
   } catch (err) {
     log.warn("failed to ensure #system channel", log.errorData(err));
   }
-
-  // Watch system pages directory for changes
-  const { startSystemWatcher } = await import("./lib/pages-watcher.js");
-  startSystemWatcher();
 
   // Use existing token if set (for testing), otherwise generate one
   const token = process.env.VOLUTE_DAEMON_TOKEN || randomBytes(32).toString("hex");
@@ -312,7 +324,7 @@ export async function startDaemon(opts: {
       }
     };
     try {
-      safe("stopAllWatchers", stopAllWatchers);
+      safe("notifyExtensionsDaemonStop", notifyExtensionsDaemonStop);
       safe("stopAllActivityTrackers", stopAllActivityTrackers);
       safe("unsubscribeWebhook", unsubscribeWebhook);
       safe("sleepManager.stop", () => sleepManager.stop());

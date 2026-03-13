@@ -22,7 +22,7 @@ Core values:
 - `src/lib/` — Shared libraries (registry, mind-manager, connector-manager, scheduler, daemon-client, arg parsing, exec wrappers, variant metadata, db, auth, conversations, channels)
 - `src/web/` — Web dashboard (Hono backend + Svelte frontend), served by the daemon
 - `src/connectors/` — Built-in connector implementations (Discord, Slack, Telegram) + shared SDK
-- `skills/` — Built-in skill definitions (memory, sessions, orientation, volute-mind, notes, dreaming, shared-files), synced to the shared pool on daemon startup
+- `skills/` — Built-in skill definitions (memory, sessions, orientation, volute-mind, dreaming, imagegen, resonance, shared-files), synced to the shared pool on daemon startup. Extensions contribute additional skills via `skillsDir` in their manifest (e.g., notes and pages extensions each bundle their own skill).
 - `templates/claude/` — Default template (Claude Agent SDK) copied by `volute mind create`
 - `templates/pi/` — Alternative template using pi-coding-agent for multi-provider LLM support
 - All minds live in `~/.volute/minds/<name>/` by default (overridable via `VOLUTE_MINDS_DIR`) with a centralized registry backed by the `minds` DB table in `volute.db`
@@ -120,11 +120,59 @@ Templates have a `.init/` directory containing identity and config files. On `vo
 
 The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 
-- **Backend** (`src/web/`): Hono API routes for auth, minds, chat, conversations, logs, variants, files, connectors, schedules, channels, env, keys, pages, prompts, skills, file-sharing
+- **Backend** (`src/web/`): Hono API routes for auth, minds, chat, conversations, logs, variants, files, connectors, schedules, channels, env, keys, prompts, skills, file-sharing
 - **Frontend** (`src/web/ui/`): Svelte SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs)
 - **Auth**: Cookie-based (`volute_session`), in-memory session map, first user auto-admin
 - **Database**: libSQL at `~/.volute/volute.db` for users, conversations, messages, mind_history, minds
 - **Build**: `vite build` → `dist/web-assets/`
+
+### Extensions
+
+Extensions add functionality to Volute — custom UI sections, API routes, database tables, feed sources, and mind lifecycle hooks. Built-in extensions (Notes, Pages) ship with Volute; third-party and local extensions can be added.
+
+**SDK** (`@volute/extensions`): Provides `ExtensionManifest`, `ExtensionContext`, and `createExtension()` helper.
+
+**Extension manifest** — an object with:
+- `id`, `name`, `version`, `description` — metadata
+- `routes(ctx)` — Hono app mounted at `/api/ext/{id}/` (authenticated)
+- `publicRoutes?(ctx)` — Hono app mounted at `/ext/{id}/public/` (no auth)
+- `ui.assetsDir?` — directory of built UI assets, served at `/ext/{id}/`
+- `ui.systemSections?` — sidebar items in the system view
+- `ui.mindSections?` — tab items in mind detail views
+- `ui.feedSource?` — endpoint for home/mind feed cards
+- `skillsDir?` — directory containing skills to sync on load (each subdirectory is a skill with a `SKILL.md`)
+- `standardSkill?` — if true, skills are added to the default skill set for new minds
+- `ui.systemSections[].urlPatterns?` — URL patterns for system-level routing (e.g., `["/notes", "/notes/:author/:slug"]`)
+- `initDb?(db)` — called on load to create tables; extension gets its own SQLite DB at `~/.volute/system/extension-data/{id}/data.db`
+- `onDaemonStart?()`, `onDaemonStop?()`, `onMindStart?(name)`, `onMindStop?(name)` — lifecycle hooks
+
+**Extension context** — provided to `routes()` and `publicRoutes()`:
+- `db` — SQLite database instance
+- `authMiddleware` — Hono middleware for auth
+- `resolveUser(c)` — extract user from Hono context
+- `getUser(id)` / `getUserByUsername(name)` — user lookup
+- `publishActivity(event)` — emit activity events
+- `getMindDir(name)` — resolve mind directory path
+- `getSystemsConfig()` — read volute.systems credentials (apiKey, system, apiUrl) or null
+- `dataDir` — extension-specific data directory
+
+**Extension UI** — standalone Svelte apps built with Vite, served as static assets at `/ext/{id}/`, rendered in iframes by the main app. Uses hash routing internally; communicates navigation to parent via `window.parent.postMessage({ type: "navigate", path })`.
+
+**Three ways to install extensions:**
+
+1. **Built-in** — statically imported in `src/lib/extensions.ts` (`discoverBuiltinExtensions`)
+2. **npm packages** — listed in `~/.volute/system/extensions.json`, loaded via dynamic import (`discoverInstalledExtensions`). Install with `volute extension install <package>`
+3. **Local directories** — placed in `~/.volute/extensions/{dir}/` with an entry point (`src/index.ts`, `src/index.js`, `index.ts`, or `index.js`). Auto-discovered on daemon start (`discoverLocalExtensions`)
+
+**Built-in extension packages:**
+- `packages/extensions/sdk/` (`@volute/extensions`) — shared types and helpers
+- `packages/extensions/notes/` (`@volute/notes`) — notes extension
+- `packages/extensions/pages/` (`@volute/pages`) — pages extension
+
+**Key files:**
+- `src/lib/extensions.ts` — extension loader: discovery, context building, route mounting, lifecycle
+- `src/commands/extension.ts` — CLI: `volute extension list|install|uninstall`
+- `packages/extensions/sdk/src/types.ts` — all extension types
 
 ## Commands
 
@@ -157,6 +205,7 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute clock add [--mind] --id <name> --cron/--in "..." --message/--script "..." [--while-sleeping skip\|queue\|trigger-wake]` | Add a schedule or timer |
 | `volute clock remove [--mind] --id <id>` | Remove a schedule or timer |
 | `volute skill <list\|add\|remove> [--mind]` | Manage mind skills |
+| `volute skill defaults <list\|add\|remove>` | Manage default skill set for new minds |
 | `volute mind seed <name>` | Create a minimal seed mind |
 | `volute mind sprout` | Grow a seed into a full mind |
 | `volute chat files [--mind]` | List pending incoming files |
@@ -166,8 +215,9 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute systems register [--name <name>]` | Register a system on volute.systems |
 | `volute systems login [--key <key>]` | Log in with an existing API key |
 | `volute systems logout` | Remove stored credentials |
-| `volute pages publish [--mind <name>] [--system]` | Publish pages (mind's or --system for shared/pages/) |
-| `volute pages status [--mind <name>] [--system]` | Show publish status (mind's or --system) |
+| `volute extension list` | List installed extensions |
+| `volute extension install <package>` | Install a third-party extension (npm package) |
+| `volute extension uninstall <package>` | Uninstall a third-party extension |
 | `volute setup [--name N] [--system] [--service] [--dir D] [--port N] [--host H]` | Required first-run setup (interactive or non-interactive) |
 | `volute up [--port N] [--foreground] [--no-sandbox]` | Start the daemon (default: 1618) |
 | `volute down` | Stop the daemon |
@@ -175,7 +225,7 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 | `volute status` | Show daemon status, service info, version, and minds |
 | `volute update` | Check for updates |
 
-Mind-scoped commands (`chat`, `clock`, `skill`, `pages`) use `--mind <name>` or `VOLUTE_MIND` env var.
+Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_MIND` env var.
 
 ## Source files
 
@@ -218,13 +268,14 @@ Mind-scoped commands (`chat`, `clock`, `skill`, `pages`) use `--mind <name>` or 
 | `file-sharing.ts` | Mind-to-mind file sharing with trust system |
 | `archive.ts` | Mind archival utilities |
 | `skills.ts` | Skill installation and management |
+| `extensions.ts` | Extension discovery (built-in, npm, local), context building, route mounting, lifecycle |
 | `shared.ts` | Shared repo init, worktree management, and merge |
 | `prompts.ts` | System prompt registry with DB overrides (creation, system, mind categories) |
 | `rotating-log.ts` | Size-limited rotating log files |
 | `read-stdin.ts` | Reads piped stdin for send commands (returns undefined if TTY) |
 | `resolve-mind-name.ts` | Resolves mind name from `--mind` flag or `VOLUTE_MIND` env var |
 | `typing.ts` | Typing indicator tracking |
-| `setup.ts` | Global config (`~/.volute/config.json`) with setup state (type, isolation, mindsDir, service), AI config types (`AiConfig`, `AiProviderConfig`), `isSetupComplete()`, migration for existing users |
+| `setup.ts` | Global config (`~/.volute/system/config.json`) with setup state, `defaultSkills` array, AI config types (`AiConfig`, `AiProviderConfig`), `isSetupComplete()`, migration for existing users |
 | `sandbox.ts` | Sandbox runtime (`@anthropic-ai/sandbox-runtime`) integration: `isSandboxEnabled()`, `initSandbox()`, `wrapForSandbox()`, deny-read list for mind isolation |
 | `service-mode.ts` | Service mode detection (manual/systemd/launchd/system-launchd), service control, health polling, daemon config reader |
 | `systems-config.ts` | Read/write `~/.volute/system/systems.json` (API key, system name, API URL) |
@@ -234,7 +285,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`, `pages`) use `--mind <name>` or 
 | `verify.ts` | Mind verification utilities |
 | `volute-config.ts` | Mind volute.json config reader |
 | `isolation.ts` | Per-mind user isolation (`VOLUTE_ISOLATION=user`), user/group management (Linux via useradd, macOS via dscl), chown |
-| `pages-watcher.ts` | Filesystem watcher for mind pages, publishes activity events |
+| `pages-watcher.ts` | Filesystem watcher for mind pages, publishes activity events (controlled by pages extension via lifecycle hooks) |
 
 ### src/lib/daemon/
 
@@ -285,7 +336,6 @@ Mind-scoped commands (`chat`, `clock`, `skill`, `pages`) use `--mind <name>` or 
 | `api/keys.ts` | API key management |
 | `api/logs.ts` | Log streaming |
 | `api/mind-skills.ts` | Per-mind skill management |
-| `api/pages.ts` | Pages publishing |
 | `api/prompts.ts` | Mind prompt management |
 | `api/schedules.ts` | CRUD schedules + webhook endpoint |
 | `api/shared.ts` | Shared resource endpoints |
@@ -339,7 +389,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`, `pages`) use `--mind <name>` or 
 - System AI service configured via `ai` field in GlobalConfig (`~/.volute/config.json`), supports multiple providers with API key, OAuth, or env var auth; admin selects enabled models via web UI
 - Mind process isolation: sandbox mode (local installs, `@anthropic-ai/sandbox-runtime`), per-user mode (system installs, Linux/macOS), or none. Configured via `volute setup`, stored in `config.json` as `setup.isolation`
 - `volute setup` is the required first-run command; CLI commands are gated on `isSetupComplete()` with auto-migration for existing users via `migrateSetupConfig()`
-- Built-in skills live in `skills/` at repo root and are synced to the shared pool (`~/.volute/skills/`) on daemon startup via `syncBuiltinSkills()`. Skill sets: `SEED_SKILLS` (orientation, memory) for seeds, `STANDARD_SKILLS` (volute-mind, memory, sessions, notes, dreaming, shared-files) for sprouted minds. Skills are installed from the shared pool with upstream tracking (`.upstream.json`) for independent updates.
+- Built-in skills live in `skills/` at repo root and are synced to the shared pool (`~/.volute/skills/`) on daemon startup via `syncBuiltinSkills()`. Extensions contribute skills via `skillsDir` in their manifest; skills with `standardSkill: true` are added to the configurable default skill set. The default skill set is stored in `~/.volute/system/config.json` (`defaultSkills` array) and initialized on first daemon start from `STANDARD_SKILLS` + extension standard skills. Admins can manage defaults via the web UI (Settings → Skills) or `volute skill defaults` CLI. `SEED_SKILLS` (orientation, memory) are installed for seed minds. Skills are installed from the shared pool with upstream tracking (`.upstream.json`) for independent updates.
 
 ## Deployment
 

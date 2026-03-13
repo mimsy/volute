@@ -32,6 +32,10 @@ export type GlobalConfig = {
   hostname?: string;
   port?: number;
   setup?: SetupConfig;
+  /** Skill IDs installed by default when a mind is created/sprouted */
+  defaultSkills?: string[];
+  /** Skills explicitly removed from defaults by an admin (not re-added on restart) */
+  removedDefaultSkills?: string[];
   ai?: AiConfig;
 };
 
@@ -55,7 +59,7 @@ export function readGlobalConfig(): GlobalConfig {
 export function writeGlobalConfig(config: GlobalConfig): void {
   const path = configPath();
   mkdirSync(voluteSystemDir(), { recursive: true });
-  writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
 }
 
 /** Check if setup has been completed. Returns true if config.json has a setup field. */

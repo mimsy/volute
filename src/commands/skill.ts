@@ -28,6 +28,9 @@ export async function run(args: string[]) {
     case "uninstall":
       await uninstallSkill(args.slice(1));
       break;
+    case "defaults":
+      await manageDefaults(args.slice(1));
+      break;
     case "--help":
     case "-h":
     case undefined:
@@ -50,7 +53,10 @@ function printUsage() {
   volute skill update --all --mind     Update all installed skills
   volute skill publish <name> --mind   Publish a mind's skill to the shared repository
   volute skill remove <name>           Remove a shared skill
-  volute skill uninstall <name> --mind Uninstall a skill from a mind`);
+  volute skill uninstall <name> --mind Uninstall a skill from a mind
+  volute skill defaults                List default skills for new minds
+  volute skill defaults add <name>     Add a skill to the default set
+  volute skill defaults remove <name>  Remove a skill from the default set`);
 }
 
 async function listSkills(args: string[]) {
@@ -342,6 +348,73 @@ async function removeSkill(args: string[]) {
   }
 
   console.log(`Removed shared skill "${id}".`);
+}
+
+async function manageDefaults(args: string[]) {
+  const action = args[0];
+
+  if (!action || action === "list") {
+    const res = await daemonFetch("/api/skills/defaults/list");
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({ error: "Unknown error" }))) as {
+        error: string;
+      };
+      console.error(`Error: ${body.error}`);
+      process.exit(1);
+    }
+    const { skills } = (await res.json()) as { skills: string[] };
+    console.log("Default skills for new minds:\n");
+    for (const s of skills) {
+      console.log(`  ${s}`);
+    }
+    return;
+  }
+
+  if (action === "add") {
+    const skillId = args[1];
+    if (!skillId) {
+      console.error("Usage: volute skill defaults add <name>");
+      process.exit(1);
+    }
+    const res = await daemonFetch("/api/skills/defaults/list", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ skill: skillId }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({ error: "Unknown error" }))) as {
+        error: string;
+      };
+      console.error(`Error: ${body.error}`);
+      process.exit(1);
+    }
+    console.log(`Added "${skillId}" to default skills.`);
+    return;
+  }
+
+  if (action === "remove") {
+    const skillId = args[1];
+    if (!skillId) {
+      console.error("Usage: volute skill defaults remove <name>");
+      process.exit(1);
+    }
+    const res = await daemonFetch(`/api/skills/defaults/list/${encodeURIComponent(skillId)}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({ error: "Unknown error" }))) as {
+        error: string;
+      };
+      console.error(`Error: ${body.error}`);
+      process.exit(1);
+    }
+    console.log(`Removed "${skillId}" from default skills.`);
+    return;
+  }
+
+  console.error(`Unknown defaults action: ${action}`);
+  console.log("Usage: volute skill defaults [add|remove] [<name>]");
+  process.exit(1);
 }
 
 async function uninstallSkill(args: string[]) {

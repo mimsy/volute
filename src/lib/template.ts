@@ -65,8 +65,9 @@ export function composeTemplate(
     process.exit(1);
   }
 
-  // Create temp staging directory
-  const composedDir = resolve(tmpdir(), `volute-template-${Date.now()}`);
+  // Create temp staging directory (include template name to avoid collisions when
+  // composing multiple templates in quick succession, e.g. in tests)
+  const composedDir = resolve(tmpdir(), `volute-template-${templateName}-${Date.now()}`);
   mkdirSync(composedDir, { recursive: true });
 
   // Copy _base first

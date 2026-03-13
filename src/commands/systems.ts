@@ -8,13 +8,13 @@ export async function run(args: string[]) {
       await showStatus();
       break;
     case "register":
-      await import("./pages/register.js").then((m) => m.run(args.slice(1)));
+      await import("./systems/register.js").then((m) => m.run(args.slice(1)));
       break;
     case "login":
-      await import("./pages/login.js").then((m) => m.run(args.slice(1)));
+      await import("./systems/login.js").then((m) => m.run(args.slice(1)));
       break;
     case "logout":
-      await import("./pages/logout.js").then((m) => m.run());
+      await import("./systems/logout.js").then((m) => m.run());
       break;
     case "--help":
     case "-h":

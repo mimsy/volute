@@ -1,29 +1,28 @@
 <script lang="ts">
-import type { Mind, Site } from "@volute/api";
+import type { Mind } from "@volute/api";
+import type { ExtensionInfo } from "../lib/extensions";
 import { mindDotColor } from "../lib/format";
 import type { Selection } from "../lib/navigate";
 import { activeMinds } from "../lib/stores.svelte";
 
 let {
   minds,
-  sites,
+  extensions,
   selection,
   onHome,
   onSelectMind,
   onSelectMindSection,
-  onSelectNotes,
-  onSelectPages,
+  onSelectExtension,
   onSelectSettings,
   onSeed,
 }: {
   minds: Mind[];
-  sites: Site[];
+  extensions: ExtensionInfo[];
   selection: Selection;
   onHome: () => void;
   onSelectMind: (name: string) => void;
-  onSelectMindSection: (name: string, section: string) => void;
-  onSelectNotes: () => void;
-  onSelectPages: () => void;
+  onSelectMindSection: (name: string, section: string, defaultPath?: string) => void;
+  onSelectExtension: (extensionId: string, path?: string) => void;
   onSelectSettings: () => void;
   onSeed: () => void;
 } = $props();
@@ -40,25 +39,31 @@ let sortedMinds = $derived(
 let activeMindName = $derived.by(() => {
   if (selection.tab !== "system") return null;
   if (selection.kind === "mind") return selection.name;
-  if (selection.kind === "mind-note" || selection.kind === "mind-page") return selection.mind;
   return null;
 });
 
 let activeMindSection = $derived.by(() => {
   if (selection.tab !== "system") return null;
   if (selection.kind === "mind") return selection.section ?? "info";
-  if (selection.kind === "mind-note") return "notes";
-  if (selection.kind === "mind-page") return "pages";
   return null;
 });
 
-const MIND_SECTIONS = [
+const CORE_MIND_SECTIONS: { key: string; label: string; defaultPath?: string }[] = [
   { key: "info", label: "Info" },
-  { key: "notes", label: "Notes" },
-  { key: "pages", label: "Pages" },
   { key: "files", label: "Files" },
   { key: "settings", label: "Settings" },
-] as const;
+];
+
+let allMindSections = $derived([
+  ...CORE_MIND_SECTIONS,
+  ...extensions.flatMap((ext) =>
+    (ext.mindSections ?? []).map((s) => ({
+      key: `ext:${ext.id}:${s.id}`,
+      label: s.label,
+      defaultPath: s.defaultPath,
+    })),
+  ),
+]);
 </script>
 
 <div class="sidebar-inner">
@@ -73,16 +78,15 @@ const MIND_SECTIONS = [
         <span>System</span>
       </button>
       <div class="sub-items">
-        <button
-          class="sub-item"
-          class:active={selection.tab === "system" && (selection.kind === "notes" || selection.kind === "note")}
-          onclick={onSelectNotes}
-        >Notes</button>
-        <button
-          class="sub-item"
-          class:active={selection.tab === "system" && (selection.kind === "pages" || selection.kind === "site" || selection.kind === "page")}
-          onclick={onSelectPages}
-        >Pages</button>
+        {#each extensions as ext}
+          {#if ext.systemSection}
+            <button
+              class="sub-item"
+              class:active={selection.tab === "system" && selection.kind === "extension" && selection.extensionId === ext.id}
+              onclick={() => onSelectExtension(ext.id)}
+            >{ext.systemSection.label}</button>
+          {/if}
+        {/each}
         <button
           class="sub-item"
           class:active={selection.tab === "system" && selection.kind === "settings"}
@@ -114,11 +118,11 @@ const MIND_SECTIONS = [
             </button>
             {#if activeMindName === mind.name}
               <div class="mind-sub-items">
-                {#each MIND_SECTIONS as sec}
+                {#each allMindSections as sec}
                   <button
                     class="mind-sub-item"
                     class:active={activeMindSection === sec.key}
-                    onclick={() => onSelectMindSection(mind.name, sec.key)}
+                    onclick={() => onSelectMindSection(mind.name, sec.key, sec.defaultPath)}
                   >{sec.label}</button>
                 {/each}
               </div>

@@ -92,7 +92,7 @@ import {
 } from "../../lib/registry.js";
 import { conversations, mindHistory } from "../../lib/schema.js";
 import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
-import { installSkill, SEED_SKILLS, STANDARD_SKILLS } from "../../lib/skills.js";
+import { getStandardSkillsWithExtensions, installSkill, SEED_SKILLS } from "../../lib/skills.js";
 import { announceToSystem } from "../../lib/system-channel.js";
 import { readSystemsConfig } from "../../lib/systems-config.js";
 import {
@@ -537,7 +537,7 @@ async function importFromHomeOnlyArchive(
     }
 
     // 12. Install skills based on stage
-    const skillSet = manifest.stage === "seed" ? SEED_SKILLS : STANDARD_SKILLS;
+    const skillSet = manifest.stage === "seed" ? SEED_SKILLS : getStandardSkillsWithExtensions();
     const skillWarnings: string[] = [];
     for (const skillId of skillSet) {
       try {
@@ -781,7 +781,8 @@ const app = new Hono<AuthEnv>()
       }
 
       // Install skills from shared pool (after git init so installSkill can commit)
-      const skillSet = body.skills ?? (body.stage === "seed" ? SEED_SKILLS : STANDARD_SKILLS);
+      const skillSet =
+        body.skills ?? (body.stage === "seed" ? SEED_SKILLS : getStandardSkillsWithExtensions());
       const skillWarnings: string[] = [];
       for (const skillId of skillSet) {
         try {
@@ -1545,7 +1546,7 @@ const app = new Hono<AuthEnv>()
         try {
           await gitExec(["add", "-A"], { cwd: dir });
           await gitExec(["commit", "-m", "Auto-commit before upgrade merge"], { cwd: dir });
-        } catch (e) {
+        } catch (_e) {
           return c.json({ error: "Failed to auto-commit main changes before merge" }, 500);
         }
       }
@@ -1893,7 +1894,10 @@ const app = new Hono<AuthEnv>()
     }
     const before = beforeStr ? parseInt(beforeStr, 10) : undefined;
     const limit = limitStr ? parseInt(limitStr, 10) : undefined;
-    if ((before !== undefined && isNaN(before)) || (limit !== undefined && isNaN(limit))) {
+    if (
+      (before !== undefined && Number.isNaN(before)) ||
+      (limit !== undefined && Number.isNaN(limit))
+    ) {
       return c.json({ error: "Invalid pagination parameters" }, 400);
     }
     const result = await getMessagesPaginated(convId, { before, limit });

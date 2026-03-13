@@ -1,15 +1,10 @@
-import type {
-  ActivityItem,
-  ConversationWithParticipants,
-  Mind,
-  RecentPage,
-  Site,
-} from "@volute/api";
+import type { ActivityItem, ConversationWithParticipants, Mind } from "@volute/api";
 import type { SSEEvent } from "@volute/api/events";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import { type AuthUser, fetchMe, logout } from "./auth";
 import { fetchMinds, fetchSystemInfo, markAsRead } from "./client";
 import { connect, connectionState, disconnect, subscribe } from "./connection.svelte";
+import { type ExtensionInfo, fetchExtensions } from "./extensions";
 import { showNotification } from "./notifications";
 
 // --- Auth ---
@@ -58,9 +53,8 @@ export async function handleAuth(u: AuthUser) {
 export const data = $state({
   minds: [] as Mind[],
   conversations: [] as ConversationWithParticipants[],
-  recentPages: [] as RecentPage[],
-  sites: [] as Site[],
   activity: [] as ActivityItem[],
+  extensions: [] as ExtensionInfo[],
   connectionOk: true,
 });
 
@@ -99,8 +93,6 @@ function handleSSEEvent(event: SSEEvent) {
   if (event.event === "snapshot") {
     data.conversations = event.conversations ?? [];
     data.activity = event.activity ?? [];
-    data.sites = event.sites ?? [];
-    data.recentPages = event.recentPages ?? [];
     activeMinds.clear();
     if (Array.isArray(event.activeMinds)) {
       for (const name of event.activeMinds) activeMinds.add(name);
@@ -121,6 +113,14 @@ function handleSSEEvent(event: SSEEvent) {
       })
       .catch((err) => {
         console.warn("[stores] failed to refresh minds:", err);
+      });
+    // Extensions — fetch metadata
+    fetchExtensions()
+      .then((ext) => {
+        data.extensions = ext;
+      })
+      .catch((err) => {
+        console.warn("[stores] failed to refresh extensions:", err);
       });
   } else if (event.event === "activity") {
     const { event: _, ...item } = event;

@@ -1,16 +1,13 @@
 <script lang="ts">
-import type { ConversationWithParticipants, LastMessageSummary, Message, Site } from "@volute/api";
+import type { ConversationWithParticipants, LastMessageSummary, Message } from "@volute/api";
+import ExtensionFeedCard from "../components/ExtensionFeedCard.svelte";
 import { fetchConversationMessages } from "../lib/client";
-import {
-  type ApiNote,
-  extractTextContent,
-  formatTime,
-  scaleIframe,
-  showSenderHeader,
-} from "../lib/feed-utils";
+import { extractTextContent, formatTime, showSenderHeader } from "../lib/feed-utils";
 import { formatRelativeTime, normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
+
 import { navigate } from "../lib/navigate";
+import { data as storeData } from "../lib/stores.svelte";
 
 type ConversationWithDetails = ConversationWithParticipants & {
   lastMessage?: LastMessageSummary;
@@ -19,32 +16,49 @@ type ConversationWithDetails = ConversationWithParticipants & {
 let {
   username,
   conversations,
-  sites,
-  onSelectPage,
   onSelectConversation,
 }: {
   username: string;
   conversations: ConversationWithDetails[];
-  sites: Site[];
-  onSelectPage: (mind: string, path: string) => void;
   onSelectConversation: (id: string) => void;
 } = $props();
 
-function handleSelectNote(author: string, slug: string) {
-  navigate(`/minds/${author}/notes/${slug}`);
-}
+type ExtFeedItem = {
+  id: string;
+  title: string;
+  url: string;
+  date: string;
+  author?: string;
+  bodyHtml: string;
+  iframeUrl?: string;
+  icon?: string;
+  color?: string;
+  extensionId: string;
+};
 
-let recentNotes = $state<ApiNote[]>([]);
+let extensionFeedItems = $state<ExtFeedItem[]>([]);
 
+// Fetch extension feed items from all extensions with feedSource
 $effect(() => {
-  fetch("/api/notes?limit=8")
-    .then((r) => (r.ok ? r.json() : []))
-    .then((notes: ApiNote[]) => {
-      recentNotes = notes;
-    })
-    .catch(() => {
-      recentNotes = [];
+  const extensions = storeData.extensions;
+  const items: ExtFeedItem[] = [];
+  const promises = extensions
+    .filter((ext) => ext.feedSource)
+    .map(async (ext) => {
+      try {
+        const res = await fetch(ext.feedSource!.endpoint);
+        if (!res.ok) return;
+        const feedItems = await res.json();
+        for (const item of feedItems) {
+          items.push({ ...item, extensionId: ext.id });
+        }
+      } catch (err) {
+        console.warn(`Failed to fetch ${ext.id} feed:`, err);
+      }
     });
+  Promise.all(promises).then(() => {
+    extensionFeedItems = items;
+  });
 });
 
 let topConversations = $derived(
@@ -80,28 +94,16 @@ $effect(() => {
 });
 
 type FeedItem =
-  | { kind: "note"; note: ApiNote; date: string }
-  | { kind: "page"; site: string; file: string; modified: string; date: string }
-  | { kind: "message"; conv: ConversationWithDetails; date: string };
+  | { kind: "message"; conv: ConversationWithDetails; date: string }
+  | { kind: "extension"; item: ExtFeedItem; date: string };
 
 let feedItems = $derived.by(() => {
   const items: FeedItem[] = [];
-  for (const note of recentNotes) {
-    items.push({ kind: "note", note, date: note.created_at });
-  }
-  for (const site of sites) {
-    for (const page of site.pages.slice(0, 3)) {
-      items.push({
-        kind: "page",
-        site: site.name,
-        file: page.file,
-        modified: page.modified,
-        date: page.modified,
-      });
-    }
-  }
   for (const conv of topConversations) {
     items.push({ kind: "message", conv, date: conv.updated_at });
+  }
+  for (const extItem of extensionFeedItems) {
+    items.push({ kind: "extension", item: extItem, date: extItem.date });
   }
   items.sort((a, b) => {
     const aTime = new Date(normalizeTimestamp(a.date)).getTime();
@@ -131,39 +133,20 @@ function getConvLabel(conv: ConversationWithDetails): string {
     <div class="empty-hint">Nothing here yet.</div>
   {:else}
     <div class="feed-grid">
-      {#each feedItems as item (item.kind === "note" ? `note-${item.note.slug}` : item.kind === "page" ? `page-${item.site}-${item.file}` : `msg-${item.conv.id}`)}
-        {#if item.kind === "note"}
-          {@const note = item.note}
+      {#each feedItems as item (item.kind === "extension" ? `ext-${item.item.id}` : `msg-${item.conv.id}`)}
+        {#if item.kind === "extension"}
           <div class="feed-item">
-            <div class="feed-card card-note" role="button" tabindex="0" onclick={() => handleSelectNote(note.author_username, note.slug)} onkeydown={(e) => { if (e.key === 'Enter') handleSelectNote(note.author_username, note.slug); }}>
-              <div class="feed-card-header header-note">
-                <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h8M2 6h10M2 9h6M2 12h9"/></svg>
-                <span class="feed-card-label">{note.title}</span>
-                <span class="feed-card-meta">{formatRelativeTime(note.created_at)}</span>
-              </div>
-              <div class="feed-card-body note-body">
-                <p class="note-excerpt">{note.content.length > 300 ? `${note.content.slice(0, 300)}...` : note.content}</p>
-                <div class="note-footer">
-                  <span class="note-author">{note.author_username}</span>
-                  {#if note.comment_count > 0}
-                    <span class="note-comments">{note.comment_count} {note.comment_count === 1 ? "comment" : "comments"}</span>
-                  {/if}
-                </div>
-              </div>
-            </div>
-          </div>
-        {:else if item.kind === "page"}
-          <div class="feed-item">
-            <div class="feed-card card-page" role="button" tabindex="0" onclick={() => onSelectPage(item.site, item.file)} onkeydown={(e) => { if (e.key === 'Enter') onSelectPage(item.site, item.file); }}>
-              <div class="feed-card-header header-page">
-                <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M2 5.5h12"/></svg>
-                <span class="feed-card-label">{item.site}/{item.file}</span>
-                <span class="feed-card-meta">{formatRelativeTime(item.modified)}</span>
-              </div>
-              <div class="feed-card-body page-body" use:scaleIframe>
-                <iframe src="/pages/{item.site}/{item.file}" loading="lazy" sandbox="allow-same-origin" tabindex={-1} title={item.file}></iframe>
-              </div>
-            </div>
+            <ExtensionFeedCard
+              title={item.item.title}
+              url={item.item.url}
+              date={item.item.date}
+              author={item.item.author}
+              bodyHtml={item.item.bodyHtml}
+              iframeUrl={item.item.iframeUrl}
+              icon={item.item.icon}
+              color={item.item.color}
+              onclick={() => navigate(item.item.url)}
+            />
           </div>
         {:else}
           {@const conv = item.conv}
@@ -273,20 +256,12 @@ function getConvLabel(conv: ConversationWithDetails): string {
     height: 14px;
   }
 
-  .card-note .feed-card-icon { color: var(--yellow); }
-  .card-page .feed-card-icon { color: var(--purple); }
   .card-chat .feed-card-icon { color: var(--blue); }
 
-  .card-note { border-color: color-mix(in srgb, var(--yellow) 25%, var(--border)); }
-  .card-page { border-color: color-mix(in srgb, var(--purple) 25%, var(--border)); }
   .card-chat { border-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
 
-  .card-note .feed-card-header { border-bottom-color: color-mix(in srgb, var(--yellow) 25%, var(--border)); }
-  .card-page .feed-card-header { border-bottom-color: color-mix(in srgb, var(--purple) 25%, var(--border)); }
   .card-chat .feed-card-header { border-bottom-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
 
-  .card-note:hover { border-color: color-mix(in srgb, var(--yellow) 50%, var(--border)); }
-  .card-page:hover { border-color: color-mix(in srgb, var(--purple) 50%, var(--border)); }
   .card-chat:hover { border-color: color-mix(in srgb, var(--blue) 50%, var(--border)); }
 
   .feed-card-label {
@@ -340,60 +315,6 @@ function getConvLabel(conv: ConversationWithDetails): string {
     opacity: 0.85;
     color: var(--bg-0);
     border-color: var(--accent);
-  }
-
-  /* Note card body */
-  .note-body {
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-  }
-
-  .note-excerpt {
-    font-size: 13px;
-    color: var(--text-1);
-    margin: 0;
-    overflow: hidden;
-    line-height: 1.5;
-    flex: 1;
-  }
-
-  .note-footer {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
-    margin-top: 6px;
-  }
-
-  .note-author {
-    font-size: 11px;
-    color: var(--accent);
-    font-weight: 500;
-  }
-
-  .note-comments {
-    font-size: 11px;
-    color: var(--text-2);
-  }
-
-  /* Page card body */
-  .page-body {
-    padding: 0;
-    overflow: hidden;
-    position: relative;
-  }
-
-  .page-body iframe {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 1280px;
-    height: 960px;
-    transform-origin: top left;
-    pointer-events: none;
-    border: none;
-    background: white;
   }
 
   /* Chat card body */

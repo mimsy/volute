@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { findMind, mindDir } from "../lib/registry.js";
-import { STANDARD_SKILLS } from "../lib/skills.js";
+import { getStandardSkillsWithExtensions } from "../lib/skills.js";
 
 const ORIENTATION_MARKER = "You don't have a soul yet";
 
@@ -53,7 +53,7 @@ export async function run(_args: string[]) {
 
   // Install standard skills from shared pool via daemon, remove orientation
   const failedSkills: string[] = [];
-  for (const skillId of STANDARD_SKILLS) {
+  for (const skillId of getStandardSkillsWithExtensions()) {
     const skillDir = resolve(dir, "home", ".claude", "skills", skillId);
     if (!existsSync(skillDir)) {
       const installRes = await daemonFetch(

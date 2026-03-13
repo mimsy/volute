@@ -65,7 +65,7 @@ const app = new Hono<AuthEnv>()
           if (hyphenIdx > 0) {
             const prefix = pname.slice(0, hyphenIdx);
             if (["discord", "slack", "telegram"].includes(prefix)) {
-              existing = await getUserByUsername(prefix + ":" + pname.slice(hyphenIdx + 1));
+              existing = await getUserByUsername(`${prefix}:${pname.slice(hyphenIdx + 1)}`);
             }
           }
         }

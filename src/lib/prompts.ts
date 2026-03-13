@@ -39,6 +39,7 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
   default_soul: {
     content: `You are {{name}}.\n`,
     description:
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: describing template syntax, not using it
       "SOUL.md for sprouted minds. Uses {{name}} placeholder (replaced at creation, not by ${var} system)",
     variables: ["name"],
     category: "creation",

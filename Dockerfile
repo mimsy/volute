@@ -13,6 +13,10 @@ COPY dist/ dist/
 COPY drizzle/ drizzle/
 COPY templates/ templates/
 COPY skills/ skills/
+COPY packages/extensions/notes/dist/ui/ packages/extensions/notes/dist/ui/
+COPY packages/extensions/notes/skills/ packages/extensions/notes/skills/
+COPY packages/extensions/pages/dist/ui/ packages/extensions/pages/dist/ui/
+COPY packages/extensions/pages/skills/ packages/extensions/pages/skills/
 
 # Make volute CLI available in PATH for minds and operators
 RUN ln -s /opt/volute/dist/cli.js /usr/local/bin/volute

@@ -65,7 +65,7 @@ function closeMenu() {
 
 $effect(() => {
   if (menuConvId) {
-    const handler = (e: MouseEvent) => closeMenu();
+    const handler = (_e: MouseEvent) => closeMenu();
     // Delay to avoid closing immediately from the same click
     requestAnimationFrame(() => {
       document.addEventListener("click", handler, { once: true });

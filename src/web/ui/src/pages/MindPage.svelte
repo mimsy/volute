@@ -1,7 +1,7 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Message } from "@volute/api";
+import ExtensionFeedCard from "../components/ExtensionFeedCard.svelte";
 import MindInfo from "../components/MindInfo.svelte";
-
 import MindSkills from "../components/MindSkills.svelte";
 import PublicFiles from "../components/PublicFiles.svelte";
 import ReadOnlyChatModal from "../components/ReadOnlyChatModal.svelte";
@@ -10,34 +10,25 @@ import {
   fetchMindConversationMessages,
   fetchMindConversations,
 } from "../lib/client";
-import {
-  type ApiNote,
-  extractTextContent,
-  formatTime,
-  scaleIframe,
-  showSenderHeader,
-} from "../lib/feed-utils";
+import { extractTextContent, formatTime, showSenderHeader } from "../lib/feed-utils";
 import { formatRelativeTime, normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
 import { navigate } from "../lib/navigate";
 import { auth, data } from "../lib/stores.svelte";
-import Notes from "./Notes.svelte";
-import SiteView from "./SiteView.svelte";
 
 let {
   name,
   section = "info",
+  subpath,
 }: {
   name: string;
-  section?: "info" | "notes" | "pages" | "files" | "settings";
+  section?: string;
+  subpath?: string;
 } = $props();
 
 let mind = $derived(data.minds.find((m) => m.name === name));
 
-let site = $derived(data.sites.find((s) => s.name === name));
-
 let mindConversations = $state<ConversationWithParticipants[]>([]);
-let recentNotes = $state<ApiNote[]>([]);
 let messagesMap = $state<Record<string, Message[]>>({});
 let scrollEls = $state<Record<string, HTMLDivElement>>({});
 let readOnlyConv = $state<ConversationWithParticipants | null>(null);
@@ -52,33 +43,40 @@ function isUserParticipant(conv: ConversationWithParticipants): boolean {
 function getConvLabel(conv: ConversationWithParticipants): string {
   if (conv.type === "channel" && conv.name) return `#${conv.name}`;
   const parts = conv.participants ?? [];
-  // For a DM, show the non-mind participant
   if (conv.type === "dm" && parts.length === 2) {
     const other = parts.find((p) => p.username !== name);
     if (other) return `@${other.username}`;
   }
-  // For groups, show non-mind participants
   const others = parts.filter((p) => p.username !== name);
   if (others.length > 0) return others.map((p) => `@${p.username}`).join(", ");
   if (conv.title) return conv.title;
   return "Conversation";
 }
 
-// Mixed feed of notes, pages, and conversations sorted by date
+// Extension feed items for the info section
+type ExtFeedItem = {
+  id: string;
+  title: string;
+  url: string;
+  date: string;
+  author?: string;
+  bodyHtml: string;
+  iframeUrl?: string;
+  icon?: string;
+  color?: string;
+  extensionId: string;
+};
+
+let extensionFeedItems = $state<ExtFeedItem[]>([]);
+
 type FeedItem =
-  | { kind: "note"; note: ApiNote; date: string }
-  | { kind: "page"; file: string; modified: string; date: string }
+  | { kind: "extension"; item: ExtFeedItem; date: string }
   | { kind: "message"; conv: ConversationWithParticipants; date: string };
 
 let feedItems = $derived.by(() => {
   const items: FeedItem[] = [];
-  for (const note of recentNotes) {
-    items.push({ kind: "note", note, date: note.created_at });
-  }
-  if (site) {
-    for (const page of site.pages.slice(0, 4)) {
-      items.push({ kind: "page", file: page.file, modified: page.modified, date: page.modified });
-    }
+  for (const extItem of extensionFeedItems) {
+    items.push({ kind: "extension", item: extItem, date: extItem.date });
   }
   for (const conv of mindConversations) {
     if ((conv as any).lastMessage) {
@@ -131,25 +129,29 @@ $effect(() => {
   }
 });
 
+// Fetch extension feed items scoped to this mind
 $effect(() => {
   const mindName = name;
-  fetch(`/api/notes?author=${encodeURIComponent(mindName)}&limit=6`)
-    .then((r) => (r.ok ? r.json() : []))
-    .then((notes: ApiNote[]) => {
-      recentNotes = notes;
-    })
-    .catch(() => {
-      recentNotes = [];
+  const extensions = data.extensions;
+  const items: ExtFeedItem[] = [];
+  const promises = extensions
+    .filter((ext) => ext.feedSource)
+    .map(async (ext) => {
+      try {
+        const res = await fetch(`${ext.feedSource!.endpoint}?mind=${encodeURIComponent(mindName)}`);
+        if (!res.ok) return;
+        const feedItems = await res.json();
+        for (const item of feedItems) {
+          items.push({ ...item, extensionId: ext.id });
+        }
+      } catch {
+        // skip
+      }
     });
+  Promise.all(promises).then(() => {
+    extensionFeedItems = items;
+  });
 });
-
-function handleSelectPage(mind: string, path: string) {
-  navigate(`/minds/${mind}/pages/${path}`);
-}
-
-function handleSelectNote(author: string, slug: string) {
-  navigate(`/minds/${author}/notes/${slug}`);
-}
 </script>
 
 {#if !mind}
@@ -162,36 +164,20 @@ function handleSelectNote(author: string, slug: string) {
         <div class="empty-hint">No activity yet.</div>
       {:else}
         <div class="feed-grid">
-          {#each feedItems as item (item.kind === "note" ? `note-${item.note.slug}` : item.kind === "page" ? `page-${item.file}` : `msg-${item.conv.id}`)}
-            {#if item.kind === "note"}
-              {@const note = item.note}
+          {#each feedItems as item (item.kind === "extension" ? `ext-${item.item.id}` : `msg-${item.conv.id}`)}
+            {#if item.kind === "extension"}
               <div class="feed-item">
-                <div class="feed-card card-note" role="button" tabindex="0" onclick={() => handleSelectNote(note.author_username, note.slug)} onkeydown={(e) => { if (e.key === 'Enter') handleSelectNote(note.author_username, note.slug); }}>
-                  <div class="feed-card-header header-note">
-                    <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h8M2 6h10M2 9h6M2 12h9"/></svg>
-                    <span class="feed-card-label">{note.title}</span>
-                    <span class="feed-card-meta">{formatRelativeTime(note.created_at)}</span>
-                  </div>
-                  <div class="feed-card-body note-body">
-                    <p class="note-excerpt">{note.content.length > 300 ? `${note.content.slice(0, 300)}...` : note.content}</p>
-                    {#if note.comment_count > 0}
-                      <span class="note-comments">{note.comment_count} {note.comment_count === 1 ? "comment" : "comments"}</span>
-                    {/if}
-                  </div>
-                </div>
-              </div>
-            {:else if item.kind === "page"}
-              <div class="feed-item">
-                <div class="feed-card card-page" role="button" tabindex="0" onclick={() => handleSelectPage(name, item.file)} onkeydown={(e) => { if (e.key === 'Enter') handleSelectPage(name, item.file); }}>
-                  <div class="feed-card-header header-page">
-                    <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M2 5.5h12"/></svg>
-                    <span class="feed-card-label">{item.file}</span>
-                    <span class="feed-card-meta">{formatRelativeTime(item.modified)}</span>
-                  </div>
-                  <div class="feed-card-body page-body" use:scaleIframe>
-                    <iframe src="/pages/{name}/{item.file}" loading="lazy" sandbox="allow-same-origin" tabindex={-1} title={item.file}></iframe>
-                  </div>
-                </div>
+                <ExtensionFeedCard
+                  title={item.item.title}
+                  url={item.item.url}
+                  date={item.item.date}
+                  author={item.item.author}
+                  bodyHtml={item.item.bodyHtml}
+                  iframeUrl={item.item.iframeUrl}
+                  icon={item.item.icon}
+                  color={item.item.color}
+                  onclick={() => navigate(item.item.url)}
+                />
               </div>
             {:else}
               {@const conv = item.conv}
@@ -247,16 +233,13 @@ function handleSelectNote(author: string, slug: string) {
           {/each}
         </div>
       {/if}
-    {:else if section === "notes"}
+    {:else if section?.startsWith("ext:")}
+      {@const extParts = section.split(":")}
       <div class="section-content">
-        <Notes author={name} />
-      </div>
-    {:else if section === "pages"}
-      <div class="section-content">
-        {#if site}
-          <SiteView {site} onSelectPage={handleSelectPage} />
+        {#if subpath && extParts[1] === "pages"}
+          <iframe src="/ext/{extParts[1]}/public/{name}/{subpath}" class="ext-iframe page-content-iframe" title="Page content"></iframe>
         {:else}
-          <div class="empty-hint">No published pages.</div>
+          <iframe src="/ext/{extParts[1]}/#/mind/{name}{subpath ? '/' + subpath : ''}" class="ext-iframe" title="Extension"></iframe>
         {/if}
       </div>
     {:else if section === "files"}
@@ -344,20 +327,12 @@ function handleSelectNote(author: string, slug: string) {
     height: 14px;
   }
 
-  .card-note .feed-card-icon { color: var(--yellow); }
-  .card-page .feed-card-icon { color: var(--purple); }
   .card-chat .feed-card-icon { color: var(--blue); }
 
-  .card-note { border-color: color-mix(in srgb, var(--yellow) 25%, var(--border)); }
-  .card-page { border-color: color-mix(in srgb, var(--purple) 25%, var(--border)); }
   .card-chat { border-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
 
-  .card-note .feed-card-header { border-bottom-color: color-mix(in srgb, var(--yellow) 25%, var(--border)); }
-  .card-page .feed-card-header { border-bottom-color: color-mix(in srgb, var(--purple) 25%, var(--border)); }
   .card-chat .feed-card-header { border-bottom-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
 
-  .card-note:hover { border-color: color-mix(in srgb, var(--yellow) 50%, var(--border)); }
-  .card-page:hover { border-color: color-mix(in srgb, var(--purple) 50%, var(--border)); }
   .card-chat:hover { border-color: color-mix(in srgb, var(--blue) 50%, var(--border)); }
 
   .feed-card-label {
@@ -411,48 +386,6 @@ function handleSelectNote(author: string, slug: string) {
     opacity: 0.85;
     color: var(--bg-0);
     border-color: var(--accent);
-  }
-
-  /* Note card body */
-  .note-body {
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-  }
-
-  .note-excerpt {
-    font-size: 13px;
-    color: var(--text-1);
-    margin: 0;
-    overflow: hidden;
-    line-height: 1.5;
-    flex: 1;
-  }
-
-  .note-comments {
-    font-size: 11px;
-    color: var(--text-2);
-    flex-shrink: 0;
-    margin-top: 6px;
-  }
-
-  /* Page card body */
-  .page-body {
-    padding: 0;
-    overflow: hidden;
-    position: relative;
-  }
-
-  .page-body iframe {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 1280px;
-    height: 960px;
-    transform-origin: top left;
-    pointer-events: none;
-    border: none;
-    background: white;
   }
 
   /* Chat card body */
@@ -528,6 +461,17 @@ function handleSelectNote(author: string, slug: string) {
     margin-top: 24px;
     padding-top: 24px;
     border-top: 1px solid var(--border);
+  }
+
+  .ext-iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: var(--bg-0);
+  }
+
+  .page-content-iframe {
+    background: white;
   }
 
   .empty-hint {

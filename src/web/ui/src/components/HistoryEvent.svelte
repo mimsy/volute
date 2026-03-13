@@ -42,7 +42,7 @@ function formatTime(dateStr: string): string {
 
 function truncate(str: string, len: number): string {
   if (!str || str.length <= len) return str ?? "";
-  return str.slice(0, len) + "...";
+  return `${str.slice(0, len)}...`;
 }
 
 function formatArgs(args: unknown): string {

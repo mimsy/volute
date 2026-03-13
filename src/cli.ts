@@ -72,11 +72,8 @@ switch (command) {
   case "status":
     await import("./commands/status.js").then((m) => m.run(args));
     break;
-  case "notes":
-    await import("./commands/notes.js").then((m) => m.run(args));
-    break;
-  case "pages":
-    await import("./commands/pages.js").then((m) => m.run(args));
+  case "extension":
+    await import("./commands/extension.js").then((m) => m.run(args));
     break;
   case "systems":
     await import("./commands/systems.js").then((m) => m.run(args));
@@ -113,13 +110,12 @@ Configuration:
   clock     Schedules, timers, and sleep/wake cycles
   skill     Browse and install skills
   env       Manage environment variables
-  notes     Read and write notes
-  pages     Publish web pages
 
 System:
   setup                            First-time setup
   up / down / restart              Daemon control
   status                           Show daemon & service status
+  extension list/install/uninstall Manage extensions
   login / logout                   CLI authentication
   update                           Update volute
   systems register/login/logout    volute.systems account
@@ -130,7 +126,7 @@ Options:
 
 Run 'volute <command> --help' for details.
 
-Mind-scoped commands (chat, clock, skill, pages)
+Mind-scoped commands (chat, clock, skill)
 use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
   default:
