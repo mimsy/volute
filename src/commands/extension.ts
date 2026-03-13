@@ -1,7 +1,21 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { exec } from "../lib/exec.js";
+
+/** Resolve the Volute package root (directory containing package.json). */
+function volutePackageRoot(): string {
+  const thisDir = dirname(new URL(import.meta.url).pathname);
+  const candidates = [
+    resolve(thisDir, ".."),
+    resolve(thisDir, "../.."),
+    resolve(thisDir, "../../.."),
+  ];
+  for (const p of candidates) {
+    if (existsSync(resolve(p, "package.json"))) return p;
+  }
+  throw new Error("Could not find Volute package root");
+}
 
 export async function run(args: string[]) {
   const subcommand = args[0];
@@ -102,9 +116,10 @@ async function installExtension(args: string[]) {
     return;
   }
 
+  const root = volutePackageRoot();
   console.log(`Installing "${pkg}"...`);
   try {
-    await exec("npm", ["install", pkg]);
+    await exec("npm", ["install", pkg], { cwd: root });
   } catch (err) {
     console.error(`Failed to install "${pkg}": ${(err as Error).message}`);
     process.exit(1);
@@ -134,7 +149,7 @@ async function uninstallExtension(args: string[]) {
   writeConfig(packages);
 
   try {
-    await exec("npm", ["uninstall", pkg]);
+    await exec("npm", ["uninstall", pkg], { cwd: volutePackageRoot() });
   } catch {
     // Non-fatal — package may have been manually removed
   }

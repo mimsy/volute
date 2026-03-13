@@ -16,6 +16,7 @@ import { exec, gitExec } from "./exec.js";
 import log from "./logger.js";
 import { voluteHome } from "./registry.js";
 import { sharedSkills } from "./schema.js";
+import { readGlobalConfig, writeGlobalConfig } from "./setup.js";
 
 const VALID_SKILL_ID = /^[a-zA-Z0-9_-]+$/;
 
@@ -31,43 +32,24 @@ export const STANDARD_SKILLS = ["volute-mind", "memory", "sessions", "dreaming",
  * STANDARD_SKILLS + extension-contributed standard skills.
  */
 export function getStandardSkillsWithExtensions(): string[] {
-  // require() breaks circular dep: skills.ts ↔ setup.ts ↔ extensions.ts (tsup bundles to CJS)
-  const { readGlobalConfig } = require("./setup.js") as {
-    readGlobalConfig: () => { defaultSkills?: string[] };
-  };
   const config = readGlobalConfig();
   if (config.defaultSkills) return [...config.defaultSkills];
-
-  // Fallback: hardcoded + extension skills (before initDefaultSkills has run)
-  try {
-    const { getExtensionStandardSkills } = require("./extensions.js") as {
-      getExtensionStandardSkills: () => string[];
-    };
-    return [...new Set([...STANDARD_SKILLS, ...getExtensionStandardSkills()])];
-  } catch (err) {
-    log.warn("failed to load extension standard skills, using defaults", log.errorData(err));
-    return [...STANDARD_SKILLS];
-  }
+  // Fallback before initDefaultSkills has run — no extension skills available synchronously
+  return [...STANDARD_SKILLS];
 }
 
 /**
  * Initialize defaultSkills in config if not already set.
  * Called on daemon startup after extensions are loaded, so extension standard skills are included.
  */
-export function initDefaultSkills(): void {
-  // require() breaks circular dep: skills.ts ↔ setup.ts ↔ extensions.ts (tsup bundles to CJS)
-  const { readGlobalConfig, writeGlobalConfig } = require("./setup.js") as {
-    readGlobalConfig: () => { defaultSkills?: string[]; [k: string]: unknown };
-    writeGlobalConfig: (c: Record<string, unknown>) => void;
-  };
+export async function initDefaultSkills(): Promise<void> {
   const config = readGlobalConfig();
   if (config.defaultSkills) return; // already configured
 
   let extensionSkills: string[] = [];
   try {
-    const { getExtensionStandardSkills } = require("./extensions.js") as {
-      getExtensionStandardSkills: () => string[];
-    };
+    // Lazy import: extensions.ts may not be loaded yet at module evaluation time
+    const { getExtensionStandardSkills } = await import("./extensions.js");
     extensionSkills = getExtensionStandardSkills();
   } catch (err) {
     log.warn("failed to load extension standard skills during init", log.errorData(err));

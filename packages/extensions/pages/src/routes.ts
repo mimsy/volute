@@ -59,6 +59,8 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       );
     })
     .put("/publish/:name", async (c) => {
+      const user = ctx.resolveUser(c);
+      if (!user || user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
       const config = ctx.getSystemsConfig();
       if (!config) return c.json({ error: "Not connected to volute.systems" }, 400);
       const name = c.req.param("name");
@@ -79,6 +81,8 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       }
     })
     .get("/status/:name", async (c) => {
+      const user = ctx.resolveUser(c);
+      if (!user || user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
       const config = ctx.getSystemsConfig();
       if (!config) return c.json({ error: "Not connected to volute.systems" }, 400);
       const name = c.req.param("name");

@@ -123,7 +123,7 @@ export async function startDaemon(opts: {
   }
 
   // Initialize default skills config if not set (after extensions load so their skills are included)
-  initDefaultSkills();
+  await initDefaultSkills();
 
   // Ensure #system channel exists (non-fatal)
   try {
