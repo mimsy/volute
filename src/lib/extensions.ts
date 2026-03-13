@@ -262,8 +262,10 @@ async function loadExtension(
 
   // Mount authenticated API routes
   const routesApp = manifest.routes(context);
-  app.use(`/api/ext/${manifest.id}/*`, authMw);
-  app.route(`/api/ext/${manifest.id}`, routesApp);
+  const extApiPath = `/api/ext/${manifest.id}`;
+  app.use(extApiPath, authMw);
+  app.use(`${extApiPath}/*`, authMw);
+  app.route(extApiPath, routesApp);
 
   // Mount public routes (no auth)
   if (manifest.publicRoutes) {
@@ -389,12 +391,19 @@ async function discoverInstalledExtensions(): Promise<ExtensionManifest[]> {
   // Extensions are installed under ~/.volute/extensions/_npm/node_modules/
   const npmDir = resolve(voluteHome(), "extensions", "_npm");
 
+  // Use createRequire to resolve package entry points from the extensions dir
+  const { createRequire } = await import("node:module");
+
   for (const pkg of packages) {
     try {
-      // Try the user-writable extensions/_npm dir first, then fall back to bare import
-      let entryPoint = resolve(npmDir, "node_modules", pkg);
-      if (!existsSync(entryPoint)) entryPoint = pkg;
-      const mod = await import(entryPoint);
+      let resolved: string = pkg;
+      const npmPkgDir = resolve(npmDir, "node_modules", pkg);
+      if (existsSync(npmPkgDir)) {
+        // Resolve the package's actual entry point from the extensions dir
+        const require = createRequire(resolve(npmDir, "noop.js"));
+        resolved = require.resolve(pkg);
+      }
+      const mod = await import(resolved);
       const manifest = mod.default ?? mod.extension ?? mod;
       if (manifest?.id && typeof manifest?.routes === "function") {
         manifests.push(manifest);
