@@ -56,11 +56,13 @@ export async function initDefaultSkills(): Promise<void> {
 
   const desired = new Set([...STANDARD_SKILLS, ...extensionSkills]);
   const current = config.defaultSkills ?? [];
+  const removed = new Set(config.removedDefaultSkills ?? []);
 
-  // Merge any new standard/extension skills into the existing set
-  const merged = [...new Set([...current, ...desired])];
-  if (merged.length === current.length) return;
+  // Only add new standard/extension skills that the admin hasn't explicitly removed
+  const toAdd = [...desired].filter((s) => !current.includes(s) && !removed.has(s));
+  if (toAdd.length === 0 && current.length > 0) return;
 
+  const merged = [...new Set([...current, ...toAdd])];
   writeGlobalConfig({ ...config, defaultSkills: merged });
   log.info(`updated default skills: ${merged.join(", ")}`);
 }

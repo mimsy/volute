@@ -34,6 +34,8 @@ export type GlobalConfig = {
   setup?: SetupConfig;
   /** Skill IDs installed by default when a mind is created/sprouted */
   defaultSkills?: string[];
+  /** Skills explicitly removed from defaults by an admin (not re-added on restart) */
+  removedDefaultSkills?: string[];
   ai?: AiConfig;
 };
 

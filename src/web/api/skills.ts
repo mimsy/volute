@@ -44,7 +44,8 @@ const app = new Hono<AuthEnv>()
     }
     const config = readGlobalConfig();
     const updated = [...current, body.skill];
-    writeGlobalConfig({ ...config, defaultSkills: updated });
+    const removed = (config.removedDefaultSkills ?? []).filter((s) => s !== body.skill);
+    writeGlobalConfig({ ...config, defaultSkills: updated, removedDefaultSkills: removed });
     return c.json({ skills: updated });
   })
   .delete("/defaults/list/:skill", requireAdmin, async (c) => {
@@ -55,7 +56,9 @@ const app = new Hono<AuthEnv>()
     }
     const config = readGlobalConfig();
     const updated = current.filter((s) => s !== skill);
-    writeGlobalConfig({ ...config, defaultSkills: updated });
+    const removed = new Set(config.removedDefaultSkills ?? []);
+    removed.add(skill);
+    writeGlobalConfig({ ...config, defaultSkills: updated, removedDefaultSkills: [...removed] });
     return c.json({ skills: updated });
   })
   .post("/upload", requireAdmin, async (c) => {
