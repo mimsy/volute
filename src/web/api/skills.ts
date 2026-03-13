@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import AdmZip from "adm-zip";
 import { Hono } from "hono";
+import { getExtensionStandardSkills } from "../../lib/extensions.js";
 import { readGlobalConfig, writeGlobalConfig } from "../../lib/setup.js";
 import {
   getSharedSkill,
@@ -11,6 +12,7 @@ import {
   listFilesRecursive,
   listSharedSkills,
   removeSharedSkill,
+  STANDARD_SKILLS,
   sharedSkillsDir,
 } from "../../lib/skills.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
@@ -30,7 +32,19 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "body.skills must be a string array" }, 400);
     }
     const config = readGlobalConfig();
-    writeGlobalConfig({ ...config, defaultSkills: body.skills });
+    // Track which standard/extension skills were explicitly removed
+    const allStandard = new Set([...STANDARD_SKILLS, ...getExtensionStandardSkills()]);
+    const newSet = new Set(body.skills);
+    const removed = [...allStandard].filter((s) => !newSet.has(s));
+    const prevRemoved = new Set(config.removedDefaultSkills ?? []);
+    for (const s of removed) prevRemoved.add(s);
+    // Re-added skills should be cleared from the removed list
+    for (const s of body.skills) prevRemoved.delete(s);
+    writeGlobalConfig({
+      ...config,
+      defaultSkills: body.skills,
+      removedDefaultSkills: [...prevRemoved],
+    });
     return c.json({ skills: body.skills });
   })
   .post("/defaults/list", requireAdmin, async (c) => {

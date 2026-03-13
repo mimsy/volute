@@ -435,13 +435,8 @@ async function discoverLocalExtensions(): Promise<ExtensionManifest[]> {
 
   for (const dir of entries) {
     const extDir = resolve(baseDir, dir);
-    // Look for an entry point — prefer .js over .ts
-    const candidates = [
-      resolve(extDir, "src", "index.js"),
-      resolve(extDir, "index.js"),
-      resolve(extDir, "src", "index.ts"),
-      resolve(extDir, "index.ts"),
-    ];
+    // Look for a .js entry point (local extensions must be pre-built)
+    const candidates = [resolve(extDir, "src", "index.js"), resolve(extDir, "index.js")];
     const entryPoint = candidates.find((p) => existsSync(p));
     if (!entryPoint) continue;
 
