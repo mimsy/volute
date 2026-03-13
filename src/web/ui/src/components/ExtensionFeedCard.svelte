@@ -108,7 +108,7 @@ let renderedBody = $derived(renderMarkdown(bodyHtml));
   .body-html {
     padding: 8px 12px;
     font-size: 13px;
-    color: var(--text-1);
+    color: var(--text-0);
     line-height: 1.5;
     overflow: hidden;
     height: 100%;
