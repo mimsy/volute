@@ -79,7 +79,7 @@ function updateFirstSegmentHeight() {
   if (firstDot) {
     const dotCenter = firstDot.getBoundingClientRect().top + 4;
     const connectorTop = eventEl.getBoundingClientRect().top + 15;
-    eventEl.style.setProperty("--first-segment-height", `${dotCenter - connectorTop + 1}px`);
+    eventEl.style.setProperty("--first-segment-height", `${dotCenter - connectorTop - 5}px`);
   }
 }
 
@@ -435,7 +435,6 @@ async function handleClick() {
     background: var(--green);
     opacity: 0;
     transition: opacity 0.15s;
-    z-index: 1;
   }
   .turn-connector-highlight::after {
     content: "";
