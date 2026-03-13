@@ -242,10 +242,16 @@ onMount(() => {
   };
   mql.addEventListener("change", mqlHandler);
 
-  // Listen for navigation messages from extension iframes
+  // Listen for navigation messages from extension iframes.
+  // Only process when current selection is an extension view, so that
+  // late-arriving messages from iframes being hidden don't override tab switches.
   const messageHandler = (e: MessageEvent) => {
     if (e.origin !== window.location.origin) return;
     if (e.data?.type === "navigate" && typeof e.data.path === "string") {
+      const sel = selection;
+      const isExtView =
+        sel.kind === "extension" || (sel.kind === "mind" && sel.section?.startsWith("ext:"));
+      if (!isExtView) return;
       navigate(e.data.path);
     }
   };
