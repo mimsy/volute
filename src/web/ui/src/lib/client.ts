@@ -202,16 +202,38 @@ export function reportTyping(
 
 export function fetchHistory(
   name: string,
-  opts?: { channel?: string; session?: string; full?: boolean; limit?: number; offset?: number },
+  opts?: {
+    channel?: string;
+    session?: string;
+    full?: boolean;
+    preset?: "summary" | "conversation" | "detailed" | "all";
+    limit?: number;
+    offset?: number;
+  },
 ): Promise<HistoryMessage[]> {
   const params = new URLSearchParams();
   if (opts?.channel) params.set("channel", opts.channel);
   if (opts?.session) params.set("session", opts.session);
   if (opts?.full) params.set("full", "true");
+  if (opts?.preset) params.set("preset", opts.preset);
   if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
   if (opts?.offset !== undefined) params.set("offset", String(opts.offset));
   const qs = params.toString();
   return get(`${V1}/minds/${enc(name)}/history${qs ? `?${qs}` : ""}`);
+}
+
+export function fetchTurnEvents(
+  name: string,
+  session: string,
+  fromId: number,
+  toId: number,
+): Promise<HistoryMessage[]> {
+  const params = new URLSearchParams({
+    session,
+    from_id: String(fromId),
+    to_id: String(toId),
+  });
+  return get(`${V1}/minds/${enc(name)}/history/turn?${params}`);
 }
 
 export function fetchHistorySessions(name: string): Promise<HistorySession[]> {

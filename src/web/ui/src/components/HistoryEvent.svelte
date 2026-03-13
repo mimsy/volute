@@ -1,11 +1,26 @@
 <script lang="ts">
 import type { HistoryMessage } from "@volute/api";
+import { fetchTurnEvents } from "../lib/client";
 import { normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
+import HistoryEvent from "./HistoryEvent.svelte";
 
-let { event, mindName }: { event: HistoryMessage; mindName: string } = $props();
+let {
+  event,
+  mindName,
+  expandable = false,
+  onsessionclick,
+}: {
+  event: HistoryMessage;
+  mindName: string;
+  expandable?: boolean;
+  onsessionclick?: (session: string) => void;
+} = $props();
 
 let expanded = $state(false);
+let turnExpanded = $state(false);
+let turnLoading = $state(false);
+let turnEvents = $state<HistoryMessage[]>([]);
 
 const typeColors: Record<string, string> = {
   inbound: "var(--blue)",
@@ -27,7 +42,8 @@ let meta = $derived(event.metadata ? JSON.parse(event.metadata) : null);
 let collapsible = $derived(
   (event.type === "tool_use" && !!event.content) ||
     (event.type === "tool_result" && !!event.content) ||
-    (event.type === "thinking" && !!event.content),
+    (event.type === "thinking" && !!event.content) ||
+    (event.type === "summary" && expandable),
 );
 
 function formatTime(dateStr: string): string {
@@ -55,6 +71,22 @@ function formatArgs(args: unknown): string {
   }
   return JSON.stringify(args, null, 2);
 }
+
+async function handleClick() {
+  if (event.type === "summary" && expandable) {
+    turnExpanded = !turnExpanded;
+    if (turnExpanded && turnEvents.length === 0) {
+      turnLoading = true;
+      try {
+        turnEvents = await fetchTurnEvents(mindName, event.session!, meta.from_id, meta.to_id);
+      } finally {
+        turnLoading = false;
+      }
+    }
+  } else if (collapsible) {
+    expanded = !expanded;
+  }
+}
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -62,7 +94,7 @@ function formatArgs(args: unknown): string {
 <div
   class="event"
   class:collapsible
-  onclick={() => { if (collapsible) expanded = !expanded; }}
+  onclick={handleClick}
   style:--type-color={color}
 >
   <div class="marker" style:background={color}></div>
@@ -74,7 +106,7 @@ function formatArgs(args: unknown): string {
       <span class="channel-tag">{event.channel}</span>
     {/if}
     {#if collapsible}
-      <span class="chevron">{expanded ? "▼" : "▶"}</span>
+      <span class="chevron">{(event.type === "summary" ? turnExpanded : expanded) ? "▼" : "▶"}</span>
     {/if}
   </div>
 
@@ -124,6 +156,22 @@ function formatArgs(args: unknown): string {
       <span class="summary-text">{event.content}</span>
       {#if meta?.from_time && meta?.to_time}
         <span class="time-range">{formatTime(meta.from_time)} – {formatTime(meta.to_time)}</span>
+      {/if}
+      {#if event.session}
+        <button class="session-tag" onclick={(e) => { e.stopPropagation(); onsessionclick?.(event.session!); }}>
+          {event.session}
+        </button>
+      {/if}
+      {#if expandable && turnExpanded}
+        {#if turnLoading}
+          <div class="turn-loading">loading turn...</div>
+        {:else}
+          <div class="turn-events">
+            {#each turnEvents as turnEv (turnEv.id)}
+              <HistoryEvent event={turnEv} {mindName} />
+            {/each}
+          </div>
+        {/if}
       {/if}
     {:else if event.type === "done"}
       <span class="dim">processing complete</span>
@@ -290,5 +338,34 @@ function formatArgs(args: unknown): string {
     font-size: 11px;
     color: var(--text-2);
     margin-left: 8px;
+  }
+
+  .session-tag {
+    font-size: 11px;
+    color: var(--text-1);
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    padding: 1px 6px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    margin-left: 8px;
+    font-family: var(--mono);
+  }
+  .session-tag:hover {
+    background: var(--bg-2);
+    color: var(--text-0);
+  }
+
+  .turn-loading {
+    font-size: 12px;
+    color: var(--text-2);
+    padding: 8px 0;
+    font-style: italic;
+  }
+
+  .turn-events {
+    margin-top: 8px;
+    padding-left: 8px;
+    border-left: 2px solid var(--border);
   }
 </style>

@@ -2263,11 +2263,43 @@ const app = new Hono<AuthEnv>()
     const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, name));
     return c.json(rows);
   })
+  .get("/:name/history/turn", async (c) => {
+    const name = c.req.param("name");
+    const session = c.req.query("session");
+    const fromId = parseInt(c.req.query("from_id") ?? "", 10);
+    const toId = parseInt(c.req.query("to_id") ?? "", 10);
+    if (!session || !fromId || !toId) {
+      return c.json({ error: "session, from_id, and to_id are required" }, 400);
+    }
+
+    const db = await getDb();
+    const rows = await db
+      .select()
+      .from(mindHistory)
+      .where(
+        and(
+          eq(mindHistory.mind, name),
+          eq(mindHistory.session, session),
+          sql`${mindHistory.id} >= ${fromId}`,
+          sql`${mindHistory.id} <= ${toId}`,
+          sql`${mindHistory.type} IN ('inbound','outbound','tool_use','tool_result','text','thinking')`,
+        ),
+      )
+      .orderBy(mindHistory.id);
+
+    return c.json(rows);
+  })
   .get("/:name/history", async (c) => {
     const name = c.req.param("name");
     const channel = c.req.query("channel");
     const session = c.req.query("session");
     const full = c.req.query("full") === "true";
+    const preset = c.req.query("preset") as
+      | "summary"
+      | "conversation"
+      | "detailed"
+      | "all"
+      | undefined;
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
     const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
 
@@ -2279,9 +2311,24 @@ const app = new Hono<AuthEnv>()
     if (session) {
       conditions.push(eq(mindHistory.session, session));
     }
-    // Default to conversation view (inbound/outbound + summaries)
-    if (!full) {
-      conditions.push(sql`${mindHistory.type} IN ('inbound', 'outbound', 'summary')`);
+
+    // Preset-based type filtering
+    const effectivePreset = full ? "all" : preset;
+    switch (effectivePreset) {
+      case "all":
+        // No type filter
+        break;
+      case "conversation":
+        conditions.push(sql`${mindHistory.type} IN ('summary','inbound','outbound','tool_use')`);
+        break;
+      case "detailed":
+        conditions.push(
+          sql`${mindHistory.type} IN ('summary','inbound','outbound','tool_use','text','thinking')`,
+        );
+        break;
+      default:
+        conditions.push(sql`${mindHistory.type} IN ('summary')`);
+        break;
     }
 
     const rows = await db

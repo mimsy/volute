@@ -142,7 +142,22 @@ function buildTranscript(events: HistoryRow[]): string {
         lines.push(toolInfo);
         break;
       }
-      // Skip tool_result, thinking, usage, done — keep prompt compact
+      case "tool_result": {
+        const content = ev.content ?? "";
+        let isError = false;
+        if (ev.metadata) {
+          try {
+            const meta = JSON.parse(ev.metadata);
+            isError = !!meta.is_error;
+          } catch {}
+        }
+        lines.push(isError ? "[result error]" : `[result] ${content.slice(0, 200)}`);
+        break;
+      }
+      case "thinking":
+        lines.push(`[thinking] ${(ev.content ?? "").slice(0, 300)}`);
+        break;
+      // Skip usage, done — keep prompt compact
     }
   }
   return lines.join("\n");
