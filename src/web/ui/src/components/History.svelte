@@ -379,7 +379,7 @@ function handleSessionClick(session: string) {
     margin-bottom: 14.5px;
     height: 6px;
     border-radius: 50%;
-    background: var(--border-bright);
+    background: var(--text-2);
     z-index: 1;
   }
   .session-divider-line {
@@ -397,9 +397,9 @@ function handleSessionClick(session: string) {
     transition: color 0.15s;
   }
   .session-divider:hover .session-divider-label {
-    color: var(--accent);
+    color: var(--text-1);
   }
-  /* Hover: highlight main rail from session dot to next item */
+  /* Hover: highlight main rail from session dot down to next item */
   .session-divider::after {
     content: "";
     position: absolute;
@@ -407,7 +407,7 @@ function handleSessionClick(session: string) {
     top: 50%;
     bottom: -16px;
     width: 2px;
-    background: var(--accent);
+    background: var(--text-1);
     opacity: 0;
     transition: opacity 0.15s;
   }

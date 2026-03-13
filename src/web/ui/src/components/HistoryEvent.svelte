@@ -238,7 +238,7 @@ async function handleClick() {
     position: absolute;
     left: -2px;
     top: 12px;
-    bottom: -24px;
+    bottom: -20px;
     width: 2px;
     background: var(--type-color);
     opacity: 0;
