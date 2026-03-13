@@ -153,24 +153,36 @@ async function handleClick() {
         <span class="session-id">{event.session}</span>
       {/if}
     {:else if event.type === "summary"}
-      <span class="summary-text">{event.content}</span>
-      {#if meta?.from_time && meta?.to_time}
-        <span class="time-range">{formatTime(meta.from_time)} – {formatTime(meta.to_time)}</span>
-      {/if}
-      {#if event.session}
-        <button class="session-tag" onclick={(e) => { e.stopPropagation(); onsessionclick?.(event.session!); }}>
-          {event.session}
-        </button>
-      {/if}
       {#if expandable && turnExpanded}
-        {#if turnLoading}
-          <div class="turn-loading">loading turn...</div>
-        {:else}
-          <div class="turn-events">
+        <div class="turn-branch">
+          <div class="branch-header">
+            <span class="summary-text">{event.content}</span>
+            {#if meta?.from_time && meta?.to_time}
+              <span class="time-range">{formatTime(meta.from_time)} – {formatTime(meta.to_time)}</span>
+            {/if}
+            {#if event.session}
+              <button class="session-tag" onclick={(e) => { e.stopPropagation(); onsessionclick?.(event.session!); }}>
+                {event.session}
+              </button>
+            {/if}
+          </div>
+          {#if turnLoading}
+            <div class="turn-loading">loading turn...</div>
+          {:else}
             {#each turnEvents as turnEv (turnEv.id)}
               <HistoryEvent event={turnEv} {mindName} />
             {/each}
-          </div>
+          {/if}
+        </div>
+      {:else}
+        <span class="summary-text">{event.content}</span>
+        {#if meta?.from_time && meta?.to_time}
+          <span class="time-range">{formatTime(meta.from_time)} – {formatTime(meta.to_time)}</span>
+        {/if}
+        {#if event.session}
+          <button class="session-tag" onclick={(e) => { e.stopPropagation(); onsessionclick?.(event.session!); }}>
+            {event.session}
+          </button>
         {/if}
       {/if}
     {:else if event.type === "done"}
@@ -359,13 +371,51 @@ async function handleClick() {
   .turn-loading {
     font-size: 12px;
     color: var(--text-2);
-    padding: 8px 0;
+    padding: 8px 0 8px 16px;
     font-style: italic;
   }
 
-  .turn-events {
-    margin-top: 8px;
-    padding-left: 8px;
-    border-left: 2px solid var(--border);
+  .turn-branch {
+    position: relative;
+    margin-top: 4px;
+    margin-left: -13px;
+    padding-left: 9px;
+  }
+  /* Sub-rail vertical line — extends up to connect with summary dot */
+  .turn-branch::before {
+    content: "";
+    position: absolute;
+    left: 7px;
+    top: -8px;
+    bottom: 0;
+    width: 2px;
+    background: var(--border);
+  }
+  /* Horizontal connector from main rail dot to sub-rail */
+  .turn-branch::after {
+    content: "";
+    position: absolute;
+    top: -8px;
+    left: -8px;
+    width: 17px;
+    height: 2px;
+    background: var(--border);
+  }
+
+  .branch-header {
+    position: relative;
+    padding: 2px 8px 2px 11px;
+  }
+  /* Dot on the sub-rail for the summary */
+  .branch-header::before {
+    content: "";
+    position: absolute;
+    left: -5px;
+    top: 6px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    z-index: 1;
   }
 </style>
