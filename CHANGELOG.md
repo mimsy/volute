@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.30.0](https://github.com/mimsy/volute/compare/volute-v0.29.0...volute-v0.30.0) (2026-03-13)
+
+
+### Features
+
+* add extension system with SDK, loader, and dashboard integration ([#194](https://github.com/mimsy/volute/issues/194)) ([a6c205f](https://github.com/mimsy/volute/commit/a6c205fa58ee216bb3ec6a168f1cc8ef6426096a))
+* add turn summarization and system AI service ([#201](https://github.com/mimsy/volute/issues/201)) ([3c68ba9](https://github.com/mimsy/volute/commit/3c68ba9e46dee8ca15bdca514fa0b79406f71fda))
+* require schedule names and show action details on hover ([#199](https://github.com/mimsy/volute/issues/199)) ([3900ca8](https://github.com/mimsy/volute/commit/3900ca87dcd173ba66174def49db7c07ec1502ac))
+
+
+### Bug Fixes
+
+* add launchctl kickstart after bootstrap to ensure daemon starts ([#202](https://github.com/mimsy/volute/issues/202)) ([c94b89d](https://github.com/mimsy/volute/commit/c94b89d21d5b445d573046f02c8b8b14b65a8d68))
+* include PATH in user-level launchd plist ([#196](https://github.com/mimsy/volute/issues/196)) ([a14ee78](https://github.com/mimsy/volute/commit/a14ee7872e3be2ab57f19051fc59b6c68d451a87))
+* use launchctl bootstrap/bootout instead of legacy load/unload ([#200](https://github.com/mimsy/volute/issues/200)) ([1f8b7d3](https://github.com/mimsy/volute/commit/1f8b7d323038d498fe68fe369071fffb000a4e11))
+
 ## [0.29.0](https://github.com/mimsy/volute/compare/volute-v0.28.0...volute-v0.29.0) (2026-03-12)
 
 
