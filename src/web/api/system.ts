@@ -252,78 +252,91 @@ const app = new Hono<AuthEnv>()
     removeAiConfig();
     return c.json({ ok: true });
   })
-  .post("/ai/oauth/start", requireAdmin, async (c) => {
-    const body = (await c.req.json()) as { provider: string };
-    const oauthProvider = getOAuthProvider(body.provider);
-    if (!oauthProvider) {
-      return c.json({ error: `OAuth not supported for provider: ${body.provider}` }, 400);
-    }
+  .post(
+    "/ai/oauth/start",
+    requireAdmin,
+    zValidator("json", z.object({ provider: z.string().min(1) })),
+    async (c) => {
+      const { provider } = c.req.valid("json");
+      const oauthProvider = getOAuthProvider(provider);
+      if (!oauthProvider) {
+        return c.json({ error: `OAuth not supported for provider: ${provider}` }, 400);
+      }
 
-    const flowId = crypto.randomUUID();
-    const needsManualCode = !!oauthProvider.usesCallbackServer;
-    const flow: OAuthFlow = {
-      status: "pending",
-      needsManualCode,
-    };
-    oauthFlows.set(flowId, flow);
+      cleanupOAuthFlows();
 
-    // For callback-based providers, onPrompt resolves with the code the user pastes.
-    // We store a resolver so the POST /ai/oauth/code endpoint can fulfill it.
-    const promptPromise = needsManualCode
-      ? new Promise<string>((resolve) => {
-          flow.resolveCode = resolve;
-        })
-      : undefined;
+      const flowId = crypto.randomUUID();
+      const needsManualCode = !!oauthProvider.usesCallbackServer;
+      const flow: OAuthFlow = {
+        status: "pending",
+        needsManualCode,
+        createdAt: Date.now(),
+      };
+      oauthFlows.set(flowId, flow);
 
-    oauthProvider
-      .login({
-        onAuth: (info) => {
-          const existing = oauthFlows.get(flowId);
-          if (existing) Object.assign(existing, { url: info.url, instructions: info.instructions });
-        },
-        onPrompt: async (_prompt) => {
-          if (promptPromise) {
+      // For callback-based providers, onPrompt resolves with the code the user pastes.
+      // We store a resolver so the POST /ai/oauth/code endpoint can fulfill it.
+      const promptPromise = needsManualCode
+        ? new Promise<string>((resolve) => {
+            flow.resolveCode = resolve;
+          })
+        : undefined;
+
+      oauthProvider
+        .login({
+          onAuth: (info) => {
             const existing = oauthFlows.get(flowId);
-            if (existing) existing.waitingForCode = true;
-            return promptPromise;
+            if (existing)
+              Object.assign(existing, { url: info.url, instructions: info.instructions });
+          },
+          onPrompt: async (_prompt) => {
+            if (promptPromise) {
+              const existing = oauthFlows.get(flowId);
+              if (existing) existing.waitingForCode = true;
+              return promptPromise;
+            }
+            return "";
+          },
+          onManualCodeInput: needsManualCode ? () => promptPromise! : undefined,
+        })
+        .then((credentials) => {
+          saveProviderConfig(provider, { oauth: credentials });
+          const existing = oauthFlows.get(flowId);
+          if (existing) existing.status = "complete";
+        })
+        .catch((err) => {
+          const existing = oauthFlows.get(flowId);
+          if (existing) {
+            existing.status = "error";
+            existing.error = err instanceof Error ? err.message : String(err);
           }
-          return "";
-        },
-        onManualCodeInput: needsManualCode ? () => promptPromise! : undefined,
-      })
-      .then((credentials) => {
-        saveProviderConfig(body.provider, { oauth: credentials });
-        const existing = oauthFlows.get(flowId);
-        if (existing) existing.status = "complete";
-      })
-      .catch((err) => {
-        const existing = oauthFlows.get(flowId);
-        if (existing) {
-          existing.status = "error";
-          existing.error = err instanceof Error ? err.message : String(err);
-        }
-      });
+        });
 
-    // Wait briefly for onAuth to fire with URL
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    const state = oauthFlows.get(flowId)!;
-    return c.json({
-      flowId,
-      url: (state as any).url,
-      instructions: (state as any).instructions,
-      needsManualCode,
-    });
-  })
-  .post("/ai/oauth/code/:flowId", requireAdmin, async (c) => {
-    const flowId = c.req.param("flowId");
-    const flow = oauthFlows.get(flowId);
-    if (!flow) return c.json({ error: "Flow not found" }, 404);
-    if (!flow.resolveCode) return c.json({ error: "Flow does not accept manual code" }, 400);
-    const body = (await c.req.json()) as { code: string };
-    if (!body.code?.trim()) return c.json({ error: "Code is required" }, 400);
-    flow.resolveCode(body.code.trim());
-    return c.json({ ok: true });
-  })
+      // Wait briefly for onAuth to fire with URL
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const state = oauthFlows.get(flowId)!;
+      return c.json({
+        flowId,
+        url: state.url,
+        instructions: state.instructions,
+        needsManualCode,
+      });
+    },
+  )
+  .post(
+    "/ai/oauth/code/:flowId",
+    requireAdmin,
+    zValidator("json", z.object({ code: z.string().min(1) })),
+    async (c) => {
+      const flowId = c.req.param("flowId");
+      const flow = oauthFlows.get(flowId);
+      if (!flow) return c.json({ error: "Flow not found" }, 404);
+      if (!flow.resolveCode) return c.json({ error: "Flow does not accept manual code" }, 400);
+      const { code } = c.req.valid("json");
+      flow.resolveCode(code.trim());
+      return c.json({ ok: true });
+    },
+  )
   .get("/ai/oauth/status/:flowId", requireAdmin, (c) => {
     const flowId = c.req.param("flowId");
     const flow = oauthFlows.get(flowId);
@@ -334,7 +347,8 @@ const app = new Hono<AuthEnv>()
     };
     if (flow.error) result.error = flow.error;
     if (flow.status !== "pending") {
-      oauthFlows.delete(flowId); // Clean up
+      // Delay deletion so retried polls still get the final status
+      setTimeout(() => oauthFlows.delete(flowId), 30_000);
     }
     return c.json(result);
   });
@@ -343,10 +357,24 @@ const app = new Hono<AuthEnv>()
 type OAuthFlow = {
   status: "pending" | "complete" | "error";
   error?: string;
+  url?: string;
+  instructions?: string;
   needsManualCode?: boolean;
   waitingForCode?: boolean;
   resolveCode?: (code: string) => void;
+  createdAt: number;
 };
 const oauthFlows = new Map<string, OAuthFlow>();
+
+// Clean up abandoned OAuth flows older than 10 minutes
+const OAUTH_FLOW_TTL_MS = 10 * 60 * 1000;
+function cleanupOAuthFlows() {
+  const now = Date.now();
+  for (const [id, flow] of oauthFlows) {
+    if (now - flow.createdAt > OAUTH_FLOW_TTL_MS) {
+      oauthFlows.delete(id);
+    }
+  }
+}
 
 export default app;

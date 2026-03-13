@@ -116,8 +116,8 @@ export function getAvailableModels(): Model<Api>[] {
   for (const provider of providers) {
     try {
       models.push(...getModels(provider as any));
-    } catch {
-      // Provider may not have models registered
+    } catch (err) {
+      aiLog.debug(`no models for provider ${provider}`, log.errorData(err));
     }
   }
   return models;
@@ -156,8 +156,8 @@ function findModel(modelId: string): Model<Api> | undefined {
     try {
       const model = getModel(provider as any, modelId as any);
       if (model) return model;
-    } catch {
-      // Try next
+    } catch (err) {
+      aiLog.debug(`model lookup failed for ${modelId} in ${provider}`, log.errorData(err));
     }
   }
   // Prefix match fallback
@@ -165,8 +165,8 @@ function findModel(modelId: string): Model<Api> | undefined {
     try {
       const found = getModels(provider as any).find((m) => m.id.startsWith(modelId));
       if (found) return found;
-    } catch {
-      // Try next
+    } catch (err) {
+      aiLog.debug(`prefix search failed for ${modelId} in ${provider}`, log.errorData(err));
     }
   }
   return undefined;

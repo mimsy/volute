@@ -51,8 +51,8 @@ async function loadAi() {
   try {
     aiProviders = await fetchAiProviders();
     aiModels = await fetchAiModels();
-  } catch {
-    // Non-critical
+  } catch (err) {
+    aiError = err instanceof Error ? err.message : "Failed to load AI config";
   }
 }
 
@@ -116,10 +116,12 @@ async function handleOAuth() {
       oauthNeedsCode = !!result.needsManualCode;
       oauthPolling = true;
       const poll = async () => {
+        let errors = 0;
         while (oauthPolling) {
           await new Promise((r) => setTimeout(r, 2500));
           try {
             const status = await pollAiOAuthStatus(result.flowId);
+            errors = 0;
             if (status.status === "complete") {
               oauthPolling = false;
               closeAddProvider();
@@ -132,7 +134,13 @@ async function handleOAuth() {
               return;
             }
           } catch {
-            // Retry
+            errors++;
+            if (errors >= 5) {
+              oauthPolling = false;
+              oauthUrl = "";
+              aiError = "Lost connection while waiting for OAuth";
+              return;
+            }
           }
         }
       };

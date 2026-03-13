@@ -94,7 +94,9 @@ function buildDeterministicSummary(events: HistoryRow[]): string {
       try {
         const meta = JSON.parse(ev.metadata);
         if (meta.name) tools.push(meta.name);
-      } catch {}
+      } catch (err) {
+        sLog.debug(`failed to parse tool_use metadata for event ${ev.id}`, log.errorData(err));
+      }
     }
   }
 
@@ -133,7 +135,9 @@ function buildTranscript(events: HistoryRow[]): string {
           try {
             const meta = JSON.parse(ev.metadata);
             toolInfo = summarizeTool(meta.name ?? "tool", meta.input ?? {});
-          } catch {}
+          } catch (err) {
+            sLog.debug(`failed to parse tool_use metadata for event ${ev.id}`, log.errorData(err));
+          }
         }
         lines.push(toolInfo);
         break;
@@ -160,7 +164,9 @@ export async function summarizeTurn(
       try {
         const meta = JSON.parse(ev.metadata);
         if (meta.name) tools.push(meta.name);
-      } catch {}
+      } catch (err) {
+        sLog.debug(`failed to parse tool_use metadata for event ${ev.id}`, log.errorData(err));
+      }
     }
   }
 
@@ -209,7 +215,10 @@ export async function summarizeTurn(
       metadata: JSON.stringify(metadata),
     });
   } catch (err) {
-    sLog.error("failed to persist summary", log.errorData(err));
+    sLog.error(
+      `failed to persist summary for ${mind} (events ${fromId}-${toId})`,
+      log.errorData(err),
+    );
     return;
   }
 
