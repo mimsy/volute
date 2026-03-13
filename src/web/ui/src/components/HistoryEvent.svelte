@@ -173,6 +173,7 @@ async function handleClick() {
               <HistoryEvent event={turnEv} {mindName} />
             {/each}
           {/if}
+          <div class="branch-return"></div>
         </div>
       {:else}
         <span class="summary-text">{event.content}</span>
@@ -380,14 +381,15 @@ async function handleClick() {
     margin-top: 4px;
     margin-left: -13px;
     padding-left: 9px;
+    padding-bottom: 4px;
   }
   /* Sub-rail vertical line — extends up to connect with summary dot */
   .turn-branch::before {
     content: "";
     position: absolute;
     left: 7px;
-    top: -8px;
-    bottom: 0;
+    top: -14px;
+    bottom: 4px;
     width: 2px;
     background: var(--border);
   }
@@ -395,27 +397,25 @@ async function handleClick() {
   .turn-branch::after {
     content: "";
     position: absolute;
-    top: -8px;
+    top: -14px;
     left: -8px;
     width: 17px;
     height: 2px;
     background: var(--border);
   }
+  /* Return connector from sub-rail back to main rail */
+  .branch-return {
+    position: relative;
+    height: 2px;
+    margin-left: -2px;
+    margin-right: auto;
+    width: 17px;
+    background: var(--border);
+    transform: translateX(-8px);
+  }
 
   .branch-header {
     position: relative;
     padding: 2px 8px 2px 11px;
-  }
-  /* Dot on the sub-rail for the summary */
-  .branch-header::before {
-    content: "";
-    position: absolute;
-    left: -5px;
-    top: 6px;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--green);
-    z-index: 1;
   }
 </style>
