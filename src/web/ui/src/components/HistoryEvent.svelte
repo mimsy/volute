@@ -94,78 +94,32 @@ async function handleClick() {
 <div
   class="event"
   class:collapsible
+  class:turn-expanded={event.type === "summary" && turnExpanded}
   onclick={handleClick}
   style:--type-color={color}
 >
   <div class="marker" style:background={color}></div>
 
-  <div class="event-header">
-    <span class="time">{formatTime(event.created_at)}</span>
-    <span class="type-badge" style:background="{color}15" style:color={color}>{event.type}</span>
-    {#if event.channel && (event.type === "inbound" || event.type === "outbound")}
-      <span class="channel-tag">{event.channel}</span>
-    {/if}
-    {#if collapsible}
-      <span class="chevron">{(event.type === "summary" ? turnExpanded : expanded) ? "▼" : "▶"}</span>
-    {/if}
-  </div>
-
-  <div class="event-body">
-    {#if event.type === "inbound"}
-      <span class="sender inbound">{event.sender ?? "user"}</span>
-      <div class="user-text">{event.content}</div>
-    {:else if event.type === "outbound"}
-      <span class="sender outbound">mind</span>
-      <div class="markdown-body">
-        {@html renderMarkdown(event.content)}
-      </div>
-    {:else if event.type === "text"}
-      <div class="markdown-body">
-        {@html renderMarkdown(event.content)}
-      </div>
-    {:else if event.type === "tool_use"}
-      <span class="summary">[{meta?.name ?? "tool"}]</span>
-      {#if expanded && event.content}
-        <pre class="detail">{formatArgs(event.content)}</pre>
-      {/if}
-    {:else if event.type === "tool_result"}
-      {#if !expanded}
-        <span class="summary" class:error={meta?.is_error}>{truncate(event.content, 80)}</span>
+  {#if event.type === "summary"}
+    <div class="event-header">
+      {#if meta?.from_time && meta?.to_time}
+        <span class="time">{formatTime(meta.from_time)} – {formatTime(meta.to_time)}</span>
       {:else}
-        <pre class="detail" class:error={meta?.is_error}>{event.content}</pre>
+        <span class="time">{formatTime(event.created_at)}</span>
       {/if}
-    {:else if event.type === "thinking"}
-      {#if !expanded}
-        <span class="summary dim">{truncate(event.content, 80)}</span>
-      {:else}
-        <div class="detail-text dim">{event.content}</div>
-      {/if}
-    {:else if event.type === "usage"}
-      <span class="usage-line">
-        ↑{meta?.input_tokens ?? 0} ↓{meta?.output_tokens ?? 0}
-        {#if meta?.model}
-          <span class="model">{meta.model}</span>
-        {/if}
-      </span>
-    {:else if event.type === "session_start"}
-      <span class="dim">session started</span>
       {#if event.session}
-        <span class="session-id">{event.session}</span>
+        <button class="session-tag" onclick={(e) => { e.stopPropagation(); onsessionclick?.(event.session!); }}>
+          {event.session}
+        </button>
       {/if}
-    {:else if event.type === "summary"}
+      {#if expandable}
+        <span class="chevron">{turnExpanded ? "▼" : "▶"}</span>
+      {/if}
+    </div>
+
+    <div class="event-body">
       {#if expandable && turnExpanded}
         <div class="turn-branch">
-          <div class="branch-header">
-            <span class="summary-text">{event.content}</span>
-            {#if meta?.from_time && meta?.to_time}
-              <span class="time-range">{formatTime(meta.from_time)} – {formatTime(meta.to_time)}</span>
-            {/if}
-            {#if event.session}
-              <button class="session-tag" onclick={(e) => { e.stopPropagation(); onsessionclick?.(event.session!); }}>
-                {event.session}
-              </button>
-            {/if}
-          </div>
           {#if turnLoading}
             <div class="turn-loading">loading turn...</div>
           {:else}
@@ -173,28 +127,79 @@ async function handleClick() {
               <HistoryEvent event={turnEv} {mindName} />
             {/each}
           {/if}
+          <div class="branch-summary">
+            <span class="summary-text">{event.content}</span>
+          </div>
           <div class="branch-return"></div>
         </div>
       {:else}
         <span class="summary-text">{event.content}</span>
-        {#if meta?.from_time && meta?.to_time}
-          <span class="time-range">{formatTime(meta.from_time)} – {formatTime(meta.to_time)}</span>
+      {/if}
+    </div>
+  {:else}
+    <div class="event-header">
+      <span class="time">{formatTime(event.created_at)}</span>
+      <span class="type-badge" style:background="{color}15" style:color={color}>{event.type}</span>
+      {#if event.channel && (event.type === "inbound" || event.type === "outbound")}
+        <span class="channel-tag">{event.channel}</span>
+      {/if}
+      {#if collapsible}
+        <span class="chevron">{expanded ? "▼" : "▶"}</span>
+      {/if}
+    </div>
+
+    <div class="event-body">
+      {#if event.type === "inbound"}
+        <span class="sender inbound">{event.sender ?? "user"}</span>
+        <div class="user-text">{event.content}</div>
+      {:else if event.type === "outbound"}
+        <span class="sender outbound">mind</span>
+        <div class="markdown-body">
+          {@html renderMarkdown(event.content)}
+        </div>
+      {:else if event.type === "text"}
+        <div class="markdown-body">
+          {@html renderMarkdown(event.content)}
+        </div>
+      {:else if event.type === "tool_use"}
+        <span class="summary">[{meta?.name ?? "tool"}]</span>
+        {#if expanded && event.content}
+          <pre class="detail">{formatArgs(event.content)}</pre>
         {/if}
+      {:else if event.type === "tool_result"}
+        {#if !expanded}
+          <span class="summary" class:error={meta?.is_error}>{truncate(event.content, 80)}</span>
+        {:else}
+          <pre class="detail" class:error={meta?.is_error}>{event.content}</pre>
+        {/if}
+      {:else if event.type === "thinking"}
+        {#if !expanded}
+          <span class="summary dim">{truncate(event.content, 80)}</span>
+        {:else}
+          <div class="detail-text dim">{event.content}</div>
+        {/if}
+      {:else if event.type === "usage"}
+        <span class="usage-line">
+          ↑{meta?.input_tokens ?? 0} ↓{meta?.output_tokens ?? 0}
+          {#if meta?.model}
+            <span class="model">{meta.model}</span>
+          {/if}
+        </span>
+      {:else if event.type === "session_start"}
+        <span class="dim">session started</span>
         {#if event.session}
-          <button class="session-tag" onclick={(e) => { e.stopPropagation(); onsessionclick?.(event.session!); }}>
-            {event.session}
-          </button>
+          <span class="session-id">{event.session}</span>
+        {/if}
+      {:else if event.type === "done"}
+        <span class="dim">processing complete</span>
+      {:else}
+        <span class="dim">{event.type}</span>
+        {#if event.content}
+          <span>{event.content}</span>
         {/if}
       {/if}
-    {:else if event.type === "done"}
-      <span class="dim">processing complete</span>
-    {:else}
-      <span class="dim">{event.type}</span>
-      {#if event.content}
-        <span>{event.content}</span>
-      {/if}
-    {/if}
-  </div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -217,6 +222,10 @@ async function handleClick() {
   }
   .event:hover::after {
     opacity: 1;
+  }
+  /* Don't highlight main rail when summary is expanded */
+  .event.turn-expanded::after {
+    display: none;
   }
   .event.collapsible {
     cursor: pointer;
@@ -347,12 +356,6 @@ async function handleClick() {
     font-size: 13px;
     color: var(--green);
   }
-  .time-range {
-    font-size: 11px;
-    color: var(--text-2);
-    margin-left: 8px;
-  }
-
   .session-tag {
     font-size: 11px;
     color: var(--text-1);
@@ -393,6 +396,14 @@ async function handleClick() {
     width: 2px;
     background: var(--border);
   }
+  /* Highlight inner rail + connectors on hover */
+  .turn-branch:hover::before,
+  .turn-branch:hover::after {
+    background: var(--green);
+  }
+  .turn-branch:hover .branch-return {
+    background: var(--green);
+  }
   /* Horizontal connector from main rail dot to sub-rail */
   .turn-branch::after {
     content: "";
@@ -414,8 +425,20 @@ async function handleClick() {
     transform: translateX(-8px);
   }
 
-  .branch-header {
+  .branch-summary {
     position: relative;
-    padding: 2px 8px 2px 11px;
+    padding: 6px 8px 6px 20px;
+  }
+  /* Dot on the sub-rail for the summary at end of branch */
+  .branch-summary::before {
+    content: "";
+    position: absolute;
+    left: -5px;
+    top: 12px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    z-index: 1;
   }
 </style>
