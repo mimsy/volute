@@ -60,10 +60,13 @@ export function createRoutes(ctx: ExtensionContext): Hono {
     })
     .put("/publish/:name", async (c) => {
       const user = ctx.resolveUser(c);
-      if (!user || user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
+      if (!user) return c.json({ error: "Unauthorized" }, 401);
+      const name = c.req.param("name");
+      if (user.role !== "admin" && user.username !== name) {
+        return c.json({ error: "Forbidden" }, 403);
+      }
       const config = ctx.getSystemsConfig();
       if (!config) return c.json({ error: "Not connected to volute.systems" }, 400);
-      const name = c.req.param("name");
       const body = await c.req.text();
       try {
         const res = await fetch(`${config.apiUrl}/api/pages/publish/${name}`, {
@@ -82,10 +85,13 @@ export function createRoutes(ctx: ExtensionContext): Hono {
     })
     .get("/status/:name", async (c) => {
       const user = ctx.resolveUser(c);
-      if (!user || user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
+      if (!user) return c.json({ error: "Unauthorized" }, 401);
+      const name = c.req.param("name");
+      if (user.role !== "admin" && user.username !== name) {
+        return c.json({ error: "Forbidden" }, 403);
+      }
       const config = ctx.getSystemsConfig();
       if (!config) return c.json({ error: "Not connected to volute.systems" }, 400);
-      const name = c.req.param("name");
       try {
         const res = await fetch(`${config.apiUrl}/api/pages/status/${name}`, {
           headers: { Authorization: `Bearer ${config.apiKey}` },
