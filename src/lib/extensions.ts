@@ -386,10 +386,15 @@ function discoverBuiltinExtensions(): ExtensionManifest[] {
 async function discoverInstalledExtensions(): Promise<ExtensionManifest[]> {
   const manifests: ExtensionManifest[] = [];
   const packages = readExtensionsConfig();
+  // Extensions are installed under ~/.volute/system/extensions-npm/node_modules/
+  const npmDir = resolve(voluteHome(), "system", "extensions-npm");
 
   for (const pkg of packages) {
     try {
-      const mod = await import(pkg);
+      // Try the user-writable extensions-npm dir first, then fall back to bare import
+      let entryPoint = resolve(npmDir, "node_modules", pkg);
+      if (!existsSync(entryPoint)) entryPoint = pkg;
+      const mod = await import(entryPoint);
       const manifest = mod.default ?? mod.extension ?? mod;
       if (manifest?.id && typeof manifest?.routes === "function") {
         manifests.push(manifest);

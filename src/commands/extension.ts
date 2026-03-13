@@ -1,20 +1,23 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { exec } from "../lib/exec.js";
 
-/** Resolve the Volute package root (directory containing package.json). */
-function volutePackageRoot(): string {
-  const thisDir = dirname(new URL(import.meta.url).pathname);
-  const candidates = [
-    resolve(thisDir, ".."),
-    resolve(thisDir, "../.."),
-    resolve(thisDir, "../../.."),
-  ];
-  for (const p of candidates) {
-    if (existsSync(resolve(p, "package.json"))) return p;
+/** User-writable directory for npm-installed extensions. */
+function extensionsNpmDir(): string {
+  const home = process.env.VOLUTE_HOME ?? resolve(process.env.HOME ?? "", ".volute");
+  return resolve(home, "system", "extensions-npm");
+}
+
+/** Ensure the extensions npm directory has a package.json. */
+function ensureExtensionsNpmDir(): string {
+  const dir = extensionsNpmDir();
+  mkdirSync(dir, { recursive: true });
+  const pkgPath = resolve(dir, "package.json");
+  if (!existsSync(pkgPath)) {
+    writeFileSync(pkgPath, '{"private":true,"dependencies":{}}\n');
   }
-  throw new Error("Could not find Volute package root");
+  return dir;
 }
 
 export async function run(args: string[]) {
@@ -116,10 +119,10 @@ async function installExtension(args: string[]) {
     return;
   }
 
-  const root = volutePackageRoot();
+  const dir = ensureExtensionsNpmDir();
   console.log(`Installing "${pkg}"...`);
   try {
-    await exec("npm", ["install", pkg], { cwd: root });
+    await exec("npm", ["install", pkg], { cwd: dir });
   } catch (err) {
     console.error(`Failed to install "${pkg}": ${(err as Error).message}`);
     process.exit(1);
@@ -149,7 +152,7 @@ async function uninstallExtension(args: string[]) {
   writeConfig(packages);
 
   try {
-    await exec("npm", ["uninstall", pkg], { cwd: volutePackageRoot() });
+    await exec("npm", ["uninstall", pkg], { cwd: extensionsNpmDir() });
   } catch {
     // Non-fatal — package may have been manually removed
   }

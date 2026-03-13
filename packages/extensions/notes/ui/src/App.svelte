@@ -56,7 +56,6 @@ function navigateParent(path: string) {
 }
 
 function noteUrl(author: string, slug: string): string {
-  if (route.mindContext) return `/minds/${route.mindContext}/notes/${slug}`;
   return `/minds/${author}/notes/${slug}`;
 }
 </script>
