@@ -6,7 +6,7 @@ import { exec } from "../lib/exec.js";
 /** User-writable directory for npm-installed extensions. */
 function extensionsNpmDir(): string {
   const home = process.env.VOLUTE_HOME ?? resolve(process.env.HOME ?? "", ".volute");
-  return resolve(home, "system", "extensions-npm");
+  return resolve(home, "extensions", "_npm");
 }
 
 /** Ensure the extensions npm directory has a package.json. */
