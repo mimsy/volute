@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { exec } from "../lib/exec.js";
@@ -148,6 +148,9 @@ async function uninstallExtension(args: string[]) {
     process.exit(1);
   }
 
+  // Try to clean up contributed skills before removing the package
+  await cleanupExtensionSkills(pkg);
+
   packages.splice(idx, 1);
   writeConfig(packages);
 
@@ -159,4 +162,40 @@ async function uninstallExtension(args: string[]) {
 
   console.log(`Removed "${pkg}".`);
   console.log("Restart the daemon (`volute restart`) to unload the extension.");
+}
+
+/**
+ * Try to discover and remove skills contributed by an extension before uninstall.
+ * Looks for a skillsDir in the package and removes matching skills from defaults and the shared pool.
+ */
+async function cleanupExtensionSkills(pkg: string): Promise<void> {
+  try {
+    const pkgDir = resolve(extensionsNpmDir(), "node_modules", pkg);
+    if (!existsSync(pkgDir)) return;
+
+    // Try to find a skills directory by loading the manifest
+    const { createRequire } = await import("node:module");
+    const require = createRequire(resolve(extensionsNpmDir(), "noop.js"));
+    const mod = require(pkg);
+    const manifest = mod.default ?? mod.extension ?? mod;
+    if (!manifest?.skillsDir || !existsSync(manifest.skillsDir)) return;
+
+    const skillDirs = readdirSync(manifest.skillsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+
+    for (const skillId of skillDirs) {
+      // Remove from defaults (ignore errors — skill may not be a default)
+      await daemonFetch(`/api/skills/defaults/list/${encodeURIComponent(skillId)}`, {
+        method: "DELETE",
+      }).catch(() => {});
+      // Remove from shared pool
+      await daemonFetch(`/api/skills/${encodeURIComponent(skillId)}`, {
+        method: "DELETE",
+      }).catch(() => {});
+      console.log(`  Removed skill: ${skillId}`);
+    }
+  } catch {
+    // Best-effort — don't block uninstall if skill cleanup fails
+  }
 }

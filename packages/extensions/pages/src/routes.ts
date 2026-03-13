@@ -136,7 +136,8 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
     const wildcard = idx >= 0 ? c.req.path.slice(idx + prefix.length) : "/";
     const requestedPath = resolve(pagesRoot, wildcard.slice(1));
 
-    if (!requestedPath.startsWith(pagesRoot)) return c.text("Forbidden", 403);
+    if (requestedPath !== pagesRoot && !requestedPath.startsWith(pagesRoot + "/"))
+      return c.text("Forbidden", 403);
 
     let fileStat = await stat(requestedPath).catch(() => null);
 
