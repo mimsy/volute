@@ -216,11 +216,12 @@ volute env remove API_KEY
 
 The daemon serves a web UI at `http://localhost:1618` (or whatever port you chose).
 
-- Real-time chat with full tool call visibility
+- Real-time chat with full tool call visibility and turn summaries
 - File browser and editor
 - Log streaming
 - Connector and schedule management
 - Variant listing and status
+- System settings: AI service config, system prompts, shared files, skills, user management
 - First user to register becomes admin
 
 ## Extensions
@@ -337,6 +338,20 @@ Two built-in templates:
 ```sh
 volute mind create atlas --template pi
 ```
+
+## AI Service
+
+Volute has an optional system-level AI service for features like automatic turn summaries. It uses [`@mariozechner/pi-ai`](https://github.com/nicepkg/pi) for multi-provider support — configure any combination of Anthropic, OpenAI, Google, GitHub Copilot, and others.
+
+Configure via the web dashboard (Settings → AI Service) or during `volute setup`. Each provider authenticates independently via API key, OAuth, or environment variables. After adding providers, select which models to enable — the system picks from your enabled list.
+
+When configured, each mind turn automatically gets a 1-2 sentence AI-generated summary (visible in history and the web UI). Without AI configured, summaries fall back to a deterministic format.
+
+## System Prompts
+
+Volute ships with default prompts for mind creation, system messages, and mind-owned templates. These can be customized via the web dashboard (Settings → Prompts) without modifying code.
+
+Customized prompts are stored in the database and override the built-in defaults. Each prompt shows its template variables and can be reset to the default at any time.
 
 ## Model configuration
 

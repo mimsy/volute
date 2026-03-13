@@ -8,7 +8,7 @@ export type ChannelConversation = {
   id: string;
   platformId: string;
   name: string;
-  type: "dm" | "group" | "channel";
+  type: "dm" | "channel";
   participantCount?: number;
 };
 

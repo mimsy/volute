@@ -202,7 +202,7 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 | `volute mind disconnect <type> [--mind]` | Disable a connector for a mind |
 | `volute clock status [--mind]` | Show sleep state + upcoming schedule fires |
 | `volute clock list [--mind]` | List schedules and timers for a mind |
-| `volute clock add [--mind] --cron/--in "..." --message/--script "..." [--id name] [--while-sleeping skip\|queue\|trigger-wake]` | Add a schedule or timer |
+| `volute clock add [--mind] --id <name> --cron/--in "..." --message/--script "..." [--while-sleeping skip\|queue\|trigger-wake]` | Add a schedule or timer |
 | `volute clock remove [--mind] --id <id>` | Remove a schedule or timer |
 | `volute skill <list\|add\|remove> [--mind]` | Manage mind skills |
 | `volute skill defaults <list\|add\|remove>` | Manage default skill set for new minds |
@@ -247,6 +247,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `exec.ts` | Async wrappers around `execFile` (returns stdout) and `spawn` (inherits stdio) |
 | `env.ts` | Environment variables (shared `~/.volute/env.json` + mind-specific state dir env) |
 | `format-tool.ts` | Shared tool call summarization (`[toolName primaryArg]` format) |
+| `ai-service.ts` | System AI completion service via `@mariozechner/pi-ai` (multi-provider, OAuth + API key + env var auth, model selection) |
 | `schema.ts` | Drizzle ORM schema (users, conversations, conversation_participants, messages, mind_history, sessions, minds) |
 | `db.ts` | libSQL database singleton at `~/.volute/volute.db` (WAL mode, foreign keys) |
 | `auth.ts` | bcrypt password hashing, first user auto-admin, pending approval flow, mind users |
@@ -269,12 +270,12 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `skills.ts` | Skill installation and management |
 | `extensions.ts` | Extension discovery (built-in, npm, local), context building, route mounting, lifecycle |
 | `shared.ts` | Shared repo init, worktree management, and merge |
-| `prompts.ts` | Mind prompt management |
+| `prompts.ts` | System prompt registry with DB overrides (creation, system, mind categories) |
 | `rotating-log.ts` | Size-limited rotating log files |
 | `read-stdin.ts` | Reads piped stdin for send commands (returns undefined if TTY) |
 | `resolve-mind-name.ts` | Resolves mind name from `--mind` flag or `VOLUTE_MIND` env var |
 | `typing.ts` | Typing indicator tracking |
-| `setup.ts` | Global config (`~/.volute/system/config.json`) with setup state, `defaultSkills` array, `isSetupComplete()`, migration for existing users |
+| `setup.ts` | Global config (`~/.volute/system/config.json`) with setup state, `defaultSkills` array, AI config types (`AiConfig`, `AiProviderConfig`), `isSetupComplete()`, migration for existing users |
 | `sandbox.ts` | Sandbox runtime (`@anthropic-ai/sandbox-runtime`) integration: `isSandboxEnabled()`, `initSandbox()`, `wrapForSandbox()`, deny-read list for mind isolation |
 | `service-mode.ts` | Service mode detection (manual/systemd/launchd/system-launchd), service control, health polling, daemon config reader |
 | `systems-config.ts` | Read/write `~/.volute/system/systems.json` (API key, system name, API URL) |
@@ -297,6 +298,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `token-budget.ts` | Per-mind token budget enforcement |
 | `restart-tracker.ts` | Tracks mind restart state |
 | `sleep-manager.ts` | Sleep/wake cycles, cron scheduling, message queuing, wake triggers |
+| `turn-summarizer.ts` | Generates 1-2 sentence turn summaries (AI or deterministic fallback) after each mind turn |
 | `mind-service.ts` | Mind service management utilities |
 
 ### src/lib/delivery/
@@ -338,7 +340,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `api/schedules.ts` | CRUD schedules + webhook endpoint |
 | `api/shared.ts` | Shared resource endpoints |
 | `api/skills.ts` | Shared skill management |
-| `api/system.ts` | System info and status |
+| `api/system.ts` | System info, status, AI service config + OAuth flows |
 | `api/typing.ts` | Typing indicator endpoints |
 | `api/update.ts` | Update check endpoint |
 | `api/variants.ts` | Variant listing |
@@ -357,6 +359,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 - **Database**: libsql (synchronous better-sqlite3-compatible API), drizzle-orm
 - **Auth**: bcryptjs
 - **Discord**: discord.js
+- **AI providers**: @mariozechner/pi-ai (multi-provider completion with OAuth support)
 - **Scheduling**: cron-parser
 - **CLI build**: tsup (compiles CLI + daemon → `dist/`)
 - **Frontend build**: Vite (→ `dist/web-assets/`)
@@ -382,7 +385,8 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 - Mind system prompt built from: SOUL.md + VOLUTE.md + MEMORY.md
 - Model configurable via `VOLUTE_MODEL` env var
 - Auto-commit hooks track file changes in mind `home/` directory
-- Centralized message persistence in `mind_history` table via daemon routes (text + tool call summaries)
+- Centralized message persistence in `mind_history` table via daemon routes (text + tool call summaries). Turn summarizer fires on each `done` event to generate a `summary` row (AI-powered via `aiComplete()` with deterministic fallback)
+- System AI service configured via `ai` field in GlobalConfig (`~/.volute/config.json`), supports multiple providers with API key, OAuth, or env var auth; admin selects enabled models via web UI
 - Mind process isolation: sandbox mode (local installs, `@anthropic-ai/sandbox-runtime`), per-user mode (system installs, Linux/macOS), or none. Configured via `volute setup`, stored in `config.json` as `setup.isolation`
 - `volute setup` is the required first-run command; CLI commands are gated on `isSetupComplete()` with auto-migration for existing users via `migrateSetupConfig()`
 - Built-in skills live in `skills/` at repo root and are synced to the shared pool (`~/.volute/skills/`) on daemon startup via `syncBuiltinSkills()`. Extensions contribute skills via `skillsDir` in their manifest; skills with `standardSkill: true` are added to the configurable default skill set. The default skill set is stored in `~/.volute/system/config.json` (`defaultSkills` array) and initialized on first daemon start from `STANDARD_SKILLS` + extension standard skills. Admins can manage defaults via the web UI (Settings → Skills) or `volute skill defaults` CLI. `SEED_SKILLS` (orientation, memory) are installed for seed minds. Skills are installed from the shared pool with upstream tracking (`.upstream.json`) for independent updates.

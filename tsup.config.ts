@@ -13,8 +13,13 @@ export default defineConfig([
     outDir: "dist",
     splitting: true,
     clean: true,
-    external: ["libsql"],
     banner: { js: "#!/usr/bin/env node" },
+    external: [
+      "libsql",
+      "@mariozechner/pi-ai",
+      "@mariozechner/pi-coding-agent",
+      "@anthropic-ai/claude-agent-sdk",
+    ],
   },
   {
     entry: { api: "src/api.ts" },

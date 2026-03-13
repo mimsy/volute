@@ -24,6 +24,7 @@ export const PROMPT_KEYS = [
   "channel_invite",
   "pre_sleep",
   "wake_summary",
+  "turn_summary",
 ] as const;
 
 export type PromptKey = (typeof PROMPT_KEYS)[number];
@@ -38,6 +39,7 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
   default_soul: {
     content: `You are {{name}}.\n`,
     description:
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: describing template syntax, not using it
       "SOUL.md for sprouted minds. Uses {{name}} placeholder (replaced at creation, not by ${var} system)",
     variables: ["name"],
     category: "creation",
@@ -113,6 +115,13 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
       "Good morning — it's ${currentDate}. You slept from ${sleepTime} to now (${duration}).\n\n${sleepActivity}",
     description: "Wake-up summary after scheduled sleep",
     variables: ["currentDate", "sleepTime", "duration", "sleepActivity"],
+    category: "system",
+  },
+  turn_summary: {
+    content:
+      "Summarize what this AI mind did in this turn in 1-2 concise sentences. Focus on what was accomplished, not the mechanics.",
+    description: "System prompt for AI-generated turn summaries",
+    variables: [],
     category: "system",
   },
 };

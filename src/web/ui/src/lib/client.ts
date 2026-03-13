@@ -144,13 +144,6 @@ export function fetchConversationParticipants(conversationId: string): Promise<P
   return get(`${V1}/conversations/${enc(conversationId)}/participants`);
 }
 
-export function createConversation(
-  participantNames: string[],
-  title?: string,
-): Promise<Conversation> {
-  return post(`${V1}/conversations`, { participantNames, title });
-}
-
 export function deleteConversation(conversationId: string): Promise<void> {
   return del(`${V1}/conversations/${enc(conversationId)}`);
 }
@@ -403,6 +396,62 @@ export function systemLogin(key: string): Promise<{ system: string }> {
 
 export function systemLogout(): Promise<void> {
   return post(`${V1}/system/logout`);
+}
+
+// --- AI Service ---
+
+export type AiProvider = {
+  id: string;
+  oauth: boolean;
+  oauthName?: string;
+  usesCallbackServer: boolean;
+  configured: boolean;
+  authMethod: "api_key" | "oauth" | "env_var" | null;
+};
+
+export type AiModel = {
+  id: string;
+  name: string;
+  provider: string;
+  contextWindow: number;
+  maxTokens: number;
+  enabled: boolean;
+};
+
+export function fetchAiProviders(): Promise<AiProvider[]> {
+  return get(`${V1}/system/ai/providers`);
+}
+
+export function fetchAiModels(): Promise<AiModel[]> {
+  return get(`${V1}/system/ai/models`);
+}
+
+export function saveProviderConfig(providerId: string, apiKey: string): Promise<void> {
+  return put(`${V1}/system/ai/providers/${enc(providerId)}`, { apiKey });
+}
+
+export function removeProviderConfig(providerId: string): Promise<void> {
+  return del(`${V1}/system/ai/providers/${enc(providerId)}`);
+}
+
+export function startAiOAuth(
+  provider: string,
+): Promise<{ flowId: string; url?: string; instructions?: string; needsManualCode?: boolean }> {
+  return post(`${V1}/system/ai/oauth/start`, { provider });
+}
+
+export function pollAiOAuthStatus(
+  flowId: string,
+): Promise<{ status: "pending" | "complete" | "error"; error?: string; waitingForCode?: boolean }> {
+  return get(`${V1}/system/ai/oauth/status/${enc(flowId)}`);
+}
+
+export function submitAiOAuthCode(flowId: string, code: string): Promise<void> {
+  return post(`${V1}/system/ai/oauth/code/${enc(flowId)}`, { code });
+}
+
+export function saveEnabledModels(models: string[]): Promise<void> {
+  return put(`${V1}/system/ai/models`, { models });
 }
 
 // --- Auth (these stay on /api/ since they're not mind-scoped) ---

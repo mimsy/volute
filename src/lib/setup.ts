@@ -12,6 +12,21 @@ export type SetupConfig = {
   service: boolean;
 };
 
+export type AiProviderConfig = {
+  apiKey?: string;
+  oauth?: {
+    refresh: string;
+    access: string;
+    expires: number;
+    [key: string]: unknown;
+  };
+};
+
+export type AiConfig = {
+  providers: Record<string, AiProviderConfig>;
+  models?: string[];
+};
+
 export type GlobalConfig = {
   name?: string;
   hostname?: string;
@@ -19,6 +34,7 @@ export type GlobalConfig = {
   setup?: SetupConfig;
   /** Skill IDs installed by default when a mind is created/sprouted */
   defaultSkills?: string[];
+  ai?: AiConfig;
 };
 
 export function configPath(): string {
@@ -41,7 +57,7 @@ export function readGlobalConfig(): GlobalConfig {
 export function writeGlobalConfig(config: GlobalConfig): void {
   const path = configPath();
   mkdirSync(voluteSystemDir(), { recursive: true });
-  writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
 }
 
 /** Check if setup has been completed. Returns true if config.json has a setup field. */

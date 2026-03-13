@@ -6,13 +6,15 @@ import UserManagement from "../components/UserManagement.svelte";
 import { restartDaemon } from "../lib/client";
 import { navigate } from "../lib/navigate";
 import { data } from "../lib/stores.svelte";
+import Prompts from "./Prompts.svelte";
 import Settings from "./Settings.svelte";
 
-const TABS = ["settings", "shared-files", "skills", "logs", "users"] as const;
+const TABS = ["settings", "prompts", "shared-files", "skills", "logs", "users"] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
   settings: "Settings",
+  prompts: "Prompts",
   "shared-files": "Shared Files",
   skills: "Skills",
   logs: "System Logs",
@@ -69,6 +71,8 @@ async function handleRestart() {
   <div class="settings-body">
     {#if activeTab === "settings"}
       <Settings />
+    {:else if activeTab === "prompts"}
+      <Prompts />
     {:else if activeTab === "shared-files"}
       <div class="files-container">
         <PublicFiles name="_system" rootLabel="shared" />

@@ -45,7 +45,10 @@ const app = new Hono<AuthEnv>()
 
     const before = beforeStr ? parseInt(beforeStr, 10) : undefined;
     const limit = limitStr ? parseInt(limitStr, 10) : undefined;
-    if ((before !== undefined && isNaN(before)) || (limit !== undefined && isNaN(limit))) {
+    if (
+      (before !== undefined && Number.isNaN(before)) ||
+      (limit !== undefined && Number.isNaN(limit))
+    ) {
       return c.json({ error: "Invalid cursor params: before and limit must be integers" }, 400);
     }
 

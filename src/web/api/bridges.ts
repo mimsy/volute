@@ -203,7 +203,7 @@ const app = new Hono<AuthEnv>()
 
     try {
       const daemonPort = parseInt(process.env.VOLUTE_DAEMON_PORT ?? "", 10);
-      if (isNaN(daemonPort)) {
+      if (Number.isNaN(daemonPort)) {
         return c.json({ error: "VOLUTE_DAEMON_PORT not available" }, 500);
       }
       await manager.startBridge(platform, daemonPort);
@@ -292,7 +292,7 @@ async function fanOutToBridgedMinds(opts: {
       writeChannelEntry(mindName, channel, {
         platformId: opts.conversationId,
         platform: "volute",
-        type: opts.isDM ? "dm" : "group",
+        type: opts.isDM ? "dm" : "channel",
       });
     } catch (err) {
       log.warn(`failed to write channel entry for ${mindName}`, log.errorData(err));

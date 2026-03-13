@@ -61,8 +61,8 @@ function printUsage() {
   console.log(`Usage:
   volute clock status [--mind <name>]
   volute clock list [--mind <name>]
-  volute clock add [--mind <name>] --cron "..." --message/--script "..." [--id name] [--channel ch] [--while-sleeping skip|queue|trigger-wake]
-  volute clock add [--mind <name>] --in <duration> --message/--script "..." [--id name] [--channel ch] [--while-sleeping skip|queue|trigger-wake]
+  volute clock add [--mind <name>] --id <name> --cron "..." --message/--script "..." [--channel ch] [--while-sleeping skip|queue|trigger-wake]
+  volute clock add [--mind <name>] --id <name> --in <duration> --message/--script "..." [--channel ch] [--while-sleeping skip|queue|trigger-wake]
   volute clock remove [--mind <name>] --id <id>
   volute clock sleep [name] [--wake-at <time>]
   volute clock wake [name]
@@ -192,6 +192,11 @@ async function addSchedule(args: string[]) {
   });
 
   const mind = resolveMindName(flags);
+
+  if (!flags.id) {
+    console.error("--id is required (a descriptive name for this schedule)");
+    process.exit(1);
+  }
 
   if (!flags.cron && !flags.in) {
     console.error("--cron or --in is required");

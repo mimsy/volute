@@ -20,6 +20,80 @@ import { publish } from "./conversation-events.js";
 
 export type { ContentBlock, Conversation, LastMessageSummary, Message, Participant };
 
+/** Migrate group DMs to channels. Converts type='group' conversations and type='dm' conversations
+ *  with 3+ participants to type='channel', generating a name from the title. */
+export async function migrateGroupDMsToChannels(): Promise<void> {
+  const db = await getDb();
+
+  await db.transaction(async (tx) => {
+    // Find DM conversations with 3+ participants
+    const overloadedDMs = await tx
+      .select({
+        conversationId: conversationParticipants.conversation_id,
+        count: sql<number>`COUNT(*)`,
+      })
+      .from(conversationParticipants)
+      .innerJoin(conversations, eq(conversationParticipants.conversation_id, conversations.id))
+      .where(eq(conversations.type, "dm"))
+      .groupBy(conversationParticipants.conversation_id)
+      .having(sql`COUNT(*) > 2`);
+
+    const dmIds = overloadedDMs.map((r) => r.conversationId);
+
+    // Update explicit group conversations
+    await tx
+      .update(conversations)
+      .set({
+        type: "channel",
+        name: sql`COALESCE(${conversations.name}, ${conversations.title})`,
+      })
+      .where(eq(conversations.type, "group"));
+
+    // Update overloaded DMs
+    if (dmIds.length > 0) {
+      await tx
+        .update(conversations)
+        .set({
+          type: "channel",
+          name: sql`COALESCE(${conversations.name}, ${conversations.title})`,
+        })
+        .where(inArray(conversations.id, dmIds));
+    }
+  });
+
+  // Migrate channels.json files: rewrite any "group" type entries to "channel"
+  await migrateChannelEntryTypes();
+}
+
+/** Rewrite type:"group" entries in per-mind channels.json files to type:"channel". */
+async function migrateChannelEntryTypes(): Promise<void> {
+  const { existsSync, readdirSync, readFileSync, writeFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const home = join((await import("node:os")).homedir(), ".volute", "state");
+  if (!existsSync(home)) return;
+
+  for (const name of readdirSync(home)) {
+    const filePath = join(home, name, "channels.json");
+    if (!existsSync(filePath)) continue;
+    try {
+      const raw = readFileSync(filePath, "utf-8");
+      const map = JSON.parse(raw) as Record<string, { type?: string }>;
+      let changed = false;
+      for (const entry of Object.values(map)) {
+        if (entry.type === "group") {
+          entry.type = "channel";
+          changed = true;
+        }
+      }
+      if (changed) {
+        writeFileSync(filePath, `${JSON.stringify(map, null, 2)}\n`);
+      }
+    } catch {
+      // Skip unparseable files
+    }
+  }
+}
+
 export async function createConversation(
   mindName: string | null,
   channel: string,
@@ -27,7 +101,7 @@ export async function createConversation(
     userId?: number;
     title?: string;
     participantIds?: number[];
-    type?: "dm" | "group" | "channel";
+    type?: "dm" | "channel";
     name?: string;
   },
 ): Promise<Conversation> {

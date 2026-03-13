@@ -65,7 +65,7 @@ const app = new Hono<AuthEnv>()
           if (hyphenIdx > 0) {
             const prefix = pname.slice(0, hyphenIdx);
             if (["discord", "slack", "telegram"].includes(prefix)) {
-              existing = await getUserByUsername(prefix + ":" + pname.slice(hyphenIdx + 1));
+              existing = await getUserByUsername(`${prefix}:${pname.slice(hyphenIdx + 1)}`);
             }
           }
         }
@@ -91,6 +91,11 @@ const app = new Hono<AuthEnv>()
     }
 
     const participantIds = [...participantSet];
+
+    // Reject group DMs — use channels for 3+ participants
+    if (participantIds.length > 2) {
+      return c.json({ error: "Use channels for multi-participant conversations" }, 400);
+    }
 
     // DM reuse: if exactly 2 participants, return existing conversation if found
     if (participantIds.length === 2) {

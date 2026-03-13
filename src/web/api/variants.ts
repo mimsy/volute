@@ -175,7 +175,7 @@ const app = new Hono<AuthEnv>()
           await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
             cwd: variantEntry.dir,
           });
-        } catch (e) {
+        } catch (_e) {
           return c.json(
             {
               error:
@@ -219,7 +219,7 @@ const app = new Hono<AuthEnv>()
         await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
           cwd: projectRoot,
         });
-      } catch (e) {
+      } catch (_e) {
         return c.json(
           { error: "Failed to auto-commit main changes. Commit or stash manually before merging." },
           500,
@@ -230,7 +230,7 @@ const app = new Hono<AuthEnv>()
     // Merge branch
     try {
       await gitExec(["merge", variantEntry.branch], { cwd: projectRoot });
-    } catch (e) {
+    } catch (_e) {
       return c.json({ error: "Merge failed. Resolve conflicts manually." }, 500);
     }
 

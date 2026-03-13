@@ -62,7 +62,7 @@ export async function announceToSystem(text: string): Promise<void> {
         platformId: channelId,
         platform: "volute",
         name: SYSTEM_CHANNEL_NAME,
-        type: "group",
+        type: "channel",
       });
     } catch (err) {
       log.warn(`failed to write channel entry for ${mind.username}`, log.errorData(err));

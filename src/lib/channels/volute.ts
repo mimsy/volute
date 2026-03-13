@@ -149,11 +149,10 @@ export async function listConversations(
       mindUsername: mindName,
       convTitle: conv.title,
       conversationId: conv.id,
-      convType: conv.type as "dm" | "group" | "channel" | undefined,
+      convType: conv.type as "dm" | "channel" | undefined,
       convName: conv.name,
     });
-    const convType =
-      conv.type === "channel" ? "channel" : participants.length === 2 ? "dm" : "group";
+    const convType = conv.type === "channel" ? "channel" : "dm";
     results.push({
       id: slug,
       platformId: conv.id,

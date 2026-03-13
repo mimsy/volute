@@ -156,7 +156,7 @@ export interface ChannelEntry {
   platform: string;
   name?: string;
   server?: string;
-  type?: "channel" | "dm" | "group";
+  type?: "channel" | "dm";
 }
 
 export function buildChannelSlug(platform: string, meta: ChannelSlugMeta): string {
@@ -202,7 +202,7 @@ export function writeChannelEntry(mindName: string, slug: string, entry: Channel
   const filePath = join(dir, "channels.json");
   const map = readChannelMap(mindName);
   map[slug] = entry;
-  writeFileSync(filePath, JSON.stringify(map, null, 2) + "\n");
+  writeFileSync(filePath, `${JSON.stringify(map, null, 2)}\n`);
 }
 
 export function resolveChannelId(mindName: string, slug: string): string {

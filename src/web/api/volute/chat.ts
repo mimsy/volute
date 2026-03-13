@@ -32,8 +32,8 @@ async function fanOutToMinds(opts: {
   convTitle: string | null;
   /** Override isDM (defaults to participants.length === 2) */
   isDM?: boolean;
-  /** Override channel entry type (defaults to isDM ? "dm" : "group") */
-  channelEntryType?: "dm" | "group";
+  /** Override channel entry type (defaults to isDM ? "dm" : "channel") */
+  channelEntryType?: "dm" | "channel";
   /** Extra fields passed to buildVoluteSlug (e.g. convType, convName) */
   slugExtra?: Partial<SlugOpts>;
   /** Maps mind username to delivery target name (for variant-aware targeting) */
@@ -43,7 +43,7 @@ async function fanOutToMinds(opts: {
   const mindParticipants = participants.filter((p) => p.userType === "mind");
   const participantNames = participants.map((p) => p.username);
   const isDM = opts.isDM ?? participants.length === 2;
-  const channelEntryType = opts.channelEntryType ?? (isDM ? "dm" : "group");
+  const channelEntryType = opts.channelEntryType ?? (isDM ? "dm" : "channel");
 
   const { getMindManager } = await import("../../../lib/daemon/mind-manager.js");
   const { getSleepManagerIfReady } = await import("../../../lib/daemon/sleep-manager.js");
@@ -70,7 +70,7 @@ async function fanOutToMinds(opts: {
   }
 
   // Write slug → platformId mapping for all mind participants
-  const channelEntry = {
+  const channelEntry: import("../../../connectors/sdk.js").ChannelEntry = {
     platformId: opts.conversationId,
     platform: "volute",
     name: opts.convTitle ?? undefined,
@@ -254,8 +254,10 @@ const app = new Hono<AuthEnv>()
       senderName,
       convTitle,
       isDM,
-      channelEntryType: conv?.type === "channel" ? "group" : isDM ? "dm" : "group",
-      slugExtra: conv ? { convType: conv.type, convName: conv.name } : undefined,
+      channelEntryType: isDM ? "dm" : "channel",
+      slugExtra: conv
+        ? { convType: conv.type as "dm" | "channel", convName: conv.name }
+        : undefined,
       targetName: (username) => (username === baseName ? name : username),
     });
 
@@ -391,8 +393,8 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       senderName,
       convTitle: conv.title,
       isDM,
-      channelEntryType: conv.type === "channel" ? "group" : isDM ? "dm" : "group",
-      slugExtra: { convType: conv.type, convName: conv.name },
+      channelEntryType: isDM ? "dm" : "channel",
+      slugExtra: { convType: conv.type as "dm" | "channel", convName: conv.name },
     });
 
     return c.json({ ok: true, conversationId: body.conversationId });

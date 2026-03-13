@@ -184,7 +184,7 @@ function handleSSEEvent(event: SSEEvent) {
 
         // Browser notifications
         const senderLabel = event.senderName ?? "Someone";
-        const isDm = conv.type === "dm" || conv.type === "group";
+        const isDm = conv.type === "dm";
         if (isDm) {
           showNotification(senderLabel, text.slice(0, 200));
         } else if (conv.type === "channel") {
