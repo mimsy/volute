@@ -68,7 +68,7 @@ function noteUrl(author: string, slug: string): string {
       slug={route.slug}
       {username}
       onNavigate={(author, slug) => navigateParent(noteUrl(author, slug))}
-      onBack={() => route.mindContext ? navigateParent(`/minds/${route.mindContext}/notes`) : navigateHash("")}
+      onBack={() => navigateParent(route.mindContext ? `/minds/${route.mindContext}/notes` : "/notes")}
     />
   {:else}
     <NotesList
