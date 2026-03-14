@@ -58,17 +58,13 @@ let sessionGroups = $derived.by(() => {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(m);
   }
-  const result: SessionGroup[] = [];
-  for (const [session, events] of groups) {
-    result.push({ session, events });
-  }
-  // Sort by most recent event timestamp ascending (most recent group last, at bottom)
-  result.sort((a, b) => {
-    const aTime = a.events[a.events.length - 1]?.created_at ?? "";
-    const bTime = b.events[b.events.length - 1]?.created_at ?? "";
-    return aTime < bTime ? -1 : aTime > bTime ? 1 : 0;
-  });
-  return result;
+  return [...groups.entries()]
+    .map(([session, events]): SessionGroup => ({ session, events }))
+    .sort((a, b) => {
+      const aTime = a.events.at(-1)?.created_at ?? "";
+      const bTime = b.events.at(-1)?.created_at ?? "";
+      return aTime < bTime ? -1 : aTime > bTime ? 1 : 0;
+    });
 });
 
 // Non-summary mode: build timeline with session dividers
@@ -183,8 +179,6 @@ function connectSSE() {
   const qs = params.toString();
   const url = `/api/minds/${encodeURIComponent(name)}/events${qs ? `?${qs}` : ""}`;
 
-  const currentPreset = filters.preset;
-
   const es = new EventSource(url);
   es.onmessage = (e) => {
     let data: Record<string, unknown>;
@@ -207,8 +201,8 @@ function connectSSE() {
       created_at: (data.createdAt as string) ?? new Date().toISOString(),
     };
 
-    // Filter SSE events by current preset
-    if (!matchesPreset(event.type, currentPreset)) return;
+    // Filter SSE events by current preset (read reactively, not captured at connect time)
+    if (!matchesPreset(event.type, filters.preset)) return;
 
     messages = [...messages, event];
 

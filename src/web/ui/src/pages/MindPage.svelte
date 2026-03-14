@@ -43,6 +43,7 @@ let sessions = $state<HistorySession[]>([]);
 let sessionMap = $state<Map<string, HistorySession>>(new Map());
 let hasMore = $state(true);
 let loading = $state(false);
+let historyError = $state("");
 
 // --- Feed data ---
 let mindConversations = $state<ConversationWithParticipants[]>([]);
@@ -85,8 +86,7 @@ function getConvLabel(conv: ConversationWithParticipants): string {
 
 function getItemTime(item: InfoTimelineItem): string {
   if (item.kind === "summary") return formatRelativeTime(item.event.created_at);
-  if (item.item.kind === "extension") return formatRelativeTime(item.item.item.date);
-  return formatRelativeTime(item.item.conv.updated_at);
+  return formatRelativeTime(item.item.date);
 }
 
 // --- Unified timeline ---
@@ -208,6 +208,7 @@ function disconnectSSE() {
 // --- Data loading ---
 async function loadHistory(offset: number) {
   loading = true;
+  historyError = "";
   try {
     const rows = await fetchHistory(name, {
       preset: "summary",
@@ -222,7 +223,7 @@ async function loadHistory(offset: number) {
     }
     hasMore = rows.length === PAGE_SIZE;
   } catch (e) {
-    console.warn("Failed to load history:", e);
+    historyError = e instanceof Error ? e.message : "Failed to load history";
   }
   loading = false;
 }
@@ -237,22 +238,20 @@ async function loadSessions() {
   }
 }
 
-// Scroll to bottom on initial load — keep nudging for a few seconds
-let initialScrollDone = $state(false);
+// Scroll to bottom on initial load -- keep nudging for a few seconds
 let scrollTimer: ReturnType<typeof setInterval> | null = null;
+let scrollTimeout: ReturnType<typeof setTimeout> | null = null;
 
 function startScrollToBottom() {
   stopScrollTimer();
-  initialScrollDone = false;
   scrollTimer = setInterval(() => {
     if (scrollContainer) {
       scrollContainer.scrollTop = scrollContainer.scrollHeight;
     }
   }, 100);
   // Stop after 3 seconds
-  setTimeout(() => {
+  scrollTimeout = setTimeout(() => {
     stopScrollTimer();
-    initialScrollDone = true;
   }, 3000);
 }
 
@@ -260,6 +259,10 @@ function stopScrollTimer() {
   if (scrollTimer) {
     clearInterval(scrollTimer);
     scrollTimer = null;
+  }
+  if (scrollTimeout) {
+    clearTimeout(scrollTimeout);
+    scrollTimeout = null;
   }
 }
 
@@ -286,6 +289,11 @@ $effect(() => {
   name; // track
   connectSSE();
   return () => disconnectSSE();
+});
+
+// Clean up scroll timer on unmount
+$effect(() => {
+  return () => stopScrollTimer();
 });
 
 // Fetch mind conversations
@@ -368,7 +376,7 @@ function jumpToLatest() {
 {:else}
   <div class="mind-page">
     {#if section === "info"}
-      <div class="info-timeline" bind:this={scrollContainer} onscroll={handleScroll} onwheel={() => { stopScrollTimer(); initialScrollDone = true; }}>
+      <div class="info-timeline" bind:this={scrollContainer} onscroll={handleScroll} onwheel={() => stopScrollTimer()}>
         {#if hasMore}
           <div class="load-older">
             <button
@@ -382,7 +390,9 @@ function jumpToLatest() {
           </div>
         {/if}
 
-        {#if timeline.length === 0 && !loading}
+        {#if historyError}
+          <div class="error-hint">{historyError}</div>
+        {:else if timeline.length === 0 && !loading}
           <div class="empty-hint">No activity yet.</div>
         {:else}
           <div class="timeline-rail">
@@ -762,6 +772,13 @@ function jumpToLatest() {
   .empty-hint {
     color: var(--text-2);
     font-size: 13px;
+    padding: 40px 0;
+    text-align: center;
+  }
+
+  .error-hint {
+    color: var(--red);
+    font-size: 14px;
     padding: 40px 0;
     text-align: center;
   }

@@ -23,6 +23,7 @@ let {
 let expanded = $state(false);
 let turnExpanded = $state(false);
 let turnLoading = $state(false);
+let turnError = $state("");
 let turnEvents = $state<HistoryMessage[]>([]);
 const typeColors: Record<string, string> = {
   inbound: "var(--red)",
@@ -80,9 +81,17 @@ async function handleClick() {
   if (event.type === "summary" && expandable) {
     turnExpanded = !turnExpanded;
     if (turnExpanded && turnEvents.length === 0) {
+      if (!event.session || !meta?.from_id || !meta?.to_id) {
+        turnError = "Missing turn data";
+        return;
+      }
       turnLoading = true;
+      turnError = "";
       try {
-        turnEvents = await fetchTurnEvents(mindName, event.session!, meta.from_id, meta.to_id);
+        turnEvents = await fetchTurnEvents(mindName, event.session, meta.from_id, meta.to_id);
+      } catch (e) {
+        turnError = "Failed to load turn details";
+        console.warn("Failed to fetch turn events:", e);
       } finally {
         turnLoading = false;
       }
@@ -141,6 +150,8 @@ async function handleClick() {
         <div class="turn-branch" onclick={(e) => e.stopPropagation()}>
           {#if turnLoading}
             <div class="turn-loading">loading turn...</div>
+          {:else if turnError}
+            <div class="turn-loading">{turnError}</div>
           {:else}
             {#each turnEvents as turnEv (turnEv.id)}
               <HistoryEvent event={turnEv} {mindName} />
@@ -248,8 +259,9 @@ async function handleClick() {
   .event:hover::after {
     opacity: 1;
   }
-  /* Expandable summaries: dashed rail by masking the solid line behind */
-  .event.expandable-summary::after {
+  /* Expandable summaries: dashed rail */
+  .event.expandable-summary::after,
+  .event.turn-expanded::after {
     top: 20px;
     background: repeating-linear-gradient(
       to bottom,
@@ -260,27 +272,7 @@ async function handleClick() {
     );
     opacity: 1;
   }
-  .event.expandable-summary:hover::after {
-    background: repeating-linear-gradient(
-      to bottom,
-      var(--type-color) 0px,
-      var(--type-color) 4px,
-      var(--bg-1) 4px,
-      var(--bg-1) 8px
-    );
-  }
-  /* Keep dashed when expanded */
-  .event.turn-expanded::after {
-    background: repeating-linear-gradient(
-      to bottom,
-      var(--timeline-rail) 0px,
-      var(--timeline-rail) 4px,
-      var(--bg-1) 4px,
-      var(--bg-1) 8px
-    );
-    opacity: 1;
-    display: block;
-  }
+  .event.expandable-summary:hover::after,
   .event.turn-expanded:hover::after {
     background: repeating-linear-gradient(
       to bottom,
@@ -474,16 +466,9 @@ async function handleClick() {
     background: var(--border);
   }
   /* Highlight whole subtrack on summary-header or branch-summary hover */
-  .event:has(.summary-header:hover) .turn-connector,
-  .event:has(.branch-summary:hover) .turn-connector {
-    background: var(--text-0);
-  }
-  .event:has(.summary-header:hover) .turn-connector::after,
-  .event:has(.branch-summary:hover) .turn-connector::after {
-    background: var(--text-0);
-  }
-  .event:has(.summary-header:hover) .branch-return,
-  .event:has(.branch-summary:hover) .branch-return {
+  .event:has(.summary-header:hover, .branch-summary:hover) .turn-connector,
+  .event:has(.summary-header:hover, .branch-summary:hover) .turn-connector::after,
+  .event:has(.summary-header:hover, .branch-summary:hover) .branch-return {
     background: var(--text-0);
   }
 

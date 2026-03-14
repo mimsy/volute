@@ -205,7 +205,6 @@ export function fetchHistory(
   opts?: {
     channel?: string;
     session?: string;
-    full?: boolean;
     preset?: "summary" | "conversation" | "detailed" | "all";
     limit?: number;
     offset?: number;
@@ -214,7 +213,6 @@ export function fetchHistory(
   const params = new URLSearchParams();
   if (opts?.channel) params.set("channel", opts.channel);
   if (opts?.session) params.set("session", opts.session);
-  if (opts?.full) params.set("full", "true");
   if (opts?.preset) params.set("preset", opts.preset);
   if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
   if (opts?.offset !== undefined) params.set("offset", String(opts.offset));

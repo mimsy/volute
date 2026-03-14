@@ -149,7 +149,12 @@ function buildTranscript(events: HistoryRow[]): string {
           try {
             const meta = JSON.parse(ev.metadata);
             isError = !!meta.is_error;
-          } catch {}
+          } catch (err) {
+            sLog.debug(
+              `failed to parse tool_result metadata for event ${ev.id}`,
+              log.errorData(err),
+            );
+          }
         }
         lines.push(isError ? "[result error]" : `[result] ${content.slice(0, 200)}`);
         break;
