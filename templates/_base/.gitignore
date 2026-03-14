@@ -2,11 +2,26 @@ node_modules/
 dist/
 .variants/
 .mind/
-.npm/
-.local/
-.cache/
-home/shared/
-home/.claude/*
-home/.claude.json*
-!home/.claude/settings.json
+
+# Ignore everything in home/ by default
+home/*
+
+# Identity files
+!home/SOUL.md
+!home/MEMORY.md
+!home/CLAUDE.md
+!home/VOLUTE.md
+
+# Memory
+!home/memory/
+!home/memory/**
+
+# Config
+!home/.config/
+!home/.config/**
+
+# Claude settings and skills only (not debug/cache junk)
+!home/.claude/
 !home/.claude/skills/
+!home/.claude/skills/**
+!home/.claude/settings.json

@@ -1,4 +1,4 @@
-import { commitFileChange } from "./auto-commit.js";
+import { flushFileChanges, trackFileChange } from "./auto-commit.js";
 import { daemonEmit, type EventType } from "./daemon-client.js";
 import { log, warn } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
@@ -110,7 +110,7 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
           const args = toolArgs.get(event.toolCallId);
           const filePath = (args as { path?: string })?.path;
           if (filePath) {
-            commitFileChange(filePath, options.cwd);
+            trackFileChange(filePath, options.cwd);
           }
         }
         toolArgs.delete(event.toolCallId);
@@ -158,7 +158,7 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         options.broadcast({ type: "done" });
         emit(session, { type: "done" });
         session.currentMessageId = undefined;
-        options.onTurnEnd?.();
+        flushFileChanges(options.cwd).then(() => options.onTurnEnd?.());
       }
     } catch (err) {
       log("mind", `session "${session.name}": event handler error (${event?.type}):`, err);
