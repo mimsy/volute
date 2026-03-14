@@ -102,6 +102,7 @@ async function handleClick() {
 <div
   class="event"
   class:collapsible
+  class:expandable-summary={event.type === "summary" && expandable}
   class:turn-expanded={event.type === "summary" && turnExpanded}
   onclick={handleClick}
   style:--type-color={color}
@@ -157,12 +158,7 @@ async function handleClick() {
           <div class="branch-return"></div>
         </div>
       {:else}
-        <span class="summary-text">
-          {#if compact && expandable}
-            <span class="chevron">{turnExpanded ? "▼" : "▶"}</span>
-          {/if}
-          {event.content}
-        </span>
+        <span class="summary-text">{event.content}</span>
       {/if}
     </div>
   {:else}
@@ -252,9 +248,47 @@ async function handleClick() {
   .event:hover::after {
     opacity: 1;
   }
-  /* Don't highlight main rail when summary is expanded */
+  /* Expandable summaries: dashed rail by masking the solid line behind */
+  .event.expandable-summary::after {
+    top: 20px;
+    background: repeating-linear-gradient(
+      to bottom,
+      var(--timeline-rail) 0px,
+      var(--timeline-rail) 4px,
+      var(--bg-1) 4px,
+      var(--bg-1) 8px
+    );
+    opacity: 1;
+  }
+  .event.expandable-summary:hover::after {
+    background: repeating-linear-gradient(
+      to bottom,
+      var(--type-color) 0px,
+      var(--type-color) 4px,
+      var(--bg-1) 4px,
+      var(--bg-1) 8px
+    );
+  }
+  /* Keep dashed when expanded */
   .event.turn-expanded::after {
-    display: none;
+    background: repeating-linear-gradient(
+      to bottom,
+      var(--timeline-rail) 0px,
+      var(--timeline-rail) 4px,
+      var(--bg-1) 4px,
+      var(--bg-1) 8px
+    );
+    opacity: 1;
+    display: block;
+  }
+  .event.turn-expanded:hover::after {
+    background: repeating-linear-gradient(
+      to bottom,
+      var(--type-color) 0px,
+      var(--type-color) 4px,
+      var(--bg-1) 4px,
+      var(--bg-1) 8px
+    );
   }
   .event.collapsible {
     cursor: pointer;
