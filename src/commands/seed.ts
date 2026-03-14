@@ -26,7 +26,7 @@ async function chooseModel(
 
   const answer = await promptLine(`\nChoose a model [1-${enabled.length}]: `);
   const idx = parseInt(answer, 10) - 1;
-  if (idx < 0 || idx >= enabled.length || isNaN(idx)) {
+  if (idx < 0 || idx >= enabled.length || Number.isNaN(idx)) {
     console.error("Invalid selection");
     process.exit(1);
   }
