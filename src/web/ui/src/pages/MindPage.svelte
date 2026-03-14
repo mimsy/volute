@@ -84,7 +84,6 @@ function getConvLabel(conv: ConversationWithParticipants): string {
 }
 
 function getItemTime(item: InfoTimelineItem): string {
-  if (item.kind === "session-divider") return "";
   if (item.kind === "summary") return formatRelativeTime(item.event.created_at);
   if (item.item.kind === "extension") return formatRelativeTime(item.item.item.date);
   return formatRelativeTime(item.item.conv.updated_at);
@@ -108,101 +107,34 @@ let feedItems = $derived.by(() => {
   return items;
 });
 
-// Group history summaries by session
-type SessionGroup = {
-  session: string;
-  events: HistoryMessage[];
-  startTime: number;
-  endTime: number;
-};
-
-let sessionGroups = $derived.by(() => {
-  const groups = new Map<string, HistoryMessage[]>();
-  for (const m of historyMessages) {
-    const key = m.session ?? "";
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(m);
-  }
-  const result: SessionGroup[] = [];
-  for (const [session, events] of groups) {
-    const times = events.map((e) => new Date(normalizeTimestamp(e.created_at)).getTime());
-    result.push({
-      session,
-      events,
-      startTime: Math.min(...times),
-      endTime: Math.max(...times),
-    });
-  }
-  result.sort((a, b) => a.endTime - b.endTime);
-  return result;
-});
-
-// Build unified timeline interleaving session groups and feed items
+// Build flat timeline sorted purely by time
 type InfoTimelineItem =
-  | { kind: "session-divider"; session: string; key: string }
   | { kind: "summary"; event: HistoryMessage; key: string }
   | { kind: "feed"; item: FeedItem; key: string };
 
 let timeline = $derived.by(() => {
-  const items: InfoTimelineItem[] = [];
+  const items: { item: InfoTimelineItem; time: number }[] = [];
 
-  const sortedFeed = [...feedItems].sort((a, b) => {
-    const aTime = new Date(normalizeTimestamp(a.date)).getTime();
-    const bTime = new Date(normalizeTimestamp(b.date)).getTime();
-    return aTime - bTime;
-  });
-
-  let feedIdx = 0;
-
-  for (const group of sessionGroups) {
-    while (feedIdx < sortedFeed.length) {
-      const feedTime = new Date(normalizeTimestamp(sortedFeed[feedIdx].date)).getTime();
-      if (feedTime < group.startTime) {
-        const fi = sortedFeed[feedIdx];
-        items.push({
-          kind: "feed",
-          item: fi,
-          key: fi.kind === "extension" ? `feed-ext-${fi.item.id}` : `feed-msg-${fi.conv.id}`,
-        });
-        feedIdx++;
-      } else {
-        break;
-      }
-    }
-
-    items.push({ kind: "session-divider", session: group.session, key: `div-${group.session}` });
-
-    for (const ev of group.events) {
-      items.push({ kind: "summary", event: ev, key: `ev-${ev.id}` });
-    }
-
-    while (feedIdx < sortedFeed.length) {
-      const feedTime = new Date(normalizeTimestamp(sortedFeed[feedIdx].date)).getTime();
-      if (feedTime <= group.endTime) {
-        const fi = sortedFeed[feedIdx];
-        items.push({
-          kind: "feed",
-          item: fi,
-          key: fi.kind === "extension" ? `feed-ext-${fi.item.id}` : `feed-msg-${fi.conv.id}`,
-        });
-        feedIdx++;
-      } else {
-        break;
-      }
-    }
-  }
-
-  while (feedIdx < sortedFeed.length) {
-    const fi = sortedFeed[feedIdx];
+  for (const ev of historyMessages) {
     items.push({
-      kind: "feed",
-      item: fi,
-      key: fi.kind === "extension" ? `feed-ext-${fi.item.id}` : `feed-msg-${fi.conv.id}`,
+      item: { kind: "summary", event: ev, key: `ev-${ev.id}` },
+      time: new Date(normalizeTimestamp(ev.created_at)).getTime(),
     });
-    feedIdx++;
   }
 
-  return items;
+  for (const fi of feedItems) {
+    items.push({
+      item: {
+        kind: "feed",
+        item: fi,
+        key: fi.kind === "extension" ? `feed-ext-${fi.item.id}` : `feed-msg-${fi.conv.id}`,
+      },
+      time: new Date(normalizeTimestamp(fi.date)).getTime(),
+    });
+  }
+
+  items.sort((a, b) => a.time - b.time);
+  return items.map((i) => i.item);
 });
 
 // --- SSE ---
@@ -432,15 +364,7 @@ function jumpToLatest() {
         {:else}
           <div class="timeline-rail">
             {#each timeline as item (item.key)}
-              {#if item.kind === "session-divider"}
-                <div class="session-section">
-                  <div class="session-divider">
-                    <div class="session-divider-line line-left"></div>
-                    <span class="session-divider-label">{item.session || "no session"}</span>
-                    <div class="session-divider-line"></div>
-                  </div>
-                </div>
-              {:else if item.kind === "summary"}
+              {#if item.kind === "summary"}
                 <div class="timed-row">
                   <span class="row-time">{getItemTime(item)}</span>
                   <HistoryEvent event={item.event} mindName={name} expandable compact />
@@ -618,48 +542,6 @@ function jumpToLatest() {
     color: var(--text-2);
     white-space: nowrap;
     text-align: right;
-  }
-
-  .session-section {
-    position: relative;
-  }
-
-  .session-divider {
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px 8px 8px 8px;
-  }
-  .session-divider:first-child {
-    padding-top: 4px;
-  }
-  .session-divider::before {
-    content: "";
-    position: absolute;
-    left: -4px;
-    top: 0;
-    bottom: 0;
-    width: 6px;
-    margin-top: auto;
-    margin-bottom: 14.5px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--text-2);
-    z-index: 1;
-  }
-  .session-divider-line {
-    flex: 1;
-    border-top: 1px solid var(--border);
-  }
-  .line-left {
-    margin-left: -6px;
-  }
-  .session-divider-label {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-2);
-    white-space: nowrap;
   }
 
   /* Feed cards on the timeline */

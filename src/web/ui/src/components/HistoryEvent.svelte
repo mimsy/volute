@@ -105,7 +105,7 @@ async function handleClick() {
   {/if}
 
   {#if event.type === "summary"}
-    {#if !compact}
+    {#if !compact || turnExpanded}
       <div class="summary-header" class:expanded={turnExpanded}>
         <div class="summary-header-line">
           {#if meta?.from_time && meta?.to_time}
