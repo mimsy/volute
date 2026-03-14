@@ -131,6 +131,7 @@ async function refreshTrayMenu() {
       label: "Show Window",
       click: () => {
         if (mainWindow) {
+          app.show();
           mainWindow.show();
           mainWindow.focus();
         }
