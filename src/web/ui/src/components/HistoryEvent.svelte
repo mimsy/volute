@@ -9,11 +9,13 @@ let {
   event,
   mindName,
   expandable = false,
+  compact = false,
   onsessionclick,
 }: {
   event: HistoryMessage;
   mindName: string;
   expandable?: boolean;
+  compact?: boolean;
   onsessionclick?: (session: string) => void;
 } = $props();
 
@@ -103,23 +105,25 @@ async function handleClick() {
   {/if}
 
   {#if event.type === "summary"}
-    <div class="summary-header" class:expanded={turnExpanded}>
-      <div class="summary-header-line">
-        {#if meta?.from_time && meta?.to_time}
-          <span class="time">{formatTime(meta.from_time)} – {formatTime(meta.to_time)}</span>
-        {:else}
-          <span class="time">{formatTime(event.created_at)}</span>
-        {/if}
-        {#if expandable}
-          <span class="chevron">{turnExpanded ? "▼" : "▶"}</span>
+    {#if !compact}
+      <div class="summary-header" class:expanded={turnExpanded}>
+        <div class="summary-header-line">
+          {#if meta?.from_time && meta?.to_time}
+            <span class="time">{formatTime(meta.from_time)} – {formatTime(meta.to_time)}</span>
+          {:else}
+            <span class="time">{formatTime(event.created_at)}</span>
+          {/if}
+          {#if expandable}
+            <span class="chevron">{turnExpanded ? "▼" : "▶"}</span>
+          {/if}
+        </div>
+        {#if event.session && !expandable}
+          <button class="session-tag" onclick={(e) => { e.stopPropagation(); onsessionclick?.(event.session!); }}>
+            {event.session}
+          </button>
         {/if}
       </div>
-      {#if event.session && !expandable}
-        <button class="session-tag" onclick={(e) => { e.stopPropagation(); onsessionclick?.(event.session!); }}>
-          {event.session}
-        </button>
-      {/if}
-    </div>
+    {/if}
 
     <div class="event-body">
       {#if expandable && turnExpanded}
@@ -145,7 +149,12 @@ async function handleClick() {
           <div class="branch-return"></div>
         </div>
       {:else}
-        <span class="summary-text">{event.content}</span>
+        <span class="summary-text">
+          {#if compact && expandable}
+            <span class="chevron">{turnExpanded ? "▼" : "▶"}</span>
+          {/if}
+          {event.content}
+        </span>
       {/if}
     </div>
   {:else}
