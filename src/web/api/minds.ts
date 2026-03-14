@@ -2268,7 +2268,7 @@ const app = new Hono<AuthEnv>()
     const session = c.req.query("session");
     const fromId = parseInt(c.req.query("from_id") ?? "", 10);
     const toId = parseInt(c.req.query("to_id") ?? "", 10);
-    if (!session || isNaN(fromId) || isNaN(toId)) {
+    if (!session || Number.isNaN(fromId) || Number.isNaN(toId)) {
       return c.json({ error: "session, from_id, and to_id are required" }, 400);
     }
 
