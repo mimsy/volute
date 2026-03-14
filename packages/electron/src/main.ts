@@ -1,7 +1,11 @@
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, Menu, nativeImage, shell, Tray } from "electron";
 import { DaemonProcess, findAvailablePort, isPortAvailable } from "./daemon.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const isDev = !app.isPackaged;
 
@@ -9,8 +13,8 @@ const isDev = !app.isPackaged;
 
 function resourcePath(...parts: string[]): string {
   if (isDev) {
-    // In dev, resources are at the repo root (two levels up from packages/electron/)
-    return resolve(__dirname, "..", "..", ...parts);
+    // In dev, __dirname is packages/electron/dist/, repo root is three levels up
+    return resolve(__dirname, "..", "..", "..", ...parts);
   }
   return join(process.resourcesPath!, ...parts);
 }
