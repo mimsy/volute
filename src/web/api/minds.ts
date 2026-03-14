@@ -1900,7 +1900,10 @@ const app = new Hono<AuthEnv>()
     }
     // Enforce privacy: if conversation is private, require participant or admin
     const conv = await getConversation(convId);
-    if (conv?.private === 1) {
+    if (!conv) {
+      return c.json({ error: "Conversation not found" }, 404);
+    }
+    if (conv.private === 1) {
       const user = c.get("user");
       if (user.role !== "admin") {
         const participant = await isParticipant(convId, user.id);

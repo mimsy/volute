@@ -190,8 +190,12 @@ $effect(() => {
       const conv = conversations.find((c) => c.id === id);
       if (conv) {
         const newPrivate = conv.private !== 1;
-        await setConversationPrivate(id, newPrivate);
-        conv.private = newPrivate ? 1 : 0;
+        try {
+          await setConversationPrivate(id, newPrivate);
+          conv.private = newPrivate ? 1 : 0;
+        } catch (err) {
+          console.error("Failed to update conversation privacy:", err);
+        }
       }
       closeMenu();
     }}>
