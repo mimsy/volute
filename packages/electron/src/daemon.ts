@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { createConnection } from "node:net";
 
 export type DaemonState = "stopped" | "starting" | "running" | "error";
@@ -23,9 +24,14 @@ export class DaemonProcess {
   private state: DaemonState = "stopped";
   private opts: DaemonOptions;
   private quitting = false;
+  private token = randomBytes(32).toString("hex");
 
   constructor(opts: DaemonOptions) {
     this.opts = opts;
+  }
+
+  getToken(): string {
+    return this.token;
   }
 
   getState(): DaemonState {
@@ -66,6 +72,7 @@ export class DaemonProcess {
       ...(process.env as Record<string, string>),
       VOLUTE_HOME: this.opts.voluteHome,
       VOLUTE_NODE_PATH: this.opts.nodePath,
+      VOLUTE_DAEMON_TOKEN: this.token,
       PATH: `${this.opts.binDir}:${process.env.PATH ?? ""}`,
       NODE_PATH: this.opts.nodeModulesDir,
     };

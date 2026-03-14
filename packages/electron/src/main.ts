@@ -72,12 +72,61 @@ async function createWindow() {
   });
 }
 
-function createTray() {
-  const icon = nativeImage.createEmpty();
-  tray = new Tray(icon);
-  tray.setToolTip("Volute");
+type MindInfo = {
+  name: string;
+  status: "running" | "stopped" | "starting" | "sleeping";
+  displayName?: string;
+};
 
-  const contextMenu = Menu.buildFromTemplate([
+const STATUS_LABELS: Record<string, string> = {
+  running: "●",
+  starting: "◐",
+  sleeping: "◌",
+  stopped: "○",
+};
+
+function daemonFetch(path: string, init?: RequestInit): Promise<Response> {
+  return fetch(`http://127.0.0.1:${daemon.getPort()}${path}`, {
+    ...init,
+    headers: {
+      ...init?.headers,
+      Authorization: `Bearer ${daemon.getToken()}`,
+    },
+  });
+}
+
+async function fetchMinds(): Promise<MindInfo[]> {
+  try {
+    const res = await daemonFetch("/api/minds/");
+    if (!res.ok) return [];
+    const minds = (await res.json()) as MindInfo[];
+    return minds.filter((m) => !("parent" in m));
+  } catch {
+    return [];
+  }
+}
+
+async function toggleMind(name: string, currentStatus: string) {
+  const action = currentStatus === "running" || currentStatus === "starting" ? "stop" : "start";
+  try {
+    await daemonFetch(`/api/minds/${name}/${action}`, { method: "POST" });
+  } catch {
+    // Daemon unavailable
+  }
+  await refreshTrayMenu();
+}
+
+async function refreshTrayMenu() {
+  if (!tray) return;
+
+  const minds = await fetchMinds();
+
+  const mindItems: Electron.MenuItemConstructorOptions[] = minds.map((mind) => ({
+    label: `${STATUS_LABELS[mind.status] ?? "○"} ${mind.displayName ?? mind.name}`,
+    click: () => toggleMind(mind.name, mind.status),
+  }));
+
+  const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: "Show Window",
       click: () => {
@@ -88,16 +137,34 @@ function createTray() {
       },
     },
     { type: "separator" },
-    {
-      label: "Quit",
-      click: () => {
-        isQuitting = true;
-        app.quit();
-      },
-    },
-  ]);
+  ];
 
-  tray.setContextMenu(contextMenu);
+  if (mindItems.length > 0) {
+    template.push(...mindItems, { type: "separator" });
+  }
+
+  template.push({
+    label: "Quit",
+    click: () => {
+      isQuitting = true;
+      app.quit();
+    },
+  });
+
+  tray.setContextMenu(Menu.buildFromTemplate(template));
+}
+
+let trayRefreshInterval: ReturnType<typeof setInterval> | null = null;
+
+function createTray() {
+  const icon = nativeImage.createEmpty();
+  tray = new Tray(icon);
+  tray.setToolTip("Volute");
+
+  // Build initial menu, then refresh periodically
+  refreshTrayMenu();
+  trayRefreshInterval = setInterval(refreshTrayMenu, 10_000);
+
   tray.on("click", () => {
     if (mainWindow) {
       mainWindow.show();
@@ -108,6 +175,7 @@ function createTray() {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  if (trayRefreshInterval) clearInterval(trayRefreshInterval);
 });
 
 app
