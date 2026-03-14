@@ -10,7 +10,6 @@ import {
   deleteConversation,
   getConversation,
   getMessages,
-  setConversationPrivate,
 } from "../src/lib/events/conversations.js";
 import {
   conversationParticipants,
