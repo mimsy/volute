@@ -35,6 +35,16 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 
+function showWindow() {
+  if (!mainWindow) return;
+  // On macOS, the app must be visible in the dock for windows to appear
+  if (process.platform === "darwin" && app.dock) {
+    app.dock.show();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+}
+
 async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -129,13 +139,7 @@ async function refreshTrayMenu() {
   const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: "Show Window",
-      click: () => {
-        if (mainWindow) {
-          app.show();
-          mainWindow.show();
-          mainWindow.focus();
-        }
-      },
+      click: showWindow,
     },
     { type: "separator" },
   ];
@@ -171,12 +175,7 @@ function createTray() {
   refreshTrayMenu();
   trayRefreshInterval = setInterval(refreshTrayMenu, 10_000);
 
-  tray.on("click", () => {
-    if (mainWindow) {
-      mainWindow.show();
-      mainWindow.focus();
-    }
-  });
+  tray.on("click", showWindow);
 }
 
 app.on("before-quit", () => {
@@ -234,12 +233,7 @@ app
     app.quit();
   });
 
-app.on("activate", () => {
-  if (mainWindow) {
-    mainWindow.show();
-    mainWindow.focus();
-  }
-});
+app.on("activate", showWindow);
 
 app.on("window-all-closed", () => {
   // On macOS, don't quit when all windows are closed
