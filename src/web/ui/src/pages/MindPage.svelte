@@ -535,23 +535,20 @@ function jumpToLatest() {
     overflow-x: hidden;
     overflow-y: auto;
     padding: 0 40px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
   }
 
   .timeline-rail {
     position: relative;
-    padding-left: 4px;
-    margin-left: 60px;
+    padding-left: 64px;
+    margin-left: auto;
+    margin-right: auto;
     min-height: 100%;
-    max-width: 800px;
-    width: 100%;
+    max-width: 860px;
   }
   .timeline-rail::before {
     content: "";
     position: absolute;
-    left: 2px;
+    left: 62px;
     top: 0;
     bottom: 0;
     width: 2px;
