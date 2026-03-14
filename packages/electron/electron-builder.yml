@@ -15,6 +15,10 @@ dmg:
   title: Volute
 afterSign: scripts/notarize.cjs
 extraResources:
+  - from: resources/trayTemplate.png
+    to: trayTemplate.png
+  - from: resources/trayTemplate@2x.png
+    to: trayTemplate@2x.png
   - from: ../../dist/
     to: dist/
     filter:

@@ -157,7 +157,12 @@ async function refreshTrayMenu() {
 let trayRefreshInterval: ReturnType<typeof setInterval> | null = null;
 
 function createTray() {
-  const icon = nativeImage.createEmpty();
+  // macOS template images: trayTemplate.png and trayTemplate@2x.png
+  const iconPath = isDev
+    ? resolve(__dirname, "..", "resources", "trayTemplate.png")
+    : join(process.resourcesPath!, "trayTemplate.png");
+  const icon = nativeImage.createFromPath(iconPath);
+  icon.setTemplateImage(true);
   tray = new Tray(icon);
   tray.setToolTip("Volute");
 
