@@ -1,24 +1,42 @@
 <script lang="ts">
 import type { HistoryMessage } from "@volute/api";
+import { tick } from "svelte";
+import { fetchTurnEvents } from "../lib/client";
 import { normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
+import HistoryEvent from "./HistoryEvent.svelte";
 
-let { event, mindName }: { event: HistoryMessage; mindName: string } = $props();
+let {
+  event,
+  mindName,
+  expandable = false,
+  compact = false,
+  onsessionclick,
+}: {
+  event: HistoryMessage;
+  mindName: string;
+  expandable?: boolean;
+  compact?: boolean;
+  onsessionclick?: (session: string) => void;
+} = $props();
 
 let expanded = $state(false);
-
+let turnExpanded = $state(false);
+let turnLoading = $state(false);
+let turnError = $state("");
+let turnEvents = $state<HistoryMessage[]>([]);
 const typeColors: Record<string, string> = {
-  inbound: "var(--blue)",
-  outbound: "var(--accent)",
-  text: "var(--accent)",
+  inbound: "var(--red)",
+  outbound: "var(--green)",
+  text: "var(--blue)",
   tool_use: "var(--yellow)",
   tool_result: "var(--yellow)",
-  thinking: "var(--text-2)",
+  thinking: "var(--purple)",
   usage: "var(--purple)",
   log: "var(--text-2)",
   session_start: "var(--accent)",
   done: "var(--text-2)",
-  summary: "var(--green)",
+  summary: "var(--text-0)",
 };
 
 let color = $derived(typeColors[event.type] ?? "var(--text-2)");
@@ -27,7 +45,8 @@ let meta = $derived(event.metadata ? JSON.parse(event.metadata) : null);
 let collapsible = $derived(
   (event.type === "tool_use" && !!event.content) ||
     (event.type === "tool_result" && !!event.content) ||
-    (event.type === "thinking" && !!event.content),
+    (event.type === "thinking" && !!event.content) ||
+    (event.type === "summary" && expandable),
 );
 
 function formatTime(dateStr: string): string {
@@ -55,6 +74,36 @@ function formatArgs(args: unknown): string {
   }
   return JSON.stringify(args, null, 2);
 }
+
+let eventEl: HTMLDivElement | undefined = $state();
+
+async function handleClick() {
+  if (event.type === "summary" && expandable) {
+    turnExpanded = !turnExpanded;
+    if (turnExpanded && turnEvents.length === 0) {
+      if (!event.session || !meta?.from_id || !meta?.to_id) {
+        turnError = "Missing turn data";
+        return;
+      }
+      turnLoading = true;
+      turnError = "";
+      try {
+        turnEvents = await fetchTurnEvents(mindName, event.session, meta.from_id, meta.to_id);
+      } catch (e) {
+        turnError = "Failed to load turn details";
+        console.warn("Failed to fetch turn events:", e);
+      } finally {
+        turnLoading = false;
+      }
+    }
+    if (turnExpanded) {
+      await tick();
+      eventEl?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  } else if (collapsible) {
+    expanded = !expanded;
+  }
+}
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -62,78 +111,131 @@ function formatArgs(args: unknown): string {
 <div
   class="event"
   class:collapsible
-  onclick={() => { if (collapsible) expanded = !expanded; }}
+  class:expandable-summary={event.type === "summary" && expandable}
+  class:turn-expanded={event.type === "summary" && turnExpanded}
+  onclick={handleClick}
   style:--type-color={color}
+  bind:this={eventEl}
 >
   <div class="marker" style:background={color}></div>
+  {#if event.type === "summary" && turnExpanded}
+    <div class="turn-connector"></div>
+  {/if}
 
-  <div class="event-header">
-    <span class="time">{formatTime(event.created_at)}</span>
-    <span class="type-badge" style:background="{color}15" style:color={color}>{event.type}</span>
-    {#if event.channel && (event.type === "inbound" || event.type === "outbound")}
-      <span class="channel-tag">{event.channel}</span>
-    {/if}
-    {#if collapsible}
-      <span class="chevron">{expanded ? "▼" : "▶"}</span>
-    {/if}
-  </div>
-
-  <div class="event-body">
-    {#if event.type === "inbound"}
-      <span class="sender inbound">{event.sender ?? "user"}</span>
-      <div class="user-text">{event.content}</div>
-    {:else if event.type === "outbound"}
-      <span class="sender outbound">mind</span>
-      <div class="markdown-body">
-        {@html renderMarkdown(event.content)}
-      </div>
-    {:else if event.type === "text"}
-      <div class="markdown-body">
-        {@html renderMarkdown(event.content)}
-      </div>
-    {:else if event.type === "tool_use"}
-      <span class="summary">[{meta?.name ?? "tool"}]</span>
-      {#if expanded && event.content}
-        <pre class="detail">{formatArgs(event.content)}</pre>
-      {/if}
-    {:else if event.type === "tool_result"}
-      {#if !expanded}
-        <span class="summary" class:error={meta?.is_error}>{truncate(event.content, 80)}</span>
-      {:else}
-        <pre class="detail" class:error={meta?.is_error}>{event.content}</pre>
-      {/if}
-    {:else if event.type === "thinking"}
-      {#if !expanded}
-        <span class="summary dim">{truncate(event.content, 80)}</span>
-      {:else}
-        <div class="detail-text dim">{event.content}</div>
-      {/if}
-    {:else if event.type === "usage"}
-      <span class="usage-line">
-        ↑{meta?.input_tokens ?? 0} ↓{meta?.output_tokens ?? 0}
-        {#if meta?.model}
-          <span class="model">{meta.model}</span>
+  {#if event.type === "summary"}
+    {#if !compact || turnExpanded}
+      <div class="summary-header" class:expanded={turnExpanded}>
+        <div class="summary-header-line">
+          {#if meta?.from_time && meta?.to_time}
+            <span class="time">{formatTime(meta.from_time)} – {formatTime(meta.to_time)}</span>
+          {:else}
+            <span class="time">{formatTime(event.created_at)}</span>
+          {/if}
+          {#if expandable}
+            <span class="chevron">{turnExpanded ? "▼" : "▶"}</span>
+          {/if}
+        </div>
+        {#if event.session && !expandable}
+          <button class="session-tag" onclick={(e) => { e.stopPropagation(); onsessionclick?.(event.session!); }}>
+            {event.session}
+          </button>
         {/if}
-      </span>
-    {:else if event.type === "session_start"}
-      <span class="dim">session started</span>
-      {#if event.session}
-        <span class="session-id">{event.session}</span>
-      {/if}
-    {:else if event.type === "summary"}
-      <span class="summary-text">{event.content}</span>
-      {#if meta?.from_time && meta?.to_time}
-        <span class="time-range">{formatTime(meta.from_time)} – {formatTime(meta.to_time)}</span>
-      {/if}
-    {:else if event.type === "done"}
-      <span class="dim">processing complete</span>
-    {:else}
-      <span class="dim">{event.type}</span>
-      {#if event.content}
-        <span>{event.content}</span>
-      {/if}
+      </div>
     {/if}
-  </div>
+
+    <div class="event-body">
+      {#if expandable && turnExpanded}
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="turn-branch" onclick={(e) => e.stopPropagation()}>
+          {#if turnLoading}
+            <div class="turn-loading">loading turn...</div>
+          {:else if turnError}
+            <div class="turn-loading">{turnError}</div>
+          {:else}
+            {#each turnEvents as turnEv (turnEv.id)}
+              <HistoryEvent event={turnEv} {mindName} />
+            {/each}
+          {/if}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="branch-summary" onclick={() => { turnExpanded = false; }}>
+            <div class="event-header">
+              <span class="time">{formatTime(event.created_at)}</span>
+              <span class="type-badge" style:background="{color}15" style:color={color}>summary</span>
+            </div>
+            <span class="summary-text">{event.content}</span>
+          </div>
+          <div class="branch-return"></div>
+        </div>
+      {:else}
+        <span class="summary-text">{event.content}</span>
+      {/if}
+    </div>
+  {:else}
+    <div class="event-header">
+      <span class="time">{formatTime(event.created_at)}</span>
+      <span class="type-badge" style:background="{color}15" style:color={color}>{event.type}</span>
+      {#if event.channel && (event.type === "inbound" || event.type === "outbound")}
+        <span class="channel-tag">{event.channel}</span>
+      {/if}
+      {#if collapsible}
+        <span class="chevron">{expanded ? "▼" : "▶"}</span>
+      {/if}
+    </div>
+
+    <div class="event-body">
+      {#if event.type === "inbound"}
+        <span class="sender inbound">{event.sender ?? "user"}</span>
+        <div class="user-text">{event.content}</div>
+      {:else if event.type === "outbound"}
+        <span class="sender outbound">mind</span>
+        <div class="markdown-body">
+          {@html renderMarkdown(event.content)}
+        </div>
+      {:else if event.type === "text"}
+        <div class="markdown-body">
+          {@html renderMarkdown(event.content)}
+        </div>
+      {:else if event.type === "tool_use"}
+        <span class="summary">[{meta?.name ?? "tool"}]</span>
+        {#if expanded && event.content}
+          <pre class="detail">{formatArgs(event.content)}</pre>
+        {/if}
+      {:else if event.type === "tool_result"}
+        {#if !expanded}
+          <span class="summary" class:error={meta?.is_error}>{truncate(event.content, 80)}</span>
+        {:else}
+          <pre class="detail" class:error={meta?.is_error}>{event.content}</pre>
+        {/if}
+      {:else if event.type === "thinking"}
+        {#if !expanded}
+          <span class="summary dim">{truncate(event.content, 80)}</span>
+        {:else}
+          <div class="detail-text dim">{event.content}</div>
+        {/if}
+      {:else if event.type === "usage"}
+        <span class="usage-line">
+          ↑{meta?.input_tokens ?? 0} ↓{meta?.output_tokens ?? 0}
+          {#if meta?.model}
+            <span class="model">{meta.model}</span>
+          {/if}
+        </span>
+      {:else if event.type === "session_start"}
+        <span class="dim">session started</span>
+        {#if event.session}
+          <span class="session-id">{event.session}</span>
+        {/if}
+      {:else if event.type === "done"}
+        <span class="dim">processing complete</span>
+      {:else}
+        <span class="dim">{event.type}</span>
+        {#if event.content}
+          <span>{event.content}</span>
+        {/if}
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -147,7 +249,7 @@ function formatArgs(args: unknown): string {
     position: absolute;
     left: -2px;
     top: 12px;
-    bottom: -12px;
+    bottom: -20px;
     width: 2px;
     background: var(--type-color);
     opacity: 0;
@@ -157,8 +259,43 @@ function formatArgs(args: unknown): string {
   .event:hover::after {
     opacity: 1;
   }
+  /* Expandable summaries: dashed rail */
+  .event.expandable-summary::after,
+  .event.turn-expanded::after {
+    top: 20px;
+    background: repeating-linear-gradient(
+      to bottom,
+      var(--timeline-rail) 0px,
+      var(--timeline-rail) 4px,
+      var(--bg-1) 4px,
+      var(--bg-1) 8px
+    );
+    opacity: 1;
+  }
+  .event.expandable-summary:hover::after,
+  .event.turn-expanded:hover::after {
+    background: repeating-linear-gradient(
+      to bottom,
+      var(--type-color) 0px,
+      var(--type-color) 4px,
+      var(--bg-1) 4px,
+      var(--bg-1) 8px
+    );
+  }
   .event.collapsible {
     cursor: pointer;
+  }
+
+  .summary-header {
+    margin-bottom: 4px;
+  }
+  .summary-header.expanded {
+    margin-left: 14px;
+  }
+  .summary-header-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
   .marker {
@@ -284,11 +421,88 @@ function formatArgs(args: unknown): string {
   }
   .summary-text {
     font-size: 13px;
-    color: var(--green);
+    color: var(--text-0);
   }
-  .time-range {
+  .session-tag {
     font-size: 11px;
-    color: var(--text-2);
+    color: var(--text-1);
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    padding: 1px 6px;
+    border-radius: var(--radius);
+    cursor: pointer;
     margin-left: 8px;
+    font-family: var(--mono);
+  }
+  .session-tag:hover {
+    background: var(--bg-2);
+    color: var(--text-0);
+  }
+
+  .turn-loading {
+    font-size: 12px;
+    color: var(--text-2);
+    padding: 8px 0 8px 16px;
+    font-style: italic;
+  }
+
+  /* Sub-rail: vertical line from dot to event bottom, at sub-rail X position */
+  .turn-connector {
+    position: absolute;
+    top: 15px;
+    left: 22px;
+    width: 2px;
+    bottom: 12px;
+    background: var(--border);
+  }
+  /* Horizontal connector from main rail dot to sub-rail */
+  .turn-connector::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -23px;
+    width: 23px;
+    height: 2px;
+    background: var(--border);
+  }
+  /* Highlight whole subtrack on summary-header or branch-summary hover */
+  .event:has(.summary-header:hover, .branch-summary:hover) .turn-connector,
+  .event:has(.summary-header:hover, .branch-summary:hover) .turn-connector::after,
+  .event:has(.summary-header:hover, .branch-summary:hover) .branch-return {
+    background: var(--text-0);
+  }
+
+  .turn-branch {
+    position: relative;
+    margin-left: -5px;
+    padding-left: 9px;
+    padding-bottom: 8px;
+  }
+  /* Return connector from sub-rail back to main rail */
+  .branch-return {
+    position: absolute;
+    bottom: 6px;
+    left: -16px;
+    width: 24px;
+    height: 2px;
+    background: var(--border);
+  }
+
+  .branch-summary {
+    position: relative;
+    padding: 6px 8px 6px 20px;
+    cursor: pointer;
+  }
+  /* Dot on the sub-rail for the summary at end of branch */
+  .branch-summary::before {
+    content: "";
+    position: absolute;
+    left: -5px;
+    top: 12px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-0);
+    z-index: 1;
   }
 </style>

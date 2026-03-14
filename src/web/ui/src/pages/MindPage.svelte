@@ -1,12 +1,20 @@
 <script lang="ts">
-import type { ConversationWithParticipants, Message } from "@volute/api";
+import type {
+  ConversationWithParticipants,
+  HistoryMessage,
+  HistorySession,
+  Message,
+} from "@volute/api";
 import ExtensionFeedCard from "../components/ExtensionFeedCard.svelte";
+import HistoryEvent from "../components/HistoryEvent.svelte";
 import MindInfo from "../components/MindInfo.svelte";
 import MindSkills from "../components/MindSkills.svelte";
 import PublicFiles from "../components/PublicFiles.svelte";
 import ReadOnlyChatModal from "../components/ReadOnlyChatModal.svelte";
 import {
   fetchConversationMessages,
+  fetchHistory,
+  fetchHistorySessions,
   fetchMindConversationMessages,
   fetchMindConversations,
 } from "../lib/client";
@@ -28,12 +36,35 @@ let {
 
 let mind = $derived(data.minds.find((m) => m.name === name));
 
+// --- History data ---
+const PAGE_SIZE = 100;
+let historyMessages = $state<HistoryMessage[]>([]);
+let sessions = $state<HistorySession[]>([]);
+let sessionMap = $state<Map<string, HistorySession>>(new Map());
+let hasMore = $state(true);
+let loading = $state(false);
+let historyError = $state("");
+
+// --- Feed data ---
 let mindConversations = $state<ConversationWithParticipants[]>([]);
 let messagesMap = $state<Record<string, Message[]>>({});
 let scrollEls = $state<Record<string, HTMLDivElement>>({});
 let readOnlyConv = $state<ConversationWithParticipants | null>(null);
-
 let currentUsername = $derived(auth.user?.username ?? "");
+
+type ExtFeedItem = {
+  id: string;
+  title: string;
+  url: string;
+  date: string;
+  author?: string;
+  bodyHtml: string;
+  iframeUrl?: string;
+  icon?: string;
+  color?: string;
+  extensionId: string;
+};
+let extensionFeedItems = $state<ExtFeedItem[]>([]);
 
 function isUserParticipant(conv: ConversationWithParticipants): boolean {
   if (!currentUsername) return false;
@@ -53,22 +84,12 @@ function getConvLabel(conv: ConversationWithParticipants): string {
   return "Conversation";
 }
 
-// Extension feed items for the info section
-type ExtFeedItem = {
-  id: string;
-  title: string;
-  url: string;
-  date: string;
-  author?: string;
-  bodyHtml: string;
-  iframeUrl?: string;
-  icon?: string;
-  color?: string;
-  extensionId: string;
-};
+function getItemTime(item: InfoTimelineItem): string {
+  if (item.kind === "summary") return formatRelativeTime(item.event.created_at);
+  return formatRelativeTime(item.item.date);
+}
 
-let extensionFeedItems = $state<ExtFeedItem[]>([]);
-
+// --- Unified timeline ---
 type FeedItem =
   | { kind: "extension"; item: ExtFeedItem; date: string }
   | { kind: "message"; conv: ConversationWithParticipants; date: string };
@@ -83,12 +104,196 @@ let feedItems = $derived.by(() => {
       items.push({ kind: "message", conv, date: conv.updated_at });
     }
   }
-  items.sort((a, b) => {
-    const aTime = new Date(normalizeTimestamp(a.date)).getTime();
-    const bTime = new Date(normalizeTimestamp(b.date)).getTime();
-    return bTime - aTime;
-  });
   return items;
+});
+
+// Build flat timeline sorted purely by time
+type InfoTimelineItem =
+  | { kind: "summary"; event: HistoryMessage; key: string }
+  | { kind: "feed"; item: FeedItem; key: string };
+
+let timeline = $derived.by(() => {
+  const items: { item: InfoTimelineItem; time: number }[] = [];
+
+  for (const ev of historyMessages) {
+    items.push({
+      item: { kind: "summary", event: ev, key: `ev-${ev.id}` },
+      time: new Date(normalizeTimestamp(ev.created_at)).getTime(),
+    });
+  }
+
+  for (const fi of feedItems) {
+    items.push({
+      item: {
+        kind: "feed",
+        item: fi,
+        key: fi.kind === "extension" ? `feed-ext-${fi.item.id}` : `feed-msg-${fi.conv.id}`,
+      },
+      time: new Date(normalizeTimestamp(fi.date)).getTime(),
+    });
+  }
+
+  items.sort((a, b) => a.time - b.time);
+  return items.map((i) => i.item);
+});
+
+// --- SSE ---
+let scrollContainer: HTMLDivElement | undefined = $state();
+let userScrolledUp = $state(false);
+let eventSource: EventSource | null = null;
+let nextSseId = -1;
+
+function connectSSE() {
+  disconnectSSE();
+  const url = `/api/minds/${encodeURIComponent(name)}/events`;
+  const es = new EventSource(url);
+  es.onmessage = (e) => {
+    let d: Record<string, unknown>;
+    try {
+      d = JSON.parse(e.data);
+    } catch {
+      return;
+    }
+
+    const event: HistoryMessage = {
+      id: nextSseId--,
+      mind: name,
+      channel: (d.channel as string) ?? "",
+      session: (d.session as string) ?? null,
+      sender: null,
+      message_id: (d.messageId as string) ?? null,
+      type: d.type as string,
+      content: (d.content as string) ?? "",
+      metadata: d.metadata ? JSON.stringify(d.metadata) : null,
+      created_at: (d.createdAt as string) ?? new Date().toISOString(),
+    };
+
+    if (event.type !== "summary") return;
+
+    historyMessages = [...historyMessages, event];
+
+    if (event.session && !sessionMap.has(event.session)) {
+      const newSess: HistorySession = {
+        session: event.session,
+        started_at: event.created_at,
+        event_count: 1,
+        message_count: 0,
+        tool_count: 0,
+      };
+      sessionMap = new Map([...sessionMap, [event.session, newSess]]);
+      sessions = [newSess, ...sessions];
+    }
+
+    if (!userScrolledUp) {
+      requestAnimationFrame(() => {
+        scrollContainer?.scrollTo({ top: scrollContainer.scrollHeight, behavior: "smooth" });
+      });
+    }
+  };
+  es.onerror = () => {
+    if (es.readyState === EventSource.CLOSED) {
+      console.warn("[Info] SSE connection closed");
+    }
+  };
+  eventSource = es;
+}
+
+function disconnectSSE() {
+  if (eventSource) {
+    eventSource.close();
+    eventSource = null;
+  }
+}
+
+// --- Data loading ---
+async function loadHistory(offset: number) {
+  loading = true;
+  historyError = "";
+  try {
+    const rows = await fetchHistory(name, {
+      preset: "summary",
+      limit: PAGE_SIZE,
+      offset,
+    });
+    const chronological = [...rows].reverse();
+    if (offset === 0) {
+      historyMessages = chronological;
+    } else {
+      historyMessages = [...chronological, ...historyMessages];
+    }
+    hasMore = rows.length === PAGE_SIZE;
+  } catch (e) {
+    historyError = e instanceof Error ? e.message : "Failed to load history";
+  }
+  loading = false;
+}
+
+async function loadSessions() {
+  try {
+    const sess = await fetchHistorySessions(name);
+    sessions = sess;
+    sessionMap = new Map(sess.map((s) => [s.session, s]));
+  } catch (err) {
+    console.warn("Failed to load sessions:", err);
+  }
+}
+
+// Scroll to bottom on initial load -- keep nudging for a few seconds
+let scrollTimer: ReturnType<typeof setInterval> | null = null;
+let scrollTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function startScrollToBottom() {
+  stopScrollTimer();
+  scrollTimer = setInterval(() => {
+    if (scrollContainer) {
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    }
+  }, 100);
+  // Stop after 3 seconds
+  scrollTimeout = setTimeout(() => {
+    stopScrollTimer();
+  }, 3000);
+}
+
+function stopScrollTimer() {
+  if (scrollTimer) {
+    clearInterval(scrollTimer);
+    scrollTimer = null;
+  }
+  if (scrollTimeout) {
+    clearTimeout(scrollTimeout);
+    scrollTimeout = null;
+  }
+}
+
+// Reload when mind name changes
+let prevName = "";
+$effect(() => {
+  const n = name;
+  if (n !== prevName) {
+    prevName = n;
+    historyMessages = [];
+    sessions = [];
+    sessionMap = new Map();
+    hasMore = true;
+    nextSseId = -1;
+    messagesMap = {};
+    startScrollToBottom();
+    loadHistory(0);
+    loadSessions();
+  }
+});
+
+// SSE lifecycle
+$effect(() => {
+  name; // track
+  connectSSE();
+  return () => disconnectSSE();
+});
+
+// Clean up scroll timer on unmount
+$effect(() => {
+  return () => stopScrollTimer();
 });
 
 // Fetch mind conversations
@@ -129,7 +334,7 @@ $effect(() => {
   }
 });
 
-// Fetch extension feed items scoped to this mind
+// Fetch extension feed items
 $effect(() => {
   const mindName = name;
   const extensions = data.extensions;
@@ -152,6 +357,18 @@ $effect(() => {
     extensionFeedItems = items;
   });
 });
+
+function handleScroll() {
+  if (!scrollContainer) return;
+  const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+  const distFromBottom = scrollHeight - scrollTop - clientHeight;
+  userScrolledUp = distFromBottom > 100;
+}
+
+function jumpToLatest() {
+  scrollContainer?.scrollTo({ top: scrollContainer.scrollHeight, behavior: "smooth" });
+  userScrolledUp = false;
+}
 </script>
 
 {#if !mind}
@@ -159,79 +376,118 @@ $effect(() => {
 {:else}
   <div class="mind-page">
     {#if section === "info"}
-      <!-- Mixed feed -->
-      {#if feedItems.length === 0}
-        <div class="empty-hint">No activity yet.</div>
-      {:else}
-        <div class="feed-grid">
-          {#each feedItems as item (item.kind === "extension" ? `ext-${item.item.id}` : `msg-${item.conv.id}`)}
-            {#if item.kind === "extension"}
-              <div class="feed-item">
-                <ExtensionFeedCard
-                  title={item.item.title}
-                  url={item.item.url}
-                  date={item.item.date}
-                  author={item.item.author}
-                  bodyHtml={item.item.bodyHtml}
-                  iframeUrl={item.item.iframeUrl}
-                  icon={item.item.icon}
-                  color={item.item.color}
-                  onclick={() => navigate(item.item.url)}
-                />
-              </div>
-            {:else}
-              {@const conv = item.conv}
-              {@const label = getConvLabel(conv)}
-              {@const messages = messagesMap[conv.id] ?? []}
-              {@const participant = isUserParticipant(conv)}
-              <div class="feed-item">
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <div class="feed-card card-chat" role="button" tabindex="0" onclick={() => { readOnlyConv = conv; }} onkeydown={(e) => { if (e.key === 'Enter') readOnlyConv = conv; }}>
-                  <div class="feed-card-header header-chat">
-                    <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                    <span class="feed-card-label">{label}</span>
-                    <span class="feed-card-meta">{formatRelativeTime(conv.updated_at)}</span>
-                    {#if participant}
-                      <button
-                        class="card-action-btn card-action-btn-primary"
-                        onclick={(e) => { e.stopPropagation(); navigate(`/chat/${conv.id}`); }}
-                      >
-                        Chat
-                      </button>
-                    {/if}
-                  </div>
-                  <!-- svelte-ignore a11y_no_static_element_interactions -->
-                  <div class="feed-card-body chat-body" bind:this={scrollEls[conv.id]} onscroll={(e) => {
-                    const el = e.currentTarget;
-                    if (el.scrollTop < 10) el.scrollTop = 10;
-                  }}>
-                    {#if messages.length === 0}
-                      <div class="msg-empty">Loading...</div>
+      <div class="info-timeline" bind:this={scrollContainer} onscroll={handleScroll} onwheel={() => stopScrollTimer()}>
+        {#if hasMore}
+          <div class="load-older">
+            <button
+              onclick={() => loadHistory(historyMessages.length)}
+              disabled={loading}
+              class="load-older-btn"
+              style:opacity={loading ? 0.5 : 1}
+            >
+              {loading ? "loading..." : "load older"}
+            </button>
+          </div>
+        {/if}
+
+        {#if historyError}
+          <div class="error-hint">{historyError}</div>
+        {:else if timeline.length === 0 && !loading}
+          <div class="empty-hint">No activity yet.</div>
+        {:else}
+          <div class="timeline-rail">
+            {#each timeline as item (item.key)}
+              {#if item.kind === "summary"}
+                <div class="timed-row">
+                  <span class="row-time">{getItemTime(item)}</span>
+                  <HistoryEvent event={item.event} mindName={name} expandable compact />
+                </div>
+              {:else if item.kind === "feed"}
+                {@const feed = item.item}
+                <div class="timed-row">
+                  <span class="row-time">{getItemTime(item)}</span>
+                  {#if feed.kind === "extension"}
+                      <div class="feed-card-wrapper">
+                        <div class="feed-marker" style:background={feed.item.color ? `var(--${feed.item.color})` : "var(--text-2)"}></div>
+                        <ExtensionFeedCard
+                          title={feed.item.title}
+                          url={feed.item.url}
+                          date={feed.item.date}
+                          author={feed.item.author}
+                          bodyHtml={feed.item.bodyHtml}
+                          iframeUrl={feed.item.iframeUrl}
+                          icon={feed.item.icon}
+                          color={feed.item.color}
+                          onclick={() => navigate(feed.item.url)}
+                        />
+                      </div>
                     {:else}
-                      {#each messages as msg, i (msg.id)}
-                        <div class="chat-entry" class:new-sender={showSenderHeader(messages, i)}>
-                          {#if showSenderHeader(messages, i)}
-                            <div class="chat-entry-header">
-                              <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : name)}</span>
-                              <span class="chat-timestamp">{formatTime(msg.created_at)}</span>
-                            </div>
-                          {/if}
-                          <div class="chat-entry-content" class:chat-user-text={msg.role === "user"}>
-                            {#if msg.role === "user"}
-                              {extractTextContent(msg.content)}
+                      {@const conv = feed.conv}
+                      {@const label = getConvLabel(conv)}
+                      {@const messages = messagesMap[conv.id] ?? []}
+                      {@const participant = isUserParticipant(conv)}
+                      <div class="feed-card-wrapper">
+                        <div class="feed-marker" style:background="var(--blue)"></div>
+                        <!-- svelte-ignore a11y_no_static_element_interactions -->
+                        <div class="feed-card card-chat" role="button" tabindex="0" onclick={() => { readOnlyConv = conv; }} onkeydown={(e) => { if (e.key === 'Enter') readOnlyConv = conv; }}>
+                          <div class="feed-card-header header-chat">
+                            <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                            <span class="feed-card-label">{label}</span>
+                            <span class="feed-card-meta">{formatRelativeTime(conv.updated_at)}</span>
+                            {#if participant}
+                              <button
+                                class="card-action-btn card-action-btn-primary"
+                                onclick={(e) => { e.stopPropagation(); navigate(`/chat/${conv.id}`); }}
+                              >
+                                Chat
+                              </button>
+                            {/if}
+                          </div>
+                          <!-- svelte-ignore a11y_no_static_element_interactions -->
+                          <div class="feed-card-body chat-body" bind:this={scrollEls[conv.id]} onscroll={(e) => {
+                            const el = e.currentTarget;
+                            if (el.scrollTop < 10) el.scrollTop = 10;
+                          }}>
+                            {#if messages.length === 0}
+                              <div class="msg-empty">Loading...</div>
                             {:else}
-                              <div class="markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</div>
+                              {#each messages as msg, i (msg.id)}
+                                <div class="chat-entry" class:new-sender={showSenderHeader(messages, i)}>
+                                  {#if showSenderHeader(messages, i)}
+                                    <div class="chat-entry-header">
+                                      <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : name)}</span>
+                                      <span class="chat-timestamp">{formatTime(msg.created_at)}</span>
+                                    </div>
+                                  {/if}
+                                  <div class="chat-entry-content" class:chat-user-text={msg.role === "user"}>
+                                    {#if msg.role === "user"}
+                                      {extractTextContent(msg.content)}
+                                    {:else}
+                                      <div class="markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</div>
+                                    {/if}
+                                  </div>
+                                </div>
+                              {/each}
                             {/if}
                           </div>
                         </div>
-                      {/each}
-                    {/if}
-                  </div>
+                      </div>
+                  {/if}
                 </div>
-              </div>
-            {/if}
-          {/each}
-        </div>
+              {/if}
+            {/each}
+          </div>
+        {/if}
+
+        {#if loading && historyMessages.length > 0}
+          <div class="loading-more">loading...</div>
+        {/if}
+      </div>
+
+      {#if userScrolledUp}
+        <button class="jump-btn" onclick={jumpToLatest}>
+          jump to latest
+        </button>
       {/if}
     {:else if section?.startsWith("ext:")}
       {@const extParts = section.split(":")}
@@ -273,7 +529,8 @@ $effect(() => {
     flex-direction: column;
     height: 100%;
     min-height: 0;
-    overflow: auto;
+    overflow: hidden;
+    position: relative;
   }
 
   .not-found {
@@ -282,18 +539,62 @@ $effect(() => {
     text-align: center;
   }
 
-  /* Feed grid */
-  .feed-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 16px;
+  /* Info timeline */
+  .info-timeline {
+    flex: 1;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 0 40px;
   }
 
-  .feed-item {
-    min-width: 0;
+  .timeline-rail {
+    position: relative;
+    padding-left: 64px;
+    margin-left: auto;
+    margin-right: auto;
+    min-height: 100%;
+    max-width: 860px;
+  }
+  .timeline-rail::before {
+    content: "";
+    position: absolute;
+    left: 62px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--timeline-rail);
   }
 
-  /* Unified card */
+  /* Timed rows: relative time to the left of the dot */
+  .timed-row {
+    position: relative;
+  }
+  .row-time {
+    position: absolute;
+    right: calc(100% + 12px);
+    top: 10px;
+    font-size: 11px;
+    color: var(--text-2);
+    white-space: nowrap;
+    text-align: right;
+  }
+
+  /* Feed cards on the timeline */
+  .feed-card-wrapper {
+    position: relative;
+    padding: 6px 8px 6px 20px;
+  }
+  .feed-marker {
+    position: absolute;
+    left: -5px;
+    top: 12px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    z-index: 1;
+  }
+
+  /* Chat card */
   .feed-card {
     background: var(--bg-0);
     border: 1px solid var(--border);
@@ -328,11 +629,8 @@ $effect(() => {
   }
 
   .card-chat .feed-card-icon { color: var(--blue); }
-
   .card-chat { border-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
-
   .card-chat .feed-card-header { border-bottom-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
-
   .card-chat:hover { border-color: color-mix(in srgb, var(--blue) 50%, var(--border)); }
 
   .feed-card-label {
@@ -358,7 +656,6 @@ $effect(() => {
     min-height: 0;
   }
 
-  /* Card action button (chat cards) */
   .card-action-btn {
     font-size: 12px;
     padding: 2px 10px;
@@ -370,25 +667,21 @@ $effect(() => {
     color: var(--text-2);
     transition: color 0.15s, border-color 0.15s;
   }
-
   .card-action-btn:hover {
     color: var(--text-1);
     border-color: var(--border-bright);
   }
-
   .card-action-btn-primary {
     background: var(--accent);
     border-color: var(--accent);
     color: var(--bg-0);
   }
-
   .card-action-btn-primary:hover {
     opacity: 0.85;
     color: var(--bg-0);
     border-color: var(--accent);
   }
 
-  /* Chat card body */
   .chat-body {
     padding: 8px 12px;
   }
@@ -400,15 +693,12 @@ $effect(() => {
     text-align: center;
   }
 
-  /* Chat entries */
   .chat-entry {
     padding: 1px 0;
   }
-
   .chat-entry.new-sender {
     margin-top: 8px;
   }
-
   .chat-entry:first-child {
     margin-top: 0;
   }
@@ -425,7 +715,6 @@ $effect(() => {
     font-weight: 600;
     color: var(--accent);
   }
-
   .chat-sender-user {
     color: var(--blue);
   }
@@ -440,10 +729,58 @@ $effect(() => {
     font-family: var(--mono);
     font-size: 13px;
   }
-
   .chat-user-text {
     color: var(--text-0);
     white-space: pre-wrap;
+  }
+
+  .load-older {
+    padding: 8px 0 16px;
+    text-align: center;
+  }
+
+  .load-older-btn {
+    padding: 4px 14px;
+    background: var(--bg-3);
+    color: var(--text-1);
+    border-radius: var(--radius);
+    font-size: 12px;
+  }
+
+  .loading-more {
+    text-align: center;
+    color: var(--text-2);
+    font-size: 13px;
+    padding: 12px;
+    animation: pulse 1.5s infinite;
+  }
+
+  .jump-btn {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 6px 16px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    border-radius: var(--radius);
+    font-size: 13px;
+    animation: fadeIn 0.2s ease both;
+    z-index: 10;
+  }
+
+  .empty-hint {
+    color: var(--text-2);
+    font-size: 13px;
+    padding: 40px 0;
+    text-align: center;
+  }
+
+  .error-hint {
+    color: var(--red);
+    font-size: 14px;
+    padding: 40px 0;
+    text-align: center;
   }
 
   /* Other sections */
@@ -473,14 +810,4 @@ $effect(() => {
   .page-content-iframe {
     background: white;
   }
-
-  .empty-hint {
-    color: var(--text-2);
-    font-size: 13px;
-    padding: 40px 0;
-    text-align: center;
-  }
-
-
-
 </style>

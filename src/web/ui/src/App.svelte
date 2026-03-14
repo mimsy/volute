@@ -97,9 +97,15 @@ let narrowViewport = $state(false);
 let showUserMenu = $state(false);
 let userAvatar = $state<string | null>(null);
 
-// Auto-collapse right panel on narrow viewports
+// Auto-collapse right panel on narrow viewports or mind info page
+let onMindInfoPage = $derived(
+  selection.tab === "system" &&
+    selection.kind === "mind" &&
+    (!selection.section || selection.section === "info"),
+);
+
 $effect(() => {
-  if (narrowViewport) {
+  if (narrowViewport || onMindInfoPage) {
     rightPanelCollapsed = true;
   } else {
     rightPanelCollapsed = false;

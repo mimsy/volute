@@ -4,15 +4,9 @@ import { formatRelativeTime } from "../lib/format";
 let {
   session,
   startedAt,
-  eventCount,
-  messageCount,
-  toolCount,
 }: {
   session: string;
   startedAt: string;
-  eventCount: number;
-  messageCount: number;
-  toolCount: number;
 } = $props();
 </script>
 
@@ -22,12 +16,6 @@ let {
     <span class="session-id">{session}</span>
     <span class="sep">&middot;</span>
     <span>{formatRelativeTime(startedAt)}</span>
-    <span class="sep">&middot;</span>
-    <span>{eventCount} events</span>
-    <span class="sep">&middot;</span>
-    <span>{messageCount} msgs</span>
-    <span class="sep">&middot;</span>
-    <span>{toolCount} tools</span>
   </div>
   <div class="line"></div>
 </div>
