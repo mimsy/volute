@@ -17,15 +17,19 @@ function exec(cmd: string, args: string[], cwd: string): Promise<{ code: number;
 // Serialize git operations to prevent concurrent commits from conflicting
 let pending = Promise.resolve();
 
+// Pending file changes accumulated across all sessions, flushed on turn end
+const pendingFiles = new Set<string>();
+const pendingSharedFiles = new Set<string>();
+
 /**
- * Commit a file change in the mind's home directory.
+ * Track a file change in the mind's home directory for batched commit.
  * Called by the PostToolUse hook when Edit or Write completes.
  *
- * Files under home/shared/ are committed to the shared worktree repo
- * with mind attribution. All other files go to the mind's own repo.
+ * Files under home/shared/ are tracked separately for the shared worktree repo.
+ * All other files go to the mind's own repo.
  */
-export function commitFileChange(filePath: string, cwd: string): void {
-  // Only commit files under the home directory
+export function trackFileChange(filePath: string, cwd: string): void {
+  // Only track files under the home directory
   const homeDir = resolve(cwd);
   const resolved = resolve(cwd, filePath);
   if (!resolved.startsWith(`${homeDir}/`) && resolved !== homeDir) return;
@@ -33,56 +37,91 @@ export function commitFileChange(filePath: string, cwd: string): void {
   const relativePath = resolved.slice(homeDir.length + 1);
   if (!relativePath) return;
 
-  // Check if this file is under the shared/ worktree
   const sharedPrefix = "shared/";
-  const isShared = relativePath.startsWith(sharedPrefix);
+  if (relativePath.startsWith(sharedPrefix)) {
+    pendingSharedFiles.add(relativePath);
+  } else {
+    pendingFiles.add(relativePath);
+  }
+}
+
+/**
+ * Flush all pending file changes into batched commits.
+ * Called at the end of each turn. Produces up to two commits:
+ * one for the mind's own repo and one for the shared worktree.
+ */
+export function flushFileChanges(cwd?: string): Promise<void> {
+  const filesToCommit = [...pendingFiles];
+  const sharedToCommit = [...pendingSharedFiles];
+  pendingFiles.clear();
+  pendingSharedFiles.clear();
+
+  if (filesToCommit.length === 0 && sharedToCommit.length === 0) {
+    return pending.then(() => {});
+  }
+
+  const effectiveCwd = cwd ?? process.cwd();
 
   pending = pending.then(async () => {
-    if (isShared) {
-      // Route to shared worktree
-      const sharedCwd = resolve(cwd, "shared");
-      const sharedRelative = relativePath.slice(sharedPrefix.length);
+    // Commit mind's own files
+    if (filesToCommit.length > 0) {
+      for (const f of filesToCommit) {
+        if ((await exec("git", ["add", f], effectiveCwd)).code !== 0) {
+          log("auto-commit", `git add failed for ${f}`);
+        }
+      }
+      if ((await exec("git", ["diff", "--cached", "--quiet"], effectiveCwd)).code !== 0) {
+        const names = filesToCommit.map((f) => f.replace(/^.*\//, "")).join(", ");
+        const message = `Update ${names}`;
+        if ((await exec("git", ["commit", "-m", message], effectiveCwd)).code === 0) {
+          log("auto-commit", message);
+          // Push if a remote is configured
+          const { stdout: remote } = await exec("git", ["remote"], effectiveCwd);
+          if (remote) {
+            const pushResult = await exec("git", ["push"], effectiveCwd);
+            if (pushResult.code !== 0) {
+              log("auto-commit", `git push failed`);
+            }
+          }
+        } else {
+          log("auto-commit", `commit failed for: ${names}`);
+        }
+      }
+    }
+
+    // Commit shared worktree files
+    if (sharedToCommit.length > 0) {
+      const sharedCwd = resolve(effectiveCwd, "shared");
+      const sharedPrefix = "shared/";
       const mindName = process.env.VOLUTE_MIND ?? "unknown";
 
-      if ((await exec("git", gitArgs(["add", sharedRelative]), sharedCwd)).code !== 0) {
-        log("auto-commit", `git add failed for shared/${sharedRelative}`);
-        return;
+      for (const f of sharedToCommit) {
+        const sharedRelative = f.slice(sharedPrefix.length);
+        if ((await exec("git", gitArgs(["add", sharedRelative]), sharedCwd)).code !== 0) {
+          log("auto-commit", `git add failed for shared/${sharedRelative}`);
+        }
       }
-      if ((await exec("git", gitArgs(["diff", "--cached", "--quiet"]), sharedCwd)).code === 0)
-        return;
-
-      const message = `Update ${sharedRelative}`;
-      const authorFlag = `${mindName} <${mindName}@volute>`;
-      if (
-        (await exec("git", gitArgs(["commit", "--author", authorFlag, "-m", message]), sharedCwd))
-          .code === 0
-      ) {
-        log("auto-commit", `[shared] ${message}`);
-      } else {
-        log("auto-commit", `[shared] commit failed for ${sharedRelative}`);
-      }
-      // No auto-push for shared files — sharing is deliberate
-    } else {
-      // Existing behavior: commit to mind's own repo
-      if ((await exec("git", ["add", relativePath], cwd)).code !== 0) {
-        log("auto-commit", `git add failed for ${relativePath}`);
-        return;
-      }
-      if ((await exec("git", ["diff", "--cached", "--quiet"], cwd)).code === 0) return;
-
-      const message = `Update ${relativePath}`;
-      if ((await exec("git", ["commit", "-m", message], cwd)).code === 0) {
-        log("auto-commit", message);
-        // Push if a remote is configured
-        const { stdout: remote } = await exec("git", ["remote"], cwd);
-        if (remote) {
-          await exec("git", ["push"], cwd);
+      if ((await exec("git", gitArgs(["diff", "--cached", "--quiet"]), sharedCwd)).code !== 0) {
+        const names = sharedToCommit
+          .map((f) => f.slice(sharedPrefix.length).replace(/^.*\//, ""))
+          .join(", ");
+        const message = `Update ${names}`;
+        const authorFlag = `${mindName} <${mindName}@volute>`;
+        if (
+          (await exec("git", gitArgs(["commit", "--author", authorFlag, "-m", message]), sharedCwd))
+            .code === 0
+        ) {
+          log("auto-commit", `[shared] ${message}`);
+        } else {
+          log("auto-commit", `[shared] commit failed`);
         }
       }
     }
   });
+
+  return pending.then(() => {});
 }
 
 export function waitForCommits(): Promise<void> {
-  return pending.then(() => {});
+  return flushFileChanges();
 }

@@ -185,6 +185,7 @@ async function initTemplateBranch(
 ) {
   const templateFiles = listFiles(composedDir)
     .filter((f) => !f.startsWith(".init/") && !f.startsWith(".init\\"))
+    .filter((f) => (!f.startsWith("home/") && !f.startsWith("home\\")) || f === "home/VOLUTE.md")
     .map((f) => manifest.rename[f] ?? f);
 
   const opts = { cwd: projectRoot, mindName, env };
@@ -247,6 +248,16 @@ async function updateTemplateBranch(projectRoot: string, template: string, mindN
     const initDir = resolve(tempWorktree, ".init");
     if (existsSync(initDir)) {
       rmSync(initDir, { recursive: true, force: true });
+    }
+
+    // Remove home files except VOLUTE.md — template branch should only track infrastructure
+    const homeDir = resolve(tempWorktree, "home");
+    if (existsSync(homeDir)) {
+      for (const entry of readdirSync(homeDir)) {
+        if (entry !== "VOLUTE.md") {
+          rmSync(resolve(homeDir, entry), { recursive: true, force: true });
+        }
+      }
     }
 
     await gitExec(["add", "-A"], { cwd: tempWorktree });
@@ -1654,8 +1665,51 @@ const app = new Hono<AuthEnv>()
 
     await gitExec(["worktree", "add", "-b", UPGRADE_BRANCH, worktreeDir], { cwd: dir });
 
+    // Prepare home/ allowlist migration: untrack home files so template
+    // branch removal doesn't cause conflicts or deletions
+    await gitExec(["rm", "-r", "--cached", "--ignore-unmatch", "home/"], {
+      cwd: worktreeDir,
+    });
+    // Re-add VOLUTE.md so template merge can update it
+    try {
+      await gitExec(["checkout", "HEAD", "--", "home/VOLUTE.md"], { cwd: worktreeDir });
+      await gitExec(["add", "home/VOLUTE.md"], { cwd: worktreeDir });
+    } catch (err) {
+      const msg = String((err as Error)?.message ?? err);
+      if (!msg.includes("did not match")) {
+        log.warn(
+          `unexpected error restoring VOLUTE.md during upgrade for ${mindName}`,
+          log.errorData(err),
+        );
+      }
+    }
+    // Commit prep step if there are changes
+    try {
+      await gitExec(["diff", "--cached", "--quiet"], { cwd: worktreeDir });
+    } catch {
+      await gitExec(["commit", "-m", "prepare for home/ allowlist migration"], {
+        cwd: worktreeDir,
+      });
+    }
+
     // Merge template branch
     const hasConflicts = await mergeTemplateBranch(worktreeDir);
+
+    if (!hasConflicts) {
+      // Re-add home files that match the new .gitignore allowlist patterns
+      try {
+        await gitExec(["add", "home/"], { cwd: worktreeDir });
+      } catch (err) {
+        log.warn(`failed to re-add home files during upgrade for ${mindName}`, log.errorData(err));
+      }
+      try {
+        await gitExec(["diff", "--cached", "--quiet"], { cwd: worktreeDir });
+      } catch {
+        await gitExec(["commit", "-m", "re-add allowlisted home files"], {
+          cwd: worktreeDir,
+        });
+      }
+    }
 
     // Fix ownership — daemon runs as root but mind needs to own its files
     chownMindDir(dir, mindName);
