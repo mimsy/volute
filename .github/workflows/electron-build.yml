@@ -1,0 +1,42 @@
+name: Build Electron App
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build core
+        run: npm run build
+
+      - name: Build Electron app
+        working-directory: packages/electron
+        run: |
+          npm run download-node
+          npx tsc
+          npx electron-builder --mac
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: volute-mac
+          path: packages/electron/out/*.dmg
+
+      - name: Publish to GitHub Releases
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packages/electron/out/*.dmg

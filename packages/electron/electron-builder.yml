@@ -1,0 +1,41 @@
+appId: com.volute.app
+productName: Volute
+directories:
+  output: out
+  buildResources: resources
+mac:
+  target: dmg
+  category: public.app-category.developer-tools
+  icon: resources/icon.icns
+dmg:
+  title: Volute
+extraResources:
+  - from: ../../dist/
+    to: dist/
+    filter:
+      - "**/*"
+  - from: ../../drizzle/
+    to: drizzle/
+    filter:
+      - "**/*"
+  - from: ../../templates/
+    to: templates/
+    filter:
+      - "**/*"
+  - from: ../../skills/
+    to: skills/
+    filter:
+      - "**/*"
+  - from: resources/bin/
+    to: bin/
+    filter:
+      - "**/*"
+  - from: ../../node_modules/
+    to: node_modules/
+    filter:
+      - "**/*"
+      - "!.cache"
+      - "!.package-lock.json"
+files:
+  - dist/**/*
+  - "!node_modules"

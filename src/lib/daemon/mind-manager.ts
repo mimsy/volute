@@ -137,21 +137,35 @@ export class MindManager {
       env.HOME = resolve(dir, "home");
     }
 
-    const tsxBin = resolve(dir, "node_modules", ".bin", "tsx");
-    const tsxArgs = ["src/server.ts", "--port", String(port)];
+    // When VOLUTE_NODE_PATH is set (e.g. Electron bundled Node), use it to run tsx explicitly
+    const customNode = process.env.VOLUTE_NODE_PATH;
+    let baseBin: string;
+    let baseArgs: string[];
+    if (customNode) {
+      baseBin = customNode;
+      baseArgs = [
+        resolve(dir, "node_modules", ".bin", "tsx"),
+        "src/server.ts",
+        "--port",
+        String(port),
+      ];
+    } else {
+      baseBin = resolve(dir, "node_modules", ".bin", "tsx");
+      baseArgs = ["src/server.ts", "--port", String(port)];
+    }
     let spawnCmd: string;
     let spawnArgs: string[];
     if (isIsolationEnabled()) {
-      [spawnCmd, spawnArgs] = await wrapForIsolation(tsxBin, tsxArgs, name);
+      [spawnCmd, spawnArgs] = await wrapForIsolation(baseBin, baseArgs, name);
     } else if (isSandboxEnabled()) {
-      [spawnCmd, spawnArgs] = await wrapForSandbox(tsxBin, tsxArgs, dir, name, [
+      [spawnCmd, spawnArgs] = await wrapForSandbox(baseBin, baseArgs, dir, name, [
         dir,
         mindStateDir,
         "/tmp",
       ]);
     } else {
-      spawnCmd = tsxBin;
-      spawnArgs = tsxArgs;
+      spawnCmd = baseBin;
+      spawnArgs = baseArgs;
     }
 
     const spawnOpts: SpawnOptions = {

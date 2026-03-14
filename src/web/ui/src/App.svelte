@@ -44,6 +44,7 @@ import {
   unhideConversation,
   unreadCounts,
 } from "./lib/stores.svelte";
+import SetupPage from "./pages/SetupPage.svelte";
 
 // Selection state
 let selection = $state<Selection>(parseSelection(data.extensions));
@@ -594,6 +595,10 @@ function handleGlobalClick(e: MouseEvent) {
 {#if !auth.checked}
   <div class="app">
     <div class="loading">Loading...</div>
+  </div>
+{:else if !auth.setupComplete}
+  <div class="app full-height">
+    <SetupPage onComplete={() => { auth.setupComplete = true; }} />
   </div>
 {:else if !auth.user}
   <div class="app full-height">
