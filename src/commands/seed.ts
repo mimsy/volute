@@ -13,7 +13,10 @@ async function chooseModel(
   daemonFetch: (path: string, options?: RequestInit) => Promise<Response>,
 ): Promise<string | undefined> {
   const res = await daemonFetch("/api/system/ai/models");
-  if (!res.ok) return undefined;
+  if (!res.ok) {
+    console.error(`Failed to fetch AI models (HTTP ${res.status}). Is the daemon running?`);
+    process.exit(1);
+  }
 
   const models = (await res.json()) as ModelInfo[];
   const enabled = models.filter((m) => m.enabled);
@@ -26,7 +29,7 @@ async function chooseModel(
 
   const answer = await promptLine(`\nChoose a model [1-${enabled.length}]: `);
   const idx = parseInt(answer, 10) - 1;
-  if (idx < 0 || idx >= enabled.length || Number.isNaN(idx)) {
+  if (Number.isNaN(idx) || idx < 0 || idx >= enabled.length) {
     console.error("Invalid selection");
     process.exit(1);
   }

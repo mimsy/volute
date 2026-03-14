@@ -8,13 +8,16 @@ import { z } from "zod";
 import {
   getAiConfig,
   getAvailableModels,
+  getConfiguredProviders,
   getEnabledModels,
   removeAiConfig,
   removeProviderConfig,
+  resolveApiKey,
   saveProviderConfig,
   setEnabledModels,
 } from "../../lib/ai-service.js";
 import { logBuffer } from "../../lib/log-buffer.js";
+import log from "../../lib/logger.js";
 import {
   deleteSystemsConfig,
   readSystemsConfig,
@@ -186,7 +189,7 @@ const app = new Hono<AuthEnv>()
   // --- AI Service config ---
   // Cached provider keys — refreshed by a daemon-level timer so individual mind
   // polls don't each trigger OAuth token refresh.
-  .get("/ai/key/:provider", async (c) => {
+  .get("/ai/key/:provider", requireAdmin, async (c) => {
     const key = getCachedApiKey(c.req.param("provider"));
     if (!key) return c.json({ error: "No key available" }, 404);
     return c.json({ key });
@@ -417,16 +420,17 @@ function getCachedApiKey(provider: string): string | undefined {
 
 let keyRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
+const slog = log.child("ai-keys");
+
 export async function refreshApiKeyCache(): Promise<void> {
-  const { resolveApiKey, getConfiguredProviders } = await import("../../lib/ai-service.js");
   for (const provider of getConfiguredProviders()) {
     try {
       const key = await resolveApiKey(provider);
       if (key) {
         apiKeyCache.set(provider, { key, expiresAt: Date.now() + API_KEY_TTL_MS });
       }
-    } catch {
-      // Keep stale cache entry if refresh fails
+    } catch (err) {
+      slog.warn(`API key refresh failed for ${provider}`, log.errorData(err));
     }
   }
 }
@@ -434,9 +438,15 @@ export async function refreshApiKeyCache(): Promise<void> {
 export function startApiKeyRefresh(): void {
   if (keyRefreshTimer) return;
   // Initial population
-  refreshApiKeyCache();
+  refreshApiKeyCache().catch((err) => {
+    slog.warn("initial API key cache refresh failed", log.errorData(err));
+  });
   // Refresh every 4 minutes
-  keyRefreshTimer = setInterval(refreshApiKeyCache, API_KEY_TTL_MS);
+  keyRefreshTimer = setInterval(() => {
+    refreshApiKeyCache().catch((err) => {
+      slog.warn("periodic API key cache refresh failed", log.errorData(err));
+    });
+  }, API_KEY_TTL_MS);
 }
 
 export function stopApiKeyRefresh(): void {

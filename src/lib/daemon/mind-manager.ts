@@ -2,7 +2,7 @@ import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:chil
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
-import { resolveApiKey } from "../ai-service.js";
+import { getAiConfig, resolveApiKey } from "../ai-service.js";
 import { getDb } from "../db.js";
 import { loadMergedEnv } from "../env.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../isolation.js";
@@ -154,7 +154,10 @@ export class MindManager {
                 ? JSON.parse(readFileSync(authPath, "utf-8"))
                 : {};
               authData[provider] = { type: "api_key", key: apiKey };
-              writeFileSync(authPath, JSON.stringify(authData, null, 2));
+              writeFileSync(authPath, JSON.stringify(authData, null, 2), { mode: 0o600 });
+              if (isIsolationEnabled()) {
+                chownMindDir(piAgentDir, baseName);
+              }
               env.PI_CODING_AGENT_DIR = piAgentDir;
             } else {
               mlog.warn(
@@ -164,7 +167,7 @@ export class MindManager {
           }
         }
       } catch (err) {
-        mlog.warn(`failed to inject AI provider key for ${name}`, log.errorData(err));
+        mlog.error(`failed to inject AI provider key for ${name}`, log.errorData(err));
       }
     }
 
@@ -173,7 +176,6 @@ export class MindManager {
     // Agent SDK authenticates natively. API key: set ANTHROPIC_API_KEY env var.
     if (target.template === "claude" || !target.template) {
       try {
-        const { getAiConfig } = await import("../ai-service.js");
         const ai = getAiConfig();
         const anthropicConfig = ai?.providers.anthropic;
         if (anthropicConfig?.oauth) {
@@ -211,7 +213,7 @@ export class MindManager {
           env.ANTHROPIC_API_KEY = anthropicConfig.apiKey;
         }
       } catch (err) {
-        mlog.warn(`failed to inject Anthropic credentials for ${name}`, log.errorData(err));
+        mlog.error(`failed to inject Anthropic credentials for ${name}`, log.errorData(err));
       }
     }
 
