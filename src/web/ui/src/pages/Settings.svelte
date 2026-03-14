@@ -1,5 +1,6 @@
 <script lang="ts">
 import { onMount } from "svelte";
+import Modal from "../components/Modal.svelte";
 import {
   type AiModel,
   type AiProvider,
@@ -28,7 +29,10 @@ let aiProviders = $state<AiProvider[]>([]);
 let aiModels = $state<AiModel[]>([]);
 let aiError = $state("");
 let aiSaving = $state(false);
-let addingProvider = $state(false);
+
+// Modal state
+let showApiKeyModal = $state(false);
+let showOAuthModal = $state(false);
 let selectedProvider = $state("");
 let apiKeyInput = $state("");
 let oauthUrl = $state("");
@@ -39,7 +43,7 @@ let oauthCodeInput = $state("");
 
 let configuredProviders = $derived(aiProviders.filter((p) => p.configured));
 let unconfiguredProviders = $derived(aiProviders.filter((p) => !p.configured));
-let selectedProviderInfo = $derived(aiProviders.find((p) => p.id === selectedProvider));
+let oauthProviders = $derived(unconfiguredProviders.filter((p) => p.oauth));
 
 let isRemote = $derived(
   typeof location !== "undefined" &&
@@ -58,22 +62,22 @@ async function loadAi() {
 
 onMount(loadAi);
 
-function openAddProvider() {
-  addingProvider = true;
-  selectedProvider = "";
-  apiKeyInput = "";
-  oauthUrl = "";
+function resetModalState() {
+  showApiKeyModal = false;
+  showOAuthModal = false;
   oauthPolling = false;
+  oauthUrl = "";
   oauthFlowId = "";
   oauthNeedsCode = false;
   oauthCodeInput = "";
+  selectedProvider = "";
+  apiKeyInput = "";
   aiError = "";
 }
 
-function closeAddProvider() {
-  addingProvider = false;
-  oauthPolling = false;
-  aiError = "";
+function openApiKeyModal() {
+  resetModalState();
+  showApiKeyModal = true;
 }
 
 async function handleApiKeySave() {
@@ -82,7 +86,7 @@ async function handleApiKeySave() {
   aiError = "";
   try {
     await saveProviderConfig(selectedProvider, apiKeyInput.trim());
-    closeAddProvider();
+    resetModalState();
     await loadAi();
   } catch (err) {
     aiError = err instanceof Error ? err.message : "Failed to save";
@@ -104,12 +108,13 @@ async function handleProviderRemove(providerId: string) {
   }
 }
 
-async function handleOAuth() {
-  if (!selectedProvider || aiSaving) return;
+async function handleOAuth(providerId: string) {
+  resetModalState();
+  selectedProvider = providerId;
+  showOAuthModal = true;
   aiSaving = true;
-  aiError = "";
   try {
-    const result = await startAiOAuth(selectedProvider);
+    const result = await startAiOAuth(providerId);
     if (result.url) {
       oauthUrl = result.url;
       oauthFlowId = result.flowId;
@@ -124,7 +129,7 @@ async function handleOAuth() {
             errors = 0;
             if (status.status === "complete") {
               oauthPolling = false;
-              closeAddProvider();
+              resetModalState();
               await loadAi();
               return;
             } else if (status.status === "error") {
@@ -164,9 +169,10 @@ async function handleOAuthCodeSubmit() {
   }
 }
 
-// Model search state
+// Model state
+let showModelModal = $state(false);
+let modelModalProvider = $state("");
 let modelSearch = $state("");
-let modelSearchFocused = $state(false);
 let enabledModels = $derived(aiModels.filter((m) => m.enabled));
 let modelSuggestions = $derived(
   modelSearch.trim()
@@ -174,12 +180,22 @@ let modelSuggestions = $derived(
         .filter(
           (m) =>
             !m.enabled &&
-            (m.id.toLowerCase().includes(modelSearch.toLowerCase()) ||
-              m.provider.toLowerCase().includes(modelSearch.toLowerCase())),
+            m.provider === modelModalProvider &&
+            m.id.toLowerCase().includes(modelSearch.toLowerCase()),
         )
         .slice(0, 12)
-    : [],
+    : aiModels.filter((m) => !m.enabled && m.provider === modelModalProvider).slice(0, 12),
 );
+
+function openModelModal(providerId: string) {
+  modelModalProvider = providerId;
+  modelSearch = "";
+  showModelModal = true;
+}
+
+function modelsForProvider(providerId: string) {
+  return enabledModels.filter((m) => m.provider === providerId);
+}
 
 async function addModel(modelId: string) {
   const updated = [...enabledModels.map((m) => m.id), modelId];
@@ -187,6 +203,7 @@ async function addModel(modelId: string) {
     await saveEnabledModels(updated);
     aiModels = aiModels.map((m) => (m.id === modelId ? { ...m, enabled: true } : m));
     modelSearch = "";
+    showModelModal = false;
   } catch (err) {
     aiError = err instanceof Error ? err.message : "Failed to update models";
   }
@@ -303,150 +320,176 @@ function authMethodLabel(method: string | null): string {
   <div class="section">
     <div class="section-header">
       <span class="section-title">AI Providers</span>
-      <span class="section-subtitle">Credentials for turn summaries, scripts, and mind tools</span>
+      <span class="section-subtitle">Authentication for minds and system AI features</span>
     </div>
 
-    {#if configuredProviders.length === 0 && !addingProvider}
-      <div class="empty-state">
-        <span class="system-label">No AI providers configured. Add one to enable turn summaries and AI features.</span>
-      </div>
-    {/if}
-
     {#each configuredProviders as provider (provider.id)}
+      {@const providerModels = modelsForProvider(provider.id)}
       <div class="provider-card">
         <div class="provider-row">
           <span class="provider-name">{provider.id}</span>
-          <span class="custom-badge">{authMethodLabel(provider.authMethod)}</span>
+          <span class="auth-badge">{authMethodLabel(provider.authMethod)}</span>
           <div class="provider-actions">
             <button class="btn btn-reset" onclick={() => handleProviderRemove(provider.id)} disabled={aiSaving}>
               Remove
             </button>
           </div>
         </div>
+        <div class="provider-models">
+          {#if providerModels.length > 0}
+            <div class="model-tags">
+              {#each providerModels as model (model.id)}
+                <span class="model-tag">
+                  {model.id}
+                  <button class="model-tag-remove" onclick={() => removeModel(model.id)}>x</button>
+                </span>
+              {/each}
+            </div>
+          {:else}
+            <span class="dim">No models enabled</span>
+          {/if}
+          {#if aiModels.some((m) => !m.enabled && m.provider === provider.id)}
+            <button class="btn btn-edit btn-add-model" onclick={() => openModelModal(provider.id)}>
+              Add model
+            </button>
+          {/if}
+        </div>
       </div>
     {/each}
 
-    {#if addingProvider}
-      <div class="provider-card add-card">
-        <select bind:value={selectedProvider} class="system-input">
-          <option value="">Select provider...</option>
-          {#each unconfiguredProviders as p (p.id)}
-            <option value={p.id}>{p.id}</option>
-          {/each}
-        </select>
-
-        {#if selectedProvider}
-          <div class="provider-config">
-            <form class="system-form" onsubmit={(e) => { e.preventDefault(); handleApiKeySave(); }}>
-              <input
-                type="password"
-                bind:value={apiKeyInput}
-                placeholder="API key"
-                class="system-input"
-              />
-              <button type="submit" class="btn btn-save" disabled={aiSaving || !apiKeyInput.trim()}>
-                {aiSaving ? "..." : "Save"}
-              </button>
-            </form>
-            {#if selectedProviderInfo?.oauth}
-              <button class="btn btn-edit" onclick={handleOAuth} disabled={aiSaving} style="margin-top: 6px;">
-                {selectedProviderInfo.oauthName ? `Sign in with ${selectedProviderInfo.oauthName}` : "OAuth"}
-              </button>
-            {/if}
-            {#if oauthUrl}
-              <div class="oauth-modal">
-                {#if oauthNeedsCode}
-                  {#if isRemote}
-                    <div class="oauth-steps">
-                      <div class="oauth-step">1. Open the link below and authorize</div>
-                      <div class="oauth-step">2. You'll be redirected to a page that won't load — this is expected</div>
-                      <div class="oauth-step">3. Copy the URL from your browser's address bar and paste it below</div>
-                    </div>
-                  {:else}
-                    <span class="system-label">Open the link below to authorize:</span>
-                  {/if}
-                  <a href={oauthUrl} target="_blank" rel="noopener" class="oauth-link">{oauthUrl}</a>
-                  {#if isRemote}
-                    <form class="system-form" onsubmit={(e) => { e.preventDefault(); handleOAuthCodeSubmit(); }} style="margin-top: 4px;">
-                      <input
-                        type="text"
-                        bind:value={oauthCodeInput}
-                        placeholder="Paste the redirect URL from your address bar"
-                        class="system-input"
-                      />
-                      <button type="submit" class="btn btn-save" disabled={!oauthCodeInput.trim()}>Submit</button>
-                    </form>
-                  {:else}
-                    <span class="dim">{oauthPolling ? "Waiting for authorization..." : ""}</span>
-                  {/if}
-                {:else}
-                  <span class="system-label">Authorize at:</span>
-                  <a href={oauthUrl} target="_blank" rel="noopener" class="oauth-link">{oauthUrl}</a>
-                  <span class="dim">{oauthPolling ? "Waiting for authorization..." : ""}</span>
-                {/if}
-              </div>
-            {/if}
-          </div>
-        {/if}
-
-        <div class="actions" style="margin-top: 8px;">
-          <button class="btn btn-cancel" onclick={closeAddProvider}>Cancel</button>
-        </div>
-      </div>
-    {:else}
-      <button class="btn btn-edit" onclick={openAddProvider} style="margin-top: 6px;">
-        Add provider
-      </button>
-    {/if}
-
-    {#if aiError}
-      <div class="error">{aiError}</div>
-    {/if}
-  </div>
-
-  <!-- AI Models -->
-  {#if aiModels.length > 0}
-    <div class="section">
-      <div class="section-header">
-        <span class="section-title">Enabled Models</span>
-        <span class="section-subtitle">Models available for system AI tasks</span>
-      </div>
-
-      {#if enabledModels.length > 0}
-        <div class="model-tags">
-          {#each enabledModels as model (model.id)}
-            <span class="model-tag">
-              {model.id}
-              <button class="model-tag-remove" onclick={() => removeModel(model.id)}>x</button>
-            </span>
-          {/each}
-        </div>
-      {/if}
-
-      <div class="model-search-wrap">
-        <input
-          type="text"
-          bind:value={modelSearch}
-          placeholder="Search models..."
-          class="system-input"
-          onfocus={() => { modelSearchFocused = true; }}
-          onblur={() => { setTimeout(() => { modelSearchFocused = false; }, 150); }}
-        />
-        {#if modelSearchFocused && modelSuggestions.length > 0}
-          <div class="model-dropdown">
-            {#each modelSuggestions as model (model.id)}
-              <button class="model-option" onmousedown={() => addModel(model.id)}>
-                <span class="model-id">{model.id}</span>
-                <span class="dim">{model.provider}</span>
+    {#if unconfiguredProviders.length > 0}
+      <div class="add-provider-area">
+        {#if oauthProviders.length > 0}
+          <span class="add-provider-heading">Sign in with</span>
+          <div class="oauth-buttons">
+            {#each oauthProviders as p (p.id)}
+              <button
+                class="btn-provider"
+                onclick={() => handleOAuth(p.id)}
+                disabled={aiSaving}
+              >
+                {p.oauthName ?? p.id}
               </button>
             {/each}
           </div>
         {/if}
+        <button class="link-btn" onclick={openApiKeyModal}>
+          {oauthProviders.length > 0 ? "or add an API key" : "Add an API key"}
+        </button>
       </div>
-    </div>
-  {/if}
+    {/if}
+
+    {#if aiError && !showApiKeyModal && !showOAuthModal}
+      <div class="error">{aiError}</div>
+    {/if}
+  </div>
+
 
 </div>
+
+<!-- OAuth Modal -->
+{#if showOAuthModal}
+  <Modal onClose={resetModalState} size="420px" title="Sign in with {aiProviders.find(p => p.id === selectedProvider)?.oauthName ?? selectedProvider}">
+    <div class="modal-body">
+      {#if oauthUrl}
+        {#if oauthNeedsCode}
+          {#if isRemote}
+            <div class="oauth-steps">
+              <div class="oauth-step"><span class="step-num">1</span> Open the link below and authorize</div>
+              <div class="oauth-step"><span class="step-num">2</span> You'll be redirected to a page that won't load — this is expected</div>
+              <div class="oauth-step"><span class="step-num">3</span> Copy the URL from your browser's address bar and paste it below</div>
+            </div>
+          {:else}
+            <p class="modal-text">Open the link below to authorize:</p>
+          {/if}
+          <a href={oauthUrl} target="_blank" rel="noopener" class="oauth-link">{oauthUrl}</a>
+          {#if isRemote}
+            <form class="modal-form" onsubmit={(e) => { e.preventDefault(); handleOAuthCodeSubmit(); }}>
+              <input
+                type="text"
+                bind:value={oauthCodeInput}
+                placeholder="Paste the redirect URL here"
+                class="system-input"
+              />
+              <button type="submit" class="btn btn-save" disabled={!oauthCodeInput.trim()}>Submit</button>
+            </form>
+          {:else}
+            {#if oauthPolling}
+              <span class="dim">Waiting for authorization...</span>
+            {/if}
+          {/if}
+        {:else}
+          <p class="modal-text">Authorize at:</p>
+          <a href={oauthUrl} target="_blank" rel="noopener" class="oauth-link">{oauthUrl}</a>
+          {#if oauthPolling}
+            <span class="dim">Waiting for authorization...</span>
+          {/if}
+        {/if}
+      {:else if aiSaving}
+        <span class="dim">Starting OAuth flow...</span>
+      {/if}
+      {#if aiError}
+        <div class="error">{aiError}</div>
+      {/if}
+    </div>
+  </Modal>
+{/if}
+
+<!-- Model Modal -->
+{#if showModelModal}
+  <Modal onClose={() => { showModelModal = false; }} size="420px" title="Add model — {modelModalProvider}">
+    <div class="modal-body">
+      <input
+        type="text"
+        bind:value={modelSearch}
+        placeholder="Search models..."
+        class="system-input"
+      />
+      {#if modelSuggestions.length > 0}
+        <div class="model-list">
+          {#each modelSuggestions as model (model.id)}
+            <button class="model-option" onclick={() => addModel(model.id)}>
+              <span class="model-id">{model.id}</span>
+            </button>
+          {/each}
+        </div>
+      {:else}
+        <span class="dim">No more models available</span>
+      {/if}
+    </div>
+  </Modal>
+{/if}
+
+<!-- API Key Modal -->
+{#if showApiKeyModal}
+  <Modal onClose={resetModalState} size="420px" title="Add API key">
+    <div class="modal-body">
+      <select bind:value={selectedProvider} class="system-input modal-select">
+        <option value="">Select provider...</option>
+        {#each unconfiguredProviders as p (p.id)}
+          <option value={p.id}>{p.id}</option>
+        {/each}
+      </select>
+
+      {#if selectedProvider}
+        <form class="modal-form" onsubmit={(e) => { e.preventDefault(); handleApiKeySave(); }}>
+          <input
+            type="password"
+            bind:value={apiKeyInput}
+            placeholder="API key"
+            class="system-input"
+          />
+          <button type="submit" class="btn btn-save" disabled={aiSaving || !apiKeyInput.trim()}>
+            {aiSaving ? "..." : "Save"}
+          </button>
+        </form>
+      {/if}
+      {#if aiError}
+        <div class="error">{aiError}</div>
+      {/if}
+    </div>
+  </Modal>
+{/if}
 
 <style>
   .settings {
@@ -458,7 +501,7 @@ function authMethodLabel(method: string | null): string {
   .error {
     color: var(--red);
     font-size: 13px;
-    margin-bottom: 16px;
+    margin-top: 8px;
   }
 
   .section {
@@ -483,25 +526,12 @@ function authMethodLabel(method: string | null): string {
     color: var(--text-2);
   }
 
-  .empty-state {
-    padding: 16px;
-    text-align: center;
-    background: var(--bg-2);
-    border: 1px dashed var(--border);
-    border-radius: var(--radius-lg);
-    margin-bottom: 8px;
-  }
-
   .provider-card {
     background: var(--bg-2);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     padding: 10px 16px;
     margin-bottom: 6px;
-  }
-
-  .add-card {
-    padding: 14px 16px;
   }
 
   .provider-row {
@@ -517,22 +547,160 @@ function authMethodLabel(method: string | null): string {
     flex: 1;
   }
 
+  .auth-badge {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: var(--bg-3);
+    color: var(--text-2);
+  }
+
   .provider-actions {
     display: flex;
     gap: 6px;
   }
 
-  .provider-config {
+  /* --- Add provider area --- */
+
+  .add-provider-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+    padding: 20px 16px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+  }
+
+  .add-provider-heading {
+    font-size: 13px;
+    color: var(--text-2);
+    letter-spacing: 0.02em;
+  }
+
+  .oauth-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .btn-provider {
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 10px 24px;
+    border-radius: var(--radius-lg);
+    cursor: pointer;
+    border: 1px solid var(--accent-border);
+    background: var(--accent-dim);
+    color: var(--accent);
+    transition: border-color 0.15s, opacity 0.15s;
+  }
+
+  .btn-provider:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+
+  .btn-provider:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .link-btn {
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--text-2);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 0;
+    border-bottom: 1px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+  }
+
+  .link-btn:hover {
+    color: var(--text-1);
+    border-bottom-color: var(--text-2);
+  }
+
+  /* --- Modal content --- */
+
+  .modal-body {
+    padding: 16px 20px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .modal-text {
+    font-size: 13px;
+    color: var(--text-2);
+    margin: 0;
+  }
+
+  .modal-form {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .modal-select {
+    width: 100%;
+  }
+
+  .oauth-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .oauth-step {
+    font-size: 13px;
+    color: var(--text-1);
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .step-num {
+    font-size: 11px;
+    font-weight: 600;
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--bg-3);
+    color: var(--text-2);
+    flex-shrink: 0;
+  }
+
+  .oauth-link {
+    color: var(--accent);
+    font-size: 13px;
+    word-break: break-all;
+  }
+
+  /* --- Models (inline in provider cards) --- */
+
+  .provider-models {
     margin-top: 8px;
     padding-top: 8px;
     border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
   }
 
   .model-tags {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin-bottom: 8px;
   }
 
   .model-tag {
@@ -561,22 +729,18 @@ function authMethodLabel(method: string | null): string {
     color: var(--red);
   }
 
-  .model-search-wrap {
-    position: relative;
+  .btn-add-model {
+    font-size: 11px;
+    padding: 2px 8px;
   }
 
-  .model-dropdown {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    background: var(--bg-2);
+  /* --- Model modal list --- */
+
+  .model-list {
+    max-height: 260px;
+    overflow-y: auto;
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    margin-top: 2px;
-    max-height: 240px;
-    overflow-y: auto;
-    z-index: 10;
   }
 
   .model-option {
@@ -584,13 +748,18 @@ function authMethodLabel(method: string | null): string {
     align-items: center;
     gap: 8px;
     width: 100%;
-    padding: 6px 12px;
+    padding: 8px 12px;
     font-size: 13px;
     background: none;
     border: none;
+    border-bottom: 1px solid var(--border);
     color: var(--text-0);
     cursor: pointer;
     text-align: left;
+  }
+
+  .model-option:last-child {
+    border-bottom: none;
   }
 
   .model-option:hover {
@@ -602,10 +771,7 @@ function authMethodLabel(method: string | null): string {
     flex: 1;
   }
 
-  .actions {
-    display: flex;
-    gap: 6px;
-  }
+  /* --- Shared --- */
 
   .btn {
     font-family: inherit;
@@ -716,35 +882,6 @@ function authMethodLabel(method: string | null): string {
 
   .system-input:focus {
     border-color: var(--border-bright);
-  }
-
-  .oauth-modal {
-    margin-top: 8px;
-    padding: 10px 12px;
-    background: var(--bg-3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .oauth-link {
-    color: var(--accent);
-    font-size: 13px;
-    word-break: break-all;
-  }
-
-  .oauth-steps {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    margin-bottom: 6px;
-  }
-
-  .oauth-step {
-    font-size: 13px;
-    color: var(--text-1);
   }
 
   .dim {
