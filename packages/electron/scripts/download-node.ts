@@ -2,7 +2,6 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, createWriteStream, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { createGunzip } from "node:zlib";
 
 // Match the project's engines requirement
 const NODE_VERSION = "24.2.0";

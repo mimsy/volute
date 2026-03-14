@@ -55,9 +55,11 @@ async function createWindow() {
 
   mainWindow.loadURL(`http://127.0.0.1:${daemon.getPort()}`);
 
-  // Open external links in the default browser
+  // Open external links in the default browser (validate protocol first)
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    if (url.startsWith("https:") || url.startsWith("http:")) {
+      shell.openExternal(url);
+    }
     return { action: "deny" };
   });
 
@@ -108,49 +110,55 @@ app.on("before-quit", () => {
   isQuitting = true;
 });
 
-app.whenReady().then(async () => {
-  // Determine port — in dev mode, always use a separate port to avoid
-  // reusing an existing daemon that serves different assets
-  let port = DEFAULT_PORT;
-  if (!(await isPortAvailable(port))) {
-    if (isDev) {
-      port = await findAvailablePort(port + 1);
-    } else {
-      // In production, check if existing daemon matches our VOLUTE_HOME
-      try {
-        const res = await fetch(`http://127.0.0.1:${port}/api/health`);
-        if (!res.ok) {
+app
+  .whenReady()
+  .then(async () => {
+    // Determine port — in dev mode, always use a separate port to avoid
+    // reusing an existing daemon that serves different assets
+    let port = DEFAULT_PORT;
+    if (!(await isPortAvailable(port))) {
+      if (isDev) {
+        port = await findAvailablePort(port + 1);
+      } else {
+        // In production, reuse any healthy daemon already on this port
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/api/health`);
+          if (!res.ok) {
+            port = await findAvailablePort(port + 1);
+          }
+        } catch {
           port = await findAvailablePort(port + 1);
         }
-      } catch {
-        port = await findAvailablePort(port + 1);
       }
     }
-  }
 
-  daemon = new DaemonProcess({
-    nodePath,
-    daemonScript,
-    port,
-    voluteHome,
-    binDir,
-    nodeModulesDir,
-    onLog: (line) => {
-      if (isDev) process.stdout.write(line);
-    },
-  });
+    daemon = new DaemonProcess({
+      nodePath,
+      daemonScript,
+      port,
+      voluteHome,
+      binDir,
+      nodeModulesDir,
+      onLog: (line) => {
+        console.log("[daemon]", line);
+      },
+    });
 
-  try {
-    await daemon.start();
-  } catch (err) {
-    console.error("Failed to start daemon:", err);
+    try {
+      await daemon.start();
+    } catch (err) {
+      console.error("Failed to start daemon:", err);
+      app.quit();
+      return;
+    }
+
+    createTray();
+    await createWindow();
+  })
+  .catch((err) => {
+    console.error("Fatal error during app startup:", err);
     app.quit();
-    return;
-  }
-
-  createTray();
-  await createWindow();
-});
+  });
 
 app.on("activate", () => {
   if (mainWindow) {

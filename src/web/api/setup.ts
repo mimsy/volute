@@ -25,11 +25,12 @@ setup.post("/configure", async (c) => {
     return c.json({ error: "Setup already complete" }, 400);
   }
 
-  const body = await c.req.json<{
-    name: string;
-    type?: SetupType;
-    isolation?: IsolationMode;
-  }>();
+  let body: { name: string; type?: SetupType; isolation?: IsolationMode };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON in request body" }, 400);
+  }
 
   if (!body.name?.trim()) {
     return c.json({ error: "System name is required" }, 400);
@@ -46,8 +47,12 @@ setup.post("/configure", async (c) => {
   const configHome = process.env.VOLUTE_HOME ?? resolve(homedir(), ".volute");
   const mindsDir = resolve(configHome, "minds");
 
-  mkdirSync(configHome, { recursive: true });
-  mkdirSync(mindsDir, { recursive: true });
+  try {
+    mkdirSync(configHome, { recursive: true });
+    mkdirSync(mindsDir, { recursive: true });
+  } catch (err) {
+    return c.json({ error: `Failed to create directories: ${(err as Error).message}` }, 500);
+  }
 
   const existingConfig = readGlobalConfig();
   const setupConfig: SetupConfig = {
@@ -63,7 +68,11 @@ setup.post("/configure", async (c) => {
     setup: setupConfig,
   };
 
-  writeGlobalConfig(config);
+  try {
+    writeGlobalConfig(config);
+  } catch (err) {
+    return c.json({ error: `Failed to write configuration: ${(err as Error).message}` }, 500);
+  }
 
   return c.json({ ok: true, config });
 });

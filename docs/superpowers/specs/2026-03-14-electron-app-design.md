@@ -14,7 +14,6 @@ Electron as a thin launcher and window wrapper. The existing daemon runs as a ch
 packages/electron/
 ├── src/
 │   ├── main.ts          # Electron main process — lifecycle, tray, window
-│   ├── preload.ts       # Preload script (minimal, security)
 │   └── daemon.ts        # Daemon child process management
 ├── resources/
 │   └── icon.icns        # macOS app icon
@@ -63,22 +62,22 @@ The bundled bin directory also contains `tsx` (or a wrapper that invokes it via 
 
 ### Port Conflict Handling
 
-The daemon already accepts a `--port` flag. The Electron app picks a port (default 1618) and checks availability before spawning. If occupied, it first tries to health-check the existing process (in case it's an orphaned daemon from a previous crash) — if healthy and has a matching `VOLUTE_HOME`, reuse it; otherwise pick another port.
+The daemon already accepts a `--port` flag. The Electron app picks a port (default 1618) and checks availability before spawning. If occupied, it first tries to health-check the existing process (in case it's an orphaned daemon from a previous crash) — if healthy, reuse it; otherwise pick another port.
 
 ### System Tray
 
 - Closing the window hides it; app keeps running in background
-- Tray menu: Show Window, mind status list, Quit
+- Tray menu: Show Window, mind status list (see below), Quit
 - Quit triggers graceful daemon shutdown (SIGTERM)
 
-### Auto-Launch
+### Auto-Launch (Future)
 
-Optional "Launch at login" via Electron's `app.setLoginItemSettings()`.
+Optional "Launch at login" via Electron's `app.setLoginItemSettings()`. Not yet implemented.
 
 ### Crash Handling
 
 - Daemon dies → main process restarts it
-- Electron crashes → daemon orphaned → next launch detects via health check, reuses or kills
+- Electron crashes → daemon orphaned → next launch detects via health check, reuses it
 
 ## Data Directory
 
@@ -134,7 +133,7 @@ Daemon, web UI, CLI, templates, skills, migrations, connectors, scheduler, sleep
 
 ### Code Signing
 
-Deferred initially (users bypass Gatekeeper via right-click → Open). Apple Developer ID certificate needed for production release.
+Implemented via `afterSign` hook in electron-builder. Code signing and notarization run in CI when Apple Developer ID credentials are available; without them, builds are unsigned (users bypass Gatekeeper via right-click → Open).
 
 ### CI
 

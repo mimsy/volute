@@ -39,7 +39,7 @@ export class DaemonProcess {
   async start(): Promise<void> {
     if (this.child) return;
 
-    // Check if port is already in use by a compatible daemon
+    // Check if port is already in use by a running daemon
     const reused = await this.tryReuseExisting();
     if (reused) return;
 
@@ -103,13 +103,15 @@ export class DaemonProcess {
       }, RESTART_DELAY);
     });
 
-    // Wait for health check
     await this.waitForHealth();
   }
 
   private async waitForHealth(): Promise<void> {
     const start = Date.now();
     while (Date.now() - start < HEALTH_TIMEOUT) {
+      if (!this.child) {
+        throw new Error("Daemon process exited during startup — check logs for details");
+      }
       try {
         const res = await fetch(`http://127.0.0.1:${this.opts.port}/api/health`);
         if (res.ok) {
@@ -126,17 +128,23 @@ export class DaemonProcess {
 
   async stop(): Promise<void> {
     this.quitting = true;
-    if (!this.child) return;
+    if (!this.child) {
+      this.setState("stopped");
+      return;
+    }
 
     const child = this.child;
     await new Promise<void>((resolve) => {
       child.on("exit", () => resolve());
       child.kill("SIGTERM");
-      // Force kill after 5s
       setTimeout(() => {
         try {
           child.kill("SIGKILL");
-        } catch {}
+        } catch (err: unknown) {
+          if (err instanceof Error && (err as NodeJS.ErrnoException).code !== "ESRCH") {
+            this.opts.onLog?.(`Warning: failed to force-kill daemon: ${err}`);
+          }
+        }
         resolve();
       }, 5_000);
     });
@@ -158,8 +166,8 @@ export function isPortAvailable(port: number): Promise<boolean> {
       socket.destroy();
       resolve(false);
     });
-    socket.on("error", () => {
-      resolve(true);
+    socket.on("error", (err: NodeJS.ErrnoException) => {
+      resolve(err.code === "ECONNREFUSED");
     });
   });
 }
