@@ -168,6 +168,52 @@ export class MindManager {
       }
     }
 
+    // For claude minds, write an apiKeyHelper script so the mind can fetch the system Anthropic key
+    if (target.template === "claude" || !target.template) {
+      try {
+        const apiKey = await resolveApiKey("anthropic");
+        const settingsPath = resolve(dir, "home/.claude/settings.json");
+        if (apiKey) {
+          // Write the helper script
+          const helperPath = resolve(dir, ".mind", "api-key-helper.mjs");
+          mkdirSync(resolve(dir, ".mind"), { recursive: true });
+          writeFileSync(
+            helperPath,
+            `const port = process.env.VOLUTE_DAEMON_PORT;
+const token = process.env.VOLUTE_DAEMON_TOKEN;
+if (!port || !token) process.exit(1);
+try {
+  const r = await fetch(\`http://127.0.0.1:\${port}/api/system/ai/key/anthropic\`, {
+    headers: { Authorization: \`Bearer \${token}\` },
+  });
+  if (r.ok) {
+    const { key } = await r.json();
+    if (key) process.stdout.write(key);
+  }
+} catch {}
+`,
+          );
+
+          // Merge apiKeyHelper into settings.json
+          const settings = existsSync(settingsPath)
+            ? JSON.parse(readFileSync(settingsPath, "utf-8"))
+            : {};
+          settings.apiKeyHelper = `node ${helperPath}`;
+          mkdirSync(resolve(dir, "home/.claude"), { recursive: true });
+          writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+        } else if (existsSync(settingsPath)) {
+          // No Anthropic key — remove apiKeyHelper if present
+          const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+          if (settings.apiKeyHelper) {
+            delete settings.apiKeyHelper;
+            writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+          }
+        }
+      } catch (err) {
+        mlog.warn(`failed to set up apiKeyHelper for ${name}`, log.errorData(err));
+      }
+    }
+
     if (isIsolationEnabled()) {
       env.HOME = resolve(dir, "home");
     }

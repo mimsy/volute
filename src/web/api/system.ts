@@ -184,6 +184,12 @@ const app = new Hono<AuthEnv>()
     }
   })
   // --- AI Service config ---
+  .get("/ai/key/:provider", async (c) => {
+    const { resolveApiKey } = await import("../../lib/ai-service.js");
+    const key = await resolveApiKey(c.req.param("provider"));
+    if (!key) return c.json({ error: "No key available" }, 404);
+    return c.json({ key });
+  })
   .get("/ai/providers", requireAdmin, (c) => {
     const allProviders = getProviders();
     const oauthProviders = getOAuthProviders();
