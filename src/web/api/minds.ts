@@ -1880,8 +1880,8 @@ const app = new Hono<AuthEnv>()
     const filtered = convs.map((conv) => {
       if (conv.private !== 1) return conv;
       if (user.role === "admin") return conv;
-      const isParticipant = conv.participants.some((p) => p.userId === user.id);
-      if (isParticipant) return conv;
+      const userIsParticipant = conv.participants.some((p) => p.userId === user.id);
+      if (userIsParticipant) return conv;
       const { lastMessage: _, ...rest } = conv;
       return rest;
     });
