@@ -1170,4 +1170,47 @@ function handleGlobalClick(e: MouseEvent) {
       display: none;
     }
   }
+
+  /* Electron: titlebar safe area and window drag */
+  :global(html.electron) .sidebar-header {
+    padding-left: var(--traffic-light-width, 0px);
+    justify-content: flex-start;
+    min-height: var(--titlebar-height, 38px);
+    padding-top: 0;
+    padding-bottom: 0;
+    gap: 4px;
+    -webkit-app-region: drag;
+    cursor: default;
+  }
+
+  :global(html.electron) .sidebar-header .sidebar-logo {
+    width: 16px;
+    height: 16px;
+  }
+
+  :global(html.electron) .sidebar-header .header-logo-wrap {
+    width: 16px;
+    height: 16px;
+  }
+
+  :global(html.electron) .sidebar-header .hover-dot {
+    width: 6px;
+    height: 6px;
+  }
+
+  :global(html.electron) .sidebar-header .sidebar-title {
+    font-size: 15px;
+    margin-top: -1px;
+    margin-left: 0;
+  }
+
+  :global(html.electron) .page-header {
+    -webkit-app-region: drag;
+  }
+
+  :global(html.electron) .page-header button,
+  :global(html.electron) .page-header a,
+  :global(html.electron) .page-header .user-menu-anchor {
+    -webkit-app-region: no-drag;
+  }
 </style>

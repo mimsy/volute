@@ -39,14 +39,18 @@ async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
-    minWidth: 600,
+    minWidth: 768,
     minHeight: 400,
     titleBarStyle: "hiddenInset",
     webPreferences: {
-      preload: join(__dirname, "preload.js"),
       nodeIntegration: false,
       contextIsolation: true,
     },
+  });
+
+  // Mark the page as running inside Electron so CSS can adapt
+  mainWindow.webContents.on("dom-ready", () => {
+    mainWindow?.webContents.executeJavaScript(`document.documentElement.classList.add("electron")`);
   });
 
   mainWindow.loadURL(`http://127.0.0.1:${daemon.getPort()}`);
@@ -105,17 +109,22 @@ app.on("before-quit", () => {
 });
 
 app.whenReady().then(async () => {
-  // Determine port
+  // Determine port — in dev mode, always use a separate port to avoid
+  // reusing an existing daemon that serves different assets
   let port = DEFAULT_PORT;
   if (!(await isPortAvailable(port))) {
-    // Check if it's an existing Volute daemon we can reuse
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/api/health`);
-      if (!res.ok) {
+    if (isDev) {
+      port = await findAvailablePort(port + 1);
+    } else {
+      // In production, check if existing daemon matches our VOLUTE_HOME
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/api/health`);
+        if (!res.ok) {
+          port = await findAvailablePort(port + 1);
+        }
+      } catch {
         port = await findAvailablePort(port + 1);
       }
-    } catch {
-      port = await findAvailablePort(port + 1);
     }
   }
 
