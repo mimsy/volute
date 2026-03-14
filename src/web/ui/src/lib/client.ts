@@ -152,6 +152,10 @@ export function markAsRead(conversationId: string): Promise<void> {
   return post(`${V1}/conversations/${enc(conversationId)}/read`);
 }
 
+export function setConversationPrivate(id: string, isPrivate: boolean): Promise<void> {
+  return put(`${V1}/conversations/${enc(id)}/private`, { private: isPrivate });
+}
+
 // --- Chat ---
 
 export function sendChat(

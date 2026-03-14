@@ -111,6 +111,11 @@ $effect(() => {
   for (const conv of convs) {
     if (messagesMap[conv.id]) continue;
     const isParticipant = isUserParticipant(conv);
+    // Skip fetching messages for private conversations the user can't view
+    if (conv.private === 1 && !isParticipant && auth.user?.role !== "admin") {
+      messagesMap[conv.id] = [];
+      continue;
+    }
     const fetchFn = isParticipant
       ? fetchConversationMessages(conv.id, { limit: 10 })
       : fetchMindConversationMessages(name, conv.id, { limit: 10 });
@@ -184,12 +189,17 @@ $effect(() => {
               {@const label = getConvLabel(conv)}
               {@const messages = messagesMap[conv.id] ?? []}
               {@const participant = isUserParticipant(conv)}
+              {@const isPrivate = conv.private === 1}
+              {@const canViewPrivate = !isPrivate || participant || auth.user?.role === "admin"}
               <div class="feed-item">
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <div class="feed-card card-chat" role="button" tabindex="0" onclick={() => { readOnlyConv = conv; }} onkeydown={(e) => { if (e.key === 'Enter') readOnlyConv = conv; }}>
+                <div class="feed-card card-chat" role="button" tabindex="0" onclick={() => { if (canViewPrivate) readOnlyConv = conv; }} onkeydown={(e) => { if (e.key === 'Enter' && canViewPrivate) readOnlyConv = conv; }}>
                   <div class="feed-card-header header-chat">
                     <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
                     <span class="feed-card-label">{label}</span>
+                    {#if isPrivate}
+                      <span class="private-badge">Private</span>
+                    {/if}
                     <span class="feed-card-meta">{formatRelativeTime(conv.updated_at)}</span>
                     {#if participant}
                       <button
@@ -201,12 +211,12 @@ $effect(() => {
                     {/if}
                   </div>
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
-                  <div class="feed-card-body chat-body" bind:this={scrollEls[conv.id]} onscroll={(e) => {
+                  <div class="feed-card-body chat-body" class:blurred={!canViewPrivate} bind:this={scrollEls[conv.id]} onscroll={(e) => {
                     const el = e.currentTarget;
                     if (el.scrollTop < 10) el.scrollTop = 10;
                   }}>
                     {#if messages.length === 0}
-                      <div class="msg-empty">Loading...</div>
+                      <div class="msg-empty">{canViewPrivate ? 'Loading...' : 'Private conversation'}</div>
                     {:else}
                       {#each messages as msg, i (msg.id)}
                         <div class="chat-entry" class:new-sender={showSenderHeader(messages, i)}>
@@ -472,6 +482,22 @@ $effect(() => {
 
   .page-content-iframe {
     background: white;
+  }
+
+  .private-badge {
+    font-size: 10px;
+    color: var(--text-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0 4px;
+    flex-shrink: 0;
+    line-height: 16px;
+  }
+
+  .blurred {
+    filter: blur(6px);
+    pointer-events: none;
+    user-select: none;
   }
 
   .empty-hint {

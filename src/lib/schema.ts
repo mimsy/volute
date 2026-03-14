@@ -40,6 +40,7 @@ export const conversations = sqliteTable(
     name: text("name"),
     user_id: integer("user_id").references(() => users.id),
     title: text("title"),
+    private: integer("private").notNull().default(0),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
     updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
   },

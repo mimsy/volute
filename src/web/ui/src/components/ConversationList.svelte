@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
+import { setConversationPrivate } from "../lib/client";
 import { getConversationLabel, mindDotColor } from "../lib/format";
 import { activeMinds, unreadCounts } from "../lib/stores.svelte";
 
@@ -99,6 +100,9 @@ $effect(() => {
         <div class="conv-item-header">
           <div class="conv-item-label" class:active={conv.id === activeId} class:unread={unread > 0}>
             <span class="conv-label-text">{getConversationLabel(conv.participants ?? [], conv.title, username, conv)}</span>
+            {#if conv.private === 1}
+              <svg class="lock-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M11 7V5a3 3 0 0 0-6 0v2H4v6h8V7h-1zm-4-2a1 1 0 1 1 2 0v2H7V5z"/></svg>
+            {/if}
           </div>
           {#if unread > 0}
             <span class="unread-badge">{unread}</span>
@@ -144,6 +148,9 @@ $effect(() => {
             {:else}
               <span class="conv-label-text">{getConversationLabel(conv.participants ?? [], conv.title, username, conv)}</span>
             {/if}
+            {#if conv.private === 1}
+              <svg class="lock-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M11 7V5a3 3 0 0 0-6 0v2H4v6h8V7h-1zm-4-2a1 1 0 1 1 2 0v2H7V5z"/></svg>
+            {/if}
             {#if isSeed}
               <span class="seed-tag">seed</span>
             {/if}
@@ -178,6 +185,18 @@ $effect(() => {
         Open mind
       </button>
     {/if}
+    <button class="context-item" onclick={async () => {
+      const id = menuConvId!;
+      const conv = conversations.find((c) => c.id === id);
+      if (conv) {
+        const newPrivate = conv.private !== 1;
+        await setConversationPrivate(id, newPrivate);
+        conv.private = newPrivate ? 1 : 0;
+      }
+      closeMenu();
+    }}>
+      {menuConv?.private === 1 ? "Make public" : "Make private"}
+    </button>
     {#if onHide}
       <button class="context-item" onclick={() => { onHide(menuConvId!); closeMenu(); }}>
         Close chat
@@ -295,6 +314,13 @@ $effect(() => {
 
   .conv-label-mind:hover {
     text-decoration: underline;
+  }
+
+  .lock-icon {
+    width: 12px;
+    height: 12px;
+    color: var(--text-2);
+    flex-shrink: 0;
   }
 
   .seed-tag {

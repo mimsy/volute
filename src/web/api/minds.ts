@@ -38,9 +38,11 @@ import { recordInbound } from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import {
   addMessage,
+  getConversation,
   getMessages,
   getMessagesPaginated,
   isConversationForMind,
+  isParticipant,
   listConversationsForMind,
 } from "../../lib/events/conversations.js";
 import { onMindEvent } from "../../lib/events/mind-activity-tracker.js";
@@ -1872,10 +1874,20 @@ const app = new Hono<AuthEnv>()
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
+    const user = c.get("user");
     const convs = await listConversationsForMind(name);
-    return c.json(convs);
+    // Strip lastMessage from private conversations for non-participants/non-admins
+    const filtered = convs.map((conv) => {
+      if (conv.private !== 1) return conv;
+      if (user.role === "admin") return conv;
+      const isParticipant = conv.participants.some((p) => p.userId === user.id);
+      if (isParticipant) return conv;
+      const { lastMessage: _, ...rest } = conv;
+      return rest;
+    });
+    return c.json(filtered);
   })
-  // Read messages from a mind's conversation (read-only, no participant check)
+  // Read messages from a mind's conversation (privacy-enforced)
   .get("/:name/conversations/:convId/messages", async (c) => {
     const name = c.req.param("name");
     const convId = c.req.param("convId");
@@ -1885,6 +1897,17 @@ const app = new Hono<AuthEnv>()
     const belongs = await isConversationForMind(name, convId);
     if (!belongs) {
       return c.json({ error: "Conversation not found" }, 404);
+    }
+    // Enforce privacy: if conversation is private, require participant or admin
+    const conv = await getConversation(convId);
+    if (conv?.private === 1) {
+      const user = c.get("user");
+      if (user.role !== "admin") {
+        const participant = await isParticipant(convId, user.id);
+        if (!participant) {
+          return c.json({ error: "This is a private conversation" }, 403);
+        }
+      }
     }
     const beforeStr = c.req.query("before");
     const limitStr = c.req.query("limit");
