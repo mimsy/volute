@@ -280,16 +280,18 @@ function handleSessionClick(session: string) {
     {#if filters.preset === 'summary'}
       <div class="timeline-rail">
         {#each sessionGroups as group (group.session)}
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="session-divider" onclick={() => handleSessionClick(group.session)}>
-            <div class="session-divider-line line-left"></div>
-            <span class="session-divider-label">{group.session || "no session"}</span>
-            <div class="session-divider-line"></div>
+          <div class="session-section">
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="session-divider" onclick={() => handleSessionClick(group.session)}>
+              <div class="session-divider-line line-left"></div>
+              <span class="session-divider-label">{group.session || "no session"}</span>
+              <div class="session-divider-line"></div>
+            </div>
+            {#each group.events as ev (ev.id)}
+              <HistoryEvent event={ev} mindName={name} expandable onsessionclick={handleSessionClick} />
+            {/each}
           </div>
-          {#each group.events as ev (ev.id)}
-            <HistoryEvent event={ev} mindName={name} expandable onsessionclick={handleSessionClick} />
-          {/each}
         {/each}
       </div>
     {:else}
@@ -399,19 +401,24 @@ function handleSessionClick(session: string) {
   .session-divider:hover .session-divider-label {
     color: var(--text-1);
   }
-  /* Hover: highlight main rail from session dot down to next item */
-  .session-divider::after {
+
+  .session-section {
+    position: relative;
+  }
+  /* Highlight whole track section on session header hover */
+  .session-section::after {
     content: "";
     position: absolute;
     left: -2px;
-    top: 50%;
-    bottom: -16px;
+    top: -4px;
+    bottom: -4px;
     width: 2px;
-    background: var(--text-1);
+    background: var(--text-2);
     opacity: 0;
     transition: opacity 0.15s;
+    z-index: 0;
   }
-  .session-divider:hover::after {
+  .session-section:has(> .session-divider:hover)::after {
     opacity: 1;
   }
 

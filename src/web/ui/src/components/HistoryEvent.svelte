@@ -21,20 +21,18 @@ let expanded = $state(false);
 let turnExpanded = $state(false);
 let turnLoading = $state(false);
 let turnEvents = $state<HistoryMessage[]>([]);
-let eventEl: HTMLDivElement | undefined = $state();
-
 const typeColors: Record<string, string> = {
-  inbound: "var(--blue)",
-  outbound: "var(--accent)",
-  text: "var(--accent)",
+  inbound: "var(--red)",
+  outbound: "var(--green)",
+  text: "var(--blue)",
   tool_use: "var(--yellow)",
   tool_result: "var(--yellow)",
-  thinking: "var(--text-2)",
+  thinking: "var(--purple)",
   usage: "var(--purple)",
   log: "var(--text-2)",
   session_start: "var(--accent)",
   done: "var(--text-2)",
-  summary: "var(--green)",
+  summary: "var(--text-0)",
 };
 
 let color = $derived(typeColors[event.type] ?? "var(--text-2)");
@@ -73,16 +71,6 @@ function formatArgs(args: unknown): string {
   return JSON.stringify(args, null, 2);
 }
 
-function updateFirstSegmentHeight() {
-  if (!eventEl) return;
-  const firstDot = eventEl.querySelector(".turn-branch > .event .marker") as HTMLElement | null;
-  if (firstDot) {
-    const dotCenter = firstDot.getBoundingClientRect().top + 4;
-    const connectorTop = eventEl.getBoundingClientRect().top + 15;
-    eventEl.style.setProperty("--first-segment-height", `${dotCenter - connectorTop - 5}px`);
-  }
-}
-
 async function handleClick() {
   if (event.type === "summary" && expandable) {
     turnExpanded = !turnExpanded;
@@ -94,9 +82,6 @@ async function handleClick() {
         turnLoading = false;
       }
     }
-    if (turnExpanded) {
-      requestAnimationFrame(updateFirstSegmentHeight);
-    }
   } else if (collapsible) {
     expanded = !expanded;
   }
@@ -106,7 +91,6 @@ async function handleClick() {
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-  bind:this={eventEl}
   class="event"
   class:collapsible
   class:turn-expanded={event.type === "summary" && turnExpanded}
@@ -116,7 +100,6 @@ async function handleClick() {
   <div class="marker" style:background={color}></div>
   {#if event.type === "summary" && turnExpanded}
     <div class="turn-connector"></div>
-    <div class="turn-connector-highlight"></div>
   {/if}
 
   {#if event.type === "summary"}
@@ -391,7 +374,7 @@ async function handleClick() {
   }
   .summary-text {
     font-size: 13px;
-    color: var(--green);
+    color: var(--text-0);
   }
   .session-tag {
     font-size: 11px;
@@ -425,32 +408,6 @@ async function handleClick() {
     bottom: 12px;
     background: var(--border);
   }
-  /* Highlight first segment (connector + drop to first event) on header hover */
-  .turn-connector-highlight {
-    position: absolute;
-    top: 15px;
-    left: 22px;
-    width: 2px;
-    height: 0;
-    background: var(--green);
-    opacity: 0;
-    transition: opacity 0.15s;
-  }
-  .turn-connector-highlight::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: -23px;
-    width: 23px;
-    height: 2px;
-    background: var(--green);
-  }
-  .event:has(.summary-header:hover) .turn-connector-highlight {
-    opacity: 1;
-  }
-  .event.turn-expanded .turn-connector-highlight {
-    height: var(--first-segment-height, 50px);
-  }
   /* Horizontal connector from main rail dot to sub-rail */
   .turn-connector::after {
     content: "";
@@ -460,6 +417,19 @@ async function handleClick() {
     width: 23px;
     height: 2px;
     background: var(--border);
+  }
+  /* Highlight whole subtrack on summary-header or branch-summary hover */
+  .event:has(.summary-header:hover) .turn-connector,
+  .event:has(.branch-summary:hover) .turn-connector {
+    background: var(--text-0);
+  }
+  .event:has(.summary-header:hover) .turn-connector::after,
+  .event:has(.branch-summary:hover) .turn-connector::after {
+    background: var(--text-0);
+  }
+  .event:has(.summary-header:hover) .branch-return,
+  .event:has(.branch-summary:hover) .branch-return {
+    background: var(--text-0);
   }
 
   .turn-branch {
@@ -491,26 +461,7 @@ async function handleClick() {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--green);
+    background: var(--text-0);
     z-index: 1;
-  }
-  /* Hover track highlight on sub-rail for summary */
-  .branch-summary::after {
-    content: "";
-    position: absolute;
-    left: -2px;
-    top: 12px;
-    bottom: -2px;
-    width: 2px;
-    background: var(--green);
-    opacity: 0;
-    transition: opacity 0.15s;
-    z-index: 1;
-  }
-  .branch-summary:hover::after {
-    opacity: 1;
-  }
-  .branch-summary:hover ~ .branch-return {
-    background: var(--green);
   }
 </style>
