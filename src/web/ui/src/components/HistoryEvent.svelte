@@ -133,7 +133,9 @@ async function handleClick() {
               <HistoryEvent event={turnEv} {mindName} />
             {/each}
           {/if}
-          <div class="branch-summary">
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="branch-summary" onclick={() => { turnExpanded = false; }}>
             <div class="event-header">
               <span class="time">{formatTime(event.created_at)}</span>
               <span class="type-badge" style:background="{color}15" style:color={color}>summary</span>
@@ -453,6 +455,7 @@ async function handleClick() {
   .branch-summary {
     position: relative;
     padding: 6px 8px 6px 20px;
+    cursor: pointer;
   }
   /* Dot on the sub-rail for the summary at end of branch */
   .branch-summary::before {
