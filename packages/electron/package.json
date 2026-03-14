@@ -16,7 +16,7 @@
   },
   "devDependencies": {
     "@electron/notarize": "^2.5.0",
-    "electron": "^35.1.2",
+    "electron": "35.7.5",
     "electron-builder": "^26.0.12",
     "tsx": "^4.0.0",
     "typescript": "^5.7.0"

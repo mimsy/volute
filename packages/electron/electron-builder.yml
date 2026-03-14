@@ -45,6 +45,7 @@ extraResources:
       - "**/*"
       - "!.cache"
       - "!.package-lock.json"
+      - "!@volute"
 files:
   - dist/**/*
   - "!node_modules"
