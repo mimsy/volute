@@ -221,11 +221,6 @@ async function loadHistory(offset: number) {
       historyMessages = [...chronological, ...historyMessages];
     }
     hasMore = rows.length === PAGE_SIZE;
-    if (offset === 0) {
-      requestAnimationFrame(() => {
-        scrollContainer?.scrollTo({ top: scrollContainer.scrollHeight });
-      });
-    }
   } catch (e) {
     console.warn("Failed to load history:", e);
   }
@@ -242,6 +237,32 @@ async function loadSessions() {
   }
 }
 
+// Scroll to bottom on initial load — keep nudging for a few seconds
+let initialScrollDone = $state(false);
+let scrollTimer: ReturnType<typeof setInterval> | null = null;
+
+function startScrollToBottom() {
+  stopScrollTimer();
+  initialScrollDone = false;
+  scrollTimer = setInterval(() => {
+    if (scrollContainer) {
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    }
+  }, 100);
+  // Stop after 3 seconds
+  setTimeout(() => {
+    stopScrollTimer();
+    initialScrollDone = true;
+  }, 3000);
+}
+
+function stopScrollTimer() {
+  if (scrollTimer) {
+    clearInterval(scrollTimer);
+    scrollTimer = null;
+  }
+}
+
 // Reload when mind name changes
 let prevName = "";
 $effect(() => {
@@ -254,6 +275,7 @@ $effect(() => {
     hasMore = true;
     nextSseId = -1;
     messagesMap = {};
+    startScrollToBottom();
     loadHistory(0);
     loadSessions();
   }
@@ -331,7 +353,8 @@ $effect(() => {
 function handleScroll() {
   if (!scrollContainer) return;
   const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
-  userScrolledUp = scrollHeight - scrollTop - clientHeight > 100;
+  const distFromBottom = scrollHeight - scrollTop - clientHeight;
+  userScrolledUp = distFromBottom > 100;
 }
 
 function jumpToLatest() {
@@ -345,7 +368,7 @@ function jumpToLatest() {
 {:else}
   <div class="mind-page">
     {#if section === "info"}
-      <div class="info-timeline" bind:this={scrollContainer} onscroll={handleScroll}>
+      <div class="info-timeline" bind:this={scrollContainer} onscroll={handleScroll} onwheel={() => { stopScrollTimer(); initialScrollDone = true; }}>
         {#if hasMore}
           <div class="load-older">
             <button
@@ -512,6 +535,9 @@ function jumpToLatest() {
     overflow-x: hidden;
     overflow-y: auto;
     padding: 0 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
 
   .timeline-rail {
@@ -519,6 +545,8 @@ function jumpToLatest() {
     padding-left: 4px;
     margin-left: 60px;
     min-height: 100%;
+    max-width: 800px;
+    width: 100%;
   }
   .timeline-rail::before {
     content: "";

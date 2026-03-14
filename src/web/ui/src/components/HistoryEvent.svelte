@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { HistoryMessage } from "@volute/api";
+import { tick } from "svelte";
 import { fetchTurnEvents } from "../lib/client";
 import { normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
@@ -73,6 +74,8 @@ function formatArgs(args: unknown): string {
   return JSON.stringify(args, null, 2);
 }
 
+let eventEl: HTMLDivElement | undefined = $state();
+
 async function handleClick() {
   if (event.type === "summary" && expandable) {
     turnExpanded = !turnExpanded;
@@ -83,6 +86,10 @@ async function handleClick() {
       } finally {
         turnLoading = false;
       }
+    }
+    if (turnExpanded) {
+      await tick();
+      eventEl?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   } else if (collapsible) {
     expanded = !expanded;
@@ -98,6 +105,7 @@ async function handleClick() {
   class:turn-expanded={event.type === "summary" && turnExpanded}
   onclick={handleClick}
   style:--type-color={color}
+  bind:this={eventEl}
 >
   <div class="marker" style:background={color}></div>
   {#if event.type === "summary" && turnExpanded}
