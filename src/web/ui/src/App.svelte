@@ -655,7 +655,7 @@ function handleGlobalClick(e: MouseEvent) {
         onpointercancel={handleResizeEnd}
       ></div>
       <div class="content-area">
-        <div class="main-column">
+        <div class="main-column" class:has-right-panel={showRightPanel}>
           <div class="page-header">
             <button class="header-hamburger" onclick={toggleSidebar}>&#9776;</button>
             <div class="page-breadcrumbs">
@@ -886,12 +886,20 @@ function handleGlobalClick(e: MouseEvent) {
     flex-direction: column;
     overflow: hidden;
     min-width: 0;
+    padding: 0 8px 8px 3px;
+  }
+
+  .main-column.has-right-panel {
+    padding-right: 3px;
   }
 
   .main-frame {
     flex: 1;
     overflow: hidden;
     min-width: 0;
+    background: var(--bg-1);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
   }
 
   .page-header {
@@ -899,7 +907,6 @@ function handleGlobalClick(e: MouseEvent) {
     align-items: center;
     justify-content: space-between;
     padding: 8px 16px;
-    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
@@ -1139,6 +1146,10 @@ function handleGlobalClick(e: MouseEvent) {
     .resize-handle {
       display: none;
     }
+
+    .main-column {
+      padding-left: 8px;
+    }
   }
 
   @media (max-width: 767px) {
@@ -1163,6 +1174,10 @@ function handleGlobalClick(e: MouseEvent) {
 
     .resize-handle {
       display: none;
+    }
+
+    .main-column {
+      padding-left: 8px;
     }
   }
 </style>

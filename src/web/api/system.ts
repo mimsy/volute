@@ -1,5 +1,7 @@
 import { zValidator } from "@hono/zod-validator";
-import { getOAuthProvider, getOAuthProviders, getProviders } from "@mariozechner/pi-ai";
+import type { OAuthAuthInfo, OAuthCredentials, OAuthPrompt } from "@mariozechner/pi-ai";
+import { getProviders } from "@mariozechner/pi-ai";
+import { getOAuthProvider, getOAuthProviders } from "@mariozechner/pi-ai/oauth";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -284,12 +286,12 @@ const app = new Hono<AuthEnv>()
 
       oauthProvider
         .login({
-          onAuth: (info) => {
+          onAuth: (info: OAuthAuthInfo) => {
             const existing = oauthFlows.get(flowId);
             if (existing)
               Object.assign(existing, { url: info.url, instructions: info.instructions });
           },
-          onPrompt: async (_prompt) => {
+          onPrompt: async (_prompt: OAuthPrompt) => {
             if (promptPromise) {
               const existing = oauthFlows.get(flowId);
               if (existing) existing.waitingForCode = true;
@@ -299,12 +301,12 @@ const app = new Hono<AuthEnv>()
           },
           onManualCodeInput: needsManualCode ? () => promptPromise! : undefined,
         })
-        .then((credentials) => {
+        .then((credentials: OAuthCredentials) => {
           saveProviderConfig(provider, { oauth: credentials });
           const existing = oauthFlows.get(flowId);
           if (existing) existing.status = "complete";
         })
-        .catch((err) => {
+        .catch((err: unknown) => {
           const existing = oauthFlows.get(flowId);
           if (existing) {
             existing.status = "error";
