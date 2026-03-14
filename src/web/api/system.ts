@@ -1,5 +1,6 @@
 import { zValidator } from "@hono/zod-validator";
-import { getOAuthProvider, getOAuthProviders, getProviders } from "@mariozechner/pi-ai";
+import { getProviders } from "@mariozechner/pi-ai";
+import { getOAuthProvider, getOAuthProviders } from "@mariozechner/pi-ai/oauth";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";

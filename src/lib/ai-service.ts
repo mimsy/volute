@@ -1,12 +1,6 @@
 import type { Api, Model } from "@mariozechner/pi-ai";
-import {
-  complete,
-  getEnvApiKey,
-  getModel,
-  getModels,
-  getOAuthApiKey,
-  getProviders,
-} from "@mariozechner/pi-ai";
+import { complete, getEnvApiKey, getModel, getModels, getProviders } from "@mariozechner/pi-ai";
+import { getOAuthApiKey } from "@mariozechner/pi-ai/oauth";
 import log from "./logger.js";
 import {
   type AiConfig,
