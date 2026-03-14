@@ -73,6 +73,7 @@ export async function createConversation(
     name,
     user_id: opts?.userId ?? null,
     title: opts?.title ?? null,
+    private: 0,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
@@ -599,6 +600,14 @@ export async function isConversationForMind(
     )
     .get();
   return !!participant;
+}
+
+export async function setConversationPrivate(id: string, isPrivate: boolean): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(conversations)
+    .set({ private: isPrivate ? 1 : 0 })
+    .where(eq(conversations.id, id));
 }
 
 export async function deleteConversation(id: string): Promise<void> {
