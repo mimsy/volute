@@ -180,10 +180,14 @@ export class MindManager {
           const key = await resolveApiKey("anthropic");
           if (key) {
             // Write credentials in the format Claude Code's Agent SDK expects.
-            // On Linux (no keychain), the SDK reads ~/.claude/.credentials.json.
+            // The SDK reads from CLAUDE_CONFIG_DIR/.credentials.json (or
+            // ~/.claude/.credentials.json). We point CLAUDE_CONFIG_DIR to the
+            // mind's .claude dir so credentials are per-mind and don't collide
+            // with the host user's own Claude Code config.
             const homeDir = resolve(dir, "home");
             const claudeDir = resolve(homeDir, ".claude");
             mkdirSync(claudeDir, { recursive: true });
+            env.CLAUDE_CONFIG_DIR = claudeDir;
             const credsPath = resolve(claudeDir, ".credentials.json");
             writeFileSync(
               credsPath,
