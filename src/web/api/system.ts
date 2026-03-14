@@ -184,9 +184,10 @@ const app = new Hono<AuthEnv>()
     }
   })
   // --- AI Service config ---
+  // Cached provider keys — refreshed by a daemon-level timer so individual mind
+  // polls don't each trigger OAuth token refresh.
   .get("/ai/key/:provider", async (c) => {
-    const { resolveApiKey } = await import("../../lib/ai-service.js");
-    const key = await resolveApiKey(c.req.param("provider"));
+    const key = getCachedApiKey(c.req.param("provider"));
     if (!key) return c.json({ error: "No key available" }, 404);
     return c.json({ key });
   })
@@ -340,7 +341,25 @@ const app = new Hono<AuthEnv>()
       if (!flow) return c.json({ error: "Flow not found" }, 404);
       if (!flow.resolveCode) return c.json({ error: "Flow does not accept manual code" }, 400);
       const { code } = c.req.valid("json");
-      flow.resolveCode(code.trim());
+      const input = code.trim();
+
+      // If the input looks like a localhost callback URL, forward it to pi-ai's
+      // callback server running inside this process. This makes pi-ai use the
+      // correct redirect_uri for the token exchange (the localhost one that
+      // matched the authorization request), instead of the manual fallback URI.
+      const localhostMatch = input.match(/^https?:\/\/localhost(:\d+)?(\/.*)/);
+      if (localhostMatch) {
+        const forwardUrl = `http://127.0.0.1${localhostMatch[1] ?? ""}${localhostMatch[2]}`;
+        try {
+          await fetch(forwardUrl);
+        } catch {
+          // Callback server may have already shut down — fall back to manual code
+          flow.resolveCode(input);
+        }
+        return c.json({ ok: true });
+      }
+
+      flow.resolveCode(input);
       return c.json({ ok: true });
     },
   )
@@ -381,6 +400,49 @@ function cleanupOAuthFlows() {
     if (now - flow.createdAt > OAUTH_FLOW_TTL_MS) {
       oauthFlows.delete(id);
     }
+  }
+}
+
+// --- Cached API key resolution ---
+// The daemon refreshes provider keys on a single timer so that N minds polling
+// the /ai/key/:provider endpoint don't each trigger independent OAuth flows.
+const apiKeyCache = new Map<string, { key: string; expiresAt: number }>();
+const API_KEY_TTL_MS = 4 * 60 * 1000; // 4 minutes
+
+function getCachedApiKey(provider: string): string | undefined {
+  const cached = apiKeyCache.get(provider);
+  if (cached && Date.now() < cached.expiresAt) return cached.key;
+  return undefined;
+}
+
+let keyRefreshTimer: ReturnType<typeof setInterval> | null = null;
+
+export async function refreshApiKeyCache(): Promise<void> {
+  const { resolveApiKey, getConfiguredProviders } = await import("../../lib/ai-service.js");
+  for (const provider of getConfiguredProviders()) {
+    try {
+      const key = await resolveApiKey(provider);
+      if (key) {
+        apiKeyCache.set(provider, { key, expiresAt: Date.now() + API_KEY_TTL_MS });
+      }
+    } catch {
+      // Keep stale cache entry if refresh fails
+    }
+  }
+}
+
+export function startApiKeyRefresh(): void {
+  if (keyRefreshTimer) return;
+  // Initial population
+  refreshApiKeyCache();
+  // Refresh every 4 minutes
+  keyRefreshTimer = setInterval(refreshApiKeyCache, API_KEY_TTL_MS);
+}
+
+export function stopApiKeyRefresh(): void {
+  if (keyRefreshTimer) {
+    clearInterval(keyRefreshTimer);
+    keyRefreshTimer = null;
   }
 }
 

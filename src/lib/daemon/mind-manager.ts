@@ -168,49 +168,46 @@ export class MindManager {
       }
     }
 
-    // For claude minds, write an apiKeyHelper script so the mind can fetch the system Anthropic key
+    // For claude minds, inject system Anthropic credentials.
+    // OAuth: write Claude Code credential file (~/.claude/.credentials.json) so the
+    // Agent SDK authenticates natively. API key: set ANTHROPIC_API_KEY env var.
     if (target.template === "claude" || !target.template) {
       try {
-        const apiKey = await resolveApiKey("anthropic");
-        const settingsPath = resolve(dir, "home/.claude/settings.json");
-        if (apiKey) {
-          // Write the helper script
-          const helperPath = resolve(dir, ".mind", "api-key-helper.mjs");
-          mkdirSync(resolve(dir, ".mind"), { recursive: true });
-          writeFileSync(
-            helperPath,
-            `const port = process.env.VOLUTE_DAEMON_PORT;
-const token = process.env.VOLUTE_DAEMON_TOKEN;
-if (!port || !token) process.exit(1);
-try {
-  const r = await fetch(\`http://127.0.0.1:\${port}/api/system/ai/key/anthropic\`, {
-    headers: { Authorization: \`Bearer \${token}\` },
-  });
-  if (r.ok) {
-    const { key } = await r.json();
-    if (key) process.stdout.write(key);
-  }
-} catch {}
-`,
-          );
-
-          // Merge apiKeyHelper into settings.json
-          const settings = existsSync(settingsPath)
-            ? JSON.parse(readFileSync(settingsPath, "utf-8"))
-            : {};
-          settings.apiKeyHelper = `node ${helperPath}`;
-          mkdirSync(resolve(dir, "home/.claude"), { recursive: true });
-          writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
-        } else if (existsSync(settingsPath)) {
-          // No Anthropic key — remove apiKeyHelper if present
-          const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-          if (settings.apiKeyHelper) {
-            delete settings.apiKeyHelper;
-            writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+        const { getAiConfig } = await import("../ai-service.js");
+        const ai = getAiConfig();
+        const anthropicConfig = ai?.providers.anthropic;
+        if (anthropicConfig?.oauth) {
+          const key = await resolveApiKey("anthropic");
+          if (key) {
+            // Write credentials in the format Claude Code's Agent SDK expects.
+            // On Linux (no keychain), the SDK reads ~/.claude/.credentials.json.
+            const homeDir = resolve(dir, "home");
+            const claudeDir = resolve(homeDir, ".claude");
+            mkdirSync(claudeDir, { recursive: true });
+            const credsPath = resolve(claudeDir, ".credentials.json");
+            writeFileSync(
+              credsPath,
+              JSON.stringify({
+                claudeAiOauth: {
+                  accessToken: key,
+                  refreshToken: anthropicConfig.oauth.refresh,
+                  expiresAt: anthropicConfig.oauth.expires
+                    ? new Date(anthropicConfig.oauth.expires).toISOString()
+                    : null,
+                  scopes: ["user:inference", "user:profile"],
+                },
+              }),
+              { mode: 0o600 },
+            );
+            if (isIsolationEnabled()) {
+              chownMindDir(claudeDir, baseName);
+            }
           }
+        } else if (anthropicConfig?.apiKey) {
+          env.ANTHROPIC_API_KEY = anthropicConfig.apiKey;
         }
       } catch (err) {
-        mlog.warn(`failed to set up apiKeyHelper for ${name}`, log.errorData(err));
+        mlog.warn(`failed to inject Anthropic credentials for ${name}`, log.errorData(err));
       }
     }
 
