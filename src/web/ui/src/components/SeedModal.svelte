@@ -1,7 +1,14 @@
 <script lang="ts">
 import type { SharedSkill } from "@volute/api";
 import { onMount } from "svelte";
-import { createSeedMind, fetchPrompts, fetchSharedSkills, startMind } from "../lib/client";
+import {
+  type AiModel,
+  createSeedMind,
+  fetchAiModels,
+  fetchPrompts,
+  fetchSharedSkills,
+  startMind,
+} from "../lib/client";
 import Modal from "./Modal.svelte";
 
 const SEED_DEFAULTS = ["orientation", "memory"];
@@ -20,6 +27,11 @@ let seedSoul = $state("");
 let defaultSeedSoul = $state("");
 let sharedSkills = $state<SharedSkill[]>([]);
 let selectedSkills = $state<Set<string>>(new Set(SEED_DEFAULTS));
+let aiModels = $state<AiModel[]>([]);
+
+let enabledModels = $derived(aiModels.filter((m) => m.enabled));
+let piNeedsModel = $derived(template === "pi" && enabledModels.length > 0 && !model);
+let canSubmit = $derived(!loading && !!name.trim() && !piNeedsModel);
 
 onMount(() => {
   nameInput?.focus();
@@ -40,6 +52,13 @@ onMount(() => {
     })
     .catch((e) => {
       console.error("Failed to load shared skills:", e);
+    });
+  fetchAiModels()
+    .then((models) => {
+      aiModels = models;
+    })
+    .catch((e) => {
+      console.error("Failed to load AI models:", e);
     });
 });
 
@@ -104,21 +123,33 @@ async function handleSubmit() {
 
     <label class="field">
       <span class="label">Template</span>
-      <select bind:value={template} class="input select">
+      <select bind:value={template} class="input select" onchange={() => model = ""}>
         <option value="claude">claude</option>
         <option value="pi">pi</option>
       </select>
     </label>
 
-    <label class="field">
-      <span class="label">Model (optional)</span>
-      <input
-        bind:value={model}
-        placeholder="e.g. claude-sonnet-4-5-20250929"
-        onkeydown={(e) => e.key === "Enter" && handleSubmit()}
-        class="input"
-      />
-    </label>
+    {#if template === "pi" && enabledModels.length > 0}
+      <label class="field">
+        <span class="label">Model</span>
+        <select bind:value={model} class="input select">
+          <option value="">Select a model...</option>
+          {#each enabledModels as m}
+            <option value="{m.provider}:{m.id}">{m.name} ({m.provider})</option>
+          {/each}
+        </select>
+      </label>
+    {:else}
+      <label class="field">
+        <span class="label">Model (optional)</span>
+        <input
+          bind:value={model}
+          placeholder={template === "pi" ? "e.g. openrouter:moonshotai/kimi-k2.5" : "e.g. claude-sonnet-4-5-20250929"}
+          onkeydown={(e) => e.key === "Enter" && handleSubmit()}
+          class="input"
+        />
+      </label>
+    {/if}
 
     <button class="advanced-toggle" onclick={() => showAdvanced = !showAdvanced}>
       <span class="caret">{showAdvanced ? "\u25BC" : "\u25B6"}</span> Advanced
@@ -164,8 +195,8 @@ async function handleSubmit() {
       <button
         class="plant-btn"
         onclick={handleSubmit}
-        disabled={loading || !name.trim()}
-        style:opacity={loading || !name.trim() ? 0.5 : 1}
+        disabled={!canSubmit}
+        style:opacity={canSubmit ? 1 : 0.5}
       >
         {loading ? "Planting..." : "Plant"}
       </button>
