@@ -5,23 +5,10 @@ import { formatRelativeTime } from "../lib/format";
 export type FilterState = {
   channel: string;
   session: string;
-  types: Set<string>;
+  preset: "summary" | "conversation" | "detailed" | "all";
 };
 
-const EVENT_TYPES = [
-  { name: "inbound", color: "var(--blue)" },
-  { name: "outbound", color: "var(--accent)" },
-  { name: "text", color: "var(--accent)" },
-  { name: "tool_use", color: "var(--yellow)" },
-  { name: "tool_result", color: "var(--yellow)" },
-  { name: "thinking", color: "var(--text-2)" },
-  { name: "usage", color: "var(--purple)" },
-  { name: "session_start", color: "var(--accent)" },
-  { name: "done", color: "var(--text-2)" },
-  { name: "log", color: "var(--text-2)" },
-] as const;
-
-const ALL_TYPES = new Set(EVENT_TYPES.map((t) => t.name));
+const PRESETS = ["summary", "conversation", "detailed", "all"] as const;
 
 let {
   channels,
@@ -40,7 +27,7 @@ let channelOpen = $state(false);
 let sessionOpen = $state(false);
 
 let hasActiveFilters = $derived(
-  filters.channel !== "" || filters.session !== "" || filters.types.size !== ALL_TYPES.size,
+  filters.channel !== "" || filters.session !== "" || filters.preset !== "summary",
 );
 
 function closeAll() {
@@ -58,22 +45,8 @@ function selectSession(value: string) {
   onchange({ ...filters, session: value });
 }
 
-function toggleType(typeName: string) {
-  const next = new Set(filters.types);
-  if (next.has(typeName)) {
-    next.delete(typeName);
-  } else {
-    next.add(typeName);
-  }
-  onchange({ ...filters, types: next });
-}
-
-function selectAllTypes() {
-  onchange({ ...filters, types: new Set(ALL_TYPES) });
-}
-
-function selectNoneTypes() {
-  onchange({ ...filters, types: new Set() });
+function selectPreset(preset: FilterState["preset"]) {
+  onchange({ ...filters, preset });
 }
 
 function toggleOpen() {
@@ -114,7 +87,7 @@ function handleClickOutside(e: MouseEvent) {
           {#if channelOpen}
             <div class="select-menu">
               <button class="select-option" class:selected={!filters.channel} onclick={() => selectChannel("")}>all</button>
-              {#each channels as ch}
+              {#each channels as ch (ch)}
                 <button class="select-option" class:selected={filters.channel === ch} onclick={() => selectChannel(ch)}>{ch}</button>
               {/each}
             </div>
@@ -132,7 +105,7 @@ function handleClickOutside(e: MouseEvent) {
           {#if sessionOpen}
             <div class="select-menu">
               <button class="select-option" class:selected={!filters.session} onclick={() => selectSession("")}>all</button>
-              {#each sessions as s}
+              {#each sessions as s (s.session)}
                 <button class="select-option" class:selected={filters.session === s.session} onclick={() => selectSession(s.session)}>
                   {s.session} <span class="option-meta">{formatRelativeTime(s.started_at)}</span>
                 </button>
@@ -142,19 +115,11 @@ function handleClickOutside(e: MouseEvent) {
         </div>
       </div>
 
-      <div class="filter-row types-row">
-        <span class="filter-label">types</span>
-        <div class="types-grid">
-          <div class="types-actions">
-            <button class="types-action" onclick={selectAllTypes}>all</button>
-            <button class="types-action" onclick={selectNoneTypes}>none</button>
-          </div>
-          {#each EVENT_TYPES as t}
-            {@const active = filters.types.has(t.name)}
-            <button class="type-chip" class:active onclick={() => toggleType(t.name)}>
-              <span class="type-dot" style:background={active ? t.color : "var(--text-2)"}></span>
-              {t.name}
-            </button>
+      <div class="filter-row preset-row">
+        <span class="filter-label">detail</span>
+        <div class="preset-buttons">
+          {#each PRESETS as p (p)}
+            <button class="preset-btn" class:active={filters.preset === p} onclick={() => selectPreset(p)}>{p}</button>
           {/each}
         </div>
       </div>
@@ -230,70 +195,38 @@ function handleClickOutside(e: MouseEvent) {
     font-family: inherit;
   }
 
-  .types-row {
-    align-items: flex-start;
+  .preset-row {
     padding-top: 4px;
     border-top: 1px solid var(--border);
     margin-top: 2px;
   }
 
-  .types-grid {
+  .preset-buttons {
     display: flex;
-    flex-wrap: wrap;
     gap: 4px;
     flex: 1;
   }
 
-  .types-actions {
-    display: flex;
-    gap: 4px;
-    width: 100%;
-    margin-bottom: 2px;
-  }
-
-  .types-action {
+  .preset-btn {
+    flex: 1;
+    padding: 3px 0;
     font-size: 11px;
     font-family: inherit;
     color: var(--text-2);
     background: none;
-    border: none;
-    cursor: pointer;
-    padding: 1px 6px;
+    border: 1px solid var(--border);
     border-radius: var(--radius);
+    cursor: pointer;
+    transition: color 0.1s, background 0.1s, border-color 0.1s;
   }
-  .types-action:hover {
+  .preset-btn:hover {
     color: var(--text-1);
     background: var(--bg-3);
   }
-
-  .type-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 6px;
-    font-size: 11px;
-    font-family: inherit;
-    color: var(--text-2);
-    background: none;
-    border: none;
-    cursor: pointer;
-    border-radius: var(--radius);
-    transition: color 0.1s;
-  }
-  .type-chip:hover {
-    background: var(--bg-3);
-    color: var(--text-1);
-  }
-  .type-chip.active {
-    color: var(--text-1);
-  }
-
-  .type-dot {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    transition: background 0.15s;
+  .preset-btn.active {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-dim);
   }
 
   .custom-select {

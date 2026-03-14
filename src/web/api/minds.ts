@@ -187,6 +187,7 @@ async function initTemplateBranch(
 ) {
   const templateFiles = listFiles(composedDir)
     .filter((f) => !f.startsWith(".init/") && !f.startsWith(".init\\"))
+    .filter((f) => (!f.startsWith("home/") && !f.startsWith("home\\")) || f === "home/VOLUTE.md")
     .map((f) => manifest.rename[f] ?? f);
 
   const opts = { cwd: projectRoot, mindName, env };
@@ -249,6 +250,16 @@ async function updateTemplateBranch(projectRoot: string, template: string, mindN
     const initDir = resolve(tempWorktree, ".init");
     if (existsSync(initDir)) {
       rmSync(initDir, { recursive: true, force: true });
+    }
+
+    // Remove home files except VOLUTE.md — template branch should only track infrastructure
+    const homeDir = resolve(tempWorktree, "home");
+    if (existsSync(homeDir)) {
+      for (const entry of readdirSync(homeDir)) {
+        if (entry !== "VOLUTE.md") {
+          rmSync(resolve(homeDir, entry), { recursive: true, force: true });
+        }
+      }
     }
 
     await gitExec(["add", "-A"], { cwd: tempWorktree });
@@ -1656,8 +1667,51 @@ const app = new Hono<AuthEnv>()
 
     await gitExec(["worktree", "add", "-b", UPGRADE_BRANCH, worktreeDir], { cwd: dir });
 
+    // Prepare home/ allowlist migration: untrack home files so template
+    // branch removal doesn't cause conflicts or deletions
+    await gitExec(["rm", "-r", "--cached", "--ignore-unmatch", "home/"], {
+      cwd: worktreeDir,
+    });
+    // Re-add VOLUTE.md so template merge can update it
+    try {
+      await gitExec(["checkout", "HEAD", "--", "home/VOLUTE.md"], { cwd: worktreeDir });
+      await gitExec(["add", "home/VOLUTE.md"], { cwd: worktreeDir });
+    } catch (err) {
+      const msg = String((err as Error)?.message ?? err);
+      if (!msg.includes("did not match")) {
+        log.warn(
+          `unexpected error restoring VOLUTE.md during upgrade for ${mindName}`,
+          log.errorData(err),
+        );
+      }
+    }
+    // Commit prep step if there are changes
+    try {
+      await gitExec(["diff", "--cached", "--quiet"], { cwd: worktreeDir });
+    } catch {
+      await gitExec(["commit", "-m", "prepare for home/ allowlist migration"], {
+        cwd: worktreeDir,
+      });
+    }
+
     // Merge template branch
     const hasConflicts = await mergeTemplateBranch(worktreeDir);
+
+    if (!hasConflicts) {
+      // Re-add home files that match the new .gitignore allowlist patterns
+      try {
+        await gitExec(["add", "home/"], { cwd: worktreeDir });
+      } catch (err) {
+        log.warn(`failed to re-add home files during upgrade for ${mindName}`, log.errorData(err));
+      }
+      try {
+        await gitExec(["diff", "--cached", "--quiet"], { cwd: worktreeDir });
+      } catch {
+        await gitExec(["commit", "-m", "re-add allowlisted home files"], {
+          cwd: worktreeDir,
+        });
+      }
+    }
 
     // Fix ownership — daemon runs as root but mind needs to own its files
     chownMindDir(dir, mindName);
@@ -2289,11 +2343,43 @@ const app = new Hono<AuthEnv>()
     const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, name));
     return c.json(rows);
   })
+  .get("/:name/history/turn", async (c) => {
+    const name = c.req.param("name");
+    const session = c.req.query("session");
+    const fromId = parseInt(c.req.query("from_id") ?? "", 10);
+    const toId = parseInt(c.req.query("to_id") ?? "", 10);
+    if (!session || Number.isNaN(fromId) || Number.isNaN(toId)) {
+      return c.json({ error: "session, from_id, and to_id are required" }, 400);
+    }
+
+    const db = await getDb();
+    const rows = await db
+      .select()
+      .from(mindHistory)
+      .where(
+        and(
+          eq(mindHistory.mind, name),
+          eq(mindHistory.session, session),
+          sql`${mindHistory.id} >= ${fromId}`,
+          sql`${mindHistory.id} <= ${toId}`,
+          sql`${mindHistory.type} IN ('inbound','outbound','tool_use','tool_result','text','thinking')`,
+        ),
+      )
+      .orderBy(mindHistory.id);
+
+    return c.json(rows);
+  })
   .get("/:name/history", async (c) => {
     const name = c.req.param("name");
     const channel = c.req.query("channel");
     const session = c.req.query("session");
     const full = c.req.query("full") === "true";
+    const preset = c.req.query("preset") as
+      | "summary"
+      | "conversation"
+      | "detailed"
+      | "all"
+      | undefined;
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
     const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
 
@@ -2305,9 +2391,24 @@ const app = new Hono<AuthEnv>()
     if (session) {
       conditions.push(eq(mindHistory.session, session));
     }
-    // Default to conversation view (inbound/outbound + summaries)
-    if (!full) {
-      conditions.push(sql`${mindHistory.type} IN ('inbound', 'outbound', 'summary')`);
+
+    // Preset-based type filtering
+    const effectivePreset = full ? "all" : preset;
+    switch (effectivePreset) {
+      case "all":
+        // No type filter
+        break;
+      case "conversation":
+        conditions.push(sql`${mindHistory.type} IN ('summary','inbound','outbound','tool_use')`);
+        break;
+      case "detailed":
+        conditions.push(
+          sql`${mindHistory.type} IN ('summary','inbound','outbound','tool_use','tool_result','text','thinking')`,
+        );
+        break;
+      default:
+        conditions.push(sql`${mindHistory.type} IN ('summary')`);
+        break;
     }
 
     const rows = await db

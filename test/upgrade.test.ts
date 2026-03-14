@@ -558,4 +558,252 @@ describe("upgrade git operations", () => {
     const branches = git(["branch", "--list", "upgrade"], repoDir).trim();
     assert.equal(branches, "", "Upgrade branch should be deleted");
   });
+
+  it("upgrade migrates home/ to allowlist tracking", () => {
+    // Create a mind with old-style tracking (everything in home/ tracked)
+    mkdirSync(join(repoDir, "src"), { recursive: true });
+    mkdirSync(join(repoDir, "home", ".config"), { recursive: true });
+    mkdirSync(join(repoDir, "home", "memory"), { recursive: true });
+    writeFileSync(join(repoDir, "src", "server.ts"), "server v1");
+    writeFileSync(join(repoDir, "home", "SOUL.md"), "I am unique");
+    writeFileSync(join(repoDir, "home", "VOLUTE.md"), "volute v1");
+    writeFileSync(join(repoDir, "home", ".config", "routes.json"), '{"routes":[]}');
+    writeFileSync(join(repoDir, "home", "random-file.txt"), "junk");
+    git(["add", "-A"], repoDir);
+    git(["commit", "-m", "mind files"], repoDir);
+
+    // Create template branch with ONLY infra + VOLUTE.md (new style)
+    git(["checkout", "--orphan", "volute/template"], repoDir);
+    git(["rm", "-rf", "--cached", "."], repoDir);
+    git(["clean", "-fd"], repoDir);
+    mkdirSync(join(repoDir, "src"), { recursive: true });
+    mkdirSync(join(repoDir, "home"), { recursive: true });
+    writeFileSync(join(repoDir, "src", "server.ts"), "server v2");
+    writeFileSync(join(repoDir, "home", "VOLUTE.md"), "volute v2");
+    // Include the new allowlist .gitignore on template branch
+    writeFileSync(
+      join(repoDir, ".gitignore"),
+      [
+        "node_modules/",
+        "dist/",
+        ".variants/",
+        ".mind/",
+        "",
+        "home/*",
+        "!home/SOUL.md",
+        "!home/MEMORY.md",
+        "!home/CLAUDE.md",
+        "!home/VOLUTE.md",
+        "!home/memory/",
+        "!home/memory/**",
+        "!home/.config/",
+        "!home/.config/**",
+        "!home/.claude/",
+        "!home/.claude/skills/",
+        "!home/.claude/skills/**",
+        "!home/.claude/settings.json",
+      ].join("\n"),
+    );
+    git(["add", "-A"], repoDir);
+    git(["commit", "-m", "template update"], repoDir);
+    git(["checkout", "main"], repoDir);
+
+    // Create upgrade worktree
+    const worktreeDir = join(repoDir, ".variants", "upgrade");
+    git(["worktree", "add", "-b", "upgrade", worktreeDir], repoDir);
+
+    // Simulate migration: untrack home/ except VOLUTE.md
+    git(["rm", "-r", "--cached", "--ignore-unmatch", "home/"], worktreeDir);
+    try {
+      git(["checkout", "HEAD", "--", "home/VOLUTE.md"], worktreeDir);
+      git(["add", "home/VOLUTE.md"], worktreeDir);
+    } catch {
+      // VOLUTE.md may not exist
+    }
+    try {
+      git(["diff", "--cached", "--quiet"], worktreeDir);
+    } catch {
+      git(["commit", "-m", "prepare for home/ allowlist migration"], worktreeDir);
+    }
+
+    // Merge template
+    try {
+      git(
+        ["merge", "volute/template", "--allow-unrelated-histories", "-m", "merge template"],
+        worktreeDir,
+      );
+    } catch {
+      // Auto-resolve: take template for src/, theirs for VOLUTE.md
+      git(["checkout", "--theirs", "src/"], worktreeDir);
+      git(["checkout", "--theirs", "home/VOLUTE.md"], worktreeDir);
+      git(["add", "-A"], worktreeDir);
+      git(["commit", "-m", "merge template"], worktreeDir);
+    }
+
+    // Re-add allowlisted home files
+    try {
+      git(["add", "home/"], worktreeDir);
+    } catch {
+      // nothing to add
+    }
+    try {
+      git(["diff", "--cached", "--quiet"], worktreeDir);
+    } catch {
+      git(["commit", "-m", "re-add allowlisted home files"], worktreeDir);
+    }
+
+    // Verify: SOUL.md still on disk
+    assert.ok(existsSync(join(worktreeDir, "home", "SOUL.md")));
+    assert.equal(readFileSync(join(worktreeDir, "home", "SOUL.md"), "utf-8"), "I am unique");
+
+    // VOLUTE.md updated from template
+    assert.equal(readFileSync(join(worktreeDir, "home", "VOLUTE.md"), "utf-8"), "volute v2");
+
+    // random-file.txt still on disk but NOT tracked by git
+    assert.ok(existsSync(join(worktreeDir, "home", "random-file.txt")));
+    const tracked = git(["ls-files", "home/random-file.txt"], worktreeDir).trim();
+    assert.equal(tracked, "", "random-file.txt should not be tracked");
+
+    // routes.json still on disk (unmodified) — config not overwritten
+    assert.equal(
+      readFileSync(join(worktreeDir, "home", ".config", "routes.json"), "utf-8"),
+      '{"routes":[]}',
+    );
+
+    git(["worktree", "remove", "--force", worktreeDir], repoDir);
+  });
+
+  it("new mind only tracks allowlisted home files", () => {
+    // Set up repo with the new-style .gitignore (allowlist)
+    const dir = join(tmpDir, "allowlist-repo");
+    if (existsSync(dir)) rmSync(dir, { recursive: true });
+    mkdirSync(dir, { recursive: true });
+    git(["init", "-b", "main"], dir);
+    git(["config", "user.email", "test@test.com"], dir);
+    git(["config", "user.name", "Test"], dir);
+
+    // Write the allowlist .gitignore
+    writeFileSync(
+      join(dir, ".gitignore"),
+      [
+        "node_modules/",
+        "dist/",
+        ".variants/",
+        ".mind/",
+        "",
+        "home/*",
+        "!home/SOUL.md",
+        "!home/MEMORY.md",
+        "!home/CLAUDE.md",
+        "!home/VOLUTE.md",
+        "!home/memory/",
+        "!home/memory/**",
+        "!home/.config/",
+        "!home/.config/**",
+        "!home/.claude/",
+        "!home/.claude/skills/",
+        "!home/.claude/skills/**",
+        "!home/.claude/settings.json",
+      ].join("\n"),
+    );
+
+    // Create allowlisted files
+    mkdirSync(join(dir, "home", "memory"), { recursive: true });
+    mkdirSync(join(dir, "home", ".config"), { recursive: true });
+    mkdirSync(join(dir, "home", ".claude", "skills", "test-skill"), { recursive: true });
+    writeFileSync(join(dir, "home", "SOUL.md"), "soul");
+    writeFileSync(join(dir, "home", "MEMORY.md"), "memory");
+    writeFileSync(join(dir, "home", "VOLUTE.md"), "volute");
+    writeFileSync(join(dir, "home", "memory", "2025-01-01.md"), "journal");
+    writeFileSync(join(dir, "home", ".config", "routes.json"), "{}");
+    writeFileSync(join(dir, "home", ".claude", "settings.json"), "{}");
+    writeFileSync(join(dir, "home", ".claude", "skills", "test-skill", "SKILL.md"), "skill");
+
+    // Create non-allowlisted files
+    writeFileSync(join(dir, "home", "random.txt"), "junk");
+    mkdirSync(join(dir, "home", "downloads"), { recursive: true });
+    writeFileSync(join(dir, "home", "downloads", "file.zip"), "data");
+
+    git(["add", "-A"], dir);
+
+    // Check what's staged
+    const staged = git(["diff", "--cached", "--name-only"], dir);
+
+    // Allowlisted files should be staged
+    assert.ok(staged.includes("home/SOUL.md"), "SOUL.md should be tracked");
+    assert.ok(staged.includes("home/MEMORY.md"), "MEMORY.md should be tracked");
+    assert.ok(staged.includes("home/VOLUTE.md"), "VOLUTE.md should be tracked");
+    assert.ok(staged.includes("home/memory/2025-01-01.md"), "journal should be tracked");
+    assert.ok(staged.includes("home/.config/routes.json"), "config should be tracked");
+    assert.ok(staged.includes("home/.claude/settings.json"), "settings should be tracked");
+    assert.ok(
+      staged.includes("home/.claude/skills/test-skill/SKILL.md"),
+      "skills should be tracked",
+    );
+
+    // Non-allowlisted files should NOT be staged
+    assert.ok(!staged.includes("home/random.txt"), "random.txt should not be tracked");
+    assert.ok(!staged.includes("home/downloads/"), "downloads/ should not be tracked");
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("template merge doesn't touch mind config files", () => {
+    // Create mind with shared history (template branch + main)
+    const dir = join(tmpDir, "config-preserve-repo");
+    if (existsSync(dir)) rmSync(dir, { recursive: true });
+    mkdirSync(dir, { recursive: true });
+    git(["init"], dir);
+    git(["config", "user.email", "test@test.com"], dir);
+    git(["config", "user.name", "Test"], dir);
+
+    // Template branch: only infra + VOLUTE.md
+    mkdirSync(join(dir, "src"), { recursive: true });
+    mkdirSync(join(dir, "home"), { recursive: true });
+    writeFileSync(join(dir, "src", "server.ts"), "server v1");
+    writeFileSync(join(dir, "home", "VOLUTE.md"), "volute v1");
+    git(["checkout", "--orphan", "volute/template"], dir);
+    git(["add", "src/server.ts", "home/VOLUTE.md"], dir);
+    git(["commit", "-m", "template v1"], dir);
+
+    // Main branch from template
+    git(["checkout", "-b", "main"], dir);
+    mkdirSync(join(dir, "home", ".config"), { recursive: true });
+    writeFileSync(join(dir, "home", ".config", "routes.json"), '{"custom": true}');
+    writeFileSync(join(dir, "home", "SOUL.md"), "my soul");
+    git(["add", "-A"], dir);
+    git(["commit", "-m", "mind setup"], dir);
+
+    // Mind customizes config
+    writeFileSync(
+      join(dir, "home", ".config", "routes.json"),
+      '{"custom": true, "modified": true}',
+    );
+    git(["add", "-A"], dir);
+    git(["commit", "-m", "customize config"], dir);
+
+    // Update template
+    git(["checkout", "volute/template"], dir);
+    writeFileSync(join(dir, "src", "server.ts"), "server v2");
+    writeFileSync(join(dir, "home", "VOLUTE.md"), "volute v2");
+    git(["add", "-A"], dir);
+    git(["commit", "-m", "template v2"], dir);
+    git(["checkout", "main"], dir);
+
+    // Merge — should NOT touch routes.json since it's not on template branch
+    const worktreeDir = join(dir, ".variants", "upgrade");
+    git(["worktree", "add", "-b", "upgrade", worktreeDir], dir);
+    git(["merge", "volute/template", "-m", "upgrade"], worktreeDir);
+
+    // Config preserved
+    assert.equal(
+      readFileSync(join(worktreeDir, "home", ".config", "routes.json"), "utf-8"),
+      '{"custom": true, "modified": true}',
+    );
+    // Template files updated
+    assert.equal(readFileSync(join(worktreeDir, "src", "server.ts"), "utf-8"), "server v2");
+    assert.equal(readFileSync(join(worktreeDir, "home", "VOLUTE.md"), "utf-8"), "volute v2");
+
+    git(["worktree", "remove", worktreeDir], dir);
+  });
 });

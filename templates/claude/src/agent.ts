@@ -193,7 +193,8 @@ export function createMind(options: {
           if (!session.name.startsWith("new-")) sessionStore.save(session.name, id);
         },
         broadcast: (event: VoluteEvent) => broadcastToSession(session, event),
-        onTurnEnd: () => {
+        onTurnEnd: async () => {
+          await autoCommit.flushFileChanges();
           const wasCompacting = compactionTriggered.get(session.name);
           compactionTriggered.set(session.name, false);
           if (wasCompacting) {
