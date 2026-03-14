@@ -123,7 +123,9 @@ async function handleClick() {
 
     <div class="event-body">
       {#if expandable && turnExpanded}
-        <div class="turn-branch">
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="turn-branch" onclick={(e) => e.stopPropagation()}>
           {#if turnLoading}
             <div class="turn-loading">loading turn...</div>
           {:else}
