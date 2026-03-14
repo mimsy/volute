@@ -158,7 +158,9 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         options.broadcast({ type: "done" });
         emit(session, { type: "done" });
         session.currentMessageId = undefined;
-        flushFileChanges(options.cwd).then(() => options.onTurnEnd?.());
+        flushFileChanges(options.cwd)
+          .then(() => options.onTurnEnd?.())
+          .catch((err) => log("mind", `session "${session.name}": flush/turn-end error:`, err));
       }
     } catch (err) {
       log("mind", `session "${session.name}": event handler error (${event?.type}):`, err);

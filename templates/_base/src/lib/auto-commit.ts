@@ -17,7 +17,7 @@ function exec(cmd: string, args: string[], cwd: string): Promise<{ code: number;
 // Serialize git operations to prevent concurrent commits from conflicting
 let pending = Promise.resolve();
 
-// Pending file changes, batched per turn
+// Pending file changes accumulated across all sessions, flushed on turn end
 const pendingFiles = new Set<string>();
 const pendingSharedFiles = new Set<string>();
 
@@ -47,7 +47,8 @@ export function trackFileChange(filePath: string, cwd: string): void {
 
 /**
  * Flush all pending file changes into batched commits.
- * Called at the end of each turn to produce one commit per turn.
+ * Called at the end of each turn. Produces up to two commits:
+ * one for the mind's own repo and one for the shared worktree.
  */
 export function flushFileChanges(cwd?: string): Promise<void> {
   const filesToCommit = [...pendingFiles];
@@ -77,8 +78,13 @@ export function flushFileChanges(cwd?: string): Promise<void> {
           // Push if a remote is configured
           const { stdout: remote } = await exec("git", ["remote"], effectiveCwd);
           if (remote) {
-            await exec("git", ["push"], effectiveCwd);
+            const pushResult = await exec("git", ["push"], effectiveCwd);
+            if (pushResult.code !== 0) {
+              log("auto-commit", `git push failed`);
+            }
           }
+        } else {
+          log("auto-commit", `commit failed for: ${names}`);
         }
       }
     }

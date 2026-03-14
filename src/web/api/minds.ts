@@ -1674,8 +1674,14 @@ const app = new Hono<AuthEnv>()
     try {
       await gitExec(["checkout", "HEAD", "--", "home/VOLUTE.md"], { cwd: worktreeDir });
       await gitExec(["add", "home/VOLUTE.md"], { cwd: worktreeDir });
-    } catch {
-      // VOLUTE.md may not exist yet
+    } catch (err) {
+      const msg = String((err as Error)?.message ?? err);
+      if (!msg.includes("did not match")) {
+        log.warn(
+          `unexpected error restoring VOLUTE.md during upgrade for ${mindName}`,
+          log.errorData(err),
+        );
+      }
     }
     // Commit prep step if there are changes
     try {
@@ -1690,8 +1696,12 @@ const app = new Hono<AuthEnv>()
     const hasConflicts = await mergeTemplateBranch(worktreeDir);
 
     if (!hasConflicts) {
-      // Re-add home files per new allowlist
-      await gitExec(["add", "home/"], { cwd: worktreeDir }).catch(() => {});
+      // Re-add home files that match the new .gitignore allowlist patterns
+      try {
+        await gitExec(["add", "home/"], { cwd: worktreeDir });
+      } catch (err) {
+        log.warn(`failed to re-add home files during upgrade for ${mindName}`, log.errorData(err));
+      }
       try {
         await gitExec(["diff", "--cached", "--quiet"], { cwd: worktreeDir });
       } catch {

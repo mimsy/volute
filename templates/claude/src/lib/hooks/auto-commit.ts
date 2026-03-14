@@ -1,5 +1,5 @@
 import type { HookCallback } from "@anthropic-ai/claude-agent-sdk";
-import { flushFileChanges, trackFileChange, waitForCommits } from "../auto-commit.js";
+import { flushFileChanges, trackFileChange } from "../auto-commit.js";
 
 export function createAutoCommitHook(cwd: string) {
   const hook: HookCallback = async (input) => {
@@ -10,5 +10,9 @@ export function createAutoCommitHook(cwd: string) {
     return {};
   };
 
-  return { hook, waitForCommits, flushFileChanges: () => flushFileChanges(cwd) };
+  return {
+    hook,
+    waitForCommits: () => flushFileChanges(cwd),
+    flushFileChanges: () => flushFileChanges(cwd),
+  };
 }

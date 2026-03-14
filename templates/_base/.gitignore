@@ -6,7 +6,7 @@ dist/
 # Ignore everything in home/ by default
 home/*
 
-# Identity files
+# Core mind files
 !home/SOUL.md
 !home/MEMORY.md
 !home/CLAUDE.md
