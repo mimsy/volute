@@ -4,7 +4,7 @@ export type ExtensionInfo = {
   version: string;
   description?: string;
   systemSection?: { id: string; label: string; urlPatterns?: string[] };
-  mindSections?: { id: string; label: string; defaultPath?: string }[];
+  mindSections?: { id: string; label: string; defaultPath?: string; icon?: string }[];
   feedSource?: { endpoint: string; kind?: string };
 };
 

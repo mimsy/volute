@@ -55,6 +55,7 @@ export type MindSection = {
   id: string;
   label: string;
   defaultPath?: string;
+  icon?: string;
 };
 
 export type FeedSource = {

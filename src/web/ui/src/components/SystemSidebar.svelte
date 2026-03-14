@@ -11,7 +11,6 @@ let {
   selection,
   onHome,
   onSelectMind,
-  onSelectMindSection,
   onSelectExtension,
   onSelectSettings,
   onSeed,
@@ -21,7 +20,6 @@ let {
   selection: Selection;
   onHome: () => void;
   onSelectMind: (name: string) => void;
-  onSelectMindSection: (name: string, section: string, defaultPath?: string) => void;
   onSelectExtension: (extensionId: string, path?: string) => void;
   onSelectSettings: () => void;
   onSeed: () => void;
@@ -41,29 +39,6 @@ let activeMindName = $derived.by(() => {
   if (selection.kind === "mind") return selection.name;
   return null;
 });
-
-let activeMindSection = $derived.by(() => {
-  if (selection.tab !== "system") return null;
-  if (selection.kind === "mind") return selection.section ?? "info";
-  return null;
-});
-
-const CORE_MIND_SECTIONS: { key: string; label: string; defaultPath?: string }[] = [
-  { key: "info", label: "Info" },
-  { key: "files", label: "Files" },
-  { key: "settings", label: "Settings" },
-];
-
-let allMindSections = $derived([
-  ...CORE_MIND_SECTIONS,
-  ...extensions.flatMap((ext) =>
-    (ext.mindSections ?? []).map((s) => ({
-      key: `ext:${ext.id}:${s.id}`,
-      label: s.label,
-      defaultPath: s.defaultPath,
-    })),
-  ),
-]);
 </script>
 
 <div class="sidebar-inner">
@@ -103,31 +78,18 @@ let allMindSections = $derived([
       </div>
       <div class="mind-list">
         {#each sortedMinds as mind}
-          <div>
-            <button
-              class="mind-item"
-              class:active={activeMindName === mind.name}
-              onclick={() => onSelectMind(mind.name)}
-            >
-              <span
-                class="status-dot"
-                class:iridescent={activeMinds.has(mind.name)}
-                style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
-              ></span>
-              <span class="mind-item-name">{mind.displayName ?? mind.name}</span>
-            </button>
-            {#if activeMindName === mind.name}
-              <div class="mind-sub-items">
-                {#each allMindSections as sec}
-                  <button
-                    class="mind-sub-item"
-                    class:active={activeMindSection === sec.key}
-                    onclick={() => onSelectMindSection(mind.name, sec.key, sec.defaultPath)}
-                  >{sec.label}</button>
-                {/each}
-              </div>
-            {/if}
-          </div>
+          <button
+            class="mind-item"
+            class:active={activeMindName === mind.name}
+            onclick={() => onSelectMind(mind.name)}
+          >
+            <span
+              class="status-dot"
+              class:iridescent={activeMinds.has(mind.name)}
+              style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
+            ></span>
+            <span class="mind-item-name">{mind.displayName ?? mind.name}</span>
+          </button>
         {/each}
       </div>
     </div>
@@ -271,32 +233,6 @@ let allMindSections = $derived([
     text-overflow: ellipsis;
     white-space: nowrap;
     font-weight: 500;
-  }
-
-  .mind-sub-items {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .mind-sub-item {
-    padding: 4px 12px 4px 42px;
-    background: none;
-    color: var(--text-2);
-    font-size: 12px;
-    text-align: left;
-    border-radius: var(--radius);
-    margin: 0 4px;
-    cursor: pointer;
-  }
-
-  .mind-sub-item:hover {
-    color: var(--text-1);
-    background: var(--bg-2);
-  }
-
-  .mind-sub-item.active {
-    color: var(--text-0);
-    background: var(--bg-2);
   }
 
   .status-dot {
