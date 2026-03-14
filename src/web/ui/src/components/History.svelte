@@ -7,6 +7,26 @@ import SessionDivider from "./SessionDivider.svelte";
 
 let { name }: { name: string } = $props();
 
+const PRESET_TYPES: Record<FilterState["preset"], Set<string> | null> = {
+  all: null,
+  summary: new Set(["summary"]),
+  conversation: new Set(["summary", "inbound", "outbound", "tool_use"]),
+  detailed: new Set([
+    "summary",
+    "inbound",
+    "outbound",
+    "tool_use",
+    "tool_result",
+    "text",
+    "thinking",
+  ]),
+};
+
+function matchesPreset(type: string, preset: FilterState["preset"]): boolean {
+  const allowed = PRESET_TYPES[preset];
+  return allowed === null || allowed.has(type);
+}
+
 const PAGE_SIZE = 100;
 
 let messages = $state<HistoryMessage[]>([]);
@@ -187,8 +207,8 @@ function connectSSE() {
       created_at: (data.createdAt as string) ?? new Date().toISOString(),
     };
 
-    // In summary mode, only append summary events
-    if (currentPreset === "summary" && event.type !== "summary") return;
+    // Filter SSE events by current preset
+    if (!matchesPreset(event.type, currentPreset)) return;
 
     messages = [...messages, event];
 

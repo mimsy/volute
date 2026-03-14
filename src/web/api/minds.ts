@@ -2323,7 +2323,7 @@ const app = new Hono<AuthEnv>()
         break;
       case "detailed":
         conditions.push(
-          sql`${mindHistory.type} IN ('summary','inbound','outbound','tool_use','text','thinking')`,
+          sql`${mindHistory.type} IN ('summary','inbound','outbound','tool_use','tool_result','text','thinking')`,
         );
         break;
       default:
