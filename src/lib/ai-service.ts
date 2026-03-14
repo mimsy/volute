@@ -106,7 +106,7 @@ export function getAvailableModels(): Model<Api>[] {
 }
 
 /** Resolve API key for a provider, checking OAuth → config → env var. */
-async function resolveApiKey(providerId: string): Promise<string | undefined> {
+export async function resolveApiKey(providerId: string): Promise<string | undefined> {
   const ai = getAiConfig();
   const providerConfig = ai?.providers[providerId];
 

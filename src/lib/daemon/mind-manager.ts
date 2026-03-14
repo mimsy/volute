@@ -2,6 +2,7 @@ import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:chil
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
+import { resolveApiKey } from "../ai-service.js";
 import { getDb } from "../db.js";
 import { loadMergedEnv } from "../env.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../isolation.js";
@@ -39,6 +40,7 @@ export class MindManager {
     dir: string;
     port: number;
     baseName: string;
+    template?: string;
   }> {
     const entry = await findMind(name);
     if (!entry) throw new Error(`Unknown mind: ${name}`);
@@ -46,12 +48,12 @@ export class MindManager {
     if (entry.parent) {
       // Variant — dir and port come from the minds table entry
       if (!entry.dir) throw new Error(`Variant ${name} has no directory`);
-      return { dir: entry.dir, port: entry.port, baseName: entry.parent };
+      return { dir: entry.dir, port: entry.port, baseName: entry.parent, template: entry.template };
     }
 
     const dir = mindDir(name);
     if (!existsSync(dir)) throw new Error(`Mind directory missing: ${dir}`);
-    return { dir, port: entry.port, baseName: name };
+    return { dir, port: entry.port, baseName: name, template: entry.template };
   }
 
   async startMind(name: string): Promise<void> {
@@ -133,6 +135,39 @@ export class MindManager {
       CLAUDECODE: undefined,
     };
 
+    // For pi minds, inject the system AI provider's API key
+    if (target.template === "pi") {
+      try {
+        const configPath = resolve(dir, "home/.config/config.json");
+        if (existsSync(configPath)) {
+          const config = JSON.parse(readFileSync(configPath, "utf-8"));
+          const modelStr = config.model as string | undefined;
+          if (modelStr?.includes(":")) {
+            const provider = modelStr.split(":")[0];
+            const apiKey = await resolveApiKey(provider);
+            if (apiKey) {
+              // Write API key to pi-coding-agent auth storage so the mind can use it
+              const piAgentDir = resolve(dir, ".mind", "pi-agent");
+              mkdirSync(piAgentDir, { recursive: true });
+              const authPath = resolve(piAgentDir, "auth.json");
+              const authData: Record<string, unknown> = existsSync(authPath)
+                ? JSON.parse(readFileSync(authPath, "utf-8"))
+                : {};
+              authData[provider] = { type: "api_key", key: apiKey };
+              writeFileSync(authPath, JSON.stringify(authData, null, 2));
+              env.PI_CODING_AGENT_DIR = piAgentDir;
+            } else {
+              mlog.warn(
+                `no API key found for provider "${provider}" — mind ${name} may fail to start`,
+              );
+            }
+          }
+        }
+      } catch (err) {
+        mlog.warn(`failed to inject AI provider key for ${name}`, log.errorData(err));
+      }
+    }
+
     if (isIsolationEnabled()) {
       env.HOME = resolve(dir, "home");
     }
@@ -169,6 +204,15 @@ export class MindManager {
     child.stdout?.pipe(logStream);
     child.stderr?.pipe(logStream);
 
+    // Capture recent stderr for error reporting
+    const recentStderr: string[] = [];
+    child.stderr?.on("data", (data: Buffer) => {
+      const lines = data.toString().split("\n").filter(Boolean);
+      recentStderr.push(...lines);
+      // Keep only last 20 lines
+      while (recentStderr.length > 20) recentStderr.shift();
+    });
+
     // Wait for "listening on :PORT" or timeout
     try {
       await new Promise<void>((resolve, reject) => {
@@ -193,7 +237,12 @@ export class MindManager {
 
         child.on("exit", (code) => {
           clearTimeout(timeout);
-          reject(new Error(`Mind ${name} exited with code ${code} during startup`));
+          // Extract the most useful error line from stderr
+          const errorLine = recentStderr.find(
+            (l) => l.startsWith("Error:") || l.includes("Error:"),
+          );
+          const detail = errorLine ? `: ${errorLine.trim()}` : "";
+          reject(new Error(`Mind ${name} exited with code ${code} during startup${detail}`));
         });
       });
     } catch (err) {
