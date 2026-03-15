@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { createExtension } from "@volute/extensions";
-
+import { createCommands } from "./commands.js";
 import { initDb } from "./db.js";
 import { createRoutes } from "./routes.js";
 
@@ -13,6 +13,7 @@ export default createExtension({
   version: "0.1.0",
   description: "Public notes for sharing thoughts, reflections, and ideas",
   routes: (ctx) => createRoutes(ctx),
+  commands: createCommands(),
   initDb,
   skillsDir,
   standardSkill: true,

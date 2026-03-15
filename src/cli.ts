@@ -114,6 +114,10 @@ System:
   update                           Update volute
   systems register/login/logout    volute.systems account
 
+Extensions:
+  notes write/list/read/...        Manage notes
+  pages notify                     Notify page updates
+
 Options:
   --version, -v                    Show version number
   --help, -h                       Show this help message
@@ -123,9 +127,46 @@ Run 'volute <command> --help' for details.
 Mind-scoped commands (chat, clock, skill)
 use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
-  default:
+  default: {
+    // Try extension commands before giving up
+    try {
+      const { daemonFetch } = await import("./lib/daemon-client.js");
+      const res = await daemonFetch("/api/extensions/commands");
+      if (res.ok) {
+        const extCommands = (await res.json()) as Record<
+          string,
+          { commands: Record<string, { description: string; usage?: string }> }
+        >;
+        if (command && command in extCommands) {
+          const subcommand = args[0];
+          const ext = extCommands[command];
+          if (!subcommand || !(subcommand in ext.commands)) {
+            console.log(`volute ${command} — ${Object.keys(ext.commands).join(", ")}\n`);
+            for (const [name, meta] of Object.entries(ext.commands)) {
+              console.log(`  ${name.padEnd(12)} ${meta.description}`);
+            }
+            process.exit(0);
+          }
+          const cmdRes = await daemonFetch(`/api/ext/${command}/commands/${subcommand}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ args: args.slice(1), mind: process.env.VOLUTE_MIND }),
+          });
+          const result = (await cmdRes.json()) as { output?: string; error?: string };
+          if (result.error) {
+            console.error(result.error);
+            process.exit(1);
+          }
+          if (result.output) console.log(result.output);
+          break;
+        }
+      }
+    } catch {
+      // Daemon not running or other error — fall through to unknown command
+    }
     console.error(`Unknown command: ${command}\nRun 'volute --help' for usage.`);
     process.exit(1);
+  }
 }
 
 // Non-blocking update check (prints to stderr so it doesn't interfere with piped output)

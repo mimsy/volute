@@ -32,6 +32,11 @@ type LoadedExtension = {
 
 const loaded: LoadedExtension[] = [];
 
+export type ExtensionCommandInfo = {
+  description: string;
+  usage?: string;
+};
+
 export type ExtensionInfo = {
   id: string;
   name: string;
@@ -40,6 +45,7 @@ export type ExtensionInfo = {
   systemSection?: SystemSection;
   mindSections?: MindSection[];
   feedSource?: FeedSource;
+  commands?: Record<string, ExtensionCommandInfo>;
 };
 
 function extensionsBaseDir(): string {
@@ -177,6 +183,31 @@ async function loadExtension(
   if (manifest.publicRoutes) {
     const publicApp = manifest.publicRoutes(context);
     app.route(`/ext/${manifest.id}/public`, publicApp);
+  }
+
+  // Mount command endpoints
+  if (manifest.commands) {
+    for (const [cmdName, cmd] of Object.entries(manifest.commands)) {
+      app.post(`${extApiPath}/commands/${cmdName}`, async (c: any) => {
+        const body = (await c.req.json().catch(() => ({}))) as {
+          args?: string[];
+          mind?: string;
+        };
+        const user = c.get("user") as { username: string } | undefined;
+        const mindName = body.mind || user?.username;
+        const session = c.get("mindSession") as string | undefined;
+        try {
+          const result = await cmd.handler(body.args ?? [], {
+            ...context,
+            mindName,
+            session,
+          });
+          return c.json(result);
+        } catch (err) {
+          return c.json({ error: (err as Error).message }, 500);
+        }
+      });
+    }
   }
 
   // Serve static UI assets with SPA fallback for client-side routing
@@ -418,18 +449,48 @@ export async function loadAllExtensions(app: Hono, authMw: MiddlewareHandler): P
       log.error(`failed to load extension: ${manifest.id}`, log.errorData(err));
     }
   }
+
+  // Discovery endpoint for CLI dynamic dispatch (no auth needed)
+  app.get("/api/extensions/commands", (c) => {
+    const result: Record<
+      string,
+      { commands: Record<string, { description: string; usage?: string }> }
+    > = {};
+    for (const { manifest } of loaded) {
+      if (!manifest.commands) continue;
+      const cmds: Record<string, { description: string; usage?: string }> = {};
+      for (const [name, cmd] of Object.entries(manifest.commands)) {
+        cmds[name] = { description: cmd.description, ...(cmd.usage ? { usage: cmd.usage } : {}) };
+      }
+      result[manifest.id] = { commands: cmds };
+    }
+    return c.json(result);
+  });
 }
 
 export function getLoadedExtensions(): ExtensionInfo[] {
-  return loaded.map(({ manifest }) => ({
-    id: manifest.id,
-    name: manifest.name,
-    version: manifest.version,
-    description: manifest.description,
-    systemSection: manifest.ui?.systemSection,
-    mindSections: manifest.ui?.mindSections,
-    feedSource: manifest.ui?.feedSource,
-  }));
+  return loaded.map(({ manifest }) => {
+    let commands: Record<string, ExtensionCommandInfo> | undefined;
+    if (manifest.commands) {
+      commands = {};
+      for (const [name, cmd] of Object.entries(manifest.commands)) {
+        commands[name] = {
+          description: cmd.description,
+          ...(cmd.usage ? { usage: cmd.usage } : {}),
+        };
+      }
+    }
+    return {
+      id: manifest.id,
+      name: manifest.name,
+      version: manifest.version,
+      description: manifest.description,
+      systemSection: manifest.ui?.systemSection,
+      mindSections: manifest.ui?.mindSections,
+      feedSource: manifest.ui?.feedSource,
+      commands,
+    };
+  });
 }
 
 export function getExtensionStandardSkills(): string[] {
