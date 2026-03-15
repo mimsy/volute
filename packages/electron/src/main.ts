@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,7 +22,21 @@ function resourcePath(...parts: string[]): string {
 }
 
 const binDir = resourcePath("bin");
-const nodePath = isDev ? process.execPath : join(binDir, "node");
+
+function findSystemNode(): string {
+  // process.execPath is the Electron binary in dev — find the real Node
+  try {
+    return execFileSync("which", ["node"], { encoding: "utf-8" }).trim();
+  } catch {
+    // Fallback: check common locations
+    for (const p of ["/usr/local/bin/node", "/opt/homebrew/bin/node"]) {
+      if (existsSync(p)) return p;
+    }
+    throw new Error("Could not find system Node.js binary for daemon");
+  }
+}
+
+const nodePath = isDev ? findSystemNode() : join(binDir, "node");
 const daemonScript = resourcePath("dist", "daemon.js");
 const nodeModulesDir = resourcePath("node_modules");
 const voluteHome = isDev
@@ -35,15 +51,11 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 
-async function showWindow() {
+function showWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  // On macOS, the app must be visible in the dock for windows to appear
-  if (process.platform === "darwin" && app.dock) {
-    await app.dock.show();
-  }
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
-  mainWindow.focus();
+  app.focus({ steal: true });
 }
 
 async function createWindow() {
@@ -79,10 +91,6 @@ async function createWindow() {
     if (!isQuitting) {
       e.preventDefault();
       mainWindow?.hide();
-      // Hide dock icon when window is hidden — app lives in the tray
-      if (process.platform === "darwin" && app.dock) {
-        app.dock.hide();
-      }
     }
   });
 }
