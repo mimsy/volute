@@ -193,7 +193,8 @@ function createTray() {
   refreshTrayMenu();
   trayRefreshInterval = setInterval(refreshTrayMenu, 10_000);
 
-  tray.on("click", showWindow);
+  // On macOS, clicking the tray icon opens the context menu by default.
+  // No additional click handler needed — "Show Window" is in the menu.
 }
 
 app.on("before-quit", () => {
