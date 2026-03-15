@@ -55,7 +55,12 @@ function showWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
-  app.focus({ steal: true });
+  // On macOS, showing a hidden window doesn't activate the app —
+  // the window appears behind other apps. setAlwaysOnTop briefly
+  // forces it to the front, then we release it.
+  mainWindow.setAlwaysOnTop(true);
+  mainWindow.focus();
+  mainWindow.setAlwaysOnTop(false);
 }
 
 async function createWindow() {
