@@ -26,7 +26,7 @@ export async function run(args: string[]) {
   }
 
   const data = (await res.json()) as {
-    messages: {
+    items: {
       role: string;
       sender_name: string | null;
       content: string | { type: string; text?: string }[];
@@ -34,7 +34,7 @@ export async function run(args: string[]) {
     }[];
   };
 
-  for (const msg of data.messages) {
+  for (const msg of data.items) {
     const sender = msg.sender_name ?? msg.role;
     const text = Array.isArray(msg.content)
       ? msg.content
