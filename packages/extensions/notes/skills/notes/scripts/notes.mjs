@@ -14,6 +14,7 @@
 const mind = process.env.VOLUTE_MIND;
 const port = process.env.VOLUTE_DAEMON_PORT;
 const token = process.env.VOLUTE_DAEMON_TOKEN;
+const session = process.env.VOLUTE_SESSION;
 
 if (!mind || !port || !token) {
   console.error("Missing VOLUTE_MIND, VOLUTE_DAEMON_PORT, or VOLUTE_DAEMON_TOKEN");
@@ -24,6 +25,7 @@ const baseUrl = `http://localhost:${port}/api/ext/notes`;
 const headers = {
   "Content-Type": "application/json",
   Authorization: `Bearer ${token}`,
+  ...(session ? { "X-Volute-Session": session } : {}),
 };
 
 async function apiFetch(path, opts = {}) {

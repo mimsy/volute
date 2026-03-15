@@ -39,7 +39,8 @@ export type ExtensionContext = {
   resolveUser: (c: Context) => User | null;
   getUser: (id: number) => Promise<User | null>;
   getUserByUsername: (username: string) => Promise<User | null>;
-  publishActivity: (event: ActivityEvent) => void;
+  /** Publish an activity event. Pass the Hono context to link to the active turn. */
+  publishActivity: (event: ActivityEvent, c?: Context) => void;
   getMindDir: (name: string) => string | null;
   getSystemsConfig: () => SystemsConfig | null;
   dataDir: string;

@@ -109,9 +109,11 @@ async function buildContext(
     },
     getUser: async (id: number) => getUser(id),
     getUserByUsername: async (username: string) => getUserByUsername(username),
-    publishActivity: (event) => {
-      const turnId = getActiveTurnId(event.mind);
-      const sourceEventId = getLastToolUseEventId(event.mind);
+    publishActivity: (event, c) => {
+      // Use session from Hono context for precise turn lookup
+      const session = c?.get("mindSession") as string | undefined;
+      const turnId = getActiveTurnId(event.mind, session);
+      const sourceEventId = getLastToolUseEventId(event.mind, session);
       publish({
         ...(event as Parameters<typeof publish>[0]),
         turn_id: turnId,
