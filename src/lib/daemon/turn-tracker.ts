@@ -44,6 +44,22 @@ export function getActiveTurnId(mind: string, session?: string | null): string |
   return (activeTurns.get(key(mind, session)) ?? activeTurns.get(key(mind)))?.turnId;
 }
 
+/**
+ * Best-effort: scan all sessions for an active turn for this mind.
+ * Use only when no session context is available (e.g. sandbox environments).
+ */
+export function getAnyActiveTurnForMind(
+  mind: string,
+): { turnId: string; lastToolUseEventId: number | undefined } | undefined {
+  const wildcard = activeTurns.get(key(mind));
+  if (wildcard) return wildcard;
+  const prefix = `${mind}:`;
+  for (const [k, entry] of activeTurns) {
+    if (k.startsWith(prefix)) return entry;
+  }
+  return undefined;
+}
+
 /** Record the last tool_use event ID for a mind+session. */
 export function trackToolUse(
   mind: string,
