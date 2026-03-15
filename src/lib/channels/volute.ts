@@ -84,7 +84,17 @@ export async function send(
     Origin: url,
   };
   if (token) headers.Authorization = `Bearer ${token}`;
-  if (env.VOLUTE_SESSION) headers["X-Volute-Session"] = env.VOLUTE_SESSION;
+  // Session from env or file fallback (sandbox strips env vars set after process start)
+  let voluteSession = env.VOLUTE_SESSION;
+  if (!voluteSession && env.VOLUTE_MIND_DIR) {
+    try {
+      const sessionPath = resolve(env.VOLUTE_MIND_DIR, ".mind", "current-session");
+      if (existsSync(sessionPath)) voluteSession = readFileSync(sessionPath, "utf-8").trim();
+    } catch {
+      /* best-effort */
+    }
+  }
+  if (voluteSession) headers["X-Volute-Session"] = voluteSession;
 
   const res = await fetch(`${url}/api/minds/${encodeURIComponent(mindName)}/chat`, {
     method: "POST",

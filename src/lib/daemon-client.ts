@@ -2,6 +2,19 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { voluteSystemDir, voluteUserHome } from "./registry.js";
 
+/** Read session from file (fallback for sandbox where env vars don't propagate). */
+function readMindSessionFile(): string | undefined {
+  const mindDir = process.env.VOLUTE_MIND_DIR;
+  if (!mindDir) return undefined;
+  try {
+    const p = resolve(mindDir, ".mind", "current-session");
+    if (existsSync(p)) return readFileSync(p, "utf-8").trim() || undefined;
+  } catch {
+    // best-effort
+  }
+  return undefined;
+}
+
 type CliSession = { sessionId: string; username: string };
 
 function readCliSession(): CliSession | null {
@@ -77,8 +90,8 @@ export async function daemonFetch(path: string, options?: RequestInit): Promise<
   // Set origin to pass CSRF checks on mutation requests
   headers.set("Origin", url);
 
-  // Pass session context for turn resolution (inherited from mind process env)
-  const voluteSession = process.env.VOLUTE_SESSION;
+  // Pass session context for turn resolution (env var or file fallback for sandbox)
+  const voluteSession = process.env.VOLUTE_SESSION ?? readMindSessionFile();
   if (voluteSession) {
     headers.set("X-Volute-Session", voluteSession);
   }

@@ -275,6 +275,19 @@ export function createRouter(options: {
 
     // Expose session to child processes (daemon-client reads this for X-Volute-Session)
     process.env.VOLUTE_SESSION = session;
+    // Also write to file for sandbox environments where env vars don't propagate
+    try {
+      const { writeFileSync, mkdirSync } = require("node:fs");
+      const { resolve } = require("node:path");
+      const mindDir = process.env.VOLUTE_MIND_DIR;
+      if (mindDir) {
+        const sessionFile = resolve(mindDir, ".mind", "current-session");
+        mkdirSync(resolve(mindDir, ".mind"), { recursive: true });
+        writeFileSync(sessionFile, session, "utf-8");
+      }
+    } catch {
+      // best-effort
+    }
 
     // Apply formatting
     const formatted = applyPrefix(content, { ...meta, sessionName: session });
