@@ -84,6 +84,7 @@ export async function send(
     Origin: url,
   };
   if (token) headers.Authorization = `Bearer ${token}`;
+  if (env.VOLUTE_SESSION) headers["X-Volute-Session"] = env.VOLUTE_SESSION;
 
   const res = await fetch(`${url}/api/minds/${encodeURIComponent(mindName)}/chat`, {
     method: "POST",

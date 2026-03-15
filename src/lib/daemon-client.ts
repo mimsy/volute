@@ -77,6 +77,12 @@ export async function daemonFetch(path: string, options?: RequestInit): Promise<
   // Set origin to pass CSRF checks on mutation requests
   headers.set("Origin", url);
 
+  // Pass session context for turn resolution (inherited from mind process env)
+  const voluteSession = process.env.VOLUTE_SESSION;
+  if (voluteSession) {
+    headers.set("X-Volute-Session", voluteSession);
+  }
+
   try {
     const res = await fetch(`${url}${path}`, { ...options, headers });
     if (res.status === 401 && !path.startsWith("/api/auth/")) {
