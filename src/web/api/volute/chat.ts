@@ -5,7 +5,7 @@ import { z } from "zod";
 import { writeChannelEntry } from "../../../connectors/sdk.js";
 import { getOrCreateMindUser } from "../../../lib/auth.js";
 import { routeOutboundBridge } from "../../../lib/bridge-outbound.js";
-import { getLastToolUseEventId } from "../../../lib/daemon/turn-tracker.js";
+import { getActiveTurnId, getLastToolUseEventId } from "../../../lib/daemon/turn-tracker.js";
 import { deliverMessage } from "../../../lib/delivery/message-delivery.js";
 import { subscribe } from "../../../lib/events/conversation-events.js";
 import {
@@ -238,10 +238,17 @@ const app = new Hono<AuthEnv>()
 
     // If sender is a mind, link the message to the tool_use event that triggered it
     const senderIsMind = user.id === 0 && body.sender && (await findMind(body.sender));
-    const sourceEventId = senderIsMind ? getLastToolUseEventId(body.sender!) : undefined;
+    const mindSession = c.get("mindSession");
+    const sourceEventId = senderIsMind
+      ? getLastToolUseEventId(body.sender!, mindSession)
+      : undefined;
+    const turnId = senderIsMind ? getActiveTurnId(body.sender!, mindSession) : undefined;
 
     // Save user message
-    await addMessage(conversationId, "user", senderName, contentBlocks, { sourceEventId });
+    await addMessage(conversationId, "user", senderName, contentBlocks, {
+      sourceEventId,
+      turnId,
+    });
     if (senderIsMind) {
       routeOutboundBridge(conversationId!, senderName, contentBlocks).catch((err) => {
         log.warn("outbound bridge routing failed", log.errorData(err));
@@ -378,10 +385,14 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       }
     }
 
+    const unifiedMindSession = c.get("mindSession");
     const unifiedSourceEventId =
-      user.user_type === "mind" ? getLastToolUseEventId(senderName) : undefined;
+      user.user_type === "mind" ? getLastToolUseEventId(senderName, unifiedMindSession) : undefined;
+    const unifiedTurnId =
+      user.user_type === "mind" ? getActiveTurnId(senderName, unifiedMindSession) : undefined;
     await addMessage(body.conversationId, "user", senderName, contentBlocks, {
       sourceEventId: unifiedSourceEventId,
+      turnId: unifiedTurnId,
     });
 
     // If sender is a mind, check for outbound bridge routing (fire-and-forget)

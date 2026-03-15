@@ -17,6 +17,7 @@ function isValidDaemonToken(token: string): boolean {
 export type AuthEnv = {
   Variables: {
     user: User;
+    mindSession?: string;
   };
 };
 
@@ -107,6 +108,9 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
         description: null,
         avatar: null,
       } as User);
+      // Capture mind session for turn resolution
+      const mindSessionHeader = c.req.header("X-Volute-Session");
+      if (mindSessionHeader) c.set("mindSession", mindSessionHeader);
       await next();
       return;
     }
@@ -116,6 +120,9 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
     if (mindName) {
       const mindUser = await getOrCreateMindUser(mindName);
       c.set("user", mindUser);
+      // Capture mind session for turn resolution
+      const mindSessionHeader = c.req.header("X-Volute-Session");
+      if (mindSessionHeader) c.set("mindSession", mindSessionHeader);
       await next();
       return;
     }

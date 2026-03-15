@@ -1,5 +1,6 @@
 import { existsSync, type FSWatcher, readdirSync, statSync, watch } from "node:fs";
 import { join, resolve } from "node:path";
+import { getActiveTurnId, getLastToolUseEventId } from "./daemon/turn-tracker.js";
 import { publish } from "./events/activity-events.js";
 import log from "./logger.js";
 import { mindDir, readRegistry, voluteHome } from "./registry.js";
@@ -36,6 +37,8 @@ function startPagesWatcher(mindName: string, pagesDir: string): void {
             mind: mindName,
             summary: `${mindName} updated ${filename}`,
             metadata: { file: filename },
+            turn_id: getActiveTurnId(mindName),
+            source_event_id: getLastToolUseEventId(mindName),
           }).catch((err) =>
             log.error("failed to publish page_updated activity", log.errorData(err)),
           );

@@ -7,6 +7,9 @@ function headers(): Record<string, string> {
   if (token) h.Authorization = `Bearer ${token}`;
   // Origin header required for CSRF checks on mutation requests
   if (port) h.Origin = `http://127.0.0.1:${port}`;
+  // Tag requests with the current session for turn resolution
+  const session = process.env.VOLUTE_SESSION;
+  if (session) h["X-Volute-Session"] = session;
   return h;
 }
 

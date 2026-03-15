@@ -1,28 +1,15 @@
 <script lang="ts">
-import type {
-  ConversationWithParticipants,
-  HistoryMessage,
-  HistorySession,
-  Message,
-} from "@volute/api";
+import type { ConversationWithParticipants, TurnRow } from "@volute/api";
 import ExtensionFeedCard from "../components/ExtensionFeedCard.svelte";
 import HistoryEvent from "../components/HistoryEvent.svelte";
 import MindInfo from "../components/MindInfo.svelte";
 import MindSkills from "../components/MindSkills.svelte";
 import PublicFiles from "../components/PublicFiles.svelte";
 import ReadOnlyChatModal from "../components/ReadOnlyChatModal.svelte";
-import {
-  fetchConversationMessages,
-  fetchHistory,
-  fetchHistorySessions,
-  fetchMindConversationMessages,
-  fetchMindConversations,
-} from "../lib/client";
-import { extractTextContent, formatTime, showSenderHeader } from "../lib/feed-utils";
-import { formatRelativeTime, normalizeTimestamp } from "../lib/format";
-import { renderMarkdown } from "../lib/markdown";
-import { navigate } from "../lib/navigate";
-import { auth, data } from "../lib/stores.svelte";
+import { fetchTurns } from "../lib/client";
+import { extractTextContent } from "../lib/feed-utils";
+import { formatRelativeTime } from "../lib/format";
+import { data } from "../lib/stores.svelte";
 
 let {
   name,
@@ -36,203 +23,36 @@ let {
 
 let mind = $derived(data.minds.find((m) => m.name === name));
 
-// --- History data ---
+// --- Turns data ---
 const PAGE_SIZE = 100;
-let historyMessages = $state<HistoryMessage[]>([]);
-let sessions = $state<HistorySession[]>([]);
-let sessionMap = $state<Map<string, HistorySession>>(new Map());
+let turnsData = $state<TurnRow[]>([]);
 let hasMore = $state(true);
 let loading = $state(false);
 let historyError = $state("");
 
-// --- Feed data ---
-let mindConversations = $state<ConversationWithParticipants[]>([]);
-let messagesMap = $state<Record<string, Message[]>>({});
-let scrollEls = $state<Record<string, HTMLDivElement>>({});
 let readOnlyConv = $state<ConversationWithParticipants | null>(null);
-let currentUsername = $derived(auth.user?.username ?? "");
 
-type ExtFeedItem = {
-  id: string;
-  title: string;
-  url: string;
-  date: string;
-  author?: string;
-  bodyHtml: string;
-  iframeUrl?: string;
-  icon?: string;
-  color?: string;
-  extensionId: string;
-};
-let extensionFeedItems = $state<ExtFeedItem[]>([]);
-
-function isUserParticipant(conv: ConversationWithParticipants): boolean {
-  if (!currentUsername) return false;
-  return (conv.participants ?? []).some((p) => p.username === currentUsername);
-}
-
-function getConvLabel(conv: ConversationWithParticipants): string {
-  if (conv.type === "channel" && conv.name) return `#${conv.name}`;
-  const parts = conv.participants ?? [];
-  if (conv.type === "dm" && parts.length === 2) {
-    const other = parts.find((p) => p.username !== name);
-    if (other) return `@${other.username}`;
-  }
-  const others = parts.filter((p) => p.username !== name);
-  if (others.length > 0) return others.map((p) => `@${p.username}`).join(", ");
-  if (conv.title) return conv.title;
-  return "Conversation";
-}
-
-function getSummaryTime(ev: HistoryMessage): string {
-  return formatRelativeTime(ev.created_at);
-}
-
-// Track expanded summaries and calculate feed card offsets
-let expandedOffsets = $state<Record<string, number>>({});
-
-function handleSummaryExpand(
-  rowKey: string,
-  summary: HistoryMessage,
-  feed: FeedItem | undefined,
-  expanded: boolean,
-  el: HTMLDivElement | undefined,
-) {
-  if (!expanded || !feed || !el) {
-    delete expandedOffsets[rowKey];
-    expandedOffsets = { ...expandedOffsets };
-    return;
-  }
-
-  const meta = summary.metadata ? JSON.parse(summary.metadata) : null;
-  if (!meta?.from_time || !meta?.to_time) return;
-
-  const from = new Date(normalizeTimestamp(meta.from_time)).getTime();
-  const to = new Date(normalizeTimestamp(meta.to_time)).getTime();
-  const feedTime = new Date(normalizeTimestamp(feed.date)).getTime();
-
-  const ratio = Math.max(0, Math.min(1, (feedTime - from) / (to - from)));
-
-  // Wait for the expanded content to render, then measure
-  requestAnimationFrame(() => {
-    const height = el.offsetHeight;
-    // Offset the card by the ratio of the expanded height, minus half the card height to center it
-    const offset = Math.round(height * ratio);
-    expandedOffsets = { ...expandedOffsets, [rowKey]: offset };
-  });
-}
-
-function getFeedTime(fi: FeedItem): string {
-  return formatRelativeTime(fi.date);
+function getSummaryTime(turn: TurnRow): string {
+  return formatRelativeTime(turn.created_at);
 }
 
 // --- Unified timeline ---
-type FeedItem =
-  | { kind: "extension"; item: ExtFeedItem; date: string }
-  | { kind: "message"; conv: ConversationWithParticipants; date: string };
-
-let feedItems = $derived.by(() => {
-  const items: FeedItem[] = [];
-  for (const extItem of extensionFeedItems) {
-    items.push({ kind: "extension", item: extItem, date: extItem.date });
-  }
-  for (const conv of mindConversations) {
-    if ((conv as any).lastMessage) {
-      items.push({ kind: "message", conv, date: conv.updated_at });
-    }
-  }
-  return items;
-});
-
-// Build flat timeline sorted purely by time
 type TimelineRow = {
   key: string;
-  summary?: HistoryMessage;
-  feed?: FeedItem;
+  turn: TurnRow;
 };
 
 let timeline = $derived.by((): TimelineRow[] => {
-  // Build sorted lists
-  const summaries = historyMessages
-    .map((ev) => ({ ev, time: new Date(normalizeTimestamp(ev.created_at)).getTime() }))
-    .sort((a, b) => a.time - b.time);
-
-  const feeds = feedItems
-    .map((fi) => ({
-      fi,
-      time: new Date(normalizeTimestamp(fi.date)).getTime(),
-      key: fi.kind === "extension" ? `feed-ext-${fi.item.id}` : `feed-msg-${fi.conv.id}`,
-    }))
-    .sort((a, b) => a.time - b.time);
-
-  // Pair feed items with summaries when the feed time falls within the summary's time range
-  const pairedFeeds = new Set<number>();
-  const summaryFeeds = new Map<number, typeof feeds>();
-
-  for (let fi = 0; fi < feeds.length; fi++) {
-    const feedTime = feeds[fi].time;
-    for (let si = 0; si < summaries.length; si++) {
-      const meta = summaries[si].ev.metadata ? JSON.parse(summaries[si].ev.metadata!) : null;
-      if (!meta?.from_time || !meta?.to_time) continue;
-      const from = new Date(normalizeTimestamp(meta.from_time)).getTime();
-      const to = new Date(normalizeTimestamp(meta.to_time)).getTime();
-      if (feedTime >= from && feedTime <= to) {
-        if (!summaryFeeds.has(si)) summaryFeeds.set(si, []);
-        summaryFeeds.get(si)!.push(feeds[fi]);
-        pairedFeeds.add(fi);
-        break;
-      }
-    }
-  }
-
-  // Build rows: walk through all items chronologically
-  const items: { kind: "summary" | "feed"; idx: number; time: number }[] = [];
-  for (let i = 0; i < summaries.length; i++) {
-    items.push({ kind: "summary", idx: i, time: summaries[i].time });
-  }
-  for (let i = 0; i < feeds.length; i++) {
-    if (!pairedFeeds.has(i)) {
-      items.push({ kind: "feed", idx: i, time: feeds[i].time });
-    }
-  }
-  items.sort((a, b) => a.time - b.time);
-
-  const rows: TimelineRow[] = [];
-  for (const item of items) {
-    if (item.kind === "summary") {
-      const ev = summaries[item.idx].ev;
-      const paired = summaryFeeds.get(item.idx);
-      if (paired && paired.length > 0) {
-        // First paired feed goes side-by-side with the summary
-        rows.push({
-          key: `ev-${ev.id}-${paired[0].key}`,
-          summary: ev,
-          feed: paired[0].fi,
-        });
-        // Additional paired feeds get their own rows
-        for (let i = 1; i < paired.length; i++) {
-          rows.push({
-            key: paired[i].key,
-            feed: paired[i].fi,
-          });
-        }
-      } else {
-        rows.push({ key: `ev-${ev.id}`, summary: ev });
-      }
-    } else {
-      const f = feeds[item.idx];
-      rows.push({ key: f.key, feed: f.fi });
-    }
-  }
-
-  return rows;
+  return turnsData.map((t) => ({
+    key: `turn-${t.id}`,
+    turn: t,
+  }));
 });
 
 // --- SSE ---
 let scrollContainer: HTMLDivElement | undefined = $state();
 let userScrolledUp = $state(false);
 let eventSource: EventSource | null = null;
-let nextSseId = -1;
 
 function connectSSE() {
   disconnectSSE();
@@ -246,34 +66,21 @@ function connectSSE() {
       return;
     }
 
-    const event: HistoryMessage = {
-      id: nextSseId--,
-      mind: name,
-      channel: (d.channel as string) ?? "",
-      session: (d.session as string) ?? null,
-      sender: null,
-      message_id: (d.messageId as string) ?? null,
-      type: d.type as string,
-      content: (d.content as string) ?? "",
-      metadata: d.metadata ? JSON.stringify(d.metadata) : null,
-      turn_id: (d.turnId as string) ?? null,
-      created_at: (d.createdAt as string) ?? new Date().toISOString(),
-    };
+    if (d.type !== "summary") return;
 
-    if (event.type !== "summary") return;
-
-    historyMessages = [...historyMessages, event];
-
-    if (event.session && !sessionMap.has(event.session)) {
-      const newSess: HistorySession = {
-        session: event.session,
-        started_at: event.created_at,
-        event_count: 1,
-        message_count: 0,
-        tool_count: 0,
-      };
-      sessionMap = new Map([...sessionMap, [event.session, newSess]]);
-      sessions = [newSess, ...sessions];
+    const turnId = d.turnId as string | undefined;
+    if (turnId) {
+      fetchTurns(name, { limit: 1, offset: 0 })
+        .then((rows) => {
+          for (const row of rows) {
+            if (!turnsData.some((t) => t.id === row.id)) {
+              turnsData = [...turnsData, row];
+            } else {
+              turnsData = turnsData.map((t) => (t.id === row.id ? row : t));
+            }
+          }
+        })
+        .catch(() => {});
     }
 
     if (!userScrolledUp) {
@@ -298,36 +105,22 @@ function disconnectSSE() {
 }
 
 // --- Data loading ---
-async function loadHistory(offset: number) {
+async function loadTurns(offset: number) {
   loading = true;
   historyError = "";
   try {
-    const rows = await fetchHistory(name, {
-      preset: "summary",
-      limit: PAGE_SIZE,
-      offset,
-    });
+    const rows = await fetchTurns(name, { limit: PAGE_SIZE, offset });
     const chronological = [...rows].reverse();
     if (offset === 0) {
-      historyMessages = chronological;
+      turnsData = chronological;
     } else {
-      historyMessages = [...chronological, ...historyMessages];
+      turnsData = [...chronological, ...turnsData];
     }
     hasMore = rows.length === PAGE_SIZE;
   } catch (e) {
-    historyError = e instanceof Error ? e.message : "Failed to load history";
+    historyError = e instanceof Error ? e.message : "Failed to load";
   }
   loading = false;
-}
-
-async function loadSessions() {
-  try {
-    const sess = await fetchHistorySessions(name);
-    sessions = sess;
-    sessionMap = new Map(sess.map((s) => [s.session, s]));
-  } catch (err) {
-    console.warn("Failed to load sessions:", err);
-  }
 }
 
 // Scroll to bottom on initial load -- keep nudging for a few seconds
@@ -364,15 +157,10 @@ $effect(() => {
   const n = name;
   if (n !== prevName) {
     prevName = n;
-    historyMessages = [];
-    sessions = [];
-    sessionMap = new Map();
+    turnsData = [];
     hasMore = true;
-    nextSseId = -1;
-    messagesMap = {};
     startScrollToBottom();
-    loadHistory(0);
-    loadSessions();
+    loadTurns(0);
   }
 });
 
@@ -386,68 +174,6 @@ $effect(() => {
 // Clean up scroll timer on unmount
 $effect(() => {
   return () => stopScrollTimer();
-});
-
-// Fetch mind conversations
-$effect(() => {
-  const mindName = name;
-  messagesMap = {};
-  fetchMindConversations(mindName)
-    .then((convs) => {
-      mindConversations = convs;
-    })
-    .catch((err) => {
-      console.warn("Failed to load mind conversations:", err);
-      mindConversations = [];
-    });
-});
-
-// Fetch messages for each conversation
-$effect(() => {
-  const convs = mindConversations;
-  for (const conv of convs) {
-    if (messagesMap[conv.id]) continue;
-    const isParticipant = isUserParticipant(conv);
-    const fetchFn = isParticipant
-      ? fetchConversationMessages(conv.id, { limit: 10 })
-      : fetchMindConversationMessages(name, conv.id, { limit: 10 });
-    fetchFn
-      .then((res) => {
-        messagesMap[conv.id] = res.items;
-        requestAnimationFrame(() => {
-          const el = scrollEls[conv.id];
-          if (el) el.scrollTop = el.scrollHeight;
-        });
-      })
-      .catch((err) => {
-        console.warn(`Failed to load messages for conversation ${conv.id}:`, err);
-        messagesMap[conv.id] = [];
-      });
-  }
-});
-
-// Fetch extension feed items
-$effect(() => {
-  const mindName = name;
-  const extensions = data.extensions;
-  const items: ExtFeedItem[] = [];
-  const promises = extensions
-    .filter((ext) => ext.feedSource)
-    .map(async (ext) => {
-      try {
-        const res = await fetch(`${ext.feedSource!.endpoint}?mind=${encodeURIComponent(mindName)}`);
-        if (!res.ok) return;
-        const feedItems = await res.json();
-        for (const item of feedItems) {
-          items.push({ ...item, extensionId: ext.id });
-        }
-      } catch {
-        // skip
-      }
-    });
-  Promise.all(promises).then(() => {
-    extensionFeedItems = items;
-  });
 });
 
 function handleScroll() {
@@ -472,7 +198,7 @@ function jumpToLatest() {
         {#if hasMore}
           <div class="load-older">
             <button
-              onclick={() => loadHistory(historyMessages.length)}
+              onclick={() => loadTurns(turnsData.length)}
               disabled={loading}
               class="load-older-btn"
               style:opacity={loading ? 0.5 : 1}
@@ -492,108 +218,109 @@ function jumpToLatest() {
               <div class="track-row">
                 <!-- Left: timestamp + summary content -->
                 <div class="track-time track-time-left">
-                  {#if row.summary}{getSummaryTime(row.summary)}{/if}
+                  {getSummaryTime(row.turn)}
                 </div>
                 <div class="track-rail track-rail-left">
-                  {#if row.summary}<div class="track-dot"></div>{/if}
+                  <div class="track-dot"></div>
                 </div>
                 <div class="track-content track-content-left">
-                  {#if row.summary}
+                  {#if row.turn.summary}
                     <HistoryEvent
-                      event={row.summary}
+                      event={{
+                        id: 0,
+                        mind: name,
+                        channel: "",
+                        session: null,
+                        sender: null,
+                        message_id: null,
+                        type: "summary",
+                        content: row.turn.summary,
+                        metadata: row.turn.summary_meta ? JSON.stringify(row.turn.summary_meta) : null,
+                        turn_id: row.turn.id,
+                        created_at: row.turn.created_at,
+                      }}
                       mindName={name}
                       expandable
                       compact
-                      onexpand={(exp, el) => handleSummaryExpand(row.key, row.summary!, row.feed, exp, el)}
                     />
+                  {:else}
+                    <div class="turn-pending">processing...</div>
                   {/if}
                 </div>
-                <!-- Right: feed card content + timestamp -->
-                <div
-                  class="track-content track-content-right"
-                  class:track-content-animated={row.summary && row.feed}
-                  style:padding-top={expandedOffsets[row.key] ? `${expandedOffsets[row.key]}px` : undefined}
-                >
-                  {#if row.feed}
-                    {#if row.feed.kind === "extension"}
-                      <div class="feed-card-wrapper">
-                        <ExtensionFeedCard
-                          title={row.feed.item.title}
-                          url={row.feed.item.url}
-                          date={row.feed.item.date}
-                          author={row.feed.item.author}
-                          bodyHtml={row.feed.item.bodyHtml}
-                          iframeUrl={row.feed.item.iframeUrl}
-                          icon={row.feed.item.icon}
-                          color={row.feed.item.color}
-                          onclick={() => navigate(row.feed!.kind === "extension" ? row.feed!.item.url : "")}
-                        />
-                      </div>
-                    {:else}
-                      {@const conv = row.feed.conv}
-                      {@const label = getConvLabel(conv)}
-                      {@const messages = messagesMap[conv.id] ?? []}
-                      {@const participant = isUserParticipant(conv)}
-                      <div class="feed-card-wrapper">
-                        <!-- svelte-ignore a11y_no_static_element_interactions -->
-                        <div class="feed-card card-chat" role="button" tabindex="0" onclick={() => { readOnlyConv = conv; }} onkeydown={(e) => { if (e.key === 'Enter') readOnlyConv = conv; }}>
-                          <div class="feed-card-header header-chat">
-                            <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                            <span class="feed-card-label">{label}</span>
-                            <span class="feed-card-meta">{formatRelativeTime(conv.updated_at)}</span>
-                            {#if participant}
-                              <button
-                                class="card-action-btn card-action-btn-primary"
-                                onclick={(e) => { e.stopPropagation(); navigate(`/chat/${conv.id}`); }}
-                              >
-                                Chat
-                              </button>
-                            {/if}
-                          </div>
-                          <!-- svelte-ignore a11y_no_static_element_interactions -->
-                          <div class="feed-card-body chat-body" bind:this={scrollEls[conv.id]} onscroll={(e) => {
-                            const el = e.currentTarget;
-                            if (el.scrollTop < 10) el.scrollTop = 10;
-                          }}>
-                            {#if messages.length === 0}
-                              <div class="msg-empty">Loading...</div>
-                            {:else}
-                              {#each messages as msg, i (msg.id)}
-                                <div class="chat-entry" class:new-sender={showSenderHeader(messages, i)}>
-                                  {#if showSenderHeader(messages, i)}
-                                    <div class="chat-entry-header">
-                                      <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : name)}</span>
-                                      <span class="chat-timestamp">{formatTime(msg.created_at)}</span>
-                                    </div>
-                                  {/if}
-                                  <div class="chat-entry-content" class:chat-user-text={msg.role === "user"}>
-                                    {#if msg.role === "user"}
-                                      {extractTextContent(msg.content)}
-                                    {:else}
-                                      <div class="markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</div>
-                                    {/if}
-                                  </div>
-                                </div>
-                              {/each}
-                            {/if}
-                          </div>
+                <!-- Right: conversation + activity cards -->
+                <div class="track-content track-content-right">
+                  {#each row.turn.conversations as conv (conv.id)}
+                    <div class="feed-card-wrapper">
+                      <div class="feed-card card-chat" role="button" tabindex="0" onclick={() => {
+                        readOnlyConv = {
+                          id: conv.id,
+                          mind_name: name,
+                          channel: "",
+                          type: conv.type,
+                          name: conv.type === "channel" ? conv.label.replace(/^#/, "") : null,
+                          user_id: null,
+                          title: conv.label,
+                          created_at: row.turn.created_at,
+                          updated_at: row.turn.created_at,
+                          participants: [],
+                        };
+                      }} onkeydown={(e) => {
+                        if (e.key === 'Enter') {
+                          readOnlyConv = {
+                            id: conv.id,
+                            mind_name: name,
+                            channel: "",
+                            type: conv.type,
+                            name: conv.type === "channel" ? conv.label.replace(/^#/, "") : null,
+                            user_id: null,
+                            title: conv.label,
+                            created_at: row.turn.created_at,
+                            updated_at: row.turn.created_at,
+                            participants: [],
+                          };
+                        }
+                      }}>
+                        <div class="feed-card-header header-chat">
+                          <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                          <span class="feed-card-label">{conv.label}</span>
+                          <span class="feed-card-meta">{conv.messages.length} message{conv.messages.length === 1 ? '' : 's'}</span>
+                        </div>
+                        <div class="feed-card-body chat-body">
+                          {#each conv.messages.slice(-5) as msg (msg.id)}
+                            <div class="chat-entry">
+                              <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : name)}</span>
+                              <span class="chat-entry-content">{extractTextContent(msg.content)}</span>
+                            </div>
+                          {/each}
                         </div>
                       </div>
-                    {/if}
-                  {/if}
+                    </div>
+                  {/each}
+                  {#each row.turn.activities as act (act.id)}
+                    <div class="feed-card-wrapper">
+                      <ExtensionFeedCard
+                        title={act.summary}
+                        url={act.metadata?.slug ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : name}/notes/${act.metadata.slug}` : ''}
+                        date={act.created_at}
+                        author={typeof act.metadata?.author === 'string' ? act.metadata.author : undefined}
+                        bodyHtml=""
+                        icon='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>'
+                        color={act.type === 'page_updated' ? 'purple' : 'yellow'}
+                      />
+                    </div>
+                  {/each}
                 </div>
                 <div class="track-rail track-rail-right">
-                  {#if row.feed}<div class="track-dot"></div>{/if}
+                  {#if row.turn.conversations.length > 0 || row.turn.activities.length > 0}<div class="track-dot"></div>{/if}
                 </div>
                 <div class="track-time track-time-right">
-                  {#if row.feed}{getFeedTime(row.feed)}{/if}
                 </div>
               </div>
             {/each}
           </div>
         {/if}
 
-        {#if loading && historyMessages.length > 0}
+        {#if loading && turnsData.length > 0}
           <div class="loading-more">loading...</div>
         {/if}
       </div>
@@ -631,7 +358,7 @@ function jumpToLatest() {
   <ReadOnlyChatModal
     mindName={name}
     conversation={readOnlyConv}
-    canChat={isUserParticipant(readOnlyConv)}
+    canChat={false}
     onClose={() => { readOnlyConv = null; }}
   />
 {/if}
@@ -733,10 +460,6 @@ function jumpToLatest() {
     padding-right: 12px;
   }
 
-  .track-content-animated {
-    transition: padding-top 0.3s ease;
-  }
-
   /* Feed cards on the timeline */
   .feed-card-wrapper {
     padding: 4px 0;
@@ -804,58 +527,15 @@ function jumpToLatest() {
     min-height: 0;
   }
 
-  .card-action-btn {
-    font-size: 12px;
-    padding: 2px 10px;
-    border-radius: var(--radius);
-    cursor: pointer;
-    flex-shrink: 0;
-    background: none;
-    border: 1px solid var(--border);
-    color: var(--text-2);
-    transition: color 0.15s, border-color 0.15s;
-  }
-  .card-action-btn:hover {
-    color: var(--text-1);
-    border-color: var(--border-bright);
-  }
-  .card-action-btn-primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--bg-0);
-  }
-  .card-action-btn-primary:hover {
-    opacity: 0.85;
-    color: var(--bg-0);
-    border-color: var(--accent);
-  }
-
   .chat-body {
     padding: 8px 12px;
-  }
-
-  .msg-empty {
-    color: var(--text-2);
-    font-size: 13px;
-    padding: 16px 0;
-    text-align: center;
   }
 
   .chat-entry {
     padding: 1px 0;
   }
-  .chat-entry.new-sender {
-    margin-top: 8px;
-  }
   .chat-entry:first-child {
     margin-top: 0;
-  }
-
-  .chat-entry-header {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    margin-bottom: 1px;
   }
 
   .chat-sender {
@@ -867,19 +547,10 @@ function jumpToLatest() {
     color: var(--blue);
   }
 
-  .chat-timestamp {
-    font-size: 11px;
-    color: var(--text-2);
-  }
-
   .chat-entry-content {
     min-width: 0;
     font-family: var(--mono);
     font-size: 13px;
-  }
-  .chat-user-text {
-    color: var(--text-0);
-    white-space: pre-wrap;
   }
 
   .load-older {
@@ -915,6 +586,13 @@ function jumpToLatest() {
     font-size: 13px;
     animation: fadeIn 0.2s ease both;
     z-index: 10;
+  }
+
+  .turn-pending {
+    font-size: 12px;
+    color: var(--text-2);
+    padding: 8px 0;
+    animation: pulse 1.5s infinite;
   }
 
   .empty-hint {

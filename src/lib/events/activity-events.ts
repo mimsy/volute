@@ -18,6 +18,8 @@ export type ActivityEvent = {
   mind: string;
   summary: string;
   metadata?: Record<string, unknown>;
+  turn_id?: string;
+  source_event_id?: number;
   created_at?: string;
 };
 
@@ -43,6 +45,8 @@ export async function publish(event: ActivityEvent): Promise<void> {
       mind: event.mind,
       summary: event.summary,
       metadata: event.metadata ? JSON.stringify(event.metadata) : null,
+      turn_id: event.turn_id ?? null,
+      source_event_id: event.source_event_id ?? null,
       created_at,
     });
     id = Number(result.lastInsertRowid);

@@ -109,7 +109,15 @@ async function buildContext(
     getUser: async (id: number) => getUser(id),
     getUserByUsername: async (username: string) => getUserByUsername(username),
     publishActivity: (event) => {
-      publish(event as Parameters<typeof publish>[0]).catch((err) =>
+      const { getActiveTurnId: getTurnId, getLastToolUseEventId: getToolUseId } =
+        require("./daemon/turn-tracker.js") as typeof import("./daemon/turn-tracker.js");
+      const turnId = getTurnId(event.mind);
+      const sourceEventId = getToolUseId(event.mind);
+      publish({
+        ...(event as Parameters<typeof publish>[0]),
+        turn_id: turnId,
+        source_event_id: sourceEventId,
+      }).catch((err) =>
         log.error(`extension ${manifest.id}: failed to publish activity`, log.errorData(err)),
       );
     },

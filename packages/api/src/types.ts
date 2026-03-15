@@ -217,3 +217,36 @@ export type HistorySession = {
   message_count: number;
   tool_count: number;
 };
+
+export type TurnConversation = {
+  id: string;
+  label: string;
+  type: "dm" | "channel";
+  messages: {
+    id: number;
+    role: string;
+    sender_name: string | null;
+    content: ContentBlock[];
+    source_event_id: number | null;
+    created_at: string;
+  }[];
+};
+
+export type TurnActivity = {
+  id: number;
+  type: string;
+  summary: string;
+  metadata: Record<string, unknown> | null;
+  source_event_id: number | null;
+  created_at: string;
+};
+
+export type TurnRow = {
+  id: string;
+  summary: string | null;
+  summary_meta: Record<string, unknown> | null;
+  status: string;
+  created_at: string;
+  conversations: TurnConversation[];
+  activities: TurnActivity[];
+};

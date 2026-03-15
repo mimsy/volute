@@ -273,6 +273,9 @@ export function createRouter(options: {
     const noop = () => {};
     const safeListener = listener ?? noop;
 
+    // Expose session to child processes (daemon-client reads this for X-Volute-Session)
+    process.env.VOLUTE_SESSION = session;
+
     // Apply formatting
     const formatted = applyPrefix(content, { ...meta, sessionName: session });
     const withTyping = appendTypingSuffix(formatted, meta.typing);

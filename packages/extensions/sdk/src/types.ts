@@ -12,9 +12,9 @@ export type Database = {
 
 export type ActivityEvent = {
   type: string;
-  mindName?: string;
-  title?: string;
-  data?: Record<string, unknown>;
+  mind: string;
+  summary: string;
+  metadata?: Record<string, unknown>;
 };
 
 export type User = {

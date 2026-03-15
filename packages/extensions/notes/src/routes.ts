@@ -79,9 +79,9 @@ export function createRoutes(ctx: ExtensionContext): Hono {
 
       ctx.publishActivity({
         type: "note_created",
-        mindName: actor.username,
-        title: body.title,
-        data: { author: actor.username, slug: note.slug },
+        mind: actor.username,
+        summary: `${actor.username} wrote "${body.title}"`,
+        metadata: { author: actor.username, slug: note.slug },
       });
 
       return c.json(note, 201);

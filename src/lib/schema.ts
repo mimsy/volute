@@ -159,11 +159,14 @@ export const activity = sqliteTable(
     mind: text("mind").notNull(),
     summary: text("summary").notNull(),
     metadata: text("metadata"),
+    turn_id: text("turn_id"),
+    source_event_id: integer("source_event_id"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
   },
   (table) => [
     index("idx_activity_created_at").on(table.created_at),
     index("idx_activity_mind").on(table.mind),
+    index("idx_activity_turn_id").on(table.turn_id),
   ],
 );
 
@@ -194,7 +197,11 @@ export const messages = sqliteTable(
     sender_name: text("sender_name"),
     content: text("content").notNull(),
     source_event_id: integer("source_event_id"),
+    turn_id: text("turn_id"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
   },
-  (table) => [index("idx_messages_conversation_id").on(table.conversation_id)],
+  (table) => [
+    index("idx_messages_conversation_id").on(table.conversation_id),
+    index("idx_messages_turn_id").on(table.turn_id),
+  ],
 );
