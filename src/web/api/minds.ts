@@ -31,6 +31,12 @@ import {
 } from "../../lib/daemon/mind-service.js";
 import { getTokenBudget } from "../../lib/daemon/token-budget.js";
 import { summarizeTurn } from "../../lib/daemon/turn-summarizer.js";
+import {
+  assignSession,
+  completeTurn,
+  getActiveTurnId,
+  trackToolUse,
+} from "../../lib/daemon/turn-tracker.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
 import { extractTextContent } from "../../lib/delivery/delivery-router.js";
@@ -2107,6 +2113,17 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "type required" }, 400);
     }
 
+    // Assign session to sessionless turn on first session_start
+    if (body.type === "session_start" && body.session) {
+      const activeTurnId = getActiveTurnId(baseName);
+      if (activeTurnId) {
+        await assignSession(baseName, activeTurnId, body.session);
+      }
+    }
+
+    // Look up active turn for this event
+    const turnId = getActiveTurnId(baseName, body.session);
+
     // Persist to mind_history
     const db = await getDb();
     let insertedId: number | undefined;
@@ -2121,12 +2138,18 @@ const app = new Hono<AuthEnv>()
           message_id: body.messageId ?? null,
           content: body.content ?? null,
           metadata: body.metadata ? JSON.stringify(body.metadata) : null,
+          turn_id: turnId ?? null,
         })
         .returning({ id: mindHistory.id });
       insertedId = result[0]?.id;
     } catch (err) {
       log.error(`failed to persist event for ${baseName}`, log.errorData(err));
       // Continue — persistence is best-effort, don't block real-time streaming
+    }
+
+    // Track tool_use events for source_event_id linking
+    if (body.type === "tool_use" && insertedId != null) {
+      trackToolUse(baseName, body.session, insertedId);
     }
 
     // Publish to in-process pub-sub
@@ -2166,11 +2189,14 @@ const app = new Hono<AuthEnv>()
           log.error(`delivery manager sessionDone failed for ${baseName}`, log.errorData(err));
         }
       }
-      // Fire-and-forget turn summarization
+      // Complete turn and fire-and-forget summarization
+      const completedTurnId = await completeTurn(baseName, body.session);
       if (insertedId != null) {
-        summarizeTurn(baseName, body.session, body.channel, insertedId).catch((err) => {
-          log.error("turn summarization failed", log.errorData(err));
-        });
+        summarizeTurn(baseName, body.session, body.channel, insertedId, completedTurnId).catch(
+          (err) => {
+            log.error("turn summarization failed", log.errorData(err));
+          },
+        );
       }
     }
 

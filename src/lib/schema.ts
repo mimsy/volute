@@ -51,6 +51,23 @@ export const conversations = sqliteTable(
   ],
 );
 
+export const turns = sqliteTable(
+  "turns",
+  {
+    id: text("id").primaryKey(),
+    mind: text("mind").notNull(),
+    session: text("session"),
+    trigger_event_id: integer("trigger_event_id"),
+    summary_event_id: integer("summary_event_id"),
+    status: text("status").notNull().default("active"),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    index("idx_turns_mind").on(table.mind),
+    index("idx_turns_mind_status").on(table.mind, table.status),
+  ],
+);
+
 export const mindHistory = sqliteTable(
   "mind_history",
   {
@@ -63,12 +80,14 @@ export const mindHistory = sqliteTable(
     type: text("type").notNull(),
     content: text("content"),
     metadata: text("metadata"),
+    turn_id: text("turn_id"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
   },
   (table) => [
     index("idx_mind_history_mind").on(table.mind),
     index("idx_mind_history_mind_channel").on(table.mind, table.channel),
     index("idx_mind_history_mind_type").on(table.mind, table.type),
+    index("idx_mind_history_turn_id").on(table.turn_id),
   ],
 );
 
@@ -174,6 +193,7 @@ export const messages = sqliteTable(
     role: text("role").notNull(),
     sender_name: text("sender_name"),
     content: text("content").notNull(),
+    source_event_id: integer("source_event_id"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
   },
   (table) => [index("idx_messages_conversation_id").on(table.conversation_id)],

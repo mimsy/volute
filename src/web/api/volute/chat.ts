@@ -5,6 +5,7 @@ import { z } from "zod";
 import { writeChannelEntry } from "../../../connectors/sdk.js";
 import { getOrCreateMindUser } from "../../../lib/auth.js";
 import { routeOutboundBridge } from "../../../lib/bridge-outbound.js";
+import { getLastToolUseEventId } from "../../../lib/daemon/turn-tracker.js";
 import { deliverMessage } from "../../../lib/delivery/message-delivery.js";
 import { subscribe } from "../../../lib/events/conversation-events.js";
 import {
@@ -235,11 +236,12 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    // Save user message
-    await addMessage(conversationId, "user", senderName, contentBlocks);
-
-    // If sender is a mind, check for outbound bridge routing (fire-and-forget)
+    // If sender is a mind, link the message to the tool_use event that triggered it
     const senderIsMind = user.id === 0 && body.sender && (await findMind(body.sender));
+    const sourceEventId = senderIsMind ? getLastToolUseEventId(body.sender!) : undefined;
+
+    // Save user message
+    await addMessage(conversationId, "user", senderName, contentBlocks, { sourceEventId });
     if (senderIsMind) {
       routeOutboundBridge(conversationId!, senderName, contentBlocks).catch((err) => {
         log.warn("outbound bridge routing failed", log.errorData(err));
@@ -376,7 +378,11 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       }
     }
 
-    await addMessage(body.conversationId, "user", senderName, contentBlocks);
+    const unifiedSourceEventId =
+      user.user_type === "mind" ? getLastToolUseEventId(senderName) : undefined;
+    await addMessage(body.conversationId, "user", senderName, contentBlocks, {
+      sourceEventId: unifiedSourceEventId,
+    });
 
     // If sender is a mind, check for outbound bridge routing (fire-and-forget)
     if (user.user_type === "mind") {

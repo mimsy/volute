@@ -6,6 +6,7 @@ import { summarizeTool } from "../format-tool.js";
 import log from "../logger.js";
 import { getPrompt } from "../prompts.js";
 import { mindHistory } from "../schema.js";
+import { setSummaryEventId } from "./turn-tracker.js";
 
 const sLog = log.child("turn-summarizer");
 
@@ -168,13 +169,42 @@ function buildTranscript(events: HistoryRow[]): string {
   return lines.join("\n");
 }
 
+async function gatherTurnEventsByTurnId(
+  turnId: string,
+): Promise<{ events: HistoryRow[]; fromId: number; toId: number }> {
+  const db = await getDb();
+  const events = await db
+    .select({
+      id: mindHistory.id,
+      type: mindHistory.type,
+      channel: mindHistory.channel,
+      session: mindHistory.session,
+      content: mindHistory.content,
+      metadata: mindHistory.metadata,
+      created_at: mindHistory.created_at,
+    })
+    .from(mindHistory)
+    .where(eq(mindHistory.turn_id, turnId))
+    .orderBy(mindHistory.id);
+
+  return {
+    events,
+    fromId: events.length > 0 ? events[0].id : 0,
+    toId: events.length > 0 ? events[events.length - 1].id : 0,
+  };
+}
+
 export async function summarizeTurn(
   mind: string,
   session: string | undefined,
   channel: string | undefined,
   doneId: number,
+  turnId?: string,
 ): Promise<void> {
-  const { events, fromId, toId } = await gatherTurnEvents(mind, session, doneId);
+  // Use turn_id-based query when available, fall back to boundary-based for old data
+  const { events, fromId, toId } = turnId
+    ? await gatherTurnEventsByTurnId(turnId)
+    : await gatherTurnEvents(mind, session, doneId);
 
   if (events.length === 0) return;
 
@@ -225,21 +255,34 @@ export async function summarizeTurn(
 
   // Persist summary
   const db = await getDb();
+  let summaryId: number | undefined;
   try {
-    await db.insert(mindHistory).values({
-      mind,
-      type: "summary",
-      session: session ?? null,
-      channel: channel ?? null,
-      content: summaryText,
-      metadata: JSON.stringify(metadata),
-    });
+    const result = await db
+      .insert(mindHistory)
+      .values({
+        mind,
+        type: "summary",
+        session: session ?? null,
+        channel: channel ?? null,
+        content: summaryText,
+        metadata: JSON.stringify(metadata),
+        turn_id: turnId ?? null,
+      })
+      .returning({ id: mindHistory.id });
+    summaryId = result[0]?.id;
   } catch (err) {
     sLog.error(
       `failed to persist summary for ${mind} (events ${fromId}-${toId})`,
       log.errorData(err),
     );
     return;
+  }
+
+  // Link summary back to turn
+  if (turnId && summaryId != null) {
+    setSummaryEventId(turnId, summaryId).catch((err) => {
+      sLog.error(`failed to link summary to turn ${turnId}`, log.errorData(err));
+    });
   }
 
   // Publish to SSE

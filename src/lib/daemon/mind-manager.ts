@@ -14,6 +14,7 @@ import { isSandboxEnabled, wrapForSandbox } from "../sandbox.js";
 import { mindHistory } from "../schema.js";
 import { generateMindToken, revokeMindToken } from "./mind-tokens.js";
 import { RestartTracker } from "./restart-tracker.js";
+import { clearMind as clearTurnState } from "./turn-tracker.js";
 
 const mlog = log.child("minds");
 
@@ -357,6 +358,7 @@ export class MindManager {
 
     this.stopping.delete(name);
     revokeMindToken(name);
+    clearTurnState(name);
     if (this.restartTracker.reset(name)) this.saveCrashAttempts();
     rmSync(mindPidPath(name), { force: true });
 
