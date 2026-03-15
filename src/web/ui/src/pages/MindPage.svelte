@@ -242,6 +242,8 @@ function jumpToLatest() {
                       mindName={name}
                       expandable
                       compact
+                      turnConversations={row.turn.conversations}
+                      turnActivities={row.turn.activities}
                     />
                   {:else}
                     <div class="turn-pending">processing...</div>

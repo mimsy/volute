@@ -4,7 +4,11 @@ import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { writeChannelEntry } from "../../../connectors/sdk.js";
 import { getOrCreateMindUser } from "../../../lib/auth.js";
-import { getActiveTurnId, getLastToolUseEventId } from "../../../lib/daemon/turn-tracker.js";
+import {
+  createTurn,
+  getActiveTurnId,
+  getLastToolUseEventId,
+} from "../../../lib/daemon/turn-tracker.js";
 import { deliverMessage } from "../../../lib/delivery/message-delivery.js";
 import { subscribe } from "../../../lib/events/conversation-events.js";
 import {
@@ -177,13 +181,17 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    // Link to sender's active turn if sender is a mind
+    // Link to turn: mind sender uses their active turn, others create/reuse target mind's turn
     const senderIsMind = user.id === 0 && body.sender && (await findMind(body.sender));
     const v1MindSession = c.get("mindSession");
-    const v1SourceEventId = senderIsMind
-      ? getLastToolUseEventId(body.sender!, v1MindSession)
-      : undefined;
-    const v1TurnId = senderIsMind ? getActiveTurnId(body.sender!, v1MindSession) : undefined;
+    let v1SourceEventId: number | undefined;
+    let v1TurnId: string | undefined;
+    if (senderIsMind) {
+      v1SourceEventId = getLastToolUseEventId(body.sender!, v1MindSession);
+      v1TurnId = getActiveTurnId(body.sender!, v1MindSession);
+    } else {
+      v1TurnId = await createTurn(baseName);
+    }
 
     await addMessage(conversationId, "user", senderName, contentBlocks, {
       sourceEventId: v1SourceEventId,
@@ -261,12 +269,16 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    // Link to sender's active turn if sender is a mind
+    // Link to turn: mind sender uses their active turn, others create/reuse target mind's turn
     const unifiedV1Session = c.get("mindSession");
-    const unifiedV1SourceEventId =
-      user.user_type === "mind" ? getLastToolUseEventId(senderName, unifiedV1Session) : undefined;
-    const unifiedV1TurnId =
-      user.user_type === "mind" ? getActiveTurnId(senderName, unifiedV1Session) : undefined;
+    let unifiedV1SourceEventId: number | undefined;
+    let unifiedV1TurnId: string | undefined;
+    if (user.user_type === "mind") {
+      unifiedV1SourceEventId = getLastToolUseEventId(senderName, unifiedV1Session);
+      unifiedV1TurnId = getActiveTurnId(senderName, unifiedV1Session);
+    } else if (conv.mind_name) {
+      unifiedV1TurnId = await createTurn(conv.mind_name);
+    }
 
     await addMessage(body.conversationId, "user", senderName, contentBlocks, {
       sourceEventId: unifiedV1SourceEventId,

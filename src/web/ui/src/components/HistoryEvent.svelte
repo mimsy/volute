@@ -1,9 +1,11 @@
 <script lang="ts">
-import type { HistoryMessage } from "@volute/api";
+import type { HistoryMessage, TurnActivity, TurnConversation } from "@volute/api";
 import { tick } from "svelte";
 import { fetchTurnEvents } from "../lib/client";
+import { extractTextContent } from "../lib/feed-utils";
 import { normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
+import ExtensionFeedCard from "./ExtensionFeedCard.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
 
 let {
@@ -11,6 +13,8 @@ let {
   mindName,
   expandable = false,
   compact = false,
+  turnConversations = [],
+  turnActivities = [],
   onsessionclick,
   onexpand,
 }: {
@@ -18,6 +22,8 @@ let {
   mindName: string;
   expandable?: boolean;
   compact?: boolean;
+  turnConversations?: TurnConversation[];
+  turnActivities?: TurnActivity[];
   onsessionclick?: (session: string) => void;
   onexpand?: (expanded: boolean, el: HTMLDivElement | undefined) => void;
 } = $props();
@@ -166,6 +172,67 @@ async function handleClick() {
           {:else}
             {#each turnEvents as turnEv (turnEv.id)}
               <HistoryEvent event={turnEv} {mindName} />
+              {#if turnEv.type === "tool_use"}
+                {#each turnConversations.filter((c) => c.messages.some((m) => m.source_event_id === turnEv.id)) as conv (conv.id)}
+                  <div class="linked-card">
+                    <div class="linked-card-chat">
+                      <div class="linked-card-header">
+                        <svg class="linked-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                        <span class="linked-card-label">{conv.label}</span>
+                      </div>
+                      {#each conv.messages.filter((m) => m.source_event_id === turnEv.id) as msg (msg.id)}
+                        <div class="linked-card-msg">
+                          <span class="linked-card-sender" class:linked-card-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : mindName)}</span>
+                          {extractTextContent(msg.content)}
+                        </div>
+                      {/each}
+                    </div>
+                  </div>
+                {/each}
+                {#each turnActivities.filter((a) => a.source_event_id === turnEv.id) as act (act.id)}
+                  <div class="linked-card">
+                    <ExtensionFeedCard
+                      title={act.summary}
+                      url={act.metadata?.slug ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : mindName}/notes/${act.metadata.slug}` : ''}
+                      date={act.created_at}
+                      author={typeof act.metadata?.author === 'string' ? act.metadata.author : undefined}
+                      bodyHtml=""
+                      icon='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>'
+                      color={act.type === 'page_updated' ? 'purple' : 'yellow'}
+                    />
+                  </div>
+                {/each}
+              {/if}
+            {/each}
+            <!-- Unlinked cards (no source_event_id) appear before the summary -->
+            {#each turnConversations.filter((c) => c.messages.every((m) => !m.source_event_id || !turnEvents.some((e) => e.id === m.source_event_id))) as conv (conv.id)}
+              <div class="linked-card">
+                <div class="linked-card-chat">
+                  <div class="linked-card-header">
+                    <svg class="linked-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                    <span class="linked-card-label">{conv.label}</span>
+                  </div>
+                  {#each conv.messages as msg (msg.id)}
+                    <div class="linked-card-msg">
+                      <span class="linked-card-sender" class:linked-card-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : mindName)}</span>
+                      {extractTextContent(msg.content)}
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/each}
+            {#each turnActivities.filter((a) => !a.source_event_id || !turnEvents.some((e) => e.id === a.source_event_id)) as act (act.id)}
+              <div class="linked-card">
+                <ExtensionFeedCard
+                  title={act.summary}
+                  url={act.metadata?.slug ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : mindName}/notes/${act.metadata.slug}` : ''}
+                  date={act.created_at}
+                  author={typeof act.metadata?.author === 'string' ? act.metadata.author : undefined}
+                  bodyHtml=""
+                  icon='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>'
+                  color={act.type === 'page_updated' ? 'purple' : 'yellow'}
+                />
+              </div>
             {/each}
           {/if}
           <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -515,5 +582,50 @@ async function handleClick() {
     border-radius: 50%;
     background: var(--text-0);
     z-index: 1;
+  }
+
+  /* Linked feed cards inline with turn events */
+  .linked-card {
+    margin: 4px 0 4px 20px;
+  }
+  .linked-card-chat {
+    background: var(--bg-0);
+    border: 1px solid color-mix(in srgb, var(--blue) 25%, var(--border));
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    font-size: 13px;
+  }
+  .linked-card-header {
+    padding: 4px 8px;
+    font-weight: 500;
+    color: var(--text-1);
+    border-bottom: 1px solid color-mix(in srgb, var(--blue) 25%, var(--border));
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .linked-card-icon {
+    width: 12px;
+    height: 12px;
+    color: var(--blue);
+    flex-shrink: 0;
+  }
+  .linked-card-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .linked-card-msg {
+    padding: 2px 8px;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .linked-card-sender {
+    font-weight: 600;
+    color: var(--accent);
+    margin-right: 6px;
+  }
+  .linked-card-sender-user {
+    color: var(--blue);
   }
 </style>
