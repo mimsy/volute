@@ -12,12 +12,14 @@ let {
   expandable = false,
   compact = false,
   onsessionclick,
+  onexpand,
 }: {
   event: HistoryMessage;
   mindName: string;
   expandable?: boolean;
   compact?: boolean;
   onsessionclick?: (session: string) => void;
+  onexpand?: (expanded: boolean, el: HTMLDivElement | undefined) => void;
 } = $props();
 
 let expanded = $state(false);
@@ -81,14 +83,22 @@ async function handleClick() {
   if (event.type === "summary" && expandable) {
     turnExpanded = !turnExpanded;
     if (turnExpanded && turnEvents.length === 0) {
-      if (!event.session || !meta?.from_id || !meta?.to_id) {
+      // Prefer turn_id when available; fall back to legacy session+range
+      const hasTurnId = !!event.turn_id;
+      const hasLegacy = event.session && meta?.from_id && meta?.to_id;
+      if (!hasTurnId && !hasLegacy) {
         turnError = "Missing turn data";
         return;
       }
       turnLoading = true;
       turnError = "";
       try {
-        turnEvents = await fetchTurnEvents(mindName, event.session, meta.from_id, meta.to_id);
+        turnEvents = await fetchTurnEvents(
+          mindName,
+          hasTurnId
+            ? { turnId: event.turn_id! }
+            : { session: event.session!, fromId: meta.from_id, toId: meta.to_id },
+        );
       } catch (e) {
         turnError = "Failed to load turn details";
         console.warn("Failed to fetch turn events:", e);
@@ -100,6 +110,7 @@ async function handleClick() {
       await tick();
       eventEl?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
+    onexpand?.(turnExpanded, eventEl);
   } else if (collapsible) {
     expanded = !expanded;
   }

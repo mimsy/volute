@@ -206,6 +206,7 @@ export type HistoryMessage = {
   type: string;
   content: string;
   metadata: string | null;
+  turn_id: string | null;
   created_at: string;
 };
 

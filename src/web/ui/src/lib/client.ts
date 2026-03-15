@@ -222,15 +222,16 @@ export function fetchHistory(
 
 export function fetchTurnEvents(
   name: string,
-  session: string,
-  fromId: number,
-  toId: number,
+  opts: { turnId: string } | { session: string; fromId: number; toId: number },
 ): Promise<HistoryMessage[]> {
-  const params = new URLSearchParams({
-    session,
-    from_id: String(fromId),
-    to_id: String(toId),
-  });
+  const params = new URLSearchParams();
+  if ("turnId" in opts) {
+    params.set("turn_id", opts.turnId);
+  } else {
+    params.set("session", opts.session);
+    params.set("from_id", String(opts.fromId));
+    params.set("to_id", String(opts.toId));
+  }
   return get(`${V1}/minds/${enc(name)}/history/turn?${params}`);
 }
 

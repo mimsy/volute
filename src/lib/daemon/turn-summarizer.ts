@@ -293,5 +293,6 @@ export async function summarizeTurn(
     channel,
     content: summaryText,
     metadata,
+    turnId: turnId,
   });
 }

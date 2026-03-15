@@ -2161,6 +2161,7 @@ const app = new Hono<AuthEnv>()
       messageId: body.messageId,
       content: body.content,
       metadata: body.metadata,
+      turnId: turnId ?? undefined,
     });
 
     // Track mind activity for dashboard timeline
@@ -2345,14 +2346,34 @@ const app = new Hono<AuthEnv>()
   })
   .get("/:name/history/turn", async (c) => {
     const name = c.req.param("name");
+    const turnId = c.req.query("turn_id");
+
+    const db = await getDb();
+
+    // Prefer turn_id-based query; fall back to legacy session+range
+    if (turnId) {
+      const rows = await db
+        .select()
+        .from(mindHistory)
+        .where(
+          and(
+            eq(mindHistory.mind, name),
+            eq(mindHistory.turn_id, turnId),
+            sql`${mindHistory.type} IN ('inbound','outbound','tool_use','tool_result','text','thinking')`,
+          ),
+        )
+        .orderBy(mindHistory.id);
+      return c.json(rows);
+    }
+
+    // Legacy: session + from_id/to_id range
     const session = c.req.query("session");
     const fromId = parseInt(c.req.query("from_id") ?? "", 10);
     const toId = parseInt(c.req.query("to_id") ?? "", 10);
     if (!session || Number.isNaN(fromId) || Number.isNaN(toId)) {
-      return c.json({ error: "session, from_id, and to_id are required" }, 400);
+      return c.json({ error: "turn_id, or session with from_id and to_id, required" }, 400);
     }
 
-    const db = await getDb();
     const rows = await db
       .select()
       .from(mindHistory)

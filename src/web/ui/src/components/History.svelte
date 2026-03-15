@@ -198,6 +198,7 @@ function connectSSE() {
       type: data.type as string,
       content: (data.content as string) ?? "",
       metadata: data.metadata ? JSON.stringify(data.metadata) : null,
+      turn_id: (data.turnId as string) ?? null,
       created_at: (data.createdAt as string) ?? new Date().toISOString(),
     };
 

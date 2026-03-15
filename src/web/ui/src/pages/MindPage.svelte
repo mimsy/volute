@@ -84,9 +84,46 @@ function getConvLabel(conv: ConversationWithParticipants): string {
   return "Conversation";
 }
 
-function getItemTime(item: InfoTimelineItem): string {
-  if (item.kind === "summary") return formatRelativeTime(item.event.created_at);
-  return formatRelativeTime(item.item.date);
+function getSummaryTime(ev: HistoryMessage): string {
+  return formatRelativeTime(ev.created_at);
+}
+
+// Track expanded summaries and calculate feed card offsets
+let expandedOffsets = $state<Record<string, number>>({});
+
+function handleSummaryExpand(
+  rowKey: string,
+  summary: HistoryMessage,
+  feed: FeedItem | undefined,
+  expanded: boolean,
+  el: HTMLDivElement | undefined,
+) {
+  if (!expanded || !feed || !el) {
+    delete expandedOffsets[rowKey];
+    expandedOffsets = { ...expandedOffsets };
+    return;
+  }
+
+  const meta = summary.metadata ? JSON.parse(summary.metadata) : null;
+  if (!meta?.from_time || !meta?.to_time) return;
+
+  const from = new Date(normalizeTimestamp(meta.from_time)).getTime();
+  const to = new Date(normalizeTimestamp(meta.to_time)).getTime();
+  const feedTime = new Date(normalizeTimestamp(feed.date)).getTime();
+
+  const ratio = Math.max(0, Math.min(1, (feedTime - from) / (to - from)));
+
+  // Wait for the expanded content to render, then measure
+  requestAnimationFrame(() => {
+    const height = el.offsetHeight;
+    // Offset the card by the ratio of the expanded height, minus half the card height to center it
+    const offset = Math.round(height * ratio);
+    expandedOffsets = { ...expandedOffsets, [rowKey]: offset };
+  });
+}
+
+function getFeedTime(fi: FeedItem): string {
+  return formatRelativeTime(fi.date);
 }
 
 // --- Unified timeline ---
@@ -108,33 +145,87 @@ let feedItems = $derived.by(() => {
 });
 
 // Build flat timeline sorted purely by time
-type InfoTimelineItem =
-  | { kind: "summary"; event: HistoryMessage; key: string }
-  | { kind: "feed"; item: FeedItem; key: string };
+type TimelineRow = {
+  key: string;
+  summary?: HistoryMessage;
+  feed?: FeedItem;
+};
 
-let timeline = $derived.by(() => {
-  const items: { item: InfoTimelineItem; time: number }[] = [];
+let timeline = $derived.by((): TimelineRow[] => {
+  // Build sorted lists
+  const summaries = historyMessages
+    .map((ev) => ({ ev, time: new Date(normalizeTimestamp(ev.created_at)).getTime() }))
+    .sort((a, b) => a.time - b.time);
 
-  for (const ev of historyMessages) {
-    items.push({
-      item: { kind: "summary", event: ev, key: `ev-${ev.id}` },
-      time: new Date(normalizeTimestamp(ev.created_at)).getTime(),
-    });
-  }
-
-  for (const fi of feedItems) {
-    items.push({
-      item: {
-        kind: "feed",
-        item: fi,
-        key: fi.kind === "extension" ? `feed-ext-${fi.item.id}` : `feed-msg-${fi.conv.id}`,
-      },
+  const feeds = feedItems
+    .map((fi) => ({
+      fi,
       time: new Date(normalizeTimestamp(fi.date)).getTime(),
-    });
+      key: fi.kind === "extension" ? `feed-ext-${fi.item.id}` : `feed-msg-${fi.conv.id}`,
+    }))
+    .sort((a, b) => a.time - b.time);
+
+  // Pair feed items with summaries when the feed time falls within the summary's time range
+  const pairedFeeds = new Set<number>();
+  const summaryFeeds = new Map<number, typeof feeds>();
+
+  for (let fi = 0; fi < feeds.length; fi++) {
+    const feedTime = feeds[fi].time;
+    for (let si = 0; si < summaries.length; si++) {
+      const meta = summaries[si].ev.metadata ? JSON.parse(summaries[si].ev.metadata!) : null;
+      if (!meta?.from_time || !meta?.to_time) continue;
+      const from = new Date(normalizeTimestamp(meta.from_time)).getTime();
+      const to = new Date(normalizeTimestamp(meta.to_time)).getTime();
+      if (feedTime >= from && feedTime <= to) {
+        if (!summaryFeeds.has(si)) summaryFeeds.set(si, []);
+        summaryFeeds.get(si)!.push(feeds[fi]);
+        pairedFeeds.add(fi);
+        break;
+      }
+    }
   }
 
+  // Build rows: walk through all items chronologically
+  const items: { kind: "summary" | "feed"; idx: number; time: number }[] = [];
+  for (let i = 0; i < summaries.length; i++) {
+    items.push({ kind: "summary", idx: i, time: summaries[i].time });
+  }
+  for (let i = 0; i < feeds.length; i++) {
+    if (!pairedFeeds.has(i)) {
+      items.push({ kind: "feed", idx: i, time: feeds[i].time });
+    }
+  }
   items.sort((a, b) => a.time - b.time);
-  return items.map((i) => i.item);
+
+  const rows: TimelineRow[] = [];
+  for (const item of items) {
+    if (item.kind === "summary") {
+      const ev = summaries[item.idx].ev;
+      const paired = summaryFeeds.get(item.idx);
+      if (paired && paired.length > 0) {
+        // First paired feed goes side-by-side with the summary
+        rows.push({
+          key: `ev-${ev.id}-${paired[0].key}`,
+          summary: ev,
+          feed: paired[0].fi,
+        });
+        // Additional paired feeds get their own rows
+        for (let i = 1; i < paired.length; i++) {
+          rows.push({
+            key: paired[i].key,
+            feed: paired[i].fi,
+          });
+        }
+      } else {
+        rows.push({ key: `ev-${ev.id}`, summary: ev });
+      }
+    } else {
+      const f = feeds[item.idx];
+      rows.push({ key: f.key, feed: f.fi });
+    }
+  }
+
+  return rows;
 });
 
 // --- SSE ---
@@ -165,6 +256,7 @@ function connectSSE() {
       type: d.type as string,
       content: (d.content as string) ?? "",
       metadata: d.metadata ? JSON.stringify(d.metadata) : null,
+      turn_id: (d.turnId as string) ?? null,
       created_at: (d.createdAt as string) ?? new Date().toISOString(),
     };
 
@@ -395,39 +487,54 @@ function jumpToLatest() {
         {:else if timeline.length === 0 && !loading}
           <div class="empty-hint">No activity yet.</div>
         {:else}
-          <div class="timeline-rail">
-            {#each timeline as item (item.key)}
-              {#if item.kind === "summary"}
-                <div class="timed-row">
-                  <span class="row-time">{getItemTime(item)}</span>
-                  <HistoryEvent event={item.event} mindName={name} expandable compact />
+          <div class="two-track">
+            {#each timeline as row (row.key)}
+              <div class="track-row">
+                <!-- Left: timestamp + summary content -->
+                <div class="track-time track-time-left">
+                  {#if row.summary}{getSummaryTime(row.summary)}{/if}
                 </div>
-              {:else if item.kind === "feed"}
-                {@const feed = item.item}
-                <div class="timed-row">
-                  <span class="row-time">{getItemTime(item)}</span>
-                  {#if feed.kind === "extension"}
+                <div class="track-rail track-rail-left">
+                  {#if row.summary}<div class="track-dot"></div>{/if}
+                </div>
+                <div class="track-content track-content-left">
+                  {#if row.summary}
+                    <HistoryEvent
+                      event={row.summary}
+                      mindName={name}
+                      expandable
+                      compact
+                      onexpand={(exp, el) => handleSummaryExpand(row.key, row.summary!, row.feed, exp, el)}
+                    />
+                  {/if}
+                </div>
+                <!-- Right: feed card content + timestamp -->
+                <div
+                  class="track-content track-content-right"
+                  class:track-content-animated={row.summary && row.feed}
+                  style:padding-top={expandedOffsets[row.key] ? `${expandedOffsets[row.key]}px` : undefined}
+                >
+                  {#if row.feed}
+                    {#if row.feed.kind === "extension"}
                       <div class="feed-card-wrapper">
-                        <div class="feed-marker" style:background={feed.item.color ? `var(--${feed.item.color})` : "var(--text-2)"}></div>
                         <ExtensionFeedCard
-                          title={feed.item.title}
-                          url={feed.item.url}
-                          date={feed.item.date}
-                          author={feed.item.author}
-                          bodyHtml={feed.item.bodyHtml}
-                          iframeUrl={feed.item.iframeUrl}
-                          icon={feed.item.icon}
-                          color={feed.item.color}
-                          onclick={() => navigate(feed.item.url)}
+                          title={row.feed.item.title}
+                          url={row.feed.item.url}
+                          date={row.feed.item.date}
+                          author={row.feed.item.author}
+                          bodyHtml={row.feed.item.bodyHtml}
+                          iframeUrl={row.feed.item.iframeUrl}
+                          icon={row.feed.item.icon}
+                          color={row.feed.item.color}
+                          onclick={() => navigate(row.feed!.kind === "extension" ? row.feed!.item.url : "")}
                         />
                       </div>
                     {:else}
-                      {@const conv = feed.conv}
+                      {@const conv = row.feed.conv}
                       {@const label = getConvLabel(conv)}
                       {@const messages = messagesMap[conv.id] ?? []}
                       {@const participant = isUserParticipant(conv)}
                       <div class="feed-card-wrapper">
-                        <div class="feed-marker" style:background="var(--blue)"></div>
                         <!-- svelte-ignore a11y_no_static_element_interactions -->
                         <div class="feed-card card-chat" role="button" tabindex="0" onclick={() => { readOnlyConv = conv; }} onkeydown={(e) => { if (e.key === 'Enter') readOnlyConv = conv; }}>
                           <div class="feed-card-header header-chat">
@@ -472,9 +579,16 @@ function jumpToLatest() {
                           </div>
                         </div>
                       </div>
+                    {/if}
                   {/if}
                 </div>
-              {/if}
+                <div class="track-rail track-rail-right">
+                  {#if row.feed}<div class="track-dot"></div>{/if}
+                </div>
+                <div class="track-time track-time-right">
+                  {#if row.feed}{getFeedTime(row.feed)}{/if}
+                </div>
+              </div>
             {/each}
           </div>
         {/if}
@@ -544,54 +658,88 @@ function jumpToLatest() {
     flex: 1;
     overflow-x: hidden;
     overflow-y: auto;
-    padding: 0 40px;
+    padding: 0 16px;
   }
 
-  .timeline-rail {
-    position: relative;
-    padding-left: 64px;
-    margin-left: auto;
-    margin-right: auto;
+  /* Two-track layout */
+  .two-track {
     min-height: 100%;
-    max-width: 860px;
-  }
-  .timeline-rail::before {
-    content: "";
-    position: absolute;
-    left: 62px;
-    top: 0;
-    bottom: 0;
-    width: 2px;
-    background: var(--timeline-rail);
+    max-width: 1100px;
+    margin: 0 auto;
   }
 
-  /* Timed rows: relative time to the left of the dot */
-  .timed-row {
-    position: relative;
+  .track-row {
+    display: flex;
+    align-items: flex-start;
   }
-  .row-time {
-    position: absolute;
-    right: calc(100% + 12px);
-    top: 10px;
+
+  .track-time {
+    width: 60px;
+    flex-shrink: 0;
     font-size: 11px;
     color: var(--text-2);
+    padding-top: 10px;
     white-space: nowrap;
+  }
+
+  .track-time-left {
     text-align: right;
+    padding-right: 8px;
+  }
+
+  .track-time-right {
+    text-align: left;
+    padding-left: 8px;
+  }
+
+  .track-rail {
+    width: 2px;
+    background: var(--timeline-rail);
+    flex-shrink: 0;
+    align-self: stretch;
+    position: relative;
+    min-height: 8px;
+  }
+
+  .track-dot {
+    position: absolute;
+    top: 12px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-2);
+  }
+
+  .track-rail-left .track-dot {
+    right: -2px;
+  }
+
+  .track-rail-right .track-dot {
+    left: -2px;
+  }
+
+  .track-content {
+    flex: 1;
+    min-width: 0;
+    min-height: 1px;
+  }
+
+  .track-content-left {
+    padding-right: 12px;
+  }
+
+  .track-content-right {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .track-content-animated {
+    transition: padding-top 0.3s ease;
   }
 
   /* Feed cards on the timeline */
   .feed-card-wrapper {
-    position: relative;
-    padding: 6px 8px 6px 20px;
-  }
-  .feed-marker {
-    position: absolute;
-    left: -5px;
-    top: 12px;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    z-index: 1;
+    padding: 4px 0;
   }
 
   /* Chat card */
