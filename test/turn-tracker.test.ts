@@ -29,7 +29,7 @@ describe("turn-tracker", () => {
     assert.equal(row!.session, null);
 
     // Cleanup
-    clearMind(mind);
+    await clearMind(mind);
   });
 
   it("reuses existing active turn for same mind", async () => {
@@ -37,7 +37,7 @@ describe("turn-tracker", () => {
     const id2 = await createTurn(mind);
     assert.equal(id1, id2, "should reuse the same turn");
 
-    clearMind(mind);
+    await clearMind(mind);
   });
 
   it("getActiveTurnId returns the active turn", async () => {
@@ -45,7 +45,7 @@ describe("turn-tracker", () => {
     assert.equal(getActiveTurnId(mind), turnId);
     assert.equal(getActiveTurnId(mind, null), turnId, "should fall back to wildcard");
 
-    clearMind(mind);
+    await clearMind(mind);
   });
 
   it("assigns session and re-keys", async () => {
@@ -64,7 +64,7 @@ describe("turn-tracker", () => {
     const row = await db.select().from(turns).where(eq(turns.id, turnId)).get();
     assert.equal(row!.session, "sess-1");
 
-    clearMind(mind);
+    await clearMind(mind);
   });
 
   it("tracks tool_use event IDs", async () => {
@@ -78,7 +78,7 @@ describe("turn-tracker", () => {
     trackToolUse(mind, null, 99);
     assert.equal(getLastToolUseEventId(mind), 99);
 
-    clearMind(mind);
+    await clearMind(mind);
   });
 
   it("completes a turn", async () => {
@@ -106,7 +106,7 @@ describe("turn-tracker", () => {
     const row = await db.select().from(turns).where(eq(turns.id, turnId)).get();
     assert.equal(row!.summary_event_id, 123);
 
-    clearMind(mind);
+    await clearMind(mind);
   });
 
   it("clearMind removes all entries for the mind", async () => {
@@ -117,10 +117,10 @@ describe("turn-tracker", () => {
     const otherMind = "test-turn-tracker-other";
     const otherId = await createTurn(otherMind);
 
-    clearMind(mind);
+    await clearMind(mind);
     assert.equal(getActiveTurnId(mind, "s1"), undefined);
     assert.equal(getActiveTurnId(otherMind), otherId, "other mind should be unaffected");
 
-    clearMind(otherMind);
+    await clearMind(otherMind);
   });
 });

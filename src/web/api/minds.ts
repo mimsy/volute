@@ -2316,6 +2316,10 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "channel and content required" }, 400);
     }
 
+    // Look up active turn for this mind (outbound happens during a turn)
+    const mindSession = c.get("mindSession");
+    const outboundTurnId = getActiveTurnId(baseName, mindSession);
+
     const db = await getDb();
     try {
       await db.insert(mindHistory).values({
@@ -2324,6 +2328,7 @@ const app = new Hono<AuthEnv>()
         channel: body.channel,
         sender: body.sender ?? baseName,
         content: body.content,
+        turn_id: outboundTurnId ?? null,
       });
     } catch (err) {
       log.error(`failed to persist external send for ${baseName}`, log.errorData(err));

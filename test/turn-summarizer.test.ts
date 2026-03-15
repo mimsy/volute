@@ -137,7 +137,7 @@ describe("turn-summarizer", () => {
     const turnRow = await db.select().from(turns).where(eq(turns.id, turnId)).get();
     assert.equal(turnRow!.summary_event_id, summary.id);
 
-    clearMind(mind4);
+    await clearMind(mind4);
   });
 
   it("skips summarization for empty turn", async () => {

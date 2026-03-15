@@ -112,10 +112,23 @@ export async function setSummaryEventId(turnId: string, summaryEventId: number):
 }
 
 /** Remove all active turn entries for a mind (called on mind stop). */
-export function clearMind(mind: string): void {
-  for (const k of activeTurns.keys()) {
+export async function clearMind(mind: string): Promise<void> {
+  const turnIds: string[] = [];
+  for (const [k, entry] of activeTurns.entries()) {
     if (k.startsWith(`${mind}:`)) {
+      turnIds.push(entry.turnId);
       activeTurns.delete(k);
+    }
+  }
+  // Mark orphaned turns as complete in DB
+  if (turnIds.length > 0) {
+    try {
+      const db = await getDb();
+      for (const id of turnIds) {
+        await db.update(turns).set({ status: "complete" }).where(eq(turns.id, id));
+      }
+    } catch (err) {
+      tlog.error(`failed to complete orphaned turns for ${mind}`, log.errorData(err));
     }
   }
 }
