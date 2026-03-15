@@ -35,12 +35,13 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 
-function showWindow() {
-  if (!mainWindow) return;
+async function showWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
   // On macOS, the app must be visible in the dock for windows to appear
   if (process.platform === "darwin" && app.dock) {
-    app.dock.show();
+    await app.dock.show();
   }
+  if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
 }
@@ -78,6 +79,10 @@ async function createWindow() {
     if (!isQuitting) {
       e.preventDefault();
       mainWindow?.hide();
+      // Hide dock icon when window is hidden — app lives in the tray
+      if (process.platform === "darwin" && app.dock) {
+        app.dock.hide();
+      }
     }
   });
 }
