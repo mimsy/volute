@@ -2139,27 +2139,34 @@ const app = new Hono<AuthEnv>()
       if (body.session) {
         await assignSession(baseName, turnId, body.session);
       }
-      // Link trigger: find the most recent inbound for this mind and tag it with this turn
+      // Link trigger: find recent untagged inbound events and tag them with this turn.
+      // Tags all recent untagged inbounds (not just the most recent) so that messages
+      // from interrupted turns that were un-tagged are reclaimed by this turn.
       try {
         const db = await getDb();
-        const triggerRow = await db
+        const recentInbounds = await db
           .select({ id: mindHistory.id })
           .from(mindHistory)
-          .where(and(eq(mindHistory.mind, baseName), eq(mindHistory.type, "inbound")))
+          .where(
+            and(
+              eq(mindHistory.mind, baseName),
+              eq(mindHistory.type, "inbound"),
+              sql`${mindHistory.turn_id} IS NULL`,
+              sql`${mindHistory.created_at} > datetime('now', '-60 seconds')`,
+            ),
+          )
           .orderBy(desc(mindHistory.id))
-          .limit(1)
-          .get();
-        if (triggerRow) {
-          // Set trigger_event_id on the turn
+          .limit(5);
+        if (recentInbounds.length > 0) {
+          // Set trigger_event_id to the most recent inbound
           await db
             .update(turns)
-            .set({ trigger_event_id: triggerRow.id })
+            .set({ trigger_event_id: recentInbounds[0].id })
             .where(eq(turns.id, turnId));
-          // Also tag the inbound event itself with this turn so it appears in expanded view
-          await db
-            .update(mindHistory)
-            .set({ turn_id: turnId })
-            .where(eq(mindHistory.id, triggerRow.id));
+          // Tag all recent inbounds with this turn so they appear in expanded view
+          for (const row of recentInbounds) {
+            await db.update(mindHistory).set({ turn_id: turnId }).where(eq(mindHistory.id, row.id));
+          }
         }
       } catch {
         // best-effort

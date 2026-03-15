@@ -213,19 +213,24 @@ export async function summarizeTurn(
   // Skip summarization and un-tag inbound events so the next turn can claim them.
   const substantiveTypes = new Set(["text", "outbound", "tool_use", "tool_result", "thinking"]);
   const hasSubstantiveOutput = events.some((ev) => substantiveTypes.has(ev.type));
-  if (!hasSubstantiveOutput && turnId) {
-    sLog.info(`skipping summary for interrupted turn ${turnId} (no substantive output)`);
-    try {
-      const db = await getDb();
-      // Un-tag inbound events in mind_history so the next turn can claim them
-      await db
-        .update(mindHistory)
-        .set({ turn_id: null })
-        .where(and(eq(mindHistory.turn_id, turnId), eq(mindHistory.type, "inbound")));
-      // Un-tag conversation messages so the next turn can claim them
-      await db.update(messages).set({ turn_id: null }).where(eq(messages.turn_id, turnId));
-    } catch (err) {
-      sLog.error(`failed to un-tag events for interrupted turn ${turnId}`, log.errorData(err));
+  if (!hasSubstantiveOutput) {
+    sLog.info(
+      `skipping summary for interrupted turn ${turnId ?? "(no turn)"} (no substantive output)`,
+    );
+    // If the turn had a turn_id, un-tag its inbound events so the next turn can claim them.
+    // If no turn_id was created (interrupted before any substantive event), inbound events
+    // are already untagged and will be claimed by the next turn's retroactive tagging.
+    if (turnId) {
+      try {
+        const db = await getDb();
+        await db
+          .update(mindHistory)
+          .set({ turn_id: null })
+          .where(and(eq(mindHistory.turn_id, turnId), eq(mindHistory.type, "inbound")));
+        await db.update(messages).set({ turn_id: null }).where(eq(messages.turn_id, turnId));
+      } catch (err) {
+        sLog.error(`failed to un-tag events for interrupted turn ${turnId}`, log.errorData(err));
+      }
     }
     return;
   }
