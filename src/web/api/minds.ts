@@ -2139,23 +2139,51 @@ const app = new Hono<AuthEnv>()
       if (body.session) {
         await assignSession(baseName, turnId, body.session);
       }
-      // Set trigger_event_id to the most recent inbound for this mind (matching channel if session known)
+      // Link trigger: find the most recent inbound for this mind and tag it with this turn
       try {
         const db = await getDb();
-        const conditions = [eq(mindHistory.mind, baseName), eq(mindHistory.type, "inbound")];
-        if (body.session) conditions.push(eq(mindHistory.channel, body.session));
         const triggerRow = await db
           .select({ id: mindHistory.id })
           .from(mindHistory)
-          .where(and(...conditions))
+          .where(and(eq(mindHistory.mind, baseName), eq(mindHistory.type, "inbound")))
           .orderBy(desc(mindHistory.id))
           .limit(1)
           .get();
         if (triggerRow) {
+          // Set trigger_event_id on the turn
           await db
             .update(turns)
             .set({ trigger_event_id: triggerRow.id })
             .where(eq(turns.id, turnId));
+          // Also tag the inbound event itself with this turn so it appears in expanded view
+          await db
+            .update(mindHistory)
+            .set({ turn_id: turnId })
+            .where(eq(mindHistory.id, triggerRow.id));
+        }
+      } catch {
+        // best-effort
+      }
+      // Retroactively tag recent untagged conversation messages for this mind
+      // These are inbound messages that arrived before the turn was created
+      try {
+        const db = await getDb();
+        const recentUntagged = await db
+          .select({ id: messages.id })
+          .from(messages)
+          .innerJoin(conversations, eq(messages.conversation_id, conversations.id))
+          .where(
+            and(
+              eq(conversations.mind_name, baseName),
+              sql`${messages.turn_id} IS NULL`,
+              // Only tag messages from the last 60 seconds to avoid false matches
+              sql`${messages.created_at} > datetime('now', '-60 seconds')`,
+            ),
+          )
+          .orderBy(desc(messages.id))
+          .limit(5);
+        for (const row of recentUntagged) {
+          await db.update(messages).set({ turn_id: turnId }).where(eq(messages.id, row.id));
         }
       } catch {
         // best-effort
