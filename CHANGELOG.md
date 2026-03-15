@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.31.0](https://github.com/mimsy/volute/compare/volute-v0.30.1...volute-v0.31.0) (2026-03-15)
+
+
+### Features
+
+* add private conversations ([#209](https://github.com/mimsy/volute/issues/209)) ([692ff54](https://github.com/mimsy/volute/commit/692ff54c7301227ebb98f4e9e36de6405dc3db46))
+* AI provider configuration and credential injection ([#211](https://github.com/mimsy/volute/issues/211)) ([c8d9b3c](https://github.com/mimsy/volute/commit/c8d9b3c5cd79a3cf18189ed7609e70572405e319))
+* allowlist home/ tracking, exclude config from template merges, batch auto-commits ([#207](https://github.com/mimsy/volute/issues/207)) ([b6a2a89](https://github.com/mimsy/volute/commit/b6a2a89e0b5450afbf0f68910ba3907b3f131264))
+* Electron desktop app with daemon management and web setup ([#212](https://github.com/mimsy/volute/issues/212)) ([a2a1950](https://github.com/mimsy/volute/commit/a2a1950bf06b7d769693e0d2a668ec0838b1d445))
+* redesign history timeline with summary presets and turn expansion ([#208](https://github.com/mimsy/volute/issues/208)) ([0582a2a](https://github.com/mimsy/volute/commit/0582a2a89c4bac85bee27f080b59ad244850d7a9))
+
 ## [0.30.1](https://github.com/mimsy/volute/compare/volute-v0.30.0...volute-v0.30.1) (2026-03-13)
 
 
