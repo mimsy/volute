@@ -5,7 +5,7 @@ import { publish as publishMindEvent } from "../events/mind-events.js";
 import { summarizeTool } from "../format-tool.js";
 import log from "../logger.js";
 import { getPrompt } from "../prompts.js";
-import { mindHistory } from "../schema.js";
+import { messages, mindHistory } from "../schema.js";
 import { setSummaryEventId } from "./turn-tracker.js";
 
 const sLog = log.child("turn-summarizer");
@@ -207,6 +207,28 @@ export async function summarizeTurn(
     : await gatherTurnEvents(mind, session, doneId);
 
   if (events.length === 0) return;
+
+  // Detect interrupted turns: if the turn has no substantive mind output (no text,
+  // outbound, or tool_use), it was likely interrupted before producing anything.
+  // Skip summarization and un-tag inbound events so the next turn can claim them.
+  const substantiveTypes = new Set(["text", "outbound", "tool_use", "tool_result", "thinking"]);
+  const hasSubstantiveOutput = events.some((ev) => substantiveTypes.has(ev.type));
+  if (!hasSubstantiveOutput && turnId) {
+    sLog.info(`skipping summary for interrupted turn ${turnId} (no substantive output)`);
+    try {
+      const db = await getDb();
+      // Un-tag inbound events in mind_history so the next turn can claim them
+      await db
+        .update(mindHistory)
+        .set({ turn_id: null })
+        .where(and(eq(mindHistory.turn_id, turnId), eq(mindHistory.type, "inbound")));
+      // Un-tag conversation messages so the next turn can claim them
+      await db.update(messages).set({ turn_id: null }).where(eq(messages.turn_id, turnId));
+    } catch (err) {
+      sLog.error(`failed to un-tag events for interrupted turn ${turnId}`, log.errorData(err));
+    }
+    return;
+  }
 
   const tools: string[] = [];
   for (const ev of events) {
