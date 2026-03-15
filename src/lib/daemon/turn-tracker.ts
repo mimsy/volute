@@ -26,6 +26,11 @@ export async function createTurn(mind: string): Promise<string> {
   const k = key(mind);
   const existing = activeTurns.get(k);
   if (existing) return existing.turnId;
+  // Check if there's an active turn under any session for this mind
+  const prefix = `${mind}:`;
+  for (const [mk, entry] of activeTurns) {
+    if (mk.startsWith(prefix)) return entry.turnId;
+  }
 
   const turnId = randomUUID();
   try {
@@ -39,9 +44,18 @@ export async function createTurn(mind: string): Promise<string> {
   return turnId;
 }
 
-/** Get the active turn ID for a mind+session, falling back to the sessionless `mind:*` key. */
+/** Get the active turn ID for a mind+session, falling back to the sessionless `mind:*` key,
+ *  then scanning all sessions for the mind. */
 export function getActiveTurnId(mind: string, session?: string | null): string | undefined {
-  return (activeTurns.get(key(mind, session)) ?? activeTurns.get(key(mind)))?.turnId;
+  // Try exact session match first, then wildcard
+  const exact = activeTurns.get(key(mind, session)) ?? activeTurns.get(key(mind));
+  if (exact) return exact.turnId;
+  // Scan all entries for this mind (handles callers that don't know the session)
+  const prefix = `${mind}:`;
+  for (const [k, entry] of activeTurns) {
+    if (k.startsWith(prefix)) return entry.turnId;
+  }
+  return undefined;
 }
 
 /** Record the last tool_use event ID for a mind+session. */
@@ -50,13 +64,28 @@ export function trackToolUse(
   session: string | null | undefined,
   eventId: number,
 ): void {
-  const entry = activeTurns.get(key(mind, session)) ?? activeTurns.get(key(mind));
+  let entry = activeTurns.get(key(mind, session)) ?? activeTurns.get(key(mind));
+  if (!entry) {
+    const prefix = `${mind}:`;
+    for (const [k, e] of activeTurns) {
+      if (k.startsWith(prefix)) {
+        entry = e;
+        break;
+      }
+    }
+  }
   if (entry) entry.lastToolUseEventId = eventId;
 }
 
 /** Get the last tool_use event ID for a mind+session. */
 export function getLastToolUseEventId(mind: string, session?: string | null): number | undefined {
-  return (activeTurns.get(key(mind, session)) ?? activeTurns.get(key(mind)))?.lastToolUseEventId;
+  const exact = activeTurns.get(key(mind, session)) ?? activeTurns.get(key(mind));
+  if (exact) return exact.lastToolUseEventId;
+  const prefix = `${mind}:`;
+  for (const [k, entry] of activeTurns) {
+    if (k.startsWith(prefix)) return entry.lastToolUseEventId;
+  }
+  return undefined;
 }
 
 /**

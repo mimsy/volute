@@ -56,8 +56,8 @@ describe("turn-tracker", () => {
 
     // Should now be keyed by session
     assert.equal(getActiveTurnId(mind, "sess-1"), turnId);
-    // Wildcard should no longer resolve
-    assert.equal(getActiveTurnId(mind), undefined);
+    // Session-less lookup should still find it via scan
+    assert.equal(getActiveTurnId(mind), turnId);
 
     // DB should reflect session
     const db = await getDb();
