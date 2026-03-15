@@ -1,12 +1,19 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, createWriteStream, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 
 // Match the project's engines requirement
 const NODE_VERSION = "24.2.0";
-const ARCH = "arm64";
-const PLATFORM = "darwin";
+const ARCH = process.arch === "x64" ? "x64" : "arm64";
+const PLATFORM = process.platform;
 
 const cacheDir = resolve(import.meta.dirname, "..", ".cache");
 const resourcesDir = resolve(import.meta.dirname, "..", "resources");
@@ -33,9 +40,10 @@ async function downloadNode() {
     if (!res.ok || !res.body) {
       throw new Error(`Failed to download: ${res.status} ${res.statusText}`);
     }
-    const fileStream = createWriteStream(cachedTarball);
-    // @ts-expect-error — ReadableStream to NodeJS stream
+    const tmpTarball = cachedTarball + ".tmp";
+    const fileStream = createWriteStream(tmpTarball);
     await pipeline(res.body as any, fileStream);
+    renameSync(tmpTarball, cachedTarball);
     console.log("Download complete");
   } else {
     console.log("Using cached tarball");

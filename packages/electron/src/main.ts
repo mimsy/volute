@@ -26,11 +26,16 @@ const binDir = resourcePath("bin");
 function findSystemNode(): string {
   // process.execPath is the Electron binary in dev — find the real Node
   try {
-    return execFileSync("which", ["node"], { encoding: "utf-8" }).trim();
+    const found = execFileSync("which", ["node"], { encoding: "utf-8" }).trim();
+    console.log(`Using system Node: ${found}`);
+    return found;
   } catch {
-    // Fallback: check common locations
+    // Electron apps on macOS don't inherit shell PATH — check common locations
     for (const p of ["/usr/local/bin/node", "/opt/homebrew/bin/node"]) {
-      if (existsSync(p)) return p;
+      if (existsSync(p)) {
+        console.log(`which node failed, falling back to: ${p}`);
+        return p;
+      }
     }
     throw new Error("Could not find system Node.js binary for daemon");
   }
@@ -126,10 +131,14 @@ function daemonFetch(path: string, init?: RequestInit): Promise<Response> {
 async function fetchMinds(): Promise<MindInfo[]> {
   try {
     const res = await daemonFetch("/api/minds");
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.warn(`Failed to fetch minds: ${res.status} ${res.statusText}`);
+      return [];
+    }
     const minds = (await res.json()) as MindInfo[];
     return minds.filter((m) => !("parent" in m));
-  } catch {
+  } catch (err) {
+    console.warn("Failed to fetch minds:", err);
     return [];
   }
 }
@@ -137,9 +146,12 @@ async function fetchMinds(): Promise<MindInfo[]> {
 async function toggleMind(name: string, currentStatus: string) {
   const action = currentStatus === "running" || currentStatus === "starting" ? "stop" : "start";
   try {
-    await daemonFetch(`/api/minds/${name}/${action}`, { method: "POST" });
-  } catch {
-    // Daemon unavailable
+    const res = await daemonFetch(`/api/minds/${name}/${action}`, { method: "POST" });
+    if (!res.ok) {
+      console.error(`Failed to ${action} mind "${name}": ${res.status} ${res.statusText}`);
+    }
+  } catch (err) {
+    console.error(`Failed to ${action} mind "${name}":`, err);
   }
   await refreshTrayMenu();
 }
@@ -216,6 +228,9 @@ app
         try {
           const res = await fetch(`http://127.0.0.1:${port}/api/health`);
           if (!res.ok) {
+            console.warn(
+              `Existing service on port ${port} is unhealthy (${res.status}), using alternate port`,
+            );
             port = await findAvailablePort(port + 1);
           }
         } catch {
@@ -262,10 +277,13 @@ app.on("window-all-closed", () => {
   }
 });
 
+let cleanupDone = false;
 app.on("will-quit", (e) => {
+  if (cleanupDone) return;
+  cleanupDone = true;
   e.preventDefault();
   daemon
     .stop()
     .catch((err) => console.error("Error stopping daemon:", err))
-    .finally(() => process.exit(0));
+    .finally(() => app.exit(0));
 });

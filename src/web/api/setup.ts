@@ -16,8 +16,14 @@ const setup = new Hono();
 
 setup.get("/status", (c) => {
   const complete = isSetupComplete();
+  if (!complete) {
+    return c.json({ complete });
+  }
   const config = readGlobalConfig();
-  return c.json({ complete, config: complete ? config : undefined });
+  return c.json({
+    complete,
+    config: { name: config.name, setup: config.setup },
+  });
 });
 
 setup.post("/configure", async (c) => {
@@ -74,7 +80,7 @@ setup.post("/configure", async (c) => {
     return c.json({ error: `Failed to write configuration: ${(err as Error).message}` }, 500);
   }
 
-  return c.json({ ok: true, config });
+  return c.json({ ok: true, config: { name: config.name, setup: config.setup } });
 });
 
 export default setup;

@@ -1,6 +1,8 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { createConnection } from "node:net";
+import { resolve } from "node:path";
 
 export type DaemonState = "stopped" | "starting" | "running" | "error";
 
@@ -25,6 +27,8 @@ export class DaemonProcess {
   private opts: DaemonOptions;
   private quitting = false;
   private token = randomBytes(32).toString("hex");
+  private restartAttempts = 0;
+  private static MAX_RESTART_ATTEMPTS = 5;
 
   constructor(opts: DaemonOptions) {
     this.opts = opts;
@@ -56,6 +60,24 @@ export class DaemonProcess {
     try {
       const res = await fetch(`http://127.0.0.1:${this.opts.port}/api/health`);
       if (res.ok) {
+        // Read the token from the running daemon's config file
+        const daemonJsonPath = resolve(this.opts.voluteHome, "system", "daemon.json");
+        if (existsSync(daemonJsonPath)) {
+          try {
+            const config = JSON.parse(readFileSync(daemonJsonPath, "utf-8"));
+            if (config.token) {
+              this.token = config.token;
+            } else {
+              this.opts.onLog?.(`Warning: daemon.json has no token — API calls will fail`);
+            }
+          } catch (err) {
+            this.opts.onLog?.(
+              `Warning: could not read daemon token from ${daemonJsonPath}: ${err}. API calls will fail.`,
+            );
+          }
+        } else {
+          this.opts.onLog?.(`Warning: ${daemonJsonPath} not found — API calls will fail`);
+        }
         this.setState("running");
         return true;
       }
@@ -86,6 +108,12 @@ export class DaemonProcess {
       },
     );
 
+    this.child.on("error", (err) => {
+      this.opts.onLog?.(`Daemon failed to spawn: ${err.message}`);
+      this.child = null;
+      this.setState("error");
+    });
+
     this.child.stdout?.on("data", (data: Buffer) => {
       this.opts.onLog?.(data.toString());
     });
@@ -99,7 +127,18 @@ export class DaemonProcess {
         this.setState("stopped");
         return;
       }
-      this.opts.onLog?.(`Daemon exited with code ${code}, restarting in ${RESTART_DELAY}ms...`);
+      this.restartAttempts++;
+      if (this.restartAttempts > DaemonProcess.MAX_RESTART_ATTEMPTS) {
+        this.opts.onLog?.(
+          `Daemon has crashed ${this.restartAttempts} times, giving up. Restart the app to try again.`,
+        );
+        this.setState("error");
+        return;
+      }
+      const delay = RESTART_DELAY * 2 ** (this.restartAttempts - 1);
+      this.opts.onLog?.(
+        `Daemon exited with code ${code}, restart attempt ${this.restartAttempts}/${DaemonProcess.MAX_RESTART_ATTEMPTS} in ${delay}ms...`,
+      );
       this.setState("error");
       setTimeout(() => {
         if (!this.quitting) {
@@ -107,7 +146,7 @@ export class DaemonProcess {
             this.opts.onLog?.(`Failed to restart daemon: ${err}`);
           });
         }
-      }, RESTART_DELAY);
+      }, delay);
     });
 
     await this.waitForHealth();
@@ -122,6 +161,7 @@ export class DaemonProcess {
       try {
         const res = await fetch(`http://127.0.0.1:${this.opts.port}/api/health`);
         if (res.ok) {
+          this.restartAttempts = 0;
           this.setState("running");
           return;
         }
@@ -174,7 +214,12 @@ export function isPortAvailable(port: number): Promise<boolean> {
       resolve(false);
     });
     socket.on("error", (err: NodeJS.ErrnoException) => {
-      resolve(err.code === "ECONNREFUSED");
+      if (err.code !== "ECONNREFUSED") {
+        console.warn(`Unexpected error checking port ${port}: ${err.code}`);
+      }
+      // ECONNREFUSED = nothing listening = available. Other errors (ETIMEDOUT, etc.)
+      // also likely mean no service, so treat as available and let spawn fail if not.
+      resolve(true);
     });
   });
 }
