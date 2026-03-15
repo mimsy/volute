@@ -34,6 +34,7 @@ import { summarizeTurn } from "../../lib/daemon/turn-summarizer.js";
 import {
   assignSession,
   completeTurn,
+  createTurn,
   getActiveTurnId,
   trackToolUse,
 } from "../../lib/daemon/turn-tracker.js";
@@ -2129,8 +2130,23 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    // Look up active turn for this event
-    const turnId = getActiveTurnId(baseName, body.session);
+    // Look up active turn for this event; create one if missing for substantive events
+    // (handles post-interrupt continuation where completeTurn fired but the mind kept going)
+    let turnId = getActiveTurnId(baseName, body.session);
+    const substantiveTypes = new Set([
+      "thinking",
+      "text",
+      "tool_use",
+      "tool_result",
+      "inbound",
+      "outbound",
+    ]);
+    if (!turnId && substantiveTypes.has(body.type)) {
+      turnId = await createTurn(baseName);
+      if (body.session) {
+        await assignSession(baseName, turnId, body.session);
+      }
+    }
 
     // Persist to mind_history
     const db = await getDb();

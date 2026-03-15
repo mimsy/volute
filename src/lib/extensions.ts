@@ -12,6 +12,7 @@ import extNotes from "@volute/notes";
 import extPages from "@volute/pages";
 import type { Hono, MiddlewareHandler } from "hono";
 import { getUser, getUserByUsername } from "./auth.js";
+import { getActiveTurnId, getLastToolUseEventId } from "./daemon/turn-tracker.js";
 import { publish } from "./events/activity-events.js";
 import log from "./logger.js";
 import { mindDir, voluteHome, voluteSystemDir } from "./registry.js";
@@ -109,10 +110,8 @@ async function buildContext(
     getUser: async (id: number) => getUser(id),
     getUserByUsername: async (username: string) => getUserByUsername(username),
     publishActivity: (event) => {
-      const { getActiveTurnId: getTurnId, getLastToolUseEventId: getToolUseId } =
-        require("./daemon/turn-tracker.js") as typeof import("./daemon/turn-tracker.js");
-      const turnId = getTurnId(event.mind);
-      const sourceEventId = getToolUseId(event.mind);
+      const turnId = getActiveTurnId(event.mind);
+      const sourceEventId = getLastToolUseEventId(event.mind);
       publish({
         ...(event as Parameters<typeof publish>[0]),
         turn_id: turnId,
