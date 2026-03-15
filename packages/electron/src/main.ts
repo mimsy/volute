@@ -125,7 +125,7 @@ function daemonFetch(path: string, init?: RequestInit): Promise<Response> {
 
 async function fetchMinds(): Promise<MindInfo[]> {
   try {
-    const res = await daemonFetch("/api/minds/");
+    const res = await daemonFetch("/api/minds");
     if (!res.ok) return [];
     const minds = (await res.json()) as MindInfo[];
     return minds.filter((m) => !("parent" in m));
@@ -156,7 +156,7 @@ async function refreshTrayMenu() {
 
   const template: Electron.MenuItemConstructorOptions[] = [
     {
-      label: "Show Window",
+      label: "Open Volute",
       click: showWindow,
     },
     { type: "separator" },
