@@ -12,6 +12,7 @@ import {
   deleteConversation,
   findDMConversation,
   getChannelByName,
+  getConversation,
   getMessages,
   getParticipants,
   isParticipant,
@@ -20,6 +21,7 @@ import {
   listChannels,
   listConversationsForUser,
   removeParticipant,
+  setConversationPrivate,
 } from "../src/lib/events/conversations.js";
 import { messages, users } from "../src/lib/schema.js";
 
@@ -407,6 +409,30 @@ describe("channels", () => {
     } finally {
       await db.delete(users).where(eq(users.id, human.id));
       await db.delete(users).where(eq(users.id, mindUser.id));
+    }
+  });
+});
+
+describe("conversation privacy", () => {
+  it("setConversationPrivate toggles private flag", async () => {
+    const conv = await createConversation("test-mind", "test");
+    try {
+      // Default is not private
+      assert.equal(conv.private, 0);
+      let fetched = await getConversation(conv.id);
+      assert.equal(fetched!.private, 0);
+
+      // Set private
+      await setConversationPrivate(conv.id, true);
+      fetched = await getConversation(conv.id);
+      assert.equal(fetched!.private, 1);
+
+      // Set back to public
+      await setConversationPrivate(conv.id, false);
+      fetched = await getConversation(conv.id);
+      assert.equal(fetched!.private, 0);
+    } finally {
+      await deleteConversation(conv.id);
     }
   });
 });

@@ -31,6 +31,7 @@ import { ensureSharedRepo } from "./lib/shared.js";
 import { initDefaultSkills, syncBuiltinSkills } from "./lib/skills.js";
 import { ensureSystemChannel } from "./lib/system-channel.js";
 import { initWebhook } from "./lib/webhook.js";
+import { startApiKeyRefresh, stopApiKeyRefresh } from "./web/api/system.js";
 import app from "./web/app.js";
 import { authMiddleware, cleanExpiredSessions } from "./web/middleware/auth.js";
 import { startServer } from "./web/server.js";
@@ -243,6 +244,9 @@ export async function startDaemon(opts: {
     log.warn("failed to clean expired logs", log.errorData(err));
   });
 
+  // Start periodic API key cache refresh for mind provider keys
+  startApiKeyRefresh();
+
   log.info(`running on ${hostname}:${port}, pid ${myPid}`);
 
   // Only delete PID/config files if they still belong to this process
@@ -289,6 +293,7 @@ export async function startDaemon(opts: {
       safe("scheduler.saveState", () => scheduler.saveState());
       safe("mailPoller.stop", () => mailPoller.stop());
       safe("tokenBudget.stop", () => tokenBudget.stop());
+      safe("stopApiKeyRefresh", stopApiKeyRefresh);
       safe("delivery.dispose", () => delivery.dispose());
       await safe("bridgeManager.stopAll", () => bridgeManager.stopAll());
       await safe("manager.stopAll", () => manager.stopAll());

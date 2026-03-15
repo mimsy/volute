@@ -8,6 +8,7 @@ import {
   type ContentBlock,
   createConversation,
   deleteConversation,
+  getConversation,
   getMessages,
 } from "../src/lib/events/conversations.js";
 import {
@@ -18,6 +19,7 @@ import {
   users,
 } from "../src/lib/schema.js";
 import conversationsRoute from "../src/web/api/volute/conversations.js";
+import userConversationsRoute from "../src/web/api/volute/user-conversations.js";
 import { authMiddleware, createSession, deleteSession } from "../src/web/middleware/auth.js";
 
 let sessionId: string;
@@ -302,6 +304,87 @@ describe("web conversations routes", () => {
     assert.equal(msgs[1].content[0].type, "text");
     assert.equal((msgs[1].content[0] as { text: string }).text, "[seed has sprouted]");
 
+    await deleteConversation(conv.id);
+  });
+});
+
+describe("conversation privacy toggle", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  function createUserConvApp() {
+    const app = new Hono();
+    app.use("/api/conversations/*", authMiddleware);
+    app.route("/api/conversations", userConversationsRoute);
+    return app;
+  }
+
+  it("PUT /:id/private — participant can toggle privacy", async () => {
+    const cookie = await setupAuth();
+    const app = createUserConvApp();
+
+    const conv = await createConversation("test-mind", "volute", {
+      participantIds: [userId],
+    });
+
+    // Set to private
+    const res = await app.request(`/api/conversations/${conv.id}/private`, {
+      method: "PUT",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ private: true }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.ok);
+
+    // Verify it persisted
+    const updated = await getConversation(conv.id);
+    assert.equal(updated!.private, 1);
+
+    // Set back to public
+    const res2 = await app.request(`/api/conversations/${conv.id}/private`, {
+      method: "PUT",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ private: false }),
+    });
+    assert.equal(res2.status, 200);
+
+    const updated2 = await getConversation(conv.id);
+    assert.equal(updated2!.private, 0);
+
+    await deleteConversation(conv.id);
+  });
+
+  it("PUT /:id/private — non-participant gets 403", async () => {
+    await setupAuth();
+    const app = createUserConvApp();
+
+    const conv = await createConversation("test-mind", "volute", {
+      participantIds: [userId],
+    });
+
+    // Create a second user who is not a participant
+    const user2 = await createUser("privacy-outsider", "pass");
+    await approveUser(user2.id);
+    const cookie2 = await createSession(user2.id);
+
+    const res = await app.request(`/api/conversations/${conv.id}/private`, {
+      method: "PUT",
+      headers: {
+        Cookie: `volute_session=${cookie2}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ private: true }),
+    });
+    assert.equal(res.status, 403);
+
+    await deleteSession(cookie2);
     await deleteConversation(conv.id);
   });
 });

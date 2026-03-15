@@ -45,7 +45,10 @@ $effect(() => {
     .catch((err) => {
       console.warn("Failed to load conversation messages:", err);
       messages = [];
-      error = "Failed to load messages.";
+      error =
+        err?.message?.includes("403") || err?.message?.includes("private")
+          ? "This is a private conversation."
+          : "Failed to load messages.";
     })
     .finally(() => {
       loading = false;
