@@ -147,10 +147,18 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
             }
             process.exit(0);
           }
+          // Extract --mind flag from args (same convention as other mind-scoped commands)
+          const cmdArgs = args.slice(1);
+          let mind = process.env.VOLUTE_MIND;
+          const mindIdx = cmdArgs.indexOf("--mind");
+          if (mindIdx !== -1 && cmdArgs[mindIdx + 1]) {
+            mind = cmdArgs[mindIdx + 1];
+            cmdArgs.splice(mindIdx, 2);
+          }
           const cmdRes = await daemonFetch(`/api/ext/${command}/commands/${subcommand}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ args: args.slice(1), mind: process.env.VOLUTE_MIND }),
+            body: JSON.stringify({ args: cmdArgs, mind }),
           });
           const result = (await cmdRes.json()) as { output?: string; error?: string };
           if (result.error) {
