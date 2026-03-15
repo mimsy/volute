@@ -5,11 +5,7 @@ import { z } from "zod";
 import { writeChannelEntry } from "../../../connectors/sdk.js";
 import { getOrCreateMindUser } from "../../../lib/auth.js";
 import { routeOutboundBridge } from "../../../lib/bridge-outbound.js";
-import {
-  createTurn,
-  getActiveTurnId,
-  getLastToolUseEventId,
-} from "../../../lib/daemon/turn-tracker.js";
+import { getActiveTurnId, getLastToolUseEventId } from "../../../lib/daemon/turn-tracker.js";
 import { deliverMessage } from "../../../lib/delivery/message-delivery.js";
 import { subscribe } from "../../../lib/events/conversation-events.js";
 import {
@@ -242,7 +238,8 @@ const app = new Hono<AuthEnv>()
 
     // Link message to a turn:
     // - If sender is a mind, use the sender's active turn (outbound from that mind)
-    // - Otherwise (user/bridge), create/reuse a turn for the target mind (inbound triggers turn)
+    // - Inbound user messages don't get turn_id — the turn is created per-session
+    //   when the mind starts processing, avoiding cross-session turn merging
     const senderIsMind = user.id === 0 && body.sender && (await findMind(body.sender));
     const mindSession = c.get("mindSession");
     let sourceEventId: number | undefined;
@@ -250,8 +247,6 @@ const app = new Hono<AuthEnv>()
     if (senderIsMind) {
       sourceEventId = getLastToolUseEventId(body.sender!, mindSession);
       turnId = getActiveTurnId(body.sender!, mindSession);
-    } else {
-      turnId = await createTurn(baseName);
     }
 
     // Save user message
@@ -401,8 +396,6 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     if (user.user_type === "mind") {
       unifiedSourceEventId = getLastToolUseEventId(senderName, unifiedMindSession);
       unifiedTurnId = getActiveTurnId(senderName, unifiedMindSession);
-    } else if (conv.mind_name) {
-      unifiedTurnId = await createTurn(conv.mind_name);
     }
     await addMessage(body.conversationId, "user", senderName, contentBlocks, {
       sourceEventId: unifiedSourceEventId,

@@ -241,12 +241,19 @@ export type TurnActivity = {
   created_at: string;
 };
 
+export type TurnTrigger = {
+  channel: string | null;
+  sender: string | null;
+  content: string | null;
+};
+
 export type TurnRow = {
   id: string;
   summary: string | null;
   summary_meta: Record<string, unknown> | null;
   status: string;
   created_at: string;
+  trigger: TurnTrigger | null;
   conversations: TurnConversation[];
   activities: TurnActivity[];
 };

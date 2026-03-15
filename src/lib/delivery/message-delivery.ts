@@ -1,11 +1,9 @@
-import { eq } from "drizzle-orm";
 import { getSleepManagerIfReady } from "../daemon/sleep-manager.js";
-import { createTurn } from "../daemon/turn-tracker.js";
 import { getDb } from "../db.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import log from "../logger.js";
 import { findMind, getBaseName } from "../registry.js";
-import { mindHistory, turns } from "../schema.js";
+import { mindHistory } from "../schema.js";
 import { getDeliveryManager } from "./delivery-manager.js";
 import { type DeliveryPayload, extractTextContent } from "./delivery-router.js";
 
@@ -21,29 +19,18 @@ export async function recordInbound(
   sender: string | null,
   content: string | null,
 ): Promise<void> {
-  // Create (or reuse) a turn for this inbound message
-  const turnId = await createTurn(mind);
-
-  let eventId: number | undefined;
+  // Record the inbound event without a turn_id. The turn will be created
+  // per-session when the mind starts processing (auto-create in events handler).
+  // This avoids merging unrelated inbounds from different channels into one turn.
   try {
     const db = await getDb();
-    const result = await db
-      .insert(mindHistory)
-      .values({
-        mind,
-        type: "inbound",
-        channel,
-        sender,
-        content,
-        turn_id: turnId,
-      })
-      .returning({ id: mindHistory.id });
-    eventId = result[0]?.id;
-
-    // Link this event as the turn's trigger
-    if (eventId) {
-      await db.update(turns).set({ trigger_event_id: eventId }).where(eq(turns.id, turnId));
-    }
+    await db.insert(mindHistory).values({
+      mind,
+      type: "inbound",
+      channel,
+      sender,
+      content,
+    });
   } catch (err) {
     dlog.warn(`failed to persist inbound for ${mind}`, log.errorData(err));
   }

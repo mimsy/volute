@@ -2130,21 +2130,35 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    // Look up active turn for this event; create one if missing for substantive events
-    // (handles post-interrupt continuation where completeTurn fired but the mind kept going)
+    // Look up active turn for this event; create one if missing for substantive events.
+    // Turns are created per-session when the mind starts processing, not when inbound arrives.
     let turnId = getActiveTurnId(baseName, body.session);
-    const substantiveTypes = new Set([
-      "thinking",
-      "text",
-      "tool_use",
-      "tool_result",
-      "inbound",
-      "outbound",
-    ]);
+    const substantiveTypes = new Set(["thinking", "text", "tool_use", "tool_result", "outbound"]);
     if (!turnId && substantiveTypes.has(body.type)) {
       turnId = await createTurn(baseName);
       if (body.session) {
         await assignSession(baseName, turnId, body.session);
+      }
+      // Set trigger_event_id to the most recent inbound for this mind (matching channel if session known)
+      try {
+        const db = await getDb();
+        const conditions = [eq(mindHistory.mind, baseName), eq(mindHistory.type, "inbound")];
+        if (body.session) conditions.push(eq(mindHistory.channel, body.session));
+        const triggerRow = await db
+          .select({ id: mindHistory.id })
+          .from(mindHistory)
+          .where(and(...conditions))
+          .orderBy(desc(mindHistory.id))
+          .limit(1)
+          .get();
+        if (triggerRow) {
+          await db
+            .update(turns)
+            .set({ trigger_event_id: triggerRow.id })
+            .where(eq(turns.id, turnId));
+        }
+      } catch {
+        // best-effort
       }
     }
 
@@ -2517,7 +2531,28 @@ const app = new Hono<AuthEnv>()
       arr.push(a);
     }
 
-    // 5. Assemble response
+    // 5. Fetch trigger events for turns that have trigger_event_id
+    const triggerIds = turnRows
+      .filter((t) => t.trigger_event_id != null)
+      .map((t) => t.trigger_event_id!);
+    const triggerMap = new Map<
+      number,
+      { channel: string | null; sender: string | null; content: string | null }
+    >();
+    if (triggerIds.length > 0) {
+      const triggerRows = await db
+        .select({
+          id: mindHistory.id,
+          channel: mindHistory.channel,
+          sender: mindHistory.sender,
+          content: mindHistory.content,
+        })
+        .from(mindHistory)
+        .where(inArray(mindHistory.id, triggerIds));
+      for (const r of triggerRows) triggerMap.set(r.id, r);
+    }
+
+    // 6. Assemble response
     const result = turnRows.map((t) => {
       const summary = summaryByTurn.get(t.id);
       const turnConvs = msgsByTurnConv.get(t.id) ?? new Map<string, MsgRow[]>();
@@ -2565,12 +2600,17 @@ const app = new Hono<AuthEnv>()
         }
       }
 
+      const trigger = t.trigger_event_id ? triggerMap.get(t.trigger_event_id) : null;
+
       return {
         id: t.id,
         summary: summary?.content ?? null,
         summary_meta: summaryMeta,
         status: t.status,
         created_at: t.created_at,
+        trigger: trigger
+          ? { channel: trigger.channel, sender: trigger.sender, content: trigger.content }
+          : null,
         conversations: convEntries,
         activities: turnActivities,
       };

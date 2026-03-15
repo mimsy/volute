@@ -14,7 +14,6 @@ import {
   setChannelMapping,
 } from "../../lib/bridges.js";
 import { getBridgeManager } from "../../lib/daemon/bridge-manager.js";
-import { createTurn } from "../../lib/daemon/turn-tracker.js";
 import { deliverMessage } from "../../lib/delivery/message-delivery.js";
 import {
   addMessage,
@@ -99,12 +98,9 @@ const app = new Hono<AuthEnv>()
         conversationId = conv.id;
       }
 
-      // Add message to conversation, linked to the target mind's turn
+      // Add message to conversation (inbound — no turn_id yet, turn created per-session)
       const contentBlocks = body.content as ContentBlock[];
-      const dmTurnId = await createTurn(mindName);
-      await addMessage(conversationId, "user", body.displayName, contentBlocks, {
-        turnId: dmTurnId,
-      });
+      await addMessage(conversationId, "user", body.displayName, contentBlocks);
 
       // Fan out to the mind via existing delivery pipeline
       await fanOutToBridgedMinds({
@@ -139,13 +135,9 @@ const app = new Hono<AuthEnv>()
       await addParticipant(channel.id, puppet.id);
     }
 
-    // Add message, linked to the first mind participant's turn
+    // Add message (inbound — no turn_id yet, turn created per-session)
     const contentBlocks = body.content as ContentBlock[];
-    const mindParticipant = participants.find((p) => p.userType === "mind");
-    const channelTurnId = mindParticipant ? await createTurn(mindParticipant.username) : undefined;
-    await addMessage(channel.id, "user", body.displayName, contentBlocks, {
-      turnId: channelTurnId,
-    });
+    await addMessage(channel.id, "user", body.displayName, contentBlocks);
 
     // Fan out to mind participants
     await fanOutToBridgedMinds({
