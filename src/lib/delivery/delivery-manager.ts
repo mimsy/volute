@@ -19,6 +19,7 @@ import {
   resolveDeliveryMode,
   resolveRoute,
 } from "./delivery-router.js";
+import { tagRecentInbound } from "./message-delivery.js";
 
 const dlog = log.child("delivery-manager");
 
@@ -123,6 +124,11 @@ export class DeliveryManager {
     if (sessionName === "$new") {
       sessionName = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     }
+
+    // Tag the most recent untagged inbound with the active turn for this session.
+    // This links incoming messages to the current turn immediately so live streams
+    // can group them correctly, and handles interrupts (message arriving mid-turn).
+    tagRecentInbound(baseName, sessionName).catch(() => {});
 
     // Resolve delivery mode for this session (pass matched rule for rule-level batch config)
     const sessionConfig = resolveDeliveryMode(config, sessionName, route.rule);
