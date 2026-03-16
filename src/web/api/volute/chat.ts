@@ -279,10 +279,10 @@ const app = new Hono<AuthEnv>()
     // Check if a mind is messaging a system DM — generate AI reply
     if (senderIsMind && body.message) {
       const participants = await getParticipants(conversationId!);
-      const hasSystemUser = participants.some((p) => (p.userType as string) === "system");
+      const hasSystemUser = participants.some((p) => p.userType === "system");
       if (hasSystemUser) {
         generateSystemReply(conversationId!, baseName, body.message).catch((err) =>
-          log.warn("system reply generation failed", log.errorData(err)),
+          log.error("system reply generation failed", log.errorData(err)),
         );
       }
     }
@@ -436,10 +436,10 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     // Check if a mind is messaging a system DM — generate AI reply
     if (user.user_type === "mind" && body.message) {
       const participants = await getParticipants(body.conversationId);
-      const hasSystemUser = participants.some((p) => (p.userType as string) === "system");
+      const hasSystemUser = participants.some((p) => p.userType === "system");
       if (hasSystemUser) {
         generateSystemReply(body.conversationId, senderName, body.message).catch((err) =>
-          log.warn("system reply generation failed", log.errorData(err)),
+          log.error("system reply generation failed", log.errorData(err)),
         );
       }
     }

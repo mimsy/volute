@@ -119,7 +119,10 @@ export async function startDaemon(opts: {
     const { getOrCreateSystemUser } = await import("./lib/auth.js");
     await getOrCreateSystemUser();
   } catch (err) {
-    log.warn("failed to ensure system user", log.errorData(err));
+    log.warn(
+      "failed to ensure system user — system chat features will be unavailable",
+      log.errorData(err),
+    );
   }
 
   // Use existing token if set (for testing), otherwise generate one

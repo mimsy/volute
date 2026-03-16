@@ -136,8 +136,8 @@ export async function generateSystemReply(
         contextParts.push(`Sleep state: sleeping since ${state.sleepingSince}`);
       }
     }
-  } catch {
-    // Sleep manager may not be initialized
+  } catch (err) {
+    slog.debug("could not retrieve sleep state for system reply", log.errorData(err));
   }
 
   // Get active schedules from config
@@ -151,15 +151,15 @@ export async function generateSystemReply(
         );
       }
     }
-  } catch {
-    // Scheduler may not be initialized
+  } catch (err) {
+    slog.debug("could not retrieve schedules for system reply", log.errorData(err));
   }
 
   const systemPrompt = contextParts.join("\n");
 
   const response = await aiComplete(systemPrompt, message);
   if (!response) {
-    slog.debug(`no AI response for system reply to ${mindName}`);
+    slog.warn(`no AI model available for system reply to ${mindName}`);
     return;
   }
 
