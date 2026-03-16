@@ -9,15 +9,18 @@ import {
   stageFile,
   validateFilePath,
 } from "../../lib/file-sharing.js";
+import log from "../../lib/logger.js";
 import { findMind, mindDir } from "../../lib/registry.js";
 import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
 async function notifyMind(mindName: string, message: string) {
+  const entry = await findMind(mindName);
+  if (!entry) return;
   try {
     const { sendSystemMessage } = await import("../../lib/system-chat.js");
     await sendSystemMessage(mindName, message);
   } catch (err) {
-    console.warn(`[file-sharing] notify mind ${mindName} failed:`, err);
+    log.warn(`[file-sharing] notify mind ${mindName} failed`, log.errorData(err));
   }
 }
 

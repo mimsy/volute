@@ -287,7 +287,7 @@ const app = new Hono<AuthEnv>()
       const hasSystemUser = participants.some((p) => p.userType === "system");
       if (hasSystemUser) {
         generateSystemReply(conversationId!, baseName, body.message).catch((err) =>
-          log.error("system reply generation failed", log.errorData(err)),
+          log.error(`system reply generation failed for ${baseName}`, log.errorData(err)),
         );
       }
     }
@@ -444,7 +444,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       const hasSystemUser = participants.some((p) => p.userType === "system");
       if (hasSystemUser) {
         generateSystemReply(body.conversationId, senderName, body.message).catch((err) =>
-          log.error("system reply generation failed", log.errorData(err)),
+          log.error(`system reply generation failed for ${senderName}`, log.errorData(err)),
         );
       }
     }

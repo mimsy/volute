@@ -86,9 +86,6 @@ export async function startMindFull(name: string): Promise<void> {
 }
 
 /**
- * Stop a mind server and (for non-variant minds) schedules and budget.
- */
-/**
  * Put a mind to sleep: stop process only, leave schedules/budget running.
  */
 export async function sleepMind(name: string): Promise<void> {

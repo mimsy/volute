@@ -31,7 +31,7 @@ function install() {
     console.warn("warning: .config/config.json not found — skipping subagent setup");
   }
 
-  // 3. Append dream checker to wake-context hook (if not already present)
+  // 2. Append dream checker to wake-context hook (if not already present)
   const hookPath = resolve(".config/hooks/wake-context.sh");
   if (existsSync(hookPath)) {
     try {
@@ -56,9 +56,8 @@ function install() {
     console.log(
       `\ndone (${actions} change${actions === 1 ? "" : "s"}). restart your mind to activate subagent.`,
     );
-    console.log("\nremaining manual steps:");
+    console.log("\nremaining manual step:");
     console.log("  1. add a dream schedule to volute.json (see INSTALL.md)");
-    console.log("  2. optionally add system:dream to sleep.wakeTriggers");
   }
 }
 

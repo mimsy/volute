@@ -47,6 +47,8 @@ export async function ensureSystemDM(mindName: string): Promise<{ conversationId
     });
   } catch (err) {
     slog.warn(`failed to write channel entry for ${mindName}`, log.errorData(err));
+    // Don't cache — retry channel entry write on next call
+    return { conversationId: conv.id };
   }
 
   dmCache.set(mindName, conv.id);
@@ -106,7 +108,6 @@ export async function generateSystemReply(
   mindName: string,
   message: string,
 ): Promise<void> {
-  // Gather mind context
   const entry = await findMind(mindName);
   const dir = mindDir(mindName);
   const config = readVoluteConfig(dir);
@@ -127,7 +128,6 @@ export async function generateSystemReply(
     if (config.sleep.schedule?.wake) contextParts.push(`Wake cron: ${config.sleep.schedule.wake}`);
   }
 
-  // Get sleep state if available
   try {
     const { getSleepManagerIfReady } = await import("./daemon/sleep-manager.js");
     const sm = getSleepManagerIfReady();
@@ -141,7 +141,6 @@ export async function generateSystemReply(
     slog.debug("could not retrieve sleep state for system reply", log.errorData(err));
   }
 
-  // Get active schedules from config
   try {
     const schedules = config?.schedules;
     if (schedules && schedules.length > 0) {
@@ -161,12 +160,14 @@ export async function generateSystemReply(
   const response = await aiComplete(systemPrompt, message);
   if (!response) {
     slog.warn(`no AI model available for system reply to ${mindName}`);
+    const fallback =
+      "I can't reply right now — no AI model is configured for system responses. An admin can set one up in Settings.";
+    await addMessage(conversationId, "assistant", "volute", [{ type: "text", text: fallback }]);
     return;
   }
 
   await addMessage(conversationId, "assistant", "volute", [{ type: "text", text: response }]);
 
-  // Deliver the reply to the mind
   await deliverMessage(mindName, {
     content: [{ type: "text", text: response }],
     channel: "volute:@volute",
