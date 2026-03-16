@@ -73,9 +73,8 @@ function connectSSE() {
 
     const turnId = d.turnId as string | undefined;
     const eventType = d.type as string;
-
     if (eventType === "turn_created" && turnId) {
-      // Create a placeholder turn row
+      // Create a placeholder turn row (guard against duplicate events)
       if (!turnsData.some((t) => t.id === turnId)) {
         turnsData = [
           ...turnsData,
@@ -91,7 +90,9 @@ function connectSSE() {
           },
         ];
       }
-      streamingEvents.set(turnId, []);
+      if (!streamingEvents.has(turnId)) {
+        streamingEvents.set(turnId, []);
+      }
     } else if (eventType === "summary" && turnId) {
       // Turn complete — fetch the full turn row and remove streaming state
       streamingEvents.delete(turnId);
@@ -110,21 +111,24 @@ function connectSSE() {
       // Ignore — summary will arrive shortly
     } else if (turnId && streamingEvents.has(turnId)) {
       // Substantive event — accumulate for streaming display
-      const events = streamingEvents.get(turnId)!;
-      events.push({
-        id: nextSyntheticId--,
-        mind: name,
-        channel: (d.channel as string) ?? "",
-        session: (d.session as string) ?? null,
-        sender: null,
-        message_id: (d.messageId as string) ?? null,
-        type: eventType,
-        content: (d.content as string) ?? "",
-        metadata: d.metadata ? JSON.stringify(d.metadata) : null,
-        turn_id: turnId,
-        created_at: new Date().toISOString(),
-      });
-      streamingEvents.set(turnId, events);
+      // Create new array to trigger Svelte reactivity
+      const prev = streamingEvents.get(turnId)!;
+      streamingEvents.set(turnId, [
+        ...prev,
+        {
+          id: nextSyntheticId--,
+          mind: name,
+          channel: (d.channel as string) ?? "",
+          session: (d.session as string) ?? null,
+          sender: null,
+          message_id: (d.messageId as string) ?? null,
+          type: eventType,
+          content: (d.content as string) ?? "",
+          metadata: d.metadata ? JSON.stringify(d.metadata) : null,
+          turn_id: turnId,
+          created_at: new Date().toISOString(),
+        },
+      ]);
     }
 
     if (!userScrolledUp) {
