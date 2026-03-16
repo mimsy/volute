@@ -364,7 +364,7 @@ export async function listConversationsWithParticipants(
     arr.push({
       userId: r.userId,
       username: r.username,
-      userType: r.userType as "brain" | "mind",
+      userType: r.userType as Participant["userType"],
       role: r.role as "owner" | "member",
       displayName: r.displayName,
       description: r.description,
@@ -520,7 +520,7 @@ export async function listConversationsForMind(
     arr.push({
       userId: r.userId,
       username: r.username,
-      userType: r.userType as "brain" | "mind",
+      userType: r.userType as Participant["userType"],
       role: r.role as "owner" | "member",
       displayName: r.displayName,
       description: r.description,

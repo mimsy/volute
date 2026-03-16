@@ -111,8 +111,8 @@ async function buildContext(
       if (!user || typeof user !== "object") return null;
       return user as ReturnType<ExtensionContext["resolveUser"]>;
     },
-    getUser: async (id: number) => getUser(id),
-    getUserByUsername: async (username: string) => getUserByUsername(username),
+    getUser: async (id: number) => getUser(id) as any,
+    getUserByUsername: async (username: string) => getUserByUsername(username) as any,
     publishActivity: (event, c) => {
       // Use session from Hono context for precise turn lookup.
       // Fall back to scanning all sessions when no session header (e.g. sandbox strips env vars).

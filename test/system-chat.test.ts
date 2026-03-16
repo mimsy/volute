@@ -1,0 +1,113 @@
+import assert from "node:assert/strict";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { getOrCreateSystemUser, verifyUser } from "../src/lib/auth.js";
+import { getDb } from "../src/lib/db.js";
+import {
+  conversationParticipants,
+  conversations,
+  messages,
+  sessions,
+  users,
+} from "../src/lib/schema.js";
+import {
+  ensureSystemDM,
+  resetSystemDMCache,
+  sendSystemMessageDirect,
+} from "../src/lib/system-chat.js";
+
+async function cleanup() {
+  resetSystemDMCache();
+  const db = await getDb();
+  await db.delete(messages);
+  await db.delete(conversationParticipants);
+  await db.delete(sessions);
+  await db.delete(conversations);
+  await db.delete(users);
+}
+
+describe("system user", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  it("getOrCreateSystemUser creates user with correct fields", async () => {
+    const user = await getOrCreateSystemUser();
+    assert.equal(user.username, "volute");
+    assert.equal(user.user_type, "system");
+    assert.equal(user.display_name, "Volute");
+    assert.equal(user.role, "user");
+  });
+
+  it("getOrCreateSystemUser is idempotent", async () => {
+    const user1 = await getOrCreateSystemUser();
+    const user2 = await getOrCreateSystemUser();
+    assert.equal(user1.id, user2.id);
+  });
+
+  it("system user cannot log in", async () => {
+    await getOrCreateSystemUser();
+    const result = await verifyUser("volute", "anything");
+    assert.equal(result, null);
+  });
+});
+
+describe("system DM", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  it("ensureSystemDM creates DM conversation", async () => {
+    const { conversationId } = await ensureSystemDM("testmind");
+    assert.ok(conversationId, "should return a conversation ID");
+
+    const db = await getDb();
+    const conv = await db
+      .select()
+      .from(conversations)
+      .where((await import("drizzle-orm")).eq(conversations.id, conversationId))
+      .get();
+    assert.ok(conv, "conversation should exist in DB");
+    assert.equal(conv!.type, "dm");
+    assert.equal(conv!.title, "Volute");
+
+    // Should have 2 participants
+    const parts = await db
+      .select()
+      .from(conversationParticipants)
+      .where(
+        (await import("drizzle-orm")).eq(conversationParticipants.conversation_id, conversationId),
+      )
+      .all();
+    assert.equal(parts.length, 2);
+  });
+
+  it("ensureSystemDM is idempotent", async () => {
+    const { conversationId: id1 } = await ensureSystemDM("testmind");
+    const { conversationId: id2 } = await ensureSystemDM("testmind");
+    assert.equal(id1, id2);
+  });
+
+  it("ensureSystemDM creates separate DMs per mind", async () => {
+    const { conversationId: id1 } = await ensureSystemDM("mind1");
+    const { conversationId: id2 } = await ensureSystemDM("mind2");
+    assert.notEqual(id1, id2);
+  });
+});
+
+describe("system messages", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  it("sendSystemMessageDirect persists message to conversation", async () => {
+    const { conversationId } = await sendSystemMessageDirect("testmind", "hello from system");
+
+    const db = await getDb();
+    const msgs = await db
+      .select()
+      .from(messages)
+      .where((await import("drizzle-orm")).eq(messages.conversation_id, conversationId))
+      .all();
+    assert.equal(msgs.length, 1);
+    assert.equal(msgs[0].sender_name, "volute");
+    assert.equal(msgs[0].role, "user");
+    assert.ok(msgs[0].content.includes("hello from system"));
+  });
+});

@@ -5,6 +5,7 @@ import { exec } from "../exec.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../json-state.js";
 import log from "../logger.js";
 import { mindDir, voluteSystemDir } from "../registry.js";
+import { sendSystemMessage } from "../system-chat.js";
 import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../volute-config.js";
 
 const slog = log.child("scheduler");
@@ -142,13 +143,20 @@ export class Scheduler {
       }
 
       const whileSleeping = schedule.whileSleeping;
+      const channel = schedule.channel;
 
-      await this.deliver(mindName, {
-        content: [{ type: "text", text }],
-        channel: schedule.channel ?? "system:scheduler",
-        sender: schedule.id,
-        whileSleeping,
-      });
+      if (channel && !channel.startsWith("system:")) {
+        // Custom channel — use existing delivery path
+        await this.deliver(mindName, {
+          content: [{ type: "text", text }],
+          channel,
+          sender: schedule.id,
+          whileSleeping,
+        });
+      } else {
+        // System channel or default — use system chat
+        await this.deliverSystem(mindName, `[${schedule.id}] ${text}`, { whileSleeping });
+      }
       slog.info(`fired "${schedule.id}" for ${mindName}`);
 
       // Self-delete one-time timers after successful delivery
@@ -202,6 +210,14 @@ export class Scheduler {
     },
   ): Promise<void> {
     return deliverMessage(mindName, payload);
+  }
+
+  protected deliverSystem(
+    mindName: string,
+    text: string,
+    opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake" },
+  ): Promise<void> {
+    return sendSystemMessage(mindName, text, opts);
   }
 }
 

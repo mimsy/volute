@@ -9,9 +9,16 @@ type DeliveryPayload = {
   whileSleeping?: "skip" | "queue" | "trigger-wake";
 };
 
+type SystemDelivery = {
+  mindName: string;
+  text: string;
+  opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake" };
+};
+
 /** Test subclass that captures calls instead of running real exec/deliver */
 class TestScheduler extends Scheduler {
   deliveries: { mindName: string; payload: DeliveryPayload }[] = [];
+  systemDeliveries: SystemDelivery[] = [];
   scriptCalls: { script: string; cwd: string; mindName: string }[] = [];
   scriptResult: string | Error = "";
 
@@ -31,6 +38,14 @@ class TestScheduler extends Scheduler {
   ): Promise<void> {
     this.deliveries.push({ mindName, payload });
   }
+
+  protected override async deliverSystem(
+    mindName: string,
+    text: string,
+    opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake" },
+  ): Promise<void> {
+    this.systemDeliveries.push({ mindName, text, opts });
+  }
 }
 
 describe("scheduler", () => {
@@ -47,7 +62,7 @@ describe("scheduler", () => {
     assert.ok(true);
   });
 
-  it("fire delivers message for message schedules", async () => {
+  it("fire delivers message for message schedules via system chat", async () => {
     const scheduler = new TestScheduler();
     await (scheduler as any).fire("test-mind", {
       id: "msg-sched",
@@ -55,18 +70,33 @@ describe("scheduler", () => {
       message: "hello",
       enabled: true,
     });
-    assert.equal(scheduler.deliveries.length, 1);
-    assert.equal(scheduler.deliveries[0].mindName, "test-mind");
-    assert.deepEqual(scheduler.deliveries[0].payload, {
-      content: [{ type: "text", text: "hello" }],
-      channel: "system:scheduler",
-      sender: "msg-sched",
-      whileSleeping: undefined,
-    });
+    assert.equal(scheduler.systemDeliveries.length, 1);
+    assert.equal(scheduler.systemDeliveries[0].mindName, "test-mind");
+    assert.equal(scheduler.systemDeliveries[0].text, "[msg-sched] hello");
+    assert.equal(scheduler.deliveries.length, 0);
     assert.equal(scheduler.scriptCalls.length, 0);
   });
 
-  it("fire uses custom channel when specified", async () => {
+  it("fire uses custom channel via deliver when specified", async () => {
+    const scheduler = new TestScheduler();
+    await (scheduler as any).fire("test-mind", {
+      id: "dream",
+      cron: "0 3 * * *",
+      message: "time to dream",
+      enabled: true,
+      channel: "custom:dream",
+    });
+    assert.equal(scheduler.deliveries.length, 1);
+    assert.deepEqual(scheduler.deliveries[0].payload, {
+      content: [{ type: "text", text: "time to dream" }],
+      channel: "custom:dream",
+      sender: "dream",
+      whileSleeping: undefined,
+    });
+    assert.equal(scheduler.systemDeliveries.length, 0);
+  });
+
+  it("fire routes system:* channels through system chat", async () => {
     const scheduler = new TestScheduler();
     await (scheduler as any).fire("test-mind", {
       id: "dream",
@@ -75,16 +105,12 @@ describe("scheduler", () => {
       enabled: true,
       channel: "system:dream",
     });
-    assert.equal(scheduler.deliveries.length, 1);
-    assert.deepEqual(scheduler.deliveries[0].payload, {
-      content: [{ type: "text", text: "time to dream" }],
-      channel: "system:dream",
-      sender: "dream",
-      whileSleeping: undefined,
-    });
+    assert.equal(scheduler.systemDeliveries.length, 1);
+    assert.equal(scheduler.systemDeliveries[0].text, "[dream] time to dream");
+    assert.equal(scheduler.deliveries.length, 0);
   });
 
-  it("fire runs script and delivers output", async () => {
+  it("fire runs script and delivers output via system chat", async () => {
     const scheduler = new TestScheduler();
     scheduler.scriptResult = "script output\n";
 
@@ -99,14 +125,9 @@ describe("scheduler", () => {
     assert.equal(scheduler.scriptCalls[0].script, "echo hello");
     assert.equal(scheduler.scriptCalls[0].mindName, "test-mind");
 
-    assert.equal(scheduler.deliveries.length, 1);
-    assert.equal(scheduler.deliveries[0].mindName, "test-mind");
-    assert.deepEqual(scheduler.deliveries[0].payload, {
-      content: [{ type: "text", text: "script output\n" }],
-      channel: "system:scheduler",
-      sender: "script-sched",
-      whileSleeping: undefined,
-    });
+    assert.equal(scheduler.systemDeliveries.length, 1);
+    assert.equal(scheduler.systemDeliveries[0].mindName, "test-mind");
+    assert.ok(scheduler.systemDeliveries[0].text.includes("script output"));
   });
 
   it("fire skips delivery when script produces no output", async () => {
@@ -150,8 +171,8 @@ describe("scheduler", () => {
       enabled: true,
     });
 
-    assert.equal(scheduler.deliveries.length, 1);
-    const text = scheduler.deliveries[0].payload.content[0].text;
+    assert.equal(scheduler.systemDeliveries.length, 1);
+    const text = scheduler.systemDeliveries[0].text;
     assert.ok(text.includes("[script error]"));
     assert.ok(text.includes("bad command"));
   });
@@ -167,9 +188,9 @@ describe("scheduler", () => {
       enabled: true,
     });
 
-    assert.equal(scheduler.deliveries.length, 1);
-    const text = scheduler.deliveries[0].payload.content[0].text;
-    assert.equal(text, "[script error] command not found");
+    assert.equal(scheduler.systemDeliveries.length, 1);
+    const text = scheduler.systemDeliveries[0].text;
+    assert.ok(text.includes("[script error] command not found"));
   });
 
   it("fire skips schedule with neither message nor script", async () => {
@@ -185,7 +206,7 @@ describe("scheduler", () => {
     assert.equal(scheduler.scriptCalls.length, 0);
   });
 
-  it("fire passes whileSleeping from schedule to delivery", async () => {
+  it("fire passes whileSleeping from schedule to system delivery", async () => {
     const scheduler = new TestScheduler();
     await (scheduler as any).fire("test-mind", {
       id: "sleep-sched",
@@ -194,11 +215,11 @@ describe("scheduler", () => {
       enabled: true,
       whileSleeping: "trigger-wake",
     });
-    assert.equal(scheduler.deliveries.length, 1);
-    assert.equal(scheduler.deliveries[0].payload.whileSleeping, "trigger-wake");
+    assert.equal(scheduler.systemDeliveries.length, 1);
+    assert.equal(scheduler.systemDeliveries[0].opts?.whileSleeping, "trigger-wake");
   });
 
-  it("fire delivers fireAt schedule", async () => {
+  it("fire delivers fireAt schedule via system chat", async () => {
     const scheduler = new TestScheduler();
     await (scheduler as any).fire("test-mind", {
       id: "timer-sched",
@@ -206,8 +227,8 @@ describe("scheduler", () => {
       message: "timer fired",
       enabled: true,
     });
-    assert.equal(scheduler.deliveries.length, 1);
-    assert.equal(scheduler.deliveries[0].payload.content[0].text, "timer fired");
+    assert.equal(scheduler.systemDeliveries.length, 1);
+    assert.ok(scheduler.systemDeliveries[0].text.includes("timer fired"));
   });
 });
 

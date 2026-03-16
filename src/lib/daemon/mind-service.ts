@@ -5,6 +5,7 @@ import { notifyExtensionsMindStart, notifyExtensionsMindStop } from "../extensio
 import log from "../logger.js";
 import { findMind, getBaseName, mindDir } from "../registry.js";
 import { joinSystemChannelForMind } from "../system-channel.js";
+import { ensureSystemDM } from "../system-chat.js";
 import { readVoluteConfig } from "../volute-config.js";
 import { ensureMailAddress } from "./mail-poller.js";
 import { getMindManager } from "./mind-manager.js";
@@ -51,6 +52,11 @@ export async function startMindFull(name: string): Promise<void> {
   // Auto-join #system channel
   joinSystemChannelForMind(baseName).catch((err: unknown) =>
     log.error(`failed to join #system for ${baseName}`, log.errorData(err)),
+  );
+
+  // Ensure system DM conversation exists
+  ensureSystemDM(baseName).catch((err: unknown) =>
+    log.error(`failed to ensure system DM for ${baseName}`, log.errorData(err)),
   );
 
   if (config?.tokenBudget) {

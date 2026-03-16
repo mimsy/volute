@@ -21,6 +21,7 @@ import { formatFileSize, stageFile, validateFilePath } from "../../../lib/file-s
 import log from "../../../lib/logger.js";
 import { findMind, getBaseName } from "../../../lib/registry.js";
 import { buildVoluteSlug } from "../../../lib/slugify.js";
+import { generateSystemReply } from "../../../lib/system-chat.js";
 import { getTypingMap } from "../../../lib/typing.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
@@ -275,6 +276,17 @@ const app = new Hono<AuthEnv>()
       targetName: (username) => (username === baseName ? name : username),
     });
 
+    // Check if a mind is messaging a system DM — generate AI reply
+    if (senderIsMind && body.message) {
+      const participants = await getParticipants(conversationId!);
+      const hasSystemUser = participants.some((p) => (p.userType as string) === "system");
+      if (hasSystemUser) {
+        generateSystemReply(conversationId!, baseName, body.message).catch((err) =>
+          log.warn("system reply generation failed", log.errorData(err)),
+        );
+      }
+    }
+
     return c.json({ ok: true, conversationId });
   })
   // SSE endpoint for conversation events (new messages + typing)
@@ -420,6 +432,17 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       channelEntryType: isDM ? "dm" : "channel",
       slugExtra: { convType: conv.type as "dm" | "channel", convName: conv.name },
     });
+
+    // Check if a mind is messaging a system DM — generate AI reply
+    if (user.user_type === "mind" && body.message) {
+      const participants = await getParticipants(body.conversationId);
+      const hasSystemUser = participants.some((p) => (p.userType as string) === "system");
+      if (hasSystemUser) {
+        generateSystemReply(body.conversationId, senderName, body.message).catch((err) =>
+          log.warn("system reply generation failed", log.errorData(err)),
+        );
+      }
+    }
 
     return c.json({ ok: true, conversationId: body.conversationId });
   },

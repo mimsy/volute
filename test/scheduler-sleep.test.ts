@@ -2,22 +2,29 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { Scheduler } from "../src/lib/daemon/scheduler.js";
 
-type DeliveryPayload = {
-  content: { type: string; text: string }[];
-  channel: string;
-  sender: string;
-  whileSleeping?: "skip" | "queue" | "trigger-wake";
+type SystemDelivery = {
+  mindName: string;
+  text: string;
+  opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake" };
 };
 
 class TestScheduler extends Scheduler {
-  deliveries: { mindName: string; payload: DeliveryPayload }[] = [];
+  systemDeliveries: SystemDelivery[] = [];
 
   protected override async runScript(): Promise<string> {
     return "";
   }
 
-  protected override async deliver(mindName: string, payload: DeliveryPayload): Promise<void> {
-    this.deliveries.push({ mindName, payload });
+  protected override async deliver(): Promise<void> {
+    // Not used for system messages
+  }
+
+  protected override async deliverSystem(
+    mindName: string,
+    text: string,
+    opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake" },
+  ): Promise<void> {
+    this.systemDeliveries.push({ mindName, text, opts });
   }
 }
 
@@ -30,8 +37,8 @@ describe("scheduler whileSleeping", () => {
       message: "hello",
       enabled: true,
     });
-    assert.equal(scheduler.deliveries.length, 1);
-    assert.equal(scheduler.deliveries[0].payload.whileSleeping, undefined);
+    assert.equal(scheduler.systemDeliveries.length, 1);
+    assert.equal(scheduler.systemDeliveries[0].opts?.whileSleeping, undefined);
   });
 
   it("passes whileSleeping: skip to delivery", async () => {
@@ -43,8 +50,8 @@ describe("scheduler whileSleeping", () => {
       enabled: true,
       whileSleeping: "skip",
     });
-    assert.equal(scheduler.deliveries.length, 1);
-    assert.equal(scheduler.deliveries[0].payload.whileSleeping, "skip");
+    assert.equal(scheduler.systemDeliveries.length, 1);
+    assert.equal(scheduler.systemDeliveries[0].opts?.whileSleeping, "skip");
   });
 
   it("passes whileSleeping: trigger-wake to delivery", async () => {
@@ -56,8 +63,8 @@ describe("scheduler whileSleeping", () => {
       enabled: true,
       whileSleeping: "trigger-wake",
     });
-    assert.equal(scheduler.deliveries.length, 1);
-    assert.equal(scheduler.deliveries[0].payload.whileSleeping, "trigger-wake");
+    assert.equal(scheduler.systemDeliveries.length, 1);
+    assert.equal(scheduler.systemDeliveries[0].opts?.whileSleeping, "trigger-wake");
   });
 
   it("passes whileSleeping: queue to delivery", async () => {
@@ -69,7 +76,7 @@ describe("scheduler whileSleeping", () => {
       enabled: true,
       whileSleeping: "queue",
     });
-    assert.equal(scheduler.deliveries.length, 1);
-    assert.equal(scheduler.deliveries[0].payload.whileSleeping, "queue");
+    assert.equal(scheduler.systemDeliveries.length, 1);
+    assert.equal(scheduler.systemDeliveries[0].opts?.whileSleeping, "queue");
   });
 });
