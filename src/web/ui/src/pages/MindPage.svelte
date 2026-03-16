@@ -180,6 +180,11 @@ function connectSSE() {
               turnsData = turnsData.map((t) => (t.id === row.id ? row : t));
             }
           }
+          // Scroll the completed turn into view after DOM update
+          requestAnimationFrame(() => {
+            const el = scrollContainer?.querySelector(`[data-turn-id="${turnId}"]`);
+            el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          });
         })
         .catch(() => {});
     } else if (eventType === "done" && turnId) {
@@ -393,7 +398,7 @@ function jumpToLatest() {
         {:else}
           <div class="two-track">
             {#each timeline as row (row.key)}
-              <div class="track-row">
+              <div class="track-row" data-turn-id={row.turn.id}>
                 <!-- Left: timestamp + summary content -->
                 <div class="track-time track-time-left">
                   {getSummaryTime(row.turn)}
