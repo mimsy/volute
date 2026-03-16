@@ -41,6 +41,41 @@ function getSummaryTime(turn: TurnRow): string {
   return formatRelativeTime(turn.created_at);
 }
 
+type StreamingConv = {
+  channel: string;
+  label: string;
+  type: "dm" | "channel";
+  messages: { role: "user" | "assistant"; sender: string | null; content: string }[];
+};
+
+function getStreamingConversations(events: HistoryMessage[]): StreamingConv[] {
+  const byChannel = new Map<string, StreamingConv>();
+  for (const ev of events) {
+    if ((ev.type !== "inbound" && ev.type !== "outbound") || !ev.channel) continue;
+    let conv = byChannel.get(ev.channel);
+    if (!conv) {
+      // Derive label from channel slug: "volute:@user" → "@user", "discord:server/chan" → "#server/chan"
+      const slug = ev.channel;
+      const colonIdx = slug.indexOf(":");
+      const raw = colonIdx >= 0 ? slug.substring(colonIdx + 1) : slug;
+      const isDM = raw.startsWith("@");
+      conv = {
+        channel: slug,
+        label: isDM ? raw : `#${raw}`,
+        type: isDM ? "dm" : "channel",
+        messages: [],
+      };
+      byChannel.set(slug, conv);
+    }
+    conv.messages.push({
+      role: ev.type === "inbound" ? "user" : "assistant",
+      sender: ev.type === "inbound" ? ev.sender : name,
+      content: ev.content,
+    });
+  }
+  return [...byChannel.values()];
+}
+
 // --- Unified timeline ---
 type TimelineRow = {
   key: string;
@@ -120,7 +155,7 @@ function connectSSE() {
           mind: name,
           channel: (d.channel as string) ?? "",
           session: (d.session as string) ?? null,
-          sender: null,
+          sender: (d.sender as string) ?? null,
           message_id: (d.messageId as string) ?? null,
           type: eventType,
           content: (d.content as string) ?? "",
@@ -312,16 +347,36 @@ function jumpToLatest() {
                     {#if events.length === 0}
                       <div class="turn-pending">processing...</div>
                     {:else}
-                      <div class="streaming-turn">
-                        {#each events as ev (ev.id)}
-                          <HistoryEvent event={ev} mindName={name} compact />
-                        {/each}
-                      </div>
+                      {#each events as ev (ev.id)}
+                        <HistoryEvent event={ev} mindName={name} compact />
+                      {/each}
                     {/if}
                   {/if}
                 </div>
                 <!-- Right: conversation + activity cards -->
                 <div class="track-content track-content-right">
+                  {#if !row.turn.summary}
+                    {@const sConvs = getStreamingConversations(streamingEvents.get(row.turn.id) ?? [])}
+                    {#each sConvs as conv (conv.channel)}
+                      <div class="feed-card-wrapper">
+                        <div class="feed-card card-chat">
+                          <div class="feed-card-header header-chat">
+                            <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                            <span class="feed-card-label">{conv.label}</span>
+                            <span class="feed-card-meta">{conv.messages.length} message{conv.messages.length === 1 ? '' : 's'}</span>
+                          </div>
+                          <div class="feed-card-body chat-body">
+                            {#each conv.messages.slice(-5) as msg}
+                              <div class="chat-entry">
+                                <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender ?? name}</span>
+                                <span class="chat-entry-content">{msg.content}</span>
+                              </div>
+                            {/each}
+                          </div>
+                        </div>
+                      </div>
+                    {/each}
+                  {/if}
                   {#each row.turn.conversations as conv (conv.id)}
                     <div class="feed-card-wrapper">
                       <div class="feed-card card-chat" role="button" tabindex="0" onclick={() => {
@@ -386,7 +441,7 @@ function jumpToLatest() {
                   {/each}
                 </div>
                 <div class="track-rail track-rail-right">
-                  {#if row.turn.conversations.length > 0 || row.turn.activities.length > 0}<div class="track-dot"></div>{/if}
+                  {#if row.turn.conversations.length > 0 || row.turn.activities.length > 0 || (!row.turn.summary && (streamingEvents.get(row.turn.id)?.some((e) => e.type === "inbound" || e.type === "outbound") ?? false))}<div class="track-dot"></div>{/if}
                 </div>
                 <div class="track-time track-time-right">
                 </div>
@@ -670,11 +725,6 @@ function jumpToLatest() {
     animation: pulse 1.5s infinite;
   }
 
-  .streaming-turn {
-    border-left: 2px solid var(--accent);
-    padding-left: 8px;
-    margin: 4px 0;
-  }
 
   .empty-hint {
     color: var(--text-2);

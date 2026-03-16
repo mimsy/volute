@@ -48,6 +48,7 @@ export async function recordInbound(
     type: "inbound",
     channel,
     content: content ?? undefined,
+    sender: sender ?? undefined,
   });
 
   return insertedId;
