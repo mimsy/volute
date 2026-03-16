@@ -1261,11 +1261,12 @@ const app = new Hono<AuthEnv>()
         try {
           const db = await getDb();
           const activeConvs = await db
-            .select({ id: conversations.id })
+            .select({ id: conversations.id, channel: conversations.channel })
             .from(conversations)
             .where(eq(conversations.mind_name, baseName))
             .all();
           for (const conv of activeConvs) {
+            await recordInbound(baseName, conv.channel, "system", "[seed has sprouted]");
             await addMessage(conv.id, "assistant", "system", [
               { type: "text", text: "[seed has sprouted]" },
             ]);

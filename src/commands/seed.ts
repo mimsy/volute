@@ -109,18 +109,37 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  // Send initial orientation message
+  // Send initial orientation message (retry if mind isn't ready yet)
   const initialMessage =
     "You've just been created. A human planted you as a seed. Start a conversation with them — introduce yourself, ask questions, and begin exploring who you want to be.";
-  await daemonFetch(urlOf(client.api.minds[":name"].message.$url({ param: { name } })), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      content: [{ type: "text", text: initialMessage }],
-      channel: "system",
-      sender: "system",
-    }),
+  const messageUrl = urlOf(client.api.minds[":name"].message.$url({ param: { name } }));
+  const messageBody = JSON.stringify({
+    content: [{ type: "text", text: initialMessage }],
+    channel: "system",
+    sender: "system",
   });
+  let sent = false;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const msgRes = await daemonFetch(messageUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: messageBody,
+    });
+    if (msgRes.ok) {
+      sent = true;
+      break;
+    }
+    if (msgRes.status === 409) {
+      // Mind not ready yet, wait and retry
+      await new Promise((r) => setTimeout(r, 1000));
+      continue;
+    }
+    console.error(`Failed to send orientation message (HTTP ${msgRes.status})`);
+    break;
+  }
+  if (!sent) {
+    console.error("Warning: orientation message may not have been delivered");
+  }
 
   console.log(`\nSeeded mind: ${name} (port ${createData.port})`);
   console.log(`\nTalk to your new mind:`);
