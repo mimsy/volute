@@ -34,6 +34,11 @@ export async function run(args: string[]) {
     }[];
   };
 
+  if (!Array.isArray(data.items)) {
+    console.error("Unexpected response format from server");
+    process.exit(1);
+  }
+
   for (const msg of data.items) {
     const sender = msg.sender_name ?? msg.role;
     const text = Array.isArray(msg.content)

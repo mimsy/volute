@@ -99,6 +99,73 @@ describe("web conversations routes", () => {
     await deleteConversation(conv.id);
   });
 
+  it("GET /:name/conversations/:id/messages?limit=N — paginates messages", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const conv = await createConversation("test-mind", "volute", {
+      participantIds: [userId],
+    });
+    for (let i = 0; i < 5; i++) {
+      await addMessage(conv.id, "user", "conv-admin", [{ type: "text", text: `msg ${i}` }]);
+    }
+
+    const res = await app.request(
+      `/api/minds/test-mind/conversations/${conv.id}/messages?limit=2`,
+      { headers: { Cookie: `volute_session=${cookie}` } },
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.items.length, 2);
+    assert.equal(body.hasMore, true);
+
+    await deleteConversation(conv.id);
+  });
+
+  it("GET /:name/conversations/:id/messages?before=N — returns older messages", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const conv = await createConversation("test-mind", "volute", {
+      participantIds: [userId],
+    });
+    const ids: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const msg = await addMessage(conv.id, "user", "conv-admin", [
+        { type: "text", text: `msg ${i}` },
+      ]);
+      ids.push(msg.id);
+    }
+
+    const res = await app.request(
+      `/api/minds/test-mind/conversations/${conv.id}/messages?before=${ids[3]}&limit=10`,
+      { headers: { Cookie: `volute_session=${cookie}` } },
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.items.length, 3);
+    assert.equal(body.hasMore, false);
+
+    await deleteConversation(conv.id);
+  });
+
+  it("GET /:name/conversations/:id/messages?limit=abc — returns 400", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const conv = await createConversation("test-mind", "volute", {
+      participantIds: [userId],
+    });
+
+    const res = await app.request(
+      `/api/minds/test-mind/conversations/${conv.id}/messages?limit=abc`,
+      { headers: { Cookie: `volute_session=${cookie}` } },
+    );
+    assert.equal(res.status, 400);
+
+    await deleteConversation(conv.id);
+  });
+
   it("DELETE /:name/conversations/:id — deletes conversation", async () => {
     const cookie = await setupAuth();
     const app = createApp();

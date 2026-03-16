@@ -56,6 +56,9 @@ export async function read(
       content: string | { type: string; text?: string }[];
     }[];
   };
+  if (!Array.isArray(data.items)) {
+    throw new Error("Unexpected response format when reading conversation messages");
+  }
   return data.items
     .slice(-limit)
     .map((m) => {

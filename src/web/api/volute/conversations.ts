@@ -136,6 +136,12 @@ const app = new Hono<AuthEnv>()
     }
     const limit = limitStr ? parseInt(limitStr, 10) : undefined;
     const before = beforeStr ? parseInt(beforeStr, 10) : undefined;
+    if (
+      (limit !== undefined && !Number.isFinite(limit)) ||
+      (before !== undefined && !Number.isFinite(before))
+    ) {
+      return c.json({ error: "Invalid pagination parameters" }, 400);
+    }
     const result = await getMessagesPaginated(id, { before, limit });
     return c.json({ items: result.messages, hasMore: result.hasMore });
   })
