@@ -1,15 +1,17 @@
 <script lang="ts">
 import { onMount } from "svelte";
-import { fetchCurrentUsername } from "./lib/api";
+import { fetchCurrentUser } from "./lib/api";
 import NoteDetail from "./pages/NoteDetail.svelte";
 import NotesList from "./pages/NotesList.svelte";
 
 let hash = $state(window.location.hash);
 let username = $state("");
+let userAvatarUrl = $state<string | null>(null);
 
 onMount(() => {
-  fetchCurrentUsername().then((u) => {
-    username = u;
+  fetchCurrentUser().then((u) => {
+    username = u.username;
+    userAvatarUrl = u.avatarUrl;
   });
   const handler = () => {
     hash = window.location.hash;
@@ -66,6 +68,7 @@ function noteUrl(author: string, slug: string): string {
       author={route.author}
       slug={route.slug}
       {username}
+      {userAvatarUrl}
       onNavigate={(author, slug) => navigateParent(noteUrl(author, slug))}
       onBack={() => navigateParent(route.mindContext ? `/minds/${route.mindContext}/notes` : "/notes")}
     />

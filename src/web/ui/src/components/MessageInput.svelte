@@ -26,6 +26,27 @@ let inputEl: HTMLTextAreaElement;
 let fileEl: HTMLInputElement;
 let attachFileEl: HTMLInputElement;
 let typingTimer = 0;
+let inputFocused = $state(false);
+let showAttach = $state(false);
+
+function showAttachMenu() {
+  showAttach = !showAttach;
+}
+
+function handleClickOutside(e: MouseEvent) {
+  if (
+    showAttach &&
+    !(e.target as HTMLElement).closest(".attach-menu") &&
+    !(e.target as HTMLElement).closest(".inline-btn.attach")
+  ) {
+    showAttach = false;
+  }
+}
+
+$effect(() => {
+  document.addEventListener("click", handleClickOutside);
+  return () => document.removeEventListener("click", handleClickOutside);
+});
 
 function handleSend() {
   const message = input.trim();
@@ -164,34 +185,47 @@ $effect(() => {
 
 <!-- Input area -->
 <div class="input-area">
-  <button class="attach-btn" title="Attach image" onclick={() => fileEl?.click()}>+</button>
-  <button class="attach-btn" title="Attach file" onclick={() => attachFileEl?.click()}>&#128206;</button>
-  <textarea
-    bind:this={inputEl}
-    bind:value={input}
-    onkeydown={handleKeyDown}
-    oninput={handleInput}
-    onblur={handleBlur}
-    placeholder="Send a message..."
-    rows={1}
-    class="chat-input"
-  ></textarea>
-  <button
-    onclick={handleSend}
-    disabled={sending || (!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0)}
-    class="send-btn"
-    class:active={!!input.trim() || pendingImages.length > 0 || pendingFiles.length > 0}
-  >
-    {sending ? "sending..." : "send"}
-  </button>
+  <div class="input-box" class:focused={inputFocused}>
+    <button class="inline-btn attach" title="Attach image or file" onclick={showAttachMenu}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    {#if showAttach}
+      <div class="attach-menu">
+        <button onclick={() => { showAttach = false; fileEl?.click(); }}>Image</button>
+        <button onclick={() => { showAttach = false; attachFileEl?.click(); }}>File</button>
+      </div>
+    {/if}
+    <textarea
+      bind:this={inputEl}
+      bind:value={input}
+      onkeydown={handleKeyDown}
+      oninput={handleInput}
+      onfocus={() => inputFocused = true}
+      onblur={() => { inputFocused = false; handleBlur(); }}
+      placeholder="Send a message..."
+      rows={1}
+      class="chat-input"
+    ></textarea>
+    <button
+      onclick={handleSend}
+      disabled={sending || (!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0)}
+      class="inline-btn send"
+      class:active={!!input.trim() || pendingImages.length > 0 || pendingFiles.length > 0}
+    >
+      {#if sending}
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      {:else}
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      {/if}
+    </button>
+  </div>
 </div>
 
 <style>
   .image-strip {
     display: flex;
     gap: 8px;
-    padding: 8px 0;
-    border-top: 1px solid var(--border);
+    padding: 4px 16px;
     overflow-x: auto;
   }
 
@@ -227,8 +261,7 @@ $effect(() => {
   .file-strip {
     display: flex;
     gap: 8px;
-    padding: 8px 0;
-    border-top: 1px solid var(--border);
+    padding: 4px 16px;
     overflow-x: auto;
     flex-wrap: wrap;
   }
@@ -253,55 +286,109 @@ $effect(() => {
   }
 
   .input-area {
-    border-top: 1px solid var(--border);
-    padding: 12px 16px 16px;
+    padding: 8px 16px 16px;
     display: flex;
-    gap: 8px;
   }
 
-  .attach-btn {
-    padding: 0 10px;
+  .input-box {
+    flex: 1;
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
     background: var(--bg-2);
-    color: var(--text-1);
-    border-radius: var(--radius);
-    font-size: 16px;
     border: 1px solid var(--border);
-    cursor: pointer;
-    flex-shrink: 0;
+    border-radius: 20px;
+    padding: 4px 6px;
+    transition: border-color 0.15s;
+    position: relative;
+  }
+
+  .input-box.focused {
+    border-color: var(--border-bright);
   }
 
   .chat-input {
     flex: 1;
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 10px 12px;
+    background: transparent;
+    border: none;
+    padding: 6px 4px;
     color: var(--text-0);
     font-family: var(--mono);
     font-size: 14px;
     resize: none;
     outline: none;
     overflow: hidden;
-    transition: border-color 0.15s;
+    line-height: 1.4;
   }
 
-  .chat-input:focus {
-    border-color: var(--border-bright);
-  }
-
-  .send-btn {
-    padding: 0 16px;
-    background: var(--bg-3);
+  .inline-btn {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
     color: var(--text-2);
-    border-radius: var(--radius);
-    font-size: 13px;
-    font-weight: 500;
+    cursor: pointer;
     transition: all 0.15s;
+    padding: 0;
   }
 
-  .send-btn.active {
+  .inline-btn:hover {
+    background: var(--bg-3);
+    color: var(--text-1);
+  }
+
+  .inline-btn.send {
+    color: var(--text-2);
+  }
+
+  .inline-btn.send.active {
     background: var(--accent-dim);
     color: var(--accent);
+  }
+
+  .inline-btn.send:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+
+  .inline-btn.send:disabled:hover {
+    background: transparent;
+  }
+
+  .attach-menu {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 4px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+
+  .attach-menu button {
+    background: transparent;
+    border: none;
+    color: var(--text-1);
+    padding: 6px 14px;
+    border-radius: var(--radius);
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  .attach-menu button:hover {
+    background: var(--bg-3);
   }
 
   @media (max-width: 767px) {

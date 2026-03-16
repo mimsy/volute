@@ -99,12 +99,26 @@ export async function toggleReaction(author: string, slug: string, emoji: string
   if (!res.ok) throw new Error("Failed to toggle reaction");
 }
 
-export async function fetchCurrentUsername(): Promise<string> {
+export interface CurrentUser {
+  username: string;
+  avatarUrl: string | null;
+}
+
+export async function fetchCurrentUser(): Promise<CurrentUser> {
   const res = await fetch("/api/auth/me");
   if (!res.ok) {
     console.warn(`Failed to fetch current user: HTTP ${res.status}`);
-    return "";
+    return { username: "", avatarUrl: null };
   }
   const data = await res.json();
-  return data?.username ?? "";
+  return {
+    username: data?.username ?? "",
+    avatarUrl: data?.avatar ? `/api/auth/avatars/${encodeURIComponent(data.avatar)}` : null,
+  };
+}
+
+/** @deprecated Use fetchCurrentUser instead */
+export async function fetchCurrentUsername(): Promise<string> {
+  const user = await fetchCurrentUser();
+  return user.username;
 }

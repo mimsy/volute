@@ -92,6 +92,18 @@ let activeMindSection = $derived.by(() => {
   return null;
 });
 
+// System section tabs (shown when on system-level pages, not mind pages)
+let onSystemPage = $derived(selection.tab === "system" && selection.kind !== "mind");
+
+let activeSystemSection = $derived.by((): string | null => {
+  if (!onSystemPage) return null;
+  if (selection.kind === "home") return "home";
+  if (selection.kind === "extension") return `ext:${selection.extensionId}`;
+  if (selection.kind === "settings") return "settings";
+  if (selection.kind === "shared-files") return "shared-files";
+  return null;
+});
+
 // Tab context memory: remember last selection per tab
 let lastSystemSelection = $state<Selection>({ tab: "system", kind: "home" });
 let lastChatSelection = $state<Selection>({ tab: "chat", kind: "home" });
@@ -141,15 +153,9 @@ let narrowViewport = $state(false);
 let showUserMenu = $state(false);
 let userAvatar = $state<string | null>(null);
 
-// Auto-collapse right panel on narrow viewports or mind info page
-let onMindInfoPage = $derived(
-  selection.tab === "system" &&
-    selection.kind === "mind" &&
-    (!selection.section || selection.section === "info"),
-);
-
+// Auto-collapse right panel on narrow viewports
 $effect(() => {
-  if (narrowViewport || onMindInfoPage) {
+  if (narrowViewport) {
     rightPanelCollapsed = true;
   } else {
     rightPanelCollapsed = false;
@@ -186,22 +192,8 @@ let contextMind = $derived(
   contextMindName ? data.minds.find((m) => m.name === contextMindName) : undefined,
 );
 
-// System tab: mind for right panel when viewing a mind page
-let systemMindName = $derived.by(() => {
-  if (selection.tab !== "system") return "";
-  if (selection.kind === "mind") return selection.name;
-  return "";
-});
-let systemMind = $derived(
-  systemMindName ? data.minds.find((m) => m.name === systemMindName) : undefined,
-);
-
 let rightPanelMind = $derived(
-  activeModal === "mind" && selectedModalMind
-    ? selectedModalMind
-    : activeTab === "system"
-      ? systemMind
-      : (contextMind ?? undefined),
+  activeModal === "mind" && selectedModalMind ? selectedModalMind : (contextMind ?? undefined),
 );
 
 let rightPanelIsManual = $derived(!!(activeModal === "mind" && selectedModalMind));
@@ -209,22 +201,16 @@ let rightPanelIsManual = $derived(!!(activeModal === "mind" && selectedModalMind
 // Show chat button in right panel unless already in a DM with that mind
 let showRightPanelChat = $derived.by(() => {
   if (!rightPanelMind) return false;
-  if (activeTab === "system") return true;
   // In chat tab: hide if this is the natural DM context (not manually opened)
   if (!rightPanelIsManual && activeConv?.type === "dm") return false;
   return true;
 });
 
-// Show mind page button in right panel unless already on the mind page
-let showRightPanelProfile = $derived.by(() => {
-  if (!rightPanelMind) return false;
-  if (activeTab === "system" && systemMindName === rightPanelMind.name) return false;
-  return true;
-});
+// Show mind page button in right panel
+let showRightPanelProfile = $derived(!!rightPanelMind);
 
 let hasRightPanel = $derived(
-  (activeTab === "system" && !!systemMind) ||
-    (activeTab === "chat" && (!!rightPanelMind || activeConv?.type === "channel")),
+  activeTab === "chat" && (!!rightPanelMind || activeConv?.type === "channel"),
 );
 
 let showRightPanel = $derived(
@@ -284,6 +270,8 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
       }
     } else if (sel.kind === "settings") {
       crumbs.push({ label: "settings" });
+    } else if (sel.kind === "shared-files") {
+      crumbs.push({ label: "shared files" });
     }
   } else {
     crumbs.push({ label: "chat" });
@@ -668,12 +656,9 @@ function handleGlobalClick(e: MouseEvent) {
         {#if activeTab === "system"}
           <SystemSidebar
             minds={data.minds}
-            extensions={data.extensions}
             {selection}
             onHome={handleSystemHome}
             onSelectMind={handleSelectMind}
-            onSelectExtension={handleSelectExtension}
-            onSelectSettings={handleSelectSettings}
             onSeed={() => (activeModal = "seed")}
           />
         {:else}
@@ -732,6 +717,45 @@ function handleGlobalClick(e: MouseEvent) {
                     <span class="tab-tooltip">{sec.label}</span>
                   </button>
                 {/each}
+                <button
+                  class="mind-section-tab mind-chat-btn"
+                  onclick={() => handleNewChatCreated(activeMindName!)}
+                  title="Chat"
+                >
+                  <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg></span>
+                  <span class="tab-tooltip">Chat</span>
+                </button>
+              </div>
+            {:else if onSystemPage}
+              <div class="mind-section-tabs">
+                {#each data.extensions as ext}
+                  {#if ext.systemSection}
+                    <button
+                      class="mind-section-tab"
+                      class:active={activeSystemSection === `ext:${ext.id}`}
+                      onclick={() => handleSelectExtension(ext.id)}
+                    >
+                      <span class="tab-icon">{@html ext.systemSection.icon ?? '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z"/></svg>'}</span>
+                      <span class="tab-tooltip">{ext.systemSection.label}</span>
+                    </button>
+                  {/if}
+                {/each}
+                <button
+                  class="mind-section-tab"
+                  class:active={activeSystemSection === "shared-files"}
+                  onclick={() => { selection = { tab: "system", kind: "shared-files" }; }}
+                >
+                  <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h5l2-2h5v11H2V4z"/></svg></span>
+                  <span class="tab-tooltip">Shared Files</span>
+                </button>
+                <button
+                  class="mind-section-tab"
+                  class:active={activeSystemSection === "settings"}
+                  onclick={handleSelectSettings}
+                >
+                  <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg></span>
+                  <span class="tab-tooltip">Settings</span>
+                </button>
               </div>
             {/if}
             <div class="header-actions">

@@ -1,27 +1,20 @@
 <script lang="ts">
 import type { Mind } from "@volute/api";
-import type { ExtensionInfo } from "../lib/extensions";
 import { mindDotColor } from "../lib/format";
 import type { Selection } from "../lib/navigate";
 import { activeMinds } from "../lib/stores.svelte";
 
 let {
   minds,
-  extensions,
   selection,
   onHome,
   onSelectMind,
-  onSelectExtension,
-  onSelectSettings,
   onSeed,
 }: {
   minds: Mind[];
-  extensions: ExtensionInfo[];
   selection: Selection;
   onHome: () => void;
   onSelectMind: (name: string) => void;
-  onSelectExtension: (extensionId: string, path?: string) => void;
-  onSelectSettings: () => void;
   onSeed: () => void;
 } = $props();
 
@@ -47,27 +40,11 @@ let activeMindName = $derived.by(() => {
     <div class="section">
       <button
         class="section-toggle"
-        class:active={selection.tab === "system" && selection.kind === "home"}
+        class:active={selection.tab === "system" && selection.kind !== "mind"}
         onclick={onHome}
       >
         <span>System</span>
       </button>
-      <div class="sub-items">
-        {#each extensions as ext}
-          {#if ext.systemSection}
-            <button
-              class="sub-item"
-              class:active={selection.tab === "system" && selection.kind === "extension" && selection.extensionId === ext.id}
-              onclick={() => onSelectExtension(ext.id)}
-            >{ext.systemSection.label}</button>
-          {/if}
-        {/each}
-        <button
-          class="sub-item"
-          class:active={selection.tab === "system" && selection.kind === "settings"}
-          onclick={onSelectSettings}
-        >Settings</button>
-      </div>
     </div>
 
     <!-- Minds -->
@@ -153,32 +130,6 @@ let activeMindName = $derived.by(() => {
   }
 
   .section-toggle.active {
-    color: var(--text-0);
-    background: var(--bg-2);
-  }
-
-  .sub-items {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .sub-item {
-    padding: 5px 12px 5px 28px;
-    background: none;
-    color: var(--text-2);
-    font-size: 13px;
-    text-align: left;
-    border-radius: var(--radius);
-    margin: 0 4px;
-    cursor: pointer;
-  }
-
-  .sub-item:hover {
-    color: var(--text-1);
-    background: var(--bg-2);
-  }
-
-  .sub-item.active {
     color: var(--text-0);
     background: var(--bg-2);
   }
