@@ -2,9 +2,9 @@
 import type { Mind } from "@volute/api";
 import { getDisplayStatus } from "../lib/format";
 import { data } from "../lib/stores.svelte";
-import History from "./History.svelte";
 import MindClock from "./MindClock.svelte";
 import StatusBadge from "./StatusBadge.svelte";
+import TurnTimeline from "./TurnTimeline.svelte";
 
 let {
   mind: initialMind,
@@ -63,7 +63,7 @@ function formatCreated(dateStr: string): string {
     <MindClock name={mind.name} />
 
     <div class="history-section">
-      <History name={mind.name} />
+      <TurnTimeline name={mind.name} />
     </div>
   </div>
 </div>
