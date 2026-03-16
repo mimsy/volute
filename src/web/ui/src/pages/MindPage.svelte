@@ -7,7 +7,7 @@ import MindInfo from "../components/MindInfo.svelte";
 import MindSkills from "../components/MindSkills.svelte";
 import PublicFiles from "../components/PublicFiles.svelte";
 import ReadOnlyChatModal from "../components/ReadOnlyChatModal.svelte";
-import { fetchTurnEvents, fetchTurns } from "../lib/client";
+import { fetchHistory, fetchTurnEvents, fetchTurns } from "../lib/client";
 import { extractTextContent } from "../lib/feed-utils";
 import { formatRelativeTime } from "../lib/format";
 import { data } from "../lib/stores.svelte";
@@ -145,21 +145,24 @@ function connectSSE() {
           },
         ];
       }
-      if (!streamingEvents.has(turnId)) {
-        // Seed with pending inbounds so they transfer seamlessly
+      // Always merge pending inbounds into the turn (even if already initialized by backfill/duplicate)
+      if (pendingInbounds.length > 0) {
         const seeded = pendingInbounds.map((ev) => ({ ...ev, turn_id: turnId }));
-        streamingEvents.set(turnId, seeded);
+        const prev = streamingEvents.get(turnId) ?? [];
+        streamingEvents.set(turnId, [...seeded, ...prev]);
+      } else if (!streamingEvents.has(turnId)) {
+        streamingEvents.set(turnId, []);
       }
       pendingInbounds = [];
-      // Fetch turn events from DB (includes retroactively-tagged inbounds)
-      fetchTurnEvents(name, { turnId })
+      // Fetch turn events from DB after a short delay to allow retroactive inbound tagging
+      new Promise((r) => setTimeout(r, 500))
+        .then(() => fetchTurnEvents(name, { turnId }))
         .then((dbEvents) => {
           if (!streamingEvents.has(turnId)) return; // turn already completed
           const current = streamingEvents.get(turnId)!;
-          const sseIds = new Set(current.filter((e) => e.id > 0).map((e) => e.id));
-          const sseOnly = current.filter((e) => e.id < 0);
-          const newFromDb = dbEvents.filter((e) => !sseIds.has(e.id));
-          streamingEvents.set(turnId, [...newFromDb, ...sseOnly]);
+          const dbIds = new Set(dbEvents.map((e) => e.id));
+          const notInDb = current.filter((e) => !dbIds.has(e.id));
+          streamingEvents.set(turnId, [...dbEvents, ...notInDb]);
         })
         .catch(() => {});
     } else if (eventType === "summary" && turnId) {
@@ -235,6 +238,18 @@ async function loadTurns(offset: number) {
     }
     hasMore = rows.length === PAGE_SIZE;
 
+    // Check for recent untagged inbound events (message sent but turn not yet started)
+    if (offset === 0 && pendingInbounds.length === 0) {
+      fetchHistory(name, { preset: "all", limit: 10 })
+        .then((recent) => {
+          const untagged = recent.filter((e) => e.type === "inbound" && !e.turn_id);
+          if (untagged.length > 0 && pendingInbounds.length === 0) {
+            pendingInbounds = untagged;
+          }
+        })
+        .catch(() => {});
+    }
+
     // Backfill streaming events for any active turns
     for (const turn of turnsData) {
       if (turn.status === "active" && !streamingEvents.has(turn.id)) {
@@ -242,10 +257,11 @@ async function loadTurns(offset: number) {
         fetchTurnEvents(name, { turnId: turn.id })
           .then((dbEvents) => {
             if (!streamingEvents.has(turn.id)) return; // turn completed while fetching
-            // Merge: keep SSE events (negative IDs) that arrived while fetching
+            // Merge: DB events are authoritative, keep any current events not in DB
             const current = streamingEvents.get(turn.id) ?? [];
-            const sseOnly = current.filter((e) => e.id < 0);
-            streamingEvents.set(turn.id, [...dbEvents, ...sseOnly]);
+            const dbIds = new Set(dbEvents.map((e) => e.id));
+            const notInDb = current.filter((e) => !dbIds.has(e.id));
+            streamingEvents.set(turn.id, [...dbEvents, ...notInDb]);
           })
           .catch(() => {});
       }
