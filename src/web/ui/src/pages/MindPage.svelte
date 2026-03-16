@@ -156,15 +156,14 @@ function connectSSE() {
         streamingEvents.set(turnId, []);
       }
       pendingInbounds = [];
-      // Fetch turn events from DB after a short delay to allow retroactive inbound tagging
+      // Fetch turn events from DB after a short delay to allow retroactive inbound tagging.
+      // DB events are authoritative — replace synthetic SSE events entirely.
+      // Any SSE events arriving after this .then() runs are appended normally.
       new Promise((r) => setTimeout(r, 500))
         .then(() => fetchTurnEvents(name, { turnId }))
         .then((dbEvents) => {
           if (!streamingEvents.has(turnId)) return; // turn already completed
-          const current = streamingEvents.get(turnId)!;
-          const dbIds = new Set(dbEvents.map((e) => e.id));
-          const notInDb = current.filter((e) => !dbIds.has(e.id));
-          streamingEvents.set(turnId, [...dbEvents, ...notInDb]);
+          streamingEvents.set(turnId, dbEvents);
         })
         .catch(() => {});
     } else if (eventType === "summary" && turnId) {
@@ -288,11 +287,7 @@ async function loadTurns(offset: number) {
         fetchTurnEvents(name, { turnId: turn.id })
           .then((dbEvents) => {
             if (!streamingEvents.has(turn.id)) return; // turn completed while fetching
-            // Merge: DB events are authoritative, keep any current events not in DB
-            const current = streamingEvents.get(turn.id) ?? [];
-            const dbIds = new Set(dbEvents.map((e) => e.id));
-            const notInDb = current.filter((e) => !dbIds.has(e.id));
-            streamingEvents.set(turn.id, [...dbEvents, ...notInDb]);
+            streamingEvents.set(turn.id, dbEvents);
           })
           .catch(() => {});
       }
