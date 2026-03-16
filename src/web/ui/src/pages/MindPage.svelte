@@ -36,6 +36,8 @@ let readOnlyConv = $state<ConversationWithParticipants | null>(null);
 // --- Streaming events for active turns ---
 let streamingEvents = $state(new SvelteMap<string, HistoryMessage[]>());
 let nextSyntheticId = 0;
+// Inbound events that arrived before any turn_created — shown as provisional turn
+let pendingInbounds = $state<HistoryMessage[]>([]);
 
 function getSummaryTime(turn: TurnRow): string {
   return formatRelativeTime(turn.created_at);
@@ -108,8 +110,26 @@ function connectSSE() {
 
     const turnId = d.turnId as string | undefined;
     const eventType = d.type as string;
-    if (eventType === "turn_created" && turnId) {
-      // Create a placeholder turn row (guard against duplicate events)
+    if (eventType === "inbound" && !turnId) {
+      // Show immediately as provisional turn before turn_created arrives
+      pendingInbounds = [
+        ...pendingInbounds,
+        {
+          id: nextSyntheticId--,
+          mind: name,
+          channel: (d.channel as string) ?? "",
+          session: (d.session as string) ?? null,
+          sender: (d.sender as string) ?? null,
+          message_id: (d.messageId as string) ?? null,
+          type: eventType,
+          content: (d.content as string) ?? "",
+          metadata: d.metadata ? JSON.stringify(d.metadata) : null,
+          turn_id: null,
+          created_at: new Date().toISOString(),
+        },
+      ];
+    } else if (eventType === "turn_created" && turnId) {
+      // Promote pending inbounds into the real turn's streaming events
       if (!turnsData.some((t) => t.id === turnId)) {
         turnsData = [
           ...turnsData,
@@ -126,8 +146,11 @@ function connectSSE() {
         ];
       }
       if (!streamingEvents.has(turnId)) {
-        streamingEvents.set(turnId, []);
+        // Seed with pending inbounds so they transfer seamlessly
+        const seeded = pendingInbounds.map((ev) => ({ ...ev, turn_id: turnId }));
+        streamingEvents.set(turnId, seeded);
       }
+      pendingInbounds = [];
       // Fetch turn events from DB (includes retroactively-tagged inbounds)
       fetchTurnEvents(name, { turnId })
         .then((dbEvents) => {
@@ -271,6 +294,7 @@ $effect(() => {
     hasMore = true;
     streamingEvents = new SvelteMap();
     nextSyntheticId = 0;
+    pendingInbounds = [];
     startScrollToBottom();
     loadTurns(0);
   }
@@ -462,6 +486,47 @@ function jumpToLatest() {
                 </div>
               </div>
             {/each}
+            {#if pendingInbounds.length > 0}
+              <div class="track-row">
+                <div class="track-time track-time-left">
+                  just now
+                </div>
+                <div class="track-rail track-rail-left">
+                  <div class="track-dot"></div>
+                </div>
+                <div class="track-content track-content-left">
+                  {#each pendingInbounds as ev (ev.id)}
+                    <HistoryEvent event={ev} mindName={name} compact />
+                  {/each}
+                </div>
+                <div class="track-content track-content-right">
+                  {#each getStreamingConversations(pendingInbounds) as conv (conv.channel)}
+                    <div class="feed-card-wrapper">
+                      <div class="feed-card card-chat">
+                        <div class="feed-card-header header-chat">
+                          <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                          <span class="feed-card-label">{conv.label}</span>
+                          <span class="feed-card-meta">{conv.messages.length} message{conv.messages.length === 1 ? '' : 's'}</span>
+                        </div>
+                        <div class="feed-card-body chat-body">
+                          {#each conv.messages.slice(-5) as msg}
+                            <div class="chat-entry">
+                              <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender ?? name}</span>
+                              <span class="chat-entry-content">{msg.content}</span>
+                            </div>
+                          {/each}
+                        </div>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+                <div class="track-rail track-rail-right">
+                  {#if pendingInbounds.some((e) => e.channel)}<div class="track-dot"></div>{/if}
+                </div>
+                <div class="track-time track-time-right">
+                </div>
+              </div>
+            {/if}
           </div>
         {/if}
 
