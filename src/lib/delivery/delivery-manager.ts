@@ -262,6 +262,18 @@ export class DeliveryManager {
   }
 
   /**
+   * Check if any session for a mind is currently busy.
+   */
+  isMindBusy(mindName: string): boolean {
+    const mindSessions = this.sessionStates.get(mindName);
+    if (!mindSessions) return false;
+    for (const [, state] of mindSessions) {
+      if (state.activeCount > 0) return true;
+    }
+    return false;
+  }
+
+  /**
    * Cleanup all timers and subscriptions.
    */
   dispose(): void {

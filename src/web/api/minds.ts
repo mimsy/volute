@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
-import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import {
@@ -127,10 +127,6 @@ import { validateBranchName } from "../../lib/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
 import { fireWebhook } from "../../lib/webhook.js";
 import { type AuthEnv, requireAdmin, requireSelf } from "../middleware/auth.js";
-
-/** Pending turn completion timers, keyed by `mind:session`. Deferred so interrupted
- *  turns merge with the next processing round into a single turn. */
-const pendingTurnCompletions = new Map<string, ReturnType<typeof setTimeout>>();
 
 type ChannelStatus = {
   name: string;
@@ -2309,68 +2305,34 @@ const app = new Hono<AuthEnv>()
           log.error(`delivery manager sessionDone failed for ${baseName}`, log.errorData(err));
         }
       }
-      // Defer turn completion so interrupted turns merge with the next processing
-      // round. When the timer fires, check if new events arrived since this done —
-      // if yes, the mind is still working and we reschedule. If no, complete the turn.
-      const turnCompleteKey = `${baseName}:${body.session ?? "*"}`;
-      const doneChannel = body.channel;
-      const doneEventId = insertedId;
-      clearTimeout(pendingTurnCompletions.get(turnCompleteKey));
-      const scheduleTurnCompletion = () => {
-        pendingTurnCompletions.set(
-          turnCompleteKey,
-          setTimeout(async () => {
-            pendingTurnCompletions.delete(turnCompleteKey);
-            // Bail if the mind was stopped while the timer was pending
-            if (!getMindManager().isRunning(name)) return;
-            // Check if the mind continued working after this done event.
-            // If newer events exist for this session, the turn was interrupted
-            // and continued — reschedule to let the current processing finish.
-            if (doneEventId != null) {
-              try {
-                const checkDb = await getDb();
-                const newer = await checkDb
-                  .select({ id: mindHistory.id })
-                  .from(mindHistory)
-                  .where(
-                    and(
-                      eq(mindHistory.mind, baseName),
-                      gt(mindHistory.id, doneEventId),
-                      body.session
-                        ? eq(mindHistory.session, body.session)
-                        : sql`${mindHistory.session} IS NULL`,
-                    ),
-                  )
-                  .limit(1)
-                  .get();
-                if (newer) {
-                  // Mind is still active — reschedule
-                  scheduleTurnCompletion();
-                  return;
-                }
-              } catch (err) {
-                log.warn(
-                  `failed to check for newer events after done (mind: ${baseName})`,
-                  log.errorData(err),
-                );
-              }
-            }
-            const completedTurnId = await completeTurn(baseName, body.session);
-            if (doneEventId != null) {
-              summarizeTurn(
-                baseName,
-                body.session,
-                doneChannel,
-                doneEventId,
-                completedTurnId,
-              ).catch((err) => {
-                log.error("turn summarization failed", log.errorData(err));
-              });
-            }
-          }, 5000),
-        );
-      };
-      scheduleTurnCompletion();
+      // Complete the turn if the session has no more pending deliveries.
+      // When messages arrive mid-turn, their incrementActive() keeps the
+      // count > 0, so we skip here. The subsequent done will re-check.
+      try {
+        const dm = getDeliveryManager();
+        const busy = body.session
+          ? dm.isSessionBusy(baseName, body.session)
+          : dm.isMindBusy(baseName);
+        if (!busy) {
+          const completedTurnId = await completeTurn(baseName, body.session);
+          if (insertedId != null) {
+            summarizeTurn(baseName, body.session, body.channel, insertedId, completedTurnId).catch(
+              (err) => log.error("turn summarization failed", log.errorData(err)),
+            );
+          }
+        }
+      } catch (err) {
+        if (!(err instanceof Error && err.message.includes("not initialized"))) {
+          log.error("turn completion check failed", log.errorData(err));
+        }
+        // DM unavailable — complete immediately as fallback
+        const completedTurnId = await completeTurn(baseName, body.session);
+        if (insertedId != null) {
+          summarizeTurn(baseName, body.session, body.channel, insertedId, completedTurnId).catch(
+            (err) => log.error("turn summarization failed", log.errorData(err)),
+          );
+        }
+      }
     }
 
     // Record usage against budget
