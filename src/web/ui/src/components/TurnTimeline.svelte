@@ -755,6 +755,24 @@ function jumpToLatest() {
     padding-right: 12px;
   }
 
+  .turn-summary {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  @container (max-width: 400px) {
+    .turn-time {
+      display: none;
+    }
+    .turn-body {
+      padding-left: 8px;
+      padding-right: 4px;
+    }
+    .turn-scroll {
+      padding: 0 8px;
+    }
+  }
+
   @container (min-width: 600px) {
     .turn-body {
       flex-direction: row;
