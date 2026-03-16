@@ -5,7 +5,7 @@ import { Scheduler } from "../src/lib/daemon/scheduler.js";
 type SystemDelivery = {
   mindName: string;
   text: string;
-  opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake" };
+  opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string };
 };
 
 class TestScheduler extends Scheduler {
@@ -15,14 +15,10 @@ class TestScheduler extends Scheduler {
     return "";
   }
 
-  protected override async deliver(): Promise<void> {
-    // Not used for system messages
-  }
-
   protected override async deliverSystem(
     mindName: string,
     text: string,
-    opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake" },
+    opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
   ): Promise<void> {
     this.systemDeliveries.push({ mindName, text, opts });
   }

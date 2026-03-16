@@ -2,22 +2,14 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { Scheduler } from "../src/lib/daemon/scheduler.js";
 
-type DeliveryPayload = {
-  content: { type: string; text: string }[];
-  channel: string;
-  sender: string;
-  whileSleeping?: "skip" | "queue" | "trigger-wake";
-};
-
 type SystemDelivery = {
   mindName: string;
   text: string;
-  opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake" };
+  opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string };
 };
 
 /** Test subclass that captures calls instead of running real exec/deliver */
 class TestScheduler extends Scheduler {
-  deliveries: { mindName: string; payload: DeliveryPayload }[] = [];
   systemDeliveries: SystemDelivery[] = [];
   scriptCalls: { script: string; cwd: string; mindName: string }[] = [];
   scriptResult: string | Error = "";
@@ -32,17 +24,10 @@ class TestScheduler extends Scheduler {
     return this.scriptResult;
   }
 
-  protected override async deliver(
-    mindName: string,
-    payload: DeliveryPayload & { whileSleeping?: "skip" | "queue" | "trigger-wake" },
-  ): Promise<void> {
-    this.deliveries.push({ mindName, payload });
-  }
-
   protected override async deliverSystem(
     mindName: string,
     text: string,
-    opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake" },
+    opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
   ): Promise<void> {
     this.systemDeliveries.push({ mindName, text, opts });
   }
@@ -62,7 +47,7 @@ describe("scheduler", () => {
     assert.ok(true);
   });
 
-  it("fire delivers message for message schedules via system chat", async () => {
+  it("fire delivers message via system chat", async () => {
     const scheduler = new TestScheduler();
     await (scheduler as any).fire("test-mind", {
       id: "msg-sched",
@@ -73,30 +58,23 @@ describe("scheduler", () => {
     assert.equal(scheduler.systemDeliveries.length, 1);
     assert.equal(scheduler.systemDeliveries[0].mindName, "test-mind");
     assert.equal(scheduler.systemDeliveries[0].text, "[msg-sched] hello");
-    assert.equal(scheduler.deliveries.length, 0);
     assert.equal(scheduler.scriptCalls.length, 0);
   });
 
-  it("fire uses custom channel via deliver when specified", async () => {
+  it("fire passes session from schedule config", async () => {
     const scheduler = new TestScheduler();
     await (scheduler as any).fire("test-mind", {
       id: "dream",
       cron: "0 3 * * *",
       message: "time to dream",
       enabled: true,
-      channel: "custom:dream",
+      session: "$new",
     });
-    assert.equal(scheduler.deliveries.length, 1);
-    assert.deepEqual(scheduler.deliveries[0].payload, {
-      content: [{ type: "text", text: "time to dream" }],
-      channel: "custom:dream",
-      sender: "dream",
-      whileSleeping: undefined,
-    });
-    assert.equal(scheduler.systemDeliveries.length, 0);
+    assert.equal(scheduler.systemDeliveries.length, 1);
+    assert.equal(scheduler.systemDeliveries[0].opts?.session, "$new");
   });
 
-  it("fire routes system:* channels through deliver (preserves routing)", async () => {
+  it("fire uses legacy channel as session fallback", async () => {
     const scheduler = new TestScheduler();
     await (scheduler as any).fire("test-mind", {
       id: "dream",
@@ -105,9 +83,9 @@ describe("scheduler", () => {
       enabled: true,
       channel: "system:dream",
     });
-    assert.equal(scheduler.deliveries.length, 1);
-    assert.equal(scheduler.deliveries[0].payload.channel, "system:dream");
-    assert.equal(scheduler.systemDeliveries.length, 0);
+    // Legacy channel is ignored — no session override
+    assert.equal(scheduler.systemDeliveries.length, 1);
+    assert.equal(scheduler.systemDeliveries[0].opts?.session, undefined);
   });
 
   it("fire runs script and delivers output via system chat", async () => {
@@ -142,7 +120,7 @@ describe("scheduler", () => {
     });
 
     assert.equal(scheduler.scriptCalls.length, 1);
-    assert.equal(scheduler.deliveries.length, 0);
+    assert.equal(scheduler.systemDeliveries.length, 0);
   });
 
   it("fire skips delivery when script produces only whitespace", async () => {
@@ -157,7 +135,7 @@ describe("scheduler", () => {
     });
 
     assert.equal(scheduler.scriptCalls.length, 1);
-    assert.equal(scheduler.deliveries.length, 0);
+    assert.equal(scheduler.systemDeliveries.length, 0);
   });
 
   it("fire delivers error when script fails", async () => {
@@ -202,11 +180,11 @@ describe("scheduler", () => {
       enabled: true,
     });
 
-    assert.equal(scheduler.deliveries.length, 0);
+    assert.equal(scheduler.systemDeliveries.length, 0);
     assert.equal(scheduler.scriptCalls.length, 0);
   });
 
-  it("fire passes whileSleeping from schedule to system delivery", async () => {
+  it("fire passes whileSleeping from schedule", async () => {
     const scheduler = new TestScheduler();
     await (scheduler as any).fire("test-mind", {
       id: "sleep-sched",

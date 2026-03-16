@@ -61,8 +61,8 @@ function printUsage() {
   console.log(`Usage:
   volute clock status [--mind <name>]
   volute clock list [--mind <name>]
-  volute clock add [--mind <name>] --id <name> --cron "..." --message/--script "..." [--channel ch] [--while-sleeping skip|queue|trigger-wake]
-  volute clock add [--mind <name>] --id <name> --in <duration> --message/--script "..." [--channel ch] [--while-sleeping skip|queue|trigger-wake]
+  volute clock add [--mind <name>] --id <name> --cron "..." --message/--script "..." [--session name] [--while-sleeping skip|queue|trigger-wake]
+  volute clock add [--mind <name>] --id <name> --in <duration> --message/--script "..." [--session name] [--while-sleeping skip|queue|trigger-wake]
   volute clock remove [--mind <name>] --id <id>
   volute clock sleep [name] [--wake-at <time>]
   volute clock wake [name]
@@ -188,6 +188,7 @@ async function addSchedule(args: string[]) {
     script: { type: "string" },
     id: { type: "string" },
     channel: { type: "string" },
+    session: { type: "string" },
     "while-sleeping": { type: "string" },
   });
 
@@ -240,6 +241,7 @@ async function addSchedule(args: string[]) {
   if (flags.script) body.script = flags.script;
   if (flags.id) body.id = flags.id;
   if (flags.channel) body.channel = flags.channel;
+  if (flags.session) body.session = flags.session;
   if (flags["while-sleeping"]) {
     const ws = flags["while-sleeping"] as string;
     if (!["skip", "queue", "trigger-wake"].includes(ws)) {

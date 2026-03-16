@@ -61,7 +61,7 @@ export async function ensureSystemDM(mindName: string): Promise<{ conversationId
 export async function sendSystemMessage(
   mindName: string,
   text: string,
-  opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake" },
+  opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
 ): Promise<void> {
   const { conversationId } = await ensureSystemDM(mindName);
 
@@ -75,7 +75,8 @@ export async function sendSystemMessage(
     isDM: true,
     participants: ["volute", mindName],
     participantCount: 2,
-    ...opts,
+    ...(opts?.whileSleeping ? { whileSleeping: opts.whileSleeping } : {}),
+    ...(opts?.session ? { session: opts.session } : {}),
   });
 }
 

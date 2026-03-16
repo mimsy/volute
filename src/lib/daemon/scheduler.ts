@@ -1,6 +1,5 @@
 import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
-import { deliverMessage } from "../delivery/message-delivery.js";
 import { exec } from "../exec.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../json-state.js";
 import log from "../logger.js";
@@ -142,21 +141,10 @@ export class Scheduler {
         return;
       }
 
-      const whileSleeping = schedule.whileSleeping;
-      const channel = schedule.channel;
-
-      if (channel) {
-        // Explicit channel — use delivery path (preserves routing rules)
-        await this.deliver(mindName, {
-          content: [{ type: "text", text }],
-          channel,
-          sender: schedule.id,
-          whileSleeping,
-        });
-      } else {
-        // No channel specified — deliver through system chat DM
-        await this.deliverSystem(mindName, `[${schedule.id}] ${text}`, { whileSleeping });
-      }
+      await this.deliverSystem(mindName, `[${schedule.id}] ${text}`, {
+        whileSleeping: schedule.whileSleeping,
+        session: schedule.session,
+      });
       slog.info(`fired "${schedule.id}" for ${mindName}`);
 
       // Self-delete one-time timers after successful delivery
@@ -200,22 +188,10 @@ export class Scheduler {
     return exec("bash", ["-c", script], { cwd, mindName });
   }
 
-  protected deliver(
-    mindName: string,
-    payload: {
-      content: { type: string; text: string }[];
-      channel: string;
-      sender: string;
-      whileSleeping?: "skip" | "queue" | "trigger-wake";
-    },
-  ): Promise<void> {
-    return deliverMessage(mindName, payload);
-  }
-
   protected deliverSystem(
     mindName: string,
     text: string,
-    opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake" },
+    opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
   ): Promise<void> {
     return sendSystemMessage(mindName, text, opts);
   }

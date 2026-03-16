@@ -82,6 +82,21 @@ export class DeliveryManager {
     const baseName = await getBaseName(mindName);
     const config = getRoutingConfig(baseName);
 
+    // Explicit session in payload — skip route matching entirely
+    if (payload.session) {
+      let sessionName = payload.session;
+      if (sessionName === "$new") {
+        sessionName = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      }
+      const sessionConfig = resolveDeliveryMode(config, sessionName);
+      if (sessionConfig.delivery.mode === "batch") {
+        await this.enqueueBatch(mindName, sessionName, payload, sessionConfig);
+        return { routed: true, session: sessionName, destination: "mind", mode: "batch" };
+      }
+      await this.deliverToMind(mindName, sessionName, payload, sessionConfig);
+      return { routed: true, session: sessionName, destination: "mind", mode: "immediate" };
+    }
+
     const meta: MatchMeta = {
       channel: payload.channel,
       sender: payload.sender ?? undefined,
