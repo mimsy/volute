@@ -109,18 +109,6 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  // Send initial orientation message via system chat DM
-  const initialMessage =
-    "You've just been created. A human planted you as a seed. Start a conversation with them — introduce yourself, ask questions, and begin exploring who you want to be.";
-  await daemonFetch(urlOf(client.api.minds[":name"].chat.$url({ param: { name } })), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      message: initialMessage,
-      sender: "volute",
-    }),
-  });
-
   console.log(`\nSeeded mind: ${name} (port ${createData.port})`);
   console.log(`\nTalk to your new mind:`);
   console.log(`  volute chat send @${name} "hello"`);
