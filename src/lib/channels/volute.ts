@@ -49,12 +49,14 @@ export async function read(
   if (!res.ok) {
     throw new Error(`Failed to read conversation: ${res.status} ${res.statusText}`);
   }
-  const messages = (await res.json()) as {
-    role: string;
-    sender_name: string | null;
-    content: string | { type: string; text?: string }[];
-  }[];
-  return messages
+  const data = (await res.json()) as {
+    items: {
+      role: string;
+      sender_name: string | null;
+      content: string | { type: string; text?: string }[];
+    }[];
+  };
+  return data.items
     .slice(-limit)
     .map((m) => {
       const text = Array.isArray(m.content)

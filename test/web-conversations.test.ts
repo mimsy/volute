@@ -90,10 +90,11 @@ describe("web conversations routes", () => {
     });
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.ok(Array.isArray(body));
-    assert.equal(body.length, 2);
-    assert.equal(body[0].role, "user");
-    assert.equal(body[1].role, "assistant");
+    assert.ok(body.items);
+    assert.equal(body.hasMore, false);
+    assert.equal(body.items.length, 2);
+    assert.equal(body.items[0].role, "user");
+    assert.equal(body.items[1].role, "assistant");
 
     await deleteConversation(conv.id);
   });
