@@ -26,6 +26,7 @@ let nextSyntheticId = 0;
 let pendingInbounds = $state<HistoryMessage[]>([]);
 // Fallback timers for done events that may not be followed by a summary
 const doneFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
+let expandedTurns = $state(new Set<string>());
 
 function getSummaryTime(turn: TurnRow): string {
   return formatRelativeTime(turn.created_at);
@@ -409,6 +410,14 @@ function jumpToLatest() {
                     compact
                     turnConversations={row.turn.conversations}
                     turnActivities={row.turn.activities}
+                    onexpand={(expanded) => {
+                      if (expanded) {
+                        expandedTurns.add(row.turn.id);
+                      } else {
+                        expandedTurns.delete(row.turn.id);
+                      }
+                      expandedTurns = new Set(expandedTurns);
+                    }}
                   />
                 {:else}
                   {@const events = streamingEvents.get(row.turn.id) ?? []}
@@ -421,6 +430,7 @@ function jumpToLatest() {
                   {/if}
                 {/if}
               </div>
+              {#if !expandedTurns.has(row.turn.id)}
               <div class="turn-cards">
                 {#if !row.turn.summary}
                   {@const sConvs = getStreamingConversations(streamingEvents.get(row.turn.id) ?? [])}
@@ -507,6 +517,7 @@ function jumpToLatest() {
                   </div>
                 {/each}
               </div>
+              {/if}
             </div>
           </div>
         {/each}
