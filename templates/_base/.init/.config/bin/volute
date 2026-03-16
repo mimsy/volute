@@ -9,7 +9,17 @@ if [ -z "$VOLUTE_SESSION" ] && [ -n "$VOLUTE_MIND_DIR" ]; then
   fi
 fi
 # Find the real volute binary (skip this wrapper)
-REAL_VOLUTE=$(which -a volute 2>/dev/null | grep -v "/.config/bin/" | head -1)
+REAL_VOLUTE=""
+OLDIFS="$IFS"
+IFS=:
+for dir in $PATH; do
+  case "$dir" in */.config/bin) continue ;; esac
+  if [ -x "$dir/volute" ]; then
+    REAL_VOLUTE="$dir/volute"
+    break
+  fi
+done
+IFS="$OLDIFS"
 if [ -z "$REAL_VOLUTE" ]; then
   echo "volute: command not found" >&2
   exit 1

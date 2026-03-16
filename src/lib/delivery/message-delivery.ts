@@ -1,11 +1,11 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getSleepManagerIfReady } from "../daemon/sleep-manager.js";
 import { getActiveTurnId } from "../daemon/turn-tracker.js";
 import { getDb } from "../db.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import log from "../logger.js";
 import { findMind, getBaseName } from "../registry.js";
-import { conversations, messages, mindHistory } from "../schema.js";
+import { conversations, messages, mindHistory, turns } from "../schema.js";
 import { getDeliveryManager } from "./delivery-manager.js";
 import { type DeliveryPayload, extractTextContent } from "./delivery-router.js";
 
@@ -55,6 +55,61 @@ export async function recordInbound(
 }
 
 /**
+ * Tag recent untagged inbound events and messages for a mind with the given turn ID.
+ * Used both proactively (on message delivery) and retroactively (on turn creation).
+ * When `setTrigger` is true, also sets the turn's `trigger_event_id` to the most recent inbound.
+ */
+export async function tagUntaggedInbound(
+  mind: string,
+  turnId: string,
+  { limit = 5, setTrigger = false }: { limit?: number; setTrigger?: boolean } = {},
+): Promise<void> {
+  const db = await getDb();
+  // Tag recent untagged inbound events in mind_history
+  const recentInbounds = await db
+    .select({ id: mindHistory.id })
+    .from(mindHistory)
+    .where(
+      and(
+        eq(mindHistory.mind, mind),
+        eq(mindHistory.type, "inbound"),
+        sql`${mindHistory.turn_id} IS NULL`,
+        sql`${mindHistory.created_at} > datetime('now', '-60 seconds')`,
+      ),
+    )
+    .orderBy(desc(mindHistory.id))
+    .limit(limit);
+  if (recentInbounds.length > 0) {
+    const ids = recentInbounds.map((r) => r.id);
+    await db.update(mindHistory).set({ turn_id: turnId }).where(inArray(mindHistory.id, ids));
+    if (setTrigger) {
+      await db
+        .update(turns)
+        .set({ trigger_event_id: recentInbounds[0].id })
+        .where(eq(turns.id, turnId));
+    }
+  }
+  // Tag recent untagged conversation messages
+  const recentMsgs = await db
+    .select({ id: messages.id })
+    .from(messages)
+    .innerJoin(conversations, eq(messages.conversation_id, conversations.id))
+    .where(
+      and(
+        eq(conversations.mind_name, mind),
+        sql`${messages.turn_id} IS NULL`,
+        sql`${messages.created_at} > datetime('now', '-60 seconds')`,
+      ),
+    )
+    .orderBy(desc(messages.id))
+    .limit(limit);
+  if (recentMsgs.length > 0) {
+    const ids = recentMsgs.map((r) => r.id);
+    await db.update(messages).set({ turn_id: turnId }).where(inArray(messages.id, ids));
+  }
+}
+
+/**
  * Tag the most recent untagged inbound for a mind with the active turn for a session.
  * Called from the delivery manager after routing resolves the session, so incoming
  * messages are linked to the current turn immediately (enabling correct live streaming).
@@ -63,41 +118,7 @@ export async function tagRecentInbound(mind: string, session: string): Promise<v
   const turnId = getActiveTurnId(mind, session);
   if (!turnId) return;
   try {
-    const db = await getDb();
-    // Tag the most recent untagged inbound in mind_history
-    const row = await db
-      .select({ id: mindHistory.id })
-      .from(mindHistory)
-      .where(
-        and(
-          eq(mindHistory.mind, mind),
-          eq(mindHistory.type, "inbound"),
-          sql`${mindHistory.turn_id} IS NULL`,
-        ),
-      )
-      .orderBy(desc(mindHistory.id))
-      .limit(1)
-      .get();
-    if (row) {
-      await db.update(mindHistory).set({ turn_id: turnId }).where(eq(mindHistory.id, row.id));
-    }
-    // Also tag recent untagged conversation messages for this mind
-    const recentMsgs = await db
-      .select({ id: messages.id })
-      .from(messages)
-      .innerJoin(conversations, eq(messages.conversation_id, conversations.id))
-      .where(
-        and(
-          eq(conversations.mind_name, mind),
-          sql`${messages.turn_id} IS NULL`,
-          sql`${messages.created_at} > datetime('now', '-60 seconds')`,
-        ),
-      )
-      .orderBy(desc(messages.id))
-      .limit(5);
-    for (const msg of recentMsgs) {
-      await db.update(messages).set({ turn_id: turnId }).where(eq(messages.id, msg.id));
-    }
+    await tagUntaggedInbound(mind, turnId, { limit: 1 });
   } catch (err) {
     dlog.warn(`failed to tag recent inbound for ${mind} with turn ${turnId}`, log.errorData(err));
   }

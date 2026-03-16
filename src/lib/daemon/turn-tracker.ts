@@ -72,15 +72,16 @@ export async function assignSession(mind: string, turnId: string, session: strin
     return;
   }
 
-  activeTurns.delete(wildcardKey);
-  activeTurns.set(key(mind, session), entry);
-
   try {
     const db = await getDb();
     await db.update(turns).set({ session }).where(eq(turns.id, turnId));
   } catch (err) {
     tlog.error(`failed to assign session to turn ${turnId}`, log.errorData(err));
+    return;
   }
+
+  activeTurns.delete(wildcardKey);
+  activeTurns.set(key(mind, session), entry);
 }
 
 /** Mark a turn as complete. Returns the turnId (or undefined if none was active). */
@@ -98,9 +99,10 @@ export async function completeTurn(
     await db.update(turns).set({ status: "complete" }).where(eq(turns.id, entry.turnId));
   } catch (err) {
     tlog.error(`failed to complete turn ${entry.turnId}`, log.errorData(err));
+    // Don't clean up in-memory state on DB failure — allows retry
+    return undefined;
   }
 
-  // Clean up in-memory state after DB update to avoid orphaned active rows
   activeTurns.delete(k);
   activeTurns.delete(wildcardKey);
 

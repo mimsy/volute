@@ -10,7 +10,8 @@ import type {
 } from "@volute/extensions";
 import extNotes from "@volute/notes";
 import extPages from "@volute/pages";
-import type { Hono, MiddlewareHandler } from "hono";
+import type { Context, Hono, MiddlewareHandler } from "hono";
+import type { AuthEnv } from "../web/middleware/auth.js";
 import { getUser, getUserByUsername } from "./auth.js";
 import { getActiveTurnId, getLastToolUseEventId } from "./daemon/turn-tracker.js";
 import { publish } from "./events/activity-events.js";
@@ -175,7 +176,7 @@ async function loadExtension(
   // Mount command endpoints
   if (manifest.commands) {
     for (const [cmdName, cmd] of Object.entries(manifest.commands)) {
-      app.post(`${extApiPath}/commands/${cmdName}`, async (c: any) => {
+      app.post(`${extApiPath}/commands/${cmdName}`, async (c: Context<AuthEnv>) => {
         let body: { args?: string[]; mind?: string };
         try {
           body = await c.req.json();
@@ -233,7 +234,7 @@ async function loadExtension(
     };
     const prefix = `/ext/${manifest.id}`;
     const indexPath = resolve(assetsDir, "index.html");
-    const serveExtAssets = async (c: any) => {
+    const serveExtAssets = async (c: Context<AuthEnv>) => {
       const urlPath = new URL(c.req.url).pathname;
       const relativePath = urlPath.slice(prefix.length).replace(/^\//, "") || "index.html";
       const filePath = resolve(assetsDir, relativePath);

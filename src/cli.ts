@@ -129,6 +129,7 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
   default: {
     // Try extension commands before giving up
+    let isExtensionCommand = false;
     try {
       const { daemonFetch } = await import("./lib/daemon-client.js");
       const res = await daemonFetch("/api/extensions/commands");
@@ -138,6 +139,7 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
           { commands: Record<string, { description: string; usage?: string }> }
         >;
         if (command && command in extCommands) {
+          isExtensionCommand = true;
           const subcommand = args[0];
           const ext = extCommands[command];
           if (!subcommand || !(subcommand in ext.commands)) {
@@ -160,6 +162,11 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ args: cmdArgs, mind }),
           });
+          if (!cmdRes.ok) {
+            const text = await cmdRes.text().catch(() => "");
+            console.error(`Extension command failed (HTTP ${cmdRes.status}): ${text}`);
+            process.exit(1);
+          }
           const result = (await cmdRes.json()) as { output?: string; error?: string };
           if (result.error) {
             console.error(result.error);
@@ -169,8 +176,13 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
           break;
         }
       }
-    } catch {
-      // Daemon not running or other error — fall through to unknown command
+    } catch (err) {
+      // If we identified this as an extension command, surface the real error
+      if (isExtensionCommand) {
+        console.error(`Extension command failed: ${err instanceof Error ? err.message : err}`);
+        process.exit(1);
+      }
+      // Otherwise daemon not running — fall through to unknown command
     }
     console.error(`Unknown command: ${command}\nRun 'volute --help' for usage.`);
     process.exit(1);
