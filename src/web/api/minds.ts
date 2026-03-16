@@ -2166,6 +2166,7 @@ const app = new Hono<AuthEnv>()
     const substantiveTypes = new Set(["thinking", "text", "tool_use", "tool_result", "outbound"]);
     if (!turnId && substantiveTypes.has(body.type)) {
       turnId = await createTurn(baseName);
+      publishMindEvent(baseName, { mind: baseName, type: "turn_created", turnId });
       if (body.session) {
         await assignSession(baseName, turnId, body.session);
       }

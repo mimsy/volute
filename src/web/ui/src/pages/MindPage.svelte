@@ -1,12 +1,12 @@
 <script lang="ts">
-import type { ConversationWithParticipants, TurnRow } from "@volute/api";
+import type { ConversationWithParticipants, HistoryMessage, TurnRow } from "@volute/api";
 import ExtensionFeedCard from "../components/ExtensionFeedCard.svelte";
 import HistoryEvent from "../components/HistoryEvent.svelte";
 import MindInfo from "../components/MindInfo.svelte";
 import MindSkills from "../components/MindSkills.svelte";
 import PublicFiles from "../components/PublicFiles.svelte";
 import ReadOnlyChatModal from "../components/ReadOnlyChatModal.svelte";
-import { fetchTurns } from "../lib/client";
+import { fetchTurnEvents, fetchTurns } from "../lib/client";
 import { extractTextContent } from "../lib/feed-utils";
 import { formatRelativeTime } from "../lib/format";
 import { data } from "../lib/stores.svelte";
@@ -31,6 +31,10 @@ let loading = $state(false);
 let historyError = $state("");
 
 let readOnlyConv = $state<ConversationWithParticipants | null>(null);
+
+// --- Streaming events for active turns ---
+let streamingEvents = $state<Map<string, HistoryMessage[]>>(new Map());
+let nextSyntheticId = 0;
 
 function getSummaryTime(turn: TurnRow): string {
   return formatRelativeTime(turn.created_at);
@@ -66,10 +70,30 @@ function connectSSE() {
       return;
     }
 
-    if (d.type !== "summary") return;
-
     const turnId = d.turnId as string | undefined;
-    if (turnId) {
+    const eventType = d.type as string;
+
+    if (eventType === "turn_created" && turnId) {
+      // Create a placeholder turn row
+      if (!turnsData.some((t) => t.id === turnId)) {
+        turnsData = [
+          ...turnsData,
+          {
+            id: turnId,
+            summary: null,
+            summary_meta: null,
+            status: "active",
+            created_at: new Date().toISOString(),
+            trigger: null,
+            conversations: [],
+            activities: [],
+          },
+        ];
+      }
+      streamingEvents.set(turnId, []);
+    } else if (eventType === "summary" && turnId) {
+      // Turn complete — fetch the full turn row and remove streaming state
+      streamingEvents.delete(turnId);
       fetchTurns(name, { limit: 1, offset: 0 })
         .then((rows) => {
           for (const row of rows) {
@@ -81,6 +105,25 @@ function connectSSE() {
           }
         })
         .catch(() => {});
+    } else if (eventType === "done") {
+      // Ignore — summary will arrive shortly
+    } else if (turnId && streamingEvents.has(turnId)) {
+      // Substantive event — accumulate for streaming display
+      const events = streamingEvents.get(turnId)!;
+      events.push({
+        id: nextSyntheticId--,
+        mind: name,
+        channel: (d.channel as string) ?? "",
+        session: (d.session as string) ?? null,
+        sender: null,
+        message_id: (d.messageId as string) ?? null,
+        type: eventType,
+        content: (d.content as string) ?? "",
+        metadata: d.metadata ? JSON.stringify(d.metadata) : null,
+        turn_id: turnId,
+        created_at: new Date().toISOString(),
+      });
+      streamingEvents.set(turnId, events);
     }
 
     if (!userScrolledUp) {
@@ -117,6 +160,18 @@ async function loadTurns(offset: number) {
       turnsData = [...chronological, ...turnsData];
     }
     hasMore = rows.length === PAGE_SIZE;
+
+    // Backfill streaming events for any active turns
+    for (const turn of turnsData) {
+      if (turn.status === "active" && !streamingEvents.has(turn.id)) {
+        streamingEvents.set(turn.id, []);
+        fetchTurnEvents(name, { turnId: turn.id })
+          .then((events) => {
+            streamingEvents.set(turn.id, events);
+          })
+          .catch(() => {});
+      }
+    }
   } catch (e) {
     historyError = e instanceof Error ? e.message : "Failed to load";
   }
@@ -159,6 +214,8 @@ $effect(() => {
     prevName = n;
     turnsData = [];
     hasMore = true;
+    streamingEvents = new Map();
+    nextSyntheticId = 0;
     startScrollToBottom();
     loadTurns(0);
   }
@@ -246,7 +303,16 @@ function jumpToLatest() {
                       turnActivities={row.turn.activities}
                     />
                   {:else}
-                    <div class="turn-pending">processing...</div>
+                    {@const events = streamingEvents.get(row.turn.id) ?? []}
+                    {#if events.length === 0}
+                      <div class="turn-pending">processing...</div>
+                    {:else}
+                      <div class="streaming-turn">
+                        {#each events as ev (ev.id)}
+                          <HistoryEvent event={ev} mindName={name} compact />
+                        {/each}
+                      </div>
+                    {/if}
                   {/if}
                 </div>
                 <!-- Right: conversation + activity cards -->
@@ -597,6 +663,12 @@ function jumpToLatest() {
     color: var(--text-2);
     padding: 8px 0;
     animation: pulse 1.5s infinite;
+  }
+
+  .streaming-turn {
+    border-left: 2px solid var(--accent);
+    padding-left: 8px;
+    margin: 4px 0;
   }
 
   .empty-hint {
