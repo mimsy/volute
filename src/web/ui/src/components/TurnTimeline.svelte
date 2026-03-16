@@ -385,7 +385,18 @@ function jumpToLatest() {
             <div class="turn-time">
               {getSummaryTime(row.turn)}
             </div>
-            <div class="turn-rail">
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="turn-rail"
+              class:turn-rail-expanded={expandedTurns.has(row.turn.id)}
+              onclick={(e) => {
+                if (!row.turn.summary) return;
+                e.stopPropagation();
+                const rowEl = (e.currentTarget as HTMLElement).closest('.turn-row');
+                const summaryEl = rowEl?.querySelector(':scope > .turn-body > .turn-summary > .event');
+                if (summaryEl) (summaryEl as HTMLElement).click();
+              }}
+            >
               <div class="turn-dot"></div>
             </div>
             <div class="turn-body">
@@ -631,6 +642,91 @@ function jumpToLatest() {
     align-self: stretch;
     position: relative;
     min-height: 8px;
+    overflow: visible;
+  }
+
+  .turn-rail-expanded {
+    background:
+      /* Solid segment at top (dot to connector) */
+      linear-gradient(to bottom, var(--timeline-rail) 15px, transparent 15px),
+      /* Solid segment at bottom (return line to next dot) */
+      linear-gradient(to top, var(--timeline-rail) 15px, transparent 15px),
+      /* Dashed middle (branch area) */
+      repeating-linear-gradient(
+        to bottom,
+        var(--timeline-rail) 0px,
+        var(--timeline-rail) 4px,
+        transparent 4px,
+        transparent 8px
+      );
+  }
+
+  /* Suppress top-level HistoryEvent's rail pseudo-element — handled by .turn-rail.
+     Only target the direct summary event, not nested events in expanded turns. */
+  .turn-summary > :global(.event::after) {
+    display: none;
+  }
+  /* Hide top-level HistoryEvent's marker dot — .turn-dot handles this on the main rail */
+  .turn-summary > :global(.event > .marker) {
+    display: none;
+  }
+
+  /* Highlight main rail on hover — offset to align with dot position */
+  .turn-rail::before {
+    content: "";
+    position: absolute;
+    top: 15px;
+    bottom: -15px;
+    left: 50%;
+    width: 2px;
+    margin-left: -1px;
+    background: var(--text-2);
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 2;
+    pointer-events: none;
+  }
+  /* Collapsed: highlight on row hover or direct rail hover */
+  .turn-row:hover > .turn-rail:not(.turn-rail-expanded)::before,
+  .turn-rail:not(.turn-rail-expanded):hover::before {
+    opacity: 1;
+  }
+  /* Expanded: highlight only on direct rail hover, matching solid-dashed-solid.
+     ::before starts at top:15px (dot center) so no solid top needed.
+     Solid bottom covers 30px (15px rail solid + 15px extension to next dot). */
+  .turn-rail-expanded::before {
+    background:
+      linear-gradient(to top, var(--text-2) 30px, transparent 30px),
+      repeating-linear-gradient(
+        to bottom,
+        var(--text-2) 0px,
+        var(--text-2) 4px,
+        transparent 4px,
+        transparent 8px
+      );
+  }
+  .turn-rail-expanded:hover::before {
+    opacity: 1;
+  }
+  /* Wider invisible click/hover target for the rail */
+  .turn-rail::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -9px;
+    right: -9px;
+    cursor: pointer;
+  }
+
+  /* Extend HistoryEvent connectors to bridge the .turn-body padding gap */
+  .turn-summary :global(.turn-connector::after) {
+    left: -35px;
+    width: 35px;
+  }
+  .turn-summary :global(.branch-return) {
+    left: -28px;
+    width: 36px;
   }
 
   .turn-dot {
@@ -641,6 +737,12 @@ function jumpToLatest() {
     height: 6px;
     border-radius: 50%;
     background: var(--text-2);
+    z-index: 3;
+  }
+
+  /* Lower inner rail z-index so it doesn't cover the main rail dot */
+  .turn-summary :global(.turn-connector) {
+    z-index: 0;
   }
 
   .turn-body {
