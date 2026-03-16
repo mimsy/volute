@@ -83,6 +83,21 @@ export class DeliveryManager {
     const baseName = await getBaseName(mindName);
     const config = getRoutingConfig(baseName);
 
+    // Explicit session in payload — skip route matching entirely
+    if (payload.session) {
+      let sessionName = payload.session;
+      if (sessionName === "$new") {
+        sessionName = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      }
+      const sessionConfig = resolveDeliveryMode(config, sessionName);
+      if (sessionConfig.delivery.mode === "batch") {
+        await this.enqueueBatch(mindName, sessionName, payload, sessionConfig);
+        return { routed: true, session: sessionName, destination: "mind", mode: "batch" };
+      }
+      await this.deliverToMind(mindName, sessionName, payload, sessionConfig);
+      return { routed: true, session: sessionName, destination: "mind", mode: "immediate" };
+    }
+
     const meta: MatchMeta = {
       channel: payload.channel,
       sender: payload.sender ?? undefined,
@@ -676,19 +691,8 @@ export class DeliveryManager {
       .filter((line) => line !== null)
       .join("\n");
 
-    const invitePayload: DeliveryPayload = {
-      channel: "system:delivery",
-      sender: "system",
-      content: [{ type: "text", text: notification }],
-    };
-
-    const config = getRoutingConfig(await getBaseName(mindName));
-    const sessionConfig = resolveDeliveryMode(config, "main");
-
-    await this.deliverToMind(mindName, "main", invitePayload, {
-      ...sessionConfig,
-      interrupt: true,
-    });
+    const { sendSystemMessage } = await import("../system-chat.js");
+    await sendSystemMessage(mindName, notification);
   }
 
   private async persistToQueue(

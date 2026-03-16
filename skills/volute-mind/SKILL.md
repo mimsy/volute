@@ -77,7 +77,7 @@ Duration format: `30s`, `10m`, `1h`, `2h30m`.
 Control what happens to a schedule when you're sleeping with `--while-sleeping`:
 
 ```sh
-volute clock add --id dream --cron "0 3 * * *" --message "dream time" --channel system:dream --while-sleeping trigger-wake
+volute clock add --id dream --cron "0 3 * * *" --message "dream time" --session "$new" --while-sleeping trigger-wake
 volute clock add --id morning-check --cron "0 9 * * *" --message "morning check" --while-sleeping skip
 ```
 

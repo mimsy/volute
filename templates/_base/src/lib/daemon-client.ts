@@ -114,26 +114,3 @@ export async function daemonSendFile(
   }
   return (await res.json()) as { status: string; id?: string; destPath?: string };
 }
-
-export async function daemonSend(channel: string, text: string): Promise<void> {
-  if (!port || !mind) {
-    console.error("[volute] daemonSend: VOLUTE_DAEMON_PORT or VOLUTE_MIND not set");
-    return;
-  }
-  const res = await fetch(
-    `http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/message`,
-    {
-      method: "POST",
-      headers: headers(),
-      body: JSON.stringify({
-        content: text,
-        channel,
-        sender: mind,
-      }),
-    },
-  );
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`daemonSend failed (${res.status}): ${body}`);
-  }
-}

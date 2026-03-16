@@ -1,9 +1,9 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { deliverMessage } from "./delivery/message-delivery.js";
 import log from "./logger.js";
 import { readRegistry, setMindTemplateHash, voluteSystemDir } from "./registry.js";
 import { parseReleaseNotes } from "./release-notes.js";
+import { sendSystemMessage } from "./system-chat.js";
 import { computeTemplateHash } from "./template-hash.js";
 import { getCurrentVersion } from "./update-check.js";
 
@@ -100,11 +100,7 @@ export async function notifyVersionUpdate(): Promise<void> {
 
     const message = formatNotification(currentVersion, releaseNotes, needsUpgrade, entry.name);
 
-    await deliverMessage(entry.name, {
-      channel: "system:version",
-      sender: "volute",
-      content: message,
-    });
+    await sendSystemMessage(entry.name, message);
   });
 
   const results = await Promise.allSettled(promises);

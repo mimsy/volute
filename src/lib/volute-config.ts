@@ -9,7 +9,8 @@ export type Schedule = {
   script?: string;
   enabled: boolean;
   whileSleeping?: "skip" | "queue" | "trigger-wake";
-  channel?: string;
+  channel?: string; // deprecated — use session instead
+  session?: string; // target session name (e.g. "$new" for isolated session)
 };
 
 export type WakeTriggerConfig = {

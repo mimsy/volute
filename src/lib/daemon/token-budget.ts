@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { deliverMessage } from "../delivery/message-delivery.js";
 import log from "../logger.js";
 import { stateDir } from "../registry.js";
+import { sendSystemMessage } from "../system-chat.js";
 
 const tlog = log.child("token-budget");
 
@@ -210,16 +210,10 @@ export class TokenBudget {
       .join("\n");
 
     try {
-      await deliverMessage(mindName, {
-        content: [
-          {
-            type: "text",
-            text: `[Budget replay] ${messages.length} queued message(s) from the previous budget period:\n\n${summary}`,
-          },
-        ],
-        channel: "system:budget-replay",
-        sender: "system",
-      });
+      await sendSystemMessage(
+        mindName,
+        `[Budget replay] ${messages.length} queued message(s) from the previous budget period:\n\n${summary}`,
+      );
       tlog.info(`replayed ${messages.length} queued message(s) for ${mindName}`);
     } catch (err) {
       tlog.warn(`failed to replay for ${mindName}`, log.errorData(err));
