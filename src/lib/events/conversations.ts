@@ -206,12 +206,20 @@ export async function addMessage(
   role: string,
   senderName: string | null,
   content: ContentBlock[],
+  opts?: { sourceEventId?: number; turnId?: string },
 ): Promise<Message> {
   const db = await getDb();
   const serialized = JSON.stringify(content);
   const [result] = await db
     .insert(messages)
-    .values({ conversation_id: conversationId, role, sender_name: senderName, content: serialized })
+    .values({
+      conversation_id: conversationId,
+      role,
+      sender_name: senderName,
+      content: serialized,
+      source_event_id: opts?.sourceEventId ?? null,
+      turn_id: opts?.turnId ?? null,
+    })
     .returning({ id: messages.id, created_at: messages.created_at });
 
   // Update conversation's updated_at

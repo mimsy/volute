@@ -35,78 +35,113 @@ async function getPagesWatcher() {
 }
 
 export function createRoutes(ctx: ExtensionContext): Hono {
-  return new Hono()
-    .get("/", async (c) => {
-      const pw = await getPagesWatcher();
-      const sites = await pw.getCachedSites();
-      const recentPages = await pw.getCachedRecentPages();
-      return c.json({ sites, recentPages });
-    })
-    .get("/feed", async (c) => {
-      const pw = await getPagesWatcher();
-      let recentPages = await pw.getCachedRecentPages();
-      const mind = c.req.query("mind");
-      if (mind) recentPages = recentPages.filter((p: any) => p.mind === mind);
-      const rawLimit = c.req.query("limit");
-      const limit = rawLimit ? parseInt(rawLimit, 10) : 8;
-      return c.json(
-        recentPages.slice(0, limit).map((p: any) => ({
-          id: `page-${p.mind}-${p.file}`,
-          title: `${p.mind}/${p.file}`,
-          url: p.url ?? `/minds/${p.mind}/pages/${p.file}`,
-          date: p.modified,
-          author: p.mind,
-          bodyHtml: `<p>Page updated</p>`,
-          iframeUrl: `/ext/pages/public/${p.mind}/${p.file}`,
-          icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c-2 2-2 10 0 12M8 2c2 2 2 10 0 12"/></svg>',
-          color: "purple",
-        })),
-      );
-    })
-    .put("/publish/:name", async (c) => {
-      const user = ctx.resolveUser(c);
-      if (!user) return c.json({ error: "Unauthorized" }, 401);
-      const name = c.req.param("name");
-      if (user.role !== "admin" && user.username !== name) {
-        return c.json({ error: "Forbidden" }, 403);
-      }
-      const config = ctx.getSystemsConfig();
-      if (!config) return c.json({ error: "Not connected to volute.systems" }, 400);
-      const body = await c.req.text();
-      try {
-        const res = await fetch(`${config.apiUrl}/api/pages/publish/${name}`, {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${config.apiKey}`,
+  return (
+    new Hono()
+      .get("/", async (c) => {
+        const pw = await getPagesWatcher();
+        const sites = await pw.getCachedSites();
+        const recentPages = await pw.getCachedRecentPages();
+        return c.json({ sites, recentPages });
+      })
+      .get("/feed", async (c) => {
+        const pw = await getPagesWatcher();
+        let recentPages = await pw.getCachedRecentPages();
+        const mind = c.req.query("mind");
+        if (mind) recentPages = recentPages.filter((p: any) => p.mind === mind);
+        const rawLimit = c.req.query("limit");
+        const limit = rawLimit ? parseInt(rawLimit, 10) : 8;
+        return c.json(
+          recentPages.slice(0, limit).map((p: any) => ({
+            id: `page-${p.mind}-${p.file}`,
+            title: `${p.mind}/${p.file}`,
+            url: p.url ?? `/minds/${p.mind}/pages/${p.file}`,
+            date: p.modified,
+            author: p.mind,
+            bodyHtml: `<p>Page updated</p>`,
+            iframeUrl: `/ext/pages/public/${p.mind}/${p.file}`,
+            icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c-2 2-2 10 0 12M8 2c2 2 2 10 0 12"/></svg>',
+            color: "purple",
+          })),
+        );
+      })
+      .put("/publish/:name", async (c) => {
+        const user = ctx.resolveUser(c);
+        if (!user) return c.json({ error: "Unauthorized" }, 401);
+        const name = c.req.param("name");
+        if (user.role !== "admin" && user.username !== name) {
+          return c.json({ error: "Forbidden" }, 403);
+        }
+        const config = ctx.getSystemsConfig();
+        if (!config) return c.json({ error: "Not connected to volute.systems" }, 400);
+        const body = await c.req.text();
+        try {
+          const res = await fetch(`${config.apiUrl}/api/pages/publish/${name}`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${config.apiKey}`,
+            },
+            body,
+          });
+          const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+          return c.json(data as Record<string, unknown>, res.status as any);
+        } catch (err) {
+          return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
+        }
+      })
+      // Notify that a page was created/updated (called by mind scripts after writing files)
+      .post("/notify", async (c) => {
+        const user = ctx.resolveUser(c);
+        if (!user) return c.json({ error: "Unauthorized" }, 401);
+
+        let body: { file?: string };
+        try {
+          body = await c.req.json();
+        } catch {
+          body = {};
+        }
+
+        const file = body.file ?? "page";
+        ctx.publishActivity(
+          {
+            type: "page_updated",
+            mind: user.username,
+            summary: `${user.username} updated ${file}`,
+            metadata: { file },
           },
-          body,
-        });
-        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        return c.json(data as Record<string, unknown>, res.status as any);
-      } catch (err) {
-        return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
-      }
-    })
-    .get("/status/:name", async (c) => {
-      const user = ctx.resolveUser(c);
-      if (!user) return c.json({ error: "Unauthorized" }, 401);
-      const name = c.req.param("name");
-      if (user.role !== "admin" && user.username !== name) {
-        return c.json({ error: "Forbidden" }, 403);
-      }
-      const config = ctx.getSystemsConfig();
-      if (!config) return c.json({ error: "Not connected to volute.systems" }, 400);
-      try {
-        const res = await fetch(`${config.apiUrl}/api/pages/status/${name}`, {
-          headers: { Authorization: `Bearer ${config.apiKey}` },
-        });
-        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        return c.json(data as Record<string, unknown>, res.status as any);
-      } catch (err) {
-        return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
-      }
-    });
+          c,
+        );
+
+        // Invalidate the pages cache so listings reflect the new file
+        try {
+          const mod = await import("../../../../src/lib/pages-watcher.js");
+          mod.invalidateCache();
+        } catch {
+          // not critical
+        }
+
+        return c.json({ ok: true });
+      })
+      .get("/status/:name", async (c) => {
+        const user = ctx.resolveUser(c);
+        if (!user) return c.json({ error: "Unauthorized" }, 401);
+        const name = c.req.param("name");
+        if (user.role !== "admin" && user.username !== name) {
+          return c.json({ error: "Forbidden" }, 403);
+        }
+        const config = ctx.getSystemsConfig();
+        if (!config) return c.json({ error: "Not connected to volute.systems" }, 400);
+        try {
+          const res = await fetch(`${config.apiUrl}/api/pages/status/${name}`, {
+            headers: { Authorization: `Bearer ${config.apiKey}` },
+          });
+          const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+          return c.json(data as Record<string, unknown>, res.status as any);
+        } catch (err) {
+          return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
+        }
+      })
+  );
 }
 
 // Lazy-loaded reference to voluteHome for system pages

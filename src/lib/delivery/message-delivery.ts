@@ -19,6 +19,9 @@ export async function recordInbound(
   sender: string | null,
   content: string | null,
 ): Promise<void> {
+  // Record the inbound event without a turn_id. The turn will be created
+  // per-session when the mind starts processing (auto-create in events handler).
+  // This avoids merging unrelated inbounds from different channels into one turn.
   try {
     const db = await getDb();
     await db.insert(mindHistory).values({

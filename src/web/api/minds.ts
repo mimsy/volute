@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import {
@@ -31,6 +31,13 @@ import {
 } from "../../lib/daemon/mind-service.js";
 import { getTokenBudget } from "../../lib/daemon/token-budget.js";
 import { summarizeTurn } from "../../lib/daemon/turn-summarizer.js";
+import {
+  assignSession,
+  completeTurn,
+  createTurn,
+  getActiveTurnId,
+  trackToolUse,
+} from "../../lib/daemon/turn-tracker.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
 import { extractTextContent } from "../../lib/delivery/delivery-router.js";
@@ -92,7 +99,15 @@ import {
   stateDir,
   validateMindName,
 } from "../../lib/registry.js";
-import { conversations, mindHistory } from "../../lib/schema.js";
+import {
+  activity,
+  conversationParticipants,
+  conversations,
+  messages,
+  mindHistory,
+  turns,
+  users,
+} from "../../lib/schema.js";
 import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
 import { getStandardSkillsWithExtensions, installSkill, SEED_SKILLS } from "../../lib/skills.js";
 import { announceToSystem } from "../../lib/system-channel.js";
@@ -2133,6 +2148,80 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "type required" }, 400);
     }
 
+    // Assign session to sessionless turn on first session_start
+    if (body.type === "session_start" && body.session) {
+      const activeTurnId = getActiveTurnId(baseName);
+      if (activeTurnId) {
+        await assignSession(baseName, activeTurnId, body.session);
+      }
+    }
+
+    // Look up active turn for this event; create one if missing for substantive events.
+    // Turns are created per-session when the mind starts processing, not when inbound arrives.
+    let turnId = getActiveTurnId(baseName, body.session);
+    const substantiveTypes = new Set(["thinking", "text", "tool_use", "tool_result", "outbound"]);
+    if (!turnId && substantiveTypes.has(body.type)) {
+      turnId = await createTurn(baseName);
+      if (body.session) {
+        await assignSession(baseName, turnId, body.session);
+      }
+      // Link trigger: find the most recent inbound for this mind and tag it with this turn
+      try {
+        const db = await getDb();
+        const triggerRow = await db
+          .select({ id: mindHistory.id })
+          .from(mindHistory)
+          .where(and(eq(mindHistory.mind, baseName), eq(mindHistory.type, "inbound")))
+          .orderBy(desc(mindHistory.id))
+          .limit(1)
+          .get();
+        if (triggerRow) {
+          // Set trigger_event_id on the turn
+          await db
+            .update(turns)
+            .set({ trigger_event_id: triggerRow.id })
+            .where(eq(turns.id, turnId));
+          // Also tag the inbound event itself with this turn so it appears in expanded view
+          await db
+            .update(mindHistory)
+            .set({ turn_id: turnId })
+            .where(eq(mindHistory.id, triggerRow.id));
+        }
+      } catch (err) {
+        log.warn(
+          `failed to link trigger event for turn ${turnId} (mind: ${baseName})`,
+          log.errorData(err),
+        );
+      }
+      // Retroactively tag recent untagged conversation messages for this mind
+      // These are inbound messages that arrived before the turn was created
+      try {
+        const db = await getDb();
+        const recentUntagged = await db
+          .select({ id: messages.id })
+          .from(messages)
+          .innerJoin(conversations, eq(messages.conversation_id, conversations.id))
+          .where(
+            and(
+              eq(conversations.mind_name, baseName),
+              sql`${messages.turn_id} IS NULL`,
+              // Only tag messages from the last 60 seconds to avoid false matches
+              sql`${messages.created_at} > datetime('now', '-60 seconds')`,
+            ),
+          )
+          .orderBy(desc(messages.id))
+          .limit(5);
+        for (const row of recentUntagged) {
+          await db.update(messages).set({ turn_id: turnId }).where(eq(messages.id, row.id));
+        }
+      } catch (err) {
+        log.warn(
+          `failed to tag messages for turn ${turnId} (mind: ${baseName})`,
+          log.errorData(err),
+        );
+      }
+    }
+
     // Persist to mind_history
     const db = await getDb();
     let insertedId: number | undefined;
@@ -2147,12 +2236,18 @@ const app = new Hono<AuthEnv>()
           message_id: body.messageId ?? null,
           content: body.content ?? null,
           metadata: body.metadata ? JSON.stringify(body.metadata) : null,
+          turn_id: turnId ?? null,
         })
         .returning({ id: mindHistory.id });
       insertedId = result[0]?.id;
     } catch (err) {
       log.error(`failed to persist event for ${baseName}`, log.errorData(err));
       // Continue — persistence is best-effort, don't block real-time streaming
+    }
+
+    // Track tool_use events for source_event_id linking
+    if (body.type === "tool_use" && insertedId != null) {
+      trackToolUse(baseName, body.session, insertedId);
     }
 
     // Publish to in-process pub-sub
@@ -2164,6 +2259,7 @@ const app = new Hono<AuthEnv>()
       messageId: body.messageId,
       content: body.content,
       metadata: body.metadata,
+      turnId: turnId ?? undefined,
     });
 
     // Track mind activity for dashboard timeline
@@ -2192,11 +2288,14 @@ const app = new Hono<AuthEnv>()
           log.error(`delivery manager sessionDone failed for ${baseName}`, log.errorData(err));
         }
       }
-      // Fire-and-forget turn summarization
+      // Complete turn and fire-and-forget summarization
+      const completedTurnId = await completeTurn(baseName, body.session);
       if (insertedId != null) {
-        summarizeTurn(baseName, body.session, body.channel, insertedId).catch((err) => {
-          log.error("turn summarization failed", log.errorData(err));
-        });
+        summarizeTurn(baseName, body.session, body.channel, insertedId, completedTurnId).catch(
+          (err) => {
+            log.error("turn summarization failed", log.errorData(err));
+          },
+        );
       }
     }
 
@@ -2291,6 +2390,10 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "channel and content required" }, 400);
     }
 
+    // Look up active turn for this mind (outbound happens during a turn)
+    const mindSession = c.get("mindSession");
+    const outboundTurnId = getActiveTurnId(baseName, mindSession);
+
     const db = await getDb();
     try {
       await db.insert(mindHistory).values({
@@ -2299,6 +2402,7 @@ const app = new Hono<AuthEnv>()
         channel: body.channel,
         sender: body.sender ?? baseName,
         content: body.content,
+        turn_id: outboundTurnId ?? null,
       });
     } catch (err) {
       log.error(`failed to persist external send for ${baseName}`, log.errorData(err));
@@ -2343,16 +2447,277 @@ const app = new Hono<AuthEnv>()
     const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, name));
     return c.json(rows);
   })
+  .get("/:name/history/turns", async (c) => {
+    const name = c.req.param("name");
+    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
+    const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
+
+    const db = await getDb();
+
+    // 1. Get turns for this mind
+    const turnRows = await db
+      .select()
+      .from(turns)
+      .where(eq(turns.mind, name))
+      .orderBy(desc(turns.created_at))
+      .limit(limit)
+      .offset(offset);
+
+    if (turnRows.length === 0) return c.json([]);
+
+    const turnIds = turnRows.map((t) => t.id);
+
+    // 2. Get summaries
+    const summaryRows = await db
+      .select()
+      .from(mindHistory)
+      .where(
+        and(
+          eq(mindHistory.mind, name),
+          eq(mindHistory.type, "summary"),
+          inArray(mindHistory.turn_id, turnIds),
+        ),
+      );
+    const summaryByTurn = new Map<string, { content: string; metadata: string | null }>();
+    for (const s of summaryRows) {
+      if (s.turn_id)
+        summaryByTurn.set(s.turn_id, { content: s.content ?? "", metadata: s.metadata });
+    }
+
+    // 3. Get conversation messages linked to these turns
+    const msgRows = await db
+      .select({
+        id: messages.id,
+        conversation_id: messages.conversation_id,
+        role: messages.role,
+        sender_name: messages.sender_name,
+        content: messages.content,
+        source_event_id: messages.source_event_id,
+        turn_id: messages.turn_id,
+        created_at: messages.created_at,
+      })
+      .from(messages)
+      .where(inArray(messages.turn_id, turnIds))
+      .orderBy(messages.created_at);
+
+    // Group messages by turn and conversation
+    type MsgRow = (typeof msgRows)[number];
+    const msgsByTurnConv = new Map<string, Map<string, MsgRow[]>>();
+    const convIds = new Set<string>();
+    for (const m of msgRows) {
+      if (!m.turn_id) continue;
+      let byConv = msgsByTurnConv.get(m.turn_id);
+      if (!byConv) {
+        byConv = new Map();
+        msgsByTurnConv.set(m.turn_id, byConv);
+      }
+      let arr = byConv.get(m.conversation_id);
+      if (!arr) {
+        arr = [];
+        byConv.set(m.conversation_id, arr);
+      }
+      arr.push(m);
+      convIds.add(m.conversation_id);
+    }
+
+    // Fetch conversation metadata + participants for referenced conversations
+    type ConvMeta = { id: string; type: string; name: string | null; title: string | null };
+    const convMeta = new Map<string, ConvMeta>();
+    const convParticipantsMap = new Map<
+      string,
+      { username: string; displayName: string | null }[]
+    >();
+    if (convIds.size > 0) {
+      const convIdsArr = [...convIds];
+      const convRows = await db
+        .select({
+          id: conversations.id,
+          type: conversations.type,
+          name: conversations.name,
+          title: conversations.title,
+        })
+        .from(conversations)
+        .where(inArray(conversations.id, convIdsArr));
+      for (const c2 of convRows) convMeta.set(c2.id, c2);
+
+      const cpRows = await db
+        .select({
+          conversationId: conversationParticipants.conversation_id,
+          username: users.username,
+          displayName: users.display_name,
+        })
+        .from(conversationParticipants)
+        .innerJoin(users, eq(conversationParticipants.user_id, users.id))
+        .where(inArray(conversationParticipants.conversation_id, convIdsArr));
+      for (const cp of cpRows) {
+        let arr = convParticipantsMap.get(cp.conversationId);
+        if (!arr) {
+          arr = [];
+          convParticipantsMap.set(cp.conversationId, arr);
+        }
+        arr.push({ username: cp.username, displayName: cp.displayName });
+      }
+    }
+
+    // Build conversation label
+    function getConvLabel(convId: string): string {
+      const meta = convMeta.get(convId);
+      if (!meta) return "Conversation";
+      if (meta.type === "channel" && meta.name) return `#${meta.name}`;
+      const parts = convParticipantsMap.get(convId) ?? [];
+      if (meta.type === "dm" && parts.length === 2) {
+        const other = parts.find((p) => p.username !== name);
+        if (other) return `@${other.displayName || other.username}`;
+      }
+      if (meta.title) return meta.title;
+      return "Conversation";
+    }
+
+    // 4. Get activities linked to these turns
+    const activityRows = await db
+      .select()
+      .from(activity)
+      .where(inArray(activity.turn_id, turnIds))
+      .orderBy(activity.created_at);
+
+    const activitiesByTurn = new Map<string, typeof activityRows>();
+    for (const a of activityRows) {
+      if (!a.turn_id) continue;
+      let arr = activitiesByTurn.get(a.turn_id);
+      if (!arr) {
+        arr = [];
+        activitiesByTurn.set(a.turn_id, arr);
+      }
+      arr.push(a);
+    }
+
+    // 5. Fetch trigger events for turns that have trigger_event_id
+    const triggerIds = turnRows
+      .filter((t) => t.trigger_event_id != null)
+      .map((t) => t.trigger_event_id!);
+    const triggerMap = new Map<
+      number,
+      { channel: string | null; sender: string | null; content: string | null }
+    >();
+    if (triggerIds.length > 0) {
+      const triggerRows = await db
+        .select({
+          id: mindHistory.id,
+          channel: mindHistory.channel,
+          sender: mindHistory.sender,
+          content: mindHistory.content,
+        })
+        .from(mindHistory)
+        .where(inArray(mindHistory.id, triggerIds));
+      for (const r of triggerRows) triggerMap.set(r.id, r);
+    }
+
+    // 6. Assemble response
+    const result = turnRows.map((t) => {
+      const summary = summaryByTurn.get(t.id);
+      const turnConvs = msgsByTurnConv.get(t.id) ?? new Map<string, MsgRow[]>();
+      const convEntries = [...turnConvs.entries()].map(([convId, msgs]) => {
+        const meta = convMeta.get(convId);
+        return {
+          id: convId,
+          label: getConvLabel(convId),
+          type: (meta?.type ?? "dm") as "dm" | "channel",
+          messages: msgs.map((m) => {
+            let content: unknown[];
+            try {
+              const parsed = JSON.parse(m.content);
+              content = Array.isArray(parsed) ? parsed : [{ type: "text", text: m.content }];
+            } catch {
+              content = [{ type: "text", text: m.content }];
+            }
+            return {
+              id: m.id,
+              role: m.role,
+              sender_name: m.sender_name,
+              content,
+              source_event_id: m.source_event_id,
+              created_at: m.created_at,
+            };
+          }),
+        };
+      });
+
+      const turnActivities = (activitiesByTurn.get(t.id) ?? []).map((a) => {
+        let metadata: Record<string, unknown> | null = null;
+        if (a.metadata) {
+          try {
+            metadata = JSON.parse(a.metadata);
+          } catch {
+            /* ignore malformed */
+          }
+        }
+        return {
+          id: a.id,
+          type: a.type,
+          summary: a.summary,
+          metadata,
+          source_event_id: a.source_event_id,
+          created_at: a.created_at,
+        };
+      });
+
+      let summaryMeta: Record<string, unknown> | null = null;
+      if (summary?.metadata) {
+        try {
+          summaryMeta = JSON.parse(summary.metadata);
+        } catch {
+          // ignore
+        }
+      }
+
+      const trigger = t.trigger_event_id ? triggerMap.get(t.trigger_event_id) : null;
+
+      return {
+        id: t.id,
+        summary: summary?.content ?? null,
+        summary_meta: summaryMeta,
+        status: t.status,
+        created_at: t.created_at,
+        trigger: trigger
+          ? { channel: trigger.channel, sender: trigger.sender, content: trigger.content }
+          : null,
+        conversations: convEntries,
+        activities: turnActivities,
+      };
+    });
+
+    return c.json(result);
+  })
   .get("/:name/history/turn", async (c) => {
     const name = c.req.param("name");
+    const turnId = c.req.query("turn_id");
+
+    const db = await getDb();
+
+    // Prefer turn_id-based query; fall back to legacy session+range
+    if (turnId) {
+      const rows = await db
+        .select()
+        .from(mindHistory)
+        .where(
+          and(
+            eq(mindHistory.mind, name),
+            eq(mindHistory.turn_id, turnId),
+            sql`${mindHistory.type} IN ('inbound','outbound','tool_use','tool_result','text','thinking')`,
+          ),
+        )
+        .orderBy(mindHistory.id);
+      return c.json(rows);
+    }
+
+    // Legacy: session + from_id/to_id range
     const session = c.req.query("session");
     const fromId = parseInt(c.req.query("from_id") ?? "", 10);
     const toId = parseInt(c.req.query("to_id") ?? "", 10);
     if (!session || Number.isNaN(fromId) || Number.isNaN(toId)) {
-      return c.json({ error: "session, from_id, and to_id are required" }, 400);
+      return c.json({ error: "turn_id, or session with from_id and to_id, required" }, 400);
     }
 
-    const db = await getDb();
     const rows = await db
       .select()
       .from(mindHistory)

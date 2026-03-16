@@ -15,6 +15,7 @@ import { isSandboxEnabled, wrapForSandbox } from "../sandbox.js";
 import { mindHistory } from "../schema.js";
 import { generateMindToken, revokeMindToken } from "./mind-tokens.js";
 import { RestartTracker } from "./restart-tracker.js";
+import { clearMind as clearTurnState } from "./turn-tracker.js";
 
 const mlog = log.child("minds");
 
@@ -123,6 +124,9 @@ export class MindManager {
     const logStream = new RotatingLog(resolve(logsDir, "mind.log"));
     const mindToken = generateMindToken(name);
     const mindEnv = loadMergedEnv(name);
+    // Prepend mind's .config/bin to PATH so the session-aware volute wrapper is found first
+    const mindBinDir = resolve(dir, "home", ".config", "bin");
+    const currentPath = process.env.PATH ?? "";
     const env: Record<string, string | undefined> = {
       ...process.env,
       ...mindEnv,
@@ -131,6 +135,7 @@ export class MindManager {
       VOLUTE_MIND_DIR: dir,
       VOLUTE_MIND_PORT: String(port),
       VOLUTE_DAEMON_TOKEN: mindToken,
+      PATH: `${mindBinDir}:${currentPath}`,
       // Strip CLAUDECODE so the Agent SDK can spawn Claude Code subprocesses
       CLAUDECODE: undefined,
     };
@@ -469,6 +474,7 @@ export class MindManager {
 
     this.stopping.delete(name);
     revokeMindToken(name);
+    clearTurnState(name);
     if (this.restartTracker.reset(name)) this.saveCrashAttempts();
     rmSync(mindPidPath(name), { force: true });
 

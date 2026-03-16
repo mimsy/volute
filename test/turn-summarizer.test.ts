@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { summarizeTurn } from "../src/lib/daemon/turn-summarizer.js";
+import { clearMind } from "../src/lib/daemon/turn-tracker.js";
 import { getDb } from "../src/lib/db.js";
-import { mindHistory } from "../src/lib/schema.js";
+import { mindHistory, turns } from "../src/lib/schema.js";
 
 describe("turn-summarizer", () => {
   const mind = "test-summarizer";
@@ -80,6 +81,63 @@ describe("turn-summarizer", () => {
     const summary = summaries.find((s) => s.mind === mind2);
     assert.ok(summary, "summary should be inserted");
     assert.equal(summary.content, "Turn completed.");
+  });
+
+  it("uses turn_id-based query when turnId is provided", async () => {
+    const mind4 = "test-summarizer-turnid";
+    const session4 = "s4";
+    const turnId = `test-turn-${Date.now()}`;
+    const db = await getDb();
+
+    // Create a turn row
+    await db.insert(turns).values({ id: turnId, mind: mind4, session: session4, status: "active" });
+
+    // Insert events tagged with the turn_id
+    await db.insert(mindHistory).values({
+      mind: mind4,
+      type: "inbound",
+      session: session4,
+      channel: "volute:test",
+      content: "hello from turn",
+      turn_id: turnId,
+    });
+    await db.insert(mindHistory).values({
+      mind: mind4,
+      type: "tool_use",
+      session: session4,
+      metadata: JSON.stringify({ name: "Write" }),
+      turn_id: turnId,
+    });
+    const doneResult = await db
+      .insert(mindHistory)
+      .values({
+        mind: mind4,
+        type: "done",
+        session: session4,
+        turn_id: turnId,
+      })
+      .returning({ id: mindHistory.id });
+
+    await summarizeTurn(mind4, session4, "volute:test", doneResult[0].id, turnId);
+
+    const summaries = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.type, "summary"), eq(mindHistory.mind, mind4)));
+    assert.equal(summaries.length, 1);
+    const summary = summaries[0];
+    assert.ok(summary.content!.includes("Received message"), "should mention received message");
+    assert.ok(summary.content!.includes("Write"), "should mention tool name");
+
+    // Summary should be tagged with turn_id
+    assert.equal(summary.turn_id, turnId);
+
+    // Turn should have summary_event_id set (async, give it a moment)
+    await new Promise((r) => setTimeout(r, 50));
+    const turnRow = await db.select().from(turns).where(eq(turns.id, turnId)).get();
+    assert.equal(turnRow!.summary_event_id, summary.id);
+
+    await clearMind(mind4);
   });
 
   it("skips summarization for empty turn", async () => {

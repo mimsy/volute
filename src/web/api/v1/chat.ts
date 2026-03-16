@@ -4,6 +4,7 @@ import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { writeChannelEntry } from "../../../connectors/sdk.js";
 import { getOrCreateMindUser } from "../../../lib/auth.js";
+import { getActiveTurnId, getLastToolUseEventId } from "../../../lib/daemon/turn-tracker.js";
 import { deliverMessage } from "../../../lib/delivery/message-delivery.js";
 import { subscribe } from "../../../lib/events/conversation-events.js";
 import {
@@ -176,7 +177,21 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    await addMessage(conversationId, "user", senderName, contentBlocks);
+    // Link to turn: mind sender uses their active turn
+    // Inbound user messages don't get turn_id — turns are created per-session
+    const senderIsMind = user.id === 0 && body.sender && (await findMind(body.sender));
+    const v1MindSession = c.get("mindSession");
+    let v1SourceEventId: number | undefined;
+    let v1TurnId: string | undefined;
+    if (senderIsMind) {
+      v1SourceEventId = getLastToolUseEventId(body.sender!, v1MindSession);
+      v1TurnId = getActiveTurnId(body.sender!, v1MindSession);
+    }
+
+    await addMessage(conversationId, "user", senderName, contentBlocks, {
+      sourceEventId: v1SourceEventId,
+      turnId: v1TurnId,
+    });
 
     const isDM = conv?.type === "dm";
     await fanOutToMinds({
@@ -249,7 +264,19 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    await addMessage(body.conversationId, "user", senderName, contentBlocks);
+    // Link to turn: mind sender uses their active turn
+    const unifiedV1Session = c.get("mindSession");
+    let unifiedV1SourceEventId: number | undefined;
+    let unifiedV1TurnId: string | undefined;
+    if (user.user_type === "mind") {
+      unifiedV1SourceEventId = getLastToolUseEventId(senderName, unifiedV1Session);
+      unifiedV1TurnId = getActiveTurnId(senderName, unifiedV1Session);
+    }
+
+    await addMessage(body.conversationId, "user", senderName, contentBlocks, {
+      sourceEventId: unifiedV1SourceEventId,
+      turnId: unifiedV1TurnId,
+    });
 
     const isDM = conv.type === "dm";
     await fanOutToMinds({

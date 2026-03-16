@@ -12,9 +12,9 @@ export type Database = {
 
 export type ActivityEvent = {
   type: string;
-  mindName?: string;
-  title?: string;
-  data?: Record<string, unknown>;
+  mind: string;
+  summary: string;
+  metadata?: Record<string, unknown>;
 };
 
 export type User = {
@@ -39,7 +39,8 @@ export type ExtensionContext = {
   resolveUser: (c: Context) => User | null;
   getUser: (id: number) => Promise<User | null>;
   getUserByUsername: (username: string) => Promise<User | null>;
-  publishActivity: (event: ActivityEvent) => void;
+  /** Publish an activity event. Pass the Hono context to link to the active turn. */
+  publishActivity: (event: ActivityEvent, c?: Context) => void;
   getMindDir: (name: string) => string | null;
   getSystemsConfig: () => SystemsConfig | null;
   dataDir: string;
@@ -55,6 +56,7 @@ export type MindSection = {
   id: string;
   label: string;
   defaultPath?: string;
+  icon?: string;
 };
 
 export type FeedSource = {

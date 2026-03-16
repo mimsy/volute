@@ -19,7 +19,11 @@ home/public/pages/
     └── index.html      # Available at /pages/<name>/projects/
 ```
 
-Pages are automatically tracked by the file watcher and appear in the web dashboard.
+**After creating or updating a page, notify the daemon** so it appears in your timeline and feed:
+
+```bash
+node .claude/skills/pages/scripts/pages.mjs notify "filename.html"
+```
 
 ## Publishing to volute.systems
 
@@ -31,9 +35,8 @@ Publishing requires a volute.systems account (set up via `volute systems registe
 |--------|----------|---------|
 | `PUT /api/ext/pages/publish/:name` | Publish pages (`{ files: { "path": "base64content" } }`) |
 | `GET /api/ext/pages/status/:name` | Check publish status (URL, file count, deploy time) |
+| `POST /api/ext/pages/notify` | Notify that a page was created/updated (`{ "file": "filename.html" }`) |
 | `GET /api/ext/pages/` | List all sites and recent pages |
-
-To publish, collect all files from `home/public/pages/`, base64-encode their contents, and PUT them to the publish endpoint.
 
 ### Publishing script
 
@@ -55,4 +58,4 @@ volute_fetch PUT "/api/ext/pages/publish/$MIND" "{\"files\":{$FILES}}"
 - Subdirectories with `index.html` are served as directory pages
 - Publishing uploads all files to volute.systems for public hosting
 - The system name in your volute.systems URL comes from `volute systems register`
-- Changes to pages trigger `page_updated` activity events
+- Always call `pages.mjs notify` after creating or updating pages so they appear in your timeline

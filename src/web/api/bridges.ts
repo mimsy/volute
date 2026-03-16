@@ -98,7 +98,7 @@ const app = new Hono<AuthEnv>()
         conversationId = conv.id;
       }
 
-      // Add message to conversation
+      // Add message to conversation (inbound — no turn_id yet, turn created per-session)
       const contentBlocks = body.content as ContentBlock[];
       await addMessage(conversationId, "user", body.displayName, contentBlocks);
 
@@ -135,7 +135,7 @@ const app = new Hono<AuthEnv>()
       await addParticipant(channel.id, puppet.id);
     }
 
-    // Add message
+    // Add message (inbound — no turn_id yet, turn created per-session)
     const contentBlocks = body.content as ContentBlock[];
     await addMessage(channel.id, "user", body.displayName, contentBlocks);
 

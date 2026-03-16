@@ -26,6 +26,8 @@ const app = new Hono<AuthEnv>()
 
     const env = buildEnv(name);
     if (sender) env.VOLUTE_SENDER = sender;
+    const mindSession = c.get("mindSession");
+    if (mindSession) env.VOLUTE_SESSION = mindSession;
     try {
       await driver.send(env, uri, message, images);
       return c.json({ ok: true });

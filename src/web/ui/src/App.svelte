@@ -49,6 +49,49 @@ import SetupPage from "./pages/SetupPage.svelte";
 // Selection state
 let selection = $state<Selection>(parseSelection(data.extensions));
 
+// Mind section tabs for page header
+const CORE_MIND_SECTIONS: { key: string; label: string; icon: string; defaultPath?: string }[] = [
+  {
+    key: "info",
+    label: "Info",
+    icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 7v4"/><circle cx="8" cy="5" r="0.5" fill="currentColor"/></svg>',
+  },
+  {
+    key: "files",
+    label: "Files",
+    icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h5l2-2h5v11H2V4z"/></svg>',
+  },
+  {
+    key: "settings",
+    label: "Settings",
+    icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg>',
+  },
+];
+
+let allMindSections = $derived([
+  ...CORE_MIND_SECTIONS,
+  ...data.extensions.flatMap((ext) =>
+    (ext.mindSections ?? []).map((s) => ({
+      key: `ext:${ext.id}:${s.id}`,
+      label: s.label,
+      icon: s.icon,
+      defaultPath: s.defaultPath,
+    })),
+  ),
+]);
+
+let activeMindName = $derived.by(() => {
+  if (selection.tab !== "system") return null;
+  if (selection.kind === "mind") return selection.name;
+  return null;
+});
+
+let activeMindSection = $derived.by(() => {
+  if (selection.tab !== "system") return null;
+  if (selection.kind === "mind") return selection.section ?? "info";
+  return null;
+});
+
 // Tab context memory: remember last selection per tab
 let lastSystemSelection = $state<Selection>({ tab: "system", kind: "home" });
 let lastChatSelection = $state<Selection>({ tab: "chat", kind: "home" });
@@ -317,13 +360,16 @@ $effect(() => {
     if (fresh.kind === "extension" && selection.kind === "home") {
       selection = fresh;
     }
-    // Mind section URLs that couldn't resolve ext: prefix without extensions
+    // Mind section URLs that couldn't resolve ext: prefix without extensions.
+    // Only upgrade if the current section matches the URL section (e.g. "notes" → "ext:notes:notes"),
+    // not if the user intentionally navigated to a different section like "info".
     if (
       fresh.kind === "mind" &&
       selection.kind === "mind" &&
       fresh.section?.startsWith("ext:") &&
       selection.section &&
-      !selection.section.startsWith("ext:")
+      !selection.section.startsWith("ext:") &&
+      fresh.section.endsWith(":" + selection.section)
     ) {
       selection = fresh;
     }
@@ -626,7 +672,6 @@ function handleGlobalClick(e: MouseEvent) {
             {selection}
             onHome={handleSystemHome}
             onSelectMind={handleSelectMind}
-            onSelectMindSection={handleSelectMindSection}
             onSelectExtension={handleSelectExtension}
             onSelectSettings={handleSelectSettings}
             onSeed={() => (activeModal = "seed")}
@@ -660,7 +705,7 @@ function handleGlobalClick(e: MouseEvent) {
         onpointercancel={handleResizeEnd}
       ></div>
       <div class="content-area">
-        <div class="main-column">
+        <div class="main-column" class:has-right-panel={showRightPanel}>
           <div class="page-header">
             <button class="header-hamburger" onclick={toggleSidebar}>&#9776;</button>
             <div class="page-breadcrumbs">
@@ -675,6 +720,20 @@ function handleGlobalClick(e: MouseEvent) {
                 {/if}
               {/each}
             </div>
+            {#if activeMindName}
+              <div class="mind-section-tabs">
+                {#each allMindSections as sec}
+                  <button
+                    class="mind-section-tab"
+                    class:active={activeMindSection === sec.key}
+                    onclick={() => handleSelectMindSection(activeMindName!, sec.key, sec.defaultPath)}
+                  >
+                    {#if sec.icon}<span class="tab-icon">{@html sec.icon}</span>{/if}
+                    <span class="tab-tooltip">{sec.label}</span>
+                  </button>
+                {/each}
+              </div>
+            {/if}
             <div class="header-actions">
               <div class="user-menu-anchor">
                 <button class="user-avatar-btn" onclick={() => { showUserMenu = !showUserMenu; }} title={auth.user?.username}>
@@ -891,12 +950,20 @@ function handleGlobalClick(e: MouseEvent) {
     flex-direction: column;
     overflow: hidden;
     min-width: 0;
+    padding: 0 8px 8px 3px;
+  }
+
+  .main-column.has-right-panel {
+    padding-right: 3px;
   }
 
   .main-frame {
     flex: 1;
     overflow: hidden;
     min-width: 0;
+    background: var(--bg-1);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
   }
 
   .page-header {
@@ -904,7 +971,6 @@ function handleGlobalClick(e: MouseEvent) {
     align-items: center;
     justify-content: space-between;
     padding: 8px 16px;
-    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
@@ -962,6 +1028,70 @@ function handleGlobalClick(e: MouseEvent) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .mind-section-tabs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .mind-section-tab {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    padding: 5px 7px;
+    color: var(--text-2);
+    cursor: pointer;
+    border-radius: var(--radius);
+    transition: color 0.15s, background 0.15s;
+  }
+
+  .mind-section-tab:hover {
+    color: var(--text-1);
+    background: var(--bg-2);
+  }
+
+  .mind-section-tab.active {
+    color: var(--text-0);
+    background: var(--bg-2);
+  }
+
+  .tab-icon {
+    width: 16px;
+    height: 16px;
+  }
+
+  .tab-icon :global(svg) {
+    width: 16px;
+    height: 16px;
+  }
+
+  .tab-tooltip {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-top: 6px;
+    padding: 4px 10px;
+    background: var(--bg-3);
+    color: var(--text-0);
+    font-family: var(--sans);
+    font-size: 12px;
+    border-radius: var(--radius);
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    border: 1px solid var(--border);
+    z-index: 10;
+  }
+
+  .mind-section-tab:hover .tab-tooltip {
+    opacity: 1;
   }
 
   .header-actions {
@@ -1144,6 +1274,10 @@ function handleGlobalClick(e: MouseEvent) {
     .resize-handle {
       display: none;
     }
+
+    .main-column {
+      padding-left: 8px;
+    }
   }
 
   @media (max-width: 767px) {
@@ -1168,6 +1302,10 @@ function handleGlobalClick(e: MouseEvent) {
 
     .resize-handle {
       display: none;
+    }
+
+    .main-column {
+      padding-left: 8px;
     }
   }
 

@@ -19,6 +19,7 @@ import type {
   RecentPage,
   SharedSkill,
   Site,
+  TurnRow,
   UpdateResult,
   Variant,
 } from "@volute/api";
@@ -226,15 +227,16 @@ export function fetchHistory(
 
 export function fetchTurnEvents(
   name: string,
-  session: string,
-  fromId: number,
-  toId: number,
+  opts: { turnId: string } | { session: string; fromId: number; toId: number },
 ): Promise<HistoryMessage[]> {
-  const params = new URLSearchParams({
-    session,
-    from_id: String(fromId),
-    to_id: String(toId),
-  });
+  const params = new URLSearchParams();
+  if ("turnId" in opts) {
+    params.set("turn_id", opts.turnId);
+  } else {
+    params.set("session", opts.session);
+    params.set("from_id", String(opts.fromId));
+    params.set("to_id", String(opts.toId));
+  }
   return get(`${V1}/minds/${enc(name)}/history/turn?${params}`);
 }
 
@@ -244,6 +246,17 @@ export function fetchHistorySessions(name: string): Promise<HistorySession[]> {
 
 export function fetchHistoryChannels(name: string): Promise<string[]> {
   return get(`${V1}/minds/${enc(name)}/history/channels`);
+}
+
+export function fetchTurns(
+  name: string,
+  opts?: { limit?: number; offset?: number },
+): Promise<TurnRow[]> {
+  const params = new URLSearchParams();
+  if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts?.offset !== undefined) params.set("offset", String(opts.offset));
+  const qs = params.toString();
+  return get(`${V1}/minds/${enc(name)}/history/turns${qs ? `?${qs}` : ""}`);
 }
 
 // --- Variants ---

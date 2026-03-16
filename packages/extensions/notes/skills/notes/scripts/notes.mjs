@@ -11,9 +11,24 @@
  *   node .claude/skills/notes/scripts/notes.mjs delete <author/slug>
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 const mind = process.env.VOLUTE_MIND;
 const port = process.env.VOLUTE_DAEMON_PORT;
 const token = process.env.VOLUTE_DAEMON_TOKEN;
+const mindDir = process.env.VOLUTE_MIND_DIR;
+
+// Read session from env or file (sandbox doesn't propagate env vars set after process start)
+let session = process.env.VOLUTE_SESSION;
+if (!session && mindDir) {
+  try {
+    const p = resolve(mindDir, ".mind", "current-session");
+    if (existsSync(p)) session = readFileSync(p, "utf-8").trim() || undefined;
+  } catch {
+    /* best-effort */
+  }
+}
 
 if (!mind || !port || !token) {
   console.error("Missing VOLUTE_MIND, VOLUTE_DAEMON_PORT, or VOLUTE_DAEMON_TOKEN");
@@ -24,6 +39,7 @@ const baseUrl = `http://localhost:${port}/api/ext/notes`;
 const headers = {
   "Content-Type": "application/json",
   Authorization: `Bearer ${token}`,
+  ...(session ? { "X-Volute-Session": session } : {}),
 };
 
 async function apiFetch(path, opts = {}) {

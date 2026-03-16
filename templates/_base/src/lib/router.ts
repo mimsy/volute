@@ -1,5 +1,7 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { formatPrefix, formatTypingSuffix } from "./format-prefix.js";
-import { log } from "./logger.js";
+import { log, warn } from "./logger.js";
 import {
   type BatchConfig,
   loadRoutingConfig,
@@ -272,6 +274,20 @@ export function createRouter(options: {
     const messageId = generateMessageId();
     const noop = () => {};
     const safeListener = listener ?? noop;
+
+    // Expose session to child processes (daemon-client reads this for X-Volute-Session)
+    process.env.VOLUTE_SESSION = session;
+    // Also write to file for sandbox environments where env vars don't propagate
+    try {
+      const mindDir = process.env.VOLUTE_MIND_DIR;
+      if (mindDir) {
+        const sessionFile = resolve(mindDir, ".mind", "current-session");
+        mkdirSync(resolve(mindDir, ".mind"), { recursive: true });
+        writeFileSync(sessionFile, session, "utf-8");
+      }
+    } catch (err) {
+      warn("router", `failed to write session file: ${err}`);
+    }
 
     // Apply formatting
     const formatted = applyPrefix(content, { ...meta, sessionName: session });

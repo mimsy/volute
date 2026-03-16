@@ -12,6 +12,11 @@ import extNotes from "@volute/notes";
 import extPages from "@volute/pages";
 import type { Hono, MiddlewareHandler } from "hono";
 import { getUser, getUserByUsername } from "./auth.js";
+import {
+  getActiveTurnId,
+  getAnyActiveTurnForMind,
+  getLastToolUseEventId,
+} from "./daemon/turn-tracker.js";
 import { publish } from "./events/activity-events.js";
 import log from "./logger.js";
 import { mindDir, voluteHome, voluteSystemDir } from "./registry.js";
@@ -108,8 +113,25 @@ async function buildContext(
     },
     getUser: async (id: number) => getUser(id),
     getUserByUsername: async (username: string) => getUserByUsername(username),
-    publishActivity: (event) => {
-      publish(event as Parameters<typeof publish>[0]).catch((err) =>
+    publishActivity: (event, c) => {
+      // Use session from Hono context for precise turn lookup.
+      // Fall back to scanning all sessions when no session header (e.g. sandbox strips env vars).
+      const session = c?.get("mindSession") as string | undefined;
+      let turnId = getActiveTurnId(event.mind, session);
+      let sourceEventId = getLastToolUseEventId(event.mind, session);
+      if (!turnId) {
+        // Scan fallback for sandbox environments where VOLUTE_SESSION isn't propagated
+        const found = getAnyActiveTurnForMind(event.mind);
+        if (found) {
+          turnId = found.turnId;
+          sourceEventId = found.lastToolUseEventId;
+        }
+      }
+      publish({
+        ...(event as Parameters<typeof publish>[0]),
+        turn_id: turnId,
+        source_event_id: sourceEventId,
+      }).catch((err) =>
         log.error(`extension ${manifest.id}: failed to publish activity`, log.errorData(err)),
       );
     },
