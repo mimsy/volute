@@ -8,6 +8,7 @@ import {
   findDMConversation,
   getConversation,
   getMessages,
+  getMessagesPaginated,
   getParticipants,
   isParticipantOrOwner,
   listConversationsForUser,
@@ -127,8 +128,22 @@ const app = new Hono<AuthEnv>()
     if (user.id !== 0 && !(await isParticipantOrOwner(id, user.id))) {
       return c.json({ error: "Conversation not found" }, 404);
     }
-    const msgs = await getMessages(id);
-    return c.json(msgs);
+    const limitStr = c.req.query("limit");
+    const beforeStr = c.req.query("before");
+    if (!limitStr && !beforeStr) {
+      const msgs = await getMessages(id);
+      return c.json({ items: msgs, hasMore: false });
+    }
+    const limit = limitStr ? parseInt(limitStr, 10) : undefined;
+    const before = beforeStr ? parseInt(beforeStr, 10) : undefined;
+    if (
+      (limit !== undefined && !Number.isFinite(limit)) ||
+      (before !== undefined && !Number.isFinite(before))
+    ) {
+      return c.json({ error: "Invalid pagination parameters" }, 400);
+    }
+    const result = await getMessagesPaginated(id, { before, limit });
+    return c.json({ items: result.messages, hasMore: result.hasMore });
   })
   .get("/:name/conversations/:id/participants", async (c) => {
     const id = c.req.param("id");
