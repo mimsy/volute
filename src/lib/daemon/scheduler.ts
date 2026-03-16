@@ -145,8 +145,8 @@ export class Scheduler {
       const whileSleeping = schedule.whileSleeping;
       const channel = schedule.channel;
 
-      if (channel && !channel.startsWith("system:")) {
-        // Custom channel — use existing delivery path
+      if (channel) {
+        // Explicit channel — use delivery path (preserves routing rules)
         await this.deliver(mindName, {
           content: [{ type: "text", text }],
           channel,
@@ -154,7 +154,7 @@ export class Scheduler {
           whileSleeping,
         });
       } else {
-        // System channel or default — use system chat
+        // No channel specified — deliver through system chat DM
         await this.deliverSystem(mindName, `[${schedule.id}] ${text}`, { whileSleeping });
       }
       slog.info(`fired "${schedule.id}" for ${mindName}`);

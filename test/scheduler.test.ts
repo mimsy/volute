@@ -96,7 +96,7 @@ describe("scheduler", () => {
     assert.equal(scheduler.systemDeliveries.length, 0);
   });
 
-  it("fire routes system:* channels through system chat", async () => {
+  it("fire routes system:* channels through deliver (preserves routing)", async () => {
     const scheduler = new TestScheduler();
     await (scheduler as any).fire("test-mind", {
       id: "dream",
@@ -105,9 +105,9 @@ describe("scheduler", () => {
       enabled: true,
       channel: "system:dream",
     });
-    assert.equal(scheduler.systemDeliveries.length, 1);
-    assert.equal(scheduler.systemDeliveries[0].text, "[dream] time to dream");
-    assert.equal(scheduler.deliveries.length, 0);
+    assert.equal(scheduler.deliveries.length, 1);
+    assert.equal(scheduler.deliveries[0].payload.channel, "system:dream");
+    assert.equal(scheduler.systemDeliveries.length, 0);
   });
 
   it("fire runs script and delivers output via system chat", async () => {
