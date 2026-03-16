@@ -31,6 +31,11 @@ export async function startMindFull(name: string): Promise<void> {
 
   if (entry?.parent) return;
 
+  // Ensure system DM conversation exists (for all minds, including seeds)
+  ensureSystemDM(baseName).catch((err: unknown) =>
+    log.error(`failed to ensure system DM for ${baseName}`, log.errorData(err)),
+  );
+
   // Seed minds only get the server — no schedules or budget
   if (!entry || entry.stage === "seed") return;
 
@@ -52,11 +57,6 @@ export async function startMindFull(name: string): Promise<void> {
   // Auto-join #system channel
   joinSystemChannelForMind(baseName).catch((err: unknown) =>
     log.error(`failed to join #system for ${baseName}`, log.errorData(err)),
-  );
-
-  // Ensure system DM conversation exists
-  ensureSystemDM(baseName).catch((err: unknown) =>
-    log.error(`failed to ensure system DM for ${baseName}`, log.errorData(err)),
   );
 
   if (config?.tokenBudget) {

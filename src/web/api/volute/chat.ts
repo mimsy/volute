@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { writeChannelEntry } from "../../../connectors/sdk.js";
-import { getOrCreateMindUser } from "../../../lib/auth.js";
+import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js";
 import { routeOutboundBridge } from "../../../lib/bridge-outbound.js";
 import { getActiveTurnId, getLastToolUseEventId } from "../../../lib/daemon/turn-tracker.js";
 import { deliverMessage } from "../../../lib/delivery/message-delivery.js";
@@ -166,11 +166,16 @@ const app = new Hono<AuthEnv>()
       if (user.id !== 0) {
         participantIds.push(user.id);
       } else if (body.sender) {
-        // Check if sender is a mind — if so, add their mind user as participant
-        const senderMind = await findMind(body.sender);
-        if (senderMind) {
-          const senderMindUser = await getOrCreateMindUser(body.sender);
-          participantIds.push(senderMindUser.id);
+        // Check if sender is the system user or a mind
+        if (body.sender === "volute") {
+          const systemUser = await getOrCreateSystemUser();
+          participantIds.push(systemUser.id);
+        } else {
+          const senderMind = await findMind(body.sender);
+          if (senderMind) {
+            const senderMindUser = await getOrCreateMindUser(body.sender);
+            participantIds.push(senderMindUser.id);
+          }
         }
       }
       participantIds.push(mindUser.id);
