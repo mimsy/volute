@@ -12,8 +12,8 @@ function readSessionFile(): string | undefined {
   try {
     const p = resolve(mindDir, ".mind", "current-session");
     if (existsSync(p)) return readFileSync(p, "utf-8").trim() || undefined;
-  } catch {
-    // best-effort
+  } catch (err) {
+    console.warn(`[volute] failed to read session file: ${err}`);
   }
   return undefined;
 }

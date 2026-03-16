@@ -2161,8 +2161,11 @@ const app = new Hono<AuthEnv>()
             .set({ turn_id: turnId })
             .where(eq(mindHistory.id, triggerRow.id));
         }
-      } catch {
-        // best-effort
+      } catch (err) {
+        log.warn(
+          `failed to link trigger event for turn ${turnId} (mind: ${baseName})`,
+          log.errorData(err),
+        );
       }
       // Retroactively tag recent untagged conversation messages for this mind
       // These are inbound messages that arrived before the turn was created
@@ -2185,8 +2188,11 @@ const app = new Hono<AuthEnv>()
         for (const row of recentUntagged) {
           await db.update(messages).set({ turn_id: turnId }).where(eq(messages.id, row.id));
         }
-      } catch {
-        // best-effort
+      } catch (err) {
+        log.warn(
+          `failed to tag messages for turn ${turnId} (mind: ${baseName})`,
+          log.errorData(err),
+        );
       }
     }
 
@@ -2610,14 +2616,24 @@ const app = new Hono<AuthEnv>()
         };
       });
 
-      const turnActivities = (activitiesByTurn.get(t.id) ?? []).map((a) => ({
-        id: a.id,
-        type: a.type,
-        summary: a.summary,
-        metadata: a.metadata ? JSON.parse(a.metadata) : null,
-        source_event_id: a.source_event_id,
-        created_at: a.created_at,
-      }));
+      const turnActivities = (activitiesByTurn.get(t.id) ?? []).map((a) => {
+        let metadata: Record<string, unknown> | null = null;
+        if (a.metadata) {
+          try {
+            metadata = JSON.parse(a.metadata);
+          } catch {
+            /* ignore malformed */
+          }
+        }
+        return {
+          id: a.id,
+          type: a.type,
+          summary: a.summary,
+          metadata,
+          source_event_id: a.source_event_id,
+          created_at: a.created_at,
+        };
+      });
 
       let summaryMeta: Record<string, unknown> | null = null;
       if (summary?.metadata) {
