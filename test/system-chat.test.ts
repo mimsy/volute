@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { getOrCreateSystemUser, verifyUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
+import { validateMindName } from "../src/lib/registry.js";
 import {
   conversationParticipants,
   conversations,
@@ -48,6 +49,12 @@ describe("system user", () => {
     const result = await verifyUser("volute", "anything");
     assert.equal(result, null);
   });
+
+  it("'volute' is a reserved mind name", () => {
+    const err = validateMindName("volute");
+    assert.ok(err, "should reject 'volute' as a mind name");
+    assert.ok(err!.includes("reserved"));
+  });
 });
 
 describe("system DM", () => {
@@ -89,6 +96,13 @@ describe("system DM", () => {
     const { conversationId: id1 } = await ensureSystemDM("mind1");
     const { conversationId: id2 } = await ensureSystemDM("mind2");
     assert.notEqual(id1, id2);
+  });
+
+  it("ensureSystemDM finds existing DM after cache clear", async () => {
+    const { conversationId: id1 } = await ensureSystemDM("testmind");
+    resetSystemDMCache();
+    const { conversationId: id2 } = await ensureSystemDM("testmind");
+    assert.equal(id1, id2, "should find existing DM via DB lookup");
   });
 });
 
