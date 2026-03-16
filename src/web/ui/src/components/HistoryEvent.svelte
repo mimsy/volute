@@ -171,9 +171,11 @@ async function handleClick() {
             <div class="turn-loading">{turnError}</div>
           {:else}
             {#each turnEvents as turnEv (turnEv.id)}
-              <HistoryEvent event={turnEv} {mindName} />
-              {#if turnEv.type === "tool_use"}
-                {#each turnConversations.filter((c) => c.messages.some((m) => m.source_event_id === turnEv.id)) as conv (conv.id)}
+              {@const linkedConvs = turnEv.type === "tool_use" ? turnConversations.filter((c) => c.messages.some((m) => m.source_event_id === turnEv.id)) : []}
+              {@const linkedActs = turnEv.type === "tool_use" ? turnActivities.filter((a) => a.source_event_id === turnEv.id) : []}
+              <div class="event-group" class:has-linked={linkedConvs.length > 0 || linkedActs.length > 0}>
+                <HistoryEvent event={turnEv} {mindName} />
+                {#each linkedConvs as conv (conv.id)}
                   <div class="linked-card">
                     <div class="linked-card-chat">
                       <div class="linked-card-header">
@@ -189,7 +191,7 @@ async function handleClick() {
                     </div>
                   </div>
                 {/each}
-                {#each turnActivities.filter((a) => a.source_event_id === turnEv.id) as act (act.id)}
+                {#each linkedActs as act (act.id)}
                   <div class="linked-card">
                     <ExtensionFeedCard
                       title={act.summary}
@@ -202,7 +204,7 @@ async function handleClick() {
                     />
                   </div>
                 {/each}
-              {/if}
+              </div>
             {/each}
             <!-- Unlinked cards (no source_event_id) appear before the summary -->
             {#each turnConversations.filter((c) => c.messages.every((m) => !m.source_event_id || !turnEvents.some((e) => e.id === m.source_event_id))) as conv (conv.id)}
@@ -584,9 +586,37 @@ async function handleClick() {
     z-index: 1;
   }
 
+  /* Event group: wraps an event + its linked cards */
+  .event-group {
+    position: relative;
+  }
+  /* Group-level rail highlight — covers event + linked cards */
+  .event-group.has-linked::after {
+    content: "";
+    position: absolute;
+    left: -2px;
+    top: 12px;
+    bottom: -20px;
+    width: 2px;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 1;
+  }
+  .event-group.has-linked:hover::after {
+    opacity: 1;
+  }
+  .event-group.has-linked::after {
+    background: var(--yellow);
+  }
+  /* Suppress the inner event's own highlight when in a group */
+  .event-group.has-linked > :global(.event::after) {
+    display: none;
+  }
+
   /* Linked feed cards inline with turn events */
   .linked-card {
     margin: 4px 0 4px 20px;
+    max-width: 480px;
   }
   .linked-card-chat {
     background: var(--bg-0);
