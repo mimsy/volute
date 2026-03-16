@@ -64,7 +64,7 @@ export function createMind(options: {
   // Shared setup (created once)
   const modelStr = options.model || process.env.PI_MODEL || "anthropic:claude-sonnet-4-20250514";
   const model = resolveModel(modelStr);
-  const authStorage = new AuthStorage();
+  const authStorage = AuthStorage.create();
   const modelRegistry = new ModelRegistry(authStorage);
 
   // --- Subagents (config-driven) ---

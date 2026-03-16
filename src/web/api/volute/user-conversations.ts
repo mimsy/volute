@@ -10,6 +10,7 @@ import {
   getMessages,
   isParticipantOrOwner,
   listConversationsWithParticipants,
+  setConversationPrivate,
 } from "../../../lib/events/conversations.js";
 import { findMind } from "../../../lib/registry.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
@@ -105,6 +106,16 @@ const app = new Hono<AuthEnv>()
         });
       });
     });
+  })
+  .put("/:id/private", zValidator("json", z.object({ private: z.boolean() })), async (c) => {
+    const id = c.req.param("id");
+    const user = c.get("user");
+    if (!(await isParticipantOrOwner(id, user.id))) {
+      return c.json({ error: "Forbidden" }, 403);
+    }
+    const body = c.req.valid("json");
+    await setConversationPrivate(id, body.private);
+    return c.json({ ok: true });
   })
   .delete("/:id", async (c) => {
     const id = c.req.param("id");

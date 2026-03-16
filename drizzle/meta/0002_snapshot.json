@@ -1,6 +1,6 @@
 {
-  "id": "0002_turn_feed_links",
-  "prevId": "0001_turns",
+  "id": "0002_turns",
+  "prevId": "0001_add_conversation_private",
   "version": "6",
   "dialect": "sqlite",
   "tables": {}

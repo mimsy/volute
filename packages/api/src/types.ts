@@ -40,6 +40,7 @@ export type Conversation = {
   name: string | null;
   user_id: number | null;
   title: string | null;
+  private: number;
   created_at: string;
   updated_at: string;
 };
