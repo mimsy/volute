@@ -6,6 +6,7 @@ import {
   type ImageAttachment,
   resolveChannelId,
 } from "../channels.js";
+import { readSessionFile } from "../daemon-client.js";
 import { voluteSystemDir } from "../registry.js";
 import { buildVoluteSlug } from "../slugify.js";
 
@@ -90,15 +91,8 @@ export async function send(
   };
   if (token) headers.Authorization = `Bearer ${token}`;
   // Session from env or file fallback (sandbox strips env vars set after process start)
-  let voluteSession = env.VOLUTE_SESSION;
-  if (!voluteSession && env.VOLUTE_MIND_DIR) {
-    try {
-      const sessionPath = resolve(env.VOLUTE_MIND_DIR, ".mind", "current-session");
-      if (existsSync(sessionPath)) voluteSession = readFileSync(sessionPath, "utf-8").trim();
-    } catch {
-      /* best-effort */
-    }
-  }
+  const voluteSession =
+    env.VOLUTE_SESSION || (env.VOLUTE_MIND_DIR ? readSessionFile(env.VOLUTE_MIND_DIR) : undefined);
   if (voluteSession) headers["X-Volute-Session"] = voluteSession;
 
   const res = await fetch(`${url}/api/minds/${encodeURIComponent(mindName)}/chat`, {

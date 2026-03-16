@@ -22,7 +22,7 @@ home/public/pages/
 **After creating or updating a page, notify the daemon** so it appears in your timeline and feed:
 
 ```bash
-node .claude/skills/pages/scripts/pages.mjs notify "filename.html"
+volute pages notify "filename.html"
 ```
 
 ## Publishing to volute.systems
@@ -58,4 +58,4 @@ volute_fetch PUT "/api/ext/pages/publish/$MIND" "{\"files\":{$FILES}}"
 - Subdirectories with `index.html` are served as directory pages
 - Publishing uploads all files to volute.systems for public hosting
 - The system name in your volute.systems URL comes from `volute systems register`
-- Always call `pages.mjs notify` after creating or updating pages so they appear in your timeline
+- Always call `volute pages notify` after creating or updating pages so they appear in your timeline

@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import type { CommandHandler } from "@volute/extensions";
 import { createExtension } from "@volute/extensions";
 
 import { createPublicRoutes, createRoutes } from "./routes.js";
@@ -20,6 +21,29 @@ async function getWatcher() {
   return _watcher;
 }
 
+const notifyHandler: CommandHandler = async (args, ctx) => {
+  const mindName = ctx.mindName;
+  if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
+
+  const file = args[0] || "page";
+  ctx.publishActivity({
+    type: "page_updated",
+    mind: mindName,
+    summary: `${mindName} updated ${file}`,
+    metadata: { file },
+  });
+
+  // Invalidate the pages cache
+  try {
+    const mod = await import("../../../../src/lib/pages-watcher.js");
+    mod.invalidateCache();
+  } catch {
+    // not critical
+  }
+
+  return { output: `Notified: ${file}` };
+};
+
 export default createExtension({
   id: "pages",
   name: "Pages",
@@ -27,6 +51,13 @@ export default createExtension({
   description: "Publish and serve web pages from mind directories",
   routes: (ctx) => createRoutes(ctx),
   publicRoutes: (ctx) => createPublicRoutes(ctx),
+  commands: {
+    notify: {
+      description: "Notify that a page was created or updated",
+      usage: "volute pages notify [filename]",
+      handler: notifyHandler,
+    },
+  },
   skillsDir,
   standardSkill: true,
   ui: {

@@ -41,7 +41,7 @@ import {
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
 import { extractTextContent } from "../../lib/delivery/delivery-router.js";
-import { recordInbound } from "../../lib/delivery/message-delivery.js";
+import { recordInbound, tagUntaggedInbound } from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import {
   addMessage,
@@ -127,6 +127,9 @@ import { validateBranchName } from "../../lib/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
 import { fireWebhook } from "../../lib/webhook.js";
 import { type AuthEnv, requireAdmin, requireSelf } from "../middleware/auth.js";
+
+/** Event types that trigger turn creation (hoisted for perf — avoid per-request allocation). */
+const SUBSTANTIVE_TYPES = new Set(["thinking", "text", "tool_use", "tool_result", "outbound"]);
 
 type ChannelStatus = {
   name: string;
@@ -1257,11 +1260,12 @@ const app = new Hono<AuthEnv>()
         try {
           const db = await getDb();
           const activeConvs = await db
-            .select({ id: conversations.id })
+            .select({ id: conversations.id, channel: conversations.channel })
             .from(conversations)
             .where(eq(conversations.mind_name, baseName))
             .all();
           for (const conv of activeConvs) {
+            await recordInbound(baseName, conv.channel, "system", "[seed has sprouted]");
             await addMessage(conv.id, "assistant", "system", [
               { type: "text", text: "[seed has sprouted]" },
             ]);
@@ -2159,67 +2163,29 @@ const app = new Hono<AuthEnv>()
     // Look up active turn for this event; create one if missing for substantive events.
     // Turns are created per-session when the mind starts processing, not when inbound arrives.
     let turnId = getActiveTurnId(baseName, body.session);
-    const substantiveTypes = new Set(["thinking", "text", "tool_use", "tool_result", "outbound"]);
-    if (!turnId && substantiveTypes.has(body.type)) {
+    if (!turnId && SUBSTANTIVE_TYPES.has(body.type)) {
       turnId = await createTurn(baseName);
-      if (body.session) {
-        await assignSession(baseName, turnId, body.session);
-      }
-      // Link trigger: find the most recent inbound for this mind and tag it with this turn
-      try {
-        const db = await getDb();
-        const triggerRow = await db
-          .select({ id: mindHistory.id })
-          .from(mindHistory)
-          .where(and(eq(mindHistory.mind, baseName), eq(mindHistory.type, "inbound")))
-          .orderBy(desc(mindHistory.id))
-          .limit(1)
-          .get();
-        if (triggerRow) {
-          // Set trigger_event_id on the turn
-          await db
-            .update(turns)
-            .set({ trigger_event_id: triggerRow.id })
-            .where(eq(turns.id, turnId));
-          // Also tag the inbound event itself with this turn so it appears in expanded view
-          await db
-            .update(mindHistory)
-            .set({ turn_id: turnId })
-            .where(eq(mindHistory.id, triggerRow.id));
+      if (!turnId) {
+        // DB failure — skip turn tracking for this event
+        log.warn(`skipping turn tracking for ${baseName}: createTurn failed`);
+      } else {
+        publishMindEvent(baseName, { mind: baseName, type: "turn_created", turnId });
+        if (body.session) {
+          await assignSession(baseName, turnId, body.session);
         }
-      } catch (err) {
-        log.warn(
-          `failed to link trigger event for turn ${turnId} (mind: ${baseName})`,
-          log.errorData(err),
-        );
-      }
-      // Retroactively tag recent untagged conversation messages for this mind
-      // These are inbound messages that arrived before the turn was created
-      try {
-        const db = await getDb();
-        const recentUntagged = await db
-          .select({ id: messages.id })
-          .from(messages)
-          .innerJoin(conversations, eq(messages.conversation_id, conversations.id))
-          .where(
-            and(
-              eq(conversations.mind_name, baseName),
-              sql`${messages.turn_id} IS NULL`,
-              // Only tag messages from the last 60 seconds to avoid false matches
-              sql`${messages.created_at} > datetime('now', '-60 seconds')`,
-            ),
-          )
-          .orderBy(desc(messages.id))
-          .limit(5);
-        for (const row of recentUntagged) {
-          await db.update(messages).set({ turn_id: turnId }).where(eq(messages.id, row.id));
+        // Link trigger and retroactively tag recent untagged inbound events/messages
+        try {
+          await tagUntaggedInbound(baseName, turnId, {
+            setTrigger: true,
+            channel: body.channel,
+          });
+        } catch (err) {
+          log.warn(
+            `failed to link trigger/tag inbounds for turn ${turnId} (mind: ${baseName})`,
+            log.errorData(err),
+          );
         }
-      } catch (err) {
-        log.warn(
-          `failed to tag messages for turn ${turnId} (mind: ${baseName})`,
-          log.errorData(err),
-        );
-      }
+      } // end if (turnId) after createTurn
     }
 
     // Persist to mind_history
@@ -2280,22 +2246,43 @@ const app = new Hono<AuthEnv>()
       publishTypingForChannels(affected, map);
       // Broadcast mind_done to SSE subscribers (ephemeral — not persisted to DB)
       broadcast({ type: "mind_done", mind: baseName, summary: "Finished processing" });
-      // Notify delivery manager of session completion
+      // Notify delivery manager of session completion (must await so activeCount
+      // is decremented before the busy check below)
       try {
-        getDeliveryManager().sessionDone(baseName, body.session);
+        await getDeliveryManager().sessionDone(baseName, body.session);
       } catch (err) {
         if (!(err instanceof Error && err.message.includes("not initialized"))) {
           log.error(`delivery manager sessionDone failed for ${baseName}`, log.errorData(err));
         }
       }
-      // Complete turn and fire-and-forget summarization
-      const completedTurnId = await completeTurn(baseName, body.session);
-      if (insertedId != null) {
-        summarizeTurn(baseName, body.session, body.channel, insertedId, completedTurnId).catch(
-          (err) => {
-            log.error("turn summarization failed", log.errorData(err));
-          },
-        );
+      // Complete the turn if the session has no more pending deliveries.
+      // When messages arrive mid-turn, their incrementActive() keeps the
+      // count > 0, so we skip here. The subsequent done will re-check.
+      try {
+        // Only gate on delivery busy state when we have a session to check.
+        // Sessionless done events (e.g., background/system work) complete immediately
+        // to avoid being blocked by unrelated active sessions.
+        const dm = getDeliveryManager();
+        const busy = body.session ? dm.isSessionBusy(baseName, body.session) : false;
+        if (!busy) {
+          const completedTurnId = await completeTurn(baseName, body.session);
+          if (insertedId != null) {
+            summarizeTurn(baseName, body.session, body.channel, insertedId, completedTurnId).catch(
+              (err) => log.error("turn summarization failed", log.errorData(err)),
+            );
+          }
+        }
+      } catch (err) {
+        if (!(err instanceof Error && err.message.includes("not initialized"))) {
+          log.error("turn completion check failed", log.errorData(err));
+        }
+        // DM unavailable — complete immediately as fallback
+        const completedTurnId = await completeTurn(baseName, body.session);
+        if (insertedId != null) {
+          summarizeTurn(baseName, body.session, body.channel, insertedId, completedTurnId).catch(
+            (err) => log.error("turn summarization failed", log.errorData(err)),
+          );
+        }
       }
     }
 
@@ -2449,16 +2436,19 @@ const app = new Hono<AuthEnv>()
   })
   .get("/:name/history/turns", async (c) => {
     const name = c.req.param("name");
+    const turnIdFilter = c.req.query("turnId");
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
     const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
 
     const db = await getDb();
 
     // 1. Get turns for this mind
+    const conditions = [eq(turns.mind, name)];
+    if (turnIdFilter) conditions.push(eq(turns.id, turnIdFilter));
     const turnRows = await db
       .select()
       .from(turns)
-      .where(eq(turns.mind, name))
+      .where(and(...conditions))
       .orderBy(desc(turns.created_at))
       .limit(limit)
       .offset(offset);
@@ -2647,8 +2637,8 @@ const app = new Hono<AuthEnv>()
         if (a.metadata) {
           try {
             metadata = JSON.parse(a.metadata);
-          } catch {
-            /* ignore malformed */
+          } catch (err) {
+            log.debug(`malformed activity metadata for activity ${a.id}`, log.errorData(err));
           }
         }
         return {
@@ -2665,8 +2655,8 @@ const app = new Hono<AuthEnv>()
       if (summary?.metadata) {
         try {
           summaryMeta = JSON.parse(summary.metadata);
-        } catch {
-          // ignore
+        } catch (err) {
+          log.debug(`malformed summary metadata for turn ${t.id}`, log.errorData(err));
         }
       }
 

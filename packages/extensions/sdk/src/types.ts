@@ -39,8 +39,8 @@ export type ExtensionContext = {
   resolveUser: (c: Context) => User | null;
   getUser: (id: number) => Promise<User | null>;
   getUserByUsername: (username: string) => Promise<User | null>;
-  /** Publish an activity event. Pass the Hono context to link to the active turn. */
-  publishActivity: (event: ActivityEvent, c?: Context) => void;
+  /** Publish an activity event. Pass the Hono context or session string to link to the active turn. */
+  publishActivity: (event: ActivityEvent, sessionOrContext?: Context | string) => void;
   getMindDir: (name: string) => string | null;
   getSystemsConfig: () => SystemsConfig | null;
   dataDir: string;
@@ -76,6 +76,17 @@ export type ExtensionFeedItem = {
   iframeUrl?: string;
 };
 
+export type CommandHandler = (
+  args: string[],
+  ctx: ExtensionContext & { mindName?: string; session?: string },
+) => Promise<{ output: string } | { error: string }>;
+
+export type ExtensionCommand = {
+  description: string;
+  usage?: string;
+  handler: CommandHandler;
+};
+
 export type ExtensionManifest = {
   id: string;
   name: string;
@@ -94,6 +105,7 @@ export type ExtensionManifest = {
   /** Whether these skills should be auto-installed on new minds */
   standardSkill?: boolean;
   initDb?: (db: Database) => void;
+  commands?: Record<string, ExtensionCommand>;
   onDaemonStart?: () => void;
   onDaemonStop?: () => void;
   onMindStart?: (mindName: string) => void;

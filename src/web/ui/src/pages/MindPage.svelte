@@ -1,12 +1,13 @@
 <script lang="ts">
-import type { ConversationWithParticipants, TurnRow } from "@volute/api";
+import type { ConversationWithParticipants, HistoryMessage, TurnRow } from "@volute/api";
+import { SvelteMap } from "svelte/reactivity";
 import ExtensionFeedCard from "../components/ExtensionFeedCard.svelte";
 import HistoryEvent from "../components/HistoryEvent.svelte";
 import MindInfo from "../components/MindInfo.svelte";
 import MindSkills from "../components/MindSkills.svelte";
 import PublicFiles from "../components/PublicFiles.svelte";
 import ReadOnlyChatModal from "../components/ReadOnlyChatModal.svelte";
-import { fetchTurns } from "../lib/client";
+import { fetchHistory, fetchTurnEvents, fetchTurns } from "../lib/client";
 import { extractTextContent } from "../lib/feed-utils";
 import { formatRelativeTime } from "../lib/format";
 import { data } from "../lib/stores.svelte";
@@ -32,8 +33,51 @@ let historyError = $state("");
 
 let readOnlyConv = $state<ConversationWithParticipants | null>(null);
 
+// --- Streaming events for active turns ---
+let streamingEvents = $state(new SvelteMap<string, HistoryMessage[]>());
+let nextSyntheticId = 0;
+// Inbound events that arrived before any turn_created — shown as provisional turn
+let pendingInbounds = $state<HistoryMessage[]>([]);
+// Fallback timers for done events that may not be followed by a summary
+const doneFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 function getSummaryTime(turn: TurnRow): string {
   return formatRelativeTime(turn.created_at);
+}
+
+type StreamingConv = {
+  channel: string;
+  label: string;
+  type: "dm" | "channel";
+  messages: { role: "user" | "assistant"; sender: string | null; content: string }[];
+};
+
+function getStreamingConversations(events: HistoryMessage[]): StreamingConv[] {
+  const byChannel = new Map<string, StreamingConv>();
+  for (const ev of events) {
+    if ((ev.type !== "inbound" && ev.type !== "outbound") || !ev.channel) continue;
+    let conv = byChannel.get(ev.channel);
+    if (!conv) {
+      // Derive label from channel slug: "volute:@user" → "@user", "discord:server/chan" → "#server/chan"
+      const slug = ev.channel;
+      const colonIdx = slug.indexOf(":");
+      const raw = colonIdx >= 0 ? slug.substring(colonIdx + 1) : slug;
+      const isDM = raw.startsWith("@");
+      conv = {
+        channel: slug,
+        label: isDM ? raw : `#${raw}`,
+        type: isDM ? "dm" : "channel",
+        messages: [],
+      };
+      byChannel.set(slug, conv);
+    }
+    conv.messages.push({
+      role: ev.type === "inbound" ? "user" : "assistant",
+      sender: ev.type === "inbound" ? ev.sender : name,
+      content: ev.content,
+    });
+  }
+  return [...byChannel.values()];
 }
 
 // --- Unified timeline ---
@@ -66,11 +110,68 @@ function connectSSE() {
       return;
     }
 
-    if (d.type !== "summary") return;
-
     const turnId = d.turnId as string | undefined;
-    if (turnId) {
-      fetchTurns(name, { limit: 1, offset: 0 })
+    const eventType = d.type as string;
+    if (eventType === "inbound" && !turnId) {
+      // Show immediately as provisional turn before turn_created arrives
+      pendingInbounds = [
+        ...pendingInbounds,
+        {
+          id: nextSyntheticId--,
+          mind: name,
+          channel: (d.channel as string) ?? "",
+          session: (d.session as string) ?? null,
+          sender: (d.sender as string) ?? null,
+          message_id: (d.messageId as string) ?? null,
+          type: eventType,
+          content: (d.content as string) ?? "",
+          metadata: d.metadata ? JSON.stringify(d.metadata) : null,
+          turn_id: null,
+          created_at: new Date().toISOString(),
+        },
+      ];
+    } else if (eventType === "turn_created" && turnId) {
+      // Promote pending inbounds into the real turn's streaming events
+      if (!turnsData.some((t) => t.id === turnId)) {
+        turnsData = [
+          ...turnsData,
+          {
+            id: turnId,
+            summary: null,
+            summary_meta: null,
+            status: "active",
+            created_at: new Date().toISOString(),
+            trigger: null,
+            conversations: [],
+            activities: [],
+          },
+        ];
+      }
+      // Always merge pending inbounds into the turn (even if already initialized by backfill/duplicate)
+      if (pendingInbounds.length > 0) {
+        const seeded = pendingInbounds.map((ev) => ({ ...ev, turn_id: turnId }));
+        const prev = streamingEvents.get(turnId) ?? [];
+        streamingEvents.set(turnId, [...seeded, ...prev]);
+      } else if (!streamingEvents.has(turnId)) {
+        streamingEvents.set(turnId, []);
+      }
+      pendingInbounds = [];
+      // Fetch turn events from DB after a short delay to allow retroactive inbound tagging.
+      // DB events are authoritative — replace synthetic SSE events entirely.
+      // Any SSE events arriving after this .then() runs are appended normally.
+      new Promise((r) => setTimeout(r, 500))
+        .then(() => fetchTurnEvents(name, { turnId }))
+        .then((dbEvents) => {
+          if (!streamingEvents.has(turnId)) return; // turn already completed
+          streamingEvents.set(turnId, dbEvents);
+        })
+        .catch(() => {});
+    } else if (eventType === "summary" && turnId) {
+      // Turn complete — fetch the specific turn row and remove streaming state
+      clearTimeout(doneFallbackTimers.get(turnId));
+      doneFallbackTimers.delete(turnId);
+      streamingEvents.delete(turnId);
+      fetchTurns(name, { turnId })
         .then((rows) => {
           for (const row of rows) {
             if (!turnsData.some((t) => t.id === row.id)) {
@@ -79,8 +180,60 @@ function connectSSE() {
               turnsData = turnsData.map((t) => (t.id === row.id ? row : t));
             }
           }
+          // Scroll the completed turn into view after DOM update
+          requestAnimationFrame(() => {
+            const el = scrollContainer?.querySelector(`[data-turn-id="${turnId}"]`);
+            el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          });
         })
         .catch(() => {});
+    } else if (eventType === "done" && turnId) {
+      // Summary usually follows shortly. If it doesn't (e.g. no substantive
+      // output), clean up streaming state after a timeout to avoid phantom turns.
+      if (!doneFallbackTimers.has(turnId)) {
+        const tid = turnId;
+        doneFallbackTimers.set(
+          tid,
+          setTimeout(() => {
+            doneFallbackTimers.delete(tid);
+            if (streamingEvents.has(tid)) {
+              streamingEvents.delete(tid);
+              // Refresh the turn from the server
+              fetchTurns(name, { turnId: tid })
+                .then((rows) => {
+                  for (const row of rows) {
+                    if (!turnsData.some((t) => t.id === row.id)) {
+                      turnsData = [...turnsData, row];
+                    } else {
+                      turnsData = turnsData.map((t) => (t.id === row.id ? row : t));
+                    }
+                  }
+                })
+                .catch(() => {});
+            }
+          }, 10000),
+        );
+      }
+    } else if (turnId && streamingEvents.has(turnId)) {
+      // Substantive event — accumulate for streaming display
+      // Create new array to trigger Svelte reactivity
+      const prev = streamingEvents.get(turnId)!;
+      streamingEvents.set(turnId, [
+        ...prev,
+        {
+          id: nextSyntheticId--,
+          mind: name,
+          channel: (d.channel as string) ?? "",
+          session: (d.session as string) ?? null,
+          sender: (d.sender as string) ?? null,
+          message_id: (d.messageId as string) ?? null,
+          type: eventType,
+          content: (d.content as string) ?? "",
+          metadata: d.metadata ? JSON.stringify(d.metadata) : null,
+          turn_id: turnId,
+          created_at: new Date().toISOString(),
+        },
+      ]);
     }
 
     if (!userScrolledUp) {
@@ -102,6 +255,8 @@ function disconnectSSE() {
     eventSource.close();
     eventSource = null;
   }
+  for (const timer of doneFallbackTimers.values()) clearTimeout(timer);
+  doneFallbackTimers.clear();
 }
 
 // --- Data loading ---
@@ -117,6 +272,31 @@ async function loadTurns(offset: number) {
       turnsData = [...chronological, ...turnsData];
     }
     hasMore = rows.length === PAGE_SIZE;
+
+    // Check for recent untagged inbound events (message sent but turn not yet started)
+    if (offset === 0 && pendingInbounds.length === 0) {
+      fetchHistory(name, { preset: "all", limit: 10 })
+        .then((recent) => {
+          const untagged = recent.filter((e) => e.type === "inbound" && !e.turn_id);
+          if (untagged.length > 0 && pendingInbounds.length === 0) {
+            pendingInbounds = untagged;
+          }
+        })
+        .catch(() => {});
+    }
+
+    // Backfill streaming events for any active turns
+    for (const turn of turnsData) {
+      if (turn.status === "active" && !streamingEvents.has(turn.id)) {
+        streamingEvents.set(turn.id, []);
+        fetchTurnEvents(name, { turnId: turn.id })
+          .then((dbEvents) => {
+            if (!streamingEvents.has(turn.id)) return; // turn completed while fetching
+            streamingEvents.set(turn.id, dbEvents);
+          })
+          .catch(() => {});
+      }
+    }
   } catch (e) {
     historyError = e instanceof Error ? e.message : "Failed to load";
   }
@@ -159,6 +339,9 @@ $effect(() => {
     prevName = n;
     turnsData = [];
     hasMore = true;
+    streamingEvents = new SvelteMap();
+    nextSyntheticId = 0;
+    pendingInbounds = [];
     startScrollToBottom();
     loadTurns(0);
   }
@@ -215,7 +398,7 @@ function jumpToLatest() {
         {:else}
           <div class="two-track">
             {#each timeline as row (row.key)}
-              <div class="track-row">
+              <div class="track-row" data-turn-id={row.turn.id}>
                 <!-- Left: timestamp + summary content -->
                 <div class="track-time track-time-left">
                   {getSummaryTime(row.turn)}
@@ -246,11 +429,40 @@ function jumpToLatest() {
                       turnActivities={row.turn.activities}
                     />
                   {:else}
-                    <div class="turn-pending">processing...</div>
+                    {@const events = streamingEvents.get(row.turn.id) ?? []}
+                    {#if events.length === 0}
+                      <div class="turn-pending">processing...</div>
+                    {:else}
+                      {#each events as ev (ev.id)}
+                        <HistoryEvent event={ev} mindName={name} compact />
+                      {/each}
+                    {/if}
                   {/if}
                 </div>
                 <!-- Right: conversation + activity cards -->
                 <div class="track-content track-content-right">
+                  {#if !row.turn.summary}
+                    {@const sConvs = getStreamingConversations(streamingEvents.get(row.turn.id) ?? [])}
+                    {#each sConvs as conv (conv.channel)}
+                      <div class="feed-card-wrapper">
+                        <div class="feed-card card-chat">
+                          <div class="feed-card-header header-chat">
+                            <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                            <span class="feed-card-label">{conv.label}</span>
+                            <span class="feed-card-meta">{conv.messages.length} message{conv.messages.length === 1 ? '' : 's'}</span>
+                          </div>
+                          <div class="feed-card-body chat-body">
+                            {#each conv.messages.slice(-5) as msg}
+                              <div class="chat-entry">
+                                <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender ?? name}</span>
+                                <span class="chat-entry-content">{msg.content}</span>
+                              </div>
+                            {/each}
+                          </div>
+                        </div>
+                      </div>
+                    {/each}
+                  {/if}
                   {#each row.turn.conversations as conv (conv.id)}
                     <div class="feed-card-wrapper">
                       <div class="feed-card card-chat" role="button" tabindex="0" onclick={() => {
@@ -315,12 +527,53 @@ function jumpToLatest() {
                   {/each}
                 </div>
                 <div class="track-rail track-rail-right">
-                  {#if row.turn.conversations.length > 0 || row.turn.activities.length > 0}<div class="track-dot"></div>{/if}
+                  {#if row.turn.conversations.length > 0 || row.turn.activities.length > 0 || (!row.turn.summary && (streamingEvents.get(row.turn.id)?.some((e) => e.type === "inbound" || e.type === "outbound") ?? false))}<div class="track-dot"></div>{/if}
                 </div>
                 <div class="track-time track-time-right">
                 </div>
               </div>
             {/each}
+            {#if pendingInbounds.length > 0}
+              <div class="track-row">
+                <div class="track-time track-time-left">
+                  just now
+                </div>
+                <div class="track-rail track-rail-left">
+                  <div class="track-dot"></div>
+                </div>
+                <div class="track-content track-content-left">
+                  {#each pendingInbounds as ev (ev.id)}
+                    <HistoryEvent event={ev} mindName={name} compact />
+                  {/each}
+                </div>
+                <div class="track-content track-content-right">
+                  {#each getStreamingConversations(pendingInbounds) as conv (conv.channel)}
+                    <div class="feed-card-wrapper">
+                      <div class="feed-card card-chat">
+                        <div class="feed-card-header header-chat">
+                          <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                          <span class="feed-card-label">{conv.label}</span>
+                          <span class="feed-card-meta">{conv.messages.length} message{conv.messages.length === 1 ? '' : 's'}</span>
+                        </div>
+                        <div class="feed-card-body chat-body">
+                          {#each conv.messages.slice(-5) as msg}
+                            <div class="chat-entry">
+                              <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender ?? name}</span>
+                              <span class="chat-entry-content">{msg.content}</span>
+                            </div>
+                          {/each}
+                        </div>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+                <div class="track-rail track-rail-right">
+                  {#if pendingInbounds.some((e) => e.channel)}<div class="track-dot"></div>{/if}
+                </div>
+                <div class="track-time track-time-right">
+                </div>
+              </div>
+            {/if}
           </div>
         {/if}
 
@@ -598,6 +851,7 @@ function jumpToLatest() {
     padding: 8px 0;
     animation: pulse 1.5s infinite;
   }
+
 
   .empty-hint {
     color: var(--text-2);
