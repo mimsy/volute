@@ -19,6 +19,7 @@ import {
   resolveDeliveryMode,
   resolveRoute,
 } from "./delivery-router.js";
+import { tagRecentInbound } from "./message-delivery.js";
 
 const dlog = log.child("delivery-manager");
 
@@ -138,6 +139,13 @@ export class DeliveryManager {
     if (sessionName === "$new") {
       sessionName = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     }
+
+    // Tag the most recent untagged inbound with the active turn for this session.
+    // This links incoming messages to the current turn immediately so live streams
+    // can group them correctly, and handles interrupts (message arriving mid-turn).
+    tagRecentInbound(baseName, sessionName, payload.channel).catch((err) => {
+      dlog.warn(`tagRecentInbound failed for ${baseName}`, log.errorData(err));
+    });
 
     // Resolve delivery mode for this session (pass matched rule for rule-level batch config)
     const sessionConfig = resolveDeliveryMode(config, sessionName, route.rule);
@@ -266,6 +274,18 @@ export class DeliveryManager {
   isSessionBusy(mindName: string, session: string): boolean {
     const state = this.sessionStates.get(mindName)?.get(session);
     return (state?.activeCount ?? 0) > 0;
+  }
+
+  /**
+   * Check if any session for a mind is currently busy.
+   */
+  isMindBusy(mindName: string): boolean {
+    const mindSessions = this.sessionStates.get(mindName);
+    if (!mindSessions) return false;
+    for (const [, state] of mindSessions) {
+      if (state.activeCount > 0) return true;
+    }
+    return false;
   }
 
   /**

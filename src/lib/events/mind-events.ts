@@ -14,6 +14,7 @@ export type MindEvent = {
   content?: string;
   metadata?: Record<string, unknown>;
   turnId?: string;
+  sender?: string;
   createdAt?: string;
 };
 

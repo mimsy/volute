@@ -1,6 +1,8 @@
 export type {
   ActivityEvent,
+  CommandHandler,
   Database,
+  ExtensionCommand,
   ExtensionContext,
   ExtensionFeedItem,
   ExtensionManifest,

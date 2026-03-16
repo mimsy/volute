@@ -59,10 +59,10 @@ describe("turn-summarizer", () => {
     assert.ok(meta.to_time);
   });
 
-  it("handles turn with no inbound messages", async () => {
+  it("skips summary for turn with no substantive output", async () => {
     const mind2 = "test-summarizer-2";
     const db = await getDb();
-    // Just a done event (scheduled wake, etc.)
+    // Just a done event (scheduled wake, interrupted turn, etc.)
     const result = await db
       .insert(mindHistory)
       .values({
@@ -79,8 +79,7 @@ describe("turn-summarizer", () => {
 
     const summaries = await db.select().from(mindHistory).where(eq(mindHistory.type, "summary"));
     const summary = summaries.find((s) => s.mind === mind2);
-    assert.ok(summary, "summary should be inserted");
-    assert.equal(summary.content, "Turn completed.");
+    assert.equal(summary, undefined, "no summary should be inserted for empty turn");
   });
 
   it("uses turn_id-based query when turnId is provided", async () => {
@@ -143,7 +142,6 @@ describe("turn-summarizer", () => {
   it("skips summarization for empty turn", async () => {
     // Insert a done with no prior events for this specific mind/session combo
     const mind3 = "test-summarizer-empty";
-    // Don't insert any events before done — but summarizeTurn gathers events including done itself
     const db = await getDb();
     const result = await db
       .insert(mindHistory)
@@ -160,8 +158,7 @@ describe("turn-summarizer", () => {
     await summarizeTurn(mind3, "empty", undefined, result[0].id);
 
     const summaries = await db.select().from(mindHistory).where(eq(mindHistory.type, "summary"));
-    // Should still produce a summary since the done event itself is gathered
     const summary = summaries.find((s) => s.mind === mind3);
-    assert.ok(summary);
+    assert.equal(summary, undefined, "no summary should be inserted for empty turn");
   });
 });

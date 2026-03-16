@@ -2,17 +2,25 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { voluteSystemDir, voluteUserHome } from "./registry.js";
 
+/** Read session from a mind's current-session file. */
+export function readSessionFile(mindDir: string): string | undefined {
+  try {
+    const p = resolve(mindDir, ".mind", "current-session");
+    if (existsSync(p)) return readFileSync(p, "utf-8").trim() || undefined;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") {
+      console.error(`[volute] failed to read session file: ${code ?? err}`);
+    }
+  }
+  return undefined;
+}
+
 /** Read session from file (fallback for sandbox where env vars don't propagate). */
 function readMindSessionFile(): string | undefined {
   const mindDir = process.env.VOLUTE_MIND_DIR;
   if (!mindDir) return undefined;
-  try {
-    const p = resolve(mindDir, ".mind", "current-session");
-    if (existsSync(p)) return readFileSync(p, "utf-8").trim() || undefined;
-  } catch {
-    // best-effort
-  }
-  return undefined;
+  return readSessionFile(mindDir);
 }
 
 type CliSession = { sessionId: string; username: string };

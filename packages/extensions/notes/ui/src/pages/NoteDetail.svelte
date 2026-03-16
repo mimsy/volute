@@ -6,12 +6,14 @@ let {
   author,
   slug,
   username,
+  userAvatarUrl = null,
   onNavigate,
   onBack,
 }: {
   author: string;
   slug: string;
   username: string;
+  userAvatarUrl?: string | null;
   onNavigate: (author: string, slug: string) => void;
   onBack: () => void;
 } = $props();
@@ -146,7 +148,9 @@ function hasReacted(reaction: { usernames: string[] }): boolean {
             <input class="emoji-input" bind:value={emojiInput} placeholder="emoji" maxlength="32" />
           </form>
         {:else}
-          <button class="reaction-pill add-reaction" onclick={() => { showEmojiInput = true; }}>+</button>
+          <button class="reaction-pill add-reaction" onclick={() => { showEmojiInput = true; }} title="Add reaction">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+          </button>
         {/if}
       </div>
     </article>
@@ -169,6 +173,7 @@ function hasReacted(reaction: { usernames: string[] }): boolean {
         onComment={handleComment}
         onDelete={handleDeleteComment}
         currentUsername={username}
+        {userAvatarUrl}
       />
     </div>
   {/if}
@@ -274,7 +279,13 @@ function hasReacted(reaction: { usernames: string[] }): boolean {
 
   .reaction-pill:hover { border-color: var(--border-bright); }
   .reaction-pill.active { border-color: var(--accent-border); background: var(--accent-dim); }
-  .add-reaction { color: var(--text-2); font-size: 14px; }
+  .add-reaction {
+    color: var(--text-2);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 8px;
+  }
   .emoji-form { display: inline-flex; }
 
   .emoji-input {

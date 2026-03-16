@@ -22,7 +22,7 @@ function key(mind: string, session?: string | null): string {
  * Create a turn for a mind (or reuse an existing active one).
  * Initially sessionless — keyed as `mind:*`.
  */
-export async function createTurn(mind: string): Promise<string> {
+export async function createTurn(mind: string): Promise<string | undefined> {
   const k = key(mind);
   const existing = activeTurns.get(k);
   if (existing) return existing.turnId;
@@ -33,7 +33,7 @@ export async function createTurn(mind: string): Promise<string> {
     await db.insert(turns).values({ id: turnId, mind, status: "active" });
   } catch (err) {
     tlog.error(`failed to create turn for ${mind}`, log.errorData(err));
-    return turnId; // return ID but don't track in-memory — DB row doesn't exist
+    return undefined;
   }
 
   activeTurns.set(k, { turnId, lastToolUseEventId: undefined });
@@ -43,22 +43,6 @@ export async function createTurn(mind: string): Promise<string> {
 /** Get the active turn ID for a mind+session, falling back to the sessionless `mind:*` key. */
 export function getActiveTurnId(mind: string, session?: string | null): string | undefined {
   return (activeTurns.get(key(mind, session)) ?? activeTurns.get(key(mind)))?.turnId;
-}
-
-/**
- * Best-effort: scan all sessions for an active turn for this mind.
- * Use only when no session context is available (e.g. sandbox environments).
- */
-export function getAnyActiveTurnForMind(
-  mind: string,
-): { turnId: string; lastToolUseEventId: number | undefined } | undefined {
-  const wildcard = activeTurns.get(key(mind));
-  if (wildcard) return { ...wildcard };
-  const prefix = `${mind}:`;
-  for (const [k, entry] of activeTurns) {
-    if (k.startsWith(prefix)) return { ...entry };
-  }
-  return undefined;
 }
 
 /** Record the last tool_use event ID for a mind+session. */
@@ -88,15 +72,16 @@ export async function assignSession(mind: string, turnId: string, session: strin
     return;
   }
 
-  activeTurns.delete(wildcardKey);
-  activeTurns.set(key(mind, session), entry);
-
   try {
     const db = await getDb();
     await db.update(turns).set({ session }).where(eq(turns.id, turnId));
   } catch (err) {
     tlog.error(`failed to assign session to turn ${turnId}`, log.errorData(err));
+    return;
   }
+
+  activeTurns.delete(wildcardKey);
+  activeTurns.set(key(mind, session), entry);
 }
 
 /** Mark a turn as complete. Returns the turnId (or undefined if none was active). */
@@ -105,18 +90,21 @@ export async function completeTurn(
   session?: string | null,
 ): Promise<string | undefined> {
   const k = key(mind, session);
-  const entry = activeTurns.get(k) ?? activeTurns.get(key(mind));
+  const wildcardKey = key(mind);
+  const entry = activeTurns.get(k) ?? activeTurns.get(wildcardKey);
   if (!entry) return undefined;
-
-  activeTurns.delete(k);
-  activeTurns.delete(key(mind)); // clean up wildcard too
 
   try {
     const db = await getDb();
     await db.update(turns).set({ status: "complete" }).where(eq(turns.id, entry.turnId));
   } catch (err) {
     tlog.error(`failed to complete turn ${entry.turnId}`, log.errorData(err));
+    // Don't clean up in-memory state on DB failure — allows retry
+    return undefined;
   }
+
+  activeTurns.delete(k);
+  activeTurns.delete(wildcardKey);
 
   return entry.turnId;
 }

@@ -10,13 +10,10 @@ import type {
 } from "@volute/extensions";
 import extNotes from "@volute/notes";
 import extPages from "@volute/pages";
-import type { Hono, MiddlewareHandler } from "hono";
+import type { Context, Hono, MiddlewareHandler } from "hono";
+import type { AuthEnv } from "../web/middleware/auth.js";
 import { getUser, getUserByUsername } from "./auth.js";
-import {
-  getActiveTurnId,
-  getAnyActiveTurnForMind,
-  getLastToolUseEventId,
-} from "./daemon/turn-tracker.js";
+import { getActiveTurnId, getLastToolUseEventId } from "./daemon/turn-tracker.js";
 import { publish } from "./events/activity-events.js";
 import log from "./logger.js";
 import { mindDir, voluteHome, voluteSystemDir } from "./registry.js";
@@ -32,6 +29,11 @@ type LoadedExtension = {
 
 const loaded: LoadedExtension[] = [];
 
+export type ExtensionCommandInfo = {
+  description: string;
+  usage?: string;
+};
+
 export type ExtensionInfo = {
   id: string;
   name: string;
@@ -40,6 +42,7 @@ export type ExtensionInfo = {
   systemSection?: SystemSection;
   mindSections?: MindSection[];
   feedSource?: FeedSource;
+  commands?: Record<string, ExtensionCommandInfo>;
 };
 
 function extensionsBaseDir(): string {
@@ -113,20 +116,14 @@ async function buildContext(
     },
     getUser: async (id: number) => getUser(id),
     getUserByUsername: async (username: string) => getUserByUsername(username),
-    publishActivity: (event, c) => {
-      // Use session from Hono context for precise turn lookup.
-      // Fall back to scanning all sessions when no session header (e.g. sandbox strips env vars).
-      const session = c?.get("mindSession") as string | undefined;
-      let turnId = getActiveTurnId(event.mind, session);
-      let sourceEventId = getLastToolUseEventId(event.mind, session);
-      if (!turnId) {
-        // Scan fallback for sandbox environments where VOLUTE_SESSION isn't propagated
-        const found = getAnyActiveTurnForMind(event.mind);
-        if (found) {
-          turnId = found.turnId;
-          sourceEventId = found.lastToolUseEventId;
-        }
-      }
+    publishActivity: (event, sessionOrContext) => {
+      // Accept session as a string (from command handlers) or Hono context (from route handlers).
+      const session =
+        typeof sessionOrContext === "string"
+          ? sessionOrContext
+          : (sessionOrContext?.get("mindSession") as string | undefined);
+      const turnId = getActiveTurnId(event.mind, session);
+      const sourceEventId = getLastToolUseEventId(event.mind, session);
       publish({
         ...(event as Parameters<typeof publish>[0]),
         turn_id: turnId,
@@ -179,6 +176,37 @@ async function loadExtension(
     app.route(`/ext/${manifest.id}/public`, publicApp);
   }
 
+  // Mount command endpoints
+  if (manifest.commands) {
+    for (const [cmdName, cmd] of Object.entries(manifest.commands)) {
+      app.post(`${extApiPath}/commands/${cmdName}`, async (c: Context<AuthEnv>) => {
+        let body: { args?: string[]; mind?: string };
+        try {
+          body = await c.req.json();
+        } catch {
+          return c.json({ error: "Invalid JSON in request body" }, 400);
+        }
+        const user = c.get("user") as { username: string } | undefined;
+        const mindName = body.mind || user?.username;
+        const session = c.get("mindSession") as string | undefined;
+        try {
+          const result = await cmd.handler(body.args ?? [], {
+            ...context,
+            // Bind publishActivity to the session so command handlers
+            // don't need to pass it explicitly
+            publishActivity: (event, sc) => context.publishActivity(event, sc ?? session),
+            mindName,
+            session,
+          });
+          return c.json(result);
+        } catch (err) {
+          log.error(`extension command ${manifest.id}/${cmdName} failed`, log.errorData(err));
+          return c.json({ error: (err as Error).message }, 500);
+        }
+      });
+    }
+  }
+
   // Serve static UI assets with SPA fallback for client-side routing
   // Resolve assetsDir: try direct path first, then search from project root
   // (import.meta.dirname changes after tsup bundling)
@@ -212,7 +240,7 @@ async function loadExtension(
     };
     const prefix = `/ext/${manifest.id}`;
     const indexPath = resolve(assetsDir, "index.html");
-    const serveExtAssets = async (c: any) => {
+    const serveExtAssets = async (c: Context<AuthEnv>) => {
       const urlPath = new URL(c.req.url).pathname;
       const relativePath = urlPath.slice(prefix.length).replace(/^\//, "") || "index.html";
       const filePath = resolve(assetsDir, relativePath);
@@ -418,18 +446,48 @@ export async function loadAllExtensions(app: Hono, authMw: MiddlewareHandler): P
       log.error(`failed to load extension: ${manifest.id}`, log.errorData(err));
     }
   }
+
+  // Discovery endpoint for CLI dynamic dispatch
+  app.get("/api/extensions/commands", (c) => {
+    const result: Record<
+      string,
+      { commands: Record<string, { description: string; usage?: string }> }
+    > = {};
+    for (const { manifest } of loaded) {
+      if (!manifest.commands) continue;
+      const cmds: Record<string, { description: string; usage?: string }> = {};
+      for (const [name, cmd] of Object.entries(manifest.commands)) {
+        cmds[name] = { description: cmd.description, ...(cmd.usage ? { usage: cmd.usage } : {}) };
+      }
+      result[manifest.id] = { commands: cmds };
+    }
+    return c.json(result);
+  });
 }
 
 export function getLoadedExtensions(): ExtensionInfo[] {
-  return loaded.map(({ manifest }) => ({
-    id: manifest.id,
-    name: manifest.name,
-    version: manifest.version,
-    description: manifest.description,
-    systemSection: manifest.ui?.systemSection,
-    mindSections: manifest.ui?.mindSections,
-    feedSource: manifest.ui?.feedSource,
-  }));
+  return loaded.map(({ manifest }) => {
+    let commands: Record<string, ExtensionCommandInfo> | undefined;
+    if (manifest.commands) {
+      commands = {};
+      for (const [name, cmd] of Object.entries(manifest.commands)) {
+        commands[name] = {
+          description: cmd.description,
+          ...(cmd.usage ? { usage: cmd.usage } : {}),
+        };
+      }
+    }
+    return {
+      id: manifest.id,
+      name: manifest.name,
+      version: manifest.version,
+      description: manifest.description,
+      systemSection: manifest.ui?.systemSection,
+      mindSections: manifest.ui?.mindSections,
+      feedSource: manifest.ui?.feedSource,
+      commands,
+    };
+  });
 }
 
 export function getExtensionStandardSkills(): string[] {
