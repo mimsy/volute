@@ -128,6 +128,17 @@ function connectSSE() {
       if (!streamingEvents.has(turnId)) {
         streamingEvents.set(turnId, []);
       }
+      // Fetch turn events from DB (includes retroactively-tagged inbounds)
+      fetchTurnEvents(name, { turnId })
+        .then((dbEvents) => {
+          if (!streamingEvents.has(turnId)) return; // turn already completed
+          const current = streamingEvents.get(turnId)!;
+          const sseIds = new Set(current.filter((e) => e.id > 0).map((e) => e.id));
+          const sseOnly = current.filter((e) => e.id < 0);
+          const newFromDb = dbEvents.filter((e) => !sseIds.has(e.id));
+          streamingEvents.set(turnId, [...newFromDb, ...sseOnly]);
+        })
+        .catch(() => {});
     } else if (eventType === "summary" && turnId) {
       // Turn complete — fetch the full turn row and remove streaming state
       streamingEvents.delete(turnId);
@@ -206,8 +217,12 @@ async function loadTurns(offset: number) {
       if (turn.status === "active" && !streamingEvents.has(turn.id)) {
         streamingEvents.set(turn.id, []);
         fetchTurnEvents(name, { turnId: turn.id })
-          .then((events) => {
-            streamingEvents.set(turn.id, events);
+          .then((dbEvents) => {
+            if (!streamingEvents.has(turn.id)) return; // turn completed while fetching
+            // Merge: keep SSE events (negative IDs) that arrived while fetching
+            const current = streamingEvents.get(turn.id) ?? [];
+            const sseOnly = current.filter((e) => e.id < 0);
+            streamingEvents.set(turn.id, [...dbEvents, ...sseOnly]);
           })
           .catch(() => {});
       }
