@@ -116,9 +116,12 @@ async function buildContext(
     },
     getUser: async (id: number) => getUser(id),
     getUserByUsername: async (username: string) => getUserByUsername(username),
-    publishActivity: (event, c) => {
-      // Use session from Hono context for precise turn lookup.
-      const session = c?.get("mindSession") as string | undefined;
+    publishActivity: (event, sessionOrContext) => {
+      // Accept session as a string (from command handlers) or Hono context (from route handlers).
+      const session =
+        typeof sessionOrContext === "string"
+          ? sessionOrContext
+          : (sessionOrContext?.get("mindSession") as string | undefined);
       const turnId = getActiveTurnId(event.mind, session);
       const sourceEventId = getLastToolUseEventId(event.mind, session);
       publish({
@@ -189,6 +192,9 @@ async function loadExtension(
         try {
           const result = await cmd.handler(body.args ?? [], {
             ...context,
+            // Bind publishActivity to the session so command handlers
+            // don't need to pass it explicitly
+            publishActivity: (event, sc) => context.publishActivity(event, sc ?? session),
             mindName,
             session,
           });

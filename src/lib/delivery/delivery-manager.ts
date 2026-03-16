@@ -128,7 +128,7 @@ export class DeliveryManager {
     // Tag the most recent untagged inbound with the active turn for this session.
     // This links incoming messages to the current turn immediately so live streams
     // can group them correctly, and handles interrupts (message arriving mid-turn).
-    tagRecentInbound(baseName, sessionName).catch((err) => {
+    tagRecentInbound(baseName, sessionName, payload.channel).catch((err) => {
       dlog.warn(`tagRecentInbound failed for ${baseName}`, log.errorData(err));
     });
 

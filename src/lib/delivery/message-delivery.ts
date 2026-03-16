@@ -58,25 +58,30 @@ export async function recordInbound(
  * Tag recent untagged inbound events and messages for a mind with the given turn ID.
  * Used both proactively (on message delivery) and retroactively (on turn creation).
  * When `setTrigger` is true, also sets the turn's `trigger_event_id` to the most recent inbound.
+ * When `channel` is provided, only tags inbounds on that channel (prevents cross-session leaks).
  */
 export async function tagUntaggedInbound(
   mind: string,
   turnId: string,
-  { limit = 5, setTrigger = false }: { limit?: number; setTrigger?: boolean } = {},
+  {
+    limit = 5,
+    setTrigger = false,
+    channel,
+  }: { limit?: number; setTrigger?: boolean; channel?: string } = {},
 ): Promise<void> {
   const db = await getDb();
   // Tag recent untagged inbound events in mind_history
+  const historyConditions = [
+    eq(mindHistory.mind, mind),
+    eq(mindHistory.type, "inbound"),
+    sql`${mindHistory.turn_id} IS NULL`,
+    sql`${mindHistory.created_at} > datetime('now', '-60 seconds')`,
+  ];
+  if (channel) historyConditions.push(eq(mindHistory.channel, channel));
   const recentInbounds = await db
     .select({ id: mindHistory.id })
     .from(mindHistory)
-    .where(
-      and(
-        eq(mindHistory.mind, mind),
-        eq(mindHistory.type, "inbound"),
-        sql`${mindHistory.turn_id} IS NULL`,
-        sql`${mindHistory.created_at} > datetime('now', '-60 seconds')`,
-      ),
-    )
+    .where(and(...historyConditions))
     .orderBy(desc(mindHistory.id))
     .limit(limit);
   if (recentInbounds.length > 0) {
@@ -113,12 +118,17 @@ export async function tagUntaggedInbound(
  * Tag the most recent untagged inbound for a mind with the active turn for a session.
  * Called from the delivery manager after routing resolves the session, so incoming
  * messages are linked to the current turn immediately (enabling correct live streaming).
+ * The channel parameter scopes the tagging to avoid cross-session leaks.
  */
-export async function tagRecentInbound(mind: string, session: string): Promise<void> {
+export async function tagRecentInbound(
+  mind: string,
+  session: string,
+  channel?: string,
+): Promise<void> {
   const turnId = getActiveTurnId(mind, session);
   if (!turnId) return;
   try {
-    await tagUntaggedInbound(mind, turnId, { limit: 1 });
+    await tagUntaggedInbound(mind, turnId, { limit: 1, channel });
   } catch (err) {
     dlog.warn(`failed to tag recent inbound for ${mind} with turn ${turnId}`, log.errorData(err));
   }

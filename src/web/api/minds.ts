@@ -2175,7 +2175,10 @@ const app = new Hono<AuthEnv>()
         }
         // Link trigger and retroactively tag recent untagged inbound events/messages
         try {
-          await tagUntaggedInbound(baseName, turnId, { setTrigger: true });
+          await tagUntaggedInbound(baseName, turnId, {
+            setTrigger: true,
+            channel: body.channel,
+          });
         } catch (err) {
           log.warn(
             `failed to link trigger/tag inbounds for turn ${turnId} (mind: ${baseName})`,
@@ -2256,10 +2259,11 @@ const app = new Hono<AuthEnv>()
       // When messages arrive mid-turn, their incrementActive() keeps the
       // count > 0, so we skip here. The subsequent done will re-check.
       try {
+        // Only gate on delivery busy state when we have a session to check.
+        // Sessionless done events (e.g., background/system work) complete immediately
+        // to avoid being blocked by unrelated active sessions.
         const dm = getDeliveryManager();
-        const busy = body.session
-          ? dm.isSessionBusy(baseName, body.session)
-          : dm.isMindBusy(baseName);
+        const busy = body.session ? dm.isSessionBusy(baseName, body.session) : false;
         if (!busy) {
           const completedTurnId = await completeTurn(baseName, body.session);
           if (insertedId != null) {
