@@ -19,6 +19,7 @@ import minds from "./api/minds.js";
 import prompts from "./api/prompts.js";
 import publicFiles from "./api/public-files.js";
 import schedules from "./api/schedules.js";
+import setup from "./api/setup.js";
 import shared from "./api/shared.js";
 import skills from "./api/skills.js";
 import system from "./api/system.js";
@@ -105,6 +106,9 @@ app.use("/api/bridges/*", authMiddleware);
 
 // v1 API auth
 app.use("/api/v1/*", authMiddleware);
+
+// Setup routes (no auth — needed before first user exists)
+app.route("/api/setup", setup);
 
 // Public routes (no auth)
 app.route("/public", publicFiles);

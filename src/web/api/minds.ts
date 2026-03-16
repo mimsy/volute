@@ -45,9 +45,11 @@ import { recordInbound } from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import {
   addMessage,
+  getConversation,
   getMessages,
   getMessagesPaginated,
   isConversationForMind,
+  isParticipant,
   listConversationsForMind,
 } from "../../lib/events/conversations.js";
 import { onMindEvent } from "../../lib/events/mind-activity-tracker.js";
@@ -1945,10 +1947,20 @@ const app = new Hono<AuthEnv>()
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
+    const user = c.get("user");
     const convs = await listConversationsForMind(name);
-    return c.json(convs);
+    // Strip lastMessage from private conversations for non-participants/non-admins
+    const filtered = convs.map((conv) => {
+      if (conv.private !== 1) return conv;
+      if (user.role === "admin") return conv;
+      const userIsParticipant = conv.participants.some((p) => p.userId === user.id);
+      if (userIsParticipant) return conv;
+      const { lastMessage: _, ...rest } = conv;
+      return rest;
+    });
+    return c.json(filtered);
   })
-  // Read messages from a mind's conversation (read-only, no participant check)
+  // Read messages from a mind's conversation (privacy-enforced)
   .get("/:name/conversations/:convId/messages", async (c) => {
     const name = c.req.param("name");
     const convId = c.req.param("convId");
@@ -1958,6 +1970,20 @@ const app = new Hono<AuthEnv>()
     const belongs = await isConversationForMind(name, convId);
     if (!belongs) {
       return c.json({ error: "Conversation not found" }, 404);
+    }
+    // Enforce privacy: if conversation is private, require participant or admin
+    const conv = await getConversation(convId);
+    if (!conv) {
+      return c.json({ error: "Conversation not found" }, 404);
+    }
+    if (conv.private === 1) {
+      const user = c.get("user");
+      if (user.role !== "admin") {
+        const participant = await isParticipant(convId, user.id);
+        if (!participant) {
+          return c.json({ error: "This is a private conversation" }, 403);
+        }
+      }
     }
     const beforeStr = c.req.query("before");
     const limitStr = c.req.query("limit");
@@ -2138,7 +2164,6 @@ const app = new Hono<AuthEnv>()
     // Turns are created per-session when the mind starts processing, not when inbound arrives.
     let turnId = getActiveTurnId(baseName, body.session);
     const substantiveTypes = new Set(["thinking", "text", "tool_use", "tool_result", "outbound"]);
-
     if (!turnId && substantiveTypes.has(body.type)) {
       turnId = await createTurn(baseName);
       if (body.session) {
@@ -2173,8 +2198,11 @@ const app = new Hono<AuthEnv>()
             await db.update(mindHistory).set({ turn_id: turnId }).where(eq(mindHistory.id, row.id));
           }
         }
-      } catch {
-        // best-effort
+      } catch (err) {
+        log.warn(
+          `failed to link trigger event for turn ${turnId} (mind: ${baseName})`,
+          log.errorData(err),
+        );
       }
       // Retroactively tag recent untagged conversation messages for this mind
       // These are inbound messages that arrived before the turn was created
@@ -2197,8 +2225,11 @@ const app = new Hono<AuthEnv>()
         for (const row of recentUntagged) {
           await db.update(messages).set({ turn_id: turnId }).where(eq(messages.id, row.id));
         }
-      } catch {
-        // best-effort
+      } catch (err) {
+        log.warn(
+          `failed to tag messages for turn ${turnId} (mind: ${baseName})`,
+          log.errorData(err),
+        );
       }
     }
 
@@ -2353,7 +2384,7 @@ const app = new Hono<AuthEnv>()
       start(controller) {
         const encoder = new TextEncoder();
         const send = (data: string) => {
-          controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+          controller.enqueue(encoder.encode(`data: $data\n\n`));
         };
 
         // Keep-alive ping every 15s to prevent silent connection drops
@@ -2670,14 +2701,24 @@ const app = new Hono<AuthEnv>()
         };
       });
 
-      const turnActivities = (activitiesByTurn.get(t.id) ?? []).map((a) => ({
-        id: a.id,
-        type: a.type,
-        summary: a.summary,
-        metadata: a.metadata ? JSON.parse(a.metadata) : null,
-        source_event_id: a.source_event_id,
-        created_at: a.created_at,
-      }));
+      const turnActivities = (activitiesByTurn.get(t.id) ?? []).map((a) => {
+        let metadata: Record<string, unknown> | null = null;
+        if (a.metadata) {
+          try {
+            metadata = JSON.parse(a.metadata);
+          } catch {
+            /* ignore malformed */
+          }
+        }
+        return {
+          id: a.id,
+          type: a.type,
+          summary: a.summary,
+          metadata,
+          source_event_id: a.source_event_id,
+          created_at: a.created_at,
+        };
+      });
 
       let summaryMeta: Record<string, unknown> | null = null;
       if (summary?.metadata) {

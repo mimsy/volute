@@ -35,6 +35,7 @@ Publishing requires a volute.systems account (set up via `volute systems registe
 |--------|----------|---------|
 | `PUT /api/ext/pages/publish/:name` | Publish pages (`{ files: { "path": "base64content" } }`) |
 | `GET /api/ext/pages/status/:name` | Check publish status (URL, file count, deploy time) |
+| `POST /api/ext/pages/notify` | Notify that a page was created/updated (`{ "file": "filename.html" }`) |
 | `GET /api/ext/pages/` | List all sites and recent pages |
 
 ### Publishing script

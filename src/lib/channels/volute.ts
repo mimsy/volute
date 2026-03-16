@@ -49,12 +49,17 @@ export async function read(
   if (!res.ok) {
     throw new Error(`Failed to read conversation: ${res.status} ${res.statusText}`);
   }
-  const messages = (await res.json()) as {
-    role: string;
-    sender_name: string | null;
-    content: string | { type: string; text?: string }[];
-  }[];
-  return messages
+  const data = (await res.json()) as {
+    items: {
+      role: string;
+      sender_name: string | null;
+      content: string | { type: string; text?: string }[];
+    }[];
+  };
+  if (!Array.isArray(data.items)) {
+    throw new Error("Unexpected response format when reading conversation messages");
+  }
+  return data.items
     .slice(-limit)
     .map((m) => {
       const text = Array.isArray(m.content)
@@ -84,7 +89,16 @@ export async function send(
     Origin: url,
   };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const voluteSession = env.VOLUTE_SESSION;
+  // Session from env or file fallback (sandbox strips env vars set after process start)
+  let voluteSession = env.VOLUTE_SESSION;
+  if (!voluteSession && env.VOLUTE_MIND_DIR) {
+    try {
+      const sessionPath = resolve(env.VOLUTE_MIND_DIR, ".mind", "current-session");
+      if (existsSync(sessionPath)) voluteSession = readFileSync(sessionPath, "utf-8").trim();
+    } catch {
+      /* best-effort */
+    }
+  }
   if (voluteSession) headers["X-Volute-Session"] = voluteSession;
 
   const res = await fetch(`${url}/api/minds/${encodeURIComponent(mindName)}/chat`, {

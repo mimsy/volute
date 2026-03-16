@@ -93,14 +93,14 @@ export function getAvailableModels(): Model<Api>[] {
     try {
       models.push(...getModels(provider as any));
     } catch (err) {
-      aiLog.debug(`no models for provider ${provider}`, log.errorData(err));
+      aiLog.warn(`failed to load models for provider ${provider}`, log.errorData(err));
     }
   }
   return models;
 }
 
 /** Resolve API key for a provider, checking OAuth → config → env var. */
-async function resolveApiKey(providerId: string): Promise<string | undefined> {
+export async function resolveApiKey(providerId: string): Promise<string | undefined> {
   const ai = getAiConfig();
   const providerConfig = ai?.providers[providerId];
 
@@ -167,6 +167,7 @@ export async function aiComplete(
   const model = modelId ? findModel(modelId) : autoSelectModel();
   if (!model) {
     if (modelId) aiLog.warn(`model not found: ${modelId}`);
+    else aiLog.debug("no enabled model available for auto-selection");
     return null;
   }
 

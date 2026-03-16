@@ -13,9 +13,30 @@ export const auth = $state({
   user: null as AuthUser | null,
   checked: false,
   systemName: null as string | null,
+  setupComplete: true,
+  setupChecked: false,
 });
 
+export async function checkSetup() {
+  try {
+    const res = await fetch("/api/setup/status");
+    if (res.ok) {
+      const data = await res.json();
+      auth.setupComplete = data.complete;
+    }
+  } catch {
+    // If the endpoint doesn't exist, assume setup is complete (older daemon)
+    auth.setupComplete = true;
+  }
+  auth.setupChecked = true;
+}
+
 export async function checkAuth() {
+  await checkSetup();
+  if (!auth.setupComplete) {
+    auth.checked = true;
+    return;
+  }
   try {
     const u = await fetchMe();
     auth.user = u;

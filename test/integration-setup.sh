@@ -19,11 +19,6 @@ if [[ -f "$REPO_ROOT/.env" ]]; then
   set +a
 fi
 
-if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-  echo "Error: ANTHROPIC_API_KEY must be set (export it or add to .env)" >&2
-  exit 1
-fi
-
 if ! command -v docker &>/dev/null; then
   echo "Error: docker is required" >&2
   exit 1
@@ -90,13 +85,14 @@ rm -f "$BUILD_LOG"
 echo "  Image: $IMAGE"
 
 # Collect API key env vars to pass to container
-ENV_ARGS=(-e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
+ENV_ARGS=()
+[[ -n "${ANTHROPIC_API_KEY:-}" ]] && ENV_ARGS+=(-e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
 [[ -n "${OPENROUTER_API_KEY:-}" ]] && ENV_ARGS+=(-e "OPENROUTER_API_KEY=$OPENROUTER_API_KEY")
 
 echo "Starting container on port $HOST_PORT..."
 if ! docker run -d --name "$CONTAINER" \
   -p "$HOST_PORT:1618" \
-  "${ENV_ARGS[@]}" \
+  ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} \
   "$IMAGE" >/dev/null; then
   echo "Error: failed to start container (port $HOST_PORT may be in use)" >&2
   exit 1
@@ -234,7 +230,7 @@ if [[ "$WITH_FIXTURES" == "true" ]]; then
         echo "Error: failed to copy archive for '$name'" >&2
         exit 1
       fi
-      if ! docker exec -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" "$CONTAINER" \
+      if ! docker exec ${ANTHROPIC_API_KEY:+-e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY"} "$CONTAINER" \
           volute mind import "/tmp/$name.volute" --name "$name" 2>&1; then
         echo "Error: failed to import mind '$name'" >&2
         exit 1
@@ -249,7 +245,7 @@ fi
 SETUP_COMPLETE=true
 
 # Helper alias for running volute commands inside the container
-VEXEC="docker exec -e ANTHROPIC_API_KEY=\$ANTHROPIC_API_KEY $CONTAINER volute"
+VEXEC="docker exec $CONTAINER volute"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

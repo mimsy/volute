@@ -33,6 +33,7 @@ export async function createTurn(mind: string): Promise<string> {
     await db.insert(turns).values({ id: turnId, mind, status: "active" });
   } catch (err) {
     tlog.error(`failed to create turn for ${mind}`, log.errorData(err));
+    return turnId; // return ID but don't track in-memory — DB row doesn't exist
   }
 
   activeTurns.set(k, { turnId, lastToolUseEventId: undefined });
@@ -52,10 +53,10 @@ export function getAnyActiveTurnForMind(
   mind: string,
 ): { turnId: string; lastToolUseEventId: number | undefined } | undefined {
   const wildcard = activeTurns.get(key(mind));
-  if (wildcard) return wildcard;
+  if (wildcard) return { ...wildcard };
   const prefix = `${mind}:`;
   for (const [k, entry] of activeTurns) {
-    if (k.startsWith(prefix)) return entry;
+    if (k.startsWith(prefix)) return { ...entry };
   }
   return undefined;
 }
@@ -82,7 +83,10 @@ export function getLastToolUseEventId(mind: string, session?: string | null): nu
 export async function assignSession(mind: string, turnId: string, session: string): Promise<void> {
   const wildcardKey = key(mind);
   const entry = activeTurns.get(wildcardKey);
-  if (!entry || entry.turnId !== turnId) return;
+  if (!entry || entry.turnId !== turnId) {
+    tlog.warn(`assignSession: no matching turn for ${mind} (turnId=${turnId}, session=${session})`);
+    return;
+  }
 
   activeTurns.delete(wildcardKey);
   activeTurns.set(key(mind, session), entry);
@@ -129,13 +133,15 @@ export async function setSummaryEventId(turnId: string, summaryEventId: number):
 
 /** Remove all active turn entries for a mind (called on mind stop). */
 export async function clearMind(mind: string): Promise<void> {
+  const toDelete: string[] = [];
   const turnIds: string[] = [];
   for (const [k, entry] of activeTurns.entries()) {
     if (k.startsWith(`${mind}:`)) {
       turnIds.push(entry.turnId);
-      activeTurns.delete(k);
+      toDelete.push(k);
     }
   }
+  for (const k of toDelete) activeTurns.delete(k);
   // Mark orphaned turns as complete in DB
   if (turnIds.length > 0) {
     try {

@@ -2,6 +2,7 @@ import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:chil
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
+import { getAiConfig, resolveApiKey } from "../ai-service.js";
 import { getDb } from "../db.js";
 import { loadMergedEnv } from "../env.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../isolation.js";
@@ -40,6 +41,7 @@ export class MindManager {
     dir: string;
     port: number;
     baseName: string;
+    template?: string;
   }> {
     const entry = await findMind(name);
     if (!entry) throw new Error(`Unknown mind: ${name}`);
@@ -47,12 +49,12 @@ export class MindManager {
     if (entry.parent) {
       // Variant — dir and port come from the minds table entry
       if (!entry.dir) throw new Error(`Variant ${name} has no directory`);
-      return { dir: entry.dir, port: entry.port, baseName: entry.parent };
+      return { dir: entry.dir, port: entry.port, baseName: entry.parent, template: entry.template };
     }
 
     const dir = mindDir(name);
     if (!existsSync(dir)) throw new Error(`Mind directory missing: ${dir}`);
-    return { dir, port: entry.port, baseName: name };
+    return { dir, port: entry.port, baseName: name, template: entry.template };
   }
 
   async startMind(name: string): Promise<void> {
@@ -138,25 +140,121 @@ export class MindManager {
       CLAUDECODE: undefined,
     };
 
+    // For pi minds, inject the system AI provider's API key
+    if (target.template === "pi") {
+      try {
+        const configPath = resolve(dir, "home/.config/config.json");
+        if (existsSync(configPath)) {
+          const config = JSON.parse(readFileSync(configPath, "utf-8"));
+          const modelStr = config.model as string | undefined;
+          if (modelStr?.includes(":")) {
+            const provider = modelStr.split(":")[0];
+            const apiKey = await resolveApiKey(provider);
+            if (apiKey) {
+              // Write API key to pi-coding-agent auth storage so the mind can use it
+              const piAgentDir = resolve(dir, ".mind", "pi-agent");
+              mkdirSync(piAgentDir, { recursive: true });
+              const authPath = resolve(piAgentDir, "auth.json");
+              const authData: Record<string, unknown> = existsSync(authPath)
+                ? JSON.parse(readFileSync(authPath, "utf-8"))
+                : {};
+              authData[provider] = { type: "api_key", key: apiKey };
+              writeFileSync(authPath, JSON.stringify(authData, null, 2), { mode: 0o600 });
+              if (isIsolationEnabled()) {
+                chownMindDir(piAgentDir, baseName);
+              }
+              env.PI_CODING_AGENT_DIR = piAgentDir;
+            } else {
+              mlog.warn(
+                `no API key found for provider "${provider}" — mind ${name} may fail to start`,
+              );
+            }
+          }
+        }
+      } catch (err) {
+        mlog.error(`failed to inject AI provider key for ${name}`, log.errorData(err));
+      }
+    }
+
+    // For claude minds, inject system Anthropic credentials.
+    // OAuth: write Claude Code credential file (~/.claude/.credentials.json) so the
+    // Agent SDK authenticates natively. API key: set ANTHROPIC_API_KEY env var.
+    if (target.template === "claude" || !target.template) {
+      try {
+        const ai = getAiConfig();
+        const anthropicConfig = ai?.providers.anthropic;
+        if (anthropicConfig?.oauth) {
+          const key = await resolveApiKey("anthropic");
+          if (key) {
+            // Write credentials in the format Claude Code's Agent SDK expects.
+            // The SDK reads from CLAUDE_CONFIG_DIR/.credentials.json (or
+            // ~/.claude/.credentials.json). We point CLAUDE_CONFIG_DIR to the
+            // mind's .claude dir so credentials are per-mind and don't collide
+            // with the host user's own Claude Code config.
+            const homeDir = resolve(dir, "home");
+            const claudeDir = resolve(homeDir, ".claude");
+            mkdirSync(claudeDir, { recursive: true });
+            env.CLAUDE_CONFIG_DIR = claudeDir;
+            const credsPath = resolve(claudeDir, ".credentials.json");
+            writeFileSync(
+              credsPath,
+              JSON.stringify({
+                claudeAiOauth: {
+                  accessToken: key,
+                  refreshToken: anthropicConfig.oauth.refresh,
+                  expiresAt: anthropicConfig.oauth.expires
+                    ? new Date(anthropicConfig.oauth.expires).toISOString()
+                    : null,
+                  scopes: ["user:inference", "user:profile"],
+                },
+              }),
+              { mode: 0o600 },
+            );
+            if (isIsolationEnabled()) {
+              chownMindDir(claudeDir, baseName);
+            }
+          }
+        } else if (anthropicConfig?.apiKey) {
+          env.ANTHROPIC_API_KEY = anthropicConfig.apiKey;
+        }
+      } catch (err) {
+        mlog.error(`failed to inject Anthropic credentials for ${name}`, log.errorData(err));
+      }
+    }
+
     if (isIsolationEnabled()) {
       env.HOME = resolve(dir, "home");
     }
 
-    const tsxBin = resolve(dir, "node_modules", ".bin", "tsx");
-    const tsxArgs = ["src/server.ts", "--port", String(port)];
+    // When VOLUTE_NODE_PATH is set (e.g. Electron bundled Node), use it to run tsx explicitly
+    const customNode = process.env.VOLUTE_NODE_PATH;
+    let baseBin: string;
+    let baseArgs: string[];
+    if (customNode) {
+      baseBin = customNode;
+      baseArgs = [
+        resolve(dir, "node_modules", ".bin", "tsx"),
+        "src/server.ts",
+        "--port",
+        String(port),
+      ];
+    } else {
+      baseBin = resolve(dir, "node_modules", ".bin", "tsx");
+      baseArgs = ["src/server.ts", "--port", String(port)];
+    }
     let spawnCmd: string;
     let spawnArgs: string[];
     if (isIsolationEnabled()) {
-      [spawnCmd, spawnArgs] = await wrapForIsolation(tsxBin, tsxArgs, name);
+      [spawnCmd, spawnArgs] = await wrapForIsolation(baseBin, baseArgs, name);
     } else if (isSandboxEnabled()) {
-      [spawnCmd, spawnArgs] = await wrapForSandbox(tsxBin, tsxArgs, dir, name, [
+      [spawnCmd, spawnArgs] = await wrapForSandbox(baseBin, baseArgs, dir, name, [
         dir,
         mindStateDir,
         "/tmp",
       ]);
     } else {
-      spawnCmd = tsxBin;
-      spawnArgs = tsxArgs;
+      spawnCmd = baseBin;
+      spawnArgs = baseArgs;
     }
 
     const spawnOpts: SpawnOptions = {
@@ -173,6 +271,15 @@ export class MindManager {
     // Pipe output to log file and check for listening
     child.stdout?.pipe(logStream);
     child.stderr?.pipe(logStream);
+
+    // Capture recent stderr for error reporting
+    const recentStderr: string[] = [];
+    child.stderr?.on("data", (data: Buffer) => {
+      const lines = data.toString().split("\n").filter(Boolean);
+      recentStderr.push(...lines);
+      // Keep only last 20 lines
+      while (recentStderr.length > 20) recentStderr.shift();
+    });
 
     // Wait for "listening on :PORT" or timeout
     try {
@@ -198,7 +305,12 @@ export class MindManager {
 
         child.on("exit", (code) => {
           clearTimeout(timeout);
-          reject(new Error(`Mind ${name} exited with code ${code} during startup`));
+          // Extract the most useful error line from stderr
+          const errorLine = recentStderr.find(
+            (l) => l.startsWith("Error:") || l.includes("Error:"),
+          );
+          const detail = errorLine ? `: ${errorLine.trim()}` : "";
+          reject(new Error(`Mind ${name} exited with code ${code} during startup${detail}`));
         });
       });
     } catch (err) {

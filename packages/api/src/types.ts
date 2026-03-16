@@ -40,6 +40,7 @@ export type Conversation = {
   name: string | null;
   user_id: number | null;
   title: string | null;
+  private: number;
   created_at: string;
   updated_at: string;
 };
@@ -224,7 +225,7 @@ export type TurnConversation = {
   type: "dm" | "channel";
   messages: {
     id: number;
-    role: string;
+    role: "user" | "assistant";
     sender_name: string | null;
     content: ContentBlock[];
     source_event_id: number | null;
@@ -234,7 +235,7 @@ export type TurnConversation = {
 
 export type TurnActivity = {
   id: number;
-  type: string;
+  type: ActivityEventType;
   summary: string;
   metadata: Record<string, unknown> | null;
   source_event_id: number | null;
@@ -251,7 +252,7 @@ export type TurnRow = {
   id: string;
   summary: string | null;
   summary_meta: Record<string, unknown> | null;
-  status: string;
+  status: "active" | "complete";
   created_at: string;
   trigger: TurnTrigger | null;
   conversations: TurnConversation[];

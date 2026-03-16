@@ -264,6 +264,7 @@ function jumpToLatest() {
                           title: conv.label,
                           created_at: row.turn.created_at,
                           updated_at: row.turn.created_at,
+                          private: 0,
                           participants: [],
                         };
                       }} onkeydown={(e) => {
@@ -278,6 +279,7 @@ function jumpToLatest() {
                             title: conv.label,
                             created_at: row.turn.created_at,
                             updated_at: row.turn.created_at,
+                            private: 0,
                             participants: [],
                           };
                         }
@@ -638,4 +640,5 @@ function jumpToLatest() {
   .page-content-iframe {
     background: white;
   }
+
 </style>

@@ -23,7 +23,8 @@ export async function recordInbound(
   content: string | null,
 ): Promise<number | undefined> {
   // Record without turn_id initially. The turn will be linked either by
-  // tagInboundWithTurn (when session is known) or retroactively at turn creation.
+  // tagRecentInbound (when session is known) or retroactively at turn creation.
+  // This avoids merging unrelated inbounds from different channels into one turn.
   let insertedId: number | undefined;
   try {
     const db = await getDb();
