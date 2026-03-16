@@ -12,11 +12,7 @@ import extNotes from "@volute/notes";
 import extPages from "@volute/pages";
 import type { Hono, MiddlewareHandler } from "hono";
 import { getUser, getUserByUsername } from "./auth.js";
-import {
-  getActiveTurnId,
-  getAnyActiveTurnForMind,
-  getLastToolUseEventId,
-} from "./daemon/turn-tracker.js";
+import { getActiveTurnId, getLastToolUseEventId } from "./daemon/turn-tracker.js";
 import { publish } from "./events/activity-events.js";
 import log from "./logger.js";
 import { mindDir, voluteHome, voluteSystemDir } from "./registry.js";
@@ -121,18 +117,9 @@ async function buildContext(
     getUserByUsername: async (username: string) => getUserByUsername(username),
     publishActivity: (event, c) => {
       // Use session from Hono context for precise turn lookup.
-      // Fall back to scanning all sessions when no session header (e.g. sandbox strips env vars).
       const session = c?.get("mindSession") as string | undefined;
-      let turnId = getActiveTurnId(event.mind, session);
-      let sourceEventId = getLastToolUseEventId(event.mind, session);
-      if (!turnId) {
-        // Scan fallback for sandbox environments where VOLUTE_SESSION isn't propagated
-        const found = getAnyActiveTurnForMind(event.mind);
-        if (found) {
-          turnId = found.turnId;
-          sourceEventId = found.lastToolUseEventId;
-        }
-      }
+      const turnId = getActiveTurnId(event.mind, session);
+      const sourceEventId = getLastToolUseEventId(event.mind, session);
       publish({
         ...(event as Parameters<typeof publish>[0]),
         turn_id: turnId,
@@ -189,10 +176,12 @@ async function loadExtension(
   if (manifest.commands) {
     for (const [cmdName, cmd] of Object.entries(manifest.commands)) {
       app.post(`${extApiPath}/commands/${cmdName}`, async (c: any) => {
-        const body = (await c.req.json().catch(() => ({}))) as {
-          args?: string[];
-          mind?: string;
-        };
+        let body: { args?: string[]; mind?: string };
+        try {
+          body = await c.req.json();
+        } catch {
+          return c.json({ error: "Invalid JSON in request body" }, 400);
+        }
         const user = c.get("user") as { username: string } | undefined;
         const mindName = body.mind || user?.username;
         const session = c.get("mindSession") as string | undefined;
@@ -204,6 +193,7 @@ async function loadExtension(
           });
           return c.json(result);
         } catch (err) {
+          log.error(`extension command ${manifest.id}/${cmdName} failed`, log.errorData(err));
           return c.json({ error: (err as Error).message }, 500);
         }
       });
@@ -450,7 +440,7 @@ export async function loadAllExtensions(app: Hono, authMw: MiddlewareHandler): P
     }
   }
 
-  // Discovery endpoint for CLI dynamic dispatch (no auth needed)
+  // Discovery endpoint for CLI dynamic dispatch
   app.get("/api/extensions/commands", (c) => {
     const result: Record<
       string,

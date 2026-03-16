@@ -134,7 +134,8 @@ export async function run(args: string[]) {
       await new Promise((r) => setTimeout(r, 1000));
       continue;
     }
-    console.error(`Failed to send orientation message (HTTP ${msgRes.status})`);
+    const errBody = await msgRes.text().catch(() => "");
+    console.error(`Failed to send orientation message (HTTP ${msgRes.status}): ${errBody}`);
     break;
   }
   if (!sent) {

@@ -2167,72 +2167,80 @@ const app = new Hono<AuthEnv>()
     const substantiveTypes = new Set(["thinking", "text", "tool_use", "tool_result", "outbound"]);
     if (!turnId && substantiveTypes.has(body.type)) {
       turnId = await createTurn(baseName);
-      publishMindEvent(baseName, { mind: baseName, type: "turn_created", turnId });
-      if (body.session) {
-        await assignSession(baseName, turnId, body.session);
-      }
-      // Link trigger: find recent untagged inbound events and tag them with this turn.
-      // Tags all recent untagged inbounds (not just the most recent) so that messages
-      // from interrupted turns that were un-tagged are reclaimed by this turn.
-      try {
-        const db = await getDb();
-        const recentInbounds = await db
-          .select({ id: mindHistory.id })
-          .from(mindHistory)
-          .where(
-            and(
-              eq(mindHistory.mind, baseName),
-              eq(mindHistory.type, "inbound"),
-              sql`${mindHistory.turn_id} IS NULL`,
-              sql`${mindHistory.created_at} > datetime('now', '-60 seconds')`,
-            ),
-          )
-          .orderBy(desc(mindHistory.id))
-          .limit(5);
-        if (recentInbounds.length > 0) {
-          // Set trigger_event_id to the most recent inbound
-          await db
-            .update(turns)
-            .set({ trigger_event_id: recentInbounds[0].id })
-            .where(eq(turns.id, turnId));
-          // Tag all recent inbounds with this turn so they appear in expanded view
-          for (const row of recentInbounds) {
-            await db.update(mindHistory).set({ turn_id: turnId }).where(eq(mindHistory.id, row.id));
+      if (!turnId) {
+        // DB failure — skip turn tracking for this event
+        log.warn(`skipping turn tracking for ${baseName}: createTurn failed`);
+      } else {
+        publishMindEvent(baseName, { mind: baseName, type: "turn_created", turnId });
+        if (body.session) {
+          await assignSession(baseName, turnId, body.session);
+        }
+        // Link trigger: find recent untagged inbound events and tag them with this turn.
+        // Tags all recent untagged inbounds (not just the most recent) so that messages
+        // from interrupted turns that were un-tagged are reclaimed by this turn.
+        try {
+          const db = await getDb();
+          const recentInbounds = await db
+            .select({ id: mindHistory.id })
+            .from(mindHistory)
+            .where(
+              and(
+                eq(mindHistory.mind, baseName),
+                eq(mindHistory.type, "inbound"),
+                sql`${mindHistory.turn_id} IS NULL`,
+                sql`${mindHistory.created_at} > datetime('now', '-60 seconds')`,
+              ),
+            )
+            .orderBy(desc(mindHistory.id))
+            .limit(5);
+          if (recentInbounds.length > 0) {
+            // Set trigger_event_id to the most recent inbound
+            await db
+              .update(turns)
+              .set({ trigger_event_id: recentInbounds[0].id })
+              .where(eq(turns.id, turnId));
+            // Tag all recent inbounds with this turn so they appear in expanded view
+            for (const row of recentInbounds) {
+              await db
+                .update(mindHistory)
+                .set({ turn_id: turnId })
+                .where(eq(mindHistory.id, row.id));
+            }
           }
+        } catch (err) {
+          log.warn(
+            `failed to link trigger event for turn ${turnId} (mind: ${baseName})`,
+            log.errorData(err),
+          );
         }
-      } catch (err) {
-        log.warn(
-          `failed to link trigger event for turn ${turnId} (mind: ${baseName})`,
-          log.errorData(err),
-        );
-      }
-      // Retroactively tag recent untagged conversation messages for this mind
-      // These are inbound messages that arrived before the turn was created
-      try {
-        const db = await getDb();
-        const recentUntagged = await db
-          .select({ id: messages.id })
-          .from(messages)
-          .innerJoin(conversations, eq(messages.conversation_id, conversations.id))
-          .where(
-            and(
-              eq(conversations.mind_name, baseName),
-              sql`${messages.turn_id} IS NULL`,
-              // Only tag messages from the last 60 seconds to avoid false matches
-              sql`${messages.created_at} > datetime('now', '-60 seconds')`,
-            ),
-          )
-          .orderBy(desc(messages.id))
-          .limit(5);
-        for (const row of recentUntagged) {
-          await db.update(messages).set({ turn_id: turnId }).where(eq(messages.id, row.id));
+        // Retroactively tag recent untagged conversation messages for this mind
+        // These are inbound messages that arrived before the turn was created
+        try {
+          const db = await getDb();
+          const recentUntagged = await db
+            .select({ id: messages.id })
+            .from(messages)
+            .innerJoin(conversations, eq(messages.conversation_id, conversations.id))
+            .where(
+              and(
+                eq(conversations.mind_name, baseName),
+                sql`${messages.turn_id} IS NULL`,
+                // Only tag messages from the last 60 seconds to avoid false matches
+                sql`${messages.created_at} > datetime('now', '-60 seconds')`,
+              ),
+            )
+            .orderBy(desc(messages.id))
+            .limit(5);
+          for (const row of recentUntagged) {
+            await db.update(messages).set({ turn_id: turnId }).where(eq(messages.id, row.id));
+          }
+        } catch (err) {
+          log.warn(
+            `failed to tag messages for turn ${turnId} (mind: ${baseName})`,
+            log.errorData(err),
+          );
         }
-      } catch (err) {
-        log.warn(
-          `failed to tag messages for turn ${turnId} (mind: ${baseName})`,
-          log.errorData(err),
-        );
-      }
+      } // end if (turnId) after createTurn
     }
 
     // Persist to mind_history
@@ -2313,6 +2321,8 @@ const app = new Hono<AuthEnv>()
           turnCompleteKey,
           setTimeout(async () => {
             pendingTurnCompletions.delete(turnCompleteKey);
+            // Bail if the mind was stopped while the timer was pending
+            if (!getMindManager().isRunning(name)) return;
             // Check if the mind continued working after this done event.
             // If newer events exist for this session, the turn was interrupted
             // and continued — reschedule to let the current processing finish.
@@ -2338,8 +2348,11 @@ const app = new Hono<AuthEnv>()
                   scheduleTurnCompletion();
                   return;
                 }
-              } catch {
-                // best-effort — proceed with completion on error
+              } catch (err) {
+                log.warn(
+                  `failed to check for newer events after done (mind: ${baseName})`,
+                  log.errorData(err),
+                );
               }
             }
             const completedTurnId = await completeTurn(baseName, body.session);
@@ -2708,8 +2721,8 @@ const app = new Hono<AuthEnv>()
         if (a.metadata) {
           try {
             metadata = JSON.parse(a.metadata);
-          } catch {
-            /* ignore malformed */
+          } catch (err) {
+            log.debug(`malformed activity metadata for activity ${a.id}`, log.errorData(err));
           }
         }
         return {
@@ -2726,8 +2739,8 @@ const app = new Hono<AuthEnv>()
       if (summary?.metadata) {
         try {
           summaryMeta = JSON.parse(summary.metadata);
-        } catch {
-          // ignore
+        } catch (err) {
+          log.debug(`malformed summary metadata for turn ${t.id}`, log.errorData(err));
         }
       }
 
