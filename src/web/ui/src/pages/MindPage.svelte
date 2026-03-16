@@ -38,6 +38,8 @@ let streamingEvents = $state(new SvelteMap<string, HistoryMessage[]>());
 let nextSyntheticId = 0;
 // Inbound events that arrived before any turn_created — shown as provisional turn
 let pendingInbounds = $state<HistoryMessage[]>([]);
+// Fallback timers for done events that may not be followed by a summary
+const doneFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function getSummaryTime(turn: TurnRow): string {
   return formatRelativeTime(turn.created_at);
@@ -166,9 +168,11 @@ function connectSSE() {
         })
         .catch(() => {});
     } else if (eventType === "summary" && turnId) {
-      // Turn complete — fetch the full turn row and remove streaming state
+      // Turn complete — fetch the specific turn row and remove streaming state
+      clearTimeout(doneFallbackTimers.get(turnId));
+      doneFallbackTimers.delete(turnId);
       streamingEvents.delete(turnId);
-      fetchTurns(name, { limit: 1, offset: 0 })
+      fetchTurns(name, { turnId })
         .then((rows) => {
           for (const row of rows) {
             if (!turnsData.some((t) => t.id === row.id)) {
@@ -179,8 +183,33 @@ function connectSSE() {
           }
         })
         .catch(() => {});
-    } else if (eventType === "done") {
-      // Ignore — summary will arrive shortly
+    } else if (eventType === "done" && turnId) {
+      // Summary usually follows shortly. If it doesn't (e.g. no substantive
+      // output), clean up streaming state after a timeout to avoid phantom turns.
+      if (!doneFallbackTimers.has(turnId)) {
+        const tid = turnId;
+        doneFallbackTimers.set(
+          tid,
+          setTimeout(() => {
+            doneFallbackTimers.delete(tid);
+            if (streamingEvents.has(tid)) {
+              streamingEvents.delete(tid);
+              // Refresh the turn from the server
+              fetchTurns(name, { turnId: tid })
+                .then((rows) => {
+                  for (const row of rows) {
+                    if (!turnsData.some((t) => t.id === row.id)) {
+                      turnsData = [...turnsData, row];
+                    } else {
+                      turnsData = turnsData.map((t) => (t.id === row.id ? row : t));
+                    }
+                  }
+                })
+                .catch(() => {});
+            }
+          }, 10000),
+        );
+      }
     } else if (turnId && streamingEvents.has(turnId)) {
       // Substantive event — accumulate for streaming display
       // Create new array to trigger Svelte reactivity
@@ -222,6 +251,8 @@ function disconnectSSE() {
     eventSource.close();
     eventSource = null;
   }
+  for (const timer of doneFallbackTimers.values()) clearTimeout(timer);
+  doneFallbackTimers.clear();
 }
 
 // --- Data loading ---

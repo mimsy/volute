@@ -2485,16 +2485,19 @@ const app = new Hono<AuthEnv>()
   })
   .get("/:name/history/turns", async (c) => {
     const name = c.req.param("name");
+    const turnIdFilter = c.req.query("turnId");
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
     const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
 
     const db = await getDb();
 
     // 1. Get turns for this mind
+    const conditions = [eq(turns.mind, name)];
+    if (turnIdFilter) conditions.push(eq(turns.id, turnIdFilter));
     const turnRows = await db
       .select()
       .from(turns)
-      .where(eq(turns.mind, name))
+      .where(and(...conditions))
       .orderBy(desc(turns.created_at))
       .limit(limit)
       .offset(offset);
