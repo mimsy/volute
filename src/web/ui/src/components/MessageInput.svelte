@@ -29,16 +29,14 @@ let typingTimer = 0;
 let inputFocused = $state(false);
 let showAttach = $state(false);
 
-function showAttachMenu() {
+function toggleAttachMenu() {
   showAttach = !showAttach;
 }
 
 function handleClickOutside(e: MouseEvent) {
-  if (
-    showAttach &&
-    !(e.target as HTMLElement).closest(".attach-menu") &&
-    !(e.target as HTMLElement).closest(".inline-btn.attach")
-  ) {
+  if (!showAttach) return;
+  const target = e.target as Element | null;
+  if (!target?.closest(".attach-menu") && !target?.closest(".inline-btn.attach")) {
     showAttach = false;
   }
 }
@@ -186,7 +184,7 @@ $effect(() => {
 <!-- Input area -->
 <div class="input-area">
   <div class="input-box" class:focused={inputFocused}>
-    <button class="inline-btn attach" title="Attach image or file" onclick={showAttachMenu}>
+    <button class="inline-btn attach" title="Attach image or file" onclick={toggleAttachMenu}>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     </button>
     {#if showAttach}
@@ -340,10 +338,6 @@ $effect(() => {
   .inline-btn:hover {
     background: var(--bg-3);
     color: var(--text-1);
-  }
-
-  .inline-btn.send {
-    color: var(--text-2);
   }
 
   .inline-btn.send.active {

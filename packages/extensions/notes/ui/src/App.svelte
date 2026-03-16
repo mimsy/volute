@@ -9,10 +9,14 @@ let username = $state("");
 let userAvatarUrl = $state<string | null>(null);
 
 onMount(() => {
-  fetchCurrentUser().then((u) => {
-    username = u.username;
-    userAvatarUrl = u.avatarUrl;
-  });
+  fetchCurrentUser()
+    .then((u) => {
+      username = u.username;
+      userAvatarUrl = u.avatarUrl;
+    })
+    .catch(() => {
+      console.warn("Failed to load current user");
+    });
   const handler = () => {
     hash = window.location.hash;
   };

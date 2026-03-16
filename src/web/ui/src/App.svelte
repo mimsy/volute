@@ -97,7 +97,6 @@ let onSystemPage = $derived(selection.tab === "system" && selection.kind !== "mi
 
 let activeSystemSection = $derived.by((): string | null => {
   if (!onSystemPage) return null;
-  if (selection.kind === "home") return "home";
   if (selection.kind === "extension") return `ext:${selection.extensionId}`;
   if (selection.kind === "settings") return "settings";
   if (selection.kind === "shared-files") return "shared-files";
