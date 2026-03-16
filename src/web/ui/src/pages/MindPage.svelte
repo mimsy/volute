@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { ConversationWithParticipants, HistoryMessage, TurnRow } from "@volute/api";
+import { SvelteMap } from "svelte/reactivity";
 import ExtensionFeedCard from "../components/ExtensionFeedCard.svelte";
 import HistoryEvent from "../components/HistoryEvent.svelte";
 import MindInfo from "../components/MindInfo.svelte";
@@ -33,7 +34,7 @@ let historyError = $state("");
 let readOnlyConv = $state<ConversationWithParticipants | null>(null);
 
 // --- Streaming events for active turns ---
-let streamingEvents = $state<Map<string, HistoryMessage[]>>(new Map());
+let streamingEvents = $state(new SvelteMap<string, HistoryMessage[]>());
 let nextSyntheticId = 0;
 
 function getSummaryTime(turn: TurnRow): string {
@@ -214,7 +215,7 @@ $effect(() => {
     prevName = n;
     turnsData = [];
     hasMore = true;
-    streamingEvents = new Map();
+    streamingEvents = new SvelteMap();
     nextSyntheticId = 0;
     startScrollToBottom();
     loadTurns(0);

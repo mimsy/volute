@@ -2385,7 +2385,7 @@ const app = new Hono<AuthEnv>()
       start(controller) {
         const encoder = new TextEncoder();
         const send = (data: string) => {
-          controller.enqueue(encoder.encode(`data: $data\n\n`));
+          controller.enqueue(encoder.encode(`data: ${data}\n\n`));
         };
 
         // Keep-alive ping every 15s to prevent silent connection drops
