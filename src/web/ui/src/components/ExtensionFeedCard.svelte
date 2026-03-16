@@ -48,22 +48,24 @@ let iframeLoaded = $state(false);
     {/if}
     <span class="feed-card-meta">{formatRelativeTime(date)}</span>
   </div>
-  <div class="feed-card-body">
-    {#if iframeUrl}
-      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-      <iframe
-        src={iframeUrl}
-        class="page-preview"
-        class:loaded={iframeLoaded}
-        title={title}
-        sandbox="allow-same-origin"
-        onpointerdown={(e) => e.preventDefault()}
-        onload={() => iframeLoaded = true}
-      ></iframe>
-    {:else}
-      <div class="body-html markdown-body">{@html renderedBody}</div>
-    {/if}
-  </div>
+  {#if iframeUrl || bodyHtml}
+    <div class="feed-card-body">
+      {#if iframeUrl}
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <iframe
+          src={iframeUrl}
+          class="page-preview"
+          class:loaded={iframeLoaded}
+          title={title}
+          sandbox="allow-same-origin"
+          onpointerdown={(e) => e.preventDefault()}
+          onload={() => iframeLoaded = true}
+        ></iframe>
+      {:else}
+        <div class="body-html markdown-body">{@html renderedBody}</div>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -73,7 +75,7 @@ let iframeLoaded = $state(false);
     border-radius: var(--radius-lg);
     display: flex;
     flex-direction: column;
-    height: 240px;
+    max-height: 240px;
     overflow: hidden;
     transition: border-color 0.15s;
     cursor: pointer;

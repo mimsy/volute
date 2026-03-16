@@ -4,6 +4,7 @@ import { SvelteMap } from "svelte/reactivity";
 import { fetchHistory, fetchTurnEvents, fetchTurns } from "../lib/client";
 import { extractTextContent } from "../lib/feed-utils";
 import { formatRelativeTime } from "../lib/format";
+import { navigate } from "../lib/navigate";
 import ExtensionFeedCard from "./ExtensionFeedCard.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
 import ReadOnlyChatModal from "./ReadOnlyChatModal.svelte";
@@ -515,15 +516,19 @@ function jumpToLatest() {
                   </div>
                 {/each}
                 {#each row.turn.activities as act (act.id)}
+                  {@const actAuthor = typeof act.metadata?.author === 'string' ? act.metadata.author : name}
+                  {@const actUrl = act.metadata?.slug ? `/minds/${actAuthor}/notes/${act.metadata.slug}` : ''}
                   <div class="feed-card-wrapper">
                     <ExtensionFeedCard
                       title={act.summary}
-                      url={act.metadata?.slug ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : name}/notes/${act.metadata.slug}` : ''}
+                      url={actUrl}
                       date={act.created_at}
-                      author={typeof act.metadata?.author === 'string' ? act.metadata.author : undefined}
-                      bodyHtml=""
+                      author={actAuthor}
+                      bodyHtml={typeof act.metadata?.bodyHtml === 'string' ? act.metadata.bodyHtml : ''}
+                      iframeUrl={typeof act.metadata?.iframeUrl === 'string' ? act.metadata.iframeUrl : undefined}
                       icon='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>'
                       color={act.type === 'page_updated' ? 'purple' : 'yellow'}
+                      onclick={actUrl ? () => navigate(actUrl) : undefined}
                     />
                   </div>
                 {/each}
