@@ -671,19 +671,8 @@ export class DeliveryManager {
       .filter((line) => line !== null)
       .join("\n");
 
-    const invitePayload: DeliveryPayload = {
-      channel: "system:delivery",
-      sender: "system",
-      content: [{ type: "text", text: notification }],
-    };
-
-    const config = getRoutingConfig(await getBaseName(mindName));
-    const sessionConfig = resolveDeliveryMode(config, "main");
-
-    await this.deliverToMind(mindName, "main", invitePayload, {
-      ...sessionConfig,
-      interrupt: true,
-    });
+    const { sendSystemMessage } = await import("../system-chat.js");
+    await sendSystemMessage(mindName, notification);
   }
 
   private async persistToQueue(

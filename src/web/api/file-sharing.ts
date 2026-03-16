@@ -12,22 +12,12 @@ import {
 import { findMind, mindDir } from "../../lib/registry.js";
 import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
-async function notifyMind(port: number, message: string, channel: string, sender: string) {
+async function notifyMind(mindName: string, message: string) {
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/message`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        content: [{ type: "text", text: message }],
-        channel,
-        sender,
-      }),
-    });
-    if (!res.ok) {
-      console.warn(`[file-sharing] notify mind on port ${port} failed: ${res.status}`);
-    }
+    const { sendSystemMessage } = await import("../../lib/system-chat.js");
+    await sendSystemMessage(mindName, message);
   } catch (err) {
-    console.warn(`[file-sharing] notify mind on port ${port} failed:`, err);
+    console.warn(`[file-sharing] notify mind ${mindName} failed:`, err);
   }
 }
 
@@ -83,14 +73,10 @@ const app = new Hono<AuthEnv>()
     const { id } = stageFile(body.targetMind, senderName, filename, content, body.filePath);
 
     // Notify receiver
-    if (receiverEntry.running) {
-      await notifyMind(
-        receiverEntry.port,
-        `[file] ${senderName} sent ${filename} (${sizeStr}) — run: volute chat accept ${id}`,
-        "system:file-sharing",
-        senderName,
-      );
-    }
+    await notifyMind(
+      body.targetMind,
+      `[file] ${senderName} sent ${filename} (${sizeStr}) — run: volute chat accept ${id}`,
+    );
 
     return c.json({ status: "pending", id }, 200);
   })
@@ -128,15 +114,7 @@ const app = new Hono<AuthEnv>()
     }
 
     // Notify sender that file was accepted
-    const senderEntry = await findMind(result.sender);
-    if (senderEntry?.running) {
-      await notifyMind(
-        senderEntry.port,
-        `[file] ${name} accepted ${result.filename}`,
-        "system:file-sharing",
-        name,
-      );
-    }
+    await notifyMind(result.sender, `[file] ${name} accepted ${result.filename}`);
 
     return c.json({ ok: true, destPath: result.destPath });
   })
@@ -161,15 +139,7 @@ const app = new Hono<AuthEnv>()
     }
 
     // Notify sender that file was rejected
-    const senderEntry = await findMind(result.sender);
-    if (senderEntry?.running) {
-      await notifyMind(
-        senderEntry.port,
-        `[file] ${name} rejected ${result.filename}`,
-        "system:file-sharing",
-        name,
-      );
-    }
+    await notifyMind(result.sender, `[file] ${name} rejected ${result.filename}`);
 
     return c.json({ ok: true });
   })
@@ -207,14 +177,10 @@ const app = new Hono<AuthEnv>()
     const { id } = stageFile(receiverName, body.sender, body.filename, content, body.filename);
 
     // Notify receiver
-    if (receiverEntry.running) {
-      await notifyMind(
-        receiverEntry.port,
-        `[file] ${body.sender} sent ${body.filename} (${sizeStr}) — run: volute chat accept ${id}`,
-        "system:file-sharing",
-        body.sender,
-      );
-    }
+    await notifyMind(
+      receiverName,
+      `[file] ${body.sender} sent ${body.filename} (${sizeStr}) — run: volute chat accept ${id}`,
+    );
 
     return c.json({ status: "pending", id }, 200);
   });
