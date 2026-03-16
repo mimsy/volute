@@ -11,6 +11,7 @@ export type Selection =
     }
   | { tab: "system"; kind: "extension"; extensionId: string; path: string }
   | { tab: "system"; kind: "settings"; section?: string }
+  | { tab: "system"; kind: "shared-files" }
   | { tab: "chat"; kind: "home" }
   | { tab: "chat"; kind: "conversation"; conversationId?: string; mindName?: string };
 
@@ -88,6 +89,7 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
   const search = new URLSearchParams(window.location.search);
 
   // System tab routes
+  if (path === "/shared-files") return { tab: "system", kind: "shared-files" };
   if (path === "/settings") return { tab: "system", kind: "settings" };
 
   const settingsSectionMatch = path.match(/^\/settings\/(.+)$/);
@@ -173,6 +175,8 @@ export function selectionToPath(selection: Selection, extensions: ExtensionInfo[
     }
     case "settings":
       return selection.section ? `/settings/${selection.section}` : "/settings";
+    case "shared-files":
+      return "/shared-files";
     case "conversation":
       if (selection.conversationId) return `/chat/${selection.conversationId}`;
       if (selection.mindName) return `/chat?mind=${selection.mindName}`;

@@ -1,5 +1,4 @@
 <script lang="ts">
-import PublicFiles from "../components/PublicFiles.svelte";
 import SharedSkills from "../components/SharedSkills.svelte";
 import SystemLogs from "../components/SystemLogs.svelte";
 import UserManagement from "../components/UserManagement.svelte";
@@ -9,13 +8,12 @@ import { data } from "../lib/stores.svelte";
 import Prompts from "./Prompts.svelte";
 import Settings from "./Settings.svelte";
 
-const TABS = ["settings", "prompts", "shared-files", "skills", "logs", "users"] as const;
+const TABS = ["settings", "prompts", "skills", "logs", "users"] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
   settings: "Settings",
   prompts: "Prompts",
-  "shared-files": "Shared Files",
   skills: "Skills",
   logs: "System Logs",
   users: "Users",
@@ -73,10 +71,6 @@ async function handleRestart() {
       <Settings />
     {:else if activeTab === "prompts"}
       <Prompts />
-    {:else if activeTab === "shared-files"}
-      <div class="files-container">
-        <PublicFiles name="_system" rootLabel="shared" />
-      </div>
     {:else if activeTab === "skills"}
       <SharedSkills />
     {:else if activeTab === "logs"}
@@ -165,10 +159,5 @@ async function handleRestart() {
     flex: 1;
     overflow: auto;
     padding: 16px;
-  }
-
-  .files-container {
-    height: 100%;
-    margin: -16px;
   }
 </style>
