@@ -253,7 +253,7 @@ $effect(() => {
   }
 
   .conv-item.active {
-    background: var(--bg-3);
+    background: var(--bg-2);
   }
 
   .conv-item-header {

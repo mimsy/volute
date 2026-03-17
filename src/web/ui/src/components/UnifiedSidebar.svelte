@@ -93,23 +93,26 @@ let activeChannelId = $derived.by(() => {
   const conv = conversations.find((c) => c.type === "channel" && c.name === selection.slug);
   return conv?.id ?? null;
 });
+
+let isSystemActive = $derived(
+  selection.kind === "home" ||
+    selection.kind === "settings" ||
+    selection.kind === "extension" ||
+    selection.kind === "shared-files",
+);
 </script>
 
 <div class="sidebar-inner">
   <div class="sections">
     <!-- System -->
-    <div class="section">
-      <div class="section-header-row">
-        <button
-          class="section-toggle"
-          class:active={selection.kind === "home" || selection.kind === "settings" || selection.kind === "extension" || selection.kind === "shared-files"}
-          onclick={onHome}
-        >
-          <span class="toggle-icon"></span>
-          <span>System</span>
-        </button>
-      </div>
-    </div>
+    <button
+      class="nav-item"
+      class:active={isSystemActive}
+      onclick={onHome}
+    >
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg>
+      <span class="nav-label">System</span>
+    </button>
 
     <!-- Minds -->
     <div class="section">
@@ -121,12 +124,12 @@ let activeChannelId = $derived.by(() => {
         <button class="section-add" onclick={onSeed} title="Plant a seed">+</button>
       </div>
       {#if !collapsed.has("minds")}
-        <div class="mind-list">
+        <div class="item-list">
           {#each sortedMinds as mind}
             {@const dmId = mindDmMap.get(mind.name)}
             {@const mindUnread = dmId ? (unreadCounts.get(dmId) ?? 0) : 0}
             <button
-              class="mind-item"
+              class="nav-item"
               class:active={selection.kind === "mind" && selection.name === mind.name}
               onclick={() => onSelectMind(mind.name)}
             >
@@ -144,7 +147,7 @@ let activeChannelId = $derived.by(() => {
                     class:iridescent={activeMinds.has(mind.name)}
                     style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
                   ></span>
-                  <span class="mind-item-name">{mind.displayName ?? mind.name}</span>
+                  <span class="nav-label">{mind.displayName ?? mind.name}</span>
                   {#if mindUnread > 0}
                     <span class="unread-dot"></span>
                   {/if}
@@ -200,6 +203,7 @@ let activeChannelId = $derived.by(() => {
     margin-bottom: 2px;
   }
 
+  /* Section headers — collapsible group labels */
   .section-header-row {
     display: flex;
     align-items: center;
@@ -214,22 +218,15 @@ let activeChannelId = $derived.by(() => {
     padding: 6px 12px;
     background: none;
     color: var(--text-2);
-    font-family: var(--display);
-    font-size: 16px;
-    font-weight: 300;
-    letter-spacing: 0.02em;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
     text-align: left;
-    border-radius: var(--radius);
-    margin: 0 4px;
   }
 
   .section-toggle:hover {
     color: var(--text-1);
-  }
-
-  .section-toggle.active {
-    color: var(--text-0);
-    background: var(--bg-2);
   }
 
   .toggle-icon {
@@ -251,18 +248,15 @@ let activeChannelId = $derived.by(() => {
     background: var(--bg-2);
   }
 
-  .mind-list {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .mind-item {
+  /* Nav items — shared style for System, minds, channels */
+  .nav-item {
     display: flex;
     align-items: center;
     gap: 8px;
     width: 100%;
-    padding: 6px 12px 6px 26px;
+    padding: 6px 12px 6px 24px;
     font-size: 14px;
+    font-weight: 500;
     color: var(--text-1);
     transition: background 0.1s;
     cursor: pointer;
@@ -272,21 +266,36 @@ let activeChannelId = $derived.by(() => {
     border-radius: var(--radius);
   }
 
-  .mind-item:hover {
+  .nav-item:hover {
     background: var(--bg-2);
   }
 
-  .mind-item.active {
+  .nav-item.active {
     background: var(--bg-2);
     color: var(--text-0);
   }
 
-  .mind-item-name {
+  .nav-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    opacity: 0.6;
+  }
+
+  .nav-item.active .nav-icon {
+    opacity: 1;
+  }
+
+  .nav-label {
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-weight: 500;
+  }
+
+  .item-list {
+    display: flex;
+    flex-direction: column;
   }
 
   .unread-dot {
@@ -319,9 +328,8 @@ let activeChannelId = $derived.by(() => {
   }
 
   @media (max-width: 767px) {
-    .mind-item {
-      padding: 10px 12px 10px 26px;
-      font-size: 14px;
+    .nav-item {
+      padding: 10px 12px 10px 24px;
     }
 
     .section-toggle {
