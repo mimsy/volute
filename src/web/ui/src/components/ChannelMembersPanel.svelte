@@ -10,11 +10,13 @@ let {
   minds,
   typingNames = [],
   onOpenMind,
+  onClose,
 }: {
   conversation: ConversationWithParticipants;
   minds: Mind[];
   typingNames?: string[];
   onOpenMind: (mind: Mind) => void;
+  onClose?: () => void;
 } = $props();
 
 let mindsByName = $derived(new Map(minds.map((m) => [m.name, m])));
@@ -47,11 +49,18 @@ function isBrainIridescent(username: string): boolean {
   <div class="panel-header">
     <span class="panel-title">Members</span>
     <span class="member-count">{conversation.participants.length}</span>
-    {#if isChannel}
-      <button class="invite-btn" onclick={() => showInvite = true} title="Invite">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
-      </button>
-    {/if}
+    <div class="header-actions">
+      {#if isChannel}
+        <button class="header-action-btn" onclick={() => showInvite = true} title="Invite">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
+        </button>
+      {/if}
+      {#if onClose}
+        <button class="header-action-btn" onclick={onClose} title="Close">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+        </button>
+      {/if}
+    </div>
   </div>
   <div class="panel-body">
     {#each mindParticipants as { participant, mind }}
@@ -132,7 +141,7 @@ function isBrainIridescent(username: string): boolean {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 12px 40px 12px 16px;
+    padding: 12px 16px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
@@ -149,27 +158,36 @@ function isBrainIridescent(username: string): boolean {
     flex: 1;
   }
 
-  .invite-btn {
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+  }
+
+  .header-action-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
-    height: 20px;
+    width: 24px;
+    height: 24px;
     background: none;
+    border: none;
     color: var(--text-2);
-    flex-shrink: 0;
-    cursor: pointer;
     padding: 0;
-    transition: color 0.1s;
+    cursor: pointer;
+    border-radius: var(--radius);
+    transition: color 0.1s, background 0.1s;
   }
 
-  .invite-btn svg {
+  .header-action-btn svg {
     width: 14px;
     height: 14px;
   }
 
-  .invite-btn:hover {
+  .header-action-btn:hover {
     color: var(--text-0);
+    background: var(--bg-2);
   }
 
   .panel-body {

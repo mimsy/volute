@@ -767,10 +767,10 @@ function handleGlobalClick(e: MouseEvent) {
             onpointercancel={handleRightResizeEnd}
           ></div>
           <div class="right-panel" class:right-panel-open={narrowViewport && rightPanelOpen} style:width="{rightPanel.width}px">
-            <button class="panel-close" onclick={closeRightPanel} title="Close">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
-            </button>
             {#if rightPanelMind}
+              <button class="panel-close" onclick={closeRightPanel} title="Close">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+              </button>
               {#key rightPanelMind.name}
                 <MindRightPanel
                   mind={rightPanelMind}
@@ -787,6 +787,7 @@ function handleGlobalClick(e: MouseEvent) {
                 minds={data.minds}
                 {typingNames}
                 onOpenMind={handleOpenMindModal}
+                onClose={closeRightPanel}
               />
             {/if}
           </div>
