@@ -52,62 +52,59 @@ function isBrainIridescent(username: string): boolean {
     {/if}
   </div>
   <div class="panel-body">
-    {#if mindParticipants.length > 0}
-      <div class="section-title">Minds</div>
-      {#each mindParticipants as { participant, mind }}
-        {#if mind}
-          <ProfileHoverCard profile={{
-            name: mind.name,
-            displayName: mind.displayName,
-            description: mind.description,
-            avatarUrl: mind.avatar ? `/api/minds/${encodeURIComponent(mind.name)}/avatar` : null,
-            userType: "mind",
-            created: mind.created,
-          }}>
-            {#snippet children()}
-              <button class="member-row clickable" onclick={() => onOpenMind(mind)}>
-                <span
-                  class="status-dot"
-                  class:iridescent={activeMinds.has(mind.name)}
-                  style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
-                ></span>
-                <span class="member-name">{participant.displayName ?? participant.username}</span>
-              </button>
-            {/snippet}
-          </ProfileHoverCard>
-        {:else}
-          <div class="member-row">
-            <span class="status-dot" style:background="var(--text-2)"></span>
-            <span class="member-name">{participant.username}</span>
-          </div>
-        {/if}
-      {/each}
-    {/if}
-    {#if userParticipants.length > 0}
-      <div class="section-title">Brains</div>
-      {#each userParticipants as participant}
+    {#each mindParticipants as { participant, mind }}
+      {#if mind}
         <ProfileHoverCard profile={{
-          name: participant.username,
-          displayName: participant.displayName,
-          description: participant.description,
-          avatarUrl: participant.avatar ? `/api/auth/avatars/${encodeURIComponent(participant.avatar)}` : null,
-          userType: "brain",
+          name: mind.name,
+          displayName: mind.displayName,
+          description: mind.description,
+          avatarUrl: mind.avatar ? `/api/minds/${encodeURIComponent(mind.name)}/avatar` : null,
+          userType: "mind",
+          created: mind.created,
         }}>
           {#snippet children()}
-            <div class="member-row">
+            <button class="member-row clickable" onclick={() => onOpenMind(mind)}>
               <span
                 class="status-dot"
-                class:iridescent={isBrainIridescent(participant.username)}
-                style:background={brainDotColor(participant.username)}
+                class:iridescent={activeMinds.has(mind.name)}
+                style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
               ></span>
-              <span class="member-name">
-                {participant.displayName ?? participant.username}
-              </span>
-            </div>
+              <span class="member-name">{participant.displayName ?? participant.username}</span>
+              <svg class="type-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5"/><circle cx="15" cy="14" r="1.5"/><line x1="12" y1="4" x2="12" y2="8"/><circle cx="12" cy="3" r="1"/></svg>
+            </button>
           {/snippet}
         </ProfileHoverCard>
-      {/each}
-    {/if}
+      {:else}
+        <div class="member-row">
+          <span class="status-dot" style:background="var(--text-2)"></span>
+          <span class="member-name">{participant.username}</span>
+          <svg class="type-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5"/><circle cx="15" cy="14" r="1.5"/><line x1="12" y1="4" x2="12" y2="8"/><circle cx="12" cy="3" r="1"/></svg>
+        </div>
+      {/if}
+    {/each}
+    {#each userParticipants as participant}
+      <ProfileHoverCard profile={{
+        name: participant.username,
+        displayName: participant.displayName,
+        description: participant.description,
+        avatarUrl: participant.avatar ? `/api/auth/avatars/${encodeURIComponent(participant.avatar)}` : null,
+        userType: "brain",
+      }}>
+        {#snippet children()}
+          <div class="member-row">
+            <span
+              class="status-dot"
+              class:iridescent={isBrainIridescent(participant.username)}
+              style:background={brainDotColor(participant.username)}
+            ></span>
+            <span class="member-name">
+              {participant.displayName ?? participant.username}
+            </span>
+            <svg class="type-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="11" r="1.5"/><circle cx="15" cy="11" r="1.5"/><line x1="10" y1="16" x2="14" y2="16"/></svg>
+          </div>
+        {/snippet}
+      </ProfileHoverCard>
+    {/each}
   </div>
 </div>
 
@@ -170,15 +167,6 @@ function isBrainIridescent(username: string): boolean {
     padding: 12px 0;
   }
 
-  .section-title {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-2);
-    padding: 8px 16px 4px;
-  }
-
   .member-row {
     display: flex;
     align-items: center;
@@ -206,6 +194,14 @@ function isBrainIridescent(username: string): boolean {
     white-space: nowrap;
     font-weight: 500;
     color: var(--text-0);
+  }
+
+  .type-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    color: var(--text-2);
+    opacity: 0.5;
   }
 
   .status-dot {
