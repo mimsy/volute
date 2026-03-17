@@ -197,11 +197,10 @@ function isBrainIridescent(username: string): boolean {
   }
 
   .type-icon {
-    width: 14px;
-    height: 14px;
+    width: 18px;
+    height: 18px;
     flex-shrink: 0;
-    color: var(--text-2);
-    opacity: 0.5;
+    color: var(--text-1);
   }
 
   .status-dot {
