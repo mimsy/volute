@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { createExtension } from "@volute/extensions";
 
 import { createCommands } from "./commands.js";
+import { initDb } from "./db.js";
 import { createPublicRoutes, createRoutes } from "./routes.js";
 
 const assetsDir = resolve(import.meta.dirname, "../dist/ui");
@@ -12,6 +13,7 @@ export default createExtension({
   name: "Pages",
   version: "0.1.0",
   description: "Publish and serve web pages from mind directories",
+  initDb,
   routes: (ctx) => createRoutes(ctx),
   publicRoutes: (ctx) => createPublicRoutes(ctx),
   commands: createCommands(),

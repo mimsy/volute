@@ -2,10 +2,9 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { extname, relative, resolve } from "node:path";
+import { extname, resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { Hono } from "hono";
-import { isPublished, publishPage } from "../packages/extensions/pages/src/manifest.js";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",
@@ -27,35 +26,41 @@ function cleanup() {
   if (testDir && existsSync(testDir)) rmSync(testDir, { recursive: true });
 }
 
+/**
+ * Set up a "snapshot" directory that simulates published content.
+ * Everything in the snapshot dir is served — no manifest gating.
+ */
 function setupTestDir() {
   testDir = resolve(tmpdir(), `volute-test-pages-${Date.now()}`);
-  const pagesDir = resolve(testDir, "home", "public", "pages");
-  mkdirSync(pagesDir, { recursive: true });
-  writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hello</h1>");
-  writeFileSync(resolve(pagesDir, "style.css"), "body { color: red; }");
-  writeFileSync(resolve(pagesDir, "app.js"), "console.log('hi')");
-  writeFileSync(resolve(pagesDir, "draft.html"), "<h1>Draft</h1>");
 
-  // Publish index.html, style.css, app.js but NOT draft.html
-  publishPage(pagesDir, "index.html");
-  publishPage(pagesDir, "style.css");
-  publishPage(pagesDir, "app.js");
+  // Snapshot dir (what gets served)
+  const snapshotDir = resolve(testDir, "sites", "test-mind");
+  mkdirSync(snapshotDir, { recursive: true });
+  writeFileSync(resolve(snapshotDir, "index.html"), "<h1>Hello</h1>");
+  writeFileSync(resolve(snapshotDir, "style.css"), "body { color: red; }");
+  writeFileSync(resolve(snapshotDir, "app.js"), "console.log('hi')");
 
   // Subdirectory with index.html
-  const subDir = resolve(pagesDir, "about");
+  const subDir = resolve(snapshotDir, "about");
   mkdirSync(subDir, { recursive: true });
   writeFileSync(resolve(subDir, "index.html"), "<h1>About</h1>");
-  publishPage(pagesDir, "about/index.html");
 
-  // Secret file outside pages (in home/)
-  writeFileSync(resolve(testDir, "home", "SOUL.md"), "secret soul");
+  // Source dir (working directory — NOT served)
+  const sourceDir = resolve(testDir, "mind", "home", "public", "pages");
+  mkdirSync(sourceDir, { recursive: true });
+  writeFileSync(resolve(sourceDir, "draft.html"), "<h1>Draft</h1>");
+
+  // Secret file outside pages (for path traversal tests)
+  writeFileSync(resolve(testDir, "mind", "home", "SOUL.md"), "secret soul");
+
   return testDir;
 }
 
 /**
- * Build a test app that mirrors the pages route with manifest gating.
+ * Build a test app that serves from the snapshot directory.
+ * No manifest gating — everything in the snapshot is published.
  */
-function createApp(mindBaseDir: string) {
+function createApp(baseDir: string) {
   const app = new Hono();
 
   app.get("/pages/:name/*", async (c) => {
@@ -64,7 +69,8 @@ function createApp(mindBaseDir: string) {
     // Simulate mind check — we only recognize "test-mind"
     if (name !== "test-mind") return c.text("Not found", 404);
 
-    const pagesRoot = resolve(mindBaseDir, "home", "public", "pages");
+    // Serve from snapshot dir (not source dir)
+    const pagesRoot = resolve(baseDir, "sites", name);
     const wildcard = c.req.path.replace(`/pages/${name}`, "") || "/";
     const requestedPath = resolve(pagesRoot, wildcard.slice(1));
 
@@ -84,12 +90,6 @@ function createApp(mindBaseDir: string) {
         return c.text("Not found", 404);
       }
     } else if (!fileStat?.isFile()) {
-      return c.text("Not found", 404);
-    }
-
-    // Manifest gating
-    const relativePath = relative(pagesRoot, fileToServe);
-    if (!isPublished(pagesRoot, relativePath)) {
       return c.text("Not found", 404);
     }
 
@@ -159,10 +159,11 @@ describe("web pages routes", () => {
     assert.ok(body.includes("<h1>Hello</h1>"));
   });
 
-  it("returns 404 for unpublished file", async () => {
+  it("returns 404 for file not in snapshot", async () => {
     const dir = setupTestDir();
     const app = createApp(dir);
 
+    // draft.html only exists in the source dir, not in the snapshot
     const res = await app.request("/pages/test-mind/draft.html");
     assert.equal(res.status, 404);
   });
@@ -186,7 +187,7 @@ describe("web pages routes", () => {
   it("resolve guard catches traversal paths", async () => {
     const dir = setupTestDir();
 
-    const pagesRoot = resolve(dir, "home", "public", "pages");
+    const pagesRoot = resolve(dir, "sites", "test-mind");
     const attackPath = resolve(pagesRoot, "../../SOUL.md");
     assert.ok(!attackPath.startsWith(pagesRoot), "attack path should be outside pages root");
   });

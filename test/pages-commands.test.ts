@@ -30,63 +30,112 @@ function configPath() {
 }
 
 // ---------------------------------------------------------------------------
-// manifest unit tests
+// db unit tests
 // ---------------------------------------------------------------------------
 
-import { createCommands } from "../packages/extensions/pages/src/commands.js";
 import {
-  isPublished,
-  publishPage,
-  readManifest,
-  unpublishPage,
-  writeManifest,
-} from "../packages/extensions/pages/src/manifest.js";
+  getAllSites,
+  getPublishedPages,
+  getRecentPages,
+  initDb,
+  syncPublishedPages,
+} from "../packages/extensions/pages/src/db.js";
+import type { Database } from "../packages/extensions/sdk/src/types.js";
 
-describe("pages manifest", () => {
-  let pagesDir: string;
+async function createTestDb(): Promise<Database> {
+  const mod = await import("libsql");
+  const Libsql = (mod.default ?? mod) as unknown as new (path: string) => any;
+  const db = new Libsql(":memory:");
+  db.pragma("journal_mode = WAL");
+  return {
+    exec: (sql: string) => db.exec(sql),
+    prepare: (sql: string) => {
+      const stmt = db.prepare(sql);
+      return {
+        run: (...params: unknown[]) => stmt.run(...params),
+        get: (...params: unknown[]) => stmt.get(...params),
+        all: (...params: unknown[]) => stmt.all(...params),
+      };
+    },
+    close: () => db.close(),
+  };
+}
 
-  beforeEach(() => {
-    pagesDir = resolve(tmpdir(), `volute-test-manifest-${Date.now()}`);
-    mkdirSync(pagesDir, { recursive: true });
+describe("pages db", () => {
+  let db: Database;
+
+  beforeEach(async () => {
+    db = await createTestDb();
+    initDb(db);
   });
 
   afterEach(() => {
-    if (existsSync(pagesDir)) rmSync(pagesDir, { recursive: true });
+    db.close();
   });
 
-  it("readManifest returns empty pages when no file exists", () => {
-    const manifest = readManifest(pagesDir);
-    assert.deepEqual(manifest, { pages: {} });
+  it("initDb creates published_pages table", () => {
+    // Should not throw on second call
+    initDb(db);
+    const pages = getPublishedPages(db, "test");
+    assert.deepEqual(pages, []);
   });
 
-  it("writeManifest + readManifest roundtrips", () => {
-    const data = { pages: { "index.html": { publishedAt: "2026-01-01T00:00:00.000Z" } } };
-    writeManifest(pagesDir, data);
-    const read = readManifest(pagesDir);
-    assert.deepEqual(read, data);
+  it("syncPublishedPages adds new files", () => {
+    const diff = syncPublishedPages(db, "mind1", ["index.html", "about.html"]);
+    assert.deepEqual(diff.added, ["index.html", "about.html"]);
+    assert.deepEqual(diff.removed, []);
+    assert.deepEqual(diff.updated, []);
+
+    const pages = getPublishedPages(db, "mind1");
+    assert.equal(pages.length, 2);
+    assert.equal(pages[0].file, "about.html");
+    assert.equal(pages[1].file, "index.html");
   });
 
-  it("publishPage adds entry with timestamp", () => {
-    writeFileSync(resolve(pagesDir, "test.html"), "<h1>Test</h1>");
-    const manifest = publishPage(pagesDir, "test.html");
-    assert.ok("test.html" in manifest.pages);
-    assert.ok(manifest.pages["test.html"].publishedAt);
+  it("syncPublishedPages detects removed files", () => {
+    syncPublishedPages(db, "mind1", ["index.html", "about.html"]);
+    const diff = syncPublishedPages(db, "mind1", ["index.html"]);
+    assert.deepEqual(diff.added, []);
+    assert.deepEqual(diff.removed, ["about.html"]);
+    assert.deepEqual(diff.updated, ["index.html"]);
   });
 
-  it("unpublishPage removes entry", () => {
-    publishPage(pagesDir, "test.html");
-    assert.ok(isPublished(pagesDir, "test.html"));
-    unpublishPage(pagesDir, "test.html");
-    assert.ok(!isPublished(pagesDir, "test.html"));
+  it("syncPublishedPages handles empty list", () => {
+    syncPublishedPages(db, "mind1", ["index.html"]);
+    const diff = syncPublishedPages(db, "mind1", []);
+    assert.deepEqual(diff.removed, ["index.html"]);
   });
 
-  it("isPublished returns false for unpublished file", () => {
-    assert.ok(!isPublished(pagesDir, "nonexistent.html"));
+  it("getRecentPages returns pages ordered by updated_at", () => {
+    syncPublishedPages(db, "mind1", ["a.html"]);
+    syncPublishedPages(db, "mind2", ["b.html"]);
+
+    const pages = getRecentPages(db);
+    assert.equal(pages.length, 2);
+    // mind2's b.html was synced last
+    assert.equal(pages[0].mind, "mind2");
+    assert.equal(pages[1].mind, "mind1");
   });
 
-  it("isPublished returns true for published file", () => {
-    publishPage(pagesDir, "page.html");
-    assert.ok(isPublished(pagesDir, "page.html"));
+  it("getRecentPages filters by mind", () => {
+    syncPublishedPages(db, "mind1", ["a.html"]);
+    syncPublishedPages(db, "mind2", ["b.html"]);
+
+    const pages = getRecentPages(db, { mind: "mind1" });
+    assert.equal(pages.length, 1);
+    assert.equal(pages[0].mind, "mind1");
+  });
+
+  it("getAllSites groups by mind", () => {
+    syncPublishedPages(db, "mind1", ["index.html"]);
+    syncPublishedPages(db, "mind2", ["about.html", "contact.html"]);
+
+    const sites = getAllSites(db);
+    assert.equal(sites.length, 2);
+    assert.equal(sites[0].mind, "mind1");
+    assert.equal(sites[0].files.length, 1);
+    assert.equal(sites[1].mind, "mind2");
+    assert.equal(sites[1].files.length, 2);
   });
 });
 
@@ -94,25 +143,35 @@ describe("pages manifest", () => {
 // command unit tests
 // ---------------------------------------------------------------------------
 
+import { createCommands } from "../packages/extensions/pages/src/commands.js";
+
 describe("pages commands", () => {
   let mindDir: string;
   let pagesDir: string;
+  let dataDir: string;
+  let db: Database;
 
-  beforeEach(() => {
-    mindDir = resolve(tmpdir(), `volute-test-cmd-${Date.now()}`);
+  beforeEach(async () => {
+    const base = resolve(tmpdir(), `volute-test-cmd-${Date.now()}`);
+    mindDir = resolve(base, "mind");
     pagesDir = resolve(mindDir, "home", "public", "pages");
+    dataDir = resolve(base, "data");
     mkdirSync(pagesDir, { recursive: true });
+    mkdirSync(dataDir, { recursive: true });
+    db = await createTestDb();
+    initDb(db);
   });
 
   afterEach(() => {
-    if (existsSync(mindDir)) rmSync(mindDir, { recursive: true });
+    if (existsSync(resolve(mindDir, ".."))) rmSync(resolve(mindDir, ".."), { recursive: true });
+    db.close();
   });
 
   function makeCtx(mindName = "test-mind") {
     const events: any[] = [];
     return {
       mindName,
-      db: null,
+      db,
       authMiddleware: (() => {}) as any,
       resolveUser: () => null,
       getUser: async () => null,
@@ -120,58 +179,95 @@ describe("pages commands", () => {
       publishActivity: (e: any) => events.push(e),
       getMindDir: (name: string) => (name === mindName ? mindDir : null),
       getSystemsConfig: () => null,
-      dataDir: "/tmp",
+      dataDir,
       _events: events,
     };
   }
 
-  it("publish command publishes a file", async () => {
+  it("publish command copies files to snapshot and syncs DB", async () => {
     writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hello</h1>");
+    writeFileSync(resolve(pagesDir, "style.css"), "body { color: red; }");
+
     const commands = createCommands();
     const ctx = makeCtx();
-    const result = await commands.publish.handler(["index.html"], ctx);
+    const result = await commands.publish.handler([], ctx);
+
     assert.ok("output" in result);
-    assert.ok(result.output.includes("Published: index.html"));
-    assert.ok(isPublished(pagesDir, "index.html"));
+    assert.ok(result.output.includes("Published 1 files"));
+    assert.ok(result.output.includes("1 new"));
+
+    // Verify snapshot was created
+    const snapshotDir = resolve(dataDir, "sites", "test-mind");
+    assert.ok(existsSync(resolve(snapshotDir, "index.html")));
+    assert.ok(existsSync(resolve(snapshotDir, "style.css")));
+
+    // Verify DB was updated (only HTML files tracked)
+    const pages = getPublishedPages(db, "test-mind");
+    assert.equal(pages.length, 1);
+    assert.equal(pages[0].file, "index.html");
+
+    // Verify activity event
     assert.equal(ctx._events.length, 1);
     assert.equal(ctx._events[0].type, "page_published");
   });
 
-  it("publish command rejects missing file", async () => {
-    const commands = createCommands();
-    const result = await commands.publish.handler(["missing.html"], makeCtx());
-    assert.ok("error" in result);
-    assert.ok(result.error.includes("File not found"));
-  });
-
-  it("unpublish command removes a published file", async () => {
+  it("publish command reports removed files", async () => {
+    // First publish with two HTML files
     writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hello</h1>");
-    publishPage(pagesDir, "index.html");
+    writeFileSync(resolve(pagesDir, "about.html"), "<h1>About</h1>");
     const commands = createCommands();
-    const result = await commands.unpublish.handler(["index.html"], makeCtx());
+    const ctx = makeCtx();
+    await commands.publish.handler([], ctx);
+
+    // Remove about.html and re-publish
+    rmSync(resolve(pagesDir, "about.html"));
+    ctx._events.length = 0;
+    const result = await commands.publish.handler([], ctx);
+
     assert.ok("output" in result);
-    assert.ok(result.output.includes("Unpublished: index.html"));
-    assert.ok(!isPublished(pagesDir, "index.html"));
+    assert.ok(result.output.includes("1 removed"));
+
+    // Verify removal event
+    const removeEvents = ctx._events.filter((e: any) => e.type === "page_removed");
+    assert.equal(removeEvents.length, 1);
+    assert.equal(removeEvents[0].metadata.file, "about.html");
   });
 
-  it("unpublish command rejects non-published file", async () => {
+  it("publish command rejects when no pages dir exists", async () => {
+    rmSync(pagesDir, { recursive: true });
     const commands = createCommands();
-    const result = await commands.unpublish.handler(["not-published.html"], makeCtx());
+    const result = await commands.publish.handler([], makeCtx());
     assert.ok("error" in result);
-    assert.ok(result.error.includes("Not published"));
+    assert.ok(result.error.includes("No pages directory"));
   });
 
-  it("list command shows draft and published status", async () => {
+  it("list command shows published and draft files", async () => {
     writeFileSync(resolve(pagesDir, "published.html"), "<h1>Pub</h1>");
     writeFileSync(resolve(pagesDir, "draft.html"), "<h1>Draft</h1>");
-    publishPage(pagesDir, "published.html");
+
+    // Publish one file
     const commands = createCommands();
-    const result = await commands.list.handler([], makeCtx());
+    const ctx = makeCtx();
+    syncPublishedPages(db, "test-mind", ["published.html"]);
+
+    const result = await commands.list.handler([], ctx);
     assert.ok("output" in result);
     assert.ok(result.output.includes("draft"));
     assert.ok(result.output.includes("published"));
     assert.ok(result.output.includes("draft.html"));
     assert.ok(result.output.includes("published.html"));
+  });
+
+  it("list --all queries across minds", async () => {
+    syncPublishedPages(db, "mind-a", ["index.html"]);
+    syncPublishedPages(db, "mind-b", ["about.html"]);
+
+    const commands = createCommands();
+    const ctx = makeCtx();
+    const result = await commands.list.handler(["--all"], ctx);
+    assert.ok("output" in result);
+    assert.ok(result.output.includes("mind-a"));
+    assert.ok(result.output.includes("mind-b"));
   });
 });
 

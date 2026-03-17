@@ -1,51 +1,66 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { relative, resolve } from "node:path";
 
 import type { ExtensionCommand } from "@volute/extensions";
 
-import { invalidateCache } from "./cache.js";
-import { isPublished, publishPage, readManifest, unpublishPage } from "./manifest.js";
+import { getPublishedPages, syncPublishedPages } from "./db.js";
 
 export function createCommands(): Record<string, ExtensionCommand> {
   return {
     publish: {
-      description: "Publish a page (make it publicly accessible)",
-      usage: "volute pages publish <file> [--remote]",
+      description: "Publish all pages (copy to public snapshot)",
+      usage: "volute pages publish [--remote]",
       handler: async (args, ctx) => {
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
 
-        const remoteIdx = args.indexOf("--remote");
-        const remote = remoteIdx !== -1;
-        const fileArgs = remote
-          ? [...args.slice(0, remoteIdx), ...args.slice(remoteIdx + 1)]
-          : args;
-
-        const file = fileArgs[0];
-        if (!file) return { error: "Usage: volute pages publish <file> [--remote]" };
+        const remote = args.includes("--remote");
 
         const mindDir = ctx.getMindDir(mindName);
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
-        const pagesDir = resolve(mindDir, "home", "public", "pages");
-        const filePath = resolve(pagesDir, file);
+        const sourceDir = resolve(mindDir, "home", "public", "pages");
+        if (!existsSync(sourceDir))
+          return { error: "No pages directory found (home/public/pages/)" };
 
-        // Ensure the file is within pagesDir
-        if (!filePath.startsWith(pagesDir + "/"))
-          return { error: "File must be within pages directory" };
-        if (!existsSync(filePath)) return { error: `File not found: ${file}` };
+        const db = ctx.db;
+        if (!db) return { error: "Database not available" };
 
-        publishPage(pagesDir, file);
-        invalidateCache();
+        // Copy entire directory to snapshot location (clean first for removals)
+        const snapshotDir = resolve(ctx.dataDir, "sites", mindName);
+        if (existsSync(snapshotDir)) rmSync(snapshotDir, { recursive: true });
+        cpSync(sourceDir, snapshotDir, { recursive: true });
 
-        ctx.publishActivity({
-          type: "page_published",
-          mind: mindName,
-          summary: `${mindName} published ${file}`,
-          metadata: { file, iframeUrl: `/ext/pages/public/${mindName}/${file}` },
-        });
+        // Scan snapshot for .html files
+        const htmlFiles = collectHtmlFiles(snapshotDir, snapshotDir);
 
-        let output = `Published: ${file}`;
+        // Sync DB and get diff
+        const diff = syncPublishedPages(db, mindName, htmlFiles);
+
+        // Fire activity events for changes
+        for (const file of diff.added) {
+          ctx.publishActivity({
+            type: "page_published",
+            mind: mindName,
+            summary: `${mindName} published ${file}`,
+            metadata: { file, iframeUrl: `/ext/pages/public/${mindName}/${file}` },
+          });
+        }
+        for (const file of diff.removed) {
+          ctx.publishActivity({
+            type: "page_removed",
+            mind: mindName,
+            summary: `${mindName} removed ${file}`,
+            metadata: { file },
+          });
+        }
+
+        let output = `Published ${htmlFiles.length} files`;
+        const parts: string[] = [];
+        if (diff.added.length > 0) parts.push(`${diff.added.length} new`);
+        if (diff.updated.length > 0) parts.push(`${diff.updated.length} updated`);
+        if (diff.removed.length > 0) parts.push(`${diff.removed.length} removed`);
+        if (parts.length > 0) output += ` (${parts.join(", ")})`;
 
         if (remote) {
           const config = ctx.getSystemsConfig();
@@ -54,14 +69,12 @@ export function createCommands(): Record<string, ExtensionCommand> {
               error: "Not connected to volute.systems. Run volute systems register or login first.",
             };
 
-          // Collect all published files and send them
-          const manifest = readManifest(pagesDir);
+          // Collect all files from snapshot as base64
+          const allFiles = collectAllFiles(snapshotDir, snapshotDir);
           const files: Record<string, string> = {};
-          for (const f of Object.keys(manifest.pages)) {
-            const fp = resolve(pagesDir, f);
-            if (existsSync(fp)) {
-              files[f] = readFileSync(fp).toString("base64");
-            }
+          for (const f of allFiles) {
+            const fp = resolve(snapshotDir, f);
+            files[f] = readFileSync(fp).toString("base64");
           }
 
           try {
@@ -86,29 +99,6 @@ export function createCommands(): Record<string, ExtensionCommand> {
       },
     },
 
-    unpublish: {
-      description: "Unpublish a page (stop serving it publicly)",
-      usage: "volute pages unpublish <file>",
-      handler: async (args, ctx) => {
-        const mindName = ctx.mindName;
-        if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
-
-        const file = args[0];
-        if (!file) return { error: "Usage: volute pages unpublish <file>" };
-
-        const mindDir = ctx.getMindDir(mindName);
-        if (!mindDir) return { error: `Mind not found: ${mindName}` };
-
-        const pagesDir = resolve(mindDir, "home", "public", "pages");
-        if (!isPublished(pagesDir, file)) return { error: `Not published: ${file}` };
-
-        unpublishPage(pagesDir, file);
-        invalidateCache();
-
-        return { output: `Unpublished: ${file}` };
-      },
-    },
-
     list: {
       description: "List pages with publish status",
       usage: "volute pages list [--all]",
@@ -116,25 +106,21 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
 
+        const db = ctx.db;
+        if (!db) return { error: "Database not available" };
+
         const allFlag = args.includes("--all");
         const port = process.env.VOLUTE_DAEMON_PORT || "1618";
 
         if (allFlag) {
-          // List all minds' published pages
-          const { readRegistry } = await import("../../../../src/lib/registry.js");
-          const entries = await readRegistry();
+          const { getAllSites } = await import("./db.js");
+          const sites = getAllSites(db);
           const lines: string[] = [];
 
-          for (const entry of entries) {
-            const dir = ctx.getMindDir(entry.name);
-            if (!dir) continue;
-            const pagesDir = resolve(dir, "home", "public", "pages");
-            if (!existsSync(pagesDir)) continue;
-
-            const manifest = readManifest(pagesDir);
-            for (const file of Object.keys(manifest.pages)) {
-              const url = `http://localhost:${port}/ext/pages/public/${entry.name}/${file}`;
-              lines.push(`${entry.name.padEnd(15)} ${file.padEnd(25)} ${url}`);
+          for (const site of sites) {
+            for (const f of site.files) {
+              const url = `http://localhost:${port}/ext/pages/public/${site.mind}/${f.file}`;
+              lines.push(`${site.mind.padEnd(15)} ${f.file.padEnd(25)} ${url}`);
             }
           }
 
@@ -145,17 +131,17 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const mindDir = ctx.getMindDir(mindName);
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
-        const pagesDir = resolve(mindDir, "home", "public", "pages");
-        if (!existsSync(pagesDir)) return { output: "No pages directory found." };
+        const sourceDir = resolve(mindDir, "home", "public", "pages");
+        const published = new Set(getPublishedPages(db, mindName).map((p) => p.file));
+        const draftFiles = existsSync(sourceDir) ? collectHtmlFiles(sourceDir, sourceDir) : [];
+        const allFiles = new Set([...published, ...draftFiles]);
 
-        const manifest = readManifest(pagesDir);
-        const files = collectPageFiles(pagesDir);
-        if (files.length === 0) return { output: "No pages found." };
+        if (allFiles.size === 0) return { output: "No pages found." };
 
-        const lines = files.map((file) => {
-          const published = file in manifest.pages;
-          const status = published ? "published" : "draft";
-          const url = published
+        const lines = [...allFiles].sort().map((file) => {
+          const isPublished = published.has(file);
+          const status = isPublished ? "published" : "draft";
+          const url = isPublished
             ? `http://localhost:${port}/ext/pages/public/${mindName}/${file}`
             : "";
           return `${status.padEnd(11)} ${file.padEnd(25)} ${url}`;
@@ -167,27 +153,53 @@ export function createCommands(): Record<string, ExtensionCommand> {
   };
 }
 
-function collectPageFiles(pagesDir: string): string[] {
+/** Recursively collect .html files, returning paths relative to baseDir */
+function collectHtmlFiles(dir: string, baseDir: string): string[] {
   const files: string[] = [];
   let items: string[];
   try {
-    items = readdirSync(pagesDir);
+    items = readdirSync(dir);
   } catch {
     return files;
   }
 
   for (const item of items) {
-    if (item.startsWith(".") || item === "pages.json") continue;
-    const fullPath = resolve(pagesDir, item);
+    if (item.startsWith(".")) continue;
+    const fullPath = resolve(dir, item);
     try {
       const s = statSync(fullPath);
       if (s.isFile() && item.endsWith(".html")) {
-        files.push(item);
+        files.push(relative(baseDir, fullPath));
       } else if (s.isDirectory()) {
-        const indexPath = resolve(fullPath, "index.html");
-        if (existsSync(indexPath)) {
-          files.push(join(item, "index.html"));
-        }
+        files.push(...collectHtmlFiles(fullPath, baseDir));
+      }
+    } catch {
+      // skip
+    }
+  }
+
+  return files.sort();
+}
+
+/** Recursively collect all files, returning paths relative to baseDir */
+function collectAllFiles(dir: string, baseDir: string): string[] {
+  const files: string[] = [];
+  let items: string[];
+  try {
+    items = readdirSync(dir);
+  } catch {
+    return files;
+  }
+
+  for (const item of items) {
+    if (item.startsWith(".")) continue;
+    const fullPath = resolve(dir, item);
+    try {
+      const s = statSync(fullPath);
+      if (s.isFile()) {
+        files.push(relative(baseDir, fullPath));
+      } else if (s.isDirectory()) {
+        files.push(...collectAllFiles(fullPath, baseDir));
       }
     } catch {
       // skip

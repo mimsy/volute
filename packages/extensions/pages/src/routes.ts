@@ -1,10 +1,9 @@
 import { readFile, stat } from "node:fs/promises";
-import { extname, relative, resolve } from "node:path";
+import { extname, resolve } from "node:path";
 import type { ExtensionContext } from "@volute/extensions";
 import { Hono } from "hono";
 
-import { getCachedRecentPages, getCachedSites } from "./cache.js";
-import { isPublished } from "./manifest.js";
+import { getRecentPagesList, getSites } from "./cache.js";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",
@@ -23,32 +22,22 @@ const MIME_TYPES: Record<string, string> = {
   ".xml": "application/xml",
 };
 
-// Lazy-loaded registry access for cache functions (built-in extension)
-let _readRegistry: (() => Promise<{ name: string }[]>) | null = null;
-async function getReadRegistry() {
-  if (_readRegistry) return _readRegistry;
-  const mod = await import("../../../../src/lib/registry.js");
-  _readRegistry = mod.readRegistry;
-  return _readRegistry;
-}
-
 export function createRoutes(ctx: ExtensionContext): Hono {
   return new Hono()
     .get("/", async (c) => {
-      const readRegistry = await getReadRegistry();
-      const sites = await getCachedSites(ctx.getMindDir, readRegistry);
-      const recentPages = await getCachedRecentPages(ctx.getMindDir, readRegistry);
+      if (!ctx.db) return c.json({ sites: [], recentPages: [] });
+      const sites = getSites(ctx.db);
+      const recentPages = getRecentPagesList(ctx.db);
       return c.json({ sites, recentPages });
     })
     .get("/feed", async (c) => {
-      const readRegistry = await getReadRegistry();
-      let recentPages = await getCachedRecentPages(ctx.getMindDir, readRegistry);
+      if (!ctx.db) return c.json([]);
       const mind = c.req.query("mind");
-      if (mind) recentPages = recentPages.filter((p: any) => p.mind === mind);
       const rawLimit = c.req.query("limit");
       const limit = rawLimit ? parseInt(rawLimit, 10) : 8;
+      const recentPages = getRecentPagesList(ctx.db, { mind: mind || undefined, limit });
       return c.json(
-        recentPages.slice(0, limit).map((p: any) => ({
+        recentPages.map((p) => ({
           id: `page-${p.mind}-${p.file}`,
           title: `${p.mind}/${p.file}`,
           url: p.url ?? `/minds/${p.mind}/pages/${p.file}`,
@@ -125,9 +114,8 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
       const home = await getVoluteHome();
       pagesRoot = resolve(home, "shared", "pages");
     } else {
-      const mindDirPath = ctx.getMindDir(name);
-      if (!mindDirPath) return c.text("Not found", 404);
-      pagesRoot = resolve(mindDirPath, "home", "public", "pages");
+      // Serve from the published snapshot, not the working directory
+      pagesRoot = resolve(ctx.dataDir, "sites", name);
     }
     const prefix = `/public/${name}`;
     const idx = c.req.path.indexOf(prefix);
@@ -137,7 +125,6 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
     if (requestedPath !== pagesRoot && !requestedPath.startsWith(pagesRoot + "/"))
       return c.text("Forbidden", 403);
 
-    // Determine the file to check against manifest
     let fileToServe = requestedPath;
     let fileStat = await stat(requestedPath).catch(() => null);
 
@@ -151,14 +138,6 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
       }
     } else if (!fileStat?.isFile()) {
       return c.text("Not found", 404);
-    }
-
-    // Check manifest gating (skip for _system pages)
-    if (name !== "_system") {
-      const relativePath = relative(pagesRoot, fileToServe);
-      if (!isPublished(pagesRoot, relativePath)) {
-        return c.text("Not found", 404);
-      }
     }
 
     const ext = extname(fileToServe);
