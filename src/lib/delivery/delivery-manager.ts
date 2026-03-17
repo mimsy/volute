@@ -358,7 +358,7 @@ export class DeliveryManager {
       typingMap.set(payload.channel, baseName, { persistent: true });
     }
     if (payload.conversationId) {
-      typingMap.set(`volute:${payload.conversationId}`, baseName, { persistent: true });
+      typingMap.set(payload.conversationId, baseName, { persistent: true });
     }
 
     // Enrich with participant profiles on first encounter per channel
@@ -438,7 +438,7 @@ export class DeliveryManager {
     for (const msg of messages) {
       if (msg.payload.conversationId && !seenConvIds.has(msg.payload.conversationId)) {
         seenConvIds.add(msg.payload.conversationId);
-        typingMap.set(`volute:${msg.payload.conversationId}`, baseName, { persistent: true });
+        typingMap.set(msg.payload.conversationId, baseName, { persistent: true });
       }
     }
 

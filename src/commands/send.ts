@@ -8,7 +8,6 @@ import { formatFileSize } from "../lib/file-sharing.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { parseTarget } from "../lib/parse-target.js";
 import { readStdin } from "../lib/read-stdin.js";
-import { resolveMindName } from "../lib/resolve-mind-name.js";
 
 /** Check if a name is a registered mind via the daemon API (avoids direct DB access). */
 async function isMind(name: string): Promise<boolean> {
@@ -132,7 +131,6 @@ async function waitForResponse(
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
-    mind: { type: "string" },
     image: { type: "string" },
     file: { type: "string" },
     wait: { type: "boolean" },
@@ -147,14 +145,13 @@ export async function run(args: string[]) {
 
   if (!target || (!message && !images && !flags.file)) {
     console.error(
-      'Usage: volute chat send <target> "<message>" [--mind <name>] [--image <path>] [--file <path>] [--wait]',
+      'Usage: volute chat send <target> "<message>" [--image <path>] [--file <path>] [--wait]',
     );
-    console.error('       echo "message" | volute chat send <target> [--mind <name>]');
+    console.error('       echo "message" | volute chat send <target>');
     console.error("");
     console.error("Examples:");
     console.error('  volute chat send @other-mind "hello"');
-    console.error('  volute chat send animal-chat "hello everyone"');
-    console.error('  volute chat send discord:server/channel "hello"');
+    console.error('  volute chat send #animal-chat "hello everyone"');
     console.error('  volute chat send @mind "check this out" --image photo.png');
     console.error("  volute chat send @mind --image photo.png");
     console.error('  volute chat send @mind "check this out" --file notes.txt');
@@ -246,7 +243,7 @@ export async function run(args: string[]) {
     parsed = {
       platform: "volute",
       identifier: `@${parsed.identifier}`,
-      uri: `volute:@${parsed.identifier}`,
+      uri: `@${parsed.identifier}`,
       isDM: true,
     };
   }
@@ -255,8 +252,7 @@ export async function run(args: string[]) {
 
   // Resolve the target mind name for --wait
   let waitMindName: string | undefined;
-
-  let channelUri = parsed.uri;
+  let waitConversationId: string | undefined;
 
   if (parsed.isDM && parsed.platform === "volute") {
     // For volute DMs (@target), create/find conversation via daemon
@@ -286,19 +282,20 @@ export async function run(args: string[]) {
       console.error((data as { error: string }).error);
       process.exit(1);
     }
-    const { slug } = (await createRes.json()) as { slug: string };
-    channelUri = slug;
+    const { conversationId: convId } = (await createRes.json()) as {
+      conversationId?: string;
+    };
+    if (convId) waitConversationId = convId;
 
-    // Send via daemon
+    // Send via daemon chat API
     const sendRes = await daemonFetch(
-      urlOf(client.api.minds[":name"].channels.send.$url({ param: { name: contextMind } })),
+      urlOf(client.api.minds[":name"].chat.$url({ param: { name: contextMind } })),
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          platform: "volute",
-          uri: channelUri,
           message: message ?? "",
+          conversationId: convId,
           images,
           sender,
         }),
@@ -310,77 +307,77 @@ export async function run(args: string[]) {
       process.exit(1);
     }
     if (!flags.wait) console.log("Message sent.");
-
-    // Persist outgoing to mind_messages if sender is a registered mind
-    if (mindSelf) {
-      try {
-        const histRes = await daemonFetch(
-          urlOf(client.api.minds[":name"].history.$url({ param: { name: mindSelf } })),
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ channel: parsed.uri, content: message ?? "" }),
-          },
-        );
-        if (!histRes.ok) {
-          console.error(`Failed to persist to history: HTTP ${histRes.status}`);
-        }
-      } catch (err) {
-        console.error(`Failed to persist to history: ${err instanceof Error ? err.message : err}`);
-      }
+  } else if (!parsed.isDM && parsed.platform === "volute") {
+    // Bare names without # are ambiguous — require explicit sigil
+    if (!parsed.identifier.startsWith("#")) {
+      console.error(
+        `Mind "${parsed.identifier}" not found.\n` +
+          `  To send a DM:      volute chat send @${parsed.identifier} "..."\n` +
+          `  To send to channel: volute chat send #${parsed.identifier} "..."`,
+      );
+      process.exit(1);
     }
-  } else {
-    // For all other targets, send through the daemon channel API
-    const mindName = resolveMindName(flags);
 
-    const res = await daemonFetch(
-      urlOf(client.api.minds[":name"].channels.send.$url({ param: { name: mindName } })),
+    // For volute group channels (#general), look up by name and send
+    const channelName = parsed.identifier.slice(1);
+    const mindSelf = process.env.VOLUTE_MIND;
+    const sender = flags.sender || mindSelf || userInfo().username;
+
+    // Look up channel conversation ID
+    const channelRes = await daemonFetch(`/api/volute/channels/${encodeURIComponent(channelName)}`);
+    if (!channelRes.ok) {
+      console.error(`Channel "${channelName}" not found. Create it first or check the name.`);
+      process.exit(1);
+    }
+    const channelData = (await channelRes.json()) as {
+      id: string;
+      participants?: { username: string; userType: string }[];
+    };
+
+    // Find a participant mind to use as context for the chat API
+    const mindParticipant = channelData.participants?.find((p) => p.userType === "mind");
+    const contextMind = mindSelf ?? mindParticipant?.username;
+    if (!contextMind) {
+      console.error("No mind is a member of this channel. A mind must join the channel first.");
+      process.exit(1);
+    }
+
+    const sendRes = await daemonFetch(
+      urlOf(client.api.minds[":name"].chat.$url({ param: { name: contextMind } })),
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          platform: parsed.platform,
-          uri: channelUri,
           message: message ?? "",
+          conversationId: channelData.id,
           images,
+          sender,
         }),
       },
     );
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: "Unknown error" }));
-      console.error((body as { error: string }).error);
+    if (!sendRes.ok) {
+      const data = await sendRes.json().catch(() => ({ error: "Unknown error" }));
+      console.error((data as { error: string }).error);
       process.exit(1);
     }
-    if (!flags.wait) console.log("Message sent.");
-
-    // Persist outgoing to mind_messages if sender is a registered mind
-    if (process.env.VOLUTE_MIND) {
-      try {
-        const histRes = await daemonFetch(
-          urlOf(client.api.minds[":name"].history.$url({ param: { name: mindName } })),
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ channel: channelUri, content: message ?? "" }),
-          },
-        );
-        if (!histRes.ok) {
-          console.error(`Failed to persist to history: HTTP ${histRes.status}`);
-        }
-      } catch (err) {
-        console.error(`Failed to persist to history: ${err instanceof Error ? err.message : err}`);
-      }
-    }
+    console.log("Message sent.");
+  } else {
+    // Non-volute targets (discord:..., slack:..., etc.) are no longer supported directly.
+    // With the bridge architecture, minds send to volute channels and bridges handle external routing.
+    console.error(
+      `Direct sends to ${parsed.platform} channels are no longer supported.\n` +
+        "Use bridge channel names instead (e.g. volute chat send @mind-name or #channel-name).\n" +
+        "See: volute chat bridge --help",
+    );
+    process.exit(1);
   }
 
   if (flags.wait && waitMindName) {
-    // Extract conversation ID from the channel URI (format: "volute:<id>")
-    const conversationId = channelUri.startsWith("volute:") ? channelUri.slice(7) : undefined;
-    if (!conversationId) {
+    if (!waitConversationId) {
       console.error("--wait requires a volute conversation (DM to a mind)");
       process.exit(1);
     }
-    await waitForResponse(waitMindName, conversationId, flags.timeout ?? 120_000);
+    await waitForResponse(waitMindName, waitConversationId, flags.timeout ?? 120_000);
   } else if (flags.wait && !waitMindName) {
     console.error("--wait is only supported when sending to a mind");
     process.exit(1);

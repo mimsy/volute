@@ -109,7 +109,7 @@ export class MindManager {
     const logsDir = resolve(mindStateDir, "logs");
     mkdirSync(logsDir, { recursive: true });
 
-    // State dir is created by root — chown so the mind user can write channels.json, etc.
+    // State dir is created by root — chown so the mind user can write to it.
     if (isIsolationEnabled()) {
       try {
         chownMindDir(mindStateDir, baseName);
@@ -361,6 +361,8 @@ export class MindManager {
       parts.push(await getPrompt("merge_message", { name: String(context.name ?? "") }));
     } else if (context.type === "sprouted") {
       parts.push(await getPrompt("sprout_message"));
+    } else if (context.type === "upgraded") {
+      parts.push(await getPrompt("upgrade_message"));
     } else {
       parts.push(await getPrompt("restart_message"));
     }
@@ -385,7 +387,7 @@ export class MindManager {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           content: [{ type: "text", text: content }],
-          channel: "volute:@volute",
+          channel: "@volute",
           sender: "volute",
           isDM: true,
           participants: ["volute", name],

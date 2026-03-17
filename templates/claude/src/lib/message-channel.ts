@@ -21,8 +21,13 @@ export function createMessageChannel(): MessageChannel {
       }
     },
     drain() {
-      // Clear any pending iterator wait so it doesn't consume a message after drain
-      resolve = null;
+      // Resolve any pending iterator wait with done:true so it doesn't
+      // leak as an orphaned promise (the old iterator is discarded after drain)
+      if (resolve) {
+        const r = resolve;
+        resolve = null;
+        r({ value: undefined as any, done: true });
+      }
       return queue.splice(0);
     },
     iterable: {

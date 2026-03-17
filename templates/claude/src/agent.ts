@@ -3,6 +3,8 @@ import { resolve as resolvePath } from "node:path";
 import type { HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { toSDKContent } from "./lib/content.js";
+import { daemonEmit } from "./lib/daemon-client.js";
+import { runHooks } from "./lib/hook-loader.js";
 import { createAutoCommitHook } from "./lib/hooks/auto-commit.js";
 import { createIdentityReloadHook } from "./lib/hooks/identity-reload.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- used as value
@@ -127,6 +129,72 @@ export function createMind(options: {
     }
   }
 
+  // --- Hook event emission ---
+
+  const hooksDir = resolvePath(options.cwd, ".config/hooks");
+
+  function wrapHookWithEmit(hook: HookCallback, source: string, session: Session): HookCallback {
+    return async (...args) => {
+      const result = await hook(...args);
+      const additionalContext = (result as any)?.hookSpecificOutput?.additionalContext;
+      const decision = (result as any)?.decision;
+      if (additionalContext || decision) {
+        const channel = session.currentMessageId
+          ? session.messageChannels.get(session.currentMessageId)
+          : undefined;
+        try {
+          daemonEmit({
+            type: "context",
+            content: additionalContext,
+            metadata: { source, ...(decision ? { hookAction: decision } : {}) },
+            session: session.name,
+            channel,
+            messageId: session.currentMessageId,
+          });
+        } catch (err) {
+          log("mind", `hook emit failed for ${source}:`, err);
+        }
+      }
+      return result;
+    };
+  }
+
+  function createDynamicHook(event: string, session: Session): HookCallback {
+    return async (input) => {
+      try {
+        const result = await runHooks(hooksDir, event, input as Record<string, unknown>);
+        if (result.additionalContext || Object.keys(result.metadata).length > 0) {
+          const channel = session.currentMessageId
+            ? session.messageChannels.get(session.currentMessageId)
+            : undefined;
+          try {
+            daemonEmit({
+              type: "context",
+              content: result.additionalContext,
+              metadata: { source: `dynamic:${event}`, ...result.metadata },
+              session: session.name,
+              channel,
+              messageId: session.currentMessageId,
+            });
+          } catch (err) {
+            log("mind", `dynamic hook emit failed for ${event}:`, err);
+          }
+        }
+        // Only UserPromptSubmit hooks can inject additionalContext into the conversation
+        if (event !== "pre-prompt" || !result.additionalContext) return {};
+        return {
+          hookSpecificOutput: {
+            hookEventName: "UserPromptSubmit" as const,
+            additionalContext: result.additionalContext,
+          },
+        };
+      } catch (err) {
+        log("mind", `dynamic ${event} hook failed:`, err);
+        return {};
+      }
+    };
+  }
+
   // --- SDK stream management ---
 
   function createStream(
@@ -157,9 +225,23 @@ export function createMind(options: {
         resume,
         agents,
         hooks: {
-          PostToolUse: postToolUseHooks,
-          PreCompact: [{ hooks: [preCompactHook] }],
-          UserPromptSubmit: [{ hooks: [sessionContext.hook, replyInstructions.hook] }],
+          PostToolUse: [
+            ...postToolUseHooks,
+            {
+              matcher: ".*",
+              hooks: [createDynamicHook("post-tool-use", session)],
+            },
+          ],
+          PreCompact: [{ hooks: [wrapHookWithEmit(preCompactHook, "pre-compact", session)] }],
+          UserPromptSubmit: [
+            {
+              hooks: [
+                wrapHookWithEmit(sessionContext.hook, "session-context", session),
+                wrapHookWithEmit(replyInstructions.hook, "reply-instructions", session),
+                createDynamicHook("pre-prompt", session),
+              ],
+            },
+          ],
         },
       },
     });

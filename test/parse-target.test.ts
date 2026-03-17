@@ -8,7 +8,7 @@ describe("parseTarget", () => {
     assert.deepStrictEqual(result, {
       platform: "volute",
       identifier: "@lion",
-      uri: "volute:@lion",
+      uri: "@lion",
       isDM: true,
     });
   });
@@ -18,7 +18,7 @@ describe("parseTarget", () => {
     assert.deepStrictEqual(result, {
       platform: "volute",
       identifier: "animal-chat",
-      uri: "volute:animal-chat",
+      uri: "animal-chat",
       isDM: false,
     });
   });

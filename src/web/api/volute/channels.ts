@@ -58,6 +58,15 @@ const app = new Hono<AuthEnv>()
       throw err;
     }
   })
+  .get("/:name", async (c) => {
+    const name = c.req.param("name");
+
+    const ch = await getChannelByName(name);
+    if (!ch) return c.json({ error: "Channel not found" }, 404);
+
+    const participants = await getParticipants(ch.id);
+    return c.json({ ...ch, participants });
+  })
   .post("/:name/join", async (c) => {
     const name = c.req.param("name");
     const user = c.get("user");

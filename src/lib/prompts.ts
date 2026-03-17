@@ -18,6 +18,7 @@ export const PROMPT_KEYS = [
   "sprout_message",
   "restart_message",
   "merge_message",
+  "upgrade_message",
   "compaction_warning",
   "compaction_instructions",
   "reply_instructions",
@@ -67,6 +68,13 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
     content: '[system] Variant "${name}" has been merged and you have been restarted.',
     description: "Variant merge notification",
     variables: ["name"],
+    category: "system",
+  },
+  upgrade_message: {
+    content:
+      "[system] Your framework has been upgraded to the latest version. You have been restarted. Check your skills and CLAUDE.md for any changes.",
+    description: "Sent after a template upgrade completes",
+    variables: [],
     category: "system",
   },
   compaction_warning: {

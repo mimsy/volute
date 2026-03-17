@@ -1,4 +1,4 @@
-import { splitMessage, writeChannelEntry } from "../../connectors/sdk.js";
+import { splitMessage } from "../../connectors/sdk.js";
 import {
   type ChannelConversation,
   type ChannelUser,
@@ -46,7 +46,7 @@ export async function read(
   limit: number,
 ): Promise<string> {
   const token = requireToken(env);
-  const channelId = resolveChannelId(env, channelSlug);
+  const channelId = resolveChannelId(channelSlug);
   const data = (await slackApi(token, "conversations.history", {
     channel: channelId,
     limit,
@@ -66,7 +66,7 @@ export async function send(
   images?: ImageAttachment[],
 ): Promise<void> {
   const token = requireToken(env);
-  const channelId = resolveChannelId(env, channelSlug);
+  const channelId = resolveChannelId(channelSlug);
 
   if (images?.length) {
     for (const img of images) {
@@ -220,8 +220,6 @@ export async function createConversation(
     ids.push(user.id);
   }
 
-  const mindName = env.VOLUTE_MIND;
-
   if (name) {
     // Create named private channel and invite participants
     const createData = (await slackApi(token, "conversations.create", {
@@ -242,37 +240,14 @@ export async function createConversation(
     const teamName = authData.team ?? "workspace";
     const slug = `slack:${slugify(teamName)}/${slugify(name)}`;
 
-    if (mindName) {
-      writeChannelEntry(mindName, slug, {
-        platformId: channelId,
-        platform: "slack",
-        name,
-        type: "channel",
-      });
-    }
-
     return slug;
   }
 
   // Open a DM or group DM (idempotent for same participants)
-  const openData = (await slackApi(token, "conversations.open", {
-    users: ids.join(","),
-  })) as { channel: { id: string } };
-  const platformId = openData.channel.id;
+  const openData = (await slackApi(token, "conversations.open", { users: ids.join(",") })) as {
+    channel: { id: string };
+  };
 
-  const slug =
-    participants.length === 1
-      ? `slack:@${slugify(participants[0])}`
-      : `slack:@${participants.map(slugify).sort().join(",")}`;
-
-  if (mindName) {
-    writeChannelEntry(mindName, slug, {
-      platformId,
-      platform: "slack",
-      name: participants.join(", "),
-      type: participants.length === 1 ? "dm" : "channel",
-    });
-  }
-
-  return slug;
+  // Return slug with actual channel ID so resolveChannelId can extract it for API calls
+  return `slack:${openData.channel.id}`;
 }

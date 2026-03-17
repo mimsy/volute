@@ -140,14 +140,6 @@ export function createExportArchive(options: ExportOptions): AdmZip {
     }
   }
 
-  // Always include channels.json from state dir
-  if (existsSync(state)) {
-    const channelsPath = resolve(state, "channels.json");
-    if (existsSync(channelsPath)) {
-      zip.addFile("state/channels.json", readFileSync(channelsPath));
-    }
-  }
-
   // Optionally include env.json from state dir
   if (includeEnv && existsSync(state)) {
     const envPath = resolve(state, "env.json");
@@ -229,7 +221,6 @@ export function extractArchive(
 ): {
   manifest: ExportManifest;
   mindDir: string;
-  channelsJson: string | null;
   envJson: string | null;
   historyJsonl: string | null;
   sessionsDir: string | null;
@@ -267,7 +258,6 @@ export function extractArchive(
     writeFileSync(destPath, entry.getData());
   }
 
-  const channelsJson = resolve(extractedStateDir, "channels.json");
   const envJson = resolve(extractedStateDir, "env.json");
   const historyJsonl = resolve(normalizedDestDir, "history.jsonl");
   const sessionsDir = resolve(normalizedDestDir, "sessions");
@@ -275,7 +265,6 @@ export function extractArchive(
   return {
     manifest,
     mindDir: extractedMindDir,
-    channelsJson: existsSync(channelsJson) ? channelsJson : null,
     envJson: existsSync(envJson) ? envJson : null,
     historyJsonl: existsSync(historyJsonl) ? historyJsonl : null,
     sessionsDir: existsSync(sessionsDir) ? sessionsDir : null,

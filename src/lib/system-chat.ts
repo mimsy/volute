@@ -1,4 +1,3 @@
-import { writeChannelEntry } from "../connectors/sdk.js";
 import { aiComplete } from "./ai-service.js";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "./auth.js";
 import { deliverMessage } from "./delivery/message-delivery.js";
@@ -38,19 +37,6 @@ export async function ensureSystemDM(mindName: string): Promise<{ conversationId
     title: "Volute",
   });
 
-  try {
-    writeChannelEntry(mindName, "volute:@volute", {
-      platformId: conv.id,
-      platform: "volute",
-      name: "Volute",
-      type: "dm",
-    });
-  } catch (err) {
-    slog.warn(`failed to write channel entry for ${mindName}`, log.errorData(err));
-    // Don't cache — retry channel entry write on next call
-    return { conversationId: conv.id };
-  }
-
   dmCache.set(mindName, conv.id);
   return { conversationId: conv.id };
 }
@@ -71,7 +57,7 @@ export async function sendSystemMessage(
 
   await deliverMessage(mindName, {
     content: [{ type: "text", text }],
-    channel: "volute:@volute",
+    channel: "@volute",
     conversationId,
     sender: "volute",
     isDM: true,
@@ -170,7 +156,7 @@ export async function generateSystemReply(
 
   await deliverMessage(mindName, {
     content: [{ type: "text", text: response }],
-    channel: "volute:@volute",
+    channel: "@volute",
     conversationId,
     sender: "volute",
     isDM: true,

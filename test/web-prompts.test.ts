@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../src/lib/db.js";
 import { PROMPT_DEFAULTS, PROMPT_KEYS } from "../src/lib/prompts.js";
@@ -16,16 +17,19 @@ function createApp() {
 
 let adminCookie: string;
 
+const TEST_USERNAMES = ["prompts-admin", "prompts-viewer"];
+
 async function setup() {
   const db = await getDb();
   await db.delete(systemPrompts);
-  await db.delete(sessions);
-  await db.delete(users);
+  for (const username of TEST_USERNAMES) {
+    await db.delete(users).where(eq(users.username, username));
+  }
 
   // Create admin user and session
   const [user] = await db
     .insert(users)
-    .values({ username: "admin", password_hash: "x", role: "admin" })
+    .values({ username: "prompts-admin", password_hash: "x", role: "admin" })
     .returning();
   const sessionId = crypto.randomUUID();
   await db.insert(sessions).values({ id: sessionId, userId: user.id, createdAt: Date.now() });
@@ -35,8 +39,9 @@ async function setup() {
 async function cleanup() {
   const db = await getDb();
   await db.delete(systemPrompts);
-  await db.delete(sessions);
-  await db.delete(users);
+  for (const username of TEST_USERNAMES) {
+    await db.delete(users).where(eq(users.username, username));
+  }
 }
 
 describe("web prompts API", () => {
@@ -135,7 +140,7 @@ describe("web prompts API", () => {
     const db = await getDb();
     const [viewer] = await db
       .insert(users)
-      .values({ username: "viewer", password_hash: "x", role: "viewer" })
+      .values({ username: "prompts-viewer", password_hash: "x", role: "viewer" })
       .returning();
     const viewerSessionId = crypto.randomUUID();
     await db

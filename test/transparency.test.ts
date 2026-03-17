@@ -8,13 +8,16 @@ function event(type: EventType, content?: string): DaemonEvent {
 }
 
 describe("filterEvent", () => {
-  describe("inbound/outbound always pass through", () => {
+  describe("inbound/outbound/context always pass through", () => {
     for (const preset of ["transparent", "standard", "private", "silent"] as TransparencyPreset[]) {
       it(`inbound passes in ${preset}`, () => {
         assert.deepEqual(filterEvent(preset, event("inbound", "hi")), event("inbound", "hi"));
       });
       it(`outbound passes in ${preset}`, () => {
         assert.deepEqual(filterEvent(preset, event("outbound", "hi")), event("outbound", "hi"));
+      });
+      it(`context passes in ${preset}`, () => {
+        assert.deepEqual(filterEvent(preset, event("context", "ctx")), event("context", "ctx"));
       });
     }
   });

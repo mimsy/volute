@@ -42,7 +42,7 @@ describe("mind-activity-tracker", () => {
   });
 
   test("text event also transitions from idle to active", async () => {
-    onMindEvent("test-mind", "text", "volute:@alice");
+    onMindEvent("test-mind", "text", "@alice");
     await wait();
     const active = received.filter((e) => e.type === "mind_active" && e.mind === "test-mind");
     assert.equal(active.length, 1);

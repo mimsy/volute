@@ -4,7 +4,7 @@ import type { DaemonEvent, EventType } from "./daemon-client.js";
 
 export type TransparencyPreset = "transparent" | "standard" | "private" | "silent";
 
-type FilterableEventType = Exclude<EventType, "inbound" | "outbound">;
+type FilterableEventType = Exclude<EventType, "inbound" | "outbound" | "context">;
 
 const PRESET_RULES: Record<
   TransparencyPreset,
@@ -53,7 +53,7 @@ const PRESET_RULES: Record<
 };
 
 // Communication records are always emitted (bypass transparency filtering)
-const ALWAYS_ALLOWED: ReadonlySet<string> = new Set(["inbound", "outbound"]);
+const ALWAYS_ALLOWED: ReadonlySet<string> = new Set(["inbound", "outbound", "context"]);
 
 export function loadTransparencyPreset(): TransparencyPreset {
   for (const file of ["home/.config/config.json", "home/.config/volute.json"]) {

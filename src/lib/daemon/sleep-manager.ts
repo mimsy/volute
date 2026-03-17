@@ -209,7 +209,7 @@ export class SleepManager {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             content: [{ type: "text", text: preSleepMsg }],
-            channel: "volute:@volute",
+            channel: "@volute",
             sender: "volute",
             isDM: true,
             participants: ["volute", name],
@@ -319,7 +319,7 @@ export class SleepManager {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               content: [{ type: "text", text: summaryText }],
-              channel: "volute:@volute",
+              channel: "@volute",
               sender: "volute",
               isDM: true,
               participants: ["volute", name],

@@ -2,7 +2,6 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
-import { writeChannelEntry } from "../../../connectors/sdk.js";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js";
 import { routeOutboundBridge } from "../../../lib/bridge-outbound.js";
 import { getActiveTurnId, getLastToolUseEventId } from "../../../lib/daemon/turn-tracker.js";
@@ -34,8 +33,6 @@ async function fanOutToMinds(opts: {
   convTitle: string | null;
   /** Override isDM (defaults to participants.length === 2) */
   isDM?: boolean;
-  /** Override channel entry type (defaults to isDM ? "dm" : "channel") */
-  channelEntryType?: "dm" | "channel";
   /** Extra fields passed to buildVoluteSlug (e.g. convType, convName) */
   slugExtra?: Partial<SlugOpts>;
   /** Maps mind username to delivery target name (for variant-aware targeting) */
@@ -45,7 +42,6 @@ async function fanOutToMinds(opts: {
   const mindParticipants = participants.filter((p) => p.userType === "mind");
   const participantNames = participants.map((p) => p.username);
   const isDM = opts.isDM ?? participants.length === 2;
-  const channelEntryType = opts.channelEntryType ?? (isDM ? "dm" : "channel");
 
   const { getMindManager } = await import("../../../lib/daemon/mind-manager.js");
   const { getSleepManagerIfReady } = await import("../../../lib/daemon/sleep-manager.js");
@@ -69,21 +65,6 @@ async function fanOutToMinds(opts: {
       conversationId: opts.conversationId,
       ...opts.slugExtra,
     });
-  }
-
-  // Write slug → platformId mapping for all mind participants
-  const channelEntry: import("../../../connectors/sdk.js").ChannelEntry = {
-    platformId: opts.conversationId,
-    platform: "volute",
-    name: opts.convTitle ?? undefined,
-    type: channelEntryType,
-  };
-  for (const ap of mindParticipants) {
-    try {
-      writeChannelEntry(ap.username, slugForMind(ap.username), channelEntry);
-    } catch (err) {
-      log.warn(`failed to write channel entry for ${ap.username}`, log.errorData(err));
-    }
   }
 
   // Fire-and-forget: deliver to all target minds (running or sleeping)
@@ -274,7 +255,6 @@ const app = new Hono<AuthEnv>()
       senderName,
       convTitle,
       isDM,
-      channelEntryType: isDM ? "dm" : "channel",
       slugExtra: conv
         ? { convType: conv.type as "dm" | "channel", convName: conv.name }
         : undefined,
@@ -434,7 +414,6 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       senderName,
       convTitle: conv.title,
       isDM,
-      channelEntryType: isDM ? "dm" : "channel",
       slugExtra: { convType: conv.type as "dm" | "channel", convName: conv.name },
     });
 

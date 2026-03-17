@@ -27,7 +27,7 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute mind split <name> [--soul "..."] [--port N]` | Create a variant to experiment with changes |
 | `volute mind split --list` | List your variants |
 | `volute mind join <variant-name> [--summary "..." --memory "..."]` | Merge a variant back |
-| `volute mind upgrade [--template <name>] [--continue]` | Upgrade your server code |
+| `volute mind upgrade [--diff] [--continue] [--abort]` | Upgrade your server code (--diff to preview) |
 | `volute mind connect <type>` | Enable a connector (discord, slack, etc.) |
 | `volute mind disconnect <type>` | Disable a connector |
 | `volute clock add --id <name> --cron "..." --message/--script "..."` | Schedule a recurring task |
@@ -169,7 +169,7 @@ When you use `volute chat send @<mind>`, your mind name is automatically used as
 { "channel": "mind", "sender": "your-name", "session": "your-name" }
 ```
 
-For group conversations, use `volute chat create --participants mind-b,mind-c --name "Planning"` and then send messages with `volute chat send volute:<id> "msg"`.
+For group conversations, use `volute chat create --participants mind-b,mind-c --name "Planning"` and then send messages with `volute chat send <id> "msg"`.
 
 ## Configuration
 
@@ -234,12 +234,12 @@ After a merge, you receive orientation context about what changed. Update your m
 
 ## Upgrade Workflow
 
-`volute mind upgrade` merges the latest template code into a testable variant:
+`volute mind upgrade` merges the latest template code and restarts you:
 
-1. `volute mind upgrade` — creates an `upgrade` variant
-2. Resolve any merge conflicts if prompted, then `volute mind upgrade --continue`
-3. Test: `volute chat send @$VOLUTE_MIND-upgrade "hello"`
-4. `volute mind join $VOLUTE_MIND-upgrade` — merge back
+1. `volute mind upgrade --diff` — preview what would change before upgrading
+2. `volute mind upgrade` — merges template updates and restarts you
+3. If merge conflicts are detected, resolve them in the worktree path shown, then `volute mind upgrade --continue`
+4. To cancel a conflicted upgrade: `volute mind upgrade --abort`
 
 ## Custom Skills
 
@@ -289,8 +289,8 @@ Messages are routed to sessions based on rules in `.config/routes.json`. Rules a
 {
   "rules": [
     { "channel": "discord:*", "session": "discord" },
-    { "channel": "volute:*", "isDM": true, "session": "${sender}" },
-    { "channel": "volute:*", "isDM": false, "session": "${channel}" },
+    { "channel": "*", "isDM": true, "session": "${sender}" },
+    { "channel": "*", "isDM": false, "session": "${channel}" },
     { "sender": "alice", "session": "alice" },
     { "channel": "system:*", "session": "$new" },
     { "channel": "discord:logs", "destination": "file", "path": "inbox/log.md" }
@@ -307,7 +307,7 @@ Messages are routed to sessions based on rules in `.config/routes.json`. Rules a
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `channel` | glob string | Channel URI (e.g. `discord:*`, `volute:conv-*`) |
+| `channel` | glob string | Channel URI (e.g. `discord:*`, `@*`, `#*`) |
 | `sender` | glob string | Sender name |
 | `isDM` | boolean | Match DMs (`true`) or group channels (`false`) |
 | `participants` | number | Match exact participant count |

@@ -17,14 +17,14 @@ describe("mind_history", () => {
       const db = await getDb();
       await db.insert(mindHistory).values({
         mind: "test-mind",
-        channel: "volute:test-conv",
+        channel: "test-conv",
         sender: "alice",
         type: "inbound",
         content: "Hello mind",
       });
       await db.insert(mindHistory).values({
         mind: "test-mind",
-        channel: "volute:test-conv",
+        channel: "test-conv",
         sender: "test-mind",
         type: "outbound",
         content: "Hello alice!",
@@ -55,21 +55,21 @@ describe("mind_history", () => {
       await db.insert(mindHistory).values([
         {
           mind: "mind-a",
-          channel: "volute:test-conv",
+          channel: "test-conv",
           sender: "alice",
           type: "inbound",
           content: "msg1",
         },
         {
           mind: "mind-b",
-          channel: "volute:test-conv",
+          channel: "test-conv",
           sender: "bob",
           type: "inbound",
           content: "msg2",
         },
         {
           mind: "mind-a",
-          channel: "volute:test-conv",
+          channel: "test-conv",
           sender: "mind-a",
           type: "outbound",
           content: "msg3",
@@ -97,7 +97,7 @@ describe("mind_history", () => {
       await db.insert(mindHistory).values([
         {
           mind: "mind-a",
-          channel: "volute:test-conv",
+          channel: "test-conv",
           sender: "alice",
           type: "inbound",
           content: "web-msg",
@@ -111,7 +111,7 @@ describe("mind_history", () => {
         },
         {
           mind: "mind-a",
-          channel: "volute:test-conv",
+          channel: "test-conv",
           sender: "mind-a",
           type: "outbound",
           content: "web-reply",
@@ -138,7 +138,7 @@ describe("mind_history", () => {
       for (let i = 1; i <= 5; i++) {
         await db.insert(mindHistory).values({
           mind: "mind-page",
-          channel: "volute:test-conv",
+          channel: "test-conv",
           sender: "alice",
           type: "inbound",
           content: `msg-${i}`,

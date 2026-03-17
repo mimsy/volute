@@ -3,6 +3,7 @@ import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import AdmZip from "adm-zip";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../src/lib/db.js";
 import { addMind, mindDir, voluteHome } from "../src/lib/registry.js";
@@ -24,16 +25,19 @@ function createApp() {
   return app;
 }
 
+const TEST_USERNAMES = ["skills-admin", "skills-viewer"];
+
 async function setupAuth() {
   const db = await getDb();
   await db.delete(sharedSkills);
-  await db.delete(sessions);
-  await db.delete(users);
+  for (const username of TEST_USERNAMES) {
+    await db.delete(users).where(eq(users.username, username));
+  }
 
   // Create admin user and session
   const [user] = await db
     .insert(users)
-    .values({ username: "admin", password_hash: "x", role: "admin" })
+    .values({ username: "skills-admin", password_hash: "x", role: "admin" })
     .returning();
   const sessionId = crypto.randomUUID();
   await db.insert(sessions).values({ id: sessionId, userId: user.id, createdAt: Date.now() });
@@ -43,8 +47,9 @@ async function setupAuth() {
 async function cleanup() {
   const db = await getDb();
   await db.delete(sharedSkills);
-  await db.delete(sessions);
-  await db.delete(users);
+  for (const username of TEST_USERNAMES) {
+    await db.delete(users).where(eq(users.username, username));
+  }
   // Clean up filesystem
   const dir = mindDir(testMindName);
   if (existsSync(dir)) rmSync(dir, { recursive: true });
@@ -320,7 +325,7 @@ describe("web skills API — mind skills", () => {
     const db = await getDb();
     const [viewer] = await db
       .insert(users)
-      .values({ username: "viewer", password_hash: "x", role: "viewer" })
+      .values({ username: "skills-viewer", password_hash: "x", role: "viewer" })
       .returning();
     const viewerSessionId = crypto.randomUUID();
     await db

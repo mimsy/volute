@@ -8,7 +8,7 @@ export function slugify(text: string): string {
 
 /**
  * Build a volute channel slug for a conversation.
- * Channels use `volute:#name`, DMs use `volute:@other-username`, fallback to `volute:conversationId`.
+ * Channels use `#name`, DMs use `@other-username`, fallback to bare conversationId.
  */
 export function buildVoluteSlug(opts: {
   participants: { username: string }[];
@@ -19,9 +19,9 @@ export function buildVoluteSlug(opts: {
   convName?: string | null;
 }): string {
   if (opts.convType === "channel" && opts.convName) {
-    return `volute:#${opts.convName}`;
+    return `#${opts.convName}`;
   }
   const other = opts.participants.find((p) => p.username !== opts.mindUsername);
   const otherSlug = other ? slugify(other.username) : "";
-  return otherSlug ? `volute:@${otherSlug}` : `volute:${opts.conversationId}`;
+  return otherSlug ? `@${otherSlug}` : opts.conversationId;
 }

@@ -1,7 +1,6 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
-import { writeChannelEntry } from "../../connectors/sdk.js";
 import { getOrCreateMindUser } from "../../lib/auth.js";
 import { getBridgeDef } from "../../lib/bridge-defs.js";
 import {
@@ -286,17 +285,6 @@ async function fanOutToBridgedMinds(opts: {
       convTitle: null,
       conversationId: opts.conversationId,
     });
-
-    // Write channel entry so the mind can resolve the conversation
-    try {
-      writeChannelEntry(mindName, channel, {
-        platformId: opts.conversationId,
-        platform: "volute",
-        type: opts.isDM ? "dm" : "channel",
-      });
-    } catch (err) {
-      log.warn(`failed to write channel entry for ${mindName}`, log.errorData(err));
-    }
 
     deliverMessage(mindName, {
       content: opts.contentBlocks,

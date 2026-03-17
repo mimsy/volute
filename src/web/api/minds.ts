@@ -69,7 +69,6 @@ import {
   wrapForIsolation,
 } from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
-import { getCachedRecentPages, getCachedSites } from "../../lib/pages-watcher.js";
 import {
   getMindPromptDefaults,
   getPrompt,
@@ -78,7 +77,6 @@ import {
 } from "../../lib/prompts.js";
 import {
   addMind,
-  addVariant,
   ensureVoluteHome,
   findMind,
   findVariants,
@@ -128,7 +126,6 @@ type ChannelStatus = {
   name: string;
   displayName: string;
   status: "connected" | "disconnected";
-  showToolCalls: boolean;
 };
 
 async function getMindStatus(name: string, port: number) {
@@ -149,7 +146,6 @@ async function getMindStatus(name: string, port: number) {
   }
 
   const config = readVoluteConfig(mindDir(name));
-  const channelConfig = config?.channels;
   const channels: ChannelStatus[] = [];
 
   // Built-in channels (e.g. volute)
@@ -159,7 +155,6 @@ async function getMindStatus(name: string, port: number) {
       name: provider.name,
       displayName: provider.displayName,
       status: status === "running" ? "connected" : "disconnected",
-      showToolCalls: channelConfig?.[provider.name]?.showToolCalls ?? provider.showToolCalls,
     });
   }
 
@@ -331,6 +326,73 @@ async function npmInstallAsMind(cwd: string, mindName: string): Promise<void> {
   }
 }
 
+/**
+ * Merge the upgrade branch back into main, clean up, install deps, and restart.
+ * Returns { ok, warning? } on success, throws on merge failure.
+ */
+async function mergeUpgradeAndRestart(
+  mindName: string,
+  dir: string,
+  worktreeDir: string,
+  upgradeVariantName: string,
+  upgradeBranch: string,
+  template: string,
+): Promise<{ ok: true; warning?: string }> {
+  // Auto-commit any uncommitted changes in main worktree
+  const mainStatus = (await gitExec(["status", "--porcelain"], { cwd: dir })).trim();
+  if (mainStatus) {
+    await gitExec(["add", "-A"], { cwd: dir });
+    await gitExec(["commit", "-m", "Auto-commit before upgrade merge"], { cwd: dir });
+  }
+
+  await gitExec(["merge", upgradeBranch], { cwd: dir });
+
+  // Merge succeeded — everything below is best-effort cleanup/restart
+  try {
+    await cleanupVariant(upgradeVariantName, dir, worktreeDir);
+  } catch (err) {
+    log.warn(`failed to clean up upgrade worktree for ${mindName}`, log.errorData(err));
+  }
+  try {
+    await gitExec(["branch", "-D", upgradeBranch], { cwd: dir });
+  } catch {
+    // branch may already be deleted by cleanupVariant
+  }
+
+  try {
+    await setMindTemplateHash(mindName, computeTemplateHash(template));
+  } catch (err) {
+    log.warn(`failed to update template hash for ${mindName}`, log.errorData(err));
+  }
+
+  try {
+    await npmInstallAsMind(dir, mindName);
+  } catch (err) {
+    log.warn(`npm install failed after upgrade merge for ${mindName}`, log.errorData(err));
+    return {
+      ok: true,
+      warning: `Upgrade merged but npm install failed: ${err instanceof Error ? err.message : String(err)}. You may need to run npm install manually.`,
+    };
+  }
+
+  // Restart mind with upgrade context
+  const manager = getMindManager();
+  try {
+    if (manager.isRunning(mindName)) {
+      await manager.stopMind(mindName);
+    }
+    manager.setPendingContext(mindName, { type: "upgraded" });
+    await manager.startMind(mindName);
+  } catch (e) {
+    return {
+      ok: true,
+      warning: `Upgrade merged but mind restart failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  return { ok: true };
+}
+
 /** Import a mind from a .volute archive (extracted to tempDir by CLI). */
 async function importFromArchive(
   c: any,
@@ -383,14 +445,9 @@ async function importFromFullArchive(
       generateIdentity(dest);
     }
 
-    // Copy state files (channels.json, env.json) to centralized state dir
+    // Copy state files (env.json) to centralized state dir
     const state = stateDir(name);
     mkdirSync(state, { recursive: true });
-
-    const channelsJson = resolve(tempDir, "state/channels.json");
-    if (existsSync(channelsJson)) {
-      cpSync(channelsJson, resolve(state, "channels.json"));
-    }
 
     const envJson = resolve(tempDir, "state/env.json");
     if (existsSync(envJson)) {
@@ -512,14 +569,9 @@ async function importFromHomeOnlyArchive(
       writeFileSync(promptsPath, `${JSON.stringify(mindPrompts, null, 2)}\n`);
     }
 
-    // 6. Copy state files (channels.json, env.json) to centralized state dir
+    // 6. Copy state files (env.json) to centralized state dir
     const state = stateDir(name);
     mkdirSync(state, { recursive: true });
-
-    const channelsJson = resolve(tempDir, "state/channels.json");
-    if (existsSync(channelsJson)) {
-      cpSync(channelsJson, resolve(state, "channels.json"));
-    }
 
     const envJson = resolve(tempDir, "state/env.json");
     if (existsSync(envJson)) {
@@ -1069,14 +1121,6 @@ const app = new Hono<AuthEnv>()
     );
     return c.json(minds);
   })
-  // Scan a pages directory and return page entries (uses cache from pages-watcher)
-  .get("/pages/sites", async (c) => {
-    return c.json(getCachedSites());
-  })
-  // Recent pages across all minds (uses cache from pages-watcher)
-  .get("/pages/recent", async (c) => {
-    return c.json(getCachedRecentPages());
-  })
   // Get single mind
   .get("/:name", async (c) => {
     const name = c.req.param("name");
@@ -1440,7 +1484,13 @@ const app = new Hono<AuthEnv>()
     const dir = mindDir(mindName);
     if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
 
-    let body: { template?: string; continue?: boolean; abort?: boolean; accept?: boolean } = {};
+    let body: {
+      template?: string;
+      continue?: boolean;
+      abort?: boolean;
+      accept?: boolean;
+      diff?: boolean;
+    } = {};
     try {
       body = await c.req.json();
     } catch {
@@ -1487,7 +1537,7 @@ const app = new Hono<AuthEnv>()
     }
 
     if (body.continue) {
-      // Continue upgrade after conflict resolution
+      // Continue upgrade after conflict resolution — merge back to main
       if (!existsSync(worktreeDir)) {
         return c.json({ error: "No upgrade in progress" }, 400);
       }
@@ -1515,106 +1565,83 @@ const app = new Hono<AuthEnv>()
           throw e;
       }
 
-      // Fix ownership after root git operations so npm install can run as mind user
+      // Re-add home files that match the new .gitignore allowlist patterns
+      try {
+        await gitExec(["add", "home/"], { cwd: worktreeDir });
+      } catch (err) {
+        log.warn(`failed to re-add home files during upgrade for ${mindName}`, log.errorData(err));
+      }
+      try {
+        await gitExec(["diff", "--cached", "--quiet"], { cwd: worktreeDir });
+      } catch {
+        await gitExec(["commit", "-m", "re-add allowlisted home files"], {
+          cwd: worktreeDir,
+        });
+      }
+
+      // Fix ownership after root git operations
       chownMindDir(dir, mindName);
 
+      // Merge upgrade branch back to main, cleanup, and restart
       try {
-        await npmInstallAsMind(worktreeDir, mindName);
-
-        const variantPort = await nextPort();
-        await addVariant(upgradeVariantName, mindName, variantPort, worktreeDir, UPGRADE_BRANCH);
-
-        await getMindManager().startMind(upgradeVariantName);
-
-        return c.json({
-          ok: true,
-          name: mindName,
-          variant: UPGRADE_BRANCH,
-          port: variantPort,
-        });
+        const result = await mergeUpgradeAndRestart(
+          mindName,
+          dir,
+          worktreeDir,
+          upgradeVariantName,
+          UPGRADE_BRANCH,
+          template,
+        );
+        return c.json(result);
       } catch (err) {
-        await cleanupVariant(upgradeVariantName, dir, worktreeDir);
         return c.json(
-          { error: err instanceof Error ? err.message : "Failed to continue upgrade" },
+          { error: err instanceof Error ? err.message : "Failed to merge upgrade" },
           500,
         );
       }
     }
 
     if (body.accept) {
-      // Accept upgrade — merge the upgrade variant back into the parent mind
-      if (!existsSync(worktreeDir)) {
-        return c.json({ error: "No upgrade in progress" }, 400);
-      }
-
-      const variantEntry = await findMind(upgradeVariantName);
-      if (!variantEntry) {
-        return c.json({ error: "Upgrade variant not found in DB" }, 400);
-      }
-
-      // Auto-commit any uncommitted changes in the upgrade worktree
-      const status = (await gitExec(["status", "--porcelain"], { cwd: worktreeDir })).trim();
-      if (status) {
+      // Legacy — upgrades now auto-merge. Clean up any old-style upgrade state.
+      if (existsSync(worktreeDir)) {
         try {
-          await gitExec(["add", "-A"], { cwd: worktreeDir });
-          await gitExec(["commit", "-m", "Auto-commit before upgrade merge"], {
-            cwd: worktreeDir,
-          });
+          await cleanupVariant(upgradeVariantName, dir, worktreeDir, { stop: true });
+        } catch (err) {
+          log.warn(`failed to clean up legacy upgrade variant for ${mindName}`, log.errorData(err));
+        }
+        try {
+          await gitExec(["branch", "-D", UPGRADE_BRANCH], { cwd: dir });
+        } catch {}
+      }
+      return c.json({ error: "Upgrades now auto-merge. Run 'volute mind upgrade' again." }, 400);
+    }
+
+    if (body.diff) {
+      // Preview what the upgrade would change
+      try {
+        // Initialize git repo if missing
+        if (!existsSync(resolve(dir, ".git"))) {
+          return c.json({ error: "Mind has no git history — nothing to diff against" }, 400);
+        }
+
+        await updateTemplateBranch(dir, template, mindName);
+
+        // Show what the template branch has that main doesn't
+        let diff: string;
+        try {
+          diff = await gitExec(["diff", "HEAD...volute/template"], { cwd: dir });
         } catch {
-          return c.json({ error: "Failed to auto-commit upgrade changes before merge" }, 500);
+          // If three-dot diff fails (no common ancestor), fall back to two-dot
+          diff = await gitExec(["diff", "HEAD", "volute/template"], { cwd: dir });
         }
-      }
 
-      // Auto-commit any uncommitted changes in the main worktree
-      const mainStatus = (await gitExec(["status", "--porcelain"], { cwd: dir })).trim();
-      if (mainStatus) {
-        try {
-          await gitExec(["add", "-A"], { cwd: dir });
-          await gitExec(["commit", "-m", "Auto-commit before upgrade merge"], { cwd: dir });
-        } catch (_e) {
-          return c.json({ error: "Failed to auto-commit main changes before merge" }, 500);
-        }
-      }
-
-      // Merge upgrade branch
-      try {
-        await gitExec(["merge", UPGRADE_BRANCH], { cwd: dir });
-      } catch {
-        return c.json({ error: "Merge failed. Resolve conflicts manually." }, 500);
-      }
-
-      await cleanupVariant(upgradeVariantName, dir, worktreeDir, { stop: true });
-
-      // Update template hash
-      try {
-        await setMindTemplateHash(mindName, computeTemplateHash(template));
+        return c.json({ ok: true, diff: diff || "(no changes)" });
       } catch (err) {
-        log.warn(`failed to update template hash for ${mindName}`, log.errorData(err));
+        return c.json(
+          { error: err instanceof Error ? err.message : "Failed to generate diff" },
+          500,
+        );
       }
-
-      // Reinstall dependencies
-      try {
-        await npmInstallAsMind(dir, mindName);
-      } catch (err) {
-        log.warn(`npm install failed after upgrade merge for ${mindName}`, log.errorData(err));
-      }
-
-      // Restart mind
-      const manager = getMindManager();
-      try {
-        if (manager.isRunning(mindName)) {
-          await manager.stopMind(mindName);
-        }
-        manager.setPendingContext(mindName, { type: "merged", name: upgradeVariantName });
-        await manager.startMind(mindName);
-      } catch (e) {
-        return c.json({
-          ok: true,
-          warning: `Upgrade merged but mind restart failed: ${e instanceof Error ? e.message : String(e)}`,
-        });
-      }
-
-      return c.json({ ok: true });
     }
 
     // Fresh upgrade
@@ -1737,27 +1764,25 @@ const app = new Hono<AuthEnv>()
       });
     }
 
-    // Install, register, start
+    // Merge upgrade branch back to main, cleanup, and restart
     try {
-      await npmInstallAsMind(worktreeDir, mindName);
-
-      const variantPort = await nextPort();
-      await addVariant(upgradeVariantName, mindName, variantPort, worktreeDir, UPGRADE_BRANCH);
-
-      await getMindManager().startMind(upgradeVariantName);
-
-      return c.json({
-        ok: true,
-        name: mindName,
-        variant: UPGRADE_BRANCH,
-        port: variantPort,
-      });
-    } catch (err) {
-      await cleanupVariant(upgradeVariantName, dir, worktreeDir);
-      return c.json(
-        { error: err instanceof Error ? err.message : "Failed to complete upgrade" },
-        500,
+      const result = await mergeUpgradeAndRestart(
+        mindName,
+        dir,
+        worktreeDir,
+        upgradeVariantName,
+        UPGRADE_BRANCH,
+        template,
       );
+      return c.json(result);
+    } catch (err) {
+      // Merge failed — clean up
+      try {
+        await cleanupVariant(upgradeVariantName, dir, worktreeDir);
+      } catch (cleanupErr) {
+        log.warn(`cleanup failed after upgrade error for ${mindName}`, log.errorData(cleanupErr));
+      }
+      return c.json({ error: err instanceof Error ? err.message : "Failed to merge upgrade" }, 500);
     }
   })
   // All conversations for a mind (across all channels)

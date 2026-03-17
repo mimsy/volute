@@ -16,20 +16,31 @@ const migrationsFolder = existsSync(resolve(__dirname, "../drizzle"))
 export type DbInstance = ReturnType<typeof drizzle<typeof schema>>;
 
 let db: DbInstance | null = null;
+let dbPromise: Promise<DbInstance> | null = null;
 
 export async function getDb(): Promise<DbInstance> {
   if (db) return db;
-  const dbPath = process.env.VOLUTE_DB_PATH || resolve(voluteSystemDir(), "volute.db");
-  db = drizzle({ connection: { url: `file:${dbPath}` }, schema });
-  await migrate(db, { migrationsFolder });
-  // Restrict database file permissions to owner only
-  try {
-    chmodSync(dbPath, 0o600);
-  } catch (err) {
-    console.error(
-      `[volute] WARNING: Failed to restrict database file permissions on ${dbPath}:`,
-      err,
-    );
-  }
-  return db;
+  if (dbPromise) return dbPromise;
+  dbPromise = (async () => {
+    try {
+      const dbPath = process.env.VOLUTE_DB_PATH || resolve(voluteSystemDir(), "volute.db");
+      const instance = drizzle({ connection: { url: `file:${dbPath}` }, schema });
+      await migrate(instance, { migrationsFolder });
+      // Restrict database file permissions to owner only
+      try {
+        chmodSync(dbPath, 0o600);
+      } catch (err) {
+        console.error(
+          `[volute] WARNING: Failed to restrict database file permissions on ${dbPath}:`,
+          err,
+        );
+      }
+      db = instance;
+      return instance;
+    } catch (err) {
+      dbPromise = null; // Allow retry on next call
+      throw err;
+    }
+  })();
+  return dbPromise;
 }

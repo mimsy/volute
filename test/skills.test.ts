@@ -9,11 +9,13 @@ import { sharedSkills } from "../src/lib/schema.js";
 import {
   getSharedSkill,
   importSkillFromDir,
+  installHookShims,
   installSkill,
   listMindSkills,
   listSharedSkills,
   parseSkillMd,
   publishSkill,
+  removeHookShims,
   removeSharedSkill,
   sharedSkillsDir,
   syncBuiltinSkills,
@@ -81,6 +83,44 @@ describe("parseSkillMd", () => {
   it("returns empty array when no npm-dependencies", () => {
     const result = parseSkillMd("---\nname: test\ndescription: test\n---\n");
     assert.deepEqual(result.npmDependencies, []);
+  });
+
+  it("parses hooks from metadata", () => {
+    const result = parseSkillMd(
+      "---\nname: test\ndescription: test\nmetadata:\n  hooks:\n    pre-prompt: scripts/hook.sh\n---\n",
+    );
+    assert.deepEqual(result.hooks, { "pre-prompt": "scripts/hook.sh" });
+  });
+
+  it("parses multiple hooks", () => {
+    const result = parseSkillMd(
+      "---\nname: test\ndescription: test\nmetadata:\n  hooks:\n    pre-prompt: scripts/a.sh\n    post-tool-use: scripts/b.ts\n---\n",
+    );
+    assert.deepEqual(result.hooks, {
+      "pre-prompt": "scripts/a.sh",
+      "post-tool-use": "scripts/b.ts",
+    });
+  });
+
+  it("returns empty hooks when none declared", () => {
+    const result = parseSkillMd("---\nname: test\ndescription: test\n---\n");
+    assert.deepEqual(result.hooks, {});
+  });
+
+  it("does not capture sibling metadata fields as hooks", () => {
+    const result = parseSkillMd(
+      "---\nname: test\ndescription: test\nmetadata:\n  hooks:\n    pre-prompt: scripts/hook.sh\n  npm-dependencies: libsql\n---\n",
+    );
+    assert.deepEqual(result.hooks, { "pre-prompt": "scripts/hook.sh" });
+    assert.deepEqual(result.npmDependencies, ["libsql"]);
+  });
+
+  it("parses hooks from real resonance SKILL.md format", () => {
+    const result = parseSkillMd(
+      "---\nname: Resonance\ndescription: Semantic memory engine\nmetadata:\n  npm-dependencies: libsql\n  hooks:\n    pre-prompt: scripts/resonance-hook.sh\n---\n",
+    );
+    assert.deepEqual(result.hooks, { "pre-prompt": "scripts/resonance-hook.sh" });
+    assert.deepEqual(result.npmDependencies, ["libsql"]);
   });
 });
 
@@ -476,5 +516,82 @@ describe("syncBuiltinSkills", () => {
     const second = await getSharedSkill("memory");
     assert.ok(second);
     assert.equal(second.version, first.version + 1, "version should bump when content differs");
+  });
+});
+
+describe("hook shim management", () => {
+  it("installs hook shims for declared hooks", () => {
+    const dir = join(voluteHome(), "test-hooks-mind");
+    mkdirSync(join(dir, "home", ".config", "hooks"), { recursive: true });
+
+    installHookShims(dir, "resonance", {
+      "pre-prompt": "scripts/resonance-hook.sh",
+    });
+
+    const shimPath = join(dir, "home", ".config", "hooks", "pre-prompt", "50-resonance.sh");
+    assert.ok(existsSync(shimPath), "shim file should exist");
+    const content = readFileSync(shimPath, "utf-8");
+    assert.ok(content.includes("exec bash"), "shim should use bash for .sh scripts");
+    assert.ok(
+      content.includes(".claude/skills/resonance/scripts/resonance-hook.sh"),
+      "shim should reference skill script",
+    );
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("installs .ts hook shims with npx tsx", () => {
+    const dir = join(voluteHome(), "test-hooks-ts");
+    mkdirSync(join(dir, "home", ".config", "hooks"), { recursive: true });
+
+    installHookShims(dir, "test-skill", {
+      "post-tool-use": "scripts/hook.ts",
+    });
+
+    const shimPath = join(dir, "home", ".config", "hooks", "post-tool-use", "50-test-skill.sh");
+    assert.ok(existsSync(shimPath));
+    const content = readFileSync(shimPath, "utf-8");
+    assert.ok(content.includes("exec npx tsx"), "shim should use npx tsx for .ts scripts");
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("removes hook shims for a skill", () => {
+    const dir = join(voluteHome(), "test-hooks-remove");
+    const eventDir = join(dir, "home", ".config", "hooks", "pre-prompt");
+    mkdirSync(eventDir, { recursive: true });
+
+    // Create a shim
+    writeFileSync(join(eventDir, "50-resonance.sh"), "#!/bin/bash\necho test");
+    // Create another skill's shim that should be kept
+    writeFileSync(join(eventDir, "50-other-skill.sh"), "#!/bin/bash\necho other");
+
+    removeHookShims(dir, "resonance");
+
+    assert.ok(!existsSync(join(eventDir, "50-resonance.sh")), "resonance shim should be removed");
+    assert.ok(existsSync(join(eventDir, "50-other-skill.sh")), "other skill shim should be kept");
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("handles remove when hooks dir does not exist", () => {
+    const dir = join(voluteHome(), "test-hooks-nodir");
+    // Should not throw
+    removeHookShims(dir, "resonance");
+  });
+
+  it("installs multiple hooks for different events", () => {
+    const dir = join(voluteHome(), "test-hooks-multi");
+    mkdirSync(join(dir, "home", ".config", "hooks"), { recursive: true });
+
+    installHookShims(dir, "my-skill", {
+      "pre-prompt": "scripts/pre.sh",
+      "post-tool-use": "scripts/post.sh",
+    });
+
+    assert.ok(existsSync(join(dir, "home", ".config", "hooks", "pre-prompt", "50-my-skill.sh")));
+    assert.ok(existsSync(join(dir, "home", ".config", "hooks", "post-tool-use", "50-my-skill.sh")));
+
+    rmSync(dir, { recursive: true });
   });
 });

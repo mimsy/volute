@@ -58,7 +58,8 @@ export type EventType =
   | "session_start"
   | "done"
   | "inbound"
-  | "outbound";
+  | "outbound"
+  | "context";
 
 export type DaemonEvent = {
   type: EventType;

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import {
   createUser,
   getOrCreateMindUser,
@@ -14,14 +15,27 @@ import {
   deleteConversation,
   getParticipants,
 } from "../src/lib/events/conversations.js";
-import { conversations, messages, users } from "../src/lib/schema.js";
+import { users } from "../src/lib/schema.js";
 import { formatPrefix } from "../templates/_base/src/lib/format-prefix.js";
+
+const TEST_USERNAMES = [
+  "profile-test",
+  "avatar-test",
+  "clear-test",
+  "fields-test",
+  "brain-profile",
+  "sync-mind",
+  "sync-clear",
+  "broadcast-test",
+  "no-broadcast",
+  "mind-profile",
+];
 
 async function cleanup() {
   const db = await getDb();
-  await db.delete(messages);
-  await db.delete(conversations);
-  await db.delete(users);
+  for (const username of TEST_USERNAMES) {
+    await db.delete(users).where(eq(users.username, username));
+  }
 }
 
 describe("user profiles", () => {
@@ -163,7 +177,7 @@ describe("format-prefix participant profiles", () => {
   it("renders participant block when profiles present", () => {
     const result = formatPrefix(
       {
-        channel: "volute:test",
+        channel: "@test",
         sender: "alice",
         participantProfiles: [
           {
@@ -188,13 +202,13 @@ describe("format-prefix participant profiles", () => {
   });
 
   it("omits participant block when no profiles", () => {
-    const result = formatPrefix({ channel: "volute:test", sender: "alice" }, "12:00");
+    const result = formatPrefix({ channel: "@test", sender: "alice" }, "12:00");
     assert.ok(!result.includes("[Participants:"));
   });
 
   it("omits participant block when profiles array is empty", () => {
     const result = formatPrefix(
-      { channel: "volute:test", sender: "alice", participantProfiles: [] },
+      { channel: "@test", sender: "alice", participantProfiles: [] },
       "12:00",
     );
     assert.ok(!result.includes("[Participants:"));

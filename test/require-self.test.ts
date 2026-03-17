@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { approveUser, createUser, getOrCreateMindUser } from "../src/lib/auth.js";
 import { generateMindToken } from "../src/lib/daemon/mind-tokens.js";
 import { getDb } from "../src/lib/db.js";
 import { addMind, addVariant, mindDir, removeMind } from "../src/lib/registry.js";
-import { sessions, users } from "../src/lib/schema.js";
+import { users } from "../src/lib/schema.js";
 import {
   authMiddleware,
   createSession,
@@ -16,10 +17,13 @@ import {
 const testMind = `require-self-test-${Date.now()}`;
 const testVariant = `${testMind}-variant`;
 
+const TEST_USERNAMES = ["admin-user", "admin-placeholder", "regular-user", testMind];
+
 async function cleanup() {
   const db = await getDb();
-  await db.delete(sessions);
-  await db.delete(users);
+  for (const username of TEST_USERNAMES) {
+    await db.delete(users).where(eq(users.username, username));
+  }
   try {
     await removeMind(testMind);
   } catch {}
