@@ -151,7 +151,7 @@ export async function run(args: string[]) {
     console.error("");
     console.error("Examples:");
     console.error('  volute chat send @other-mind "hello"');
-    console.error('  volute chat send animal-chat "hello everyone"');
+    console.error('  volute chat send #animal-chat "hello everyone"');
     console.error('  volute chat send @mind "check this out" --image photo.png');
     console.error("  volute chat send @mind --image photo.png");
     console.error('  volute chat send @mind "check this out" --file notes.txt');
@@ -308,8 +308,18 @@ export async function run(args: string[]) {
     }
     if (!flags.wait) console.log("Message sent.");
   } else if (!parsed.isDM && parsed.platform === "volute") {
-    // For volute group channels (#general, animal-chat), look up by name and send
-    const channelName = parsed.identifier.replace(/^#/, "");
+    // Bare names without # are ambiguous — require explicit sigil
+    if (!parsed.identifier.startsWith("#")) {
+      console.error(
+        `Mind "${parsed.identifier}" not found.\n` +
+          `  To send a DM:      volute chat send @${parsed.identifier} "..."\n` +
+          `  To send to channel: volute chat send #${parsed.identifier} "..."`,
+      );
+      process.exit(1);
+    }
+
+    // For volute group channels (#general), look up by name and send
+    const channelName = parsed.identifier.slice(1);
     const mindSelf = process.env.VOLUTE_MIND;
     const sender = flags.sender || mindSelf || userInfo().username;
 
