@@ -215,19 +215,8 @@ const app = new Hono<AuthEnv>()
     const message = `[webhook: ${event}] ${body}`;
 
     try {
-      const res = await fetch(`http://127.0.0.1:${entry.port}/message`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content: [{ type: "text", text: message }],
-          channel: "system:webhook",
-          sender: "webhook",
-        }),
-      });
-
-      if (!res.ok) {
-        return c.json({ error: `Mind responded with ${res.status}` }, 502);
-      }
+      const { sendSystemMessage } = await import("../../lib/system-chat.js");
+      await sendSystemMessage(name, message);
       return c.json({ ok: true });
     } catch (err) {
       slog.warn(`webhook delivery failed for ${name}`, log.errorData(err));

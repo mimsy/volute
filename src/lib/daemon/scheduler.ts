@@ -1,10 +1,10 @@
 import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
-import { deliverMessage } from "../delivery/message-delivery.js";
 import { exec } from "../exec.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../json-state.js";
 import log from "../logger.js";
 import { mindDir, voluteSystemDir } from "../registry.js";
+import { sendSystemMessage } from "../system-chat.js";
 import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../volute-config.js";
 
 const slog = log.child("scheduler");
@@ -141,13 +141,9 @@ export class Scheduler {
         return;
       }
 
-      const whileSleeping = schedule.whileSleeping;
-
-      await this.deliver(mindName, {
-        content: [{ type: "text", text }],
-        channel: schedule.channel ?? "system:scheduler",
-        sender: schedule.id,
-        whileSleeping,
+      await this.deliverSystem(mindName, `[${schedule.id}] ${text}`, {
+        whileSleeping: schedule.whileSleeping,
+        session: schedule.session,
       });
       slog.info(`fired "${schedule.id}" for ${mindName}`);
 
@@ -192,16 +188,12 @@ export class Scheduler {
     return exec("bash", ["-c", script], { cwd, mindName });
   }
 
-  protected deliver(
+  protected deliverSystem(
     mindName: string,
-    payload: {
-      content: { type: string; text: string }[];
-      channel: string;
-      sender: string;
-      whileSleeping?: "skip" | "queue" | "trigger-wake";
-    },
+    text: string,
+    opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
   ): Promise<void> {
-    return deliverMessage(mindName, payload);
+    return sendSystemMessage(mindName, text, opts);
   }
 }
 

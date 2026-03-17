@@ -5,6 +5,7 @@ import { notifyExtensionsMindStart, notifyExtensionsMindStop } from "../extensio
 import log from "../logger.js";
 import { findMind, getBaseName, mindDir } from "../registry.js";
 import { joinSystemChannelForMind } from "../system-channel.js";
+import { ensureSystemDM, sendSystemMessage } from "../system-chat.js";
 import { readVoluteConfig } from "../volute-config.js";
 import { ensureMailAddress } from "./mail-poller.js";
 import { getMindManager } from "./mind-manager.js";
@@ -30,8 +31,28 @@ export async function startMindFull(name: string): Promise<void> {
 
   if (entry?.parent) return;
 
-  // Seed minds only get the server — no schedules or budget
-  if (!entry || entry.stage === "seed") return;
+  // Seed minds get the server + initial orientation, no schedules or budget
+  if (!entry || entry.stage === "seed") {
+    if (entry?.stage === "seed") {
+      // sendSystemMessage calls ensureSystemDM internally
+      sendSystemMessage(
+        baseName,
+        "You've just been created. A human planted you as a seed. Start a conversation with them — introduce yourself, ask questions, and begin exploring who you want to be.",
+      ).catch((err: unknown) =>
+        log.error(`failed to send seed orientation for ${baseName}`, log.errorData(err)),
+      );
+    } else {
+      ensureSystemDM(baseName).catch((err: unknown) =>
+        log.error(`failed to ensure system DM for ${baseName}`, log.errorData(err)),
+      );
+    }
+    return;
+  }
+
+  // Ensure system DM conversation exists (for sprouted minds)
+  ensureSystemDM(baseName).catch((err: unknown) =>
+    log.error(`failed to ensure system DM for ${baseName}`, log.errorData(err)),
+  );
 
   const dir = mindDir(baseName);
   getScheduler().loadSchedules(baseName);
@@ -64,9 +85,6 @@ export async function startMindFull(name: string): Promise<void> {
   notifyExtensionsMindStart(baseName);
 }
 
-/**
- * Stop a mind server and (for non-variant minds) schedules and budget.
- */
 /**
  * Put a mind to sleep: stop process only, leave schedules/budget running.
  */

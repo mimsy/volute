@@ -114,6 +114,17 @@ export async function startDaemon(opts: {
     log.warn("failed to ensure #system channel", log.errorData(err));
   }
 
+  // Ensure system user exists (non-fatal)
+  try {
+    const { getOrCreateSystemUser } = await import("./lib/auth.js");
+    await getOrCreateSystemUser();
+  } catch (err) {
+    log.warn(
+      "failed to ensure system user — system chat features will be unavailable",
+      log.errorData(err),
+    );
+  }
+
   // Use existing token if set (for testing), otherwise generate one
   const token = process.env.VOLUTE_DAEMON_TOKEN || randomBytes(32).toString("hex");
 

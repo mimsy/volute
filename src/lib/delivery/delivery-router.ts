@@ -77,6 +77,7 @@ export interface DeliveryPayload {
   sender: string | null;
   content: unknown; // string or content block array
   conversationId?: string;
+  session?: string; // explicit target session — skips route matching
   typing?: string[];
   platform?: string;
   isDM?: boolean;

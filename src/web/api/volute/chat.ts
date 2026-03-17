@@ -2,7 +2,7 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
-import { getOrCreateMindUser } from "../../../lib/auth.js";
+import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js";
 import { routeOutboundBridge } from "../../../lib/bridge-outbound.js";
 import { getActiveTurnId, getLastToolUseEventId } from "../../../lib/daemon/turn-tracker.js";
 import { deliverMessage } from "../../../lib/delivery/message-delivery.js";
@@ -20,6 +20,7 @@ import { formatFileSize, stageFile, validateFilePath } from "../../../lib/file-s
 import log from "../../../lib/logger.js";
 import { findMind, getBaseName } from "../../../lib/registry.js";
 import { buildVoluteSlug } from "../../../lib/slugify.js";
+import { generateSystemReply } from "../../../lib/system-chat.js";
 import { getTypingMap } from "../../../lib/typing.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
@@ -146,11 +147,16 @@ const app = new Hono<AuthEnv>()
       if (user.id !== 0) {
         participantIds.push(user.id);
       } else if (body.sender) {
-        // Check if sender is a mind — if so, add their mind user as participant
-        const senderMind = await findMind(body.sender);
-        if (senderMind) {
-          const senderMindUser = await getOrCreateMindUser(body.sender);
-          participantIds.push(senderMindUser.id);
+        // Check if sender is the system user or a mind
+        if (body.sender === "volute") {
+          const systemUser = await getOrCreateSystemUser();
+          participantIds.push(systemUser.id);
+        } else {
+          const senderMind = await findMind(body.sender);
+          if (senderMind) {
+            const senderMindUser = await getOrCreateMindUser(body.sender);
+            participantIds.push(senderMindUser.id);
+          }
         }
       }
       participantIds.push(mindUser.id);
@@ -254,6 +260,17 @@ const app = new Hono<AuthEnv>()
         : undefined,
       targetName: (username) => (username === baseName ? name : username),
     });
+
+    // Check if a mind is messaging a system DM — generate AI reply
+    if (senderIsMind && body.message) {
+      const participants = await getParticipants(conversationId!);
+      const hasSystemUser = participants.some((p) => p.userType === "system");
+      if (hasSystemUser) {
+        generateSystemReply(conversationId!, baseName, body.message).catch((err) =>
+          log.error(`system reply generation failed for ${baseName}`, log.errorData(err)),
+        );
+      }
+    }
 
     return c.json({ ok: true, conversationId });
   })
@@ -399,6 +416,17 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       isDM,
       slugExtra: { convType: conv.type as "dm" | "channel", convName: conv.name },
     });
+
+    // Check if a mind is messaging a system DM — generate AI reply
+    if (user.user_type === "mind" && body.message) {
+      const participants = await getParticipants(body.conversationId);
+      const hasSystemUser = participants.some((p) => p.userType === "system");
+      if (hasSystemUser) {
+        generateSystemReply(body.conversationId, senderName, body.message).catch((err) =>
+          log.error(`system reply generation failed for ${senderName}`, log.errorData(err)),
+        );
+      }
+    }
 
     return c.json({ ok: true, conversationId: body.conversationId });
   },

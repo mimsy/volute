@@ -1,4 +1,4 @@
-import { getOrCreateMindUser } from "./auth.js";
+import { getOrCreateMindUser, getOrCreateSystemUser } from "./auth.js";
 import { deliverMessage } from "./delivery/message-delivery.js";
 import {
   addMessage,
@@ -49,7 +49,12 @@ export async function joinSystemChannelForMind(mindName: string): Promise<void> 
 /** Post a system announcement to the #system channel and deliver to mind participants. */
 export async function announceToSystem(text: string): Promise<void> {
   const channelId = await ensureSystemChannel();
-  await addMessage(channelId, "system", "system", [{ type: "text", text }]);
+  const systemUser = await getOrCreateSystemUser();
+
+  // Ensure system user is a participant
+  await joinChannel(channelId, systemUser.id);
+
+  await addMessage(channelId, "user", "volute", [{ type: "text", text }]);
 
   // Deliver to all mind participants of #system
   const participants = await getParticipants(channelId);
@@ -60,7 +65,7 @@ export async function announceToSystem(text: string): Promise<void> {
       content: [{ type: "text", text }],
       channel,
       conversationId: channelId,
-      sender: "system",
+      sender: "volute",
       participants: participants.map((p) => p.username),
       participantCount: participants.length,
       isDM: false,

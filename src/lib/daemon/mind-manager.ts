@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { getAiConfig, resolveApiKey } from "../ai-service.js";
-import { getDb } from "../db.js";
 import { loadMergedEnv } from "../env.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../isolation.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../json-state.js";
@@ -12,7 +11,7 @@ import { getPrompt } from "../prompts.js";
 import { findMind, mindDir, setMindRunning, stateDir, voluteSystemDir } from "../registry.js";
 import { RotatingLog } from "../rotating-log.js";
 import { isSandboxEnabled, wrapForSandbox } from "../sandbox.js";
-import { mindHistory } from "../schema.js";
+import { sendSystemMessageDirect } from "../system-chat.js";
 import { generateMindToken, revokeMindToken } from "./mind-tokens.js";
 import { RestartTracker } from "./restart-tracker.js";
 import { clearMind as clearTurnState } from "./turn-tracker.js";
@@ -371,15 +370,11 @@ export class MindManager {
 
     const content = parts.join("\n");
 
-    // Persist system message to mind_history
+    // Persist to system DM conversation and deliver directly to mind
+    let conversationId: string | undefined;
     try {
-      const db = await getDb();
-      await db.insert(mindHistory).values({
-        mind: name,
-        type: "inbound",
-        channel: "system",
-        content,
-      });
+      const result = await sendSystemMessageDirect(name, content);
+      conversationId = result.conversationId;
     } catch (err) {
       mlog.error(`failed to persist pending context for ${name}`, log.errorData(err));
     }
@@ -390,7 +385,12 @@ export class MindManager {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           content: [{ type: "text", text: content }],
-          channel: "system",
+          channel: "@volute",
+          sender: "volute",
+          isDM: true,
+          participants: ["volute", name],
+          participantCount: 2,
+          ...(conversationId ? { conversationId } : {}),
         }),
       });
     } catch (err) {

@@ -105,11 +105,16 @@ export async function readAllMinds(): Promise<MindEntry[]> {
 const MIND_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 const MIND_NAME_MAX = 64;
 
+const RESERVED_NAMES = new Set(["volute", "system"]);
+
 export function validateMindName(name: string): string | null {
   if (!name) return "Mind name is required";
   if (name.length > MIND_NAME_MAX) return `Mind name must be at most ${MIND_NAME_MAX} characters`;
   if (!MIND_NAME_RE.test(name)) {
     return "Mind name must start with alphanumeric and contain only alphanumeric, dots, dashes, or underscores";
+  }
+  if (RESERVED_NAMES.has(name.toLowerCase())) {
+    return `"${name}" is a reserved name`;
   }
   return null;
 }

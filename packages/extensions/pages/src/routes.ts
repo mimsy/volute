@@ -107,7 +107,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
             type: "page_updated",
             mind: user.username,
             summary: `${user.username} updated ${file}`,
-            metadata: { file },
+            metadata: { file, iframeUrl: `/ext/pages/public/${user.username}/${file}` },
           },
           c,
         );
