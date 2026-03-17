@@ -298,7 +298,6 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `volute-config.ts` | Mind volute.json config reader |
 | `webhook.ts` | Webhook integration |
 | `isolation.ts` | Per-mind user isolation (`VOLUTE_ISOLATION=user`), user/group management (Linux via useradd, macOS via dscl), chown |
-| `pages-watcher.ts` | Filesystem watcher for mind pages, publishes activity events (controlled by pages extension via lifecycle hooks) |
 
 ### src/lib/daemon/
 
