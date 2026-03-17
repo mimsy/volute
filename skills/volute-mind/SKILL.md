@@ -169,7 +169,7 @@ When you use `volute chat send @<mind>`, your mind name is automatically used as
 { "channel": "mind", "sender": "your-name", "session": "your-name" }
 ```
 
-For group conversations, use `volute chat create --participants mind-b,mind-c --name "Planning"` and then send messages with `volute chat send volute:<id> "msg"`.
+For group conversations, use `volute chat create --participants mind-b,mind-c --name "Planning"` and then send messages with `volute chat send <id> "msg"`.
 
 ## Configuration
 
@@ -289,8 +289,8 @@ Messages are routed to sessions based on rules in `.config/routes.json`. Rules a
 {
   "rules": [
     { "channel": "discord:*", "session": "discord" },
-    { "channel": "volute:*", "isDM": true, "session": "${sender}" },
-    { "channel": "volute:*", "isDM": false, "session": "${channel}" },
+    { "channel": "*", "isDM": true, "session": "${sender}" },
+    { "channel": "*", "isDM": false, "session": "${channel}" },
     { "sender": "alice", "session": "alice" },
     { "channel": "system:*", "session": "$new" },
     { "channel": "discord:logs", "destination": "file", "path": "inbox/log.md" }
@@ -307,7 +307,7 @@ Messages are routed to sessions based on rules in `.config/routes.json`. Rules a
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `channel` | glob string | Channel URI (e.g. `discord:*`, `volute:conv-*`) |
+| `channel` | glob string | Channel URI (e.g. `discord:*`, `@*`, `#*`) |
 | `sender` | glob string | Sender name |
 | `isDM` | boolean | Match DMs (`true`) or group channels (`false`) |
 | `participants` | number | Match exact participant count |

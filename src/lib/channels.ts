@@ -1,4 +1,3 @@
-import { resolveChannelId as resolveChannelIdByName } from "../connectors/sdk.js";
 import * as discord from "./channels/discord.js";
 import * as slack from "./channels/slack.js";
 import * as telegram from "./channels/telegram.js";
@@ -43,7 +42,6 @@ export type ChannelDriver = {
 export type ChannelProvider = {
   name: string;
   displayName: string;
-  showToolCalls: boolean;
   builtIn?: boolean;
   driver?: ChannelDriver;
 };
@@ -52,40 +50,36 @@ export const CHANNELS: Record<string, ChannelProvider> = {
   volute: {
     name: "volute",
     displayName: "Volute",
-    showToolCalls: true,
     builtIn: true,
     driver: volute,
   },
   discord: {
     name: "discord",
     displayName: "Discord",
-    showToolCalls: false,
     driver: discord,
   },
   slack: {
     name: "slack",
     displayName: "Slack",
-    showToolCalls: false,
     driver: slack,
   },
   telegram: {
     name: "telegram",
     displayName: "Telegram",
-    showToolCalls: false,
     driver: telegram,
   },
-  mail: { name: "mail", displayName: "Email", showToolCalls: false },
-  system: { name: "system", displayName: "System", showToolCalls: false },
+  mail: { name: "mail", displayName: "Email" },
+  system: { name: "system", displayName: "System" },
 };
 
 export function getChannelProvider(channelUri?: string): ChannelProvider {
   if (!channelUri) return CHANNELS.volute;
+  if (!channelUri.includes(":")) return CHANNELS.volute;
   const platform = channelUri.split(":")[0];
   return (
     CHANNELS[platform] ?? {
       name: platform,
       displayName: platform,
-      showToolCalls: false,
     }
   );
 }
@@ -94,13 +88,9 @@ export function getChannelDriver(platform: string): ChannelDriver | null {
   return CHANNELS[platform]?.driver ?? null;
 }
 
-/** Resolve a channel slug (e.g. "discord:my-server/general") to its platform ID via channels.json.
- *  Falls back to the slug suffix (part after colon) if not found. */
-export function resolveChannelId(env: Record<string, string>, slug: string): string {
-  const mindName = env.VOLUTE_MIND;
-  if (!mindName) {
-    const colonIdx = slug.indexOf(":");
-    return colonIdx !== -1 ? slug.slice(colonIdx + 1) : slug;
-  }
-  return resolveChannelIdByName(mindName, slug);
+/** Resolve a channel slug to its platform ID.
+ *  Returns the part after the colon, or the full string if no colon. */
+export function resolveChannelId(slug: string): string {
+  const colonIdx = slug.indexOf(":");
+  return colonIdx !== -1 ? slug.slice(colonIdx + 1) : slug;
 }

@@ -1,4 +1,4 @@
-import { splitMessage, writeChannelEntry } from "../../connectors/sdk.js";
+import { splitMessage } from "../../connectors/sdk.js";
 import {
   type ChannelConversation,
   type ChannelUser,
@@ -33,7 +33,7 @@ export async function read(
   limit: number,
 ): Promise<string> {
   const token = requireToken(env);
-  const channelId = resolveChannelId(env, channelSlug);
+  const channelId = resolveChannelId(channelSlug);
   const res = await fetch(`${API_BASE}/channels/${channelId}/messages?limit=${limit}`, {
     headers: { Authorization: `Bot ${token}` },
   });
@@ -57,7 +57,7 @@ export async function send(
   images?: ImageAttachment[],
 ): Promise<void> {
   const token = requireToken(env);
-  const channelId = resolveChannelId(env, channelSlug);
+  const channelId = resolveChannelId(channelSlug);
 
   if (images?.length) {
     for (let i = 0; i < images.length; i++) {
@@ -210,18 +210,7 @@ export async function createConversation(
   if (!res.ok) {
     throw new Error(`Discord API error: ${res.status} ${res.statusText}`);
   }
-  const dm = (await res.json()) as { id: string };
-  const slug = `discord:@${slugify(participants[0])}`;
-
-  const mindName = env.VOLUTE_MIND;
-  if (mindName) {
-    writeChannelEntry(mindName, slug, {
-      platformId: dm.id,
-      platform: "discord",
-      name: participants[0],
-      type: "dm",
-    });
-  }
-
-  return slug;
+  const dmChannel = (await res.json()) as { id: string };
+  // Return slug with actual channel ID so resolveChannelId can extract it for API calls
+  return `discord:${dmChannel.id}`;
 }

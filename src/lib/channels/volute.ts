@@ -37,7 +37,7 @@ export async function read(
 ): Promise<string> {
   const mindName = env.VOLUTE_MIND;
   if (!mindName) throw new Error("VOLUTE_MIND not set");
-  const conversationId = resolveChannelId(env, channelSlug);
+  const conversationId = resolveChannelId(channelSlug);
 
   const { url, token } = getDaemonConfig();
   const headers: Record<string, string> = { Origin: url };
@@ -82,7 +82,7 @@ export async function send(
 ): Promise<void> {
   const mindName = env.VOLUTE_MIND;
   if (!mindName) throw new Error("VOLUTE_MIND not set");
-  const conversationId = resolveChannelId(env, channelSlug);
+  const conversationId = resolveChannelId(channelSlug);
 
   const { url, token } = getDaemonConfig();
   const headers: Record<string, string> = {
@@ -218,7 +218,7 @@ export async function createConversation(
     throw new Error(data.error ?? `Failed to create conversation: ${res.status}`);
   }
   const conv = (await res.json()) as { id: string };
-  // Return the conversation ID directly — resolveChannelId extracts it from the slug.
+  // Return the conversation ID directly — resolveChannelId passes it through.
   // Pretty @username slugs are generated dynamically by listConversations.
-  return `volute:${conv.id}`;
+  return conv.id;
 }

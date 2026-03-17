@@ -104,10 +104,10 @@ describe("resolveRoute (daemon-side)", () => {
       rules: [{ isDM: true, session: "dm" }],
       default: "main",
     };
-    const r = resolveRoute(config, { channel: "volute:abc", isDM: true });
+    const r = resolveRoute(config, { channel: "@abc", isDM: true });
     assert.equal((r as any).session, "dm");
 
-    const r2 = resolveRoute(config, { channel: "volute:abc", isDM: false });
+    const r2 = resolveRoute(config, { channel: "@abc", isDM: false });
     assert.equal((r2 as any).session, "main");
   });
 
@@ -141,9 +141,9 @@ describe("resolveRoute (daemon-side)", () => {
 
   it("passes mode through", () => {
     const config: RoutingConfig = {
-      rules: [{ channel: "volute:#*", session: "channel", mode: "mention" }],
+      rules: [{ channel: "#*", session: "channel", mode: "mention" }],
     };
-    const r = resolveRoute(config, { channel: "volute:#general" });
+    const r = resolveRoute(config, { channel: "#general" });
     assert.equal((r as any).mode, "mention");
   });
 });

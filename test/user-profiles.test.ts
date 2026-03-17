@@ -163,7 +163,7 @@ describe("format-prefix participant profiles", () => {
   it("renders participant block when profiles present", () => {
     const result = formatPrefix(
       {
-        channel: "volute:test",
+        channel: "@test",
         sender: "alice",
         participantProfiles: [
           {
@@ -188,13 +188,13 @@ describe("format-prefix participant profiles", () => {
   });
 
   it("omits participant block when no profiles", () => {
-    const result = formatPrefix({ channel: "volute:test", sender: "alice" }, "12:00");
+    const result = formatPrefix({ channel: "@test", sender: "alice" }, "12:00");
     assert.ok(!result.includes("[Participants:"));
   });
 
   it("omits participant block when profiles array is empty", () => {
     const result = formatPrefix(
-      { channel: "volute:test", sender: "alice", participantProfiles: [] },
+      { channel: "@test", sender: "alice", participantProfiles: [] },
       "12:00",
     );
     assert.ok(!result.includes("[Participants:"));

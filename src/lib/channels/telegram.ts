@@ -28,7 +28,7 @@ export async function send(
   images?: ImageAttachment[],
 ): Promise<void> {
   const token = requireToken(env);
-  const chatId = resolveChannelId(env, channelSlug);
+  const chatId = resolveChannelId(channelSlug);
 
   if (images?.length) {
     const CAPTION_MAX = 1024;
