@@ -2,9 +2,14 @@
 # Cross-session activity — shows what happened in other sessions since last check.
 # Uses the daemon history API. Customize or remove this hook as you like.
 
+if ! command -v jq &>/dev/null; then
+  echo '{}'
+  exit 0
+fi
+
 # Read session from stdin JSON (dynamic hooks receive { event, session } on stdin)
 INPUT=$(cat)
-SESSION=$(echo "$INPUT" | jq -r '.session // ""')
+SESSION=$(echo "$INPUT" | jq -r '.session // ""' 2>/dev/null)
 
 if [ -z "$VOLUTE_DAEMON_PORT" ] || [ -z "$VOLUTE_DAEMON_TOKEN" ] || [ -z "$VOLUTE_MIND" ]; then
   echo '{}'
@@ -19,7 +24,7 @@ if [ -z "$RESPONSE" ]; then
   exit 0
 fi
 
-CONTEXT=$(echo "$RESPONSE" | jq -r '.context // empty')
+CONTEXT=$(echo "$RESPONSE" | jq -r '.context // empty' 2>/dev/null)
 
 if [ -z "$CONTEXT" ]; then
   echo '{}'

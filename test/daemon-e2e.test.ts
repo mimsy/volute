@@ -947,6 +947,74 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.ok(!body.context!.includes("excluded"), "Should not include same session");
   });
 
+  it("cross-session history: uses turn boundary as since timestamp", async () => {
+    await ensureTestMind();
+
+    const { getDb } = await import("../src/lib/db.js");
+    const { mindHistory } = await import("../src/lib/schema.js");
+    const db = await getDb();
+
+    const now = new Date();
+    const thirtyMinAgo = new Date(now.getTime() - 30 * 60_000);
+    const tenMinAgo = new Date(now.getTime() - 10 * 60_000);
+    const fiveMinAgo = new Date(now.getTime() - 5 * 60_000);
+    const fmt = (d: Date) => d.toISOString().replace("T", " ").slice(0, 19);
+
+    // Insert a turn for the requesting session ("web") — this sets the boundary
+    await db.insert(mindHistory).values([
+      {
+        mind: TEST_MIND,
+        session: "web",
+        type: "inbound",
+        content: "hello",
+        turn_id: "web-turn-1",
+        created_at: fmt(tenMinAgo),
+      },
+      {
+        mind: TEST_MIND,
+        session: "web",
+        type: "outbound",
+        content: "hi there",
+        turn_id: "web-turn-1",
+        created_at: fmt(fiveMinAgo),
+      },
+    ]);
+
+    // Insert summaries: one before the turn boundary, one after
+    await db.insert(mindHistory).values([
+      {
+        mind: TEST_MIND,
+        session: "telegram",
+        type: "summary",
+        content: "Old activity before turn boundary",
+        turn_id: "old-turn",
+        created_at: fmt(thirtyMinAgo),
+      },
+      {
+        mind: TEST_MIND,
+        session: "telegram",
+        type: "summary",
+        content: "New activity after turn boundary",
+        turn_id: "new-turn",
+        created_at: fmt(fiveMinAgo),
+      },
+    ]);
+
+    // Turn boundary = start of web-turn-1 = tenMinAgo
+    const res = await daemonRequest(`/api/minds/${TEST_MIND}/history/cross-session?session=web`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { context: string | null };
+    assert.ok(body.context, "Should return context");
+    assert.ok(
+      !body.context!.includes("Old activity before turn boundary"),
+      "Should exclude summaries from before the turn boundary",
+    );
+    assert.ok(
+      body.context!.includes("New activity after turn boundary"),
+      "Should include summaries from after the turn boundary",
+    );
+  });
+
   it("message proxy returns JSON response", async () => {
     if (!process.env.ANTHROPIC_API_KEY) {
       console.log("Skipping message test: ANTHROPIC_API_KEY not set");
