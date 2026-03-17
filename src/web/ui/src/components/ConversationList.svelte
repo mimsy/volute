@@ -90,12 +90,13 @@ $effect(() => {
     {/if}
     {#each channels as conv (conv.id)}
       {@const unread = unreadCounts.get(conv.id) ?? 0}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="conv-item"
         class:active={conv.id === activeId}
+        role="button"
+        tabindex="0"
         onclick={() => onSelect(conv.id)}
-        onkeydown={() => {}}
+        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(conv.id); } }}
       >
         <div class="conv-item-header">
           <div class="conv-item-label" class:active={conv.id === activeId} class:unread={unread > 0}>
@@ -107,7 +108,7 @@ $effect(() => {
           {#if unread > 0}
             <span class="unread-badge">{unread}</span>
           {:else}
-            <button class="delete-btn" onclick={(e) => { e.stopPropagation(); onDelete(conv.id); }}>
+            <button class="delete-btn" onclick={(e) => { e.stopPropagation(); onDelete(conv.id); }} aria-label="Remove">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
             </button>
           {/if}
@@ -127,12 +128,13 @@ $effect(() => {
       {@const dmInfo = getDmInfo(conv)}
       {@const isGroup = (conv.participants?.length ?? 0) > 2}
       {@const unread = unreadCounts.get(conv.id) ?? 0}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="conv-item"
         class:active={conv.id === activeId}
+        role="button"
+        tabindex="0"
         onclick={() => onSelect(conv.id)}
-        onkeydown={() => {}}
+        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(conv.id); } }}
       >
         <div class="conv-item-header">
           <div class="conv-item-label" class:active={conv.id === activeId} class:unread={unread > 0}>
@@ -180,8 +182,7 @@ $effect(() => {
 {#if menuConvId}
   {@const menuConv = conversations.find((c) => c.id === menuConvId)}
   {@const menuDmInfo = menuConv ? getDmInfo(menuConv) : { isMindDm: false }}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="context-menu" style:left="{menuX}px" style:top="{menuY}px" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
+  <div class="context-menu" role="menu" style:left="{menuX}px" style:top="{menuY}px" onclick={(e) => e.stopPropagation()}>
     {#if menuDmInfo.isMindDm && menuDmInfo.mind}
       <button class="context-item" onclick={() => { onOpenMind(menuDmInfo.mind!); closeMenu(); }}>
         Open mind

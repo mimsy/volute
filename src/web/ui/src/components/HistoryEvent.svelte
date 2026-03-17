@@ -130,14 +130,16 @@ async function handleClick() {
 }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div
   class="event"
   class:collapsible
   class:expandable-summary={event.type === "summary" && expandable}
   class:turn-expanded={event.type === "summary" && turnExpanded}
+  role={collapsible ? "button" : undefined}
+  tabindex={collapsible ? 0 : undefined}
   onclick={handleClick}
+  onkeydown={collapsible ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick(); } } : undefined}
   style:--type-color={color}
   bind:this={eventEl}
 >
@@ -170,8 +172,8 @@ async function handleClick() {
     <div class="event-body">
       {#if expandable && turnExpanded}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="turn-branch" onclick={(e) => e.stopPropagation()}>
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <div class="turn-branch" role="group" onclick={(e) => e.stopPropagation()}>
           {#if turnLoading}
             <div class="turn-loading">loading turn...</div>
           {:else if turnError}
@@ -245,15 +247,13 @@ async function handleClick() {
               </div>
             {/each}
           {/if}
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="branch-summary" onclick={() => { turnExpanded = false; }}>
+          <button class="branch-summary" onclick={() => { turnExpanded = false; }}>
             <div class="event-header">
               <span class="time">{formatTime(event.created_at)}</span>
               <span class="type-badge" style:background="{color}15" style:color={color}>summary</span>
             </div>
             <span class="summary-text">{event.content}</span>
-          </div>
+          </button>
           <div class="branch-return"></div>
         </div>
       {:else}
@@ -580,6 +580,12 @@ async function handleClick() {
     position: relative;
     padding: 6px 8px 6px 20px;
     cursor: pointer;
+    width: 100%;
+    background: none;
+    border: none;
+    text-align: left;
+    font: inherit;
+    color: inherit;
   }
   /* Dot on the sub-rail for the summary at end of branch */
   .branch-summary::before {

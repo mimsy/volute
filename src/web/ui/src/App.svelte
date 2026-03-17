@@ -642,12 +642,13 @@ function handleGlobalClick(e: MouseEvent) {
         />
       </div>
       {#if layout.sidebarOpen}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="sidebar-backdrop" onclick={closeSidebar}></div>
+        <button class="sidebar-backdrop" onclick={closeSidebar}></button>
       {/if}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="resize-handle"
+        role="separator"
+        aria-label="Resize sidebar"
         onpointerdown={handleResizeStart}
         onpointermove={handleResizeMove}
         onpointerup={handleResizeEnd}
@@ -724,8 +725,7 @@ function handleGlobalClick(e: MouseEvent) {
                   {/if}
                 </button>
                 {#if showUserMenu}
-                  <!-- svelte-ignore a11y_no_static_element_interactions -->
-                  <div class="user-dropdown">
+                  <div class="user-dropdown" role="menu">
                     <button class="user-dropdown-item" onclick={() => { showUserMenu = false; activeModal = "userSettings"; }}>Profile</button>
                     <button class="user-dropdown-item" onclick={() => { showUserMenu = false; handleLogout(); }}>Logout</button>
                   </div>
@@ -755,12 +755,13 @@ function handleGlobalClick(e: MouseEvent) {
         </div>
         {#if showRightPanel}
           {#if narrowViewport && rightPanelOpen}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="right-panel-backdrop" onclick={closeRightPanel}></div>
+            <button class="right-panel-backdrop" onclick={closeRightPanel}></button>
           {/if}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
             class="resize-handle right-resize-handle"
+            role="separator"
+            aria-label="Resize panel"
             onpointerdown={handleRightResizeStart}
             onpointermove={handleRightResizeMove}
             onpointerup={handleRightResizeEnd}
@@ -1207,10 +1208,18 @@ function handleGlobalClick(e: MouseEvent) {
 
   .right-panel-backdrop {
     display: none;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: default;
   }
 
   .sidebar-backdrop {
     display: none;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: default;
   }
 
   /* Right panel: overlay on narrow viewports */
@@ -1234,6 +1243,9 @@ function handleGlobalClick(e: MouseEvent) {
       inset: 0;
       background: rgba(0, 0, 0, 0.5);
       z-index: 39;
+      border: none;
+      padding: 0;
+      cursor: default;
     }
   }
 
@@ -1261,6 +1273,9 @@ function handleGlobalClick(e: MouseEvent) {
       inset: 0;
       background: rgba(0, 0, 0, 0.5);
       z-index: 49;
+      border: none;
+      padding: 0;
+      cursor: default;
     }
 
     .resize-handle {
@@ -1339,7 +1354,6 @@ function handleGlobalClick(e: MouseEvent) {
   }
 
   :global(html.electron) .page-header button,
-  :global(html.electron) .page-header a,
   :global(html.electron) .page-header .user-menu-anchor {
     -webkit-app-region: no-drag;
   }
