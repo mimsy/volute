@@ -29,9 +29,11 @@ function handleKeydown(e: KeyboardEvent) {
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="modal-overlay" onclick={onClose}>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="modal"
     role="dialog"
+    tabindex="-1"
     class:full={isFullSize}
     style:width={isFullSize ? undefined : size}
     onclick={(e) => e.stopPropagation()}

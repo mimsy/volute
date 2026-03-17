@@ -642,7 +642,7 @@ function handleGlobalClick(e: MouseEvent) {
         />
       </div>
       {#if layout.sidebarOpen}
-        <button class="sidebar-backdrop" onclick={closeSidebar}></button>
+        <button class="sidebar-backdrop" aria-label="Close sidebar" onclick={closeSidebar}></button>
       {/if}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
@@ -755,7 +755,7 @@ function handleGlobalClick(e: MouseEvent) {
         </div>
         {#if showRightPanel}
           {#if narrowViewport && rightPanelOpen}
-            <button class="right-panel-backdrop" onclick={closeRightPanel}></button>
+            <button class="right-panel-backdrop" aria-label="Close panel" onclick={closeRightPanel}></button>
           {/if}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div

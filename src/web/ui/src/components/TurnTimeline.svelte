@@ -400,6 +400,7 @@ function jumpToLatest() {
               {formatRelativeTime(turn.created_at)}
             </div>
             <button
+              aria-label="Toggle turn details"
               class="turn-rail"
               class:turn-rail-expanded={expandedTurns.has(turn.id)}
               onclick={(e) => {
