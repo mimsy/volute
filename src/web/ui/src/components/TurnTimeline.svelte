@@ -431,6 +431,36 @@ function jumpToLatest() {
                       expandedTurns = new Set(expandedTurns);
                     }}
                   />
+                {:else if row.turn.status === "complete"}
+                  <!-- Complete but no summary (e.g. daemon restarted mid-turn) -->
+                  <HistoryEvent
+                    event={{
+                      id: 0,
+                      mind: name,
+                      channel: row.turn.trigger?.channel ?? "",
+                      session: null,
+                      sender: row.turn.trigger?.sender ?? null,
+                      message_id: null,
+                      type: "summary",
+                      content: row.turn.trigger?.content ?? "(no summary)",
+                      metadata: null,
+                      turn_id: row.turn.id,
+                      created_at: row.turn.created_at,
+                    }}
+                    mindName={name}
+                    expandable
+                    compact
+                    turnConversations={row.turn.conversations}
+                    turnActivities={row.turn.activities}
+                    onexpand={(expanded) => {
+                      if (expanded) {
+                        expandedTurns.add(row.turn.id);
+                      } else {
+                        expandedTurns.delete(row.turn.id);
+                      }
+                      expandedTurns = new Set(expandedTurns);
+                    }}
+                  />
                 {:else}
                   {@const events = streamingEvents.get(row.turn.id) ?? []}
                   {#if events.length === 0}
