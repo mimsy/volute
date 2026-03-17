@@ -142,14 +142,18 @@ export function createMind(options: {
         const channel = session.currentMessageId
           ? session.messageChannels.get(session.currentMessageId)
           : undefined;
-        daemonEmit({
-          type: "context",
-          content: additionalContext,
-          metadata: { source },
-          session: session.name,
-          channel,
-          messageId: session.currentMessageId,
-        });
+        try {
+          daemonEmit({
+            type: "context",
+            content: additionalContext,
+            metadata: { source },
+            session: session.name,
+            channel,
+            messageId: session.currentMessageId,
+          });
+        } catch (err) {
+          log("mind", `context emit failed for ${source}:`, err);
+        }
       }
       return result;
     };

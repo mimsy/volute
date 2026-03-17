@@ -22,20 +22,25 @@ export async function getDb(): Promise<DbInstance> {
   if (db) return db;
   if (dbPromise) return dbPromise;
   dbPromise = (async () => {
-    const dbPath = process.env.VOLUTE_DB_PATH || resolve(voluteSystemDir(), "volute.db");
-    const instance = drizzle({ connection: { url: `file:${dbPath}` }, schema });
-    await migrate(instance, { migrationsFolder });
-    // Restrict database file permissions to owner only
     try {
-      chmodSync(dbPath, 0o600);
+      const dbPath = process.env.VOLUTE_DB_PATH || resolve(voluteSystemDir(), "volute.db");
+      const instance = drizzle({ connection: { url: `file:${dbPath}` }, schema });
+      await migrate(instance, { migrationsFolder });
+      // Restrict database file permissions to owner only
+      try {
+        chmodSync(dbPath, 0o600);
+      } catch (err) {
+        console.error(
+          `[volute] WARNING: Failed to restrict database file permissions on ${dbPath}:`,
+          err,
+        );
+      }
+      db = instance;
+      return instance;
     } catch (err) {
-      console.error(
-        `[volute] WARNING: Failed to restrict database file permissions on ${dbPath}:`,
-        err,
-      );
+      dbPromise = null; // Allow retry on next call
+      throw err;
     }
-    db = instance;
-    return instance;
   })();
   return dbPromise;
 }
