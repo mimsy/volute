@@ -30,7 +30,7 @@ const notifyHandler: CommandHandler = async (args, ctx) => {
     type: "page_updated",
     mind: mindName,
     summary: `${mindName} updated ${file}`,
-    metadata: { file },
+    metadata: { file, iframeUrl: `/ext/pages/public/${mindName}/${file}` },
   });
 
   // Invalidate the pages cache

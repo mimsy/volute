@@ -48,7 +48,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
           type: "note_created",
           mind: user.username,
           summary: `${user.username} wrote "${title}"`,
-          metadata: { author: user.username, slug: note.slug },
+          metadata: { author: user.username, slug: note.slug, bodyHtml: content.slice(0, 500) },
         });
 
         return { output: `Published: ${note.author_username}/${note.slug}` };
