@@ -16,9 +16,7 @@ import type {
   MindSkillInfo,
   Participant,
   Prompt,
-  RecentPage,
   SharedSkill,
-  Site,
   TurnRow,
   UpdateResult,
   Variant,
@@ -398,16 +396,6 @@ export function updatePrompt(key: string, content: string): Promise<void> {
 
 export function resetPrompt(key: string): Promise<void> {
   return del(`${V1}/prompts/${enc(key)}`);
-}
-
-// --- Pages ---
-
-export function fetchRecentPages(): Promise<RecentPage[]> {
-  return get(`${V1}/minds/pages/recent`);
-}
-
-export function fetchSites(): Promise<Site[]> {
-  return get(`${V1}/minds/pages/sites`);
 }
 
 // --- System ---

@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { after, afterEach, before, describe, it } from "node:test";
+import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { approveUser, createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
@@ -19,6 +28,152 @@ import { authMiddleware, createSession } from "../src/web/middleware/auth.js";
 function configPath() {
   return resolve(voluteSystemDir(), "systems.json");
 }
+
+// ---------------------------------------------------------------------------
+// manifest unit tests
+// ---------------------------------------------------------------------------
+
+import { createCommands } from "../packages/extensions/pages/src/commands.js";
+import {
+  isPublished,
+  publishPage,
+  readManifest,
+  unpublishPage,
+  writeManifest,
+} from "../packages/extensions/pages/src/manifest.js";
+
+describe("pages manifest", () => {
+  let pagesDir: string;
+
+  beforeEach(() => {
+    pagesDir = resolve(tmpdir(), `volute-test-manifest-${Date.now()}`);
+    mkdirSync(pagesDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    if (existsSync(pagesDir)) rmSync(pagesDir, { recursive: true });
+  });
+
+  it("readManifest returns empty pages when no file exists", () => {
+    const manifest = readManifest(pagesDir);
+    assert.deepEqual(manifest, { pages: {} });
+  });
+
+  it("writeManifest + readManifest roundtrips", () => {
+    const data = { pages: { "index.html": { publishedAt: "2026-01-01T00:00:00.000Z" } } };
+    writeManifest(pagesDir, data);
+    const read = readManifest(pagesDir);
+    assert.deepEqual(read, data);
+  });
+
+  it("publishPage adds entry with timestamp", () => {
+    writeFileSync(resolve(pagesDir, "test.html"), "<h1>Test</h1>");
+    const manifest = publishPage(pagesDir, "test.html");
+    assert.ok("test.html" in manifest.pages);
+    assert.ok(manifest.pages["test.html"].publishedAt);
+  });
+
+  it("unpublishPage removes entry", () => {
+    publishPage(pagesDir, "test.html");
+    assert.ok(isPublished(pagesDir, "test.html"));
+    unpublishPage(pagesDir, "test.html");
+    assert.ok(!isPublished(pagesDir, "test.html"));
+  });
+
+  it("isPublished returns false for unpublished file", () => {
+    assert.ok(!isPublished(pagesDir, "nonexistent.html"));
+  });
+
+  it("isPublished returns true for published file", () => {
+    publishPage(pagesDir, "page.html");
+    assert.ok(isPublished(pagesDir, "page.html"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// command unit tests
+// ---------------------------------------------------------------------------
+
+describe("pages commands", () => {
+  let mindDir: string;
+  let pagesDir: string;
+
+  beforeEach(() => {
+    mindDir = resolve(tmpdir(), `volute-test-cmd-${Date.now()}`);
+    pagesDir = resolve(mindDir, "home", "public", "pages");
+    mkdirSync(pagesDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    if (existsSync(mindDir)) rmSync(mindDir, { recursive: true });
+  });
+
+  function makeCtx(mindName = "test-mind") {
+    const events: any[] = [];
+    return {
+      mindName,
+      db: null,
+      authMiddleware: (() => {}) as any,
+      resolveUser: () => null,
+      getUser: async () => null,
+      getUserByUsername: async () => null,
+      publishActivity: (e: any) => events.push(e),
+      getMindDir: (name: string) => (name === mindName ? mindDir : null),
+      getSystemsConfig: () => null,
+      dataDir: "/tmp",
+      _events: events,
+    };
+  }
+
+  it("publish command publishes a file", async () => {
+    writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hello</h1>");
+    const commands = createCommands();
+    const ctx = makeCtx();
+    const result = await commands.publish.handler(["index.html"], ctx);
+    assert.ok("output" in result);
+    assert.ok(result.output.includes("Published: index.html"));
+    assert.ok(isPublished(pagesDir, "index.html"));
+    assert.equal(ctx._events.length, 1);
+    assert.equal(ctx._events[0].type, "page_published");
+  });
+
+  it("publish command rejects missing file", async () => {
+    const commands = createCommands();
+    const result = await commands.publish.handler(["missing.html"], makeCtx());
+    assert.ok("error" in result);
+    assert.ok(result.error.includes("File not found"));
+  });
+
+  it("unpublish command removes a published file", async () => {
+    writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hello</h1>");
+    publishPage(pagesDir, "index.html");
+    const commands = createCommands();
+    const result = await commands.unpublish.handler(["index.html"], makeCtx());
+    assert.ok("output" in result);
+    assert.ok(result.output.includes("Unpublished: index.html"));
+    assert.ok(!isPublished(pagesDir, "index.html"));
+  });
+
+  it("unpublish command rejects non-published file", async () => {
+    const commands = createCommands();
+    const result = await commands.unpublish.handler(["not-published.html"], makeCtx());
+    assert.ok("error" in result);
+    assert.ok(result.error.includes("Not published"));
+  });
+
+  it("list command shows draft and published status", async () => {
+    writeFileSync(resolve(pagesDir, "published.html"), "<h1>Pub</h1>");
+    writeFileSync(resolve(pagesDir, "draft.html"), "<h1>Draft</h1>");
+    publishPage(pagesDir, "published.html");
+    const commands = createCommands();
+    const result = await commands.list.handler([], makeCtx());
+    assert.ok("output" in result);
+    assert.ok(result.output.includes("draft"));
+    assert.ok(result.output.includes("published"));
+    assert.ok(result.output.includes("draft.html"));
+    assert.ok(result.output.includes("published.html"));
+  });
+});
 
 // ---------------------------------------------------------------------------
 // systems-config unit tests

@@ -69,7 +69,6 @@ import {
   wrapForIsolation,
 } from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
-import { getCachedRecentPages, getCachedSites } from "../../lib/pages-watcher.js";
 import {
   getMindPromptDefaults,
   getPrompt,
@@ -1055,14 +1054,6 @@ const app = new Hono<AuthEnv>()
       }),
     );
     return c.json(minds);
-  })
-  // Scan a pages directory and return page entries (uses cache from pages-watcher)
-  .get("/pages/sites", async (c) => {
-    return c.json(getCachedSites());
-  })
-  // Recent pages across all minds (uses cache from pages-watcher)
-  .get("/pages/recent", async (c) => {
-    return c.json(getCachedRecentPages());
   })
   // Get single mind
   .get("/:name", async (c) => {
