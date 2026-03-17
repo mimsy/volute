@@ -43,7 +43,7 @@ export function discoverHooks(hooksDir: string, event: string): string[] {
  */
 function getRunner(scriptPath: string): { cmd: string; args: string[] } {
   const ext = extname(scriptPath);
-  if (ext === ".ts") return { cmd: "npx", args: ["tsx", scriptPath] };
+  if (ext === ".ts") return { cmd: process.execPath, args: ["--import", "tsx", scriptPath] };
   if (ext === ".js") return { cmd: "node", args: [scriptPath] };
   return { cmd: "bash", args: [scriptPath] };
 }

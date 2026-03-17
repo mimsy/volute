@@ -575,7 +575,7 @@ function shimContent(skillId: string, scriptPath: string): string {
   const ext = scriptPath.split(".").pop() ?? "sh";
   const skillScriptPath = `.claude/skills/${skillId}/${scriptPath}`;
   if (ext === "ts") {
-    return `#!/bin/bash\nexec npx tsx ${skillScriptPath} "$@"\n`;
+    return `#!/bin/bash\nexec node --import tsx ${skillScriptPath} "$@"\n`;
   }
   if (ext === "js") {
     return `#!/bin/bash\nexec node ${skillScriptPath} "$@"\n`;

@@ -539,7 +539,7 @@ describe("hook shim management", () => {
     rmSync(dir, { recursive: true });
   });
 
-  it("installs .ts hook shims with npx tsx", () => {
+  it("installs .ts hook shims with node --import tsx", () => {
     const dir = join(voluteHome(), "test-hooks-ts");
     mkdirSync(join(dir, "home", ".config", "hooks"), { recursive: true });
 
@@ -550,7 +550,10 @@ describe("hook shim management", () => {
     const shimPath = join(dir, "home", ".config", "hooks", "post-tool-use", "50-test-skill.sh");
     assert.ok(existsSync(shimPath));
     const content = readFileSync(shimPath, "utf-8");
-    assert.ok(content.includes("exec npx tsx"), "shim should use npx tsx for .ts scripts");
+    assert.ok(
+      content.includes("exec node --import tsx"),
+      "shim should use node --import tsx for .ts scripts",
+    );
 
     rmSync(dir, { recursive: true });
   });

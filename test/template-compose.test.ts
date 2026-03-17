@@ -41,7 +41,7 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, ".init/MEMORY.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/CLAUDE.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/memory/journal/.gitkeep")));
-      assert.ok(existsSync(resolve(composedDir, ".init/.config/hooks/startup-context.sh")));
+      assert.ok(existsSync(resolve(composedDir, ".init/.config/hooks/startup-context.ts")));
       assert.ok(
         existsSync(resolve(composedDir, ".init/.config/hooks/pre-prompt/session-activity.ts")),
       );
