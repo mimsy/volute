@@ -106,6 +106,22 @@ describe("parseSkillMd", () => {
     const result = parseSkillMd("---\nname: test\ndescription: test\n---\n");
     assert.deepEqual(result.hooks, {});
   });
+
+  it("does not capture sibling metadata fields as hooks", () => {
+    const result = parseSkillMd(
+      "---\nname: test\ndescription: test\nmetadata:\n  hooks:\n    pre-prompt: scripts/hook.sh\n  npm-dependencies: libsql\n---\n",
+    );
+    assert.deepEqual(result.hooks, { "pre-prompt": "scripts/hook.sh" });
+    assert.deepEqual(result.npmDependencies, ["libsql"]);
+  });
+
+  it("parses hooks from real resonance SKILL.md format", () => {
+    const result = parseSkillMd(
+      "---\nname: Resonance\ndescription: Semantic memory engine\nmetadata:\n  npm-dependencies: libsql\n  hooks:\n    pre-prompt: scripts/resonance-hook.sh\n---\n",
+    );
+    assert.deepEqual(result.hooks, { "pre-prompt": "scripts/resonance-hook.sh" });
+    assert.deepEqual(result.npmDependencies, ["libsql"]);
+  });
 });
 
 describe("shared skill CRUD", () => {

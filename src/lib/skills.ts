@@ -93,15 +93,38 @@ export function parseSkillMd(content: string): {
   const descMatch = frontmatter.match(/^description:\s*(.+)$/m);
   const depsMatch = frontmatter.match(/^\s*npm-dependencies:\s*(.+)$/m);
 
-  // Parse hooks from metadata block (indented under metadata:)
+  // Parse hooks from metadata block using indentation-aware parsing.
+  // hooks: must appear under metadata:, and hook entries are indented deeper than hooks:.
   const hooks: Record<string, string> = {};
-  const hooksBlock = frontmatter.match(/^\s*hooks:\s*\n((?:\s+\S.*\n?)*)/m);
-  if (hooksBlock) {
-    const lines = hooksBlock[1].split("\n").filter(Boolean);
-    for (const line of lines) {
-      const hookMatch = line.match(/^\s+(\S+):\s*(.+)$/);
+  const lines = frontmatter.split("\n");
+  let inHooks = false;
+  let hooksIndent = -1;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+
+    // Detect "hooks:" key — must be indented (i.e., under metadata:)
+    const hooksStart = line.match(/^(\s+)hooks:\s*$/);
+    if (hooksStart) {
+      inHooks = true;
+      hooksIndent = hooksStart[1].length;
+      continue;
+    }
+
+    if (inHooks) {
+      // Check indentation — hook entries must be deeper than hooks:
+      const lineIndentMatch = line.match(/^(\s*)/);
+      const lineIndent = lineIndentMatch ? lineIndentMatch[1].length : 0;
+
+      // If indentation is <= hooks: level, we've left the hooks block
+      if (lineIndent <= hooksIndent) {
+        inHooks = false;
+        continue;
+      }
+
+      // Parse "event-name: script/path" entries
+      const hookMatch = line.match(/^\s+([a-z0-9-]+):\s*(.+)$/);
       if (hookMatch) {
-        hooks[hookMatch[1].trim()] = hookMatch[2].trim();
+        hooks[hookMatch[1]] = hookMatch[2].trim();
       }
     }
   }
