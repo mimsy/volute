@@ -70,13 +70,13 @@ Three isolation modes are available, configured during [`volute setup`](/volute/
 
 ### Sandbox (default for local installs)
 
-Uses `@anthropic-ai/sandbox-runtime` to restrict mind filesystem access. Each mind can only write to its own directory; reads to other minds' dirs, system state (`volute.db`, `env.json`, `minds.json`), and sensitive user dirs (`.ssh`, `.aws`, `.gnupg`, `.config`) are blocked.
+Uses `@anthropic-ai/sandbox-runtime` to restrict mind filesystem access. Each mind can only write to its own directory; reads to other minds' dirs, system state (`volute.db`, `env.json`), and sensitive user dirs (`.ssh`, `.aws`, `.gnupg`, `.config`) are blocked.
 
 Disable at runtime with `volute up --no-sandbox` or `VOLUTE_SANDBOX=0`.
 
 ### Per-user isolation (system installs)
 
-Creates per-mind OS users (`mind-<name>`, prefix configurable via `VOLUTE_USER_PREFIX`). On Linux, uses `useradd`/`runuser`; on macOS, uses `dscl`/`sudo -u`. Mind and connector processes spawn with the mind's uid/gid. Requires root.
+Creates per-mind OS users (`mind-<name>`, prefix configurable via `VOLUTE_USER_PREFIX`). On Linux, uses `useradd`/`runuser`; on macOS, uses `dscl`/`sudo -u`. Mind and bridge processes spawn with the mind's uid/gid. Requires root.
 
 Enabled automatically by Docker and `volute setup --system`.
 
@@ -86,7 +86,7 @@ No isolation. Used for development or legacy installations.
 
 ## Minds directory
 
-When `VOLUTE_MINDS_DIR` is set (e.g. `/minds`), mind directories live at `$VOLUTE_MINDS_DIR/<name>` instead of `$VOLUTE_HOME/minds/<name>`. Both `volute service install --system` and Docker set this automatically.
+When `VOLUTE_MINDS_DIR` is set (e.g. `/minds`), mind directories live at `$VOLUTE_MINDS_DIR/<name>` instead of `$VOLUTE_HOME/minds/<name>`. Both `volute setup --system` and Docker set this automatically.
 
 ## Environment variables
 

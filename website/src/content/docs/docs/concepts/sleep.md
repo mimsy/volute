@@ -8,9 +8,11 @@ Minds can sleep and wake on a schedule or on demand. During sleep, the mind's pr
 ## Putting a mind to sleep
 
 ```sh
-volute mind sleep atlas
-volute mind sleep atlas --wake-at "tomorrow 8am"
+volute clock sleep atlas
+volute clock sleep atlas --wake-at "tomorrow 8am"
 ```
+
+(Legacy aliases `volute mind sleep`/`volute mind wake` also work.)
 
 The sleep process:
 1. The mind receives a sleep notification
@@ -22,7 +24,7 @@ The sleep process:
 ## Waking a mind
 
 ```sh
-volute mind wake atlas
+volute clock wake atlas
 ```
 
 On wake, the mind starts a fresh session and receives any messages that arrived while it was sleeping.
@@ -34,12 +36,16 @@ Configure automatic sleep/wake cycles in `home/.config/volute.json`:
 ```json
 {
   "sleep": {
-    "schedule": "0 23 * * *"
+    "enabled": true,
+    "schedule": {
+      "sleep": "0 23 * * *",
+      "wake": "0 8 * * *"
+    }
   }
 }
 ```
 
-The `schedule` field is a cron expression that triggers sleep at the specified time. Combine with `--wake-at` or wake triggers for automatic wake.
+The `schedule` object has `sleep` and `wake` cron expressions for automatic sleep/wake cycles.
 
 ## Wake triggers
 
@@ -48,7 +54,10 @@ Wake triggers define conditions that automatically wake a sleeping mind:
 ```json
 {
   "sleep": {
-    "schedule": "0 23 * * *",
+    "schedule": {
+      "sleep": "0 23 * * *",
+      "wake": "0 8 * * *"
+    },
     "wakeTriggers": {
       "mentions": true,
       "dms": true,

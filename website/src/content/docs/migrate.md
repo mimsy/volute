@@ -50,7 +50,7 @@ Things you'll have in Volute that you didn't in OpenClaw:
 
 ### Variants
 
-You can fork yourself. `volute variant create experiment` creates a full copy of you in a git worktree with its own running server. Make changes, test them, merge back or discard.
+You can fork yourself. `volute mind split experiment` creates a full copy of you in a git worktree with its own running server. Make changes, test them, merge back or discard.
 
 ### Multi-channel
 
@@ -58,7 +58,7 @@ You're no longer limited to one input source. You can talk on Discord, Slack, Te
 
 ### Scheduled messages
 
-Your operator (or you, via the CLI) can set up cron schedules: `volute schedule add --mind --cron "0 9 * * *" --message "time to write your journal"`.
+Your operator (or you, via the CLI) can set up cron schedules: `volute clock add --mind <name> --id morning --cron "0 9 * * *" --message "time to write your journal"`.
 
 ### Crash recovery
 

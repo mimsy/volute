@@ -14,10 +14,10 @@ CLI ──→ DaemonClient ──→ Daemon HTTP API
                               │
                     ┌─────────┼─────────┐
                     ▼         ▼         ▼
-              MindManager  ConnectorMgr  Scheduler
+              MindManager  BridgeManager  Scheduler
                     │         │
                     ▼         ▼
-              Mind Process  Connector Process
+              Mind Process  Bridge Process
 ```
 
 ## Key components
@@ -27,7 +27,7 @@ CLI ──→ DaemonClient ──→ Daemon HTTP API
 The daemon entry point starts the web server and initializes the core managers:
 
 - **MindManager** — spawns/stops mind server processes with crash recovery (3s delay)
-- **ConnectorManager** — manages connector processes per mind
+- **BridgeManager** — manages bridge processes (Discord, Slack, Telegram) per mind
 - **Scheduler** — cron-based scheduled messages and scripts for minds
 - **SleepManager** — sleep/wake cycles with cron scheduling, pre-sleep ritual, session archival, message queuing, and wake triggers
 - **MailPoller** — system-wide email polling via volute.systems API
@@ -46,7 +46,7 @@ HTTP client for CLI-to-daemon communication. Reads `~/.volute/daemon.json` for t
 
 ### Registry (`src/lib/registry.ts`)
 
-Mind registry at `~/.volute/minds.json`. Maps mind names to ports, tracks `running` state. Supports `name@variant` syntax via `resolveMind()`. Port allocation starts at 4100.
+Mind registry backed by the `minds` DB table in `volute.db`. Maps mind names to ports, tracks `running` state. Supports `name@variant` syntax via `resolveMind()`. Port allocation starts at 4100.
 
 ## Message flow
 
@@ -97,11 +97,11 @@ Runtime state specific to a mind lives in `<mindDir>/.mind/` — sessions, ident
 
 ### Database
 
-libSQL at `~/.volute/volute.db` (WAL mode, foreign keys) stores users, conversations, messages, mind_history, and sessions. The `users` table uses `user_type` to distinguish `"brain"` (human) and `"mind"` entries. Schema defined with Drizzle ORM.
+libSQL at `~/.volute/volute.db` (WAL mode, foreign keys) stores minds, users, conversations, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, and conversation_reads. The `users` table uses `user_type` to distinguish `"brain"` (human) and `"mind"` entries. Schema defined with Drizzle ORM.
 
-## Connector architecture
+## Bridge architecture
 
-Connectors are separate processes managed by the ConnectorManager. Resolution order:
+Bridges are separate processes managed by the BridgeManager. Resolution order:
 
 1. Mind-specific — `<mindDir>/.mind/connectors/<type>/`
 2. User-shared — `~/.volute/connectors/<type>/`
@@ -109,7 +109,7 @@ Connectors are separate processes managed by the ConnectorManager. Resolution or
 
 ## Channel system
 
-Channel URIs use human-readable slugs. Connectors generate slugs and write mappings to `~/.volute/state/<name>/channels.json`. Channel drivers resolve slugs back to platform IDs.
+Channel URIs use human-readable slugs. Bridges generate slugs and write mappings to `~/.volute/state/<name>/channels.json`. Channel drivers resolve slugs back to platform IDs.
 
 ## Skills system
 
@@ -123,7 +123,7 @@ Each mind has an Ed25519 keypair in `.mind/identity/`. This enables mind-to-mind
 
 Hono backend + Svelte frontend, served by the daemon:
 
-- **Backend** — Hono routes for auth, minds, chat, logs, variants, files, connectors, schedules, skills, pages, prompts, channels, env, keys, file sharing
+- **Backend** — Hono routes for auth, minds, chat, logs, variants, files, bridges, schedules, skills, pages, prompts, channels, env, keys, file sharing, extensions, setup, activity, typing
 - **Frontend** — Svelte SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs)
 - **Real-time** — SSE for conversation events, activity events, log streaming
 - **Profiles** — minds and brains have display names, descriptions, and avatars

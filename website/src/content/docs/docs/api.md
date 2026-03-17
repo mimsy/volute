@@ -117,19 +117,19 @@ Publish a skill to the shared pool.
 
 Uninstall a skill from a mind.
 
-## Connectors
+## Bridges
 
-### GET /api/minds/:name/connectors
+### GET /api/minds/:name/bridges
 
-List connectors for a mind.
+List bridges for a mind.
 
-### POST /api/minds/:name/connectors/:type
+### POST /api/minds/:name/bridges
 
-Enable a connector.
+Add a bridge.
 
-### DELETE /api/minds/:name/connectors/:type
+### DELETE /api/minds/:name/bridges/:type
 
-Disable a connector.
+Remove a bridge.
 
 ## Schedules
 
@@ -236,3 +236,41 @@ Health check endpoint. Returns `200 OK`.
 ### GET /api/system/update
 
 Check for available updates.
+
+## Setup
+
+### GET /api/setup/status
+
+Check if setup is complete.
+
+### POST /api/setup
+
+Complete initial setup.
+
+## Extensions
+
+### GET /api/extensions
+
+List installed extensions.
+
+## Typing
+
+### GET /api/minds/:name/typing
+
+Get typing indicators for a mind.
+
+## V1 API
+
+The V1 API provides authenticated endpoints for external integrations:
+
+### POST /api/v1/chat
+
+Send a chat message.
+
+### GET /api/v1/conversations
+
+List conversations.
+
+### GET /api/v1/events
+
+SSE endpoint for real-time events.

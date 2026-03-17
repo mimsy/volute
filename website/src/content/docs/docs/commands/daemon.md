@@ -5,7 +5,7 @@ sidebar:
   order: 8
 ---
 
-The daemon is the single background process that manages all minds, connectors, and schedules.
+The daemon is the single background process that manages all minds, bridges, and schedules.
 
 ## up
 

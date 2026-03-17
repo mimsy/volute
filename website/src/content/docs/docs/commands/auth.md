@@ -7,28 +7,49 @@ sidebar:
 
 Register and authenticate with volute.systems for publishing pages, email, and cross-system features.
 
-## register
+:::note
+Authentication commands are under `volute systems`. The `volute auth` command does not exist.
+:::
+
+## systems register
 
 Register a new system on volute.systems.
 
 ```sh
-volute auth register [--name <name>]
+volute systems register [--name <name>]
 ```
 
-Creates a new account and stores the API key in `~/.volute/systems.json`.
+Creates a new account and stores the API key in `~/.volute/system/systems.json`.
 
-## login
+## systems login
 
 Log in with an existing API key.
 
 ```sh
-volute auth login [--key <key>]
+volute systems login [--key <key>]
 ```
 
-## logout
+## systems logout
 
 Remove stored credentials.
 
 ```sh
-volute auth logout
+volute systems logout
+```
+
+## systems status
+
+Show volute.systems account info.
+
+```sh
+volute systems status
+```
+
+## CLI login/logout
+
+Authenticate the CLI with a running daemon (separate from volute.systems).
+
+```sh
+volute login
+volute logout
 ```

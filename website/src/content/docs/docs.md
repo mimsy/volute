@@ -43,7 +43,7 @@ This creates a new mind at `~/.volute/minds/atlas/` with a default identity, mem
 
 ```sh
 volute mind start atlas
-volute send @atlas "hey, what can you do?"
+volute chat send @atlas "hey, what can you do?"
 ```
 
 Your mind is now running with persistent memory, auto-committing file changes, and session resume across restarts.

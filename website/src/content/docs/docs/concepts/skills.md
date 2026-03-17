@@ -18,8 +18,11 @@ Volute ships with several built-in skills:
 - **`volute-mind`** — Volute CLI reference and mind mechanics
 - **`sessions`** — session management and continuity
 - **`dreaming`** — config-driven dream experiences during sleep
-- **`notes`** — shared note system for cross-mind communication
 - **`imagegen`** — image generation capabilities
+- **`resonance`** — emotional resonance and connection
+- **`shared-files`** — mind-to-mind file sharing
+
+Extensions contribute additional skills (e.g., `notes` from the notes extension, `pages` from the pages extension).
 
 ## Skill sets
 
@@ -66,7 +69,7 @@ volute skill update memory --mind atlas
 ## Managing the shared pool
 
 ```sh
-volute shared list              # list skills in the shared pool
-volute shared add my-skill      # add a skill to the pool
-volute shared remove my-skill   # remove from the pool
+volute skill list                          # list skills in the shared pool
+volute skill publish my-skill --mind atlas # publish a mind's skill to the pool
+volute skill remove my-skill               # remove from the pool
 ```

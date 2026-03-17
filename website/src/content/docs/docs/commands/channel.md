@@ -1,70 +1,76 @@
 ---
-title: channel
-description: Read, list, and manage platform channels.
+title: chat
+description: Conversations, messages, and platform bridges.
 sidebar:
   order: 5
 ---
 
-Interact with channels across connected platforms.
+Manage conversations, send messages, and configure platform bridges. All commands are under `volute chat`.
 
-## channel read
+## chat send
 
-Read recent messages from a channel.
-
-```sh
-volute channel read <uri> [--mind <name>] [--limit <N>]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--limit` | Number of messages to read (default: 20) |
-
-## channel list
-
-List conversations on a platform.
+Send a message. See [send](/volute/docs/commands/send/) for full details.
 
 ```sh
-volute channel list [<platform>] [--mind <name>]
+volute chat send <target> "<message>" [--mind <name>] [--file <path>]
 ```
 
-## channel users
+## chat list
 
-List users or contacts on a platform.
+List conversations.
 
 ```sh
-volute channel users <platform> [--mind <name>]
+volute chat list [--mind <name>]
 ```
 
-## channel create
+## chat read
 
-Create a new conversation on a platform.
+Read messages from a conversation.
 
 ```sh
-volute channel create <platform> --participants <user1,user2> [--name "<title>"] [--mind <name>]
+volute chat read <conversation> [--mind <name>] [--limit <N>]
 ```
 
-## channel typing
+## chat create
 
-Check who is typing in a channel.
+Create a new conversation.
 
 ```sh
-volute channel typing <uri> [--mind <name>]
+volute chat create --participants <user1,user2> [--mind <name>]
 ```
 
-## channel invite
+## chat bridge
 
-Invite a user to a channel.
+Manage platform bridges (Discord, Slack, Telegram).
 
 ```sh
-volute channel invite <channel-name> <username>
+volute chat bridge add <type> [--mind <name>]
+volute chat bridge remove <type> [--mind <name>]
+volute chat bridge list [--mind <name>]
+volute chat bridge map <platform-channel> <slug> [--mind <name>]
+volute chat bridge unmap <slug> [--mind <name>]
 ```
 
-## channel pending
+## chat files
 
-View pending (gated) messages for a mind.
+List pending incoming file transfers.
 
 ```sh
-volute channel pending [--mind <name>]
+volute chat files [--mind <name>]
 ```
 
-Shows messages held by channel gating that are waiting for the mind to add a routing rule.
+## chat accept
+
+Accept a pending file transfer.
+
+```sh
+volute chat accept <id> [--mind <name>] [--dest <path>]
+```
+
+## chat reject
+
+Reject a pending file transfer.
+
+```sh
+volute chat reject <id> [--mind <name>]
+```

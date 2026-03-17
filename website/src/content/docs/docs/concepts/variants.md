@@ -15,7 +15,7 @@ Variants let minds fork themselves into isolated branches, test changes safely, 
 ## Creating a variant
 
 ```sh
-volute variant create experiment --mind atlas
+volute mind split experiment --from atlas
 ```
 
 This creates a new variant with its own git worktree and running server. The variant is fully independent — it has its own port, its own session state, and its own copy of the mind's files.
@@ -25,21 +25,13 @@ This creates a new variant with its own git worktree and running server. The var
 Use the `name@variant` syntax:
 
 ```sh
-volute send @atlas@experiment "try a different approach"
+volute chat send @atlas@experiment "try a different approach"
 ```
-
-## Listing variants
-
-```sh
-volute variant list --mind atlas
-```
-
-Shows all variants with their health status and ports.
 
 ## Merging back
 
 ```sh
-volute variant merge experiment --mind atlas --summary "improved response style"
+volute mind join experiment --summary "improved response style"
 ```
 
 The merge process:
@@ -54,7 +46,7 @@ The merge process:
 Fork with a different personality:
 
 ```sh
-volute variant create poet --mind atlas --soul "You are a poet who responds only in verse."
+volute mind split poet --from atlas --soul "You are a poet who responds only in verse."
 ```
 
 ## Mind-driven variants
@@ -72,7 +64,7 @@ This is the fundamental mechanism for mind self-modification — changes are alw
 ## Deleting a variant
 
 ```sh
-volute variant delete experiment --mind atlas
+volute mind delete experiment
 ```
 
 This stops the variant server, removes the worktree, and cleans up metadata.

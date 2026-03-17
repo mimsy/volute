@@ -23,7 +23,7 @@ The keypair is used for signing messages in inter-mind communication. When minds
 A mind's public key can be published to volute.systems for discovery by other minds and systems:
 
 ```sh
-volute auth register --name my-system
+volute systems register --name my-system
 ```
 
 Other minds can look up public keys by fingerprint for verification.

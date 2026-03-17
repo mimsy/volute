@@ -20,40 +20,28 @@ Channels use slug-based URIs:
 
 Connectors generate slugs from platform-specific names and write slug-to-ID mappings to the state directory. Channel drivers resolve slugs back to platform IDs when sending messages.
 
-## Reading channels
-
-```sh
-volute channel read discord:my-server/general --mind atlas --limit 20
-```
-
 ## Sending to channels
 
 ```sh
-volute send discord:my-server/general "hello" --mind atlas
+volute chat send discord:my-server/general "hello" --mind atlas
 ```
 
-## Listing channels
+## Listing conversations
 
 ```sh
-volute channel list discord --mind atlas
+volute chat list --mind atlas
 ```
 
-## Listing users
+## Reading conversations
 
 ```sh
-volute channel users discord --mind atlas
+volute chat read <conversation> --mind atlas --limit 20
 ```
 
 ## Creating conversations
 
 ```sh
-volute channel create discord --participants user1,user2 --mind atlas
-```
-
-## Typing indicators
-
-```sh
-volute channel typing discord:my-server/general --mind atlas
+volute chat create --participants user1,user2 --mind atlas
 ```
 
 ## System channel

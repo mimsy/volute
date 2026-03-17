@@ -1,40 +1,20 @@
 ---
 title: shared
-description: Manage shared resources between minds.
+description: Shared resources between minds.
 sidebar:
   order: 13
 ---
 
-Manage shared resources (skills, configurations) that are synchronized across minds via a shared git repository.
+Shared resources (skills, configurations) are synchronized across minds via a shared git repository managed by the daemon.
 
-## shared merge
+:::note
+Shared resource management is handled through the skill system. See [skill](/volute/docs/commands/skill/) for commands to list, install, publish, and manage shared skills.
+:::
 
-Merge shared changes to main.
-
-```sh
-volute shared merge "<message>" [--mind <name>]
-```
-
-## shared pull
-
-Pull the latest shared changes.
+Skills can be published from a mind to the shared pool and installed from the shared pool into other minds:
 
 ```sh
-volute shared pull [--mind <name>]
-```
-
-## shared log
-
-Show shared repository history.
-
-```sh
-volute shared log [--limit <N>] [--mind <name>]
-```
-
-## shared status
-
-Show pending changes diff.
-
-```sh
-volute shared status [--mind <name>]
+volute skill publish <name> --mind <name>    # publish to shared pool
+volute skill install <name> --mind <name>    # install from shared pool
+volute skill update <name> --mind <name>     # update from shared pool
 ```

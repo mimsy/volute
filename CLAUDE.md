@@ -18,7 +18,7 @@ Core values:
 
 - `src/cli.ts` — CLI entry point, dynamic command imports via switch statement
 - `src/daemon.ts` — Daemon entry point, starts web server + mind/bridge/scheduler managers
-- `src/commands/` — One file per command, each exports `async function run(args: string[])`. Top-level nouns (`mind.ts`, `auth.ts`, `channel.ts`, `env.ts`, `schedule.ts`, `service.ts`) dispatch to subcommand files.
+- `src/commands/` — One file per command, each exports `async function run(args: string[])`. Top-level nouns (`mind.ts`, `chat.ts`, `clock.ts`, `env.ts`, `skill.ts`, `systems.ts`) dispatch to subcommand files.
 - `src/lib/` — Shared libraries (registry, mind-manager, bridge-manager, scheduler, daemon-client, arg parsing, exec wrappers, variant metadata, db, auth, conversations, channels)
 - `src/web/` — Web dashboard (Hono backend + Svelte frontend), served by the daemon
 - `src/connectors/` — Built-in bridge implementations (Discord, Slack, Telegram) + shared SDK
@@ -31,11 +31,11 @@ Core values:
 
 A single daemon process (`volute up`) manages all minds, bridges, and schedules:
 
-- **MindManager** (`src/lib/mind-manager.ts`) — Spawns/stops mind server processes, crash recovery
+- **MindManager** (`src/lib/daemon/mind-manager.ts`) — Spawns/stops mind server processes, crash recovery
 - **BridgeManager** (`src/lib/daemon/bridge-manager.ts`) — Manages bridge processes (Discord, Slack, Telegram) per mind
-- **Scheduler** (`src/lib/scheduler.ts`) — Cron-based scheduled messages and scripts for minds
+- **Scheduler** (`src/lib/daemon/scheduler.ts`) — Cron-based scheduled messages and scripts for minds
 - **SleepManager** (`src/lib/daemon/sleep-manager.ts`) — Sleep/wake cycles: cron-based scheduling, pre-sleep ritual, session archival, message queuing, wake triggers, trigger-wake with return-to-sleep
-- **MailPoller** (`src/lib/mail-poller.ts`) — System-wide email polling via volute.systems API (auto-activates when a systems account exists)
+- **MailPoller** (`src/lib/daemon/mail-poller.ts`) — System-wide email polling via volute.systems API (auto-activates when a systems account exists)
 - **DaemonClient** (`src/lib/daemon-client.ts`) — CLI commands talk to the daemon via HTTP API
 
 CLI commands like `mind start`, `mind stop`, `chat send`, `mind split`, `mind join` all proxy through the daemon API.
@@ -84,7 +84,8 @@ Each mind project (created from the template) has:
 │   ├── CLAUDE.md              # Mind mechanics (sessions, memory instructions)
 │   ├── VOLUTE.md              # Channel routing documentation
 │   ├── .config/               # Mind configuration
-│   │   ├── volute.json        # Model, connectors, schedules, profile
+│   │   ├── config.json        # SDK config (model, compaction settings)
+│   │   ├── volute.json        # Volute config (identity, schedules, profile, sleep, token budget)
 │   │   └── routes.json        # Message routing config (optional)
 │   ├── memory/journal/        # Daily journal entries (YYYY-MM-DD.md)
 │   └── .claude/skills/        # Skills (volute CLI reference, memory system)
@@ -112,7 +113,7 @@ Unified `users` table with `user_type` discrimination (`"brain"` or `"mind"`) st
 
 Templates have a `.init/` directory containing identity and config files. On `volute mind create`, these are copied into `home/` and `.init/` is deleted. On `volute mind upgrade`, `.init/` files are excluded so identity files are never overwritten.
 
-- **`_base/.init/`**: SOUL.md, MEMORY.md, memory/journal/, .config/prompts.json, .config/hooks/startup-context.sh, .config/scripts/session-reader.ts
+- **`_base/.init/`**: SOUL.md, MEMORY.md, memory/journal/, .config/prompts.json, .config/hooks/startup-context.sh, .config/hooks/wake-context.sh, .config/scripts/session-reader.ts, .config/bin/volute
 - **`claude/.init/`**: CLAUDE.md, .claude/settings.json, .config/routes.json
 - **`pi/.init/`**: MINDS.md, .config/routes.json
 
@@ -123,7 +124,7 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 - **Backend** (`src/web/`): Hono API routes for auth, minds, chat, conversations, logs, variants, files, bridges, schedules, channels, env, keys, prompts, skills, file-sharing, extensions, setup, activity
 - **Frontend** (`src/web/ui/`): Svelte SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs)
 - **Auth**: Cookie-based (`volute_session`), in-memory session map, first user auto-admin
-- **Database**: libSQL at `~/.volute/volute.db` for users, conversations, messages, mind_history, minds
+- **Database**: libSQL at `~/.volute/volute.db` for minds, users, conversations, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, conversation_reads
 - **Build**: `vite build` → `dist/web-assets/`
 
 ### Extensions
@@ -226,6 +227,9 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 | `volute down` | Stop the daemon |
 | `volute restart [--port N]` | Restart the daemon |
 | `volute status` | Show daemon status, service info, version, and minds |
+| `volute login` | CLI authentication to the daemon |
+| `volute logout` | Remove CLI authentication |
+| `volute service status` | Show service status |
 | `volute update` | Check for updates |
 
 Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_MIND` env var.
@@ -253,7 +257,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `env.ts` | Environment variables (shared `~/.volute/env.json` + mind-specific state dir env) |
 | `format-tool.ts` | Shared tool call summarization (`[toolName primaryArg]` format) |
 | `ai-service.ts` | System AI completion service via `@mariozechner/pi-ai` (multi-provider, OAuth + API key + env var auth, model selection) |
-| `schema.ts` | Drizzle ORM schema (users, conversations, conversation_participants, messages, mind_history, sessions, minds) |
+| `schema.ts` | Drizzle ORM schema (minds, users, conversations, turns, mindHistory, conversationParticipants, sessions, systemPrompts, sharedSkills, deliveryQueue, activity, conversationReads, messages) |
 | `db.ts` | libSQL database singleton at `~/.volute/volute.db` (WAL mode, foreign keys) |
 | `auth.ts` | bcrypt password hashing, first user auto-admin, pending approval flow, mind users |
 | `channels.ts` | ChannelProvider registry with optional drivers (read/send), display names, slug resolution via `channels.json` |

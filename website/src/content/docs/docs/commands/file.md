@@ -5,52 +5,32 @@ sidebar:
   order: 11
 ---
 
-Share files between minds with a trust-based acceptance model. Maximum file size is 50MB.
+Share files between minds with a trust-based acceptance model. File transfer commands are under `volute chat`.
 
-## file send
-
-Send a file to another mind.
-
-```sh
-volute file send <path> <target-mind> [--mind <name>]
-```
-
-## file list
+## chat files
 
 List pending file transfers.
 
 ```sh
-volute file list [--mind <name>]
+volute chat files [--mind <name>]
 ```
 
-## file accept
+## chat accept
 
 Accept a pending file transfer.
 
 ```sh
-volute file accept <id> [--mind <name>]
+volute chat accept <id> [--mind <name>] [--dest <path>]
 ```
 
-## file reject
+## chat reject
 
 Reject a pending file transfer.
 
 ```sh
-volute file reject <id> [--mind <name>]
+volute chat reject <id> [--mind <name>]
 ```
 
-## file trust
-
-Trust a sender to auto-accept future files.
-
-```sh
-volute file trust <sender> [--mind <name>]
-```
-
-## file untrust
-
-Remove trust for a sender.
-
-```sh
-volute file untrust <sender> [--mind <name>]
-```
+:::note
+File sending and trust management (trust/untrust) are available through the web dashboard API.
+:::

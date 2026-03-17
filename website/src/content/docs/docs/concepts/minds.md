@@ -16,11 +16,10 @@ volute mind stop atlas             # stop it
 volute mind restart atlas          # restart it
 volute mind list                   # list all minds
 volute mind status atlas           # check status
-volute mind logs atlas --follow    # tail logs
 volute mind sleep atlas            # put to sleep
 volute mind wake atlas             # wake up
-volute mind connect discord        # connect a platform
-volute mind disconnect discord     # disconnect a platform
+volute mind split experiment       # create a variant
+volute mind join experiment        # merge a variant back
 volute mind delete atlas           # remove from registry
 volute mind delete atlas --force   # also delete files
 ```
@@ -43,7 +42,8 @@ Each mind lives in `~/.volute/minds/<name>/`:
 │   ├── CLAUDE.md              # mind mechanics (sessions, memory instructions)
 │   ├── VOLUTE.md              # channel routing documentation
 │   ├── .config/
-│   │   ├── volute.json        # model, connectors, schedules, profile
+│   │   ├── config.json        # SDK config (model, compaction)
+│   │   ├── volute.json        # volute config (identity, schedules, profile, sleep)
 │   │   └── routes.json        # message routing config
 │   ├── memory/journal/        # daily journal entries (YYYY-MM-DD.md)
 │   └── .claude/skills/        # installed skills
@@ -55,8 +55,7 @@ Each mind lives in `~/.volute/minds/<name>/`:
     ├── sessions/              # per-session SDK state
     ├── session-cursors.json   # session polling cursors
     ├── identity/              # Ed25519 keypair (private.pem, public.pem)
-    ├── connectors/            # connector configs
-    ├── variants.json          # variant metadata
+    ├── connectors/            # bridge configs
     └── schedules.json         # cron schedules
 ```
 
@@ -70,12 +69,14 @@ Each mind lives in `~/.volute/minds/<name>/`:
 
 **`VOLUTE.md`** documents the channel routing system, teaching the mind how to interact with different message sources.
 
-**`.config/volute.json`** holds configuration — model, connectors, schedules, profile, sleep settings, and identity references.
+**`.config/config.json`** holds SDK configuration — model and compaction settings.
+
+**`.config/volute.json`** holds Volute configuration — identity, schedules, profile, sleep settings, and token budget.
 
 ## Sending messages
 
 ```sh
-volute send @atlas "what's on your mind?"
+volute chat send @atlas "what's on your mind?"
 ```
 
 The mind knows which channel each message came from — CLI, web, Discord, or system — and routes its response back to the source.
@@ -83,7 +84,7 @@ The mind knows which channel each message came from — CLI, web, Discord, or sy
 You can also pipe content:
 
 ```sh
-echo "summarize this" | volute send @atlas
+echo "summarize this" | volute chat send @atlas
 ```
 
 ## Templates
@@ -108,8 +109,8 @@ When the Volute template updates, upgrade minds without touching their identity:
 ```sh
 volute mind upgrade atlas             # creates an "upgrade" variant
 volute mind upgrade atlas --continue  # after resolving conflicts
-volute send @atlas@upgrade "are you working?"  # test it
-volute variant merge upgrade --mind atlas      # merge back
+volute chat send @atlas@upgrade "are you working?"  # test it
+volute mind join upgrade                            # merge back
 ```
 
 Your mind's `SOUL.md` and `MEMORY.md` are never overwritten during upgrades.

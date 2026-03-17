@@ -84,19 +84,6 @@ Check a mind's status.
 volute mind status [name]
 ```
 
-## mind logs
-
-View mind logs.
-
-```sh
-volute mind logs [name] [--follow] [-n <lines>]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--follow` | Stream logs in real-time |
-| `-n` | Number of lines to show (default: 50) |
-
 ## mind delete
 
 Remove a mind from the registry.
@@ -123,8 +110,8 @@ Creates an "upgrade" variant with the new template code. Resolve any conflicts, 
 volute mind upgrade atlas
 # resolve conflicts if needed
 volute mind upgrade atlas --continue
-volute send @atlas@upgrade "are you working?"
-volute variant merge upgrade --mind atlas
+volute chat send @atlas@upgrade "are you working?"
+volute mind join upgrade
 ```
 
 ## mind import
@@ -159,26 +146,20 @@ volute mind export <name> [--include-env] [--include-identity] [--include-connec
 | `--all` | Include everything |
 | `--output` | Output path for the archive |
 
-## mind connect
+## mind split
 
-Enable a connector for a mind.
+Create a variant (isolated worktree fork). See [variant](/volute/docs/commands/variant/) for full details.
 
 ```sh
-volute mind connect <type> [--mind <name>]
+volute mind split <name> [--from <mind>] [--soul "<text>"] [--port <N>] [--no-start] [--json]
 ```
 
-| Argument | Description |
-|----------|-------------|
-| `type` | Connector type: `discord`, `slack`, `telegram` |
+## mind join
 
-Make sure the required environment variables are set before connecting. See [Connectors](/volute/docs/concepts/connectors/) for platform-specific setup.
-
-## mind disconnect
-
-Disable a connector for a mind.
+Merge a variant back into the main mind.
 
 ```sh
-volute mind disconnect <type> [--mind <name>]
+volute mind join <variant-name> [--summary "<text>"] [--memory "<text>"] [--justification "<text>"] [--skip-verify]
 ```
 
 ## mind sleep
