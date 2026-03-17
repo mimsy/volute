@@ -6,7 +6,7 @@ export async function run(args: string[]) {
     template: { type: "string" },
     continue: { type: "boolean" },
     abort: { type: "boolean" },
-    accept: { type: "boolean" },
+    diff: { type: "boolean" },
   });
 
   const mindName = resolveMindName({ mind: positional[0] });
@@ -24,7 +24,7 @@ export async function run(args: string[]) {
         template: flags.template,
         continue: flags.continue,
         abort: flags.abort,
-        accept: flags.accept,
+        diff: flags.diff,
       }),
     },
   );
@@ -34,9 +34,9 @@ export async function run(args: string[]) {
     error?: string;
     conflicts?: boolean;
     worktreeDir?: string;
-    variant?: string;
-    port?: number;
+    diff?: string;
     message?: string;
+    warning?: string;
   };
 
   if (!res.ok && !data.conflicts) {
@@ -44,13 +44,13 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  if (flags.abort) {
-    console.log(`Upgrade aborted for ${mindName}.`);
+  if (flags.diff) {
+    console.log(data.diff ?? "(no changes)");
     return;
   }
 
-  if (flags.accept) {
-    console.log(`Upgrade accepted for ${mindName}.`);
+  if (flags.abort) {
+    console.log(`Upgrade aborted for ${mindName}.`);
     return;
   }
 
@@ -64,9 +64,9 @@ export async function run(args: string[]) {
     return;
   }
 
-  const variantMindName = `${mindName}-${data.variant}`;
-  console.log(`\nUpgrade variant running on port ${data.port}`);
-  console.log(`\nNext steps:`);
-  console.log(`  volute chat send @${variantMindName} "hello"    # chat with upgraded variant`);
-  console.log(`  volute mind upgrade ${mindName} --accept            # accept the upgrade`);
+  if (data.warning) {
+    console.log(`Upgrade complete for ${mindName} (with warning: ${data.warning})`);
+  } else {
+    console.log(`Upgrade complete for ${mindName}.`);
+  }
 }

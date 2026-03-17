@@ -361,6 +361,8 @@ export class MindManager {
       parts.push(await getPrompt("merge_message", { name: String(context.name ?? "") }));
     } else if (context.type === "sprouted") {
       parts.push(await getPrompt("sprout_message"));
+    } else if (context.type === "upgraded") {
+      parts.push(await getPrompt("upgrade_message"));
     } else {
       parts.push(await getPrompt("restart_message"));
     }
