@@ -61,7 +61,7 @@ const CORE_MIND_SECTIONS: { key: string; label: string; icon: string; defaultPat
   {
     key: "settings",
     label: "Settings",
-    icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg>',
+    icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M7 1h2l.3 1.5a5.5 5.5 0 0 1 1.6.9l1.5-.6 1 1.7-1.2 1a5.5 5.5 0 0 1 0 1.8l1.2 1-1 1.7-1.5-.6a5.5 5.5 0 0 1-1.6.9L9 15H7l-.3-1.5a5.5 5.5 0 0 1-1.6-.9l-1.5.6-1-1.7 1.2-1a5.5 5.5 0 0 1 0-1.8l-1.2-1 1-1.7 1.5.6a5.5 5.5 0 0 1 1.6-.9z"/></svg>',
   },
 ];
 
@@ -709,7 +709,7 @@ function handleGlobalClick(e: MouseEvent) {
                   class:active={activeSystemSection === "settings"}
                   onclick={handleSelectSettings}
                 >
-                  <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg></span>
+                  <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M7 1h2l.3 1.5a5.5 5.5 0 0 1 1.6.9l1.5-.6 1 1.7-1.2 1a5.5 5.5 0 0 1 0 1.8l1.2 1-1 1.7-1.5-.6a5.5 5.5 0 0 1-1.6.9L9 15H7l-.3-1.5a5.5 5.5 0 0 1-1.6-.9l-1.5.6-1-1.7 1.2-1a5.5 5.5 0 0 1 0-1.8l-1.2-1 1-1.7 1.5.6a5.5 5.5 0 0 1 1.6-.9z"/></svg></span>
                   <span class="tab-tooltip">Settings</span>
                 </button>
               </div>
@@ -720,7 +720,7 @@ function handleGlobalClick(e: MouseEvent) {
                   {#if userAvatar}
                     <img src={userAvatar} alt="" class="user-avatar-img" />
                   {:else}
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 12 0v1"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="7"/><circle cx="9.5" cy="13" r="1.5"/><circle cx="14.5" cy="13" r="1.5"/><path d="M9 5c1-2 5-2 6 0"/></svg>
                   {/if}
                 </button>
                 {#if showUserMenu}
