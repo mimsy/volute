@@ -99,13 +99,16 @@ let activeChannelId = $derived.by(() => {
   <div class="sections">
     <!-- System -->
     <div class="section">
-      <button
-        class="section-toggle"
-        class:active={selection.kind === "home" || selection.kind === "settings" || selection.kind === "extension" || selection.kind === "shared-files"}
-        onclick={onHome}
-      >
-        <span>System</span>
-      </button>
+      <div class="section-header-row">
+        <button
+          class="section-toggle"
+          class:active={selection.kind === "home" || selection.kind === "settings" || selection.kind === "extension" || selection.kind === "shared-files"}
+          onclick={onHome}
+        >
+          <span class="toggle-icon"></span>
+          <span>System</span>
+        </button>
+      </div>
     </div>
 
     <!-- Minds -->
