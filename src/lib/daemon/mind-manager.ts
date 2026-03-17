@@ -110,7 +110,7 @@ export class MindManager {
     const logsDir = resolve(mindStateDir, "logs");
     mkdirSync(logsDir, { recursive: true });
 
-    // State dir is created by root — chown so the mind user can write channels.json, etc.
+    // State dir is created by root — chown so the mind user can write to it.
     if (isIsolationEnabled()) {
       try {
         chownMindDir(mindStateDir, baseName);

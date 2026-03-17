@@ -36,7 +36,7 @@ export type VoluteConfig = {
   maxThinkingTokens?: number;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   schedules?: Schedule[];
-  channels?: Record<string, { showToolCalls?: boolean }>;
+
   tokenBudget?: number;
   tokenBudgetPeriodMinutes?: number;
   identity?: { privateKey: string; publicKey: string };

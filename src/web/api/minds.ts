@@ -135,7 +135,6 @@ type ChannelStatus = {
   name: string;
   displayName: string;
   status: "connected" | "disconnected";
-  showToolCalls: boolean;
 };
 
 async function getMindStatus(name: string, port: number) {
@@ -156,7 +155,6 @@ async function getMindStatus(name: string, port: number) {
   }
 
   const config = readVoluteConfig(mindDir(name));
-  const channelConfig = config?.channels;
   const channels: ChannelStatus[] = [];
 
   // Built-in channels (e.g. volute)
@@ -166,7 +164,6 @@ async function getMindStatus(name: string, port: number) {
       name: provider.name,
       displayName: provider.displayName,
       status: status === "running" ? "connected" : "disconnected",
-      showToolCalls: channelConfig?.[provider.name]?.showToolCalls ?? provider.showToolCalls,
     });
   }
 
@@ -390,14 +387,9 @@ async function importFromFullArchive(
       generateIdentity(dest);
     }
 
-    // Copy state files (channels.json, env.json) to centralized state dir
+    // Copy state files (env.json) to centralized state dir
     const state = stateDir(name);
     mkdirSync(state, { recursive: true });
-
-    const channelsJson = resolve(tempDir, "state/channels.json");
-    if (existsSync(channelsJson)) {
-      cpSync(channelsJson, resolve(state, "channels.json"));
-    }
 
     const envJson = resolve(tempDir, "state/env.json");
     if (existsSync(envJson)) {
@@ -519,14 +511,9 @@ async function importFromHomeOnlyArchive(
       writeFileSync(promptsPath, `${JSON.stringify(mindPrompts, null, 2)}\n`);
     }
 
-    // 6. Copy state files (channels.json, env.json) to centralized state dir
+    // 6. Copy state files (env.json) to centralized state dir
     const state = stateDir(name);
     mkdirSync(state, { recursive: true });
-
-    const channelsJson = resolve(tempDir, "state/channels.json");
-    if (existsSync(channelsJson)) {
-      cpSync(channelsJson, resolve(state, "channels.json"));
-    }
 
     const envJson = resolve(tempDir, "state/env.json");
     if (existsSync(envJson)) {

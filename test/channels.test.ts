@@ -33,53 +33,45 @@ describe("channels", () => {
   it("getChannelProvider with bare slug returns volute config", () => {
     const config = getChannelProvider("@alice");
     assert.equal(config.name, "volute");
-    assert.equal(config.showToolCalls, true);
   });
 
   it("getChannelProvider with bare channel slug returns volute config", () => {
     const config = getChannelProvider("#general");
     assert.equal(config.name, "volute");
-    assert.equal(config.showToolCalls, true);
   });
 
   it("getChannelProvider with bare conversationId returns volute config", () => {
     const config = getChannelProvider("abc-123");
     assert.equal(config.name, "volute");
-    assert.equal(config.showToolCalls, true);
   });
 
   it("getChannelProvider with discord URI returns discord config", () => {
     const config = getChannelProvider("discord:456");
     assert.equal(config.name, "discord");
-    assert.equal(config.showToolCalls, false);
   });
 
   it("getChannelProvider with slack URI returns slack config", () => {
     const config = getChannelProvider("slack:C123");
     assert.equal(config.name, "slack");
     assert.equal(config.displayName, "Slack");
-    assert.equal(config.showToolCalls, false);
   });
 
   it("getChannelProvider with telegram URI returns telegram config", () => {
     const config = getChannelProvider("telegram:456");
     assert.equal(config.name, "telegram");
     assert.equal(config.displayName, "Telegram");
-    assert.equal(config.showToolCalls, false);
   });
 
   it("getChannelProvider with mail URI returns mail config", () => {
     const config = getChannelProvider("mail:user@example.com");
     assert.equal(config.name, "mail");
     assert.equal(config.displayName, "Email");
-    assert.equal(config.showToolCalls, false);
   });
 
   it("getChannelProvider with unknown platform auto-generates config", () => {
     const config = getChannelProvider("matrix:foo");
     assert.equal(config.name, "matrix");
     assert.equal(config.displayName, "matrix");
-    assert.equal(config.showToolCalls, false);
   });
 
   it("getChannelDriver returns driver for volute", () => {

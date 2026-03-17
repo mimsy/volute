@@ -1,4 +1,4 @@
-import { splitMessage, writeChannelEntry } from "../../connectors/sdk.js";
+import { splitMessage } from "../../connectors/sdk.js";
 import {
   type ChannelConversation,
   type ChannelUser,
@@ -210,18 +210,5 @@ export async function createConversation(
   if (!res.ok) {
     throw new Error(`Discord API error: ${res.status} ${res.statusText}`);
   }
-  const dm = (await res.json()) as { id: string };
-  const slug = `discord:@${slugify(participants[0])}`;
-
-  const mindName = env.VOLUTE_MIND;
-  if (mindName) {
-    writeChannelEntry(mindName, slug, {
-      platformId: dm.id,
-      platform: "discord",
-      name: participants[0],
-      type: "dm",
-    });
-  }
-
-  return slug;
+  return `discord:@${slugify(participants[0])}`;
 }

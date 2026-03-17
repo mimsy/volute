@@ -8,7 +8,6 @@ import { formatFileSize } from "../lib/file-sharing.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { parseTarget } from "../lib/parse-target.js";
 import { readStdin } from "../lib/read-stdin.js";
-import { resolveMindName } from "../lib/resolve-mind-name.js";
 
 /** Check if a name is a registered mind via the daemon API (avoids direct DB access). */
 async function isMind(name: string): Promise<boolean> {
@@ -257,8 +256,6 @@ export async function run(args: string[]) {
   let waitMindName: string | undefined;
   let waitConversationId: string | undefined;
 
-  let channelUri = parsed.uri;
-
   if (parsed.isDM && parsed.platform === "volute") {
     // For volute DMs (@target), create/find conversation via daemon
     const targetName = parsed.identifier.slice(1); // strip @
@@ -287,23 +284,20 @@ export async function run(args: string[]) {
       console.error((data as { error: string }).error);
       process.exit(1);
     }
-    const { slug, conversationId: convId } = (await createRes.json()) as {
-      slug: string;
+    const { conversationId: convId } = (await createRes.json()) as {
       conversationId?: string;
     };
-    channelUri = slug;
     if (convId) waitConversationId = convId;
 
-    // Send via daemon
+    // Send via daemon chat API
     const sendRes = await daemonFetch(
-      urlOf(client.api.minds[":name"].channels.send.$url({ param: { name: contextMind } })),
+      urlOf(client.api.minds[":name"].chat.$url({ param: { name: contextMind } })),
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          platform: "volute",
-          uri: channelUri,
           message: message ?? "",
+          conversationId: convId,
           images,
           sender,
         }),
@@ -315,67 +309,15 @@ export async function run(args: string[]) {
       process.exit(1);
     }
     if (!flags.wait) console.log("Message sent.");
-
-    // Persist outgoing to mind_messages if sender is a registered mind
-    if (mindSelf) {
-      try {
-        const histRes = await daemonFetch(
-          urlOf(client.api.minds[":name"].history.$url({ param: { name: mindSelf } })),
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ channel: parsed.uri, content: message ?? "" }),
-          },
-        );
-        if (!histRes.ok) {
-          console.error(`Failed to persist to history: HTTP ${histRes.status}`);
-        }
-      } catch (err) {
-        console.error(`Failed to persist to history: ${err instanceof Error ? err.message : err}`);
-      }
-    }
   } else {
-    // For all other targets, send through the daemon channel API
-    const mindName = resolveMindName(flags);
-
-    const res = await daemonFetch(
-      urlOf(client.api.minds[":name"].channels.send.$url({ param: { name: mindName } })),
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          platform: parsed.platform,
-          uri: channelUri,
-          message: message ?? "",
-          images,
-        }),
-      },
+    // Non-volute targets (discord:..., slack:..., etc.) are no longer supported directly.
+    // With the bridge architecture, minds send to volute channels and bridges handle external routing.
+    console.error(
+      `Direct sends to ${parsed.platform} channels are no longer supported.\n` +
+        "Use bridge channel names instead (e.g. volute chat send @mind-name or #channel-name).\n" +
+        "See: volute chat bridge --help",
     );
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: "Unknown error" }));
-      console.error((body as { error: string }).error);
-      process.exit(1);
-    }
-    if (!flags.wait) console.log("Message sent.");
-
-    // Persist outgoing to mind_messages if sender is a registered mind
-    if (process.env.VOLUTE_MIND) {
-      try {
-        const histRes = await daemonFetch(
-          urlOf(client.api.minds[":name"].history.$url({ param: { name: mindName } })),
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ channel: channelUri, content: message ?? "" }),
-          },
-        );
-        if (!histRes.ok) {
-          console.error(`Failed to persist to history: HTTP ${histRes.status}`);
-        }
-      } catch (err) {
-        console.error(`Failed to persist to history: ${err instanceof Error ? err.message : err}`);
-      }
-    }
+    process.exit(1);
   }
 
   if (flags.wait && waitMindName) {

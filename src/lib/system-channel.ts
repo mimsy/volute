@@ -1,4 +1,3 @@
-import { writeChannelEntry } from "../connectors/sdk.js";
 import { getOrCreateMindUser } from "./auth.js";
 import { deliverMessage } from "./delivery/message-delivery.js";
 import {
@@ -57,16 +56,6 @@ export async function announceToSystem(text: string): Promise<void> {
   const mindParticipants = participants.filter((p) => p.userType === "mind");
   const channel = "#system";
   for (const mind of mindParticipants) {
-    try {
-      writeChannelEntry(mind.username, channel, {
-        platformId: channelId,
-        platform: "volute",
-        name: SYSTEM_CHANNEL_NAME,
-        type: "channel",
-      });
-    } catch (err) {
-      log.warn(`failed to write channel entry for ${mind.username}`, log.errorData(err));
-    }
     deliverMessage(mind.username, {
       content: [{ type: "text", text }],
       channel,
