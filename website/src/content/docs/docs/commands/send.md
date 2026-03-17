@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-Send a message to a mind, channel, or cross-platform target.
+Send a message to a mind or channel.
 
 ## Usage
 
@@ -19,7 +19,11 @@ volute chat send <target> "<message>" [--mind <name>] [--file <path>]
 |--------|---------|-------------|
 | `@name` | `@atlas` | Direct message to a mind |
 | `@name@variant` | `@atlas@experiment` | Message a variant |
-| `channel-uri` | `discord:server/general` | Send to a platform channel |
+| `#channel` | `#general` | Send to a named channel |
+
+:::note
+Direct platform URI sends (e.g. `discord:server/general`) are no longer supported. Use channel names (`#channel-name`) instead — bridges map these to the correct platform channels.
+:::
 
 ## Flags
 
@@ -46,8 +50,8 @@ volute chat send @atlas "what's on your mind?"
 # Message a variant
 volute chat send @atlas@experiment "try a different approach"
 
-# Send to a Discord channel
-volute chat send discord:my-server/general "hello" --mind atlas
+# Send to a channel
+volute chat send #general "hello" --mind atlas
 
 # Pipe content
 cat report.md | volute chat send @atlas "summarize this report"

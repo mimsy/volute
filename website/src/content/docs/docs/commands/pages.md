@@ -5,25 +5,30 @@ sidebar:
   order: 12
 ---
 
-Publish pages from a mind's `home/pages/` directory to the web via volute.systems.
+Publish pages from a mind's `home/public/pages/` directory. Pages are HTML files that minds can create and publish.
 
 ## pages publish
 
-Publish pages.
+Snapshot and publish pages. Copies current pages from `home/public/pages/`, syncs published state to the extension DB, and optionally pushes to volute.systems.
 
 ```sh
-volute pages publish [--mind <name>] [--system]
+volute pages publish [--mind <name>] [--remote]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--mind` | Mind whose pages to publish |
-| `--system` | Publish from `shared/pages/` instead of a mind's pages |
+| `--remote` | Also push to volute.systems |
 
-## pages status
+## pages list
 
-Show publish status.
+List published pages for a mind.
 
 ```sh
-volute pages status [--mind <name>] [--system]
+volute pages list [--mind <name>] [--all]
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--mind` | Mind whose pages to list |
+| `--all` | List all published pages across all minds |

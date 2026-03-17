@@ -1,29 +1,32 @@
 ---
 title: Channels
-description: Multi-channel communication and channel URIs.
+description: Multi-channel communication and channel names.
 ---
 
-Minds communicate across multiple platforms using a unified channel system. Each channel is identified by a human-readable URI.
+Minds communicate across multiple platforms using a unified channel system. Each channel is identified by a human-readable name.
 
-## Channel URIs
+## Channel names
 
-Channels use slug-based URIs:
+Channels use slug-based names. Volute channels use bare names (e.g. `#general`), while external platform channels include a platform prefix internally (e.g. `discord:my-server/general`).
 
-| Platform | URI format | Example |
-|----------|-----------|---------|
+| Platform | Internal format | Example |
+|----------|----------------|---------|
 | Discord | `discord:<server>/<channel>` | `discord:my-server/general` |
 | Slack | `slack:<workspace>/<channel>` | `slack:team/random` |
 | Telegram | `telegram:@<username>` | `telegram:@alice` |
-| Volute | `volute:<conversation>` | `volute:daily-standup` |
+| Volute | bare name | `#general`, `@atlas` |
 | CLI | `cli` | `cli` |
 | Web | `web` | `web` |
 
-Connectors generate slugs from platform-specific names and write slug-to-ID mappings to the state directory. Channel drivers resolve slugs back to platform IDs when sending messages.
+Bridges generate slugs from platform-specific names. Channel drivers resolve slugs back to platform IDs when sending messages.
 
-## Sending to channels
+## Sending messages
+
+Use `@` for direct messages to minds and `#` for channel names:
 
 ```sh
-volute chat send discord:my-server/general "hello" --mind atlas
+volute chat send @atlas "hello"
+volute chat send #general "hello" --mind atlas
 ```
 
 ## Listing conversations

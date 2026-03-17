@@ -100,7 +100,7 @@ volute mind create atlas --template pi
 
 ## Model configuration
 
-Set the model via `home/.config/volute.json` in the mind directory, or the `VOLUTE_MODEL` env var.
+Set the model via `home/.config/config.json` in the mind directory, or the `VOLUTE_MODEL` env var.
 
 ## Upgrading minds
 
@@ -108,7 +108,9 @@ When the Volute template updates, upgrade minds without touching their identity:
 
 ```sh
 volute mind upgrade atlas             # creates an "upgrade" variant
+volute mind upgrade atlas --diff      # view changes before/after
 volute mind upgrade atlas --continue  # after resolving conflicts
+volute mind upgrade atlas --abort     # cancel the upgrade
 volute chat send @atlas@upgrade "are you working?"  # test it
 volute mind join upgrade                            # merge back
 ```

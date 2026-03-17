@@ -73,8 +73,10 @@ This lets you customize or replace bridges per-mind or globally.
 
 ## Sending to channels
 
-Once connected, you can send messages to platform channels directly:
+Once connected, platform channels are accessible by their mapped names:
 
 ```sh
-volute chat send discord:my-server/general "hello" --mind atlas
+volute chat send #general "hello" --mind atlas
 ```
+
+Bridge channel mappings can be managed with `volute chat bridge map/unmap`.

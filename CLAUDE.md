@@ -66,6 +66,7 @@ Each mind project (created from the template) has:
 │       ├── auto-commit.ts     # Auto-commits file changes in home/ via SDK hooks
 │       ├── transparency.ts    # Tool call transparency for connector channels
 │       ├── daemon-client.ts   # Mind-side daemon API client (daemonRestart, daemonSend)
+│       ├── hook-loader.ts     # Dynamic hook discovery and execution from .config/hooks/<event>/
 │       ├── session-monitor.ts # Session activity tracking and cross-session summaries
 │       ├── logger.ts          # Logging utilities
 │       ├── message-channel.ts # Async iterable for mind communication (claude template only)
@@ -87,6 +88,7 @@ Each mind project (created from the template) has:
 │   │   ├── config.json        # SDK config (model, compaction settings)
 │   │   ├── volute.json        # Volute config (identity, schedules, profile, sleep, token budget)
 │   │   └── routes.json        # Message routing config (optional)
+│   ├── .config/hooks/          # Custom hooks: .config/hooks/<event>/<script>.sh|.ts|.js
 │   ├── memory/journal/        # Daily journal entries (YYYY-MM-DD.md)
 │   └── .claude/skills/        # Skills (volute CLI reference, memory system)
 └── .mind/                     # Mind-internal runtime state
@@ -191,7 +193,7 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 | `volute mind status <name>` | Check mind status |
 | `volute mind history <name> [--channel <ch>] [--limit N] [--full]` | View mind activity history |
 | `volute mind restart <name>` | Restart a mind |
-| `volute mind upgrade <name>` | Upgrade mind to latest template |
+| `volute mind upgrade <name> [--diff] [--continue] [--abort]` | Upgrade mind to latest template |
 | `volute clock sleep <name> [--wake-at <time>]` | Put a mind to sleep (pre-sleep ritual, session archive, stop process) |
 | `volute clock wake <name>` | Wake a sleeping mind |
 | `volute mind import <path> [--name <name>] [--session <path>]` | Import an OpenClaw workspace |
@@ -275,7 +277,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `identity.ts` | Mind identity (Ed25519 keypair) management |
 | `file-sharing.ts` | Mind-to-mind file sharing with trust system |
 | `archive.ts` | Mind archival utilities |
-| `skills.ts` | Skill installation and management |
+| `skills.ts` | Skill installation and management, hook shim generation from SKILL.md frontmatter |
 | `extensions.ts` | Extension discovery (built-in, npm, local), context building, route mounting, lifecycle |
 | `shared.ts` | Shared repo init, worktree management, and merge |
 | `prompts.ts` | System prompt registry with DB overrides (creation, system, mind categories) |

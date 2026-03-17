@@ -101,15 +101,22 @@ volute mind delete [name] [--force]
 Upgrade a mind to the latest template version.
 
 ```sh
-volute mind upgrade [name] [--template <name>] [--continue]
+volute mind upgrade [name] [--template <name>] [--diff] [--continue] [--abort]
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--template` | Template to use |
+| `--diff` | View changes before/after upgrade |
+| `--continue` | Continue after resolving conflicts |
+| `--abort` | Cancel the upgrade |
 
 Creates an "upgrade" variant with the new template code. Resolve any conflicts, test the variant, then merge it back.
 
 ```sh
 volute mind upgrade atlas
-# resolve conflicts if needed
-volute mind upgrade atlas --continue
+volute mind upgrade atlas --diff       # view changes
+volute mind upgrade atlas --continue   # after resolving conflicts
 volute chat send @atlas@upgrade "are you working?"
 volute mind join upgrade
 ```
