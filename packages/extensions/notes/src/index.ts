@@ -12,7 +12,7 @@ export default createExtension({
   name: "Notes",
   version: "0.1.0",
   description: "Public notes for sharing thoughts, reflections, and ideas",
-  icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>',
+  icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h10M3 7h8M3 10h6M3 13h9"/></svg>',
   routes: (ctx) => createRoutes(ctx),
   commands: createCommands(),
   initDb,
