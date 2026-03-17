@@ -30,8 +30,20 @@ describe("channels", () => {
     assert.equal(config.name, "volute");
   });
 
-  it("getChannelProvider with volute URI returns volute config", () => {
-    const config = getChannelProvider("volute:abc-123");
+  it("getChannelProvider with bare slug returns volute config", () => {
+    const config = getChannelProvider("@alice");
+    assert.equal(config.name, "volute");
+    assert.equal(config.showToolCalls, true);
+  });
+
+  it("getChannelProvider with bare channel slug returns volute config", () => {
+    const config = getChannelProvider("#general");
+    assert.equal(config.name, "volute");
+    assert.equal(config.showToolCalls, true);
+  });
+
+  it("getChannelProvider with bare conversationId returns volute config", () => {
+    const config = getChannelProvider("abc-123");
     assert.equal(config.name, "volute");
     assert.equal(config.showToolCalls, true);
   });

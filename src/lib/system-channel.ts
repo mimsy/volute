@@ -55,7 +55,7 @@ export async function announceToSystem(text: string): Promise<void> {
   // Deliver to all mind participants of #system
   const participants = await getParticipants(channelId);
   const mindParticipants = participants.filter((p) => p.userType === "mind");
-  const channel = "volute:#system";
+  const channel = "#system";
   for (const mind of mindParticipants) {
     try {
       writeChannelEntry(mind.username, channel, {

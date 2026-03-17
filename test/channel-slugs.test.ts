@@ -53,7 +53,7 @@ describe("buildVoluteSlug", () => {
       convTitle: "bot, alice",
       conversationId: "conv-123",
     });
-    assert.equal(slug, "volute:@alice");
+    assert.equal(slug, "@alice");
   });
 
   it("each mind in a multi-mind DM gets a different slug", () => {
@@ -70,8 +70,8 @@ describe("buildVoluteSlug", () => {
       convTitle: null,
       conversationId: "conv-456",
     });
-    assert.equal(slug1, "volute:@mind2");
-    assert.equal(slug2, "volute:@mind1");
+    assert.equal(slug1, "@mind2");
+    assert.equal(slug2, "@mind1");
   });
 
   it("falls back to conversation ID when slugify produces empty string", () => {
@@ -81,7 +81,7 @@ describe("buildVoluteSlug", () => {
       convTitle: null,
       conversationId: "conv-789",
     });
-    assert.equal(slug, "volute:conv-789");
+    assert.equal(slug, "conv-789");
   });
 
   it("uses @other slug for 3-participant conversations (non-channel)", () => {
@@ -92,7 +92,7 @@ describe("buildVoluteSlug", () => {
       conversationId: "conv-abc",
     });
     // Without convType: "channel", falls through to DM slug using first non-mind participant
-    assert.equal(slug, "volute:@alice");
+    assert.equal(slug, "@alice");
   });
 
   it("uses #name slug for channel conversations with 3+ participants", () => {
@@ -104,7 +104,7 @@ describe("buildVoluteSlug", () => {
       convType: "channel",
       convName: "project-chat",
     });
-    assert.equal(slug, "volute:#project-chat");
+    assert.equal(slug, "#project-chat");
   });
 
   it("falls back to conversation ID for single-participant conversations", () => {
@@ -114,7 +114,7 @@ describe("buildVoluteSlug", () => {
       convTitle: null,
       conversationId: "conv-solo",
     });
-    assert.equal(slug, "volute:conv-solo");
+    assert.equal(slug, "conv-solo");
   });
 
   it("falls back to conversation ID with no participants and no title", () => {
@@ -124,7 +124,7 @@ describe("buildVoluteSlug", () => {
       convTitle: null,
       conversationId: "conv-empty",
     });
-    assert.equal(slug, "volute:conv-empty");
+    assert.equal(slug, "conv-empty");
   });
 
   it("uses #channel-name slug for channel conversations", () => {
@@ -136,7 +136,7 @@ describe("buildVoluteSlug", () => {
       convType: "channel",
       convName: "general",
     });
-    assert.equal(slug, "volute:#general");
+    assert.equal(slug, "#general");
   });
 
   it("falls through to DM/group logic when channel has no name", () => {
@@ -149,7 +149,7 @@ describe("buildVoluteSlug", () => {
       convName: undefined,
     });
     // No convName → falls through, 2 participants → DM slug
-    assert.equal(slug, "volute:@alice");
+    assert.equal(slug, "@alice");
   });
 
   it("does NOT use channel path for DM even when convName is set", () => {
@@ -162,7 +162,7 @@ describe("buildVoluteSlug", () => {
       convName: "general",
     });
     // convType is "dm", not "channel" → should use DM slug
-    assert.equal(slug, "volute:@alice");
+    assert.equal(slug, "@alice");
   });
 });
 

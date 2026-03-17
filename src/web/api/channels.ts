@@ -131,7 +131,8 @@ const app = new Hono<AuthEnv>()
     if (sender) env.VOLUTE_SENDER = sender;
     try {
       const slug = await driver.createConversation(env, participants, convName);
-      return c.json({ slug });
+      // For volute, the slug is the bare conversationId — return both for callers that need the ID
+      return c.json({ slug, conversationId: slug });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
     }

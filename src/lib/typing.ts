@@ -2,7 +2,6 @@ import { publish } from "./events/conversation-events.js";
 
 const DEFAULT_TTL_MS = 10_000;
 const SWEEP_INTERVAL_MS = 5_000;
-const VOLUTE_PREFIX = "volute:";
 
 type Entry = { expiresAt: number };
 
@@ -95,12 +94,21 @@ export function getTypingMap(): TypingMap {
   return instance;
 }
 
-/** Publish typing SSE events for any volute: channels in the affected list. */
+/** Check if a channel key is a bare conversation ID (UUID-like, no @/#/:/). */
+export function isConversationId(channel: string): boolean {
+  return (
+    !channel.startsWith("@") &&
+    !channel.startsWith("#") &&
+    !channel.includes(":") &&
+    !channel.includes("/")
+  );
+}
+
+/** Publish typing SSE events for conversation ID channels in the affected list. */
 export function publishTypingForChannels(channels: string[], map: TypingMap): void {
   for (const channel of channels) {
-    if (channel.startsWith(VOLUTE_PREFIX)) {
-      const conversationId = channel.slice(VOLUTE_PREFIX.length);
-      publish(conversationId, { type: "typing", senders: map.get(channel) });
+    if (isConversationId(channel)) {
+      publish(channel, { type: "typing", senders: map.get(channel) });
     }
   }
 }

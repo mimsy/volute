@@ -80,6 +80,7 @@ export const CHANNELS: Record<string, ChannelProvider> = {
 
 export function getChannelProvider(channelUri?: string): ChannelProvider {
   if (!channelUri) return CHANNELS.volute;
+  if (!channelUri.includes(":")) return CHANNELS.volute;
   const platform = channelUri.split(":")[0];
   return (
     CHANNELS[platform] ?? {

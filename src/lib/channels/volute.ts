@@ -218,7 +218,7 @@ export async function createConversation(
     throw new Error(data.error ?? `Failed to create conversation: ${res.status}`);
   }
   const conv = (await res.json()) as { id: string };
-  // Return the conversation ID directly — resolveChannelId extracts it from the slug.
+  // Return the conversation ID directly — resolveChannelId passes it through.
   // Pretty @username slugs are generated dynamically by listConversations.
-  return `volute:${conv.id}`;
+  return conv.id;
 }

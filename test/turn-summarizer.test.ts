@@ -31,12 +31,12 @@ describe("turn-summarizer", () => {
 
   it("generates deterministic summary for a basic turn", async () => {
     // Simulate a simple turn: inbound → tool_use → outbound → done
-    await insertEvent("inbound", { content: "hello", channel: "volute:chat" });
+    await insertEvent("inbound", { content: "hello", channel: "@chat" });
     await insertEvent("tool_use", { metadata: { name: "Read" } });
     await insertEvent("outbound", { content: "hi there" });
     const doneId = await insertEvent("done");
 
-    await summarizeTurn(mind, session, "volute:chat", doneId);
+    await summarizeTurn(mind, session, "@chat", doneId);
 
     // Check that a summary was inserted
     const db = await getDb();
@@ -96,7 +96,7 @@ describe("turn-summarizer", () => {
       mind: mind4,
       type: "inbound",
       session: session4,
-      channel: "volute:test",
+      channel: "@test",
       content: "hello from turn",
       turn_id: turnId,
     });
@@ -117,7 +117,7 @@ describe("turn-summarizer", () => {
       })
       .returning({ id: mindHistory.id });
 
-    await summarizeTurn(mind4, session4, "volute:test", doneResult[0].id, turnId);
+    await summarizeTurn(mind4, session4, "@test", doneResult[0].id, turnId);
 
     const summaries = await db
       .select()

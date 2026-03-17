@@ -58,11 +58,11 @@ function getStreamingConversations(events: HistoryMessage[]): StreamingConv[] {
     if ((ev.type !== "inbound" && ev.type !== "outbound") || !ev.channel) continue;
     let conv = byChannel.get(ev.channel);
     if (!conv) {
-      // Derive label from channel slug: "volute:@user" → "@user", "discord:server/chan" → "#server/chan"
+      // Derive label from channel slug: "@user" → "@user", "discord:server/chan" → "#server/chan"
       const slug = ev.channel;
       const colonIdx = slug.indexOf(":");
       const raw = colonIdx >= 0 ? slug.substring(colonIdx + 1) : slug;
-      const isDM = raw.startsWith("@");
+      const isDM = slug.startsWith("@");
       conv = {
         channel: slug,
         label: isDM ? raw : `#${raw}`,

@@ -246,7 +246,7 @@ export async function run(args: string[]) {
     parsed = {
       platform: "volute",
       identifier: `@${parsed.identifier}`,
-      uri: `volute:@${parsed.identifier}`,
+      uri: `@${parsed.identifier}`,
       isDM: true,
     };
   }
@@ -255,6 +255,7 @@ export async function run(args: string[]) {
 
   // Resolve the target mind name for --wait
   let waitMindName: string | undefined;
+  let waitConversationId: string | undefined;
 
   let channelUri = parsed.uri;
 
@@ -286,8 +287,12 @@ export async function run(args: string[]) {
       console.error((data as { error: string }).error);
       process.exit(1);
     }
-    const { slug } = (await createRes.json()) as { slug: string };
+    const { slug, conversationId: convId } = (await createRes.json()) as {
+      slug: string;
+      conversationId?: string;
+    };
     channelUri = slug;
+    if (convId) waitConversationId = convId;
 
     // Send via daemon
     const sendRes = await daemonFetch(
@@ -374,13 +379,11 @@ export async function run(args: string[]) {
   }
 
   if (flags.wait && waitMindName) {
-    // Extract conversation ID from the channel URI (format: "volute:<id>")
-    const conversationId = channelUri.startsWith("volute:") ? channelUri.slice(7) : undefined;
-    if (!conversationId) {
+    if (!waitConversationId) {
       console.error("--wait requires a volute conversation (DM to a mind)");
       process.exit(1);
     }
-    await waitForResponse(waitMindName, conversationId, flags.timeout ?? 120_000);
+    await waitForResponse(waitMindName, waitConversationId, flags.timeout ?? 120_000);
   } else if (flags.wait && !waitMindName) {
     console.error("--wait is only supported when sending to a mind");
     process.exit(1);
