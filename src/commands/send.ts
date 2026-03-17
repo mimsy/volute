@@ -307,6 +307,50 @@ export async function run(args: string[]) {
       process.exit(1);
     }
     if (!flags.wait) console.log("Message sent.");
+  } else if (!parsed.isDM && parsed.platform === "volute") {
+    // For volute group channels (#general, animal-chat), look up by name and send
+    const channelName = parsed.identifier.replace(/^#/, "");
+    const mindSelf = process.env.VOLUTE_MIND;
+    const sender = flags.sender || mindSelf || userInfo().username;
+
+    // Look up channel conversation ID
+    const channelRes = await daemonFetch(`/api/volute/channels/${encodeURIComponent(channelName)}`);
+    if (!channelRes.ok) {
+      console.error(`Channel "${channelName}" not found. Create it first or check the name.`);
+      process.exit(1);
+    }
+    const channelData = (await channelRes.json()) as {
+      id: string;
+      participants?: { username: string; userType: string }[];
+    };
+
+    // Find a participant mind to use as context for the chat API
+    const mindParticipant = channelData.participants?.find((p) => p.userType === "mind");
+    const contextMind = mindSelf ?? mindParticipant?.username;
+    if (!contextMind) {
+      console.error("No mind is a member of this channel. A mind must join the channel first.");
+      process.exit(1);
+    }
+
+    const sendRes = await daemonFetch(
+      urlOf(client.api.minds[":name"].chat.$url({ param: { name: contextMind } })),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: message ?? "",
+          conversationId: channelData.id,
+          images,
+          sender,
+        }),
+      },
+    );
+    if (!sendRes.ok) {
+      const data = await sendRes.json().catch(() => ({ error: "Unknown error" }));
+      console.error((data as { error: string }).error);
+      process.exit(1);
+    }
+    console.log("Message sent.");
   } else {
     // Non-volute targets (discord:..., slack:..., etc.) are no longer supported directly.
     // With the bridge architecture, minds send to volute channels and bridges handle external routing.

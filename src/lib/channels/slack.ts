@@ -244,12 +244,10 @@ export async function createConversation(
   }
 
   // Open a DM or group DM (idempotent for same participants)
-  await slackApi(token, "conversations.open", { users: ids.join(",") });
+  const openData = (await slackApi(token, "conversations.open", { users: ids.join(",") })) as {
+    channel: { id: string };
+  };
 
-  const slug =
-    participants.length === 1
-      ? `slack:@${slugify(participants[0])}`
-      : `slack:@${participants.map(slugify).sort().join(",")}`;
-
-  return slug;
+  // Return slug with actual channel ID so resolveChannelId can extract it for API calls
+  return `slack:${openData.channel.id}`;
 }

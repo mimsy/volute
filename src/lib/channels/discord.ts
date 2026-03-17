@@ -210,5 +210,7 @@ export async function createConversation(
   if (!res.ok) {
     throw new Error(`Discord API error: ${res.status} ${res.statusText}`);
   }
-  return `discord:@${slugify(participants[0])}`;
+  const dmChannel = (await res.json()) as { id: string };
+  // Return slug with actual channel ID so resolveChannelId can extract it for API calls
+  return `discord:${dmChannel.id}`;
 }
