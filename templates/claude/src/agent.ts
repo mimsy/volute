@@ -162,7 +162,7 @@ export function createMind(options: {
   function createDynamicHook(event: string, session: Session): HookCallback {
     return async (input) => {
       const result = await runHooks(hooksDir, event, input as Record<string, unknown>);
-      if (result.additionalContext) {
+      if (result.additionalContext || Object.keys(result.metadata).length > 0) {
         const channel = session.currentMessageId
           ? session.messageChannels.get(session.currentMessageId)
           : undefined;
@@ -179,7 +179,8 @@ export function createMind(options: {
           log("mind", `dynamic hook emit failed for ${event}:`, err);
         }
       }
-      if (!result.additionalContext) return {};
+      // Only UserPromptSubmit hooks can inject additionalContext into the conversation
+      if (event !== "pre-prompt" || !result.additionalContext) return {};
       return {
         hookSpecificOutput: {
           hookEventName: "UserPromptSubmit" as const,

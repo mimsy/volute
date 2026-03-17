@@ -288,6 +288,8 @@ export async function installSkill(
   // Write upstream tracking file
   // We need to commit first, then get the hash, then write upstream and amend
   await gitExec(["add", join("home", ".claude", "skills", skillId)], { cwd: dir });
+  // Stage hook shim files if any were created
+  await gitExec(["add", join("home", ".config", "hooks")], { cwd: dir }).catch(() => {});
   // Also commit package.json/package-lock.json changes from npm install
   if (npmInstalled.length > 0) {
     await gitExec(["add", "package.json", "package-lock.json"], { cwd: dir });
