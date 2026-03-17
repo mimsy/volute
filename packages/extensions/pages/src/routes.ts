@@ -34,7 +34,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       if (!ctx.db) return c.json([]);
       const mind = c.req.query("mind");
       const rawLimit = c.req.query("limit");
-      const limit = rawLimit ? parseInt(rawLimit, 10) : 8;
+      const limit = rawLimit ? parseInt(rawLimit, 10) || 8 : 8;
       const recentPages = getRecentPagesList(ctx.db, { mind: mind || undefined, limit });
       return c.json(
         recentPages.map((p) => ({
@@ -108,6 +108,8 @@ async function getVoluteHome(): Promise<string> {
 export function createPublicRoutes(ctx: ExtensionContext): Hono {
   return new Hono().get("/:name/*", async (c) => {
     const name = c.req.param("name");
+    if (name.includes("/") || name.includes("\\") || name === "." || name === "..")
+      return c.text("Not found", 404);
 
     let pagesRoot: string;
     if (name === "_system") {
@@ -142,7 +144,11 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
 
     const ext = extname(fileToServe);
     const mime = MIME_TYPES[ext] || "application/octet-stream";
-    const body = await readFile(fileToServe);
-    return c.body(body, 200, { "Content-Type": mime });
+    try {
+      const body = await readFile(fileToServe);
+      return c.body(body, 200, { "Content-Type": mime });
+    } catch {
+      return c.text("Not found", 404);
+    }
   });
 }

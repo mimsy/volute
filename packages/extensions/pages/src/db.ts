@@ -80,24 +80,30 @@ export function syncPublishedPages(
   const updated: string[] = [];
   const removed: string[] = [];
 
-  for (const file of htmlFiles) {
-    if (existing.has(file)) {
-      // Update the updated_at timestamp
-      db.prepare(
-        "UPDATE published_pages SET updated_at = datetime('now') WHERE mind = ? AND file = ?",
-      ).run(mind, file);
-      updated.push(file);
-    } else {
-      db.prepare("INSERT INTO published_pages (mind, file) VALUES (?, ?)").run(mind, file);
-      added.push(file);
+  db.exec("BEGIN");
+  try {
+    for (const file of htmlFiles) {
+      if (existing.has(file)) {
+        db.prepare(
+          "UPDATE published_pages SET updated_at = datetime('now') WHERE mind = ? AND file = ?",
+        ).run(mind, file);
+        updated.push(file);
+      } else {
+        db.prepare("INSERT INTO published_pages (mind, file) VALUES (?, ?)").run(mind, file);
+        added.push(file);
+      }
     }
-  }
 
-  for (const [file] of existing) {
-    if (!newSet.has(file)) {
-      db.prepare("DELETE FROM published_pages WHERE mind = ? AND file = ?").run(mind, file);
-      removed.push(file);
+    for (const [file] of existing) {
+      if (!newSet.has(file)) {
+        db.prepare("DELETE FROM published_pages WHERE mind = ? AND file = ?").run(mind, file);
+        removed.push(file);
+      }
     }
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
   }
 
   return { added, removed, updated };

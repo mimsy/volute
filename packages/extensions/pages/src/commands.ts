@@ -28,8 +28,12 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
         // Copy entire directory to snapshot location (clean first for removals)
         const snapshotDir = resolve(ctx.dataDir, "sites", mindName);
-        if (existsSync(snapshotDir)) rmSync(snapshotDir, { recursive: true });
-        cpSync(sourceDir, snapshotDir, { recursive: true });
+        try {
+          if (existsSync(snapshotDir)) rmSync(snapshotDir, { recursive: true });
+          cpSync(sourceDir, snapshotDir, { recursive: true });
+        } catch (err) {
+          return { error: `Failed to publish snapshot: ${(err as Error).message}` };
+        }
 
         // Scan snapshot for .html files
         const htmlFiles = collectHtmlFiles(snapshotDir, snapshotDir);
@@ -87,11 +91,14 @@ export function createCommands(): Record<string, ExtensionCommand> {
               body: JSON.stringify({ files }),
             });
             const data = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
-            if (!res.ok)
-              return { error: data.error || `Remote publish failed: HTTP ${res.status}` };
-            if (data.url) output += `\nRemote: ${data.url}`;
+            if (!res.ok) {
+              const errMsg = data.error || `HTTP ${res.status}`;
+              output += `\nWarning: remote publish failed: ${errMsg}`;
+            } else if (data.url) {
+              output += `\nRemote: ${data.url}`;
+            }
           } catch (err) {
-            return { error: `Remote publish failed: ${(err as Error).message}` };
+            output += `\nWarning: remote publish failed: ${(err as Error).message}`;
           }
         }
 
