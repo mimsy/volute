@@ -312,7 +312,11 @@ export async function installSkill(
   // We need to commit first, then get the hash, then write upstream and amend
   await gitExec(["add", join("home", ".claude", "skills", skillId)], { cwd: dir });
   // Stage hook shim files if any were created
-  await gitExec(["add", join("home", ".config", "hooks")], { cwd: dir }).catch(() => {});
+  if (
+    Object.keys(parseSkillMd(readFileSync(join(sourceDir, "SKILL.md"), "utf-8")).hooks).length > 0
+  ) {
+    await gitExec(["add", join("home", ".config", "hooks")], { cwd: dir });
+  }
   // Also commit package.json/package-lock.json changes from npm install
   if (npmInstalled.length > 0) {
     await gitExec(["add", "package.json", "package-lock.json"], { cwd: dir });
@@ -349,8 +353,10 @@ export async function uninstallSkill(
   rmSync(skillDir, { recursive: true });
   await gitExec(["add", join("home", ".claude", "skills", skillId)], { cwd: dir });
   // Also stage hook shim removals
-  const hooksBase = join("home", ".config", "hooks");
-  await gitExec(["add", hooksBase], { cwd: dir }).catch(() => {});
+  const hooksBase = join(dir, "home", ".config", "hooks");
+  if (existsSync(hooksBase)) {
+    await gitExec(["add", join("home", ".config", "hooks")], { cwd: dir });
+  }
   await gitExec(["commit", "-m", `Uninstall skill: ${skillId}`], { cwd: dir });
 }
 
