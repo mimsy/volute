@@ -886,6 +886,67 @@ describe("daemon e2e", { timeout: 120000 }, () => {
 
   // ── End Clock & Schedule Tests ──
 
+  it("cross-session history: returns null context when no history", async () => {
+    await ensureTestMind();
+    const res = await daemonRequest(
+      `/api/minds/${TEST_MIND}/history/cross-session?session=test-session`,
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { context: string | null };
+    assert.equal(body.context, null, "Should return null context when no cross-session activity");
+  });
+
+  it("cross-session history: returns activity from other sessions", async () => {
+    await ensureTestMind();
+
+    // Insert some summary rows directly into mind_history via the history endpoint
+    const { getDb } = await import("../src/lib/db.js");
+    const { mindHistory } = await import("../src/lib/schema.js");
+    const db = await getDb();
+
+    const now = new Date();
+    const fiveMinAgo = new Date(now.getTime() - 5 * 60_000);
+    const tenMinAgo = new Date(now.getTime() - 10 * 60_000);
+
+    // Insert summaries for different sessions
+    await db.insert(mindHistory).values([
+      {
+        mind: TEST_MIND,
+        session: "discord",
+        type: "summary",
+        content: "Discussed project updates with Alice",
+        turn_id: "turn-1",
+        created_at: tenMinAgo.toISOString().replace("T", " ").slice(0, 19),
+      },
+      {
+        mind: TEST_MIND,
+        session: "slack",
+        type: "summary",
+        content: "Reviewed code changes for PR #42",
+        turn_id: "turn-2",
+        created_at: fiveMinAgo.toISOString().replace("T", " ").slice(0, 19),
+      },
+      {
+        mind: TEST_MIND,
+        session: "main",
+        type: "summary",
+        content: "This should be excluded (same session)",
+        turn_id: "turn-3",
+        created_at: fiveMinAgo.toISOString().replace("T", " ").slice(0, 19),
+      },
+    ]);
+
+    // Query cross-session for "main" session
+    const res = await daemonRequest(`/api/minds/${TEST_MIND}/history/cross-session?session=main`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { context: string | null };
+    assert.ok(body.context, "Should return context");
+    assert.ok(body.context!.includes("[Session Activity]"), "Should have header");
+    assert.ok(body.context!.includes("discord"), "Should include discord session");
+    assert.ok(body.context!.includes("slack"), "Should include slack session");
+    assert.ok(!body.context!.includes("excluded"), "Should not include same session");
+  });
+
   it("message proxy returns JSON response", async () => {
     if (!process.env.ANTHROPIC_API_KEY) {
       console.log("Skipping message test: ANTHROPIC_API_KEY not set");

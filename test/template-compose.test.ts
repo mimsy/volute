@@ -23,8 +23,6 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, "src/lib/auto-commit.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/format-prefix.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/startup.ts")));
-      assert.ok(existsSync(resolve(composedDir, "src/lib/session-monitor.ts")));
-
       // Base router + file handler
       assert.ok(existsSync(resolve(composedDir, "src/lib/router.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/file-handler.ts")));
@@ -37,7 +35,6 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, "src/lib/hooks/auto-commit.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/hooks/pre-compact.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/hooks/identity-reload.ts")));
-      assert.ok(existsSync(resolve(composedDir, "src/lib/hooks/session-context.ts")));
 
       // Init files (from base + template)
       assert.ok(existsSync(resolve(composedDir, ".init/SOUL.md")));
@@ -45,7 +42,9 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, ".init/CLAUDE.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/memory/journal/.gitkeep")));
       assert.ok(existsSync(resolve(composedDir, ".init/.config/hooks/startup-context.sh")));
-      assert.ok(existsSync(resolve(composedDir, ".init/.config/scripts/session-reader.ts")));
+      assert.ok(
+        existsSync(resolve(composedDir, ".init/.config/hooks/pre-prompt/session-activity.sh")),
+      );
       assert.ok(existsSync(resolve(composedDir, ".init/.claude/settings.json")));
 
       // Skills no longer bundled in template (managed via shared pool)
@@ -87,8 +86,6 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, "src/lib/auto-commit.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/format-prefix.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/startup.ts")));
-      assert.ok(existsSync(resolve(composedDir, "src/lib/session-monitor.ts")));
-
       // Base router + file handler
       assert.ok(existsSync(resolve(composedDir, "src/lib/router.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/file-handler.ts")));
@@ -97,7 +94,6 @@ describe("template composition", () => {
       // Template-specific source
       assert.ok(existsSync(resolve(composedDir, "src/server.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/agent.ts")));
-      assert.ok(existsSync(resolve(composedDir, "src/lib/session-context-extension.ts")));
 
       // No claude-template-specific files
       assert.ok(!existsSync(resolve(composedDir, "src/lib/message-channel.ts")));
@@ -109,7 +105,9 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, ".init/MEMORY.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/MINDS.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/.config/routes.json")));
-      assert.ok(existsSync(resolve(composedDir, ".init/.config/scripts/session-reader.ts")));
+      assert.ok(
+        existsSync(resolve(composedDir, ".init/.config/hooks/pre-prompt/session-activity.sh")),
+      );
 
       // Pi overrides home/.config/config.json.tmpl with its own default model
       assert.ok(existsSync(resolve(composedDir, "home/.config/config.json.tmpl")));
