@@ -792,7 +792,6 @@ function jumpToLatest() {
 
   .turn-summary {
     min-width: 0;
-    overflow: hidden;
   }
 
   @container (max-width: 400px) {
@@ -805,6 +804,15 @@ function jumpToLatest() {
     }
     .turn-scroll {
       padding: 0 8px;
+    }
+    /* Shorter connector extensions for reduced padding */
+    .turn-summary :global(.turn-connector::after) {
+      left: -31px;
+      width: 31px;
+    }
+    .turn-summary :global(.branch-return) {
+      left: -24px;
+      width: 32px;
     }
   }
 
