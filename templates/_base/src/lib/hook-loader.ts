@@ -29,7 +29,11 @@ export function discoverHooks(hooksDir: string, event: string): string[] {
       .filter((f) => /\.(sh|ts|js)$/.test(f))
       .sort()
       .map((f) => join(dir, f));
-  } catch {
+  } catch (err) {
+    log(
+      "hooks",
+      `failed to read hooks directory ${dir}: ${err instanceof Error ? err.message : err}`,
+    );
     return [];
   }
 }
@@ -71,10 +75,15 @@ export function executeHook(
       stderr += d.toString();
     });
 
+    // Ignore stdin errors — child may exit before reading (EPIPE)
+    child.stdin.on("error", () => {});
     child.stdin.write(JSON.stringify(input));
     child.stdin.end();
 
+    let settled = false;
     child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
       if (code !== 0) {
         log("hooks", `hook ${scriptPath} exited with code ${code}: ${stderr.trim()}`);
         resolve({});
@@ -101,6 +110,8 @@ export function executeHook(
     });
 
     child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
       log("hooks", `hook ${scriptPath} failed to spawn: ${err.message}`);
       resolve({});
     });

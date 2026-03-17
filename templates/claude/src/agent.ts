@@ -161,32 +161,37 @@ export function createMind(options: {
 
   function createDynamicHook(event: string, session: Session): HookCallback {
     return async (input) => {
-      const result = await runHooks(hooksDir, event, input as Record<string, unknown>);
-      if (result.additionalContext || Object.keys(result.metadata).length > 0) {
-        const channel = session.currentMessageId
-          ? session.messageChannels.get(session.currentMessageId)
-          : undefined;
-        try {
-          daemonEmit({
-            type: "context",
-            content: result.additionalContext,
-            metadata: { source: `dynamic:${event}`, ...result.metadata },
-            session: session.name,
-            channel,
-            messageId: session.currentMessageId,
-          });
-        } catch (err) {
-          log("mind", `dynamic hook emit failed for ${event}:`, err);
+      try {
+        const result = await runHooks(hooksDir, event, input as Record<string, unknown>);
+        if (result.additionalContext || Object.keys(result.metadata).length > 0) {
+          const channel = session.currentMessageId
+            ? session.messageChannels.get(session.currentMessageId)
+            : undefined;
+          try {
+            daemonEmit({
+              type: "context",
+              content: result.additionalContext,
+              metadata: { source: `dynamic:${event}`, ...result.metadata },
+              session: session.name,
+              channel,
+              messageId: session.currentMessageId,
+            });
+          } catch (err) {
+            log("mind", `dynamic hook emit failed for ${event}:`, err);
+          }
         }
+        // Only UserPromptSubmit hooks can inject additionalContext into the conversation
+        if (event !== "pre-prompt" || !result.additionalContext) return {};
+        return {
+          hookSpecificOutput: {
+            hookEventName: "UserPromptSubmit" as const,
+            additionalContext: result.additionalContext,
+          },
+        };
+      } catch (err) {
+        log("mind", `dynamic ${event} hook failed:`, err);
+        return {};
       }
-      // Only UserPromptSubmit hooks can inject additionalContext into the conversation
-      if (event !== "pre-prompt" || !result.additionalContext) return {};
-      return {
-        hookSpecificOutput: {
-          hookEventName: "UserPromptSubmit" as const,
-          additionalContext: result.additionalContext,
-        },
-      };
     };
   }
 
