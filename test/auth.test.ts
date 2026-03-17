@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import {
   approveUser,
   createUser,
@@ -13,13 +14,33 @@ import {
   verifyUser,
 } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
-import { conversations, messages, users } from "../src/lib/schema.js";
+import { users } from "../src/lib/schema.js";
+
+const TEST_USERNAMES = [
+  "admin1",
+  "user2",
+  "testuser",
+  "lookup",
+  "findme",
+  "u1",
+  "u2",
+  "admin",
+  "pending1",
+  "pending2",
+  "newuser",
+  "my-mind",
+  "mind-login",
+  "delete-me",
+  "keep-me",
+  "human1",
+  "mind1",
+];
 
 async function cleanup() {
   const db = await getDb();
-  await db.delete(messages);
-  await db.delete(conversations);
-  await db.delete(users);
+  for (const username of TEST_USERNAMES) {
+    await db.delete(users).where(eq(users.username, username));
+  }
 }
 
 describe("auth", () => {

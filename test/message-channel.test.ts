@@ -99,27 +99,25 @@ describe("createMessageChannel", () => {
       assert.equal(drained.length, 2);
     });
 
-    it("drain while iterator is waiting nulls out the resolve", async () => {
+    it("drain while iterator is waiting terminates the pending iterator", async () => {
       const ch = createMessageChannel();
       const iter = ch.iterable[Symbol.asyncIterator]();
 
       // Start waiting (sets resolve)
       const waiting = iter.next();
 
-      // Drain should clear the pending resolve
+      // Drain should resolve the pending iterator with done:true
       const drained = ch.drain();
       assert.deepEqual(drained, []);
 
-      // Push to new channel — the old waiting promise never resolves,
-      // but new pushes go to the queue (not the old resolve)
+      const result = await waiting;
+      assert.equal(result.done, true, "drain should terminate pending iterator");
+
+      // Push to new channel — goes to the queue (not the old resolve)
       ch.push(msg("new"));
       const newDrained = ch.drain();
       assert.equal(newDrained.length, 1);
       assert.equal((newDrained[0].message.content[0] as any).text, "new");
-
-      // The old waiting promise is orphaned — this is expected behavior
-      // (in production the old channel is replaced after drain)
-      void waiting; // suppress unhandled rejection
     });
   });
 });

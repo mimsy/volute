@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import { createFileHandlerResolver } from "../templates/_base/src/lib/file-handler.js";
 import type { VoluteContentPart } from "../templates/_base/src/lib/types.js";
 
@@ -19,8 +19,25 @@ function waitForDone(
 }
 
 describe("file handler", () => {
-  it("writes text to file", async () => {
+  const tempDirs: string[] = [];
+
+  function makeTempDir(): string {
     const dir = mkdtempSync(join(tmpdir(), "fh-test-"));
+    tempDirs.push(dir);
+    return dir;
+  }
+
+  afterEach(() => {
+    for (const dir of tempDirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {}
+    }
+    tempDirs.length = 0;
+  });
+
+  it("writes text to file", async () => {
+    const dir = makeTempDir();
     const resolver = createFileHandlerResolver(dir);
     const handler = resolver("output.md");
 
@@ -31,7 +48,7 @@ describe("file handler", () => {
   });
 
   it("creates intermediate directories", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "fh-test-"));
+    const dir = makeTempDir();
     const resolver = createFileHandlerResolver(dir);
     const handler = resolver("sub/deep/file.md");
 
@@ -41,7 +58,7 @@ describe("file handler", () => {
   });
 
   it("emits done even with no text content", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "fh-test-"));
+    const dir = makeTempDir();
     const resolver = createFileHandlerResolver(dir);
     const handler = resolver("empty.md");
 
@@ -52,7 +69,7 @@ describe("file handler", () => {
   });
 
   it("rejects path traversal", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "fh-test-"));
+    const dir = makeTempDir();
     const resolver = createFileHandlerResolver(dir);
     const handler = resolver("../../etc/passwd");
 
@@ -63,7 +80,7 @@ describe("file handler", () => {
   });
 
   it("rejects absolute path outside cwd", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "fh-test-"));
+    const dir = makeTempDir();
     const resolver = createFileHandlerResolver(dir);
     const handler = resolver("/tmp/outside.md");
 
@@ -72,7 +89,7 @@ describe("file handler", () => {
   });
 
   it("appends to existing file", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "fh-test-"));
+    const dir = makeTempDir();
     const resolver = createFileHandlerResolver(dir);
     const handler = resolver("append.md");
 

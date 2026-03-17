@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
-import { conversations, messages, sessions, users } from "../src/lib/schema.js";
+import { users } from "../src/lib/schema.js";
 import auth from "../src/web/api/auth.js";
 import { createSession, deleteSession, getSessionUserId } from "../src/web/middleware/auth.js";
 
@@ -13,12 +14,13 @@ function createApp() {
   return app;
 }
 
+const TEST_USERNAMES = ["expiry-user", "expuser"];
+
 async function cleanup() {
   const db = await getDb();
-  await db.delete(sessions);
-  await db.delete(messages);
-  await db.delete(conversations);
-  await db.delete(users);
+  for (const username of TEST_USERNAMES) {
+    await db.delete(users).where(eq(users.username, username));
+  }
 }
 
 describe("security", () => {
