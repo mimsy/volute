@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.31.0](https://github.com/mimsy/volute/compare/volute-v0.30.1...volute-v0.31.0) (2026-03-17)
+
+
+### Features
+
+* add private conversations ([#209](https://github.com/mimsy/volute/issues/209)) ([692ff54](https://github.com/mimsy/volute/commit/692ff54c7301227ebb98f4e9e36de6405dc3db46))
+* AI provider configuration and credential injection ([#211](https://github.com/mimsy/volute/issues/211)) ([c8d9b3c](https://github.com/mimsy/volute/commit/c8d9b3c5cd79a3cf18189ed7609e70572405e319))
+* allowlist home/ tracking, exclude config from template merges, batch auto-commits ([#207](https://github.com/mimsy/volute/issues/207)) ([b6a2a89](https://github.com/mimsy/volute/commit/b6a2a89e0b5450afbf0f68910ba3907b3f131264))
+* Electron desktop app with daemon management and web setup ([#212](https://github.com/mimsy/volute/issues/212)) ([a2a1950](https://github.com/mimsy/volute/commit/a2a1950bf06b7d769693e0d2a668ec0838b1d445))
+* extension CLI commands, turn tracking, and UI polish ([#218](https://github.com/mimsy/volute/issues/218)) ([53de676](https://github.com/mimsy/volute/commit/53de6762d40a4d3abfd91188e735be8e42768508))
+* redesign history timeline with summary presets and turn expansion ([#208](https://github.com/mimsy/volute/issues/208)) ([0582a2a](https://github.com/mimsy/volute/commit/0582a2a89c4bac85bee27f080b59ad244850d7a9))
+* turn tracking, UI refresh, and session propagation ([#214](https://github.com/mimsy/volute/issues/214)) ([35d1ddf](https://github.com/mimsy/volute/commit/35d1ddf59d951c0996ef8c9f05fdad2e7ce37ebb))
+* UI polish — chat input, notes comments, system navigation ([#216](https://github.com/mimsy/volute/issues/216)) ([10ec198](https://github.com/mimsy/volute/commit/10ec198f0f0ed2310d0de38e9357f54cf84353be))
+* unified turn-based timeline with improved error handling ([#220](https://github.com/mimsy/volute/issues/220)) ([86bf3f0](https://github.com/mimsy/volute/commit/86bf3f0f711c941d891b5c93bc65be405fdb28a2))
+* unify system-to-mind messages through conversation system ([#219](https://github.com/mimsy/volute/issues/219)) ([e7036af](https://github.com/mimsy/volute/commit/e7036af0690b1f69bbed3e4dccd24dda43f49823))
+
+
+### Bug Fixes
+
+* align conversation messages endpoint with CursorResponse shape ([#215](https://github.com/mimsy/volute/issues/215)) ([224be5f](https://github.com/mimsy/volute/commit/224be5fb14ea5a1908fa677f074b7cf6f6d0663d))
+
 ## [0.30.1](https://github.com/mimsy/volute/compare/volute-v0.30.0...volute-v0.30.1) (2026-03-13)
 
 
