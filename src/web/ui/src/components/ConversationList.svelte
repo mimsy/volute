@@ -182,7 +182,7 @@ $effect(() => {
 {#if menuConvId}
   {@const menuConv = conversations.find((c) => c.id === menuConvId)}
   {@const menuDmInfo = menuConv ? getDmInfo(menuConv) : { isMindDm: false }}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
   <div class="context-menu" role="menu" tabindex="-1" style:left="{menuX}px" style:top="{menuY}px" onclick={(e) => e.stopPropagation()}>
     {#if menuDmInfo.isMindDm && menuDmInfo.mind}
       <button class="context-item" onclick={() => { onOpenMind(menuDmInfo.mind!); closeMenu(); }}>
