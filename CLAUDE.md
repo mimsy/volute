@@ -42,7 +42,7 @@ CLI commands like `mind start`, `mind stop`, `message send`, `connector`, `mind 
 
 ### Centralized state directory
 
-Volute system state (logs, env, channel mappings, connector PIDs) lives in `~/.volute/state/<name>/`, separate from mind directories. This keeps mind projects portable — they contain only mind-owned state (sessions, cursors, connector configs). The `stateDir(name)` helper in `src/lib/registry.ts` resolves state paths. On daemon startup, `migrateDotVoluteDir()` renames any legacy `<mindDir>/.volute/` to `<mindDir>/.mind/`, then `migrateMindState()` copies `env.json`, `channels.json`, and `logs/` from the mind's `.mind/` to the centralized state dir.
+Volute system state (logs, env, connector PIDs) lives in `~/.volute/state/<name>/`, separate from mind directories. This keeps mind projects portable — they contain only mind-owned state (sessions, cursors, connector configs). The `stateDir(name)` helper in `src/lib/registry.ts` resolves state paths. On daemon startup, `migrateDotVoluteDir()` renames any legacy `<mindDir>/.volute/` to `<mindDir>/.mind/`, then `migrateMindState()` copies `env.json` and `logs/` from the mind's `.mind/` to the centralized state dir.
 
 Minds receive `VOLUTE_MIND`, `VOLUTE_STATE_DIR`, `VOLUTE_MIND_DIR`, `VOLUTE_MIND_PORT`, `VOLUTE_DAEMON_PORT`, and `VOLUTE_DAEMON_TOKEN` env vars from the daemon (via `process.env` inheritance). Instead of file-based IPC (restart.json, merged.json), minds call the daemon's REST API via `daemonRestart()` and `daemonSend()` from `templates/_base/src/lib/daemon-client.ts`. The daemon delivers post-restart context (merge info) to minds via HTTP POST to the mind's `/message` endpoint.
 
@@ -251,7 +251,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `schema.ts` | Drizzle ORM schema (users, conversations, conversation_participants, messages, mind_history, sessions, minds) |
 | `db.ts` | libSQL database singleton at `~/.volute/volute.db` (WAL mode, foreign keys) |
 | `auth.ts` | bcrypt password hashing, first user auto-admin, pending approval flow, mind users |
-| `channels.ts` | ChannelProvider registry with optional drivers (read/send), display names, slug resolution via `channels.json` |
+| `channels.ts` | ChannelProvider registry with optional drivers (read/send), display names, slug resolution |
 | `channels/discord.ts` | Discord channel driver (read/send via REST API, slug-to-ID resolution) |
 | `channels/slack.ts` | Slack channel driver (read/send via Slack API, slug-to-ID resolution) |
 | `channels/telegram.ts` | Telegram channel driver (send via Bot API, slug-to-ID resolution; read not supported) |
@@ -372,7 +372,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 - Centralized registry in the `minds` DB table maps mind names to ports, tracks `running` state; variants are rows with a `parent` field
 - `resolveMind()` does DB lookups to resolve mind names (including variants by their standalone name)
 - MindManager spawns mind servers as child processes with crash recovery (3s delay) and merge-restart
-- Channel URIs use human-readable slugs: `discord:my-server/general`, `slack:workspace/channel`, `telegram:@username`, `volute:conversation-title`. Connectors generate slugs and write slug→platformId mappings to `~/.volute/state/<name>/channels.json`. Channel drivers resolve slugs back to platform IDs via this mapping.
+- Channel URIs use human-readable slugs: `discord:my-server/general`, `slack:workspace/channel`, `telegram:@username`, `@mind-name`, `#channel-name`. Volute channels use bare slugs (no platform prefix); external platform slugs use `platform:identifier` format. `resolveChannelId()` extracts the part after the colon, or returns the full string for bare slugs.
 - Connector resolution: mind-specific → user-shared (`~/.volute/connectors/`) → built-in (`src/connectors/`)
 - Mind message flow: `volute-server` (JSON req/res) → `Router` (routing/formatting/batching) → `MessageHandler` (mind or file destination); web dashboard receives updates via SSE event channel
 - `MessageHandler` interface: `handle(content, meta, listener) => unsubscribe`; `HandlerResolver`: `(key: string) => MessageHandler`

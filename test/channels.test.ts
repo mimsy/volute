@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CHANNELS, getChannelDriver, getChannelProvider } from "../src/lib/channels.js";
+import {
+  CHANNELS,
+  getChannelDriver,
+  getChannelProvider,
+  resolveChannelId,
+} from "../src/lib/channels.js";
+import { isConversationId } from "../src/lib/typing.js";
 
 describe("channels", () => {
   it("CHANNELS has expected entries", () => {
@@ -164,5 +170,55 @@ describe("channels", () => {
     await assert.rejects(() => driver.createConversation!({} as Record<string, string>, []), {
       message: /does not support creating conversations/,
     });
+  });
+});
+
+describe("resolveChannelId", () => {
+  it("extracts part after colon for platform slugs", () => {
+    assert.equal(resolveChannelId("discord:my-server/general"), "my-server/general");
+    assert.equal(resolveChannelId("slack:workspace/channel"), "workspace/channel");
+    assert.equal(resolveChannelId("telegram:@user"), "@user");
+  });
+
+  it("returns full string for bare slugs", () => {
+    assert.equal(resolveChannelId("@alice"), "@alice");
+    assert.equal(resolveChannelId("#general"), "#general");
+    assert.equal(resolveChannelId("abc-123-def"), "abc-123-def");
+  });
+
+  it("handles multiple colons by splitting on first", () => {
+    assert.equal(resolveChannelId("slack:workspace:extra"), "workspace:extra");
+  });
+
+  it("handles empty string", () => {
+    assert.equal(resolveChannelId(""), "");
+  });
+});
+
+describe("isConversationId", () => {
+  it("returns true for UUID-like conversation IDs", () => {
+    assert.equal(isConversationId("abc-123-def-456"), true);
+    assert.equal(isConversationId("550e8400-e29b-41d4-a716-446655440000"), true);
+  });
+
+  it("returns false for DM slugs", () => {
+    assert.equal(isConversationId("@alice"), false);
+  });
+
+  it("returns false for channel slugs", () => {
+    assert.equal(isConversationId("#general"), false);
+  });
+
+  it("returns false for platform-prefixed slugs", () => {
+    assert.equal(isConversationId("discord:my-server/general"), false);
+    assert.equal(isConversationId("slack:workspace/channel"), false);
+  });
+
+  it("returns false for slugs with slashes", () => {
+    assert.equal(isConversationId("server/channel"), false);
+  });
+
+  it("returns true for empty string", () => {
+    assert.equal(isConversationId(""), true);
   });
 });

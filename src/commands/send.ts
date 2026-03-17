@@ -131,7 +131,6 @@ async function waitForResponse(
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
-    mind: { type: "string" },
     image: { type: "string" },
     file: { type: "string" },
     wait: { type: "boolean" },
@@ -146,14 +145,13 @@ export async function run(args: string[]) {
 
   if (!target || (!message && !images && !flags.file)) {
     console.error(
-      'Usage: volute chat send <target> "<message>" [--mind <name>] [--image <path>] [--file <path>] [--wait]',
+      'Usage: volute chat send <target> "<message>" [--image <path>] [--file <path>] [--wait]',
     );
-    console.error('       echo "message" | volute chat send <target> [--mind <name>]');
+    console.error('       echo "message" | volute chat send <target>');
     console.error("");
     console.error("Examples:");
     console.error('  volute chat send @other-mind "hello"');
     console.error('  volute chat send animal-chat "hello everyone"');
-    console.error('  volute chat send discord:server/channel "hello"');
     console.error('  volute chat send @mind "check this out" --image photo.png');
     console.error("  volute chat send @mind --image photo.png");
     console.error('  volute chat send @mind "check this out" --file notes.txt');

@@ -46,7 +46,7 @@ export async function read(
   limit: number,
 ): Promise<string> {
   const token = requireToken(env);
-  const channelId = resolveChannelId(env, channelSlug);
+  const channelId = resolveChannelId(channelSlug);
   const data = (await slackApi(token, "conversations.history", {
     channel: channelId,
     limit,
@@ -66,7 +66,7 @@ export async function send(
   images?: ImageAttachment[],
 ): Promise<void> {
   const token = requireToken(env);
-  const channelId = resolveChannelId(env, channelSlug);
+  const channelId = resolveChannelId(channelSlug);
 
   if (images?.length) {
     for (const img of images) {

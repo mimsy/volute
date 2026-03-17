@@ -90,7 +90,7 @@ export function getChannelDriver(platform: string): ChannelDriver | null {
 
 /** Resolve a channel slug to its platform ID.
  *  Returns the part after the colon, or the full string if no colon. */
-export function resolveChannelId(_env: Record<string, string>, slug: string): string {
+export function resolveChannelId(slug: string): string {
   const colonIdx = slug.indexOf(":");
   return colonIdx !== -1 ? slug.slice(colonIdx + 1) : slug;
 }

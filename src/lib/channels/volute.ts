@@ -37,7 +37,7 @@ export async function read(
 ): Promise<string> {
   const mindName = env.VOLUTE_MIND;
   if (!mindName) throw new Error("VOLUTE_MIND not set");
-  const conversationId = resolveChannelId(env, channelSlug);
+  const conversationId = resolveChannelId(channelSlug);
 
   const { url, token } = getDaemonConfig();
   const headers: Record<string, string> = { Origin: url };
@@ -82,7 +82,7 @@ export async function send(
 ): Promise<void> {
   const mindName = env.VOLUTE_MIND;
   if (!mindName) throw new Error("VOLUTE_MIND not set");
-  const conversationId = resolveChannelId(env, channelSlug);
+  const conversationId = resolveChannelId(channelSlug);
 
   const { url, token } = getDaemonConfig();
   const headers: Record<string, string> = {

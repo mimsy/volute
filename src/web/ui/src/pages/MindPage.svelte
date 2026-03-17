@@ -65,7 +65,7 @@ function getStreamingConversations(events: HistoryMessage[]): StreamingConv[] {
       const isDM = slug.startsWith("@");
       conv = {
         channel: slug,
-        label: isDM ? raw : `#${raw}`,
+        label: isDM ? raw : raw.startsWith("#") ? raw : `#${raw}`,
         type: isDM ? "dm" : "channel",
         messages: [],
       };

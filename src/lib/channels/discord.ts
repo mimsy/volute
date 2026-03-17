@@ -33,7 +33,7 @@ export async function read(
   limit: number,
 ): Promise<string> {
   const token = requireToken(env);
-  const channelId = resolveChannelId(env, channelSlug);
+  const channelId = resolveChannelId(channelSlug);
   const res = await fetch(`${API_BASE}/channels/${channelId}/messages?limit=${limit}`, {
     headers: { Authorization: `Bot ${token}` },
   });
@@ -57,7 +57,7 @@ export async function send(
   images?: ImageAttachment[],
 ): Promise<void> {
   const token = requireToken(env);
-  const channelId = resolveChannelId(env, channelSlug);
+  const channelId = resolveChannelId(channelSlug);
 
   if (images?.length) {
     for (let i = 0; i < images.length; i++) {
