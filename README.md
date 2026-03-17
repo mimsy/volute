@@ -26,7 +26,7 @@ volute mind create atlas
 volute mind start atlas
 
 # Talk to it
-volute send @atlas "hey, what can you do?"
+volute chat send @atlas "hey, what can you do?"
 ```
 
 You now have a running AI mind with persistent memory, auto-committing file changes, and session resume across restarts. Open `http://localhost:1618` for the web dashboard.
@@ -63,7 +63,7 @@ volute mind delete atlas --force   # also delete files
 ### Sending messages
 
 ```sh
-volute send @atlas "what's on your mind?"
+volute chat send @atlas "what's on your mind?"
 ```
 
 The mind knows which channel each message came from — CLI, web, Discord, or system — and routes its response back to the source.
@@ -97,16 +97,16 @@ This is the interesting part. Minds can fork themselves into isolated branches, 
 
 ```sh
 # Create a variant — gets its own git worktree and running server
-volute mind split experiment --mind atlas
+volute mind split experiment --from atlas
 
 # Talk to the variant directly (variants have standalone names)
-volute send @atlas-experiment "try a different approach"
+volute chat send @atlas-experiment "try a different approach"
 
 # List all variants
-volute mind split --list --mind atlas
+volute mind list
 
 # Merge it back (verifies, merges, cleans up, restarts the main mind)
-volute mind join atlas-experiment --mind atlas --summary "improved response style"
+volute mind join atlas-experiment --summary "improved response style"
 ```
 
 What happens:
@@ -119,37 +119,30 @@ What happens:
 You can fork with a custom personality:
 
 ```sh
-volute mind split poet --mind atlas --soul "You are a poet who responds only in verse."
+volute mind split poet --from atlas --soul "You are a poet who responds only in verse."
 ```
 
 Minds have access to the `volute` CLI from their working directory, so they can split, test, and join their own variants autonomously.
 
-## Connectors
+## Bridges
 
-Connect minds to external services. Connectors are generic — any connector type that has an implementation (built-in, shared, or mind-specific) can be enabled.
+Connect minds to external platforms. Bridges are managed through the web dashboard or API — enable Discord, Slack, or Telegram for any mind.
 
 ### Discord
 
 ```sh
 # Set the bot token (shared across minds, or per-mind with --mind)
 volute env set DISCORD_TOKEN <your-bot-token>
-
-# Connect
-volute mind connect discord --mind atlas
-
-# Disconnect
-volute mind disconnect discord --mind atlas
 ```
 
-The mind receives Discord messages and responds in-channel. Tool calls are filtered out — connector users see clean text responses.
+Enable the Discord bridge for a mind via the web dashboard (Connections tab) or the API. The mind receives Discord messages and responds in-channel. Tool calls are filtered out — bridge users see clean text responses.
 
-### Channel commands
+### Sending to channels
 
-Read from and write to connector channels directly:
+Send messages to platform channels directly:
 
 ```sh
-volute channel read discord:123456789 --mind atlas         # recent messages
-volute send discord:123456789 "hello" --mind atlas        # send a message
+volute chat send discord:my-server/general "hello" --mind atlas
 ```
 
 ## Clock
@@ -166,7 +159,7 @@ volute clock add --mind atlas \
 volute clock add --mind atlas --in 30m --message "check on that task"
 
 # Sleep/wake
-volute clock sleep atlas --wake-at "2025-01-15T07:00:00Z"
+volute clock sleep atlas --wake-at "2026-06-15T07:00:00Z"
 volute clock wake atlas
 
 # Status and management
@@ -321,7 +314,7 @@ volute mind upgrade atlas          # creates an "atlas-upgrade" variant
 # resolve conflicts if needed, then:
 volute mind upgrade atlas --continue
 # test:
-volute send @atlas-upgrade "are you working?"
+volute chat send @atlas-upgrade "are you working?"
 # merge:
 volute mind join atlas-upgrade
 ```
