@@ -61,7 +61,7 @@ const CORE_MIND_SECTIONS: { key: string; label: string; icon: string; defaultPat
   {
     key: "settings",
     label: "Settings",
-    icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="1.75"/><polygon points="7,2.5 9,2.5 9.5,4 11,3 12,4.5 10.5,5.5 11.5,7 13.5,7 13.5,9 11.5,9 10.5,10.5 12,11.5 11,13 9.5,12 9,13.5 7,13.5 6.5,12 5,13 4,11.5 5.5,10.5 4.5,9 2.5,9 2.5,7 4.5,7 5.5,5.5 4,4.5 5,3 6.5,4"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M14 3.27A1.27 1.27 0 0 0 12.73 2h-1.46A1.27 1.27 0 0 0 10 3.27c0 .58-.4 1.07-.93 1.29a8 8 0 0 0-.26.1c-.53.23-1.16.16-1.57-.25a1.27 1.27 0 0 0-1.8 0l-1.03 1.03a1.27 1.27 0 0 0 0 1.8c.41.41.48 1.04.25 1.57a8 8 0 0 0-.1.25c-.22.54-.71.94-1.29.94A1.27 1.27 0 0 0 2 11.27v1.46A1.27 1.27 0 0 0 3.27 14c.58 0 1.07.4 1.29.93.03.09.07.17.1.26.23.53.16 1.16-.25 1.57a1.27 1.27 0 0 0 0 1.8l1.03 1.03a1.27 1.27 0 0 0 1.8 0c.41-.41 1.04-.48 1.57-.25.09.04.17.07.26.1.54.22.93.71.93 1.29A1.27 1.27 0 0 0 11.27 22h1.46A1.27 1.27 0 0 0 14 20.73c0-.58.4-1.07.93-1.29.09-.03.17-.07.26-.1.53-.23 1.16-.16 1.57.25a1.27 1.27 0 0 0 1.8 0l1.03-1.03a1.27 1.27 0 0 0 0-1.8c-.41-.41-.48-1.04-.25-1.57.04-.09.07-.17.1-.26.22-.54.71-.93 1.29-.93A1.27 1.27 0 0 0 22 12.73v-1.46A1.27 1.27 0 0 0 20.73 10c-.58 0-1.07-.4-1.29-.93a8 8 0 0 0-.1-.26c-.23-.53-.16-1.16.25-1.57a1.27 1.27 0 0 0 0-1.8l-1.03-1.03a1.27 1.27 0 0 0-1.8 0c-.41.41-1.04.48-1.57.25a8 8 0 0 0-.26-.1C14.4 4.34 14 3.85 14 3.27z"/></svg>',
   },
 ];
 
@@ -709,7 +709,7 @@ function handleGlobalClick(e: MouseEvent) {
                   class:active={activeSystemSection === "settings"}
                   onclick={handleSelectSettings}
                 >
-                  <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="1.75"/><polygon points="7,2.5 9,2.5 9.5,4 11,3 12,4.5 10.5,5.5 11.5,7 13.5,7 13.5,9 11.5,9 10.5,10.5 12,11.5 11,13 9.5,12 9,13.5 7,13.5 6.5,12 5,13 4,11.5 5.5,10.5 4.5,9 2.5,9 2.5,7 4.5,7 5.5,5.5 4,4.5 5,3 6.5,4"/></svg></span>
+                  <span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M14 3.27A1.27 1.27 0 0 0 12.73 2h-1.46A1.27 1.27 0 0 0 10 3.27c0 .58-.4 1.07-.93 1.29a8 8 0 0 0-.26.1c-.53.23-1.16.16-1.57-.25a1.27 1.27 0 0 0-1.8 0l-1.03 1.03a1.27 1.27 0 0 0 0 1.8c.41.41.48 1.04.25 1.57a8 8 0 0 0-.1.25c-.22.54-.71.94-1.29.94A1.27 1.27 0 0 0 2 11.27v1.46A1.27 1.27 0 0 0 3.27 14c.58 0 1.07.4 1.29.93.03.09.07.17.1.26.23.53.16 1.16-.25 1.57a1.27 1.27 0 0 0 0 1.8l1.03 1.03a1.27 1.27 0 0 0 1.8 0c.41-.41 1.04-.48 1.57-.25.09.04.17.07.26.1.54.22.93.71.93 1.29A1.27 1.27 0 0 0 11.27 22h1.46A1.27 1.27 0 0 0 14 20.73c0-.58.4-1.07.93-1.29.09-.03.17-.07.26-.1.53-.23 1.16-.16 1.57.25a1.27 1.27 0 0 0 1.8 0l1.03-1.03a1.27 1.27 0 0 0 0-1.8c-.41-.41-.48-1.04-.25-1.57.04-.09.07-.17.1-.26.22-.54.71-.93 1.29-.93A1.27 1.27 0 0 0 22 12.73v-1.46A1.27 1.27 0 0 0 20.73 10c-.58 0-1.07-.4-1.29-.93a8 8 0 0 0-.1-.26c-.23-.53-.16-1.16.25-1.57a1.27 1.27 0 0 0 0-1.8l-1.03-1.03a1.27 1.27 0 0 0-1.8 0c-.41.41-1.04.48-1.57.25a8 8 0 0 0-.26-.1C14.4 4.34 14 3.85 14 3.27z"/></svg></span>
                   <span class="tab-tooltip">Settings</span>
                 </button>
               </div>
@@ -720,7 +720,7 @@ function handleGlobalClick(e: MouseEvent) {
                   {#if userAvatar}
                     <img src={userAvatar} alt="" class="user-avatar-img" />
                   {:else}
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><circle cx="9" cy="11" r="1.5"/><circle cx="15" cy="11" r="1.5"/><path d="M10 16c.7.4 1.3.6 2 .6s1.3-.2 2-.6"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M7 8.5c1.5-3.5 4-5 7.5-4.5 1.5.2 3 1 3.5 2.5"/><circle cx="9.5" cy="13" r="1.5"/><circle cx="14.5" cy="13" r="1.5"/><path d="M10.5 17.5c.5.3 1 .5 1.5.5s1-.2 1.5-.5"/></svg>
                   {/if}
                 </button>
                 {#if showUserMenu}
