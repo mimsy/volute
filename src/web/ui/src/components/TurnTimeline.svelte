@@ -1,5 +1,10 @@
 <script lang="ts">
-import type { ConversationWithParticipants, HistoryMessage, TurnRow } from "@volute/api";
+import type {
+  ConversationWithParticipants,
+  HistoryMessage,
+  TurnConversation,
+  TurnRow,
+} from "@volute/api";
 import { SvelteMap } from "svelte/reactivity";
 import { fetchHistory, fetchTurnEvents, fetchTurns } from "../lib/client";
 import { extractTextContent } from "../lib/feed-utils";
@@ -22,15 +27,66 @@ let readOnlyConv = $state<ConversationWithParticipants | null>(null);
 
 // --- Streaming events for active turns ---
 let streamingEvents = $state(new SvelteMap<string, HistoryMessage[]>());
-let nextSyntheticId = 0;
+let nextSyntheticId = -1;
 // Inbound events that arrived before any turn_created — shown as provisional turn
 let pendingInbounds = $state<HistoryMessage[]>([]);
 // Fallback timers for done events that may not be followed by a summary
 const doneFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let expandedTurns = $state(new Set<string>());
 
-function getSummaryTime(turn: TurnRow): string {
-  return formatRelativeTime(turn.created_at);
+function buildHistoryMessage(
+  d: Record<string, unknown>,
+  overrides: Partial<HistoryMessage> = {},
+): HistoryMessage {
+  return {
+    id: nextSyntheticId--,
+    mind: name,
+    channel: (d.channel as string) ?? "",
+    session: (d.session as string) ?? null,
+    sender: (d.sender as string) ?? null,
+    message_id: (d.messageId as string) ?? null,
+    type: (d.type as string) ?? "",
+    content: (d.content as string) ?? "",
+    metadata: d.metadata ? JSON.stringify(d.metadata) : null,
+    turn_id: null,
+    created_at: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+function upsertTurnRows(rows: TurnRow[]) {
+  for (const row of rows) {
+    if (!turnsData.some((t) => t.id === row.id)) {
+      turnsData = [...turnsData, row];
+    } else {
+      turnsData = turnsData.map((t) => (t.id === row.id ? row : t));
+    }
+  }
+}
+
+function openConversation(conv: TurnConversation, turn: TurnRow) {
+  readOnlyConv = {
+    id: conv.id,
+    mind_name: name,
+    channel: "",
+    type: conv.type,
+    name: conv.type === "channel" ? conv.label.replace(/^#/, "") : null,
+    user_id: null,
+    title: conv.label,
+    created_at: turn.created_at,
+    updated_at: turn.created_at,
+    private: 0,
+    participants: [],
+  };
+}
+
+function handleExpand(turnId: string, expanded: boolean) {
+  if (expanded) {
+    expandedTurns.add(turnId);
+  } else {
+    expandedTurns.delete(turnId);
+  }
+  expandedTurns = new Set(expandedTurns);
 }
 
 type StreamingConv = {
@@ -68,19 +124,6 @@ function getStreamingConversations(events: HistoryMessage[]): StreamingConv[] {
   return [...byChannel.values()];
 }
 
-// --- Unified timeline ---
-type TimelineRow = {
-  key: string;
-  turn: TurnRow;
-};
-
-let timeline = $derived.by((): TimelineRow[] => {
-  return turnsData.map((t) => ({
-    key: `turn-${t.id}`,
-    turn: t,
-  }));
-});
-
 // --- SSE ---
 let scrollContainer: HTMLDivElement | undefined = $state();
 let userScrolledUp = $state(false);
@@ -94,7 +137,8 @@ function connectSSE() {
     let d: Record<string, unknown>;
     try {
       d = JSON.parse(e.data);
-    } catch {
+    } catch (err) {
+      console.warn("[TurnTimeline] Failed to parse SSE event:", e.data, err);
       return;
     }
 
@@ -102,22 +146,7 @@ function connectSSE() {
     const eventType = d.type as string;
     if (eventType === "inbound" && !turnId) {
       // Show immediately as provisional turn before turn_created arrives
-      pendingInbounds = [
-        ...pendingInbounds,
-        {
-          id: nextSyntheticId--,
-          mind: name,
-          channel: (d.channel as string) ?? "",
-          session: (d.session as string) ?? null,
-          sender: (d.sender as string) ?? null,
-          message_id: (d.messageId as string) ?? null,
-          type: eventType,
-          content: (d.content as string) ?? "",
-          metadata: d.metadata ? JSON.stringify(d.metadata) : null,
-          turn_id: null,
-          created_at: new Date().toISOString(),
-        },
-      ];
+      pendingInbounds = [...pendingInbounds, buildHistoryMessage(d)];
     } else if (eventType === "turn_created" && turnId) {
       // Promote pending inbounds into the real turn's streaming events
       if (!turnsData.some((t) => t.id === turnId)) {
@@ -153,28 +182,29 @@ function connectSSE() {
           if (!streamingEvents.has(turnId)) return; // turn already completed
           streamingEvents.set(turnId, dbEvents);
         })
-        .catch(() => {});
+        .catch((err) => console.warn("[TurnTimeline] Failed to fetch turn events:", err));
     } else if (eventType === "summary" && turnId) {
       // Turn complete — fetch the specific turn row and remove streaming state
       clearTimeout(doneFallbackTimers.get(turnId));
       doneFallbackTimers.delete(turnId);
+      const prevStreaming = streamingEvents.get(turnId);
       streamingEvents.delete(turnId);
       fetchTurns(name, { turnId })
         .then((rows) => {
-          for (const row of rows) {
-            if (!turnsData.some((t) => t.id === row.id)) {
-              turnsData = [...turnsData, row];
-            } else {
-              turnsData = turnsData.map((t) => (t.id === row.id ? row : t));
-            }
-          }
+          upsertTurnRows(rows);
           // Scroll the completed turn into view after DOM update
           requestAnimationFrame(() => {
             const el = scrollContainer?.querySelector(`[data-turn-id="${turnId}"]`);
             el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
           });
         })
-        .catch(() => {});
+        .catch((err) => {
+          console.warn("[TurnTimeline] Failed to fetch completed turn:", err);
+          // Restore streaming state so the turn doesn't vanish
+          if (!streamingEvents.has(turnId)) {
+            streamingEvents.set(turnId, prevStreaming ?? []);
+          }
+        });
     } else if (eventType === "done" && turnId) {
       // Summary usually follows shortly. If it doesn't (e.g. no substantive
       // output), clean up streaming state after a timeout to avoid phantom turns.
@@ -188,16 +218,10 @@ function connectSSE() {
               streamingEvents.delete(tid);
               // Refresh the turn from the server
               fetchTurns(name, { turnId: tid })
-                .then((rows) => {
-                  for (const row of rows) {
-                    if (!turnsData.some((t) => t.id === row.id)) {
-                      turnsData = [...turnsData, row];
-                    } else {
-                      turnsData = turnsData.map((t) => (t.id === row.id ? row : t));
-                    }
-                  }
-                })
-                .catch(() => {});
+                .then((rows) => upsertTurnRows(rows))
+                .catch((err) =>
+                  console.warn("[TurnTimeline] Failed to refresh turn after done:", err),
+                );
             }
           }, 10000),
         );
@@ -206,22 +230,7 @@ function connectSSE() {
       // Substantive event — accumulate for streaming display
       // Create new array to trigger Svelte reactivity
       const prev = streamingEvents.get(turnId)!;
-      streamingEvents.set(turnId, [
-        ...prev,
-        {
-          id: nextSyntheticId--,
-          mind: name,
-          channel: (d.channel as string) ?? "",
-          session: (d.session as string) ?? null,
-          sender: (d.sender as string) ?? null,
-          message_id: (d.messageId as string) ?? null,
-          type: eventType,
-          content: (d.content as string) ?? "",
-          metadata: d.metadata ? JSON.stringify(d.metadata) : null,
-          turn_id: turnId,
-          created_at: new Date().toISOString(),
-        },
-      ]);
+      streamingEvents.set(turnId, [...prev, buildHistoryMessage(d, { turn_id: turnId })]);
     }
 
     if (!userScrolledUp) {
@@ -232,7 +241,9 @@ function connectSSE() {
   };
   es.onerror = () => {
     if (es.readyState === EventSource.CLOSED) {
-      console.warn("[Info] SSE connection closed");
+      console.warn("[TurnTimeline] SSE connection closed permanently");
+    } else if (es.readyState === EventSource.CONNECTING) {
+      console.warn("[TurnTimeline] SSE reconnecting...");
     }
   };
   eventSource = es;
@@ -270,7 +281,7 @@ async function loadTurns(offset: number) {
             pendingInbounds = untagged;
           }
         })
-        .catch(() => {});
+        .catch((err) => console.warn("[TurnTimeline] Failed to check pending inbounds:", err));
     }
 
     // Backfill streaming events for any active turns
@@ -282,7 +293,9 @@ async function loadTurns(offset: number) {
             if (!streamingEvents.has(turn.id)) return; // turn completed while fetching
             streamingEvents.set(turn.id, dbEvents);
           })
-          .catch(() => {});
+          .catch((err) =>
+            console.warn("[TurnTimeline] Failed to backfill active turn events:", err),
+          );
       }
     }
   } catch (e) {
@@ -328,7 +341,7 @@ $effect(() => {
     turnsData = [];
     hasMore = true;
     streamingEvents = new SvelteMap();
-    nextSyntheticId = 0;
+    nextSyntheticId = -1;
     pendingInbounds = [];
     startScrollToBottom();
     loadTurns(0);
@@ -377,21 +390,21 @@ function jumpToLatest() {
 
     {#if historyError}
       <div class="error-hint">{historyError}</div>
-    {:else if timeline.length === 0 && !loading}
+    {:else if turnsData.length === 0 && !loading}
       <div class="empty-hint">No activity yet.</div>
     {:else}
       <div class="turn-track">
-        {#each timeline as row (row.key)}
-          <div class="turn-row" data-turn-id={row.turn.id}>
+        {#each turnsData as turn (turn.id)}
+          <div class="turn-row" data-turn-id={turn.id}>
             <div class="turn-time">
-              {getSummaryTime(row.turn)}
+              {formatRelativeTime(turn.created_at)}
             </div>
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
               class="turn-rail"
-              class:turn-rail-expanded={expandedTurns.has(row.turn.id)}
+              class:turn-rail-expanded={expandedTurns.has(turn.id)}
               onclick={(e) => {
-                if (!row.turn.summary) return;
+                if (!turn.summary) return;
                 e.stopPropagation();
                 const rowEl = (e.currentTarget as HTMLElement).closest('.turn-row');
                 const summaryEl = rowEl?.querySelector(':scope > .turn-body > .turn-summary > .event');
@@ -402,7 +415,7 @@ function jumpToLatest() {
             </div>
             <div class="turn-body">
               <div class="turn-summary">
-                {#if row.turn.summary}
+                {#if turn.summary}
                   <HistoryEvent
                     event={{
                       id: 0,
@@ -412,57 +425,43 @@ function jumpToLatest() {
                       sender: null,
                       message_id: null,
                       type: "summary",
-                      content: row.turn.summary,
-                      metadata: row.turn.summary_meta ? JSON.stringify(row.turn.summary_meta) : null,
-                      turn_id: row.turn.id,
-                      created_at: row.turn.created_at,
+                      content: turn.summary,
+                      metadata: turn.summary_meta ? JSON.stringify(turn.summary_meta) : null,
+                      turn_id: turn.id,
+                      created_at: turn.created_at,
                     }}
                     mindName={name}
                     expandable
                     compact
-                    turnConversations={row.turn.conversations}
-                    turnActivities={row.turn.activities}
-                    onexpand={(expanded) => {
-                      if (expanded) {
-                        expandedTurns.add(row.turn.id);
-                      } else {
-                        expandedTurns.delete(row.turn.id);
-                      }
-                      expandedTurns = new Set(expandedTurns);
-                    }}
+                    turnConversations={turn.conversations}
+                    turnActivities={turn.activities}
+                    onexpand={(expanded) => handleExpand(turn.id, expanded)}
                   />
-                {:else if row.turn.status === "complete"}
+                {:else if turn.status === "complete"}
                   <!-- Complete but no summary (e.g. daemon restarted mid-turn) -->
                   <HistoryEvent
                     event={{
                       id: 0,
                       mind: name,
-                      channel: row.turn.trigger?.channel ?? "",
+                      channel: turn.trigger?.channel ?? "",
                       session: null,
-                      sender: row.turn.trigger?.sender ?? null,
+                      sender: turn.trigger?.sender ?? null,
                       message_id: null,
                       type: "summary",
-                      content: row.turn.trigger?.content ?? "(no summary)",
+                      content: turn.trigger?.content ?? "(no summary)",
                       metadata: null,
-                      turn_id: row.turn.id,
-                      created_at: row.turn.created_at,
+                      turn_id: turn.id,
+                      created_at: turn.created_at,
                     }}
                     mindName={name}
                     expandable
                     compact
-                    turnConversations={row.turn.conversations}
-                    turnActivities={row.turn.activities}
-                    onexpand={(expanded) => {
-                      if (expanded) {
-                        expandedTurns.add(row.turn.id);
-                      } else {
-                        expandedTurns.delete(row.turn.id);
-                      }
-                      expandedTurns = new Set(expandedTurns);
-                    }}
+                    turnConversations={turn.conversations}
+                    turnActivities={turn.activities}
+                    onexpand={(expanded) => handleExpand(turn.id, expanded)}
                   />
                 {:else}
-                  {@const events = streamingEvents.get(row.turn.id) ?? []}
+                  {@const events = streamingEvents.get(turn.id) ?? []}
                   {#if events.length === 0}
                     <div class="turn-pending">processing...</div>
                   {:else}
@@ -472,10 +471,10 @@ function jumpToLatest() {
                   {/if}
                 {/if}
               </div>
-              {#if !expandedTurns.has(row.turn.id)}
+              {#if !expandedTurns.has(turn.id)}
               <div class="turn-cards">
-                {#if !row.turn.summary}
-                  {@const sConvs = getStreamingConversations(streamingEvents.get(row.turn.id) ?? [])}
+                {#if !turn.summary}
+                  {@const sConvs = getStreamingConversations(streamingEvents.get(turn.id) ?? [])}
                   {#each sConvs as conv (conv.channel)}
                     <div class="feed-card-wrapper">
                       <div class="feed-card card-chat">
@@ -496,39 +495,12 @@ function jumpToLatest() {
                     </div>
                   {/each}
                 {/if}
-                {#each row.turn.conversations as conv (conv.id)}
+                {#each turn.conversations as conv (conv.id)}
                   <div class="feed-card-wrapper">
-                    <div class="feed-card card-chat" role="button" tabindex="0" onclick={() => {
-                      readOnlyConv = {
-                        id: conv.id,
-                        mind_name: name,
-                        channel: "",
-                        type: conv.type,
-                        name: conv.type === "channel" ? conv.label.replace(/^#/, "") : null,
-                        user_id: null,
-                        title: conv.label,
-                        created_at: row.turn.created_at,
-                        updated_at: row.turn.created_at,
-                        private: 0,
-                        participants: [],
-                      };
-                    }} onkeydown={(e) => {
-                      if (e.key === 'Enter') {
-                        readOnlyConv = {
-                          id: conv.id,
-                          mind_name: name,
-                          channel: "",
-                          type: conv.type,
-                          name: conv.type === "channel" ? conv.label.replace(/^#/, "") : null,
-                          user_id: null,
-                          title: conv.label,
-                          created_at: row.turn.created_at,
-                          updated_at: row.turn.created_at,
-                          private: 0,
-                          participants: [],
-                        };
-                      }
-                    }}>
+                    <div class="feed-card card-chat" role="button" tabindex="0"
+                      onclick={() => openConversation(conv, turn)}
+                      onkeydown={(e) => { if (e.key === 'Enter') openConversation(conv, turn); }}
+                    >
                       <div class="feed-card-header header-chat">
                         <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
                         <span class="feed-card-label">{conv.label}</span>
@@ -545,7 +517,7 @@ function jumpToLatest() {
                     </div>
                   </div>
                 {/each}
-                {#each row.turn.activities as act (act.id)}
+                {#each turn.activities as act (act.id)}
                   {@const actAuthor = typeof act.metadata?.author === 'string' ? act.metadata.author : name}
                   {@const actUrl = act.metadata?.slug ? `/minds/${actAuthor}/notes/${act.metadata.slug}` : ''}
                   <div class="feed-card-wrapper">

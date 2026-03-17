@@ -48,7 +48,14 @@ const typeColors: Record<string, string> = {
 };
 
 let color = $derived(typeColors[event.type] ?? "var(--text-2)");
-let meta = $derived(event.metadata ? JSON.parse(event.metadata) : null);
+let meta = $derived.by(() => {
+  if (!event.metadata) return null;
+  try {
+    return JSON.parse(event.metadata);
+  } catch {
+    return null;
+  }
+});
 
 let collapsible = $derived(
   (event.type === "tool_use" && !!event.content) ||
@@ -599,15 +606,13 @@ async function handleClick() {
     top: 12px;
     bottom: -20px;
     width: 2px;
+    background: var(--yellow);
     opacity: 0;
     transition: opacity 0.15s;
     z-index: 1;
   }
   .event-group.has-linked:hover::after {
     opacity: 1;
-  }
-  .event-group.has-linked::after {
-    background: var(--yellow);
   }
   /* Suppress the inner event's own highlight when in a group */
   .event-group.has-linked > :global(.event::after) {
