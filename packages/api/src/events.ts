@@ -5,8 +5,6 @@ import type {
   ActivityItem,
   ContentBlock,
   ConversationWithParticipants,
-  RecentPage,
-  Site,
 } from "./types.js";
 
 /** Conversation-scoped events (messages, typing) */
@@ -37,8 +35,6 @@ export type SSESnapshotEvent = {
   event: "snapshot";
   conversations: ConversationWithParticipants[];
   activity: ActivityItem[];
-  sites: Site[];
-  recentPages: RecentPage[];
   activeMinds: string[];
   onlineBrains: string[];
 };

@@ -1,23 +1,25 @@
 import { syncMindProfile } from "../auth.js";
 import { publish as publishActivity } from "../events/activity-events.js";
 import { markIdle } from "../events/mind-activity-tracker.js";
+import { notifyExtensionsMindStart, notifyExtensionsMindStop } from "../extensions.js";
 import log from "../logger.js";
-import { startWatcher, stopWatcher } from "../pages-watcher.js";
-import { findMind, mindDir } from "../registry.js";
+import { findMind, getBaseName, mindDir } from "../registry.js";
 import { joinSystemChannelForMind } from "../system-channel.js";
+import { ensureSystemDM, sendSystemMessage } from "../system-chat.js";
 import { readVoluteConfig } from "../volute-config.js";
-import { getConnectorManager } from "./connector-manager.js";
 import { ensureMailAddress } from "./mail-poller.js";
 import { getMindManager } from "./mind-manager.js";
 import { getScheduler } from "./scheduler.js";
+import { getSleepManagerIfReady } from "./sleep-manager.js";
 import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "./token-budget.js";
 
 /**
- * Start a mind server and (for non-seed base minds) connectors, schedules, mail, and token budget.
- * Variants only get the server — no connectors/schedules/budget.
+ * Start a mind server and (for non-seed base minds) schedules, mail, and token budget.
+ * Variants only get the server — no schedules/budget.
  */
 export async function startMindFull(name: string): Promise<void> {
-  const [baseName, variantName] = name.split("@", 2);
+  const entry = await findMind(name);
+  const baseName = entry?.parent ?? name;
 
   await getMindManager().startMind(name);
 
@@ -27,18 +29,34 @@ export async function startMindFull(name: string): Promise<void> {
     summary: `${name} started`,
   }).catch((err) => log.error("failed to publish mind_started activity", log.errorData(err)));
 
-  if (variantName) return;
+  if (entry?.parent) return;
 
-  // Seed minds only get the server — no connectors, schedules, or budget
-  const entry = findMind(baseName);
-  if (!entry || entry.stage === "seed") return;
+  // Seed minds get the server + initial orientation, no schedules or budget
+  if (!entry || entry.stage === "seed") {
+    if (entry?.stage === "seed") {
+      // sendSystemMessage calls ensureSystemDM internally
+      sendSystemMessage(
+        baseName,
+        "You've just been created. A human planted you as a seed. Start a conversation with them — introduce yourself, ask questions, and begin exploring who you want to be.",
+      ).catch((err: unknown) =>
+        log.error(`failed to send seed orientation for ${baseName}`, log.errorData(err)),
+      );
+    } else {
+      ensureSystemDM(baseName).catch((err: unknown) =>
+        log.error(`failed to ensure system DM for ${baseName}`, log.errorData(err)),
+      );
+    }
+    return;
+  }
+
+  // Ensure system DM conversation exists (for sprouted minds)
+  ensureSystemDM(baseName).catch((err: unknown) =>
+    log.error(`failed to ensure system DM for ${baseName}`, log.errorData(err)),
+  );
 
   const dir = mindDir(baseName);
-  const daemonPort = process.env.VOLUTE_DAEMON_PORT
-    ? parseInt(process.env.VOLUTE_DAEMON_PORT, 10)
-    : undefined;
-  await getConnectorManager().startConnectors(baseName, dir, entry.port, daemonPort);
   getScheduler().loadSchedules(baseName);
+  getSleepManagerIfReady()?.loadSleepConfig(baseName);
   ensureMailAddress(baseName).catch((err: unknown) =>
     log.error(`failed to ensure mail address for ${baseName}`, log.errorData(err)),
   );
@@ -64,14 +82,11 @@ export async function startMindFull(name: string): Promise<void> {
     );
   }
 
-  startWatcher(baseName);
+  notifyExtensionsMindStart(baseName);
 }
 
 /**
- * Stop a mind server and (for non-variant minds) connectors, schedules, and budget.
- */
-/**
- * Put a mind to sleep: stop process only, leave connectors/schedules/budget running.
+ * Put a mind to sleep: stop process only, leave schedules/budget running.
  */
 export async function sleepMind(name: string): Promise<void> {
   markIdle(name);
@@ -85,7 +100,7 @@ export async function sleepMind(name: string): Promise<void> {
 }
 
 /**
- * Wake a sleeping mind: start process only (connectors are already running).
+ * Wake a sleeping mind: start process only.
  */
 export async function wakeMind(name: string): Promise<void> {
   await getMindManager().startMind(name);
@@ -98,12 +113,12 @@ export async function wakeMind(name: string): Promise<void> {
 }
 
 export async function stopMindFull(name: string): Promise<void> {
-  const [baseName, variantName] = name.split("@", 2);
+  const baseName = await getBaseName(name);
+  const isBase = baseName === name;
 
-  if (!variantName) {
-    stopWatcher(baseName);
+  if (isBase) {
+    notifyExtensionsMindStop(baseName);
     markIdle(baseName);
-    await getConnectorManager().stopConnectors(baseName);
     getScheduler().unloadSchedules(baseName);
     getTokenBudget().removeBudget(baseName);
   }

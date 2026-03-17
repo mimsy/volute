@@ -8,24 +8,20 @@ export function slugify(text: string): string {
 
 /**
  * Build a volute channel slug for a conversation.
- * DMs use `volute:@other-username`, groups use `volute:title`, fallback to `volute:conversationId`.
+ * Channels use `volute:#name`, DMs use `volute:@other-username`, fallback to `volute:conversationId`.
  */
 export function buildVoluteSlug(opts: {
   participants: { username: string }[];
   mindUsername: string;
   convTitle: string | null | undefined;
   conversationId: string;
-  convType?: "dm" | "group" | "channel";
+  convType?: "dm" | "channel";
   convName?: string | null;
 }): string {
   if (opts.convType === "channel" && opts.convName) {
     return `volute:#${opts.convName}`;
   }
-  const isDM = opts.participants.length === 2;
-  if (isDM) {
-    const other = opts.participants.find((p) => p.username !== opts.mindUsername);
-    const otherSlug = other ? slugify(other.username) : "";
-    return otherSlug ? `volute:@${otherSlug}` : `volute:${opts.conversationId}`;
-  }
-  return opts.convTitle ? `volute:${slugify(opts.convTitle)}` : `volute:${opts.conversationId}`;
+  const other = opts.participants.find((p) => p.username !== opts.mindUsername);
+  const otherSlug = other ? slugify(other.username) : "";
+  return otherSlug ? `volute:@${otherSlug}` : `volute:${opts.conversationId}`;
 }

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { exec, execInherit, resolveVoluteBin } from "../lib/exec.js";
-import { voluteHome } from "../lib/registry.js";
+import { voluteSystemDir } from "../lib/registry.js";
 import {
   getServiceMode,
   modeLabel,
@@ -94,9 +94,9 @@ export async function run(_args: string[]) {
   }
 
   // Manual mode: stop → install → restart (existing logic)
-  const home = voluteHome();
-  const pidPath = resolve(home, "daemon.pid");
-  const configPath = resolve(home, "daemon.json");
+  const systemDir = voluteSystemDir();
+  const pidPath = resolve(systemDir, "daemon.pid");
+  const configPath = resolve(systemDir, "daemon.json");
 
   let daemonWasRunning = false;
   let daemonPort = 1618;

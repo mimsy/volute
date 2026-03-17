@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
-import { voluteHome } from "../lib/registry.js";
+import { voluteSystemDir } from "../lib/registry.js";
 import {
   getServiceMode,
   modeLabel,
@@ -20,12 +20,12 @@ export type StopResult =
  * so callers can decide how to handle each case.
  */
 export async function stopDaemon(): Promise<StopResult> {
-  const home = voluteHome();
-  const pidPath = resolve(home, "daemon.pid");
+  const systemDir = voluteSystemDir();
+  const pidPath = resolve(systemDir, "daemon.pid");
 
   if (!existsSync(pidPath)) {
     // Check if a daemon is running without a PID file (orphan)
-    const configPath = resolve(home, "daemon.json");
+    const configPath = resolve(systemDir, "daemon.json");
     let port = 1618;
     let hostname = "localhost";
     if (existsSync(configPath)) {

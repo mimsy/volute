@@ -3,12 +3,14 @@ import { dirname, resolve } from "node:path";
 
 export type Schedule = {
   id: string;
-  cron: string;
+  cron?: string;
+  fireAt?: string; // ISO date for one-time timers
   message?: string;
   script?: string;
   enabled: boolean;
-  skipWhenSleeping?: boolean;
-  channel?: string;
+  whileSleeping?: "skip" | "queue" | "trigger-wake";
+  channel?: string; // deprecated — use session instead
+  session?: string; // target session name (e.g. "$new" for isolated session)
 };
 
 export type WakeTriggerConfig = {
@@ -34,7 +36,6 @@ export type VoluteConfig = {
   model?: string;
   maxThinkingTokens?: number;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-  connectors?: string[];
   schedules?: Schedule[];
   channels?: Record<string, { showToolCalls?: boolean }>;
   tokenBudget?: number;
@@ -57,24 +58,7 @@ function readJson(path: string): VoluteConfig | null {
 
 export function readVoluteConfig(mindDir: string): VoluteConfig | null {
   const path = resolve(mindDir, "home/.config/volute.json");
-  const config = readJson(path);
-  if (!config) return null;
-  // Migrate legacy top-level profile fields into profile object
-  const legacy = config as Record<string, unknown>;
-  if (
-    !config.profile &&
-    ("displayName" in config || "description" in config || "avatar" in config)
-  ) {
-    config.profile = {
-      displayName: legacy.displayName as string | undefined,
-      description: legacy.description as string | undefined,
-      avatar: legacy.avatar as string | undefined,
-    };
-    delete legacy.displayName;
-    delete legacy.description;
-    delete legacy.avatar;
-  }
-  return config;
+  return readJson(path);
 }
 
 export function writeVoluteConfig(mindDir: string, config: VoluteConfig) {

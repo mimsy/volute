@@ -8,8 +8,8 @@ import type { MindProfile } from "./volute-config.js";
 export type User = {
   id: number;
   username: string;
-  role: "admin" | "user" | "pending" | "mind";
-  user_type: "brain" | "mind";
+  role: "admin" | "user" | "pending";
+  user_type: "brain" | "mind" | "system";
   display_name: string | null;
   description: string | null;
   avatar: string | null;
@@ -50,7 +50,7 @@ export async function verifyUser(username: string, password: string): Promise<Us
   const db = await getDb();
   const row = await db.select().from(users).where(eq(users.username, username)).get();
   if (!row) return null;
-  if (row.user_type === "mind") return null; // minds can't log in
+  if (row.user_type === "mind" || row.user_type === "system") return null; // minds and system users can't log in
   if (!compareSync(password, row.password_hash)) return null;
   const { password_hash: _, ...user } = row;
   return user as User;
@@ -112,7 +112,7 @@ export async function getOrCreateMindUser(mindName: string): Promise<User> {
       .values({
         username: mindName,
         password_hash: "!mind",
-        role: "mind",
+        role: "user",
         user_type: "mind",
       })
       .returning(userSelectFields);
@@ -124,6 +124,40 @@ export async function getOrCreateMindUser(mindName: string): Promise<User> {
         .select(userSelectFields)
         .from(users)
         .where(and(eq(users.username, mindName), eq(users.user_type, "mind")))
+        .get();
+      if (retried) return retried as User;
+    }
+    throw err;
+  }
+}
+
+export async function getOrCreateSystemUser(): Promise<User> {
+  const db = await getDb();
+  const existing = await db
+    .select(userSelectFields)
+    .from(users)
+    .where(and(eq(users.username, "volute"), eq(users.user_type, "system")))
+    .get();
+  if (existing) return existing as User;
+
+  try {
+    const [result] = await db
+      .insert(users)
+      .values({
+        username: "volute",
+        password_hash: "!system",
+        role: "user",
+        user_type: "system",
+        display_name: "Volute",
+      })
+      .returning(userSelectFields);
+    return result as User;
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.includes("UNIQUE constraint")) {
+      const retried = await db
+        .select(userSelectFields)
+        .from(users)
+        .where(and(eq(users.username, "volute"), eq(users.user_type, "system")))
         .get();
       if (retried) return retried as User;
     }

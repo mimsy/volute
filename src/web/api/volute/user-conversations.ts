@@ -10,6 +10,7 @@ import {
   getMessages,
   isParticipantOrOwner,
   listConversationsWithParticipants,
+  setConversationPrivate,
 } from "../../../lib/events/conversations.js";
 import { findMind } from "../../../lib/registry.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
@@ -51,7 +52,7 @@ const app = new Hono<AuthEnv>()
         if (!firstMindName && existing.user_type === "mind") firstMindName = name;
         continue;
       }
-      if (findMind(name)) {
+      if (await findMind(name)) {
         const au = await getOrCreateMindUser(name);
         participantIds.add(au.id);
         if (!firstMindName) firstMindName = name;
@@ -62,6 +63,11 @@ const app = new Hono<AuthEnv>()
 
     if (!firstMindName) {
       return c.json({ error: "At least one mind participant is required" }, 400);
+    }
+
+    // Reject group DMs — use channels for 3+ participants
+    if (participantIds.size > 2) {
+      return c.json({ error: "Use channels for multi-participant conversations" }, 400);
     }
 
     const conv = await createConversation(firstMindName, "volute", {
@@ -100,6 +106,16 @@ const app = new Hono<AuthEnv>()
         });
       });
     });
+  })
+  .put("/:id/private", zValidator("json", z.object({ private: z.boolean() })), async (c) => {
+    const id = c.req.param("id");
+    const user = c.get("user");
+    if (!(await isParticipantOrOwner(id, user.id))) {
+      return c.json({ error: "Forbidden" }, 403);
+    }
+    const body = c.req.valid("json");
+    await setConversationPrivate(id, body.private);
+    return c.json({ ok: true });
   })
   .delete("/:id", async (c) => {
     const id = c.req.param("id");

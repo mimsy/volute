@@ -1,22 +1,22 @@
 <script lang="ts">
-import type { Prompt } from "@volute/api";
 import { onMount } from "svelte";
+import Modal from "../components/Modal.svelte";
 import {
-  fetchPrompts,
-  resetPrompt,
+  type AiModel,
+  type AiProvider,
+  fetchAiModels,
+  fetchAiProviders,
+  pollAiOAuthStatus,
+  removeProviderConfig,
+  saveEnabledModels,
+  saveProviderConfig,
+  startAiOAuth,
+  submitAiOAuthCode,
   systemLogin,
   systemLogout,
   systemRegister,
-  updatePrompt,
 } from "../lib/client";
 import { auth } from "../lib/stores.svelte";
-
-let prompts = $state<Prompt[]>([]);
-let loading = $state(true);
-let editingKey = $state<string | null>(null);
-let editContent = $state("");
-let saving = $state(false);
-let error = $state("");
 
 // System registration state
 let systemError = $state("");
@@ -24,41 +24,200 @@ let systemAction = $state<"none" | "register" | "login">("none");
 let systemInput = $state("");
 let systemSaving = $state(false);
 
-const categoryMeta: Record<string, { label: string; subtitle: string }> = {
-  creation: { label: "Creation Prompts", subtitle: "Used when creating new minds" },
-  system: { label: "System Messages", subtitle: "Sent by the daemon to minds" },
-  mind: {
-    label: "Mind Prompts",
-    subtitle: "Stamped into prompts.json at creation, then mind-owned",
-  },
-};
+// AI Service state
+let aiProviders = $state<AiProvider[]>([]);
+let aiModels = $state<AiModel[]>([]);
+let aiError = $state("");
+let aiSaving = $state(false);
 
-const categoryOrder = ["creation", "system", "mind"];
+// Modal state
+let showApiKeyModal = $state(false);
+let showOAuthModal = $state(false);
+let selectedProvider = $state("");
+let apiKeyInput = $state("");
+let oauthUrl = $state("");
+let oauthPolling = $state(false);
+let oauthFlowId = $state("");
+let oauthNeedsCode = $state(false);
+let oauthCodeInput = $state("");
 
-let groupedPrompts = $derived(
-  categoryOrder
-    .map((cat) => ({
-      category: cat,
-      meta: categoryMeta[cat],
-      items: prompts.filter((p) => p.category === cat),
-    }))
-    .filter((g) => g.items.length > 0),
+let configuredProviders = $derived(aiProviders.filter((p) => p.configured));
+let unconfiguredProviders = $derived(aiProviders.filter((p) => !p.configured));
+let oauthProviders = $derived(unconfiguredProviders.filter((p) => p.oauth));
+
+let isRemote = $derived(
+  typeof location !== "undefined" &&
+    location.hostname !== "localhost" &&
+    location.hostname !== "127.0.0.1",
 );
 
-async function load() {
+async function loadAi() {
   try {
-    prompts = await fetchPrompts();
-    error = "";
-  } catch (e) {
-    error = e instanceof Error ? e.message : "Failed to load prompts";
-  } finally {
-    loading = false;
+    aiProviders = await fetchAiProviders();
+    aiModels = await fetchAiModels();
+  } catch (err) {
+    aiError = err instanceof Error ? err.message : "Failed to load AI config";
   }
 }
 
-onMount(() => {
-  load();
-});
+onMount(loadAi);
+
+function resetModalState() {
+  showApiKeyModal = false;
+  showOAuthModal = false;
+  oauthPolling = false;
+  oauthUrl = "";
+  oauthFlowId = "";
+  oauthNeedsCode = false;
+  oauthCodeInput = "";
+  selectedProvider = "";
+  apiKeyInput = "";
+  aiError = "";
+}
+
+function openApiKeyModal() {
+  resetModalState();
+  showApiKeyModal = true;
+}
+
+async function handleApiKeySave() {
+  if (!selectedProvider || !apiKeyInput.trim() || aiSaving) return;
+  aiSaving = true;
+  aiError = "";
+  try {
+    await saveProviderConfig(selectedProvider, apiKeyInput.trim());
+    resetModalState();
+    await loadAi();
+  } catch (err) {
+    aiError = err instanceof Error ? err.message : "Failed to save";
+  } finally {
+    aiSaving = false;
+  }
+}
+
+async function handleProviderRemove(providerId: string) {
+  aiSaving = true;
+  aiError = "";
+  try {
+    await removeProviderConfig(providerId);
+    await loadAi();
+  } catch (err) {
+    aiError = err instanceof Error ? err.message : "Failed to remove";
+  } finally {
+    aiSaving = false;
+  }
+}
+
+async function handleOAuth(providerId: string) {
+  resetModalState();
+  selectedProvider = providerId;
+  showOAuthModal = true;
+  aiSaving = true;
+  try {
+    const result = await startAiOAuth(providerId);
+    if (result.url) {
+      oauthUrl = result.url;
+      oauthFlowId = result.flowId;
+      oauthNeedsCode = !!result.needsManualCode;
+      oauthPolling = true;
+      const poll = async () => {
+        let errors = 0;
+        while (oauthPolling) {
+          await new Promise((r) => setTimeout(r, 2500));
+          try {
+            const status = await pollAiOAuthStatus(result.flowId);
+            errors = 0;
+            if (status.status === "complete") {
+              oauthPolling = false;
+              resetModalState();
+              await loadAi();
+              return;
+            } else if (status.status === "error") {
+              oauthPolling = false;
+              oauthUrl = "";
+              aiError = status.error ?? "OAuth failed";
+              return;
+            }
+          } catch {
+            errors++;
+            if (errors >= 5) {
+              oauthPolling = false;
+              oauthUrl = "";
+              aiError = "Lost connection while waiting for OAuth";
+              return;
+            }
+          }
+        }
+      };
+      poll();
+    }
+  } catch (err) {
+    aiError = err instanceof Error ? err.message : "OAuth failed";
+  } finally {
+    aiSaving = false;
+  }
+}
+
+async function handleOAuthCodeSubmit() {
+  if (!oauthCodeInput.trim() || !oauthFlowId) return;
+  aiError = "";
+  try {
+    await submitAiOAuthCode(oauthFlowId, oauthCodeInput.trim());
+    oauthCodeInput = "";
+  } catch (err) {
+    aiError = err instanceof Error ? err.message : "Failed to submit code";
+  }
+}
+
+// Model state
+let showModelModal = $state(false);
+let modelModalProvider = $state("");
+let modelSearch = $state("");
+let enabledModels = $derived(aiModels.filter((m) => m.enabled));
+let modelSuggestions = $derived(
+  modelSearch.trim()
+    ? aiModels
+        .filter(
+          (m) =>
+            !m.enabled &&
+            m.provider === modelModalProvider &&
+            m.id.toLowerCase().includes(modelSearch.toLowerCase()),
+        )
+        .slice(0, 12)
+    : aiModels.filter((m) => !m.enabled && m.provider === modelModalProvider).slice(0, 12),
+);
+
+function openModelModal(providerId: string) {
+  modelModalProvider = providerId;
+  modelSearch = "";
+  showModelModal = true;
+}
+
+function modelsForProvider(providerId: string) {
+  return enabledModels.filter((m) => m.provider === providerId);
+}
+
+async function addModel(modelId: string) {
+  const updated = [...enabledModels.map((m) => m.id), modelId];
+  try {
+    await saveEnabledModels(updated);
+    aiModels = aiModels.map((m) => (m.id === modelId ? { ...m, enabled: true } : m));
+    modelSearch = "";
+    showModelModal = false;
+  } catch (err) {
+    aiError = err instanceof Error ? err.message : "Failed to update models";
+  }
+}
+
+async function removeModel(modelId: string) {
+  const updated = enabledModels.map((m) => m.id).filter((id) => id !== modelId);
+  try {
+    await saveEnabledModels(updated);
+    aiModels = aiModels.map((m) => (m.id === modelId ? { ...m, enabled: false } : m));
+  } catch (err) {
+    aiError = err instanceof Error ? err.message : "Failed to update models";
+  }
+}
 
 async function handleSystemAction() {
   if (!systemInput.trim() || systemSaving) return;
@@ -90,42 +249,11 @@ async function handleSystemLogout() {
   }
 }
 
-function startEdit(prompt: Prompt) {
-  editingKey = prompt.key;
-  editContent = prompt.content;
-}
-
-function cancelEdit() {
-  editingKey = null;
-  editContent = "";
-}
-
-async function save(key: string) {
-  saving = true;
-  try {
-    await updatePrompt(key, editContent);
-    editingKey = null;
-    editContent = "";
-    await load();
-  } catch (e) {
-    error = e instanceof Error ? e.message : "Failed to save";
-  } finally {
-    saving = false;
-  }
-}
-
-async function handleReset(key: string) {
-  saving = true;
-  try {
-    await resetPrompt(key);
-    editingKey = null;
-    editContent = "";
-    await load();
-  } catch (e) {
-    error = e instanceof Error ? e.message : "Failed to reset";
-  } finally {
-    saving = false;
-  }
+function authMethodLabel(method: string | null): string {
+  if (method === "api_key") return "API key";
+  if (method === "oauth") return "OAuth";
+  if (method === "env_var") return "env var";
+  return "";
 }
 </script>
 
@@ -188,75 +316,180 @@ async function handleReset(key: string) {
     {/if}
   </div>
 
-  <!-- Prompts -->
-  {#if error}
-    <div class="error">{error}</div>
-  {/if}
+  <!-- AI Providers -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">AI Providers</span>
+      <span class="section-subtitle">Authentication for minds and system AI features</span>
+    </div>
 
-  {#if loading}
-    <div class="loading">Loading prompts...</div>
-  {:else}
-    {#each groupedPrompts as group (group.category)}
-      <div class="section">
-        <div class="section-header">
-          <span class="section-title">{group.meta.label}</span>
-          <span class="section-subtitle">{group.meta.subtitle}</span>
-        </div>
-
-        {#each group.items as prompt (prompt.key)}
-          <div class="prompt-card" class:custom={prompt.isCustom}>
-            <div class="prompt-header">
-              <span class="prompt-key">{prompt.key}</span>
-              {#if prompt.isCustom}
-                <span class="custom-badge">customized</span>
-              {/if}
-            </div>
-
-            <p class="prompt-desc">{prompt.description}</p>
-
-            {#if prompt.variables.length > 0}
-              <div class="var-tags">
-                {#each prompt.variables as v (v)}
-                  <span class="var-tag">${'{' + v + '}'}</span>
-                {/each}
-              </div>
-            {/if}
-
-            {#if editingKey === prompt.key}
-              <textarea
-                class="edit-area"
-                bind:value={editContent}
-                rows="10"
-              ></textarea>
-              <div class="actions">
-                <button class="btn btn-save" onclick={() => save(prompt.key)} disabled={saving}>
-                  {saving ? "Saving..." : "Save"}
-                </button>
-                <button class="btn btn-cancel" onclick={cancelEdit} disabled={saving}>
-                  Cancel
-                </button>
-              </div>
-            {:else}
-              <pre class="prompt-content"><code>{prompt.content}</code></pre>
-              <div class="actions">
-                <button class="btn btn-edit" onclick={() => startEdit(prompt)}>Edit</button>
-                {#if prompt.isCustom}
-                  <button
-                    class="btn btn-reset"
-                    onclick={() => handleReset(prompt.key)}
-                    disabled={saving}
-                  >
-                    Reset
-                  </button>
-                {/if}
-              </div>
-            {/if}
+    {#each configuredProviders as provider (provider.id)}
+      {@const providerModels = modelsForProvider(provider.id)}
+      <div class="provider-card">
+        <div class="provider-row">
+          <span class="provider-name">{provider.id}</span>
+          <span class="auth-badge">{authMethodLabel(provider.authMethod)}</span>
+          <div class="provider-actions">
+            <button class="btn btn-reset" onclick={() => handleProviderRemove(provider.id)} disabled={aiSaving}>
+              Remove
+            </button>
           </div>
-        {/each}
+        </div>
+        <div class="provider-models">
+          {#if providerModels.length > 0}
+            <div class="model-tags">
+              {#each providerModels as model (model.id)}
+                <span class="model-tag">
+                  {model.id}
+                  <button class="model-tag-remove" onclick={() => removeModel(model.id)}>x</button>
+                </span>
+              {/each}
+            </div>
+          {:else}
+            <span class="dim">No models enabled</span>
+          {/if}
+          {#if aiModels.some((m) => !m.enabled && m.provider === provider.id)}
+            <button class="btn btn-edit btn-add-model" onclick={() => openModelModal(provider.id)}>
+              Add model
+            </button>
+          {/if}
+        </div>
       </div>
     {/each}
-  {/if}
+
+    {#if unconfiguredProviders.length > 0}
+      <div class="add-provider-area">
+        {#if oauthProviders.length > 0}
+          <span class="add-provider-heading">Sign in with</span>
+          <div class="oauth-buttons">
+            {#each oauthProviders as p (p.id)}
+              <button
+                class="btn-provider"
+                onclick={() => handleOAuth(p.id)}
+                disabled={aiSaving}
+              >
+                {p.oauthName ?? p.id}
+              </button>
+            {/each}
+          </div>
+        {/if}
+        <button class="link-btn" onclick={openApiKeyModal}>
+          {oauthProviders.length > 0 ? "or add an API key" : "Add an API key"}
+        </button>
+      </div>
+    {/if}
+
+    {#if aiError && !showApiKeyModal && !showOAuthModal}
+      <div class="error">{aiError}</div>
+    {/if}
+  </div>
+
+
 </div>
+
+<!-- OAuth Modal -->
+{#if showOAuthModal}
+  <Modal onClose={resetModalState} size="420px" title="Sign in with {aiProviders.find(p => p.id === selectedProvider)?.oauthName ?? selectedProvider}">
+    <div class="modal-body">
+      {#if oauthUrl}
+        {#if oauthNeedsCode}
+          {#if isRemote}
+            <div class="oauth-steps">
+              <div class="oauth-step"><span class="step-num">1</span> Open the link below and authorize</div>
+              <div class="oauth-step"><span class="step-num">2</span> You'll be redirected to a page that won't load — this is expected</div>
+              <div class="oauth-step"><span class="step-num">3</span> Copy the URL from your browser's address bar and paste it below</div>
+            </div>
+          {:else}
+            <p class="modal-text">Open the link below to authorize:</p>
+          {/if}
+          <a href={oauthUrl} target="_blank" rel="noopener" class="oauth-link">{oauthUrl}</a>
+          {#if isRemote}
+            <form class="modal-form" onsubmit={(e) => { e.preventDefault(); handleOAuthCodeSubmit(); }}>
+              <input
+                type="text"
+                bind:value={oauthCodeInput}
+                placeholder="Paste the redirect URL here"
+                class="system-input"
+              />
+              <button type="submit" class="btn btn-save" disabled={!oauthCodeInput.trim()}>Submit</button>
+            </form>
+          {:else}
+            {#if oauthPolling}
+              <span class="dim">Waiting for authorization...</span>
+            {/if}
+          {/if}
+        {:else}
+          <p class="modal-text">Authorize at:</p>
+          <a href={oauthUrl} target="_blank" rel="noopener" class="oauth-link">{oauthUrl}</a>
+          {#if oauthPolling}
+            <span class="dim">Waiting for authorization...</span>
+          {/if}
+        {/if}
+      {:else if aiSaving}
+        <span class="dim">Starting OAuth flow...</span>
+      {/if}
+      {#if aiError}
+        <div class="error">{aiError}</div>
+      {/if}
+    </div>
+  </Modal>
+{/if}
+
+<!-- Model Modal -->
+{#if showModelModal}
+  <Modal onClose={() => { showModelModal = false; }} size="420px" title="Add model — {modelModalProvider}">
+    <div class="modal-body">
+      <input
+        type="text"
+        bind:value={modelSearch}
+        placeholder="Search models..."
+        class="system-input"
+      />
+      {#if modelSuggestions.length > 0}
+        <div class="model-list">
+          {#each modelSuggestions as model (model.id)}
+            <button class="model-option" onclick={() => addModel(model.id)}>
+              <span class="model-id">{model.id}</span>
+            </button>
+          {/each}
+        </div>
+      {:else}
+        <span class="dim">No more models available</span>
+      {/if}
+    </div>
+  </Modal>
+{/if}
+
+<!-- API Key Modal -->
+{#if showApiKeyModal}
+  <Modal onClose={resetModalState} size="420px" title="Add API key">
+    <div class="modal-body">
+      <select bind:value={selectedProvider} class="system-input modal-select">
+        <option value="">Select provider...</option>
+        {#each unconfiguredProviders as p (p.id)}
+          <option value={p.id}>{p.id}</option>
+        {/each}
+      </select>
+
+      {#if selectedProvider}
+        <form class="modal-form" onsubmit={(e) => { e.preventDefault(); handleApiKeySave(); }}>
+          <input
+            type="password"
+            bind:value={apiKeyInput}
+            placeholder="API key"
+            class="system-input"
+          />
+          <button type="submit" class="btn btn-save" disabled={aiSaving || !apiKeyInput.trim()}>
+            {aiSaving ? "..." : "Save"}
+          </button>
+        </form>
+      {/if}
+      {#if aiError}
+        <div class="error">{aiError}</div>
+      {/if}
+    </div>
+  </Modal>
+{/if}
 
 <style>
   .settings {
@@ -268,14 +501,7 @@ async function handleReset(key: string) {
   .error {
     color: var(--red);
     font-size: 13px;
-    margin-bottom: 16px;
-  }
-
-  .loading {
-    color: var(--text-2);
-    font-size: 13px;
-    padding: 40px 0;
-    text-align: center;
+    margin-top: 8px;
   }
 
   .section {
@@ -300,108 +526,252 @@ async function handleReset(key: string) {
     color: var(--text-2);
   }
 
-  .prompt-card {
+  .provider-card {
     background: var(--bg-2);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    padding: 14px 16px;
-    margin-bottom: 10px;
+    padding: 10px 16px;
+    margin-bottom: 6px;
   }
 
-  .prompt-card.custom {
-    border-color: var(--yellow-dim);
-  }
-
-  .prompt-header {
+  .provider-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 4px;
   }
 
-  .prompt-key {
-    font-family: var(--mono);
-    font-size: 14px;
-    font-weight: 600;
+  .provider-name {
+    font-size: 13px;
+    font-weight: 500;
     color: var(--text-0);
+    flex: 1;
   }
 
-  .custom-badge {
+  .auth-badge {
     font-size: 11px;
     padding: 1px 6px;
     border-radius: 3px;
-    background: var(--yellow-dim);
-    color: var(--yellow);
-  }
-
-  .prompt-desc {
-    font-size: 13px;
+    background: var(--bg-3);
     color: var(--text-2);
-    margin-bottom: 8px;
-    line-height: 1.5;
   }
 
-  .var-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin-bottom: 10px;
-  }
-
-  .var-tag {
-    font-family: var(--mono);
-    font-size: 11px;
-    padding: 2px 6px;
-    border-radius: 3px;
-    background: var(--bg-3);
-    color: var(--accent);
-    border: 1px solid var(--border);
-  }
-
-  .prompt-content {
-    background: var(--bg-3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 10px 12px;
-    overflow-x: auto;
-    font-family: var(--mono);
-    font-size: 13px;
-    line-height: 1.5;
-    color: var(--text-1);
-    white-space: pre-wrap;
-    word-break: break-word;
-    margin-bottom: 8px;
-  }
-
-  .prompt-content code {
-    font-family: inherit;
-    font-size: inherit;
-  }
-
-  .edit-area {
-    width: 100%;
-    min-height: 120px;
-    background: var(--bg-3);
-    border: 1px solid var(--accent-dim);
-    border-radius: var(--radius);
-    padding: 10px 12px;
-    font-family: var(--mono);
-    font-size: 14px;
-    line-height: 1.5;
-    color: var(--text-0);
-    resize: vertical;
-    margin-bottom: 8px;
-  }
-
-  .edit-area:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-
-  .actions {
+  .provider-actions {
     display: flex;
     gap: 6px;
   }
+
+  /* --- Add provider area --- */
+
+  .add-provider-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+    padding: 20px 16px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+  }
+
+  .add-provider-heading {
+    font-size: 13px;
+    color: var(--text-2);
+    letter-spacing: 0.02em;
+  }
+
+  .oauth-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .btn-provider {
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 10px 24px;
+    border-radius: var(--radius-lg);
+    cursor: pointer;
+    border: 1px solid var(--accent-border);
+    background: var(--accent-dim);
+    color: var(--accent);
+    transition: border-color 0.15s, opacity 0.15s;
+  }
+
+  .btn-provider:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+
+  .btn-provider:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .link-btn {
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--text-2);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 0;
+    border-bottom: 1px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+  }
+
+  .link-btn:hover {
+    color: var(--text-1);
+    border-bottom-color: var(--text-2);
+  }
+
+  /* --- Modal content --- */
+
+  .modal-body {
+    padding: 16px 20px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .modal-text {
+    font-size: 13px;
+    color: var(--text-2);
+    margin: 0;
+  }
+
+  .modal-form {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .modal-select {
+    width: 100%;
+  }
+
+  .oauth-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .oauth-step {
+    font-size: 13px;
+    color: var(--text-1);
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .step-num {
+    font-size: 11px;
+    font-weight: 600;
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--bg-3);
+    color: var(--text-2);
+    flex-shrink: 0;
+  }
+
+  .oauth-link {
+    color: var(--accent);
+    font-size: 13px;
+    word-break: break-all;
+  }
+
+  /* --- Models (inline in provider cards) --- */
+
+  .provider-models {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .model-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .model-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    padding: 3px 8px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-0);
+  }
+
+  .model-tag-remove {
+    background: none;
+    border: none;
+    color: var(--text-2);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 0 2px;
+    line-height: 1;
+  }
+
+  .model-tag-remove:hover {
+    color: var(--red);
+  }
+
+  .btn-add-model {
+    font-size: 11px;
+    padding: 2px 8px;
+  }
+
+  /* --- Model modal list --- */
+
+  .model-list {
+    max-height: 260px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .model-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 12px;
+    font-size: 13px;
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-0);
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .model-option:last-child {
+    border-bottom: none;
+  }
+
+  .model-option:hover {
+    background: var(--bg-3);
+  }
+
+  .model-id {
+    color: var(--text-0);
+    flex: 1;
+  }
+
+  /* --- Shared --- */
 
   .btn {
     font-family: inherit;
@@ -512,5 +882,10 @@ async function handleReset(key: string) {
 
   .system-input:focus {
     border-color: var(--border-bright);
+  }
+
+  .dim {
+    color: var(--text-2);
+    font-size: 12px;
   }
 </style>

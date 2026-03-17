@@ -2,38 +2,30 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { Scheduler } from "../src/lib/daemon/scheduler.js";
 
-type DeliveryPayload = {
-  content: { type: string; text: string }[];
-  channel: string;
-  sender: string;
+type SystemDelivery = {
+  mindName: string;
+  text: string;
+  opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string };
 };
 
 class TestScheduler extends Scheduler {
-  deliveries: { mindName: string; payload: DeliveryPayload }[] = [];
+  systemDeliveries: SystemDelivery[] = [];
 
   protected override async runScript(): Promise<string> {
     return "";
   }
 
-  protected override async deliver(mindName: string, payload: DeliveryPayload): Promise<void> {
-    this.deliveries.push({ mindName, payload });
+  protected override async deliverSystem(
+    mindName: string,
+    text: string,
+    opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
+  ): Promise<void> {
+    this.systemDeliveries.push({ mindName, text, opts });
   }
 }
 
-describe("scheduler skipWhenSleeping", () => {
-  it("delivers message when skipWhenSleeping is false", async () => {
-    const scheduler = new TestScheduler();
-    await (scheduler as any).fire("test-mind", {
-      id: "no-skip",
-      cron: "* * * * *",
-      message: "hello",
-      enabled: true,
-      skipWhenSleeping: false,
-    });
-    assert.equal(scheduler.deliveries.length, 1);
-  });
-
-  it("delivers message when skipWhenSleeping is undefined", async () => {
+describe("scheduler whileSleeping", () => {
+  it("delivers message with whileSleeping undefined by default", async () => {
     const scheduler = new TestScheduler();
     await (scheduler as any).fire("test-mind", {
       id: "no-flag",
@@ -41,21 +33,46 @@ describe("scheduler skipWhenSleeping", () => {
       message: "hello",
       enabled: true,
     });
-    assert.equal(scheduler.deliveries.length, 1);
+    assert.equal(scheduler.systemDeliveries.length, 1);
+    assert.equal(scheduler.systemDeliveries[0].opts?.whileSleeping, undefined);
   });
 
-  it("delivers when skipWhenSleeping is true but sleep manager not initialized", async () => {
-    // When no sleep manager is available (getSleepManagerIfReady returns null),
-    // schedules should still fire
+  it("passes whileSleeping: skip to delivery", async () => {
     const scheduler = new TestScheduler();
     await (scheduler as any).fire("test-mind", {
-      id: "skip-no-manager",
+      id: "skip-sched",
       cron: "* * * * *",
       message: "hello",
       enabled: true,
-      skipWhenSleeping: true,
+      whileSleeping: "skip",
     });
-    // In test environment, getSleepManagerIfReady() returns null, so message delivers
-    assert.equal(scheduler.deliveries.length, 1);
+    assert.equal(scheduler.systemDeliveries.length, 1);
+    assert.equal(scheduler.systemDeliveries[0].opts?.whileSleeping, "skip");
+  });
+
+  it("passes whileSleeping: trigger-wake to delivery", async () => {
+    const scheduler = new TestScheduler();
+    await (scheduler as any).fire("test-mind", {
+      id: "wake-sched",
+      cron: "* * * * *",
+      message: "hello",
+      enabled: true,
+      whileSleeping: "trigger-wake",
+    });
+    assert.equal(scheduler.systemDeliveries.length, 1);
+    assert.equal(scheduler.systemDeliveries[0].opts?.whileSleeping, "trigger-wake");
+  });
+
+  it("passes whileSleeping: queue to delivery", async () => {
+    const scheduler = new TestScheduler();
+    await (scheduler as any).fire("test-mind", {
+      id: "queue-sched",
+      cron: "* * * * *",
+      message: "hello",
+      enabled: true,
+      whileSleeping: "queue",
+    });
+    assert.equal(scheduler.systemDeliveries.length, 1);
+    assert.equal(scheduler.systemDeliveries[0].opts?.whileSleeping, "queue");
   });
 });

@@ -1,4 +1,42 @@
 import { parseArgs } from "../lib/parse-args.js";
+import { promptLine } from "../lib/prompt.js";
+
+type ModelInfo = {
+  id: string;
+  name: string;
+  provider: string;
+  contextWindow?: number;
+  enabled: boolean;
+};
+
+async function chooseModel(
+  daemonFetch: (path: string, options?: RequestInit) => Promise<Response>,
+): Promise<string | undefined> {
+  const res = await daemonFetch("/api/system/ai/models");
+  if (!res.ok) {
+    console.error(`Failed to fetch AI models (HTTP ${res.status}). Is the daemon running?`);
+    process.exit(1);
+  }
+
+  const models = (await res.json()) as ModelInfo[];
+  const enabled = models.filter((m) => m.enabled);
+  if (enabled.length === 0) return undefined;
+
+  console.log("\nAvailable models:");
+  for (let i = 0; i < enabled.length; i++) {
+    console.log(`  ${i + 1}) ${enabled[i].name} (${enabled[i].provider})`);
+  }
+
+  const answer = await promptLine(`\nChoose a model [1-${enabled.length}]: `);
+  const idx = parseInt(answer, 10) - 1;
+  if (Number.isNaN(idx) || idx < 0 || idx >= enabled.length) {
+    console.error("Invalid selection");
+    process.exit(1);
+  }
+
+  const chosen = enabled[idx];
+  return `${chosen.provider}:${chosen.id}`;
+}
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -23,6 +61,16 @@ export async function run(args: string[]) {
   const { getClient, urlOf } = await import("../lib/api-client.js");
   const client = getClient();
 
+  // For pi template, prompt for model selection if not specified
+  let model = flags.model;
+  if (template === "pi" && !model) {
+    model = await chooseModel(daemonFetch);
+    if (!model) {
+      console.error("No AI models configured. Set up providers in the web dashboard first.");
+      process.exit(1);
+    }
+  }
+
   // Create mind as seed
   const createRes = await daemonFetch(urlOf(client.api.minds.$url()), {
     method: "POST",
@@ -32,7 +80,7 @@ export async function run(args: string[]) {
       template,
       stage: "seed",
       description: flags.description,
-      model: flags.model,
+      model,
       skills,
     }),
   });
@@ -61,20 +109,7 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
-  // Send initial orientation message
-  const initialMessage =
-    "You've just been created. A human planted you as a seed. Start a conversation with them — introduce yourself, ask questions, and begin exploring who you want to be.";
-  await daemonFetch(urlOf(client.api.minds[":name"].message.$url({ param: { name } })), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      content: [{ type: "text", text: initialMessage }],
-      channel: "system",
-      sender: "system",
-    }),
-  });
-
   console.log(`\nSeeded mind: ${name} (port ${createData.port})`);
   console.log(`\nTalk to your new mind:`);
-  console.log(`  volute send @${name} "hello"`);
+  console.log(`  volute chat send @${name} "hello"`);
 }

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { voluteHome } from "./registry.js";
+import { voluteSystemDir } from "./registry.js";
 
 type UpdateCheckResult = {
   current: string;
@@ -17,7 +17,7 @@ type UpdateCheckCache = {
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 function cachePath(): string {
-  return resolve(voluteHome(), "update-check.json");
+  return resolve(voluteSystemDir(), "update-check.json");
 }
 
 function readCache(): UpdateCheckCache | null {

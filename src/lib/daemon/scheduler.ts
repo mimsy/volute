@@ -1,12 +1,11 @@
 import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
-import { deliverMessage } from "../delivery/message-delivery.js";
 import { exec } from "../exec.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../json-state.js";
 import log from "../logger.js";
-import { mindDir, voluteHome } from "../registry.js";
-import { readVoluteConfig, type Schedule } from "../volute-config.js";
-import { getSleepManagerIfReady } from "./sleep-manager.js";
+import { mindDir, voluteSystemDir } from "../registry.js";
+import { sendSystemMessage } from "../system-chat.js";
+import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../volute-config.js";
 
 const slog = log.child("scheduler");
 
@@ -16,7 +15,7 @@ export class Scheduler {
   private lastFired = new Map<string, number>(); // "mind:scheduleId" → epoch minute
 
   private get statePath(): string {
-    return resolve(voluteHome(), "scheduler-state.json");
+    return resolve(voluteSystemDir(), "scheduler-state.json");
   }
 
   start(): void {
@@ -85,6 +84,19 @@ export class Scheduler {
     const key = `${mind}:${schedule.id}`;
     if (this.lastFired.get(key) === epochMinute) return false;
 
+    // One-time timer: fireAt
+    if (schedule.fireAt) {
+      const fireTime = Math.floor(new Date(schedule.fireAt).getTime() / 60000);
+      if (epochMinute >= fireTime) {
+        this.lastFired.set(key, epochMinute);
+        return true;
+      }
+      return false;
+    }
+
+    // Recurring: cron
+    if (!schedule.cron) return false;
+
     let prevMinute = cronCache.get(schedule.cron);
     if (prevMinute === undefined) {
       try {
@@ -106,20 +118,6 @@ export class Scheduler {
   }
 
   private async fire(mindName: string, schedule: Schedule): Promise<void> {
-    const sleepManager = getSleepManagerIfReady();
-    const sleepState = sleepManager?.getState(mindName);
-    if (sleepState?.sleeping) {
-      if (schedule.skipWhenSleeping) {
-        slog.info(`skipped "${schedule.id}" for ${mindName} (sleeping)`);
-        return;
-      }
-      // During trigger-wake, skip all scheduled fires. The trigger message already
-      // woke the mind; additional schedules would flood a brief wake-up.
-      if (sleepState.wokenByTrigger) {
-        slog.info(`skipped "${schedule.id}" for ${mindName} (trigger-woken)`);
-        return;
-      }
-    }
     try {
       let text: string;
       if (schedule.script) {
@@ -142,14 +140,47 @@ export class Scheduler {
         slog.warn(`schedule "${schedule.id}" for ${mindName} has no message or script`);
         return;
       }
-      await this.deliver(mindName, {
-        content: [{ type: "text", text }],
-        channel: schedule.channel ?? "system:scheduler",
-        sender: schedule.id,
+
+      await this.deliverSystem(mindName, `[${schedule.id}] ${text}`, {
+        whileSleeping: schedule.whileSleeping,
+        session: schedule.session,
       });
       slog.info(`fired "${schedule.id}" for ${mindName}`);
+
+      // Self-delete one-time timers after successful delivery
+      if (schedule.fireAt) {
+        this.removeSchedule(mindName, schedule.id);
+      }
     } catch (err) {
       slog.warn(`failed to fire "${schedule.id}" for ${mindName}`, log.errorData(err));
+    }
+  }
+
+  private removeSchedule(mindName: string, scheduleId: string): void {
+    // Remove from in-memory schedules immediately to prevent re-firing on config write failure
+    const memSchedules = this.schedules.get(mindName);
+    if (memSchedules) {
+      const filtered = memSchedules.filter((s) => s.id !== scheduleId);
+      if (filtered.length > 0) {
+        this.schedules.set(mindName, filtered);
+      } else {
+        this.schedules.delete(mindName);
+      }
+    }
+
+    try {
+      const dir = mindDir(mindName);
+      const config = readVoluteConfig(dir);
+      if (!config?.schedules) return;
+      config.schedules = config.schedules.filter((s) => s.id !== scheduleId);
+      if (config.schedules.length === 0) config.schedules = undefined;
+      writeVoluteConfig(dir, config);
+      slog.info(`removed one-time schedule "${scheduleId}" for ${mindName}`);
+    } catch (err) {
+      slog.error(
+        `failed to persist removal of schedule "${scheduleId}" for ${mindName} (removed from memory)`,
+        log.errorData(err),
+      );
     }
   }
 
@@ -157,11 +188,12 @@ export class Scheduler {
     return exec("bash", ["-c", script], { cwd, mindName });
   }
 
-  protected deliver(
+  protected deliverSystem(
     mindName: string,
-    payload: { content: { type: string; text: string }[]; channel: string; sender: string },
+    text: string,
+    opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
   ): Promise<void> {
-    return deliverMessage(mindName, payload);
+    return sendSystemMessage(mindName, text, opts);
   }
 }
 

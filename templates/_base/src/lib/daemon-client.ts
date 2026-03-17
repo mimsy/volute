@@ -1,12 +1,31 @@
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 const port = process.env.VOLUTE_DAEMON_PORT;
 const mind = process.env.VOLUTE_MIND;
 const token = process.env.VOLUTE_DAEMON_TOKEN;
+
+/** Read session from file (fallback for sandbox where env vars don't propagate). */
+function readSessionFile(): string | undefined {
+  const mindDir = process.env.VOLUTE_MIND_DIR;
+  if (!mindDir) return undefined;
+  try {
+    const p = resolve(mindDir, ".mind", "current-session");
+    if (existsSync(p)) return readFileSync(p, "utf-8").trim() || undefined;
+  } catch (err) {
+    console.warn(`[volute] failed to read session file: ${err}`);
+  }
+  return undefined;
+}
 
 function headers(): Record<string, string> {
   const h: Record<string, string> = { "Content-Type": "application/json" };
   if (token) h.Authorization = `Bearer ${token}`;
   // Origin header required for CSRF checks on mutation requests
   if (port) h.Origin = `http://127.0.0.1:${port}`;
+  // Tag requests with the current session for turn resolution
+  const session = process.env.VOLUTE_SESSION ?? readSessionFile();
+  if (session) h["X-Volute-Session"] = session;
   return h;
 }
 
@@ -94,27 +113,4 @@ export async function daemonSendFile(
     throw new Error(`daemonSendFile failed (${res.status}): ${body}`);
   }
   return (await res.json()) as { status: string; id?: string; destPath?: string };
-}
-
-export async function daemonSend(channel: string, text: string): Promise<void> {
-  if (!port || !mind) {
-    console.error("[volute] daemonSend: VOLUTE_DAEMON_PORT or VOLUTE_MIND not set");
-    return;
-  }
-  const res = await fetch(
-    `http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/message`,
-    {
-      method: "POST",
-      headers: headers(),
-      body: JSON.stringify({
-        content: text,
-        channel,
-        sender: mind,
-      }),
-    },
-  );
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`daemonSend failed (${res.status}): ${body}`);
-  }
 }

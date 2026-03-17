@@ -29,7 +29,7 @@ bash test/integration-setup.sh
 docker exec -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY <container> \
   volute mind seed my-mind --template claude --model claude-sonnet-4-6
 
-docker exec <container> volute send @my-mind "hello, who are you?" --wait
+docker exec <container> volute chat send @my-mind "hello, who are you?" --wait
 
 # Tear down when done
 bash test/integration-teardown.sh
@@ -97,10 +97,10 @@ The `ANTHROPIC_API_KEY` is needed for commands that create or start minds (it ge
 
 ### Sending messages with `--wait`
 
-`volute send --wait` sends a message to a mind and streams the response back to your terminal:
+`volute chat send --wait` sends a message to a mind and streams the response back to your terminal:
 
 ```sh
-docker exec <container> volute send @my-mind "what are you thinking about?" --wait
+docker exec <container> volute chat send @my-mind "what are you thinking about?" --wait
 ```
 
 This connects to the mind's event stream, prints response text as it arrives, and exits when the mind finishes processing. Default timeout is 120 seconds; override with `--timeout <ms>`.
@@ -119,8 +119,8 @@ $V mind seed aria --template claude --model claude-sonnet-4-6
 $V mind seed kimi --template pi --model "openrouter:moonshotai/kimi-k2.5"
 
 # Talk to them and see their responses
-docker exec $CONTAINER volute send @aria "tell me about yourself" --wait
-docker exec $CONTAINER volute send @kimi "what interests you?" --wait
+docker exec $CONTAINER volute chat send @aria "tell me about yourself" --wait
+docker exec $CONTAINER volute chat send @kimi "what interests you?" --wait
 
 # Check their files
 docker exec $CONTAINER cat /minds/aria/home/SOUL.md

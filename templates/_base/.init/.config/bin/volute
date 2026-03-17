@@ -1,0 +1,27 @@
+#!/bin/sh
+# Wrapper that sets VOLUTE_SESSION from the session file before calling the real volute CLI.
+# In sandbox mode, env vars set after process start don't propagate to child processes.
+if [ -z "$VOLUTE_SESSION" ] && [ -n "$VOLUTE_MIND_DIR" ]; then
+  SESSION_FILE="$VOLUTE_MIND_DIR/.mind/current-session"
+  if [ -f "$SESSION_FILE" ]; then
+    VOLUTE_SESSION=$(cat "$SESSION_FILE")
+    export VOLUTE_SESSION
+  fi
+fi
+# Find the real volute binary (skip this wrapper)
+REAL_VOLUTE=""
+OLDIFS="$IFS"
+IFS=:
+for dir in $PATH; do
+  case "$dir" in */.config/bin) continue ;; esac
+  if [ -x "$dir/volute" ]; then
+    REAL_VOLUTE="$dir/volute"
+    break
+  fi
+done
+IFS="$OLDIFS"
+if [ -z "$REAL_VOLUTE" ]; then
+  echo "volute: command not found" >&2
+  exit 1
+fi
+exec "$REAL_VOLUTE" "$@"

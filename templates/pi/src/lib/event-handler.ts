@@ -1,6 +1,6 @@
-import { commitFileChange } from "./auto-commit.js";
+import { flushFileChanges, trackFileChange } from "./auto-commit.js";
 import { daemonEmit, type EventType } from "./daemon-client.js";
-import { log, logText, logThinking, logToolResult, logToolUse, warn } from "./logger.js";
+import { log, warn } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
 import type { VoluteEvent } from "./types.js";
 
@@ -44,7 +44,6 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
 
   function flushText() {
     if (textBuf) {
-      logText(textBuf);
       emit(session, { type: "text", content: textBuf });
       textBuf = "";
     }
@@ -52,7 +51,6 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
 
   function flushThinking() {
     if (thinkingBuf) {
-      logThinking(thinkingBuf);
       emit(session, { type: "thinking", content: thinkingBuf });
       thinkingBuf = "";
     }
@@ -82,25 +80,15 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         if (ae.type === "text_delta") {
           if (thinkingBuf) flushThinking();
           textBuf += ae.delta;
-          // Log complete lines as they arrive
-          for (let nl = textBuf.indexOf("\n"); nl !== -1; nl = textBuf.indexOf("\n")) {
-            logText(textBuf.slice(0, nl + 1));
-            textBuf = textBuf.slice(nl + 1);
-          }
         } else if (ae.type === "thinking_delta") {
           if (textBuf) flushText();
           thinkingBuf += ae.delta;
-          for (let nl = thinkingBuf.indexOf("\n"); nl !== -1; nl = thinkingBuf.indexOf("\n")) {
-            logThinking(thinkingBuf.slice(0, nl + 1));
-            thinkingBuf = thinkingBuf.slice(nl + 1);
-          }
         }
       }
 
       if (event.type === "tool_execution_start") {
         flushBuffers();
         toolArgs.set(event.toolCallId, event.args);
-        logToolUse(event.toolName, event.args);
         emit(session, {
           type: "tool_use",
           content: JSON.stringify(event.args),
@@ -111,7 +99,6 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
       if (event.type === "tool_execution_end") {
         const output =
           typeof event.result === "string" ? event.result : JSON.stringify(event.result);
-        logToolResult(event.toolName, output, event.isError);
         emit(session, {
           type: "tool_result",
           content: output,
@@ -123,7 +110,7 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
           const args = toolArgs.get(event.toolCallId);
           const filePath = (args as { path?: string })?.path;
           if (filePath) {
-            commitFileChange(filePath, options.cwd);
+            trackFileChange(filePath, options.cwd);
           }
         }
         toolArgs.delete(event.toolCallId);
@@ -171,7 +158,9 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         options.broadcast({ type: "done" });
         emit(session, { type: "done" });
         session.currentMessageId = undefined;
-        options.onTurnEnd?.();
+        flushFileChanges(options.cwd)
+          .then(() => options.onTurnEnd?.())
+          .catch((err) => log("mind", `session "${session.name}": flush/turn-end error:`, err));
       }
     } catch (err) {
       log("mind", `session "${session.name}": event handler error (${event?.type}):`, err);

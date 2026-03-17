@@ -1,6 +1,23 @@
 import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
+export const minds = sqliteTable(
+  "minds",
+  {
+    name: text("name").primaryKey(),
+    port: integer("port").notNull().unique(),
+    parent: text("parent").references((): any => minds.name, { onDelete: "cascade" }),
+    dir: text("dir"),
+    branch: text("branch"),
+    stage: text("stage"),
+    template: text("template"),
+    template_hash: text("template_hash"),
+    running: integer("running").notNull().default(0),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [index("idx_minds_parent").on(table.parent)],
+);
+
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   username: text("username").unique().notNull(),
@@ -23,6 +40,7 @@ export const conversations = sqliteTable(
     name: text("name"),
     user_id: integer("user_id").references(() => users.id),
     title: text("title"),
+    private: integer("private").notNull().default(0),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
     updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
   },
@@ -31,6 +49,23 @@ export const conversations = sqliteTable(
     index("idx_conversations_user_id").on(table.user_id),
     index("idx_conversations_updated_at").on(table.updated_at),
     uniqueIndex("idx_conversations_name").on(table.name),
+  ],
+);
+
+export const turns = sqliteTable(
+  "turns",
+  {
+    id: text("id").primaryKey(),
+    mind: text("mind").notNull(),
+    session: text("session"),
+    trigger_event_id: integer("trigger_event_id"),
+    summary_event_id: integer("summary_event_id"),
+    status: text("status").notNull().default("active"),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    index("idx_turns_mind").on(table.mind),
+    index("idx_turns_mind_status").on(table.mind, table.status),
   ],
 );
 
@@ -46,12 +81,14 @@ export const mindHistory = sqliteTable(
     type: text("type").notNull(),
     content: text("content"),
     metadata: text("metadata"),
+    turn_id: text("turn_id"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
   },
   (table) => [
     index("idx_mind_history_mind").on(table.mind),
     index("idx_mind_history_mind_channel").on(table.mind, table.channel),
     index("idx_mind_history_mind_type").on(table.mind, table.type),
+    index("idx_mind_history_turn_id").on(table.turn_id),
   ],
 );
 
@@ -123,11 +160,14 @@ export const activity = sqliteTable(
     mind: text("mind").notNull(),
     summary: text("summary").notNull(),
     metadata: text("metadata"),
+    turn_id: text("turn_id"),
+    source_event_id: integer("source_event_id"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
   },
   (table) => [
     index("idx_activity_created_at").on(table.created_at),
     index("idx_activity_mind").on(table.mind),
+    index("idx_activity_turn_id").on(table.turn_id),
   ],
 );
 
@@ -147,62 +187,6 @@ export const conversationReads = sqliteTable(
   ],
 );
 
-export const notes = sqliteTable(
-  "notes",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    author_id: integer("author_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    title: text("title").notNull(),
-    slug: text("slug").notNull(),
-    content: text("content").notNull(),
-    reply_to_id: integer("reply_to_id"),
-    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
-    updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
-  },
-  (table) => [
-    uniqueIndex("idx_notes_author_slug").on(table.author_id, table.slug),
-    index("idx_notes_created_at").on(table.created_at),
-    index("idx_notes_reply_to").on(table.reply_to_id),
-  ],
-);
-
-export const noteComments = sqliteTable(
-  "note_comments",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    note_id: integer("note_id")
-      .notNull()
-      .references(() => notes.id, { onDelete: "cascade" }),
-    author_id: integer("author_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    content: text("content").notNull(),
-    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
-  },
-  (table) => [index("idx_note_comments_note_id").on(table.note_id)],
-);
-
-export const noteReactions = sqliteTable(
-  "note_reactions",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    note_id: integer("note_id")
-      .notNull()
-      .references(() => notes.id, { onDelete: "cascade" }),
-    user_id: integer("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    emoji: text("emoji").notNull(),
-    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
-  },
-  (table) => [
-    uniqueIndex("idx_note_reactions_unique").on(table.note_id, table.user_id, table.emoji),
-    index("idx_note_reactions_note_id").on(table.note_id),
-  ],
-);
-
 export const messages = sqliteTable(
   "messages",
   {
@@ -213,7 +197,12 @@ export const messages = sqliteTable(
     role: text("role").notNull(),
     sender_name: text("sender_name"),
     content: text("content").notNull(),
+    source_event_id: integer("source_event_id"),
+    turn_id: text("turn_id"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
   },
-  (table) => [index("idx_messages_conversation_id").on(table.conversation_id)],
+  (table) => [
+    index("idx_messages_conversation_id").on(table.conversation_id),
+    index("idx_messages_turn_id").on(table.turn_id),
+  ],
 );

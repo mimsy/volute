@@ -253,7 +253,7 @@ export class MailPoller {
   }
 
   private async deliver(mind: string, email: Email): Promise<void> {
-    const entry = findMind(mind);
+    const entry = await findMind(mind);
     if (!entry || !entry.running) {
       mlog.warn(`skipping delivery to ${mind}: ${!entry ? "not found" : "not running"}`);
       return;

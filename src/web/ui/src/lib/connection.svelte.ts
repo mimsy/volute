@@ -106,7 +106,7 @@ function startSSE() {
 
         for (const part of parts) {
           if (!part.trim()) continue;
-          const events = parseSSE(part + "\n\n");
+          const events = parseSSE(`${part}\n\n`);
           for (const event of events) {
             if (event.id) lastEventId = event.id;
             if (!event.data) continue;

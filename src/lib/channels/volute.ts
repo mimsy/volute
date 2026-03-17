@@ -6,11 +6,12 @@ import {
   type ImageAttachment,
   resolveChannelId,
 } from "../channels.js";
-import { voluteHome } from "../registry.js";
+import { readSessionFile } from "../daemon-client.js";
+import { voluteSystemDir } from "../registry.js";
 import { buildVoluteSlug } from "../slugify.js";
 
 function getDaemonConfig(): { url: string; token?: string } {
-  const configPath = resolve(voluteHome(), "daemon.json");
+  const configPath = resolve(voluteSystemDir(), "daemon.json");
   if (!existsSync(configPath)) {
     throw new Error("Volute daemon is not running");
   }
@@ -49,12 +50,17 @@ export async function read(
   if (!res.ok) {
     throw new Error(`Failed to read conversation: ${res.status} ${res.statusText}`);
   }
-  const messages = (await res.json()) as {
-    role: string;
-    sender_name: string | null;
-    content: string | { type: string; text?: string }[];
-  }[];
-  return messages
+  const data = (await res.json()) as {
+    items: {
+      role: string;
+      sender_name: string | null;
+      content: string | { type: string; text?: string }[];
+    }[];
+  };
+  if (!Array.isArray(data.items)) {
+    throw new Error("Unexpected response format when reading conversation messages");
+  }
+  return data.items
     .slice(-limit)
     .map((m) => {
       const text = Array.isArray(m.content)
@@ -84,6 +90,10 @@ export async function send(
     Origin: url,
   };
   if (token) headers.Authorization = `Bearer ${token}`;
+  // Session from env or file fallback (sandbox strips env vars set after process start)
+  const voluteSession =
+    env.VOLUTE_SESSION || (env.VOLUTE_MIND_DIR ? readSessionFile(env.VOLUTE_MIND_DIR) : undefined);
+  if (voluteSession) headers["X-Volute-Session"] = voluteSession;
 
   const res = await fetch(`${url}/api/minds/${encodeURIComponent(mindName)}/chat`, {
     method: "POST",
@@ -147,11 +157,10 @@ export async function listConversations(
       mindUsername: mindName,
       convTitle: conv.title,
       conversationId: conv.id,
-      convType: conv.type as "dm" | "group" | "channel" | undefined,
+      convType: conv.type as "dm" | "channel" | undefined,
       convName: conv.name,
     });
-    const convType =
-      conv.type === "channel" ? "channel" : participants.length === 2 ? "dm" : "group";
+    const convType = conv.type === "channel" ? "channel" : "dm";
     results.push({
       id: slug,
       platformId: conv.id,

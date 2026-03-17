@@ -5,7 +5,6 @@ import { getOrCreateMindUser, getUserByUsername } from "../../../lib/auth.js";
 import {
   createConversation,
   deleteConversationForUser,
-  getMessages,
   getMessagesPaginated,
   getParticipants,
   isParticipantOrOwner,
@@ -36,16 +35,12 @@ const app = new Hono<AuthEnv>()
 
     const beforeStr = c.req.query("before");
     const limitStr = c.req.query("limit");
-
-    // If no cursor params, return all messages (backwards compat)
-    if (!beforeStr && !limitStr) {
-      const msgs = await getMessages(id);
-      return c.json({ items: msgs, hasMore: false });
-    }
-
     const before = beforeStr ? parseInt(beforeStr, 10) : undefined;
     const limit = limitStr ? parseInt(limitStr, 10) : undefined;
-    if ((before !== undefined && isNaN(before)) || (limit !== undefined && isNaN(limit))) {
+    if (
+      (before !== undefined && Number.isNaN(before)) ||
+      (limit !== undefined && Number.isNaN(limit))
+    ) {
       return c.json({ error: "Invalid cursor params: before and limit must be integers" }, 400);
     }
 
@@ -76,7 +71,7 @@ const app = new Hono<AuthEnv>()
         if (!firstMindName && existing.user_type === "mind") firstMindName = name;
         continue;
       }
-      if (findMind(name)) {
+      if (await findMind(name)) {
         const au = await getOrCreateMindUser(name);
         participantIds.add(au.id);
         if (!firstMindName) firstMindName = name;

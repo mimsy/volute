@@ -1,6 +1,5 @@
 import { existsSync, type FSWatcher, readdirSync, statSync, watch } from "node:fs";
 import { join, resolve } from "node:path";
-import { publish } from "./events/activity-events.js";
 import log from "./logger.js";
 import { mindDir, readRegistry, voluteHome } from "./registry.js";
 
@@ -31,14 +30,6 @@ function startPagesWatcher(mindName: string, pagesDir: string): void {
         setTimeout(() => {
           debounceTimers.delete(key);
           invalidateCache();
-          publish({
-            type: "page_updated",
-            mind: mindName,
-            summary: `${mindName} updated ${filename}`,
-            metadata: { file: filename },
-          }).catch((err) =>
-            log.error("failed to publish page_updated activity", log.errorData(err)),
-          );
         }, 100),
       );
     });
@@ -47,6 +38,13 @@ function startPagesWatcher(mindName: string, pagesDir: string): void {
   } catch (err) {
     log.warn(`failed to start pages watcher for ${mindName}`, log.errorData(err));
   }
+}
+
+export function startSystemWatcher(): void {
+  if (watchers.has("_system")) return;
+  const systemPagesDir = resolve(voluteHome(), "shared", "pages");
+  if (!existsSync(systemPagesDir)) return;
+  startPagesWatcher("_system", systemPagesDir);
 }
 
 export function startWatcher(mindName: string): void {
@@ -115,7 +113,7 @@ export function stopAllWatchers(): void {
   invalidateCache();
 }
 
-function invalidateCache(): void {
+export function invalidateCache(): void {
   sitesCache = null;
   recentPagesCache = null;
 }
@@ -160,7 +158,7 @@ function scanPagesDir(dir: string, urlPrefix: string): SitePage[] {
   return pages;
 }
 
-function buildSites(): Site[] {
+async function buildSites(): Promise<Site[]> {
   const sites: Site[] = [];
   const systemPagesDir = resolve(voluteHome(), "shared", "pages");
   if (existsSync(systemPagesDir)) {
@@ -170,11 +168,11 @@ function buildSites(): Site[] {
     }
   }
 
-  const entries = readRegistry();
+  const entries = await readRegistry();
   for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
     const pagesDir = resolve(mindDir(entry.name), "home", "public", "pages");
     if (!existsSync(pagesDir)) continue;
-    const mindPages = scanPagesDir(pagesDir, `/pages/${entry.name}`);
+    const mindPages = scanPagesDir(pagesDir, `/minds/${entry.name}/pages`);
     if (mindPages.length > 0) {
       sites.push({ name: entry.name, label: entry.name, pages: mindPages });
     }
@@ -183,8 +181,8 @@ function buildSites(): Site[] {
   return sites;
 }
 
-function buildRecentPages(): RecentPage[] {
-  const entries = readRegistry();
+async function buildRecentPages(): Promise<RecentPage[]> {
+  const entries = await readRegistry();
   const pages: RecentPage[] = [];
 
   for (const entry of entries) {
@@ -208,7 +206,7 @@ function buildRecentPages(): RecentPage[] {
             mind: entry.name,
             file: item,
             modified: s.mtime.toISOString(),
-            url: `/pages/${entry.name}/${item}`,
+            url: `/minds/${entry.name}/pages/${item}`,
           });
         } else if (s.isDirectory()) {
           const indexPath = resolve(fullPath, "index.html");
@@ -218,7 +216,7 @@ function buildRecentPages(): RecentPage[] {
               mind: entry.name,
               file: join(item, "index.html"),
               modified: indexStat.mtime.toISOString(),
-              url: `/pages/${entry.name}/${item}/`,
+              url: `/minds/${entry.name}/pages/${item}/`,
             });
           }
         }
@@ -232,12 +230,12 @@ function buildRecentPages(): RecentPage[] {
   return pages.slice(0, 10);
 }
 
-export function getCachedSites(): Site[] {
-  if (!sitesCache) sitesCache = buildSites();
+export async function getCachedSites(): Promise<Site[]> {
+  if (!sitesCache) sitesCache = await buildSites();
   return sitesCache;
 }
 
-export function getCachedRecentPages(): RecentPage[] {
-  if (!recentPagesCache) recentPagesCache = buildRecentPages();
+export async function getCachedRecentPages(): Promise<RecentPage[]> {
+  if (!recentPagesCache) recentPagesCache = await buildRecentPages();
   return recentPagesCache;
 }

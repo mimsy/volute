@@ -1,5 +1,97 @@
 # Changelog
 
+## [0.31.0](https://github.com/mimsy/volute/compare/volute-v0.30.1...volute-v0.31.0) (2026-03-17)
+
+
+### Features
+
+* add private conversations ([#209](https://github.com/mimsy/volute/issues/209)) ([692ff54](https://github.com/mimsy/volute/commit/692ff54c7301227ebb98f4e9e36de6405dc3db46))
+* AI provider configuration and credential injection ([#211](https://github.com/mimsy/volute/issues/211)) ([c8d9b3c](https://github.com/mimsy/volute/commit/c8d9b3c5cd79a3cf18189ed7609e70572405e319))
+* allowlist home/ tracking, exclude config from template merges, batch auto-commits ([#207](https://github.com/mimsy/volute/issues/207)) ([b6a2a89](https://github.com/mimsy/volute/commit/b6a2a89e0b5450afbf0f68910ba3907b3f131264))
+* Electron desktop app with daemon management and web setup ([#212](https://github.com/mimsy/volute/issues/212)) ([a2a1950](https://github.com/mimsy/volute/commit/a2a1950bf06b7d769693e0d2a668ec0838b1d445))
+* extension CLI commands, turn tracking, and UI polish ([#218](https://github.com/mimsy/volute/issues/218)) ([53de676](https://github.com/mimsy/volute/commit/53de6762d40a4d3abfd91188e735be8e42768508))
+* redesign history timeline with summary presets and turn expansion ([#208](https://github.com/mimsy/volute/issues/208)) ([0582a2a](https://github.com/mimsy/volute/commit/0582a2a89c4bac85bee27f080b59ad244850d7a9))
+* turn tracking, UI refresh, and session propagation ([#214](https://github.com/mimsy/volute/issues/214)) ([35d1ddf](https://github.com/mimsy/volute/commit/35d1ddf59d951c0996ef8c9f05fdad2e7ce37ebb))
+* UI polish — chat input, notes comments, system navigation ([#216](https://github.com/mimsy/volute/issues/216)) ([10ec198](https://github.com/mimsy/volute/commit/10ec198f0f0ed2310d0de38e9357f54cf84353be))
+* unified turn-based timeline with improved error handling ([#220](https://github.com/mimsy/volute/issues/220)) ([86bf3f0](https://github.com/mimsy/volute/commit/86bf3f0f711c941d891b5c93bc65be405fdb28a2))
+* unify system-to-mind messages through conversation system ([#219](https://github.com/mimsy/volute/issues/219)) ([e7036af](https://github.com/mimsy/volute/commit/e7036af0690b1f69bbed3e4dccd24dda43f49823))
+
+
+### Bug Fixes
+
+* align conversation messages endpoint with CursorResponse shape ([#215](https://github.com/mimsy/volute/issues/215)) ([224be5f](https://github.com/mimsy/volute/commit/224be5fb14ea5a1908fa677f074b7cf6f6d0663d))
+
+## [0.30.1](https://github.com/mimsy/volute/compare/volute-v0.30.0...volute-v0.30.1) (2026-03-13)
+
+
+### Bug Fixes
+
+* move @mariozechner/pi-ai to dependencies for system installs ([#203](https://github.com/mimsy/volute/issues/203)) ([5880407](https://github.com/mimsy/volute/commit/588040715f0a638b180ac4797ec1a1600361625f))
+
+## [0.30.0](https://github.com/mimsy/volute/compare/volute-v0.29.0...volute-v0.30.0) (2026-03-13)
+
+
+### Features
+
+* add extension system with SDK, loader, and dashboard integration ([#194](https://github.com/mimsy/volute/issues/194)) ([a6c205f](https://github.com/mimsy/volute/commit/a6c205fa58ee216bb3ec6a168f1cc8ef6426096a))
+* add turn summarization and system AI service ([#201](https://github.com/mimsy/volute/issues/201)) ([3c68ba9](https://github.com/mimsy/volute/commit/3c68ba9e46dee8ca15bdca514fa0b79406f71fda))
+* require schedule names and show action details on hover ([#199](https://github.com/mimsy/volute/issues/199)) ([3900ca8](https://github.com/mimsy/volute/commit/3900ca87dcd173ba66174def49db7c07ec1502ac))
+
+
+### Bug Fixes
+
+* add launchctl kickstart after bootstrap to ensure daemon starts ([#202](https://github.com/mimsy/volute/issues/202)) ([c94b89d](https://github.com/mimsy/volute/commit/c94b89d21d5b445d573046f02c8b8b14b65a8d68))
+* include PATH in user-level launchd plist ([#196](https://github.com/mimsy/volute/issues/196)) ([a14ee78](https://github.com/mimsy/volute/commit/a14ee7872e3be2ab57f19051fc59b6c68d451a87))
+* use launchctl bootstrap/bootout instead of legacy load/unload ([#200](https://github.com/mimsy/volute/issues/200)) ([1f8b7d3](https://github.com/mimsy/volute/commit/1f8b7d323038d498fe68fe369071fffb000a4e11))
+
+## [0.29.0](https://github.com/mimsy/volute/compare/volute-v0.28.0...volute-v0.29.0) (2026-03-12)
+
+
+### Features
+
+* remove group DMs, simplify to DMs + channels ([#195](https://github.com/mimsy/volute/issues/195)) ([79ec21f](https://github.com/mimsy/volute/commit/79ec21f0bb12f0698b2205f0be6f5f37da9ae95a))
+* unified mind view with feed cards, right panel, and settings ([#192](https://github.com/mimsy/volute/issues/192)) ([4db32d9](https://github.com/mimsy/volute/commit/4db32d959edb344717c40a26089a1e6b4f8ea5fb))
+* unify scheduling and sleep into `volute clock` ([#190](https://github.com/mimsy/volute/issues/190)) ([bc3ef49](https://github.com/mimsy/volute/commit/bc3ef491e904e036e684640d800d83abdc3cfe58))
+
+
+### Bug Fixes
+
+* stop logging thinking/text/tool calls to mind logs ([#193](https://github.com/mimsy/volute/issues/193)) ([987ba06](https://github.com/mimsy/volute/commit/987ba0682b672bafc8ba24a7a274ea6277eaee94))
+
+## [0.28.0](https://github.com/mimsy/volute/compare/volute-v0.27.0...volute-v0.28.0) (2026-03-11)
+
+
+### Features
+
+* improve CLI for minds — self-ops, history, systems, status ([#189](https://github.com/mimsy/volute/issues/189)) ([279faeb](https://github.com/mimsy/volute/commit/279faebdba05f843ad546e530f5e039144144fff))
+* move file transfer into volute chat ([#188](https://github.com/mimsy/volute/issues/188)) ([a8964b4](https://github.com/mimsy/volute/commit/a8964b4ff682bd196bd180ae8deebb89448a29e4))
+* replace volute shared CLI with shared-files skill ([#186](https://github.com/mimsy/volute/issues/186)) ([24eacfb](https://github.com/mimsy/volute/commit/24eacfb219399566749d713ac4884500779f0aec))
+
+## [0.27.0](https://github.com/mimsy/volute/compare/volute-v0.26.0...volute-v0.27.0) (2026-03-11)
+
+
+### Features
+
+* move infrastructure state to ~/.volute/system/ directory ([#181](https://github.com/mimsy/volute/issues/181)) ([bc23319](https://github.com/mimsy/volute/commit/bc23319a49cd4f979d989e74d5cada3a99ad4458))
+* replace per-mind connectors with system-level bridge architecture ([#184](https://github.com/mimsy/volute/issues/184)) ([f05e153](https://github.com/mimsy/volute/commit/f05e1532d9086c8d58dad805eea26b226c66659d))
+* unify minds and variants into single DB table ([#183](https://github.com/mimsy/volute/issues/183)) ([76d2280](https://github.com/mimsy/volute/commit/76d2280fb91ac38a05d6e3b3bbd06acb13229386))
+* web UI redesign, notes system, and bridge architecture ([#185](https://github.com/mimsy/volute/issues/185)) ([0304c27](https://github.com/mimsy/volute/commit/0304c27758ad52a7eb81fb39f5d11b3eeb595df6))
+
+
+### Bug Fixes
+
+* upgrade message, dreaming docs, and user-local session storage ([#177](https://github.com/mimsy/volute/issues/177)) ([1b30454](https://github.com/mimsy/volute/commit/1b3045446aacbcd32f57cca9a7ebb27a123009db))
+
+## [0.26.0](https://github.com/mimsy/volute/compare/volute-v0.25.1...volute-v0.26.0) (2026-03-10)
+
+
+### Features
+
+* add CLI permissions system with per-mind tokens and role-based access ([#176](https://github.com/mimsy/volute/issues/176)) ([dc899e7](https://github.com/mimsy/volute/commit/dc899e712e0cd42427dd98e3fdcb6c596a252744))
+* add dreaming system with config-driven subagents ([#175](https://github.com/mimsy/volute/issues/175)) ([54583c0](https://github.com/mimsy/volute/commit/54583c0c76349d12e2a449a626a52606ce9cead8))
+* add notes system, #system channel, and default schedules ([#172](https://github.com/mimsy/volute/issues/172)) ([9d99939](https://github.com/mimsy/volute/commit/9d999395f5dfa32ca43aa48f3d01a7820e6d0447))
+* add volute setup command and sandbox runtime isolation ([#174](https://github.com/mimsy/volute/issues/174)) ([16c09be](https://github.com/mimsy/volute/commit/16c09be82061c596fd1190a4bd22333b66267969))
+
 ## [0.25.0](https://github.com/mimsy/volute/compare/volute-v0.24.0...volute-v0.25.0) (2026-03-08)
 
 

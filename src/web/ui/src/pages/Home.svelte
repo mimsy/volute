@@ -1,350 +1,377 @@
 <script lang="ts">
-import type {
-  ActivityItem,
-  ConversationWithParticipants,
-  LastMessageSummary,
-  Mind,
-  RecentPage,
-} from "@volute/api";
-import StatusBadge from "../components/StatusBadge.svelte";
-import {
-  formatRelativeTime,
-  getConversationLabel,
-  getDisplayStatus,
-  normalizeTimestamp,
-} from "../lib/format";
+import type { ConversationWithParticipants, LastMessageSummary, Message } from "@volute/api";
+import ExtensionFeedCard from "../components/ExtensionFeedCard.svelte";
+import { fetchConversationMessages } from "../lib/client";
+import { extractTextContent, formatTime, showSenderHeader } from "../lib/feed-utils";
+import { formatRelativeTime, normalizeTimestamp } from "../lib/format";
+import { renderMarkdown } from "../lib/markdown";
+
+import { navigate } from "../lib/navigate";
+import { data as storeData } from "../lib/stores.svelte";
 
 type ConversationWithDetails = ConversationWithParticipants & {
   lastMessage?: LastMessageSummary;
 };
 
-type TimelineItem =
-  | { kind: "activity"; item: ActivityItem; timestamp: number }
-  | { kind: "conversation"; item: ConversationWithDetails; timestamp: number };
-
 let {
   username,
-  minds,
   conversations,
-  recentPages,
-  activity,
-  onOpenMind,
-  onSelectPage,
   onSelectConversation,
 }: {
   username: string;
-  minds: Mind[];
   conversations: ConversationWithDetails[];
-  recentPages: RecentPage[];
-  activity: ActivityItem[];
-  onOpenMind: (mind: Mind) => void;
-  onSelectPage: (mind: string, path: string) => void;
   onSelectConversation: (id: string) => void;
 } = $props();
 
-let timelineItems = $derived.by(() => {
-  const items: TimelineItem[] = [];
+type ExtFeedItem = {
+  id: string;
+  title: string;
+  url: string;
+  date: string;
+  author?: string;
+  bodyHtml: string;
+  iframeUrl?: string;
+  icon?: string;
+  color?: string;
+  extensionId: string;
+};
 
-  for (const a of activity) {
-    items.push({
-      kind: "activity",
-      item: a,
-      timestamp: new Date(normalizeTimestamp(a.created_at)).getTime(),
+let extensionFeedItems = $state<ExtFeedItem[]>([]);
+
+// Fetch extension feed items from all extensions with feedSource
+$effect(() => {
+  const extensions = storeData.extensions;
+  const items: ExtFeedItem[] = [];
+  const promises = extensions
+    .filter((ext) => ext.feedSource)
+    .map(async (ext) => {
+      try {
+        const res = await fetch(ext.feedSource!.endpoint);
+        if (!res.ok) return;
+        const feedItems = await res.json();
+        for (const item of feedItems) {
+          items.push({ ...item, extensionId: ext.id });
+        }
+      } catch (err) {
+        console.warn(`Failed to fetch ${ext.id} feed:`, err);
+      }
     });
-  }
-
-  for (const c of conversations) {
-    if (!(c as any).lastMessage) continue;
-    items.push({
-      kind: "conversation",
-      item: c,
-      timestamp: new Date(normalizeTimestamp(c.updated_at)).getTime(),
-    });
-  }
-
-  items.sort((a, b) => b.timestamp - a.timestamp);
-  return items.slice(0, 50);
+  Promise.all(promises).then(() => {
+    extensionFeedItems = items;
+  });
 });
 
-let sortedMinds = $derived(
-  [...minds].sort((a, b) => {
-    if (a.status === "running" && b.status !== "running") return -1;
-    if (a.status !== "running" && b.status === "running") return 1;
-    const aTime = a.lastActiveAt ?? "";
-    const bTime = b.lastActiveAt ?? "";
-    return bTime.localeCompare(aTime);
-  }),
+let topConversations = $derived(
+  [...conversations]
+    .filter((c) => (c as any).lastMessage)
+    .sort((a, b) => {
+      const aTime = new Date(normalizeTimestamp(a.updated_at)).getTime();
+      const bTime = new Date(normalizeTimestamp(b.updated_at)).getTime();
+      return bTime - aTime;
+    })
+    .slice(0, 6),
 );
 
-function mindForActivity(mindName: string): Mind | undefined {
-  return minds.find((m) => m.name === mindName);
-}
+let messagesMap = $state<Record<string, Message[]>>({});
+let scrollEls = $state<Record<string, HTMLDivElement>>({});
 
-function handleActivityClick(item: ActivityItem) {
-  if (item.type === "page_updated" && item.metadata?.file) {
-    onSelectPage(item.mind, item.metadata.file as string);
-  } else {
-    const mind = mindForActivity(item.mind);
-    if (mind) onOpenMind(mind);
+$effect(() => {
+  const convs = topConversations;
+  for (const conv of convs) {
+    if (messagesMap[conv.id]) continue;
+    fetchConversationMessages(conv.id, { limit: 10 })
+      .then((res) => {
+        messagesMap[conv.id] = res.items;
+        requestAnimationFrame(() => {
+          const el = scrollEls[conv.id];
+          if (el) el.scrollTop = el.scrollHeight;
+        });
+      })
+      .catch(() => {
+        messagesMap[conv.id] = [];
+      });
   }
+});
+
+type FeedItem =
+  | { kind: "message"; conv: ConversationWithDetails; date: string }
+  | { kind: "extension"; item: ExtFeedItem; date: string };
+
+let feedItems = $derived.by(() => {
+  const items: FeedItem[] = [];
+  for (const conv of topConversations) {
+    items.push({ kind: "message", conv, date: conv.updated_at });
+  }
+  for (const extItem of extensionFeedItems) {
+    items.push({ kind: "extension", item: extItem, date: extItem.date });
+  }
+  items.sort((a, b) => {
+    const aTime = new Date(normalizeTimestamp(a.date)).getTime();
+    const bTime = new Date(normalizeTimestamp(b.date)).getTime();
+    return bTime - aTime;
+  });
+  return items;
+});
+
+function getConvLabel(conv: ConversationWithDetails): string {
+  if (conv.type === "channel" && conv.name) return `#${conv.name}`;
+  const parts = conv.participants ?? [];
+  if (conv.type === "dm" && parts.length === 2) {
+    const mind = parts.find((p) => p.userType === "mind");
+    const other = parts.find((p) => p.username !== mind?.username);
+    if (mind && other) return `@${mind.username}`;
+  }
+  const names = parts.map((p) => p.username);
+  if (names.length > 0) return names.join(", ");
+  if (conv.title) return conv.title;
+  return "Conversation";
 }
 </script>
 
 <div class="home">
-  <!-- Minds -->
-  <div class="section">
-    <div class="section-header">
-      <span class="section-title">Minds</span>
-    </div>
-    {#if minds.length === 0}
-      <div class="empty-hint">
-        No minds registered. Run <code class="code-hint">volute mind create &lt;name&gt;</code> to get started.
-      </div>
-    {:else}
-      <div class="mind-row">
-        {#each sortedMinds as mind (mind.name)}
-          {@const connectedChannels = mind.channels.filter(ch => ch.name !== "web" && ch.name !== "volute" && ch.status === "connected")}
-          <button class="home-mind-card" onclick={() => onOpenMind(mind)}>
-            <div class="mind-card-header">
-              <span class="mind-name">{mind.name}</span>
-              <StatusBadge status={getDisplayStatus(mind)} />
-              {#if mind.stage === "seed"}
-                <span class="seed-tag">seed</span>
-              {/if}
-            </div>
-            {#if connectedChannels.length > 0}
-              <div class="channel-row">
-                {#each connectedChannels as ch (ch.name)}
-                  <span class="channel-chip">{ch.displayName || ch.name}</span>
-                {/each}
+  {#if feedItems.length === 0}
+    <div class="empty-hint">Nothing here yet.</div>
+  {:else}
+    <div class="feed-grid">
+      {#each feedItems as item (item.kind === "extension" ? `ext-${item.item.id}` : `msg-${item.conv.id}`)}
+        {#if item.kind === "extension"}
+          <div class="feed-item">
+            <ExtensionFeedCard
+              title={item.item.title}
+              url={item.item.url}
+              date={item.item.date}
+              author={item.item.author}
+              bodyHtml={item.item.bodyHtml}
+              iframeUrl={item.item.iframeUrl}
+              icon={item.item.icon}
+              color={item.item.color}
+              onclick={() => navigate(item.item.url)}
+            />
+          </div>
+        {:else}
+          {@const conv = item.conv}
+          {@const label = getConvLabel(conv)}
+          {@const messages = messagesMap[conv.id] ?? []}
+          <div class="feed-item">
+            <div class="feed-card card-chat" role="button" tabindex="0" onclick={() => onSelectConversation(conv.id)} onkeydown={(e) => { if (e.key === 'Enter') onSelectConversation(conv.id); }}>
+              <div class="feed-card-header header-chat">
+                <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                <span class="feed-card-label">{label}</span>
+                <span class="feed-card-meta">{formatRelativeTime(conv.updated_at)}</span>
+                <button
+                  class="card-action-btn card-action-btn-primary"
+                  onclick={(e) => { e.stopPropagation(); onSelectConversation(conv.id); }}
+                >
+                  Chat
+                </button>
               </div>
-            {/if}
-            <div class="mind-activity">
-              {mind.lastActiveAt ? `active ${formatRelativeTime(mind.lastActiveAt)}` : "no activity"}
-            </div>
-          </button>
-        {/each}
-      </div>
-    {/if}
-  </div>
-
-  <!-- Activity timeline -->
-  {#if timelineItems.length > 0}
-    <div class="section">
-      <div class="section-header">
-        <span class="section-title">Activity</span>
-      </div>
-      <div class="timeline">
-        {#each timelineItems as entry (`${entry.kind}-${entry.item.id}`)}
-          {#if entry.kind === "activity"}
-            {@const a = entry.item}
-            <button class="timeline-row" onclick={() => handleActivityClick(a)}>
-              <span class="timeline-dot" class:dot-started={a.type === "mind_started"} class:dot-stopped={a.type === "mind_stopped"} class:dot-active={a.type === "mind_active"} class:dot-idle={a.type === "mind_idle"} class:dot-page={a.type === "page_updated"}></span>
-              <span class="timeline-text">{a.summary}</span>
-              <span class="timeline-time">{formatRelativeTime(a.created_at)}</span>
-            </button>
-          {:else}
-            {@const c = entry.item}
-            {@const label = getConversationLabel(c.participants ?? [], c.title, username)}
-            {@const msg = c.lastMessage}
-            <button class="timeline-row" onclick={() => onSelectConversation(c.id)}>
-              <span class="timeline-dot dot-message"></span>
-              <span class="timeline-text">
-                <span class="conv-label">{label}:</span>
-                {#if msg}
-                  {msg.senderName ? `${msg.senderName}: ` : ""}{msg.text}
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div class="feed-card-body chat-body" bind:this={scrollEls[conv.id]} onscroll={(e) => {
+                const el = e.currentTarget;
+                if (el.scrollTop < 10) el.scrollTop = 10;
+              }}>
+                {#if messages.length === 0}
+                  <div class="msg-empty">Loading...</div>
+                {:else}
+                  {#each messages as msg, i (msg.id)}
+                    <div class="chat-entry" class:new-sender={showSenderHeader(messages, i)}>
+                      {#if showSenderHeader(messages, i)}
+                        <div class="chat-entry-header">
+                          <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? username : "")}</span>
+                          <span class="chat-timestamp">{formatTime(msg.created_at)}</span>
+                        </div>
+                      {/if}
+                      <div class="chat-entry-content" class:chat-user-text={msg.role === "user"}>
+                        {#if msg.role === "user"}
+                          {extractTextContent(msg.content)}
+                        {:else}
+                          <div class="markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</div>
+                        {/if}
+                      </div>
+                    </div>
+                  {/each}
                 {/if}
-              </span>
-              <span class="timeline-time">{formatRelativeTime(c.updated_at)}</span>
-            </button>
-          {/if}
-        {/each}
-      </div>
+              </div>
+            </div>
+          </div>
+        {/if}
+      {/each}
     </div>
   {/if}
 </div>
 
 <style>
   .home {
-    max-width: 800px;
     animation: fadeIn 0.2s ease both;
-  }
-
-  .section {
-    margin-bottom: 24px;
-  }
-
-  .section-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-  }
-
-  .section-title {
-    font-family: var(--display);
-    font-size: 17px;
-    font-weight: 300;
-    color: var(--text-2);
   }
 
   .empty-hint {
     color: var(--text-2);
     font-size: 13px;
+    padding: 40px 0;
+    text-align: center;
   }
 
-  .code-hint {
-    color: var(--text-1);
+  .feed-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
   }
 
-  .mind-row {
-    display: flex;
-    gap: 10px;
-    overflow-x: auto;
-    padding-bottom: 4px;
-  }
-
-  .home-mind-card {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 10px 14px;
-    border-radius: var(--radius-lg);
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    min-width: 150px;
-    transition: border-color 0.15s;
-    flex-shrink: 0;
-    cursor: pointer;
-    text-align: left;
-    color: inherit;
-    font-size: inherit;
-  }
-
-  .home-mind-card:hover {
-    border-color: var(--border-bright);
-  }
-
-  .mind-card-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .mind-name {
-    color: var(--text-0);
-    font-weight: 500;
-    font-size: 14px;
-  }
-
-  .seed-tag {
-    font-size: 9px;
-    color: var(--yellow);
-  }
-
-  .channel-row {
-    display: flex;
-    gap: 4px;
-    flex-wrap: wrap;
-  }
-
-  .channel-chip {
-    font-size: 11px;
-    padding: 1px 5px;
-    border-radius: 3px;
-    background: var(--accent-dim);
-    color: var(--accent);
-  }
-
-  .mind-activity {
-    font-size: 11px;
-    color: var(--text-2);
-  }
-
-  .timeline {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .timeline-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 7px 10px;
-    border-radius: var(--radius-lg);
-    background: none;
-    border: none;
-    cursor: pointer;
-    text-align: left;
-    color: inherit;
-    font-size: 13px;
-    transition: background 0.12s;
-    width: 100%;
-  }
-
-  .timeline-row:hover {
-    background: var(--bg-2);
-  }
-
-  .timeline-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    background: var(--text-2);
-  }
-
-  .dot-started {
-    background: var(--accent);
-  }
-
-  .dot-stopped {
-    background: var(--text-2);
-  }
-
-  .dot-active {
-    background: var(--accent);
-  }
-
-  .dot-idle {
-    background: var(--text-2);
-  }
-
-  .dot-page {
-    background: var(--yellow);
-  }
-
-  .dot-message {
-    background: var(--blue, var(--accent));
-  }
-
-  .timeline-text {
-    flex: 1;
+  .feed-item {
     min-width: 0;
+  }
+
+  /* Unified card */
+  .feed-card {
+    background: var(--bg-0);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    display: flex;
+    flex-direction: column;
+    height: 240px;
+    overflow: hidden;
+    transition: border-color 0.15s;
+  }
+
+  .feed-card[role="button"] {
+    cursor: pointer;
+  }
+
+  .feed-card-header {
+    padding: 6px 8px 6px 10px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-1);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .feed-card-icon {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+  }
+
+  .card-chat .feed-card-icon { color: var(--blue); }
+
+  .card-chat { border-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
+
+  .card-chat .feed-card-header { border-bottom-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
+
+  .card-chat:hover { border-color: color-mix(in srgb, var(--blue) 50%, var(--border)); }
+
+  .feed-card-label {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: var(--text-1);
+    min-width: 0;
+    flex: 1;
   }
 
-  .timeline-text .conv-label {
-    color: var(--text-0);
-    font-weight: 500;
-  }
-
-  .timeline-time {
-    color: var(--text-2);
+  .feed-card-meta {
     font-size: 11px;
+    color: var(--text-2);
+    font-weight: 400;
     flex-shrink: 0;
+    margin-left: auto;
   }
 
-  @media (max-width: 767px) {
-    .home {
-      max-width: 100%;
-    }
+  .feed-card-body {
+    flex: 1;
+    overflow: auto;
+    padding: 10px 12px;
+    min-height: 0;
+  }
 
-    .home-mind-card {
-      min-width: 120px;
-    }
+  /* Card action button */
+  .card-action-btn {
+    font-size: 12px;
+    padding: 2px 10px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    flex-shrink: 0;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    transition: color 0.15s, border-color 0.15s;
+  }
+
+  .card-action-btn:hover {
+    color: var(--text-1);
+    border-color: var(--border-bright);
+  }
+
+  .card-action-btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg-0);
+  }
+
+  .card-action-btn-primary:hover {
+    opacity: 0.85;
+    color: var(--bg-0);
+    border-color: var(--accent);
+  }
+
+  /* Chat card body */
+  .chat-body {
+    padding: 8px 12px;
+  }
+
+  .msg-empty {
+    color: var(--text-2);
+    font-size: 13px;
+    padding: 16px 0;
+    text-align: center;
+  }
+
+  /* Chat entries */
+  .chat-entry {
+    padding: 1px 0;
+  }
+
+  .chat-entry.new-sender {
+    margin-top: 8px;
+  }
+
+  .chat-entry:first-child {
+    margin-top: 0;
+  }
+
+  .chat-entry-header {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-bottom: 1px;
+  }
+
+  .chat-sender {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  .chat-sender-user {
+    color: var(--blue);
+  }
+
+  .chat-timestamp {
+    font-size: 11px;
+    color: var(--text-2);
+  }
+
+  .chat-entry-content {
+    min-width: 0;
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+
+  .chat-user-text {
+    color: var(--text-0);
+    white-space: pre-wrap;
   }
 </style>

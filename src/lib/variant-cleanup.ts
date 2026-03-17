@@ -3,15 +3,14 @@ import { getMindManager } from "./daemon/mind-manager.js";
 import { gitExec } from "./exec.js";
 import { chownMindDir } from "./isolation.js";
 import log from "./logger.js";
-import { removeVariant } from "./variants.js";
+import { removeMind } from "./registry.js";
 
 /**
  * Clean up a variant's git resources: stop process, remove worktree, delete branch,
- * remove metadata, and fix ownership. Each step is independently guarded so failures
+ * remove from DB, and fix ownership. Each step is independently guarded so failures
  * don't prevent subsequent cleanup.
  */
 export async function cleanupVariant(
-  mindName: string,
   variantName: string,
   projectRoot: string,
   variantPath: string,
@@ -19,9 +18,16 @@ export async function cleanupVariant(
 ): Promise<void> {
   if (opts?.stop) {
     try {
-      await getMindManager().stopMind(`${mindName}@${variantName}`);
-    } catch {}
+      await getMindManager().stopMind(variantName);
+    } catch (err) {
+      log.warn(`failed to stop variant ${variantName}`, log.errorData(err));
+    }
   }
+
+  // Get the branch name from the variant entry before removing from DB
+  const { findMind } = await import("./registry.js");
+  const variantEntry = await findMind(variantName);
+  const branchName = variantEntry?.branch ?? variantName;
 
   if (existsSync(variantPath)) {
     try {
@@ -30,21 +36,33 @@ export async function cleanupVariant(
       rmSync(variantPath, { recursive: true, force: true });
       try {
         await gitExec(["worktree", "prune"], { cwd: projectRoot });
-      } catch {}
+      } catch (err) {
+        log.warn(`failed to prune worktrees for ${variantName}`, log.errorData(err));
+      }
     }
   }
 
   try {
-    await gitExec(["branch", "-D", variantName], { cwd: projectRoot });
-  } catch {}
-
-  try {
-    removeVariant(mindName, variantName);
-  } catch {}
-
-  try {
-    chownMindDir(projectRoot, mindName);
+    await gitExec(["branch", "-D", branchName], { cwd: projectRoot });
   } catch (err) {
-    log.error(`failed to fix ownership during variant cleanup for ${mindName}`, log.errorData(err));
+    log.warn(`failed to delete branch ${branchName} for ${variantName}`, log.errorData(err));
+  }
+
+  // Get the base name before removing from DB (uses variantEntry.parent which is already fetched)
+  const baseName = variantEntry?.parent ?? variantName;
+
+  try {
+    await removeMind(variantName);
+  } catch (err) {
+    log.warn(`failed to remove variant ${variantName} from DB`, log.errorData(err));
+  }
+
+  try {
+    chownMindDir(projectRoot, baseName);
+  } catch (err) {
+    log.error(
+      `failed to fix ownership during variant cleanup for ${variantName}`,
+      log.errorData(err),
+    );
   }
 }

@@ -1,38 +1,23 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { findVariant, readVariants } from "./variants.js";
+import { eq, isNull } from "drizzle-orm";
+import { getDb } from "./db.js";
+import { minds } from "./schema.js";
 
-// In-memory registry cache for the daemon process.
-// When active, reads come from memory and writes flush to disk.
-// CLI processes (daemon not running) continue reading from file.
-let registryCache: MindEntry[] | null = null;
-
-export function initRegistryCache(): void {
-  registryCache = readRegistryFromDisk();
-}
-
-export function getRegistryCache(): MindEntry[] | null {
-  return registryCache;
-}
-
-function readRegistryFromDisk(): MindEntry[] {
-  const registryPath = resolve(voluteHome(), "minds.json");
-  if (!existsSync(registryPath)) return [];
-  try {
-    const entries = JSON.parse(readFileSync(registryPath, "utf-8")) as Array<
-      Omit<MindEntry, "running"> & { running?: boolean }
-    >;
-    return entries.map((e) => ({
-      ...e,
-      running: e.running ?? false,
-      stage: e.stage ?? "sprouted",
-    }));
-  } catch {
-    return [];
-  }
-}
+export type MindEntry = {
+  name: string;
+  port: number;
+  created: string;
+  running: boolean;
+  stage?: "seed" | "sprouted";
+  template?: string;
+  templateHash?: string;
+  parent?: string;
+  dir?: string;
+  branch?: string;
+};
 
 export function voluteHome(): string {
   if (process.env.VOLUTE_HOME) return process.env.VOLUTE_HOME;
@@ -51,37 +36,76 @@ export function voluteHome(): string {
   return resolve(homedir(), ".volute");
 }
 
-export type MindEntry = {
-  name: string;
-  port: number;
-  created: string;
-  running: boolean;
-  stage?: "seed" | "sprouted";
-  template?: string;
-  templateHash?: string;
-};
+/**
+ * Per-user config directory (~/.volute/), independent of VOLUTE_HOME.
+ * Used for user-specific state like login sessions and API keys that
+ * shouldn't live in system directories (e.g. /var/lib/volute).
+ */
+export function voluteUserHome(): string {
+  if (process.env.VOLUTE_USER_HOME) return process.env.VOLUTE_USER_HOME;
+  return resolve(homedir(), ".volute");
+}
+
+export function voluteSystemDir(): string {
+  return resolve(voluteHome(), "system");
+}
+
+export function ensureSystemDir(): void {
+  mkdirSync(voluteSystemDir(), { recursive: true });
+}
 
 export function ensureVoluteHome() {
   const mindsBase = process.env.VOLUTE_MINDS_DIR ?? resolve(voluteHome(), "minds");
   mkdirSync(mindsBase, { recursive: true });
+  ensureSystemDir();
 }
 
-export function readRegistry(): MindEntry[] {
-  if (registryCache) return registryCache;
-  return readRegistryFromDisk();
+type RawMindRow = {
+  name: string;
+  port: number;
+  parent: string | null;
+  dir: string | null;
+  branch: string | null;
+  stage: string | null;
+  template: string | null;
+  template_hash: string | null;
+  running: number;
+  created_at: string;
+};
+
+function rowToEntry(row: RawMindRow): MindEntry {
+  return {
+    name: row.name,
+    port: row.port,
+    created: row.created_at,
+    running: row.running === 1,
+    stage: (row.stage as MindEntry["stage"]) ?? (row.parent ? undefined : "sprouted"),
+    template: row.template ?? undefined,
+    templateHash: row.template_hash ?? undefined,
+    parent: row.parent ?? undefined,
+    dir: row.dir ?? undefined,
+    branch: row.branch ?? undefined,
+  };
 }
 
-export function writeRegistry(entries: MindEntry[]) {
-  if (registryCache) registryCache = entries;
-  ensureVoluteHome();
-  const registryPath = resolve(voluteHome(), "minds.json");
-  const tmpPath = `${registryPath}.tmp`;
-  writeFileSync(tmpPath, `${JSON.stringify(entries, null, 2)}\n`);
-  renameSync(tmpPath, registryPath);
+/** Read base minds (no parent) from DB. */
+export async function readRegistry(): Promise<MindEntry[]> {
+  const db = await getDb();
+  const rows = await db.select().from(minds).where(isNull(minds.parent));
+  return (rows as unknown as RawMindRow[]).map(rowToEntry);
+}
+
+/** Read ALL minds (base + variants) from DB. */
+export async function readAllMinds(): Promise<MindEntry[]> {
+  const db = await getDb();
+  const rows = await db.select().from(minds);
+  return (rows as unknown as RawMindRow[]).map(rowToEntry);
 }
 
 const MIND_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 const MIND_NAME_MAX = 64;
+
+const RESERVED_NAMES = new Set(["volute", "system"]);
 
 export function validateMindName(name: string): string | null {
   if (!name) return "Mind name is required";
@@ -89,10 +113,13 @@ export function validateMindName(name: string): string | null {
   if (!MIND_NAME_RE.test(name)) {
     return "Mind name must start with alphanumeric and contain only alphanumeric, dots, dashes, or underscores";
   }
+  if (RESERVED_NAMES.has(name.toLowerCase())) {
+    return `"${name}" is a reserved name`;
+  }
   return null;
 }
 
-export function addMind(
+export async function addMind(
   name: string,
   port: number,
   stage?: "seed" | "sprouted",
@@ -100,46 +127,72 @@ export function addMind(
 ) {
   const err = validateMindName(name);
   if (err) throw new Error(err);
-  const entries = readRegistry();
-  const filtered = entries.filter((e) => e.name !== name);
-  filtered.push({ name, port, created: new Date().toISOString(), running: false, stage, template });
-  writeRegistry(filtered);
+  const db = await getDb();
+  await db
+    .insert(minds)
+    .values({ name, port, stage: stage ?? null, template: template ?? null })
+    .onConflictDoUpdate({
+      target: minds.name,
+      set: { port, stage: stage ?? null, template: template ?? null },
+    });
 }
 
-export function removeMind(name: string) {
-  const entries = readRegistry();
-  writeRegistry(entries.filter((e) => e.name !== name));
+export async function addVariant(
+  name: string,
+  parent: string,
+  port: number,
+  dir: string,
+  branch: string,
+) {
+  const err = validateMindName(name);
+  if (err) throw new Error(err);
+  const db = await getDb();
+  await db.insert(minds).values({ name, port, parent, dir, branch }).onConflictDoUpdate({
+    target: minds.name,
+    set: { port, parent, dir, branch },
+  });
 }
 
-export function setMindRunning(name: string, running: boolean) {
-  const entries = readRegistry();
-  const entry = entries.find((e) => e.name === name);
-  if (entry) {
-    entry.running = running;
-    writeRegistry(entries);
-  }
+export async function removeMind(name: string) {
+  const db = await getDb();
+  await db.delete(minds).where(eq(minds.name, name));
 }
 
-export function setMindStage(name: string, stage: "seed" | "sprouted") {
-  const entries = readRegistry();
-  const entry = entries.find((e) => e.name === name);
-  if (entry) {
-    entry.stage = stage;
-    writeRegistry(entries);
-  }
+export async function setMindRunning(name: string, running: boolean) {
+  const db = await getDb();
+  await db
+    .update(minds)
+    .set({ running: running ? 1 : 0 })
+    .where(eq(minds.name, name));
 }
 
-export function setMindTemplateHash(name: string, hash: string) {
-  const entries = readRegistry();
-  const entry = entries.find((e) => e.name === name);
-  if (entry) {
-    entry.templateHash = hash;
-    writeRegistry(entries);
-  }
+export async function setMindStage(name: string, stage: "seed" | "sprouted") {
+  const db = await getDb();
+  await db.update(minds).set({ stage }).where(eq(minds.name, name));
 }
 
-export function findMind(name: string): MindEntry | undefined {
-  return readRegistry().find((e) => e.name === name);
+export async function setMindTemplateHash(name: string, hash: string) {
+  const db = await getDb();
+  await db.update(minds).set({ template_hash: hash }).where(eq(minds.name, name));
+}
+
+export async function findMind(name: string): Promise<MindEntry | undefined> {
+  const db = await getDb();
+  const rows = await db.select().from(minds).where(eq(minds.name, name));
+  if (rows.length === 0) return undefined;
+  return rowToEntry(rows[0] as unknown as RawMindRow);
+}
+
+export async function findVariants(parent: string): Promise<MindEntry[]> {
+  const db = await getDb();
+  const rows = await db.select().from(minds).where(eq(minds.parent, parent));
+  return (rows as unknown as RawMindRow[]).map(rowToEntry);
+}
+
+/** Get the base mind name for a given name. If it's a variant, returns its parent. */
+export async function getBaseName(name: string): Promise<string> {
+  const entry = await findMind(name);
+  return entry?.parent ?? name;
 }
 
 export function mindDir(name: string): string {
@@ -150,18 +203,13 @@ export function mindDir(name: string): string {
 }
 
 export function stateDir(name: string): string {
-  return resolve(voluteHome(), "state", name);
+  return resolve(voluteSystemDir(), "state", name);
 }
 
-export function nextPort(): number {
-  const entries = readRegistry();
-  const usedPorts = new Set(entries.map((e) => e.port));
-  // Also reserve ports used by variants
-  for (const entry of entries) {
-    for (const v of readVariants(entry.name)) {
-      if (v.port) usedPorts.add(v.port);
-    }
-  }
+export async function nextPort(): Promise<number> {
+  const db = await getDb();
+  const rows = await db.select({ port: minds.port }).from(minds);
+  const usedPorts = new Set(rows.map((r) => r.port));
   const basePort = parseInt(process.env.VOLUTE_BASE_PORT || "4100", 10);
   let port = basePort;
   while (usedPorts.has(port)) port++;
@@ -175,28 +223,4 @@ export function daemonLoopback(): string {
   if (host === "0.0.0.0") return "127.0.0.1";
   if (host === "::") return "[::1]";
   return host;
-}
-
-export function resolveMind(name: string): { entry: MindEntry; dir: string } {
-  // Parse name@variant syntax
-  const [baseName, variantName] = name.split("@", 2);
-
-  const entry = findMind(baseName);
-  if (!entry) {
-    throw new Error(`Unknown mind: ${baseName}`);
-  }
-  const dir = mindDir(baseName);
-  if (!existsSync(dir)) {
-    throw new Error(`Mind directory missing: ${dir}`);
-  }
-
-  if (variantName) {
-    const variant = findVariant(baseName, variantName);
-    if (!variant) {
-      throw new Error(`Unknown variant: ${variantName} (mind: ${baseName})`);
-    }
-    return { entry: { ...entry, port: variant.port }, dir: variant.path };
-  }
-
-  return { entry, dir };
 }

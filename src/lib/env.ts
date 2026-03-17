@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { stateDir, voluteHome } from "./registry.js";
+import { stateDir, voluteSystemDir } from "./registry.js";
 
 export function sharedEnvPath(): string {
-  return resolve(voluteHome(), "env.json");
+  return resolve(voluteSystemDir(), "env.json");
 }
 
 export function mindEnvPath(mindName: string): string {

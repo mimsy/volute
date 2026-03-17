@@ -6,7 +6,7 @@ export type HoverProfile = {
   displayName?: string | null;
   description?: string | null;
   avatarUrl?: string | null;
-  userType: "brain" | "mind";
+  userType: "brain" | "mind" | "puppet" | "system";
   created?: string;
 };
 
@@ -108,6 +108,9 @@ function handleMouseLeave() {
         <span class="description">{profile.description}</span>
       {/if}
       <span class="meta">@{profile.name}{#if profile.created} &middot; since {formatCreated(profile.created)}{/if}</span>
+      {#if profile.userType === "mind"}
+        <a href="/minds/{profile.name}" class="view-profile">View profile</a>
+      {/if}
     </div>
   </div>
 {/if}
@@ -183,5 +186,17 @@ function handleMouseLeave() {
     font-size: 11px;
     color: var(--text-2);
     margin-top: 2px;
+  }
+
+  .view-profile {
+    font-size: 11px;
+    color: var(--accent);
+    margin-top: 2px;
+    text-decoration: none;
+    pointer-events: auto;
+  }
+
+  .view-profile:hover {
+    text-decoration: underline;
   }
 </style>

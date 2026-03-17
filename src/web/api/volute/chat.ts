@@ -3,7 +3,9 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { writeChannelEntry } from "../../../connectors/sdk.js";
-import { getOrCreateMindUser } from "../../../lib/auth.js";
+import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js";
+import { routeOutboundBridge } from "../../../lib/bridge-outbound.js";
+import { getActiveTurnId, getLastToolUseEventId } from "../../../lib/daemon/turn-tracker.js";
 import { deliverMessage } from "../../../lib/delivery/message-delivery.js";
 import { subscribe } from "../../../lib/events/conversation-events.js";
 import {
@@ -15,9 +17,11 @@ import {
   getParticipants,
   isParticipantOrOwner,
 } from "../../../lib/events/conversations.js";
+import { formatFileSize, stageFile, validateFilePath } from "../../../lib/file-sharing.js";
 import log from "../../../lib/logger.js";
-import { findMind } from "../../../lib/registry.js";
+import { findMind, getBaseName } from "../../../lib/registry.js";
 import { buildVoluteSlug } from "../../../lib/slugify.js";
+import { generateSystemReply } from "../../../lib/system-chat.js";
 import { getTypingMap } from "../../../lib/typing.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
@@ -30,8 +34,8 @@ async function fanOutToMinds(opts: {
   convTitle: string | null;
   /** Override isDM (defaults to participants.length === 2) */
   isDM?: boolean;
-  /** Override channel entry type (defaults to isDM ? "dm" : "group") */
-  channelEntryType?: "dm" | "group";
+  /** Override channel entry type (defaults to isDM ? "dm" : "channel") */
+  channelEntryType?: "dm" | "channel";
   /** Extra fields passed to buildVoluteSlug (e.g. convType, convName) */
   slugExtra?: Partial<SlugOpts>;
   /** Maps mind username to delivery target name (for variant-aware targeting) */
@@ -41,7 +45,7 @@ async function fanOutToMinds(opts: {
   const mindParticipants = participants.filter((p) => p.userType === "mind");
   const participantNames = participants.map((p) => p.username);
   const isDM = opts.isDM ?? participants.length === 2;
-  const channelEntryType = opts.channelEntryType ?? (isDM ? "dm" : "group");
+  const channelEntryType = opts.channelEntryType ?? (isDM ? "dm" : "channel");
 
   const { getMindManager } = await import("../../../lib/daemon/mind-manager.js");
   const { getSleepManagerIfReady } = await import("../../../lib/daemon/sleep-manager.js");
@@ -68,7 +72,7 @@ async function fanOutToMinds(opts: {
   }
 
   // Write slug → platformId mapping for all mind participants
-  const channelEntry = {
+  const channelEntry: import("../../../connectors/sdk.js").ChannelEntry = {
     platformId: opts.conversationId,
     platform: "volute",
     name: opts.convTitle ?? undefined,
@@ -100,9 +104,16 @@ async function fanOutToMinds(opts: {
       participantCount: participants.length,
       isDM,
       ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
-    }).catch(() => {}); // deliverMessage logs errors internally
+    }).catch((err) => {
+      log.warn(`fan-out delivery failed for ${target}`, log.errorData(err));
+    });
   }
 }
+
+const fileSchema = z.object({
+  filename: z.string(),
+  data: z.string(), // base64
+});
 
 const chatSchema = z.object({
   message: z.string().optional(),
@@ -116,19 +127,24 @@ const chatSchema = z.object({
       }),
     )
     .optional(),
+  files: z.array(fileSchema).optional(),
 });
 
 const app = new Hono<AuthEnv>()
   .post("/:name/chat", zValidator("json", chatSchema), async (c) => {
     const name = c.req.param("name");
-    const [baseName] = name.split("@", 2);
+    const baseName = await getBaseName(name);
 
-    const entry = findMind(baseName);
+    const entry = await findMind(baseName);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const body = c.req.valid("json");
-    if (!body.message && (!body.images || body.images.length === 0)) {
-      return c.json({ error: "message or images required" }, 400);
+    if (
+      !body.message &&
+      (!body.images || body.images.length === 0) &&
+      (!body.files || body.files.length === 0)
+    ) {
+      return c.json({ error: "message, images, or files required" }, 400);
     }
 
     const user = c.get("user");
@@ -150,11 +166,16 @@ const app = new Hono<AuthEnv>()
       if (user.id !== 0) {
         participantIds.push(user.id);
       } else if (body.sender) {
-        // Check if sender is a mind — if so, add their mind user as participant
-        const senderMind = findMind(body.sender);
-        if (senderMind) {
-          const senderMindUser = await getOrCreateMindUser(body.sender);
-          participantIds.push(senderMindUser.id);
+        // Check if sender is the system user or a mind
+        if (body.sender === "volute") {
+          const systemUser = await getOrCreateSystemUser();
+          participantIds.push(systemUser.id);
+        } else {
+          const senderMind = await findMind(body.sender);
+          if (senderMind) {
+            const senderMindUser = await getOrCreateMindUser(body.sender);
+            participantIds.push(senderMindUser.id);
+          }
         }
       }
       participantIds.push(mindUser.id);
@@ -184,10 +205,36 @@ const app = new Hono<AuthEnv>()
     const conv = await getConversation(conversationId);
     const convTitle = conv?.title ?? null;
 
+    // Stage files if any
+    const fileNotifications: string[] = [];
+    if (body.files && body.files.length > 0) {
+      const MAX_FILE_SIZE = 50 * 1024 * 1024;
+      for (const file of body.files) {
+        const pathErr = validateFilePath(file.filename);
+        if (pathErr) return c.json({ error: `Invalid filename: ${pathErr}` }, 400);
+        const content = Buffer.from(file.data, "base64");
+        if (content.length > MAX_FILE_SIZE) {
+          return c.json(
+            {
+              error: `File too large: ${file.filename} (${formatFileSize(content.length)}, max ${formatFileSize(MAX_FILE_SIZE)})`,
+            },
+            413,
+          );
+        }
+        const { id } = stageFile(baseName, senderName, file.filename, content, file.filename);
+        fileNotifications.push(
+          `[file] ${senderName} sent ${file.filename} (${formatFileSize(content.length)}) — run: volute chat accept ${id}`,
+        );
+      }
+    }
+
     // Build content blocks
     const contentBlocks: ContentBlock[] = [];
     if (body.message) {
       contentBlocks.push({ type: "text", text: body.message });
+    }
+    for (const note of fileNotifications) {
+      contentBlocks.push({ type: "text", text: note });
     }
     if (body.images) {
       for (const img of body.images) {
@@ -195,8 +242,29 @@ const app = new Hono<AuthEnv>()
       }
     }
 
+    // Link message to a turn:
+    // - If sender is a mind, use the sender's active turn (outbound from that mind)
+    // - Inbound user messages don't get turn_id — the turn is created per-session
+    //   when the mind starts processing, avoiding cross-session turn merging
+    const senderIsMind = user.id === 0 && body.sender && (await findMind(body.sender));
+    const mindSession = c.get("mindSession");
+    let sourceEventId: number | undefined;
+    let turnId: string | undefined;
+    if (senderIsMind) {
+      sourceEventId = getLastToolUseEventId(body.sender!, mindSession);
+      turnId = getActiveTurnId(body.sender!, mindSession);
+    }
+
     // Save user message
-    await addMessage(conversationId, "user", senderName, contentBlocks);
+    await addMessage(conversationId, "user", senderName, contentBlocks, {
+      sourceEventId,
+      turnId,
+    });
+    if (senderIsMind) {
+      routeOutboundBridge(conversationId!, senderName, contentBlocks).catch((err) => {
+        log.warn("outbound bridge routing failed", log.errorData(err));
+      });
+    }
 
     // Fan out to all running mind participants
     const isDM = conv?.type === "dm";
@@ -206,10 +274,23 @@ const app = new Hono<AuthEnv>()
       senderName,
       convTitle,
       isDM,
-      channelEntryType: conv?.type === "channel" ? "group" : isDM ? "dm" : "group",
-      slugExtra: conv ? { convType: conv.type, convName: conv.name } : undefined,
+      channelEntryType: isDM ? "dm" : "channel",
+      slugExtra: conv
+        ? { convType: conv.type as "dm" | "channel", convName: conv.name }
+        : undefined,
       targetName: (username) => (username === baseName ? name : username),
     });
+
+    // Check if a mind is messaging a system DM — generate AI reply
+    if (senderIsMind && body.message) {
+      const participants = await getParticipants(conversationId!);
+      const hasSystemUser = participants.some((p) => p.userType === "system");
+      if (hasSystemUser) {
+        generateSystemReply(conversationId!, baseName, body.message).catch((err) =>
+          log.error(`system reply generation failed for ${baseName}`, log.errorData(err)),
+        );
+      }
+    }
 
     return c.json({ ok: true, conversationId });
   })
@@ -251,6 +332,7 @@ const unifiedChatSchema = z.object({
   message: z.string().optional(),
   conversationId: z.string(),
   images: z.array(z.object({ media_type: z.string(), data: z.string() })).optional(),
+  files: z.array(fileSchema).optional(),
 });
 
 export const unifiedChatApp = new Hono<AuthEnv>().post(
@@ -259,8 +341,12 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
   async (c) => {
     const user = c.get("user");
     const body = c.req.valid("json");
-    if (!body.message && (!body.images || body.images.length === 0)) {
-      return c.json({ error: "message or images required" }, 400);
+    if (
+      !body.message &&
+      (!body.images || body.images.length === 0) &&
+      (!body.files || body.files.length === 0)
+    ) {
+      return c.json({ error: "message, images, or files required" }, 400);
     }
 
     const conv = await getConversation(body.conversationId);
@@ -272,16 +358,73 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
 
     const senderName = user.username;
 
+    // Determine the target mind for file staging
+    // For conversations, stage files to all mind participants
+    const fileNotifications: string[] = [];
+    if (body.files && body.files.length > 0) {
+      const participants = await getParticipants(body.conversationId);
+      const mindParticipants = participants.filter(
+        (p) => p.userType === "mind" && p.username !== senderName,
+      );
+      const MAX_FILE_SIZE = 50 * 1024 * 1024;
+
+      for (const file of body.files) {
+        const pathErr = validateFilePath(file.filename);
+        if (pathErr) return c.json({ error: `Invalid filename: ${pathErr}` }, 400);
+        const content = Buffer.from(file.data, "base64");
+        if (content.length > MAX_FILE_SIZE) {
+          return c.json(
+            {
+              error: `File too large: ${file.filename} (${formatFileSize(content.length)}, max ${formatFileSize(MAX_FILE_SIZE)})`,
+            },
+            413,
+          );
+        }
+        for (const mind of mindParticipants) {
+          const { id } = stageFile(
+            mind.username,
+            senderName,
+            file.filename,
+            content,
+            file.filename,
+          );
+          fileNotifications.push(
+            `[file] ${senderName} sent ${file.filename} (${formatFileSize(content.length)}) — run: volute chat accept ${id}`,
+          );
+        }
+      }
+    }
+
     // Build content blocks
     const contentBlocks: ContentBlock[] = [];
     if (body.message) contentBlocks.push({ type: "text", text: body.message });
+    for (const note of fileNotifications) {
+      contentBlocks.push({ type: "text", text: note });
+    }
     if (body.images) {
       for (const img of body.images) {
         contentBlocks.push({ type: "image", media_type: img.media_type, data: img.data });
       }
     }
 
-    await addMessage(body.conversationId, "user", senderName, contentBlocks);
+    const unifiedMindSession = c.get("mindSession");
+    let unifiedSourceEventId: number | undefined;
+    let unifiedTurnId: string | undefined;
+    if (user.user_type === "mind") {
+      unifiedSourceEventId = getLastToolUseEventId(senderName, unifiedMindSession);
+      unifiedTurnId = getActiveTurnId(senderName, unifiedMindSession);
+    }
+    await addMessage(body.conversationId, "user", senderName, contentBlocks, {
+      sourceEventId: unifiedSourceEventId,
+      turnId: unifiedTurnId,
+    });
+
+    // If sender is a mind, check for outbound bridge routing (fire-and-forget)
+    if (user.user_type === "mind") {
+      routeOutboundBridge(body.conversationId, senderName, contentBlocks).catch((err) => {
+        log.warn("outbound bridge routing failed", log.errorData(err));
+      });
+    }
 
     // Fan out to running mind participants
     const isDM = conv.type === "dm";
@@ -291,9 +434,20 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       senderName,
       convTitle: conv.title,
       isDM,
-      channelEntryType: conv.type === "channel" ? "group" : isDM ? "dm" : "group",
-      slugExtra: { convType: conv.type, convName: conv.name },
+      channelEntryType: isDM ? "dm" : "channel",
+      slugExtra: { convType: conv.type as "dm" | "channel", convName: conv.name },
     });
+
+    // Check if a mind is messaging a system DM — generate AI reply
+    if (user.user_type === "mind" && body.message) {
+      const participants = await getParticipants(body.conversationId);
+      const hasSystemUser = participants.some((p) => p.userType === "system");
+      if (hasSystemUser) {
+        generateSystemReply(body.conversationId, senderName, body.message).catch((err) =>
+          log.error(`system reply generation failed for ${senderName}`, log.errorData(err)),
+        );
+      }
+    }
 
     return c.json({ ok: true, conversationId: body.conversationId });
   },

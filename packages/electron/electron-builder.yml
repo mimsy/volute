@@ -1,0 +1,51 @@
+appId: com.volute.app
+productName: Volute
+directories:
+  output: out
+  buildResources: resources
+mac:
+  target: dmg
+  category: public.app-category.developer-tools
+  icon: resources/icon.icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.plist
+dmg:
+  title: Volute
+afterSign: scripts/notarize.cjs
+extraResources:
+  - from: resources/trayTemplate.png
+    to: trayTemplate.png
+  - from: resources/trayTemplate@2x.png
+    to: trayTemplate@2x.png
+  - from: ../../dist/
+    to: dist/
+    filter:
+      - "**/*"
+  - from: ../../drizzle/
+    to: drizzle/
+    filter:
+      - "**/*"
+  - from: ../../templates/
+    to: templates/
+    filter:
+      - "**/*"
+  - from: ../../skills/
+    to: skills/
+    filter:
+      - "**/*"
+  - from: resources/bin/
+    to: bin/
+    filter:
+      - "**/*"
+  - from: ../../node_modules/
+    to: node_modules/
+    filter:
+      - "**/*"
+      - "!.cache"
+      - "!.package-lock.json"
+      - "!@volute"
+files:
+  - dist/**/*
+  - "!node_modules"

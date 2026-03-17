@@ -16,8 +16,9 @@ import { getDb } from "../db.js";
 import { type ActivityEvent, subscribe } from "../events/activity-events.js";
 import log from "../logger.js";
 import { getPrompt } from "../prompts.js";
-import { findMind, mindDir, readRegistry, voluteHome } from "../registry.js";
-import { deliveryQueue, mindHistory } from "../schema.js";
+import { findMind, mindDir, readRegistry, voluteSystemDir } from "../registry.js";
+import { deliveryQueue } from "../schema.js";
+import { sendSystemMessageDirect } from "../system-chat.js";
 import { readVoluteConfig, type SleepConfig } from "../volute-config.js";
 import { getMindManager } from "./mind-manager.js";
 import { sleepMind, wakeMind } from "./mind-service.js";
@@ -75,9 +76,10 @@ export class SleepManager {
   private interval: ReturnType<typeof setInterval> | null = null;
   private unsubActivity: (() => void) | null = null;
   private transitioning = new Set<string>();
+  private sleepConfigs = new Map<string, SleepConfig | null>();
 
   private get statePath(): string {
-    return resolve(voluteHome(), "sleep-state.json");
+    return resolve(voluteSystemDir(), "sleep-state.json");
   }
 
   start(): void {
@@ -147,9 +149,23 @@ export class SleepManager {
   }
 
   getSleepConfig(name: string): SleepConfig | null {
+    if (this.sleepConfigs.has(name)) {
+      return this.sleepConfigs.get(name) ?? null;
+    }
+    const config = this.loadSleepConfig(name);
+    return config;
+  }
+
+  loadSleepConfig(name: string): SleepConfig | null {
     const dir = mindDir(name);
     const config = readVoluteConfig(dir);
-    return config?.sleep ?? null;
+    const sleepConfig = config?.sleep ?? null;
+    this.sleepConfigs.set(name, sleepConfig);
+    return sleepConfig;
+  }
+
+  invalidateSleepConfig(name: string): void {
+    this.sleepConfigs.delete(name);
   }
 
   /**
@@ -169,25 +185,20 @@ export class SleepManager {
         return;
       }
 
-      const entry = findMind(name);
+      const entry = await findMind(name);
       if (!entry) return;
 
       // Send pre-sleep message
       const sleepConfig = this.getSleepConfig(name);
       const wakeTime =
         opts?.voluntaryWakeAt ?? this.getNextWakeTime(sleepConfig) ?? "scheduled time";
-      const queuedInfo = "";
-      const preSleepMsg = await getPrompt("pre_sleep", { wakeTime, queuedInfo });
+      const preSleepMsg = await getPrompt("pre_sleep", { wakeTime });
 
-      // Persist pre-sleep message to mind_history
+      // Persist to system DM conversation and deliver directly to mind
+      let conversationId: string | undefined;
       try {
-        const db = await getDb();
-        await db.insert(mindHistory).values({
-          mind: name,
-          type: "inbound",
-          channel: "system:sleep",
-          content: preSleepMsg,
-        });
+        const result = await sendSystemMessageDirect(name, preSleepMsg);
+        conversationId = result.conversationId;
       } catch (err) {
         slog.error(`failed to persist pre-sleep message for ${name}`, log.errorData(err));
       }
@@ -198,7 +209,12 @@ export class SleepManager {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             content: [{ type: "text", text: preSleepMsg }],
-            channel: "system:sleep",
+            channel: "volute:@volute",
+            sender: "volute",
+            isDM: true,
+            participants: ["volute", name],
+            participantCount: 2,
+            ...(conversationId ? { conversationId } : {}),
           }),
         });
       } catch (err) {
@@ -246,7 +262,7 @@ export class SleepManager {
       }
 
       // Wait for health check
-      const entry = findMind(name);
+      const entry = await findMind(name);
       if (!entry) return;
 
       if (opts?.trigger) {
@@ -288,15 +304,11 @@ export class SleepManager {
           sleepActivity,
         });
 
-        // Persist wake summary to mind_history
+        // Persist to system DM conversation and deliver directly to mind
+        let wakeConvId: string | undefined;
         try {
-          const db = await getDb();
-          await db.insert(mindHistory).values({
-            mind: name,
-            type: "inbound",
-            channel: "system:sleep",
-            content: summaryText,
-          });
+          const result = await sendSystemMessageDirect(name, summaryText);
+          wakeConvId = result.conversationId;
         } catch (err) {
           slog.error(`failed to persist wake summary for ${name}`, log.errorData(err));
         }
@@ -307,7 +319,12 @@ export class SleepManager {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               content: [{ type: "text", text: summaryText }],
-              channel: "system:sleep",
+              channel: "volute:@volute",
+              sender: "volute",
+              isDM: true,
+              participants: ["volute", name],
+              participantCount: 2,
+              ...(wakeConvId ? { conversationId: wakeConvId } : {}),
             }),
           });
         } catch (err) {
@@ -481,12 +498,12 @@ export class SleepManager {
     }
   }
 
-  private tick(): void {
+  private async tick(): Promise<void> {
     const now = new Date();
     const epochMinute = Math.floor(now.getTime() / 60_000);
 
     // Check each mind's sleep config
-    const registry = readRegistry();
+    const registry = await readRegistry();
 
     for (const entry of registry) {
       if (!entry.running && !this.isSleeping(entry.name)) continue;

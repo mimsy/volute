@@ -1,4 +1,3 @@
-import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { resolve } from "node:path";
 import { createMind } from "./agent.js";
 import { daemonRestart } from "./lib/daemon-client.js";
@@ -22,14 +21,6 @@ if (config.maxThinkingTokens) log("server", `max thinking tokens: ${config.maxTh
 
 const systemPrompt = loadSystemPrompt();
 const sessionsDir = resolve(".mind/sessions");
-
-// Migrate old single session.json → sessions/main.json
-const oldSessionPath = resolve(".mind/session.json");
-if (existsSync(oldSessionPath) && !existsSync(resolve(sessionsDir, "main.json"))) {
-  mkdirSync(sessionsDir, { recursive: true });
-  renameSync(oldSessionPath, resolve(sessionsDir, "main.json"));
-  log("server", "migrated session.json → sessions/main.json");
-}
 
 const pkg = loadPackageInfo();
 const abortController = new AbortController();

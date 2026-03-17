@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { format } from "node:util";
-import { initConnectorManager } from "./lib/daemon/connector-manager.js";
+import { initBridgeManager } from "./lib/daemon/bridge-manager.js";
 import { initMailPoller } from "./lib/daemon/mail-poller.js";
 import { initMindManager } from "./lib/daemon/mind-manager.js";
 import { startMindFull } from "./lib/daemon/mind-service.js";
@@ -12,28 +12,28 @@ import { initSleepManager } from "./lib/daemon/sleep-manager.js";
 import { initTokenBudget } from "./lib/daemon/token-budget.js";
 import { initDeliveryManager } from "./lib/delivery/delivery-manager.js";
 import { stopAll as stopAllActivityTrackers } from "./lib/events/mind-activity-tracker.js";
+import {
+  loadAllExtensions,
+  notifyExtensionsDaemonStart,
+  notifyExtensionsDaemonStop,
+} from "./lib/extensions.js";
+import { cleanExpiredLogs } from "./lib/history-cleanup.js";
 import log from "./lib/logger.js";
-import { migrateAgentsToMinds } from "./lib/migrate-agents-to-minds.js";
 import {
-  migrateDotVoluteDir,
-  migrateMindState,
-  migratePagesDirToPublic,
-} from "./lib/migrate-state.js";
-import { stopAllWatchers } from "./lib/pages-watcher.js";
-import {
-  initRegistryCache,
-  mindDir,
-  readRegistry,
+  ensureSystemDir,
+  readAllMinds,
   setMindRunning,
   voluteHome,
+  voluteSystemDir,
 } from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
 import { ensureSharedRepo } from "./lib/shared.js";
-import { syncBuiltinSkills } from "./lib/skills.js";
+import { initDefaultSkills, syncBuiltinSkills } from "./lib/skills.js";
 import { ensureSystemChannel } from "./lib/system-channel.js";
-import { getAllRunningVariants, setVariantRunning } from "./lib/variants.js";
 import { initWebhook } from "./lib/webhook.js";
-import { cleanExpiredSessions } from "./web/middleware/auth.js";
+import { startApiKeyRefresh, stopApiKeyRefresh } from "./web/api/system.js";
+import app from "./web/app.js";
+import { authMiddleware, cleanExpiredSessions } from "./web/middleware/auth.js";
 import { startServer } from "./web/server.js";
 
 if (!process.env.VOLUTE_HOME) {
@@ -56,9 +56,11 @@ export async function startDaemon(opts: {
 
   const home = voluteHome();
 
+  const systemDir = voluteSystemDir();
+
   // In background mode, redirect structured logs and console to a rotating log file
   if (!opts.foreground) {
-    const rotatingLog = new RotatingLog(resolve(home, "daemon.log"));
+    const rotatingLog = new RotatingLog(resolve(systemDir, "daemon.log"));
     log.setOutput((line) => rotatingLog.write(`${line}\n`));
     // Keep console redirect as safety net for uncaught/third-party output
     const write = (...args: any[]) => rotatingLog.write(`${format(...args)}\n`);
@@ -67,13 +69,11 @@ export async function startDaemon(opts: {
     console.warn = write;
     console.info = write;
   }
-  const DAEMON_PID_PATH = resolve(home, "daemon.pid");
-  const DAEMON_JSON_PATH = resolve(home, "daemon.json");
+  const DAEMON_PID_PATH = resolve(systemDir, "daemon.pid");
+  const DAEMON_JSON_PATH = resolve(systemDir, "daemon.json");
 
   mkdirSync(home, { recursive: true });
-
-  // One-time migration: agents.json → minds.json, agents/ → minds/
-  migrateAgentsToMinds();
+  ensureSystemDir();
 
   // Initialize shared repo for inter-mind collaboration (non-fatal)
   try {
@@ -82,8 +82,8 @@ export async function startDaemon(opts: {
     log.warn("failed to initialize shared repo", log.errorData(err));
   }
 
-  // Load registry into memory for fast reads within the daemon
-  initRegistryCache();
+  // Initialize database (runs drizzle migrations + creates raw connection)
+  await (await import("./lib/db.js")).getDb();
 
   // Initialize sandbox runtime for mind process isolation
   const { initSandbox } = await import("./lib/sandbox.js");
@@ -96,11 +96,33 @@ export async function startDaemon(opts: {
     log.error("failed to sync built-in skills", log.errorData(err));
   }
 
+  // Load extensions (non-fatal)
+  try {
+    await loadAllExtensions(app, authMiddleware);
+    notifyExtensionsDaemonStart();
+  } catch (err) {
+    log.error("failed to load extensions", log.errorData(err));
+  }
+
+  // Initialize default skills config if not set (after extensions load so their skills are included)
+  await initDefaultSkills();
+
   // Ensure #system channel exists (non-fatal)
   try {
     await ensureSystemChannel();
   } catch (err) {
     log.warn("failed to ensure #system channel", log.errorData(err));
+  }
+
+  // Ensure system user exists (non-fatal)
+  try {
+    const { getOrCreateSystemUser } = await import("./lib/auth.js");
+    await getOrCreateSystemUser();
+  } catch (err) {
+    log.warn(
+      "failed to ensure system user — system chat features will be unavailable",
+      log.errorData(err),
+    );
   }
 
   // Use existing token if set (for testing), otherwise generate one
@@ -145,11 +167,11 @@ export async function startDaemon(opts: {
   if (tls) daemonConfig.tls = true;
   writeFileSync(DAEMON_JSON_PATH, `${JSON.stringify(daemonConfig, null, 2)}\n`, { mode: 0o644 });
 
-  // Start delivery manager, mind manager, connector manager, and scheduler
+  // Start delivery manager, mind manager, bridge manager, and scheduler
   const delivery = initDeliveryManager();
   const manager = initMindManager();
   manager.loadCrashAttempts();
-  const connectors = initConnectorManager();
+  const bridgeManager = initBridgeManager();
   const scheduler = initScheduler();
   scheduler.start();
   const mailPoller = initMailPoller();
@@ -160,39 +182,22 @@ export async function startDaemon(opts: {
   sleepManager.start();
   const unsubscribeWebhook = initWebhook();
 
-  // Migrate .volute/ → .mind/ and system state for all registered minds
-  const registry = readRegistry();
-  for (const entry of registry) {
-    for (const migrate of [migrateDotVoluteDir, migrateMindState, migratePagesDirToPublic]) {
-      try {
-        migrate(entry.name);
-      } catch (err) {
-        log.warn(`failed to migrate state for ${entry.name}`, log.errorData(err));
-      }
-    }
-  }
-
-  // Start all minds that were previously running (parallel, concurrency limit of 5)
+  // Start all minds + variants that were previously running (parallel, concurrency limit of 5)
   // Skip sleeping minds — they only need connectors, not the mind process
-  const runningEntries = registry.filter((e) => e.running);
+  const allMinds = await readAllMinds();
+  const runningEntries = allMinds.filter((e) => e.running);
   {
     const queue = [...runningEntries];
     const workers = Array.from({ length: Math.min(5, queue.length) }, async () => {
       while (queue.length > 0) {
         const entry = queue.shift()!;
-        if (sleepManager.isSleeping(entry.name)) {
-          // Sleeping mind: start connectors/schedules but not the process
+        if (!entry.parent && sleepManager.isSleeping(entry.name)) {
+          // Sleeping mind: start schedules but not the process
           try {
-            // We need connectors running but not the mind process
-            const dir = mindDir(entry.name);
-            const daemonPort = process.env.VOLUTE_DAEMON_PORT
-              ? parseInt(process.env.VOLUTE_DAEMON_PORT, 10)
-              : undefined;
-            await connectors.startConnectors(entry.name, dir, entry.port, daemonPort);
             scheduler.loadSchedules(entry.name);
           } catch (err) {
             log.error(
-              `failed to start connectors for sleeping mind ${entry.name}`,
+              `failed to start schedules for sleeping mind ${entry.name}`,
               log.errorData(err),
             );
           }
@@ -202,31 +207,17 @@ export async function startDaemon(opts: {
           await startMindFull(entry.name);
         } catch (err) {
           log.error(`failed to start mind ${entry.name}`, log.errorData(err));
-          setMindRunning(entry.name, false);
+          await setMindRunning(entry.name, false);
         }
       }
     });
     await Promise.all(workers);
   }
 
-  // Restore running variants (in parallel with same pattern)
-  const runningVariants = getAllRunningVariants();
-  {
-    const queue = [...runningVariants];
-    const workers = Array.from({ length: Math.min(5, queue.length) }, async () => {
-      while (queue.length > 0) {
-        const { mindName, variant } = queue.shift()!;
-        const compositeKey = `${mindName}@${variant.name}`;
-        try {
-          await startMindFull(compositeKey);
-        } catch (err) {
-          log.error(`failed to start variant ${compositeKey}`, log.errorData(err));
-          setVariantRunning(mindName, variant.name, false);
-        }
-      }
-    });
-    await Promise.all(workers);
-  }
+  // Start system-level bridges (non-blocking)
+  bridgeManager.startBridges(daemonPort).catch((err) => {
+    log.warn("failed to start bridges", log.errorData(err));
+  });
 
   // Consume messages queued in the cloud while the machine was off (non-blocking)
   import("./lib/cloud-sync.js")
@@ -256,10 +247,16 @@ export async function startDaemon(opts: {
     log.warn("failed to restore delivery queue", log.errorData(err));
   });
 
-  // Clean up expired sessions (non-blocking)
+  // Clean up expired sessions and old log entries (non-blocking)
   cleanExpiredSessions().catch((err) => {
     log.warn("failed to clean expired sessions", log.errorData(err));
   });
+  cleanExpiredLogs().catch((err) => {
+    log.warn("failed to clean expired logs", log.errorData(err));
+  });
+
+  // Start periodic API key cache refresh for mind provider keys
+  startApiKeyRefresh();
 
   log.info(`running on ${hostname}:${port}, pid ${myPid}`);
 
@@ -298,7 +295,7 @@ export async function startDaemon(opts: {
       }
     };
     try {
-      safe("stopAllWatchers", stopAllWatchers);
+      safe("notifyExtensionsDaemonStop", notifyExtensionsDaemonStop);
       safe("stopAllActivityTrackers", stopAllActivityTrackers);
       safe("unsubscribeWebhook", unsubscribeWebhook);
       safe("sleepManager.stop", () => sleepManager.stop());
@@ -307,8 +304,9 @@ export async function startDaemon(opts: {
       safe("scheduler.saveState", () => scheduler.saveState());
       safe("mailPoller.stop", () => mailPoller.stop());
       safe("tokenBudget.stop", () => tokenBudget.stop());
+      safe("stopApiKeyRefresh", stopApiKeyRefresh);
       safe("delivery.dispose", () => delivery.dispose());
-      await safe("connectors.stopAll", () => connectors.stopAll());
+      await safe("bridgeManager.stopAll", () => bridgeManager.stopAll());
       await safe("manager.stopAll", () => manager.stopAll());
       safe("clearCrashAttempts", () => manager.clearCrashAttempts());
       safe("server.close", () => server.close());

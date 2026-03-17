@@ -1,3 +1,6 @@
+// Suppress deprecation warnings from transitive dependencies (e.g. punycode via node-fetch v2)
+process.noDeprecation = true;
+
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
@@ -19,9 +22,7 @@ if (command === "--version" || command === "-v") {
 // Gate commands on setup — skip for setup itself, help, version, and update
 const ungatedCommands = new Set(["setup", "--help", "-h", "--version", "-v", "update", undefined]);
 if (!ungatedCommands.has(command)) {
-  const { isSetupComplete, migrateSetupConfig } = await import("./lib/setup.js");
-  // Auto-migrate existing users so they're never blocked
-  migrateSetupConfig();
+  const { isSetupComplete } = await import("./lib/setup.js");
   if (!isSetupComplete()) {
     console.error("Volute is not set up. Run `volute setup` first.");
     process.exit(1);
@@ -35,29 +36,17 @@ switch (command) {
   case "mind":
     await import("./commands/mind.js").then((m) => m.run(args));
     break;
-  case "send":
-    await import("./commands/send.js").then((m) => m.run(args));
-    break;
-  case "history":
-    await import("./commands/history.js").then((m) => m.run(args));
+  case "chat":
+    await import("./commands/chat.js").then((m) => m.run(args));
     break;
   case "variant":
     await import("./commands/variant.js").then((m) => m.run(args));
     break;
-  case "channel":
-    await import("./commands/channel.js").then((m) => m.run(args));
-    break;
-  case "schedule":
-    await import("./commands/schedule.js").then((m) => m.run(args));
+  case "clock":
+    await import("./commands/clock.js").then((m) => m.run(args));
     break;
   case "skill":
     await import("./commands/skill.js").then((m) => m.run(args));
-    break;
-  case "shared":
-    await import("./commands/shared.js").then((m) => m.run(args));
-    break;
-  case "file":
-    await import("./commands/file.js").then((m) => m.run(args));
     break;
   case "env":
     await import("./commands/env.js").then((m) => m.run(args));
@@ -71,23 +60,23 @@ switch (command) {
   case "restart":
     await import("./commands/daemon-restart.js").then((m) => m.run(args));
     break;
-  case "service":
-    await import("./commands/service.js").then((m) => m.run(args));
-    break;
   case "update":
     await import("./commands/update.js").then((m) => m.run(args));
     break;
   case "status":
     await import("./commands/status.js").then((m) => m.run(args));
     break;
-  case "notes":
-    await import("./commands/notes.js").then((m) => m.run(args));
+  case "extension":
+    await import("./commands/extension.js").then((m) => m.run(args));
     break;
-  case "pages":
-    await import("./commands/pages.js").then((m) => m.run(args));
+  case "systems":
+    await import("./commands/systems.js").then((m) => m.run(args));
     break;
-  case "auth":
-    await import("./commands/auth.js").then((m) => m.run(args));
+  case "login":
+    await import("./commands/login.js").then((m) => m.run(args));
+    break;
+  case "logout":
+    await import("./commands/logout.js").then((m) => m.run(args));
     break;
   case "--help":
   case "-h":
@@ -95,9 +84,9 @@ switch (command) {
     console.log(`volute — create and manage AI minds
 
 Common:
-  send <target> "<msg>"            Send a message
-  history [--channel <ch>]         View activity history
-  status                           Show system status
+  chat send <target> "<msg>"       Send a message
+  chat list / read / create        Manage conversations
+  chat bridge                      Manage platform bridges
 
 Mind:
   mind create <name>               Create a new mind
@@ -105,28 +94,29 @@ Mind:
   mind start/stop/restart [name]   Control a mind
   mind list                        List all minds
   mind status [name]               Check a mind's status
-  mind connect/disconnect <type>   Manage connectors
-  mind logs [name] [--follow]      Tail mind logs
+  mind history [name] [--full]     View mind activity history
   mind sprout                      Complete orientation
+  mind split/join                  Create and merge experimental splits
   mind upgrade/import/export       Lifecycle operations
 
 Configuration:
-  channel   Read, list, and manage channels
-  variant   Create and merge experimental variants
-  schedule  Manage cron schedules
+  chat      Conversations, messages, files, and platform bridges
+  clock     Schedules, timers, and sleep/wake cycles
   skill     Browse and install skills
   env       Manage environment variables
-  file      Mind-to-mind file sharing
-  shared    Collaborative shared repository
-  notes     Read and write notes
-  pages     Publish web pages
 
 System:
   setup                            First-time setup
   up / down / restart              Daemon control
+  status                           Show daemon & service status
+  extension list/install/uninstall Manage extensions
+  login / logout                   CLI authentication
   update                           Update volute
-  service status                   Check service status
-  auth register/login/logout       volute.systems account
+  systems register/login/logout    volute.systems account
+
+Extensions:
+  notes write/list/read/...        Manage notes
+  pages notify                     Notify page updates
 
 Options:
   --version, -v                    Show version number
@@ -134,12 +124,69 @@ Options:
 
 Run 'volute <command> --help' for details.
 
-Mind-scoped commands (send, history, variant, schedule, channel, file, skill, shared, pages)
+Mind-scoped commands (chat, clock, skill)
 use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
-  default:
+  default: {
+    // Try extension commands before giving up
+    let isExtensionCommand = false;
+    try {
+      const { daemonFetch } = await import("./lib/daemon-client.js");
+      const res = await daemonFetch("/api/extensions/commands");
+      if (res.ok) {
+        const extCommands = (await res.json()) as Record<
+          string,
+          { commands: Record<string, { description: string; usage?: string }> }
+        >;
+        if (command && command in extCommands) {
+          isExtensionCommand = true;
+          const subcommand = args[0];
+          const ext = extCommands[command];
+          if (!subcommand || !(subcommand in ext.commands)) {
+            console.log(`volute ${command} — ${Object.keys(ext.commands).join(", ")}\n`);
+            for (const [name, meta] of Object.entries(ext.commands)) {
+              console.log(`  ${name.padEnd(12)} ${meta.description}`);
+            }
+            process.exit(0);
+          }
+          // Extract --mind flag from args (same convention as other mind-scoped commands)
+          const cmdArgs = args.slice(1);
+          let mind = process.env.VOLUTE_MIND;
+          const mindIdx = cmdArgs.indexOf("--mind");
+          if (mindIdx !== -1 && cmdArgs[mindIdx + 1]) {
+            mind = cmdArgs[mindIdx + 1];
+            cmdArgs.splice(mindIdx, 2);
+          }
+          const cmdRes = await daemonFetch(`/api/ext/${command}/commands/${subcommand}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ args: cmdArgs, mind }),
+          });
+          if (!cmdRes.ok) {
+            const text = await cmdRes.text().catch(() => "");
+            console.error(`Extension command failed (HTTP ${cmdRes.status}): ${text}`);
+            process.exit(1);
+          }
+          const result = (await cmdRes.json()) as { output?: string; error?: string };
+          if (result.error) {
+            console.error(result.error);
+            process.exit(1);
+          }
+          if (result.output) console.log(result.output);
+          break;
+        }
+      }
+    } catch (err) {
+      // If we identified this as an extension command, surface the real error
+      if (isExtensionCommand) {
+        console.error(`Extension command failed: ${err instanceof Error ? err.message : err}`);
+        process.exit(1);
+      }
+      // Otherwise daemon not running — fall through to unknown command
+    }
     console.error(`Unknown command: ${command}\nRun 'volute --help' for usage.`);
     process.exit(1);
+  }
 }
 
 // Non-blocking update check (prints to stderr so it doesn't interfere with piped output)

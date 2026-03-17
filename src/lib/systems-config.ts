@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { voluteHome } from "./registry.js";
+import { voluteSystemDir } from "./registry.js";
 
 export type SystemsConfig = {
   apiKey: string;
@@ -11,7 +11,7 @@ export type SystemsConfig = {
 const DEFAULT_API_URL = "https://volute.systems";
 
 function configPath(): string {
-  return resolve(voluteHome(), "systems.json");
+  return resolve(voluteSystemDir(), "systems.json");
 }
 
 export function readSystemsConfig(): SystemsConfig | null {
@@ -22,7 +22,9 @@ export function readSystemsConfig(): SystemsConfig | null {
   try {
     data = JSON.parse(raw);
   } catch {
-    console.error(`Warning: ${path} contains invalid JSON. Run "volute auth logout" and re-login.`);
+    console.error(
+      `Warning: ${path} contains invalid JSON. Run "volute systems logout" and re-login.`,
+    );
     return null;
   }
   if (!data.apiKey || !data.system) return null;
@@ -34,7 +36,7 @@ export function readSystemsConfig(): SystemsConfig | null {
 }
 
 export function writeSystemsConfig(config: SystemsConfig): void {
-  mkdirSync(voluteHome(), { recursive: true });
+  mkdirSync(voluteSystemDir(), { recursive: true });
   writeFileSync(configPath(), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 }
 

@@ -19,11 +19,6 @@ if [[ -f "$REPO_ROOT/.env" ]]; then
   set +a
 fi
 
-if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-  echo "Error: ANTHROPIC_API_KEY must be set (export it or add to .env)" >&2
-  exit 1
-fi
-
 if ! command -v docker &>/dev/null; then
   echo "Error: docker is required" >&2
   exit 1
@@ -90,13 +85,14 @@ rm -f "$BUILD_LOG"
 echo "  Image: $IMAGE"
 
 # Collect API key env vars to pass to container
-ENV_ARGS=(-e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
+ENV_ARGS=()
+[[ -n "${ANTHROPIC_API_KEY:-}" ]] && ENV_ARGS+=(-e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
 [[ -n "${OPENROUTER_API_KEY:-}" ]] && ENV_ARGS+=(-e "OPENROUTER_API_KEY=$OPENROUTER_API_KEY")
 
 echo "Starting container on port $HOST_PORT..."
 if ! docker run -d --name "$CONTAINER" \
   -p "$HOST_PORT:1618" \
-  "${ENV_ARGS[@]}" \
+  ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} \
   "$IMAGE" >/dev/null; then
   echo "Error: failed to start container (port $HOST_PORT may be in use)" >&2
   exit 1
@@ -130,7 +126,7 @@ echo "  Daemon is healthy"
 
 echo "Reading daemon token..."
 if ! TOKEN=$(docker exec "$CONTAINER" node -e \
-  "process.stdout.write(JSON.parse(require('fs').readFileSync('/data/daemon.json','utf8')).token)" 2>&1); then
+  "const fs=require('fs'); const p='/data/system/daemon.json'; const lp='/data/daemon.json'; const f=fs.existsSync(p)?p:lp; process.stdout.write(JSON.parse(fs.readFileSync(f,'utf8')).token)" 2>&1); then
   echo "Error: failed to read daemon token" >&2
   echo "  $TOKEN" >&2
   exit 1
@@ -141,11 +137,16 @@ if [[ -z "$TOKEN" ]]; then
   exit 1
 fi
 
+# Write setup config so CLI commands work inside the container
+echo "Writing setup config..."
+docker exec "$CONTAINER" sh -c \
+  'mkdir -p /data/system && echo '"'"'{"setup":{"type":"system","isolation":"user"}}'"'"' > /data/system/config.json'
+
 # Create a test user account (first user auto-becomes admin)
 echo "Creating test user account..."
 REGISTER_RESP=$(curl -sf -X POST \
   -H "Content-Type: application/json" \
-  -H "Origin: http://127.0.0.1:1618" \
+  -H "Origin: http://localhost:$HOST_PORT" \
   -d '{"username":"tester","password":"tester"}' \
   "http://localhost:$HOST_PORT/api/auth/register" 2>&1) || true
 
@@ -159,32 +160,52 @@ fi
 # (the container runs as root, and @target DMs resolve the OS username as sender)
 ROOT_REGISTER_RESP=$(curl -sf -X POST \
   -H "Content-Type: application/json" \
-  -H "Origin: http://127.0.0.1:1618" \
+  -H "Origin: http://localhost:$HOST_PORT" \
   -d '{"username":"root","password":"root"}' \
   "http://localhost:$HOST_PORT/api/auth/register" 2>&1) || true
 
 ROOT_USER_ID=$(echo "$ROOT_REGISTER_RESP" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
 if [[ -n "$ROOT_USER_ID" ]]; then
-  # Get admin session cookie to approve the pending root user
-  SESSION_COOKIE=$(curl -sf -X POST \
+  # Approve the pending root user and promote to admin using daemon token
+  curl -sf -X POST \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Origin: http://localhost:$HOST_PORT" \
+    "http://localhost:$HOST_PORT/api/auth/users/$ROOT_USER_ID/approve" >/dev/null 2>&1 || true
+  curl -sf -X POST \
     -H "Content-Type: application/json" \
-    -H "Origin: http://127.0.0.1:1618" \
-    -c - \
-    -d '{"username":"tester","password":"tester"}' \
-    "http://localhost:$HOST_PORT/api/auth/login" 2>/dev/null | grep volute_session | awk '{print $NF}')
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Origin: http://localhost:$HOST_PORT" \
+    -d '{"role":"admin"}' \
+    "http://localhost:$HOST_PORT/api/auth/users/$ROOT_USER_ID/role" >/dev/null 2>&1 || true
 
-  if [[ -n "$SESSION_COOKIE" ]]; then
-    curl -sf -X POST \
-      -H "Cookie: volute_session=$SESSION_COOKIE" \
-      -H "Origin: http://127.0.0.1:1618" \
-      "http://localhost:$HOST_PORT/api/auth/users/$ROOT_USER_ID/approve" >/dev/null 2>&1 || true
+  # Log in as 'root' (now approved) to get a CLI session
+  LOGIN_RESP=$(curl -sf -X POST \
+    -H "Content-Type: application/json" \
+    -H "Origin: http://localhost:$HOST_PORT" \
+    -d '{"username":"root","password":"root"}' \
+    "http://localhost:$HOST_PORT/api/auth/login" 2>&1) || true
+
+  ROOT_SESSION_ID=$(echo "$LOGIN_RESP" | grep -o '"sessionId":"[^"]*"' | head -1 | cut -d'"' -f4)
+  if [[ -n "$ROOT_SESSION_ID" ]]; then
+    # Write cli-session.json inside the container so CLI commands authenticate
+    docker exec "$CONTAINER" sh -c \
+      "mkdir -p /root/.volute && echo '{\"sessionId\":\"$ROOT_SESSION_ID\",\"username\":\"root\"}' > /root/.volute/cli-session.json && chmod 600 /root/.volute/cli-session.json"
+    echo "  User 'root' created and CLI session established"
+  else
+    echo "  User 'root' created (for CLI inside container)"
   fi
-  echo "  User 'root' created (for CLI inside container)"
+else
+  echo "  Warning: root user creation response: $ROOT_REGISTER_RESP" >&2
 fi
 
 # Set OPENROUTER_API_KEY as a global env var if present
 if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
-  docker exec "$CONTAINER" node dist/cli.js env set OPENROUTER_API_KEY "$OPENROUTER_API_KEY" >/dev/null 2>&1
+  curl -sf -X PUT \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Origin: http://localhost:$HOST_PORT" \
+    -d "{\"value\":\"$OPENROUTER_API_KEY\"}" \
+    "http://localhost:$HOST_PORT/api/env/OPENROUTER_API_KEY" >/dev/null 2>&1 || true
   echo "  OPENROUTER_API_KEY set for minds"
 fi
 
@@ -209,7 +230,7 @@ if [[ "$WITH_FIXTURES" == "true" ]]; then
         echo "Error: failed to copy archive for '$name'" >&2
         exit 1
       fi
-      if ! docker exec -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" "$CONTAINER" \
+      if ! docker exec ${ANTHROPIC_API_KEY:+-e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY"} "$CONTAINER" \
           volute mind import "/tmp/$name.volute" --name "$name" 2>&1; then
         echo "Error: failed to import mind '$name'" >&2
         exit 1
@@ -224,7 +245,7 @@ fi
 SETUP_COMPLETE=true
 
 # Helper alias for running volute commands inside the container
-VEXEC="docker exec -e ANTHROPIC_API_KEY=\$ANTHROPIC_API_KEY $CONTAINER volute"
+VEXEC="docker exec $CONTAINER volute"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

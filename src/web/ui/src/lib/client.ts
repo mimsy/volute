@@ -19,6 +19,7 @@ import type {
   RecentPage,
   SharedSkill,
   Site,
+  TurnRow,
   UpdateResult,
   Variant,
 } from "@volute/api";
@@ -103,6 +104,26 @@ export function createSeedMind(
   return post(`${V1}/minds`, { name, stage: "seed", ...opts });
 }
 
+// --- Mind conversations (all channels) ---
+
+export function fetchMindConversations(name: string): Promise<ConversationWithParticipants[]> {
+  return get(`${V1}/minds/${enc(name)}/conversations`);
+}
+
+export function fetchMindConversationMessages(
+  mindName: string,
+  conversationId: string,
+  opts?: { before?: number; limit?: number },
+): Promise<CursorResponse<Message>> {
+  const params = new URLSearchParams();
+  if (opts?.before != null) params.set("before", String(opts.before));
+  if (opts?.limit != null) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  return get(
+    `${V1}/minds/${enc(mindName)}/conversations/${enc(conversationId)}/messages${qs ? `?${qs}` : ""}`,
+  );
+}
+
 // --- Conversations ---
 
 export function fetchConversations(): Promise<ConversationWithParticipants[]> {
@@ -124,19 +145,16 @@ export function fetchConversationParticipants(conversationId: string): Promise<P
   return get(`${V1}/conversations/${enc(conversationId)}/participants`);
 }
 
-export function createConversation(
-  participantNames: string[],
-  title?: string,
-): Promise<Conversation> {
-  return post(`${V1}/conversations`, { participantNames, title });
-}
-
 export function deleteConversation(conversationId: string): Promise<void> {
   return del(`${V1}/conversations/${enc(conversationId)}`);
 }
 
 export function markAsRead(conversationId: string): Promise<void> {
   return post(`${V1}/conversations/${enc(conversationId)}/read`);
+}
+
+export function setConversationPrivate(id: string, isPrivate: boolean): Promise<void> {
+  return put(`${V1}/conversations/${enc(id)}/private`, { private: isPrivate });
 }
 
 // --- Chat ---
@@ -146,11 +164,13 @@ export function sendChat(
   message: string,
   conversationId?: string,
   images?: Array<{ media_type: string; data: string }>,
+  files?: Array<{ filename: string; data: string }>,
 ): Promise<{ ok: boolean; conversationId: string }> {
   return post(`${V1}/minds/${enc(name)}/chat`, {
     message: message || undefined,
     conversationId,
     images: images && images.length > 0 ? images : undefined,
+    files: files && files.length > 0 ? files : undefined,
   });
 }
 
@@ -158,11 +178,13 @@ export function sendChatUnified(
   conversationId: string,
   message: string,
   images?: Array<{ media_type: string; data: string }>,
+  files?: Array<{ filename: string; data: string }>,
 ): Promise<{ ok: boolean; conversationId: string }> {
   return post(`${V1}/chat`, {
     message: message || undefined,
     conversationId,
     images: images && images.length > 0 ? images : undefined,
+    files: files && files.length > 0 ? files : undefined,
   });
 }
 
@@ -185,16 +207,37 @@ export function reportTyping(
 
 export function fetchHistory(
   name: string,
-  opts?: { channel?: string; session?: string; full?: boolean; limit?: number; offset?: number },
+  opts?: {
+    channel?: string;
+    session?: string;
+    preset?: "summary" | "conversation" | "detailed" | "all";
+    limit?: number;
+    offset?: number;
+  },
 ): Promise<HistoryMessage[]> {
   const params = new URLSearchParams();
   if (opts?.channel) params.set("channel", opts.channel);
   if (opts?.session) params.set("session", opts.session);
-  if (opts?.full) params.set("full", "true");
+  if (opts?.preset) params.set("preset", opts.preset);
   if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
   if (opts?.offset !== undefined) params.set("offset", String(opts.offset));
   const qs = params.toString();
   return get(`${V1}/minds/${enc(name)}/history${qs ? `?${qs}` : ""}`);
+}
+
+export function fetchTurnEvents(
+  name: string,
+  opts: { turnId: string } | { session: string; fromId: number; toId: number },
+): Promise<HistoryMessage[]> {
+  const params = new URLSearchParams();
+  if ("turnId" in opts) {
+    params.set("turn_id", opts.turnId);
+  } else {
+    params.set("session", opts.session);
+    params.set("from_id", String(opts.fromId));
+    params.set("to_id", String(opts.toId));
+  }
+  return get(`${V1}/minds/${enc(name)}/history/turn?${params}`);
 }
 
 export function fetchHistorySessions(name: string): Promise<HistorySession[]> {
@@ -203,6 +246,18 @@ export function fetchHistorySessions(name: string): Promise<HistorySession[]> {
 
 export function fetchHistoryChannels(name: string): Promise<string[]> {
   return get(`${V1}/minds/${enc(name)}/history/channels`);
+}
+
+export function fetchTurns(
+  name: string,
+  opts?: { limit?: number; offset?: number; turnId?: string },
+): Promise<TurnRow[]> {
+  const params = new URLSearchParams();
+  if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts?.offset !== undefined) params.set("offset", String(opts.offset));
+  if (opts?.turnId) params.set("turnId", opts.turnId);
+  const qs = params.toString();
+  return get(`${V1}/minds/${enc(name)}/history/turns${qs ? `?${qs}` : ""}`);
 }
 
 // --- Variants ---
@@ -313,6 +368,24 @@ export function removeSharedSkill(id: string): Promise<void> {
   return del(`${V1}/skills/${enc(id)}`);
 }
 
+export function fetchDefaultSkills(): Promise<string[]> {
+  return get<{ skills: string[] }>(`${V1}/skills/defaults/list`).then((r) => r.skills);
+}
+
+export function addDefaultSkill(skill: string): Promise<string[]> {
+  return post<{ skills: string[] }>(`${V1}/skills/defaults/list`, { skill }).then((r) => r.skills);
+}
+
+export async function removeDefaultSkill(skill: string): Promise<string[]> {
+  const res = await fetch(`${V1}/skills/defaults/list/${enc(skill)}`, { method: "DELETE" });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || `Request failed: ${res.status}`);
+  }
+  const body = (await res.json()) as { skills: string[] };
+  return body.skills;
+}
+
 // --- Prompts ---
 
 export function fetchPrompts(): Promise<Prompt[]> {
@@ -363,6 +436,62 @@ export function systemLogout(): Promise<void> {
   return post(`${V1}/system/logout`);
 }
 
+// --- AI Service ---
+
+export type AiProvider = {
+  id: string;
+  oauth: boolean;
+  oauthName?: string;
+  usesCallbackServer: boolean;
+  configured: boolean;
+  authMethod: "api_key" | "oauth" | "env_var" | null;
+};
+
+export type AiModel = {
+  id: string;
+  name: string;
+  provider: string;
+  contextWindow: number;
+  maxTokens: number;
+  enabled: boolean;
+};
+
+export function fetchAiProviders(): Promise<AiProvider[]> {
+  return get(`${V1}/system/ai/providers`);
+}
+
+export function fetchAiModels(): Promise<AiModel[]> {
+  return get(`${V1}/system/ai/models`);
+}
+
+export function saveProviderConfig(providerId: string, apiKey: string): Promise<void> {
+  return put(`${V1}/system/ai/providers/${enc(providerId)}`, { apiKey });
+}
+
+export function removeProviderConfig(providerId: string): Promise<void> {
+  return del(`${V1}/system/ai/providers/${enc(providerId)}`);
+}
+
+export function startAiOAuth(
+  provider: string,
+): Promise<{ flowId: string; url?: string; instructions?: string; needsManualCode?: boolean }> {
+  return post(`${V1}/system/ai/oauth/start`, { provider });
+}
+
+export function pollAiOAuthStatus(
+  flowId: string,
+): Promise<{ status: "pending" | "complete" | "error"; error?: string; waitingForCode?: boolean }> {
+  return get(`${V1}/system/ai/oauth/status/${enc(flowId)}`);
+}
+
+export function submitAiOAuthCode(flowId: string, code: string): Promise<void> {
+  return post(`${V1}/system/ai/oauth/code/${enc(flowId)}`, { code });
+}
+
+export function saveEnabledModels(models: string[]): Promise<void> {
+  return put(`${V1}/system/ai/models`, { models });
+}
+
 // --- Auth (these stay on /api/ since they're not mind-scoped) ---
 
 export function fetchAvailableUsers(type?: string): Promise<AvailableUser[]> {
@@ -381,6 +510,38 @@ export async function uploadSkillZip(file: File): Promise<SharedSkill> {
     throw new Error(data.error || "Failed to upload skill");
   }
   return res.json();
+}
+
+// --- Clock ---
+
+export interface ClockStatus {
+  sleep: {
+    sleeping: boolean;
+    sleepingSince: string | null;
+    scheduledWakeAt: string | null;
+    wokenByTrigger: boolean;
+    voluntaryWakeAt: string | null;
+    queuedMessageCount: number;
+  } | null;
+  sleepConfig: {
+    enabled?: boolean;
+    schedule?: { sleep: string; wake: string };
+  } | null;
+  schedules: {
+    id: string;
+    cron?: string;
+    fireAt?: string;
+    message?: string;
+    script?: string;
+    enabled: boolean;
+    whileSleeping?: string;
+    channel?: string;
+  }[];
+  upcoming: { id: string; at: string; type: "cron" | "timer" }[];
+}
+
+export function fetchClockStatus(name: string): Promise<ClockStatus> {
+  return get(`${V1}/minds/${enc(name)}/clock/status`);
 }
 
 // --- Helpers ---

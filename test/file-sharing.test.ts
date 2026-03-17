@@ -4,16 +4,11 @@ import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import {
   acceptPending,
-  addTrust,
   deliverFile,
-  isTrustedSender,
   listPending,
-  readFileSharingConfig,
   rejectPending,
-  removeTrust,
   stageFile,
   validateFilePath,
-  writeFileSharingConfig,
 } from "../src/lib/file-sharing.js";
 import { voluteHome } from "../src/lib/registry.js";
 
@@ -66,56 +61,6 @@ describe("file-sharing", () => {
     });
   });
 
-  describe("config read/write", () => {
-    it("returns empty config when no file exists", () => {
-      const dir = setup("cfg-empty");
-      const config = readFileSharingConfig(dir);
-      assert.deepEqual(config, {});
-    });
-
-    it("round-trips config", () => {
-      const dir = setup("cfg-roundtrip");
-      const config = { trustedSenders: ["alice", "bob"], inboxPath: "incoming" };
-      writeFileSharingConfig(dir, config);
-      const loaded = readFileSharingConfig(dir);
-      assert.deepEqual(loaded, config);
-    });
-  });
-
-  describe("trust", () => {
-    it("returns false for untrusted sender", () => {
-      const dir = setup("trust-none");
-      assert.equal(isTrustedSender(dir, "alice"), false);
-    });
-
-    it("returns true for trusted sender", () => {
-      const dir = setup("trust-yes");
-      writeFileSharingConfig(dir, { trustedSenders: ["alice"] });
-      assert.equal(isTrustedSender(dir, "alice"), true);
-    });
-
-    it("addTrust adds sender", () => {
-      const dir = setup("trust-add");
-      addTrust(dir, "alice");
-      assert.equal(isTrustedSender(dir, "alice"), true);
-    });
-
-    it("addTrust is idempotent", () => {
-      const dir = setup("trust-add-idem");
-      addTrust(dir, "alice");
-      addTrust(dir, "alice");
-      const config = readFileSharingConfig(dir);
-      assert.equal(config.trustedSenders!.filter((s) => s === "alice").length, 1);
-    });
-
-    it("removeTrust removes sender", () => {
-      const dir = setup("trust-remove");
-      addTrust(dir, "alice");
-      removeTrust(dir, "alice");
-      assert.equal(isTrustedSender(dir, "alice"), false);
-    });
-  });
-
   describe("staging and pending", () => {
     it("stageFile + listPending", () => {
       const name = "stage-list";
@@ -148,6 +93,17 @@ describe("file-sharing", () => {
 
       // Staging should be gone
       assert.equal(listPending(name).length, 0);
+    });
+
+    it("acceptPending with custom dest", () => {
+      const name = "stage-custom-dest";
+      const dir = setup(name);
+      const content = Buffer.from("custom dest content");
+      const { id } = stageFile(name, "bob", "file.md", content, "file.md");
+
+      const result = acceptPending(name, id, dir, "incoming");
+      assert.equal(result.destPath, "incoming/bob/file.md");
+      assert.ok(existsSync(resolve(dir, "home", "incoming", "bob", "file.md")));
     });
 
     it("rejectPending removes staging", () => {
@@ -201,17 +157,6 @@ describe("file-sharing", () => {
       const name = "reject-id-traversal";
       setup(name);
       assert.throws(() => rejectPending(name, "../../../tmp"), /invalid pending file id/i);
-    });
-
-    it("acceptPending uses custom inboxPath", () => {
-      const name = "stage-custom-inbox";
-      const dir = setup(name);
-      writeFileSharingConfig(dir, { inboxPath: "incoming" });
-
-      const { id } = stageFile(name, "bob", "file.md", Buffer.from("data"), "file.md");
-      const result = acceptPending(name, id, dir);
-      assert.equal(result.destPath, "incoming/bob/file.md");
-      assert.ok(existsSync(resolve(dir, "home", "incoming", "bob", "file.md")));
     });
   });
 

@@ -48,23 +48,26 @@ function generatePlist(
   if (opts.host) args.push("--host", opts.host);
 
   const logPath = opts.system
-    ? "/var/lib/volute/daemon.log"
-    : resolve(homedir(), ".volute", "daemon.log");
+    ? "/var/lib/volute/system/daemon.log"
+    : resolve(homedir(), ".volute", "system", "daemon.log");
 
-  const envEntries: string[] = [];
+  const envEntries: string[] = [
+    "  <key>EnvironmentVariables</key>",
+    "  <dict>",
+    `    <key>PATH</key>`,
+    `    <string>${escapeXml(buildServicePath(voluteBin))}</string>`,
+  ];
   if (opts.system) {
     envEntries.push(
-      "  <key>EnvironmentVariables</key>",
-      "  <dict>",
       "    <key>VOLUTE_HOME</key>",
       "    <string>/var/lib/volute</string>",
       "    <key>VOLUTE_MINDS_DIR</key>",
       "    <string>/minds</string>",
       "    <key>VOLUTE_ISOLATION</key>",
       "    <string>user</string>",
-      "  </dict>",
     );
   }
+  envEntries.push("  </dict>");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -76,7 +79,8 @@ function generatePlist(
   <array>
     ${[voluteBin, ...args].map((a) => `<string>${escapeXml(a)}</string>`).join("\n    ")}
   </array>
-${envEntries.length > 0 ? envEntries.join("\n") + "\n" : ""}  <key>RunAtLoad</key>
+${envEntries.join("\n")}
+  <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
   <true/>
@@ -174,7 +178,13 @@ async function installUserService(
       mkdirSync(resolve(homedir(), "Library", "LaunchAgents"), { recursive: true });
       writeFileSync(LAUNCHD_PLIST_PATH, generatePlist(voluteBin, { port, host }));
       console.log(`  Wrote ${LAUNCHD_PLIST_PATH}`);
-      await execFileAsync("launchctl", ["load", LAUNCHD_PLIST_PATH]);
+      const uid = `gui/${process.getuid!()}`;
+      try {
+        await execFileAsync("launchctl", ["bootout", `${uid}/${LAUNCHD_PLIST_LABEL}`]);
+      } catch {
+        // May not be loaded — ignore
+      }
+      await execFileAsync("launchctl", ["bootstrap", uid, LAUNCHD_PLIST_PATH]);
       console.log("  Service installed (launchd)");
       return true;
     } else if (platform === "linux") {
@@ -202,14 +212,21 @@ function installSystemService(voluteBin: string, port?: number, host?: string): 
     );
     console.log(`  Wrote ${SYSTEM_LAUNCHD_PLIST_PATH}`);
     try {
-      execFileSync("launchctl", ["load", SYSTEM_LAUNCHD_PLIST_PATH]);
+      try {
+        execFileSync("launchctl", ["bootout", `system/${LAUNCHD_PLIST_LABEL}`]);
+      } catch {
+        // May not be loaded — ignore
+      }
+      execFileSync("launchctl", ["bootstrap", "system", SYSTEM_LAUNCHD_PLIST_PATH]);
       console.log("  Service installed (LaunchDaemon)");
       return true;
     } catch (err) {
       console.warn(
         `  Warning: failed to load LaunchDaemon: ${err instanceof Error ? err.message : err}`,
       );
-      console.warn("  Try: sudo launchctl load /Library/LaunchDaemons/com.volute.daemon.plist");
+      console.warn(
+        "  Try: sudo launchctl bootstrap system /Library/LaunchDaemons/com.volute.daemon.plist",
+      );
       return false;
     }
   } else if (platform === "linux") {
@@ -411,6 +428,26 @@ export async function run(args: string[]) {
   if (host) config.hostname = host;
 
   writeGlobalConfig(config);
+
+  // Optional AI provider configuration (interactive only)
+  if (isInteractive) {
+    const wantAi = (await promptLine("\nConfigure an AI provider? (optional) [y/N]: "))
+      .trim()
+      .toLowerCase();
+    if (wantAi === "y" || wantAi === "yes") {
+      const aiProvider = (await promptLine("Provider (anthropic, openai, google, etc.): ")).trim();
+      if (aiProvider) {
+        const aiApiKey = (await promptLine("API key (leave empty to use env var): ")).trim();
+        if (aiApiKey) {
+          const { saveProviderConfig } = await import("../lib/ai-service.js");
+          saveProviderConfig(aiProvider, { apiKey: aiApiKey });
+          console.log(`  AI provider configured: ${aiProvider}`);
+        } else {
+          console.log(`  Using env var for ${aiProvider} (no explicit key saved)`);
+        }
+      }
+    }
+  }
 
   console.log(`\nDone! Use \`volute mind create <name>\` to create your first mind.`);
 }

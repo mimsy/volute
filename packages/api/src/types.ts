@@ -36,10 +36,11 @@ export type Conversation = {
   id: string;
   mind_name: string | null;
   channel: string;
-  type: "dm" | "group" | "channel";
+  type: "dm" | "channel";
   name: string | null;
   user_id: number | null;
   title: string | null;
+  private: number;
   created_at: string;
   updated_at: string;
 };
@@ -47,7 +48,7 @@ export type Conversation = {
 export type Participant = {
   userId: number;
   username: string;
-  userType: "brain" | "mind";
+  userType: "brain" | "mind" | "puppet" | "system";
   role: "owner" | "member";
   displayName?: string | null;
   description?: string | null;
@@ -130,7 +131,7 @@ export type AvailableUser = {
   id: number;
   username: string;
   role: "admin" | "user" | "pending" | "mind";
-  user_type: "brain" | "mind";
+  user_type: "brain" | "mind" | "system";
   display_name?: string | null;
   description?: string | null;
   avatar?: string | null;
@@ -206,6 +207,7 @@ export type HistoryMessage = {
   type: string;
   content: string;
   metadata: string | null;
+  turn_id: string | null;
   created_at: string;
 };
 
@@ -215,4 +217,44 @@ export type HistorySession = {
   event_count: number;
   message_count: number;
   tool_count: number;
+};
+
+export type TurnConversation = {
+  id: string;
+  label: string;
+  type: "dm" | "channel";
+  messages: {
+    id: number;
+    role: "user" | "assistant";
+    sender_name: string | null;
+    content: ContentBlock[];
+    source_event_id: number | null;
+    created_at: string;
+  }[];
+};
+
+export type TurnActivity = {
+  id: number;
+  type: ActivityEventType;
+  summary: string;
+  metadata: Record<string, unknown> | null;
+  source_event_id: number | null;
+  created_at: string;
+};
+
+export type TurnTrigger = {
+  channel: string | null;
+  sender: string | null;
+  content: string | null;
+};
+
+export type TurnRow = {
+  id: string;
+  summary: string | null;
+  summary_meta: Record<string, unknown> | null;
+  status: "active" | "complete";
+  created_at: string;
+  trigger: TurnTrigger | null;
+  conversations: TurnConversation[];
+  activities: TurnActivity[];
 };

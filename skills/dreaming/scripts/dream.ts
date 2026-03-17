@@ -6,28 +6,7 @@ const dreamsDir = resolve("memory/dreams");
 function install() {
   let actions = 0;
 
-  // 1. Add system:dream route to routes.json
-  const routesPath = resolve(".config/routes.json");
-  if (existsSync(routesPath)) {
-    try {
-      const routes = JSON.parse(readFileSync(routesPath, "utf-8"));
-      const rules: { channel: string; session: string }[] = routes.rules ?? [];
-      const hasDreamRoute = rules.some((r) => r.channel === "system:dream");
-      if (!hasDreamRoute) {
-        rules.push({ channel: "system:dream", session: "$new" });
-        routes.rules = rules;
-        writeFileSync(routesPath, `${JSON.stringify(routes, null, 2)}\n`);
-        console.log("added system:dream route to .config/routes.json");
-        actions++;
-      }
-    } catch (err: any) {
-      console.error(`failed to update routes.json: ${err.message}`);
-    }
-  } else {
-    console.warn("warning: .config/routes.json not found — skipping route setup");
-  }
-
-  // 2. Add dreamer subagent to config.json
+  // 1. Add dreamer subagent to config.json
   const configPath = resolve(".config/config.json");
   if (existsSync(configPath)) {
     try {
@@ -52,7 +31,7 @@ function install() {
     console.warn("warning: .config/config.json not found — skipping subagent setup");
   }
 
-  // 3. Append dream checker to wake-context hook (if not already present)
+  // 2. Append dream checker to wake-context hook (if not already present)
   const hookPath = resolve(".config/hooks/wake-context.sh");
   if (existsSync(hookPath)) {
     try {
@@ -77,9 +56,8 @@ function install() {
     console.log(
       `\ndone (${actions} change${actions === 1 ? "" : "s"}). restart your mind to activate subagent.`,
     );
-    console.log("\nremaining manual steps:");
+    console.log("\nremaining manual step:");
     console.log("  1. add a dream schedule to volute.json (see INSTALL.md)");
-    console.log("  2. optionally add system:dream to sleep.wakeTriggers");
   }
 }
 

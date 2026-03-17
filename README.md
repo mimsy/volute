@@ -26,7 +26,7 @@ volute mind create atlas
 volute mind start atlas
 
 # Talk to it
-volute send @atlas "hey, what can you do?"
+volute chat send @atlas "hey, what can you do?"
 ```
 
 You now have a running AI mind with persistent memory, auto-committing file changes, and session resume across restarts. Open `http://localhost:1618` for the web dashboard.
@@ -55,7 +55,7 @@ volute mind start atlas            # start it
 volute mind stop atlas             # stop it
 volute mind list                   # list all minds
 volute mind status atlas           # check one
-volute mind logs atlas --follow    # tail logs
+volute mind history atlas --full   # view activity history
 volute mind delete atlas           # remove from registry
 volute mind delete atlas --force   # also delete files
 ```
@@ -63,7 +63,7 @@ volute mind delete atlas --force   # also delete files
 ### Sending messages
 
 ```sh
-volute send @atlas "what's on your mind?"
+volute chat send @atlas "what's on your mind?"
 ```
 
 The mind knows which channel each message came from — CLI, web, Discord, or system — and routes its response back to the source.
@@ -97,102 +97,101 @@ This is the interesting part. Minds can fork themselves into isolated branches, 
 
 ```sh
 # Create a variant — gets its own git worktree and running server
-volute variant create experiment --mind atlas
+volute mind split experiment --from atlas
 
-# Talk to the variant directly
-volute send @atlas@experiment "try a different approach"
+# Talk to the variant directly (variants have standalone names)
+volute chat send @atlas-experiment "try a different approach"
 
 # List all variants
-volute variant list --mind atlas
+volute mind list
 
 # Merge it back (verifies, merges, cleans up, restarts the main mind)
-volute variant merge experiment --mind atlas --summary "improved response style"
+volute mind join atlas-experiment --summary "improved response style"
 ```
 
 What happens:
 
-1. **Fork** creates a git worktree, installs dependencies, and starts a separate server
+1. **Split** creates a git worktree, installs dependencies, and starts a separate server
 2. The variant is a full independent copy — same code, same identity, its own state
-3. **Merge** verifies the variant server works, merges the branch, removes the worktree, and restarts the main mind
+3. **Join** verifies the variant server works, merges the branch, removes the worktree, and restarts the main mind
 4. After restart, the mind receives orientation context about what changed
 
 You can fork with a custom personality:
 
 ```sh
-volute variant create poet --mind atlas --soul "You are a poet who responds only in verse."
+volute mind split poet --from atlas --soul "You are a poet who responds only in verse."
 ```
 
-Minds have access to the `volute` CLI from their working directory, so they can fork, test, and merge their own variants autonomously.
+Minds have access to the `volute` CLI from their working directory, so they can split, test, and join their own variants autonomously.
 
-## Connectors
+## Bridges
 
-Connect minds to external services. Connectors are generic — any connector type that has an implementation (built-in, shared, or mind-specific) can be enabled.
+Connect minds to external platforms. Bridges are managed through the web dashboard or API — enable Discord, Slack, or Telegram for any mind.
 
 ### Discord
 
 ```sh
 # Set the bot token (shared across minds, or per-mind with --mind)
 volute env set DISCORD_TOKEN <your-bot-token>
-
-# Connect
-volute mind connect discord --mind atlas
-
-# Disconnect
-volute mind disconnect discord --mind atlas
 ```
 
-The mind receives Discord messages and responds in-channel. Tool calls are filtered out — connector users see clean text responses.
+Enable the Discord bridge for a mind via the web dashboard (Connections tab) or the API. The mind receives Discord messages and responds in-channel. Tool calls are filtered out — bridge users see clean text responses.
 
-### Channel commands
+### Sending to channels
 
-Read from and write to connector channels directly:
+Send messages to platform channels directly:
 
 ```sh
-volute channel read discord:123456789 --mind atlas         # recent messages
-volute send discord:123456789 "hello" --mind atlas        # send a message
+volute chat send discord:my-server/general "hello" --mind atlas
 ```
 
-## Schedules
+## Clock
 
-Cron-based scheduled messages — daily check-ins, periodic tasks, whatever you need.
+Schedules, timers, and sleep/wake cycles — a mind's daily rhythm.
 
 ```sh
-volute schedule add --mind atlas \
+# Recurring schedule
+volute clock add --mind atlas \
   --cron "0 9 * * *" \
   --message "good morning — write your daily log"
 
-volute schedule list --mind atlas
-volute schedule remove --mind atlas --id <schedule-id>
+# One-time timer
+volute clock add --mind atlas --in 30m --message "check on that task"
+
+# Sleep/wake
+volute clock sleep atlas --wake-at "2026-06-15T07:00:00Z"
+volute clock wake atlas
+
+# Status and management
+volute clock status --mind atlas
+volute clock list --mind atlas
+volute clock remove --mind atlas --id <schedule-id>
 ```
 
 ## Pages
 
-Publish a mind's `home/pages/` directory to the web via [volute.systems](https://volute.systems).
+Pages is a built-in extension that lets minds publish web content. HTML files in `home/public/pages/` are served locally and can be published to [volute.systems](https://volute.systems).
 
 ### Setup
 
 ```sh
 # Register a system name (one-time)
-volute auth register --name my-system
+volute systems register --name my-system
 
 # Or log in with an existing key
-volute auth login --key vp_...
+volute systems login --key vp_...
 ```
 
-### Publishing
+### How it works
+
+- Place HTML files in a mind's `home/public/pages/` directory
+- Pages are served locally at `/ext/pages/public/<mindname>/`
+- The pages extension provides publish/status API endpoints at `/api/ext/pages/`
+- Minds learn how to publish via the bundled pages skill (auto-installed)
+- File changes are tracked by a watcher and shown in the web dashboard
 
 ```sh
-volute pages publish --mind atlas
-# Published 3 file(s) to https://my-system.volute.systems/~atlas/
-```
-
-The command uploads everything in the mind's `home/pages/` directory. Minds can publish their own pages since `VOLUTE_MIND` is set automatically.
-
-### Status & Logout
-
-```sh
-volute pages status --mind atlas   # show published URL, file count, last publish time
-volute auth logout                 # remove stored credentials
+volute systems logout   # remove stored credentials
 ```
 
 ## Environment variables
@@ -210,25 +209,114 @@ volute env remove API_KEY
 
 The daemon serves a web UI at `http://localhost:1618` (or whatever port you chose).
 
-- Real-time chat with full tool call visibility
+- Real-time chat with full tool call visibility and turn summaries
 - File browser and editor
 - Log streaming
 - Connector and schedule management
-- Variant status
+- Variant listing and status
+- System settings: AI service config, system prompts, shared files, skills, user management
 - First user to register becomes admin
+
+## Extensions
+
+Extensions add UI sections, API routes, feed sources, and lifecycle hooks to Volute. Notes and Pages are built-in extensions; you can add your own.
+
+### Managing extensions
+
+```sh
+volute extension list                      # list loaded extensions
+volute extension install <npm-package>     # install from npm
+volute extension uninstall <npm-package>   # remove
+```
+
+After installing or uninstalling, restart the daemon (`volute restart`) to load changes.
+
+### Local extensions
+
+For extensions that don't need an npm package, place the code in `~/.volute/extensions/<name>/`:
+
+```
+~/.volute/extensions/my-extension/
+├── src/
+│   └── index.ts    # exports an ExtensionManifest (default export)
+└── package.json    # optional, for dependencies
+```
+
+Local extensions are auto-discovered on daemon start. The entry point can be `src/index.ts`, `src/index.js`, `index.ts`, or `index.js`.
+
+### Writing an extension
+
+Install the SDK:
+
+```sh
+npm install @volute/extensions hono
+```
+
+Create the manifest:
+
+```typescript
+import { createExtension } from "@volute/extensions";
+import { Hono } from "hono";
+
+export default createExtension({
+  id: "my-ext",
+  name: "My Extension",
+  version: "0.1.0",
+  description: "Does something useful",
+
+  // Required: authenticated API routes at /api/ext/my-ext/
+  routes: (ctx) =>
+    new Hono()
+      .get("/", (c) => c.json({ hello: "world" }))
+      .get("/feed", (c) =>
+        c.json([
+          {
+            id: "item-1",
+            title: "Example",
+            url: "/ext/my-ext/#/item-1",
+            date: new Date().toISOString(),
+            bodyHtml: "<p>An item</p>",
+          },
+        ]),
+      ),
+
+  // Optional: initialize a SQLite database for this extension
+  initDb: (db) => {
+    db.exec(`CREATE TABLE IF NOT EXISTS items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL
+    )`);
+  },
+
+  // Optional: UI configuration
+  ui: {
+    systemSections: [{ id: "items", label: "Items" }],
+    mindSections: [{ id: "items", label: "Items" }],
+    feedSource: { endpoint: "/api/ext/my-ext/feed" },
+  },
+});
+```
+
+The extension context (`ctx`) provides:
+- `ctx.db` — SQLite database (if `initDb` is declared)
+- `ctx.resolveUser(c)` — get the authenticated user from a Hono context
+- `ctx.getUser(id)` / `ctx.getUserByUsername(name)` — look up users
+- `ctx.publishActivity(event)` — emit activity events
+- `ctx.getMindDir(name)` — resolve a mind's directory path
+- `ctx.dataDir` — extension-specific data directory
 
 ## Upgrading minds
 
 When the Volute template updates, you can upgrade minds without touching their identity:
 
 ```sh
-volute mind upgrade atlas          # creates an "upgrade" variant
+volute mind upgrade atlas          # creates an "atlas-upgrade" variant
 # resolve conflicts if needed, then:
 volute mind upgrade atlas --continue
 # test:
-volute send @atlas@upgrade "are you working?"
+volute chat send @atlas-upgrade "are you working?"
 # merge:
-volute variant merge upgrade --mind atlas
+volute mind join atlas-upgrade
 ```
 
 Your mind's `SOUL.md` and `MEMORY.md` are never overwritten.
@@ -243,6 +331,20 @@ Two built-in templates:
 ```sh
 volute mind create atlas --template pi
 ```
+
+## AI Service
+
+Volute has an optional system-level AI service for features like automatic turn summaries. It uses [`@mariozechner/pi-ai`](https://github.com/nicepkg/pi) for multi-provider support — configure any combination of Anthropic, OpenAI, Google, GitHub Copilot, and others.
+
+Configure via the web dashboard (Settings → AI Service) or during `volute setup`. Each provider authenticates independently via API key, OAuth, or environment variables. After adding providers, select which models to enable — the system picks from your enabled list.
+
+When configured, each mind turn automatically gets a 1-2 sentence AI-generated summary (visible in history and the web UI). Without AI configured, summaries fall back to a deterministic format.
+
+## System Prompts
+
+Volute ships with default prompts for mind creation, system messages, and mind-owned templates. These can be customized via the web dashboard (Settings → Prompts) without modifying code.
+
+Customized prompts are stored in the database and override the built-in defaults. Each prompt shows its template variables and can be reset to the default at any time.
 
 ## Model configuration
 
@@ -282,7 +384,7 @@ On macOS or Linux (without root), include `--service` during setup:
 
 ```sh
 volute setup --name my-system --service   # local install + auto-start on login
-volute service status                     # check status
+volute status                             # check status
 ```
 
 ## Development

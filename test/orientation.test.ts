@@ -25,42 +25,38 @@ function postHeaders(cookie: string) {
 describe("registry stage", () => {
   const name = `orient-test-${Date.now()}`;
 
-  afterEach(() => {
-    removeMind(name);
+  afterEach(async () => {
+    await removeMind(name);
   });
 
-  it("addMind with stage=seed persists correctly", () => {
-    addMind(name, 4100, "seed");
-    const entry = findMind(name);
+  it("addMind with stage=seed persists correctly", async () => {
+    await addMind(name, 4100, "seed");
+    const entry = await findMind(name);
     assert.ok(entry);
     assert.equal(entry.stage, "seed");
   });
 
-  it("addMind without stage defaults to sprouted on read", () => {
-    addMind(name, 4100);
-    const entry = findMind(name);
+  it("addMind without stage defaults to sprouted on read", async () => {
+    await addMind(name, 4100);
+    const entry = await findMind(name);
     assert.ok(entry);
     assert.equal(entry.stage, "sprouted");
   });
 
-  it("readRegistry defaults missing stage to sprouted", () => {
-    // Write a registry entry without stage field
-    const registryPath = resolve(voluteHome(), "minds.json");
-    writeFileSync(
-      registryPath,
-      JSON.stringify([{ name, port: 4100, created: new Date().toISOString(), running: false }]),
-    );
-    const entries = readRegistry();
+  it("readRegistry defaults missing stage to sprouted", async () => {
+    // Add a mind without explicit stage — should default to sprouted on read
+    await addMind(name, 4100);
+    const entries = await readRegistry();
     const entry = entries.find((e) => e.name === name);
     assert.ok(entry);
     assert.equal(entry.stage, "sprouted");
   });
 
-  it("setMindStage flips seed to sprouted", () => {
-    addMind(name, 4100, "seed");
-    assert.equal(findMind(name)?.stage, "seed");
-    setMindStage(name, "sprouted");
-    assert.equal(findMind(name)?.stage, "sprouted");
+  it("setMindStage flips seed to sprouted", async () => {
+    await addMind(name, 4100, "seed");
+    assert.equal((await findMind(name))?.stage, "seed");
+    await setMindStage(name, "sprouted");
+    assert.equal((await findMind(name))?.stage, "sprouted");
   });
 });
 
@@ -80,9 +76,9 @@ describe("seed mind creation API", () => {
   });
   afterEach(async () => {
     // Clean up any minds we created
-    for (const entry of readRegistry()) {
+    for (const entry of await readRegistry()) {
       if (entry.name.startsWith("seed-test-")) {
-        removeMind(entry.name);
+        await removeMind(entry.name);
       }
     }
     await cleanup();
@@ -110,12 +106,12 @@ describe("seed mind creation API", () => {
     if (res.status === 200) {
       const body = (await res.json()) as { stage?: string };
       assert.equal(body.stage, "seed");
-      const entry = findMind(mindName);
+      const entry = await findMind(mindName);
       assert.ok(entry);
       assert.equal(entry.stage, "seed");
     }
     // Clean up
-    removeMind(mindName);
+    await removeMind(mindName);
   });
 });
 
@@ -127,32 +123,20 @@ describe("seed gating", () => {
     const db = await getDb();
     await db.delete(sessions);
     await db.delete(users);
-    removeMind(mindName);
+    await removeMind(mindName);
   }
 
   beforeEach(async () => {
     await cleanup();
     const user = await createUser("gate-admin", "pass");
     cookie = await createSession(user.id);
-    addMind(mindName, 4199, "seed");
+    await addMind(mindName, 4199, "seed");
     // Create minimal mind directory
     const dir = resolve(voluteHome(), "minds", mindName);
     mkdirSync(resolve(dir, "home/.config"), { recursive: true });
     writeFileSync(resolve(dir, "home/.config/volute.json"), "{}");
   });
   afterEach(cleanup);
-
-  it("POST connectors returns 403 for seed minds", async () => {
-    const { default: app } = await import("../src/web/app.js");
-
-    const res = await app.request(`http://localhost/api/minds/${mindName}/connectors/discord`, {
-      method: "POST",
-      headers: postHeaders(cookie),
-    });
-    assert.equal(res.status, 403);
-    const body = (await res.json()) as { error: string };
-    assert.ok(body.error.includes("Seed"));
-  });
 
   it("POST schedules returns 403 for seed minds", async () => {
     const { default: app } = await import("../src/web/app.js");

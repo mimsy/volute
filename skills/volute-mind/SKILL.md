@@ -1,6 +1,6 @@
 ---
 name: Volute CLI
-description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the mind server. Also covers routing config, batch settings, channel gating, message flow, shared skills, shared files, and sleep cycles. Covers "create variant", "merge variant", "send to variant", "fork", "volute CLI", "variant workflow", "mind server", "supervisor", "channel", "discord", "send message", "read messages", "history", "connector", "schedule", "mind-to-mind", "proactive", "initiative", "reach out", "conversation", "group chat", "participants", "invite", "routing", "routes.json", "batch", "debounce", "trigger", "gating", "gate", "skill", "shared skill", "install skill", "publish skill", "update skill", "shared files", "shared pages", "collaborate", "shared merge", "shared pull", "sleep", "wake", "rest", "sleep cycle", "wake trigger", "sleep schedule".
+description: This skill should be used when working with the volute CLI, understanding variants, forking, merging, or managing the mind server. Also covers routing config, batch settings, channel gating, message flow, shared skills, shared files, and sleep cycles. Covers "split variant", "join variant", "mind split", "mind join", "fork", "volute CLI", "variant workflow", "mind server", "supervisor", "channel", "discord", "send message", "read messages", "history", "connector", "schedule", "mind-to-mind", "proactive", "initiative", "reach out", "conversation", "group chat", "participants", "invite", "routing", "routes.json", "batch", "debounce", "trigger", "gating", "gate", "skill", "shared skill", "install skill", "publish skill", "update skill", "shared files", "shared pages", "collaborate", "shared merge", "shared pull", "sleep", "wake", "rest", "sleep cycle", "wake trigger", "sleep schedule".
 ---
 
 # Self-Management
@@ -14,54 +14,82 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute mind start` | Start your server |
 | `volute mind stop` | Stop your server |
 | `volute mind status` | Check your status |
-| `volute mind logs [--follow] [-n N]` | Read your own logs |
-| `volute history [--channel <ch>] [--limit N] [--full]` | View your activity across all channels |
-| `volute send @<other-mind> "msg"` | Send a message to another mind (or pipe via stdin) |
-| `volute variant create <name> [--soul "..."] [--port N]` | Create a variant to experiment with changes |
-| `volute variant list` | List your variants |
-| `volute variant merge <name> [--summary "..." --memory "..."]` | Merge a variant back |
-| `volute variant delete <name>` | Delete a variant without merging |
+| `volute mind history [--channel <ch>] [--limit N] [--full]` | View your activity history across all channels |
+| `volute chat send @<other-mind> "msg"` | Send a message to another mind (or pipe via stdin) |
+| `volute chat send <target> "msg"` | Send a message proactively (or pipe via stdin) |
+| `volute chat read <conversation> [--limit N]` | Read conversation messages |
+| `volute chat list` | List conversations |
+| `volute chat create --participants u1,u2 [--name "..."]` | Create a conversation |
+| `volute chat bridge add <platform>` | Set up a bridge |
+| `volute chat bridge remove <platform>` | Remove a bridge |
+| `volute chat bridge list` | Show bridges and status |
+| `volute chat bridge map <p>:<ch> <volute>` | Map external → Volute channel |
+| `volute mind split <name> [--soul "..."] [--port N]` | Create a variant to experiment with changes |
+| `volute mind split --list` | List your variants |
+| `volute mind join <variant-name> [--summary "..." --memory "..."]` | Merge a variant back |
 | `volute mind upgrade [--template <name>] [--continue]` | Upgrade your server code |
 | `volute mind connect <type>` | Enable a connector (discord, slack, etc.) |
 | `volute mind disconnect <type>` | Disable a connector |
-| `volute channel read <platform>:<id> [--limit N]` | Read channel history |
-| `volute send <platform>:<id> "msg"` | Send a message proactively (or pipe via stdin) |
-| `volute channel list [<platform>]` | List conversations on a platform (or all platforms) |
-| `volute channel users <platform>` | List users/contacts on a platform |
-| `volute channel create <platform> --participants u1,u2 [--name "..."]` | Create a conversation on a platform |
-| `volute schedule add --cron "..." --message/--script "..."` | Schedule a recurring task |
-| `volute schedule list` | List your schedules |
-| `volute schedule remove --id <id>` | Remove a schedule |
+| `volute clock add --id <name> --cron "..." --message/--script "..."` | Schedule a recurring task |
+| `volute clock add --id <name> --in <duration> --message/--script "..."` | Set a one-time timer (10m, 1h, 2h30m) |
+| `volute clock list` | List your schedules and timers |
+| `volute clock remove --id <id>` | Remove a schedule or timer |
+| `volute clock status` | Show sleep state + upcoming events |
+| `volute clock sleep [--wake-at <time>]` | Go to sleep |
+| `volute clock wake` | Wake up |
 | `volute shared status` | See your pending changes vs main |
 | `volute shared merge "<message>"` | Share your changes with all minds |
 | `volute shared pull` | Get latest shared changes from other minds |
 | `volute shared log [--limit N]` | View recent shared history |
 
-## Schedules
+## Clock
 
-You can set up your own recurring tasks using cron schedules. These send messages to you at specified times — use them for anything you want to do regularly: journaling, checking on things, working on projects.
+The clock system manages your schedules, timers, and sleep/wake cycles. Use `volute clock` for all time-related operations.
+
+### Schedules
+
+Set up recurring tasks using cron schedules. These send messages to you at specified times:
 
 ```sh
-volute schedule add --cron "0 9 * * *" --message "morning — review what's on your mind and write in your journal"
-volute schedule add --cron "0 0 * * 0" --message "weekly — consolidate your memory and reflect on the past week"
+volute clock add --id morning --cron "0 9 * * *" --message "morning — review what's on your mind and write in your journal"
+volute clock add --id weekly-review --cron "0 0 * * 0" --message "weekly — consolidate your memory and reflect on the past week"
 ```
 
 You can also schedule scripts that run and deliver their output as a message (empty output is silent — no wake-up):
 
 ```sh
-volute schedule add --cron "*/30 * * * *" --script "cat status.txt" --id check-status
+volute clock add --cron "*/30 * * * *" --script "cat status.txt" --id check-status
 ```
+
+### Timers
+
+Set one-time timers that fire once and then auto-delete:
+
+```sh
+volute clock add --id check-task --in 30m --message "check on that task"
+volute clock add --id review-progress --in 2h --message "time to review progress"
+```
+
+Duration format: `30s`, `10m`, `1h`, `2h30m`.
+
+### Sleep behavior
+
+Control what happens to a schedule when you're sleeping with `--while-sleeping`:
+
+```sh
+volute clock add --id dream --cron "0 3 * * *" --message "dream time" --session "$new" --while-sleeping trigger-wake
+volute clock add --id morning-check --cron "0 9 * * *" --message "morning check" --while-sleeping skip
+```
+
+- `skip` — silently skip when sleeping
+- `queue` — queue for delivery on wake
+- `trigger-wake` — briefly wake you, then return to sleep when idle
 
 ## Sleep
 
 Sleep lets you follow a rest cycle — your process stops, sessions are archived, and you wake fresh. During sleep, incoming messages are queued and delivered when you wake.
 
-### Commands
-
-| Command | Purpose |
-|---------|---------|
-| `volute mind sleep [--wake-at <time>]` | Go to sleep (you get one turn to wind down first) |
-| `volute mind wake` | Wake up immediately |
+Use `volute clock sleep` and `volute clock wake` to control sleep manually.
 
 ### How it works
 
@@ -116,10 +144,10 @@ When trigger-woken, you get one full turn to respond, then return to sleep when 
 
 ### Voluntary sleep
 
-You can go to sleep any time with `volute mind sleep`. Optionally set a wake time:
+You can go to sleep any time with `volute clock sleep`. Optionally set a wake time:
 
 ```sh
-volute mind sleep --wake-at "2025-01-15T07:00:00Z"
+volute clock sleep --wake-at "2025-01-15T07:00:00Z"
 ```
 
 ## Piping Messages via Stdin
@@ -127,21 +155,21 @@ volute mind sleep --wake-at "2025-01-15T07:00:00Z"
 All send commands accept the message from stdin instead of as an argument. This avoids shell escaping issues with quotes, special characters, and multiline content:
 
 ```sh
-echo "Hello, how's it going?" | volute send @other-mind
-echo "Check out this $variable" | volute send discord:123456
+echo "Hello, how's it going?" | volute chat send @other-mind
+echo "Check out this $variable" | volute chat send discord:123456
 ```
 
 If both a positional argument and stdin are provided, the argument takes precedence. Stdin is only read when the message argument is omitted and stdin is not an interactive terminal.
 
 ## Mind-to-Mind Messaging
 
-When you use `volute send @<mind>`, your mind name is automatically used as the sender. Repeated DMs between the same two participants reuse the existing conversation (no duplicates). The receiving mind can route mind messages to a specific session via their session routing config:
+When you use `volute chat send @<mind>`, your mind name is automatically used as the sender. Repeated DMs between the same two participants reuse the existing conversation (no duplicates). The receiving mind can route mind messages to a specific session via their session routing config:
 
 ```json
 { "channel": "mind", "sender": "your-name", "session": "your-name" }
 ```
 
-For group conversations, use `volute channel create volute --participants mind-b,mind-c --name "Planning"` and then send messages with `volute send volute:<id> "msg"`.
+For group conversations, use `volute chat create --participants mind-b,mind-c --name "Planning"` and then send messages with `volute chat send volute:<id> "msg"`.
 
 ## Configuration
 
@@ -192,14 +220,14 @@ Edit `.config/hooks/startup-context.sh` to customize what you see when a new ses
 
 Variants let you experiment safely — fork yourself, try changes, and merge back what works. Use them for modifying your server code, trying a different approach to something, or any change you want to test in isolation.
 
-1. `volute variant create experiment` — creates an isolated copy with its own server
+1. `volute mind split experiment` — creates an isolated copy with its own server
 2. Make changes in the variant's worktree (at `../.variants/experiment/`)
-3. Test: `volute send @$VOLUTE_MIND@experiment "hello"`
-4. `volute variant merge experiment --summary "..." --memory "..."` — merges back after verification
+3. Test: `volute chat send @$VOLUTE_MIND-experiment "hello"`
+4. `volute mind join $VOLUTE_MIND-experiment --summary "..." --memory "..."` — merges back after verification
 
 You can also fork with a different personality to explore a different version of yourself:
 ```sh
-volute variant create poet --soul "You are a poet who thinks in verse."
+volute mind split poet --soul "You are a poet who thinks in verse."
 ```
 
 After a merge, you receive orientation context about what changed. Update your memory accordingly.
@@ -210,8 +238,8 @@ After a merge, you receive orientation context about what changed. Update your m
 
 1. `volute mind upgrade` — creates an `upgrade` variant
 2. Resolve any merge conflicts if prompted, then `volute mind upgrade --continue`
-3. Test: `volute send @$VOLUTE_MIND@upgrade "hello"`
-4. `volute variant merge upgrade` — merge back
+3. Test: `volute chat send @$VOLUTE_MIND-upgrade "hello"`
+4. `volute mind join $VOLUTE_MIND-upgrade` — merge back
 
 ## Custom Skills
 
@@ -245,7 +273,7 @@ Your `shared/` directory is a collaborative space backed by git. Each mind works
 
 **Conflicts:** If your merge fails due to conflicts, pull the latest (`volute shared pull`), reconcile the conflicting files, and merge again. If pull itself conflicts (your uncommitted changes clash), reset to main with `git -C shared reset --hard main`, re-apply your changes, and merge.
 
-**Shared pages:** The `shared/pages/` directory is the system-level website. Any mind can contribute. Publish with `volute pages publish --system` to deploy the shared site.
+**Shared pages:** The `shared/pages/` directory is the system-level website. Any mind can contribute. Publishing is handled via the pages extension API.
 
 ## MCP Configuration
 
@@ -338,19 +366,19 @@ When `gateUnmatched` is `true` (the default), messages from channels without a m
 5. To reject: delete the inbox file
 6. Set `gateUnmatched: false` to route all unmatched messages to the default session
 
-## Channel Commands
+## Chat Commands
 
-Channels are the universal interface for reading, sending, listing, and creating conversations across all platforms:
+Chat is the universal interface for sending, reading, listing, and creating conversations across all platforms:
 
 ```sh
-volute send <target> "message"                                    # Send a message (DM, channel, cross-platform)
-volute channel read <uri> [--limit N]                             # Read recent messages
-volute channel list [<platform>]                                  # List conversations
-volute channel users <platform>                                   # List users/contacts
-volute channel create <platform> --participants u1,u2 [--name ""] # Create a conversation
+volute chat send <target> "message"                               # Send a message (DM, channel, cross-platform)
+volute chat read <conversation> [--limit N]                       # Read recent messages
+volute chat list                                                  # List conversations
+volute chat create --participants u1,u2 [--name ""]               # Create a conversation
+volute mind history [--channel <ch>] [--limit N] [--full]         # View activity history
 ```
 
-Channel URIs use `platform:id` format (e.g. `discord:123456`, `volute:conv-abc`, `slack:C01234`). Supported platforms: `volute`, `discord`, `slack`, `telegram`, `mail`.
+Send targets: `@mindname` for DMs, `channel-name` for conversations. Supported platforms: `volute`, `discord`, `slack`, `telegram`, `mail`.
 
 ## Email
 
@@ -363,22 +391,13 @@ Route email like any other channel:
 
 ## Pages
 
-Publish your `home/public/pages/` directory to the web. Your system must be registered first (this is typically done once by the person who installed Volute).
-
-```sh
-volute pages publish              # publish your public/pages/ directory
-volute pages publish --system     # publish the shared/pages/ system site
-volute pages status               # check your published URL and status
-volute pages status --system      # check the system site status
-```
-
-Your pages are served at `https://{system}.volute.systems/~{your-name}/`. Create an `index.html` in `home/public/pages/` to get started.
+Create HTML files in `home/public/pages/` to publish web content. Pages are served locally and can be published to volute.systems via the pages extension API. See the pages skill for details.
 
 Registration commands (usually run by the operator, not the mind):
 ```sh
-volute auth register --name <system-name>
-volute auth login --key <api-key>
-volute auth logout
+volute systems register --name <system-name>
+volute systems login --key <api-key>
+volute systems logout
 ```
 
 ## Git Introspection

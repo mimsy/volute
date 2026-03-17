@@ -4,6 +4,7 @@ import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { writeChannelEntry } from "../../../connectors/sdk.js";
 import { getOrCreateMindUser } from "../../../lib/auth.js";
+import { getActiveTurnId, getLastToolUseEventId } from "../../../lib/daemon/turn-tracker.js";
 import { deliverMessage } from "../../../lib/delivery/message-delivery.js";
 import { subscribe } from "../../../lib/events/conversation-events.js";
 import {
@@ -16,7 +17,7 @@ import {
   isParticipantOrOwner,
 } from "../../../lib/events/conversations.js";
 import log from "../../../lib/logger.js";
-import { findMind } from "../../../lib/registry.js";
+import { findMind, getBaseName } from "../../../lib/registry.js";
 import { buildVoluteSlug } from "../../../lib/slugify.js";
 import { getTypingMap } from "../../../lib/typing.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
@@ -29,7 +30,7 @@ async function fanOutToMinds(opts: {
   senderName: string;
   convTitle: string | null;
   isDM?: boolean;
-  channelEntryType?: "dm" | "group";
+  channelEntryType?: "dm" | "channel";
   slugExtra?: Partial<SlugOpts>;
   targetName?: (username: string) => string;
 }): Promise<void> {
@@ -37,7 +38,7 @@ async function fanOutToMinds(opts: {
   const mindParticipants = participants.filter((p) => p.userType === "mind");
   const participantNames = participants.map((p) => p.username);
   const isDM = opts.isDM ?? participants.length === 2;
-  const channelEntryType = opts.channelEntryType ?? (isDM ? "dm" : "group");
+  const channelEntryType = opts.channelEntryType ?? (isDM ? "dm" : "channel");
 
   const { getMindManager } = await import("../../../lib/daemon/mind-manager.js");
   const { getSleepManagerIfReady } = await import("../../../lib/daemon/sleep-manager.js");
@@ -62,7 +63,7 @@ async function fanOutToMinds(opts: {
     });
   }
 
-  const channelEntry = {
+  const channelEntry: import("../../../connectors/sdk.js").ChannelEntry = {
     platformId: opts.conversationId,
     platform: "volute",
     name: opts.convTitle ?? undefined,
@@ -116,9 +117,9 @@ const app = new Hono<AuthEnv>()
   // Mind-scoped chat: POST /api/v1/minds/:name/chat
   .post("/minds/:name/chat", zValidator("json", mindChatSchema), async (c) => {
     const name = c.req.param("name");
-    const [baseName] = name.split("@", 2);
+    const baseName = await getBaseName(name);
 
-    const entry = findMind(baseName);
+    const entry = await findMind(baseName);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const body = c.req.valid("json");
@@ -140,7 +141,7 @@ const app = new Hono<AuthEnv>()
       if (user.id !== 0) {
         participantIds.push(user.id);
       } else if (body.sender) {
-        const senderMind = findMind(body.sender);
+        const senderMind = await findMind(body.sender);
         if (senderMind) {
           const senderMindUser = await getOrCreateMindUser(body.sender);
           participantIds.push(senderMindUser.id);
@@ -176,7 +177,21 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    await addMessage(conversationId, "user", senderName, contentBlocks);
+    // Link to turn: mind sender uses their active turn
+    // Inbound user messages don't get turn_id — turns are created per-session
+    const senderIsMind = user.id === 0 && body.sender && (await findMind(body.sender));
+    const v1MindSession = c.get("mindSession");
+    let v1SourceEventId: number | undefined;
+    let v1TurnId: string | undefined;
+    if (senderIsMind) {
+      v1SourceEventId = getLastToolUseEventId(body.sender!, v1MindSession);
+      v1TurnId = getActiveTurnId(body.sender!, v1MindSession);
+    }
+
+    await addMessage(conversationId, "user", senderName, contentBlocks, {
+      sourceEventId: v1SourceEventId,
+      turnId: v1TurnId,
+    });
 
     const isDM = conv?.type === "dm";
     await fanOutToMinds({
@@ -185,8 +200,10 @@ const app = new Hono<AuthEnv>()
       senderName,
       convTitle,
       isDM,
-      channelEntryType: conv?.type === "channel" ? "group" : isDM ? "dm" : "group",
-      slugExtra: conv ? { convType: conv.type, convName: conv.name } : undefined,
+      channelEntryType: isDM ? "dm" : "channel",
+      slugExtra: conv
+        ? { convType: conv.type as "dm" | "channel", convName: conv.name }
+        : undefined,
       targetName: (username) => (username === baseName ? name : username),
     });
 
@@ -247,7 +264,19 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    await addMessage(body.conversationId, "user", senderName, contentBlocks);
+    // Link to turn: mind sender uses their active turn
+    const unifiedV1Session = c.get("mindSession");
+    let unifiedV1SourceEventId: number | undefined;
+    let unifiedV1TurnId: string | undefined;
+    if (user.user_type === "mind") {
+      unifiedV1SourceEventId = getLastToolUseEventId(senderName, unifiedV1Session);
+      unifiedV1TurnId = getActiveTurnId(senderName, unifiedV1Session);
+    }
+
+    await addMessage(body.conversationId, "user", senderName, contentBlocks, {
+      sourceEventId: unifiedV1SourceEventId,
+      turnId: unifiedV1TurnId,
+    });
 
     const isDM = conv.type === "dm";
     await fanOutToMinds({
@@ -256,8 +285,8 @@ const app = new Hono<AuthEnv>()
       senderName,
       convTitle: conv.title,
       isDM,
-      channelEntryType: conv.type === "channel" ? "group" : isDM ? "dm" : "group",
-      slugExtra: { convType: conv.type, convName: conv.name },
+      channelEntryType: isDM ? "dm" : "channel",
+      slugExtra: { convType: conv.type as "dm" | "channel", convName: conv.name },
     });
 
     return c.json({ ok: true, conversationId: body.conversationId });

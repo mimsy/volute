@@ -157,9 +157,8 @@ export async function listConversations(
   }
 
   return data.channels.map((ch) => {
-    let type: "dm" | "group" | "channel" = "channel";
+    let type: "dm" | "channel" = "channel";
     if (ch.is_im) type = "dm";
-    else if (ch.is_mpim) type = "group";
 
     let slug: string;
     let name: string;
@@ -271,7 +270,7 @@ export async function createConversation(
       platformId,
       platform: "slack",
       name: participants.join(", "),
-      type: participants.length === 1 ? "dm" : "group",
+      type: participants.length === 1 ? "dm" : "channel",
     });
   }
 

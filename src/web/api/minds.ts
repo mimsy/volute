@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import {
@@ -23,7 +23,6 @@ import { deleteMindUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
 import { consolidateMemory } from "../../lib/consolidate.js";
 import { convertSession } from "../../lib/convert-session.js";
-import { getConnectorManager } from "../../lib/daemon/connector-manager.js";
 import { getMindManager } from "../../lib/daemon/mind-manager.js";
 // Lifecycle functions from mind-service.ts
 import {
@@ -31,26 +30,36 @@ import {
   stopMindFull as stopMindFullService,
 } from "../../lib/daemon/mind-service.js";
 import { getTokenBudget } from "../../lib/daemon/token-budget.js";
+import { summarizeTurn } from "../../lib/daemon/turn-summarizer.js";
+import {
+  assignSession,
+  completeTurn,
+  createTurn,
+  getActiveTurnId,
+  trackToolUse,
+} from "../../lib/daemon/turn-tracker.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
 import { extractTextContent } from "../../lib/delivery/delivery-router.js";
-import { recordInbound } from "../../lib/delivery/message-delivery.js";
+import { recordInbound, tagUntaggedInbound } from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
-import { addMessage } from "../../lib/events/conversations.js";
+import {
+  addMessage,
+  getConversation,
+  getMessages,
+  getMessagesPaginated,
+  isConversationForMind,
+  isParticipant,
+  listConversationsForMind,
+} from "../../lib/events/conversations.js";
 import { onMindEvent } from "../../lib/events/mind-activity-tracker.js";
 import {
   publish as publishMindEvent,
   subscribe as subscribeMindEvent,
 } from "../../lib/events/mind-events.js";
 import { exec, gitExec } from "../../lib/exec.js";
-import {
-  generateIdentity,
-  getFingerprint,
-  getPrivateKey,
-  getPublicKey,
-  publishPublicKey,
-  signMessage,
-} from "../../lib/identity.js";
+import { checkHealth } from "../../lib/health.js";
+import { generateIdentity, publishPublicKey } from "../../lib/identity.js";
 import {
   chownMindDir,
   createMindUser,
@@ -69,8 +78,11 @@ import {
 } from "../../lib/prompts.js";
 import {
   addMind,
+  addVariant,
   ensureVoluteHome,
   findMind,
+  findVariants,
+  getBaseName,
   mindDir,
   nextPort,
   readRegistry,
@@ -80,9 +92,17 @@ import {
   stateDir,
   validateMindName,
 } from "../../lib/registry.js";
-import { conversations, mindHistory } from "../../lib/schema.js";
+import {
+  activity,
+  conversationParticipants,
+  conversations,
+  messages,
+  mindHistory,
+  turns,
+  users,
+} from "../../lib/schema.js";
 import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
-import { installSkill, SEED_SKILLS, STANDARD_SKILLS } from "../../lib/skills.js";
+import { getStandardSkillsWithExtensions, installSkill, SEED_SKILLS } from "../../lib/skills.js";
 import { announceToSystem } from "../../lib/system-channel.js";
 import { readSystemsConfig } from "../../lib/systems-config.js";
 import {
@@ -96,17 +116,13 @@ import {
 import { computeTemplateHash } from "../../lib/template-hash.js";
 import { getTypingMap, publishTypingForChannels } from "../../lib/typing.js";
 import { cleanupVariant } from "../../lib/variant-cleanup.js";
-import {
-  addVariant,
-  checkHealth,
-  findVariant,
-  readVariants,
-  removeAllVariants,
-  validateBranchName,
-} from "../../lib/variants.js";
+import { validateBranchName } from "../../lib/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
 import { fireWebhook } from "../../lib/webhook.js";
-import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
+import { type AuthEnv, requireAdmin, requireSelf } from "../middleware/auth.js";
+
+/** Event types that trigger turn creation (hoisted for perf — avoid per-request allocation). */
+const SUBSTANTIVE_TYPES = new Set(["thinking", "text", "tool_use", "tool_result", "outbound"]);
 
 type ChannelStatus = {
   name: string;
@@ -147,18 +163,6 @@ async function getMindStatus(name: string, port: number) {
     });
   }
 
-  // External connectors
-  const connectorStatuses = getConnectorManager().getConnectorStatus(name);
-  for (const cs of connectorStatuses) {
-    const provider = CHANNELS[cs.type];
-    channels.push({
-      name: provider?.name ?? cs.type,
-      displayName: provider?.displayName ?? cs.type,
-      status: cs.running ? "connected" : "disconnected",
-      showToolCalls: channelConfig?.[cs.type]?.showToolCalls ?? provider?.showToolCalls ?? false,
-    });
-  }
-
   return {
     status,
     channels,
@@ -194,6 +198,7 @@ async function initTemplateBranch(
 ) {
   const templateFiles = listFiles(composedDir)
     .filter((f) => !f.startsWith(".init/") && !f.startsWith(".init\\"))
+    .filter((f) => (!f.startsWith("home/") && !f.startsWith("home\\")) || f === "home/VOLUTE.md")
     .map((f) => manifest.rename[f] ?? f);
 
   const opts = { cwd: projectRoot, mindName, env };
@@ -258,6 +263,16 @@ async function updateTemplateBranch(projectRoot: string, template: string, mindN
       rmSync(initDir, { recursive: true, force: true });
     }
 
+    // Remove home files except VOLUTE.md — template branch should only track infrastructure
+    const homeDir = resolve(tempWorktree, "home");
+    if (existsSync(homeDir)) {
+      for (const entry of readdirSync(homeDir)) {
+        if (entry !== "VOLUTE.md") {
+          rmSync(resolve(homeDir, entry), { recursive: true, force: true });
+        }
+      }
+    }
+
     await gitExec(["add", "-A"], { cwd: tempWorktree });
 
     try {
@@ -309,7 +324,7 @@ async function mergeTemplateBranch(worktreeDir: string): Promise<boolean> {
  */
 async function npmInstallAsMind(cwd: string, mindName: string): Promise<void> {
   if (isIsolationEnabled()) {
-    const [cmd, args] = wrapForIsolation("npm", ["install"], mindName);
+    const [cmd, args] = await wrapForIsolation("npm", ["install"], mindName);
     await exec(cmd, args, { cwd, env: { ...process.env, HOME: resolve(cwd, "home") } });
   } else {
     await exec("npm", ["install"], { cwd });
@@ -353,7 +368,7 @@ async function importFromFullArchive(
   const nameErr = validateMindName(name);
   if (nameErr) return c.json({ error: nameErr }, 400);
 
-  if (findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
+  if (await findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
 
   ensureVoluteHome();
   const dest = mindDir(name);
@@ -383,10 +398,10 @@ async function importFromFullArchive(
     }
 
     // Assign port and register
-    const port = nextPort();
-    addMind(name, port, manifest.stage, manifest.template);
+    const port = await nextPort();
+    await addMind(name, port, manifest.stage, manifest.template);
     try {
-      setMindTemplateHash(name, computeTemplateHash(manifest.template));
+      await setMindTemplateHash(name, computeTemplateHash(manifest.template));
     } catch (err) {
       log.warn(`failed to set template hash for ${name}`, log.errorData(err));
     }
@@ -430,7 +445,7 @@ async function importFromFullArchive(
   } catch (err) {
     if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
     try {
-      removeMind(name);
+      await removeMind(name);
     } catch (cleanupErr) {
       log.error(`Failed to clean up registry for ${name}`, log.errorData(cleanupErr));
     }
@@ -452,7 +467,7 @@ async function importFromHomeOnlyArchive(
   const nameErr = validateMindName(name);
   if (nameErr) return c.json({ error: nameErr }, 400);
 
-  if (findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
+  if (await findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
 
   ensureVoluteHome();
   const dest = mindDir(name);
@@ -475,7 +490,7 @@ async function importFromHomeOnlyArchive(
       cpSync(extractedHome, resolve(dest, "home"), { recursive: true });
     }
 
-    // 3. Overlay .mind/ from archive (preserves connectors, schedules, etc.)
+    // 3. Overlay .mind/ from archive (preserves schedules, etc.)
     const extractedMindInternal = resolve(extractedMindDir, ".mind");
     if (existsSync(extractedMindInternal)) {
       cpSync(extractedMindInternal, resolve(dest, ".mind"), { recursive: true });
@@ -512,8 +527,8 @@ async function importFromHomeOnlyArchive(
     }
 
     // 7. Register with correct stage and template
-    const port = nextPort();
-    addMind(name, port, manifest.stage, manifest.template);
+    const port = await nextPort();
+    await addMind(name, port, manifest.stage, manifest.template);
 
     // 8. User isolation setup
     const homeDir = resolve(dest, "home");
@@ -546,7 +561,7 @@ async function importFromHomeOnlyArchive(
     }
 
     // 12. Install skills based on stage
-    const skillSet = manifest.stage === "seed" ? SEED_SKILLS : STANDARD_SKILLS;
+    const skillSet = manifest.stage === "seed" ? SEED_SKILLS : getStandardSkillsWithExtensions();
     const skillWarnings: string[] = [];
     for (const skillId of skillSet) {
       try {
@@ -582,7 +597,7 @@ async function importFromHomeOnlyArchive(
   } catch (err) {
     if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
     try {
-      removeMind(name);
+      await removeMind(name);
     } catch (cleanupErr) {
       log.error(`Failed to clean up registry for ${name}`, log.errorData(cleanupErr));
     }
@@ -672,7 +687,7 @@ const app = new Hono<AuthEnv>()
     const nameErr = validateMindName(name);
     if (nameErr) return c.json({ error: nameErr }, 400);
 
-    if (findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
+    if (await findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
 
     ensureVoluteHome();
     const dest = mindDir(name);
@@ -710,7 +725,7 @@ const app = new Hono<AuthEnv>()
               message:
                 "A quiet moment. You might write something — a note, a journal entry, a page. You could explore a topic that interests you, check in on #system, or just think. No obligations, just time.",
               enabled: true,
-              skipWhenSleeping: true,
+              whileSleeping: "skip",
             },
           ];
         }
@@ -733,10 +748,10 @@ const app = new Hono<AuthEnv>()
         `${JSON.stringify(mindPrompts, null, 2)}\n`,
       );
 
-      const port = nextPort();
-      addMind(name, port, body.stage, template);
+      const port = await nextPort();
+      await addMind(name, port, body.stage, template);
       try {
-        setMindTemplateHash(name, computeTemplateHash(template));
+        await setMindTemplateHash(name, computeTemplateHash(template));
       } catch (err) {
         log.warn(`failed to set template hash for ${name}`, log.errorData(err));
       }
@@ -790,7 +805,8 @@ const app = new Hono<AuthEnv>()
       }
 
       // Install skills from shared pool (after git init so installSkill can commit)
-      const skillSet = body.skills ?? (body.stage === "seed" ? SEED_SKILLS : STANDARD_SKILLS);
+      const skillSet =
+        body.skills ?? (body.stage === "seed" ? SEED_SKILLS : getStandardSkillsWithExtensions());
       const skillWarnings: string[] = [];
       for (const skillId of skillSet) {
         try {
@@ -846,7 +862,7 @@ const app = new Hono<AuthEnv>()
       // Clean up partial state
       if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
       try {
-        removeMind(name);
+        await removeMind(name);
       } catch {
         // ignore cleanup errors
       }
@@ -896,7 +912,7 @@ const app = new Hono<AuthEnv>()
     const nameErr = validateMindName(name);
     if (nameErr) return c.json({ error: nameErr }, 400);
 
-    if (findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
+    if (await findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
 
     const mergedSoul = `${soul.trimEnd()}\n\n---\n\n${identity.trimEnd()}\n`;
     const mergedMemoryExtra = user ? `\n\n---\n\n${user.trimEnd()}\n` : "";
@@ -946,10 +962,10 @@ const app = new Hono<AuthEnv>()
       }
 
       // Assign port and register
-      const port = nextPort();
-      addMind(name, port, undefined, template);
+      const port = await nextPort();
+      await addMind(name, port, undefined, template);
       try {
-        setMindTemplateHash(name, computeTemplateHash(template));
+        await setMindTemplateHash(name, computeTemplateHash(template));
       } catch (err) {
         log.warn(`failed to set template hash for ${name}`, log.errorData(err));
       }
@@ -990,7 +1006,7 @@ const app = new Hono<AuthEnv>()
         }
       }
 
-      // Import connectors
+      // Import OpenClaw connectors as system bridges (non-fatal)
       importOpenClawConnectors(name, dest);
 
       // Add shared worktree (non-fatal)
@@ -1012,7 +1028,7 @@ const app = new Hono<AuthEnv>()
     } catch (err) {
       if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
       try {
-        removeMind(name);
+        await removeMind(name);
       } catch {
         // ignore cleanup errors
       }
@@ -1023,7 +1039,7 @@ const app = new Hono<AuthEnv>()
   })
   // List all minds
   .get("/", async (c) => {
-    const entries = readRegistry();
+    const entries = await readRegistry();
     let lastActiveMap = new Map<string, string>();
     try {
       const db = await getDb();
@@ -1064,46 +1080,43 @@ const app = new Hono<AuthEnv>()
   // Get single mind
   .get("/:name", async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    if (!existsSync(mindDir(name))) return c.json({ error: "Mind directory missing" }, 404);
+    const dir = entry.dir ?? mindDir(entry.parent ?? name);
+    if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
 
     const mindStatus = await getMindStatus(name, entry.port);
 
     // Include variant info
-    const variants = readVariants(name);
+    const variants = await findVariants(name);
     const manager = getMindManager();
     const variantStatuses = await Promise.all(
-      variants.map(async (v) => {
-        const compositeKey = `${name}@${v.name}`;
+      variants.map(async (s) => {
         let variantStatus: "running" | "stopped" | "starting" = "stopped";
-        if (manager.isRunning(compositeKey)) {
-          const health = await checkHealth(v.port);
+        if (manager.isRunning(s.name)) {
+          const health = await checkHealth(s.port);
           variantStatus = health.ok ? "running" : "starting";
         }
-        return { name: v.name, port: v.port, status: variantStatus };
+        return { name: s.name, port: s.port, status: variantStatus };
       }),
     );
 
     const hasPages = existsSync(resolve(mindDir(name), "home", "public", "pages"));
     return c.json({ ...entry, ...mindStatus, variants: variantStatuses, hasPages });
   })
-  // Start mind (supports name@variant) — admin only
-  .post("/:name/start", requireAdmin, async (c) => {
+  // Start mind (supports variants) — admin only
+  .post("/:name/start", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const [baseName, variantName] = name.split("@", 2);
 
-    const entry = findMind(baseName);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    let targetPort = entry.port;
-    if (variantName) {
-      const variant = findVariant(baseName, variantName);
-      if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
-      targetPort = variant.port;
+    const targetPort = entry.port;
+    if (entry.parent) {
+      if (!entry.dir) return c.json({ error: `Variant ${name} has no directory` }, 404);
     } else {
-      const dir = mindDir(baseName);
+      const dir = mindDir(name);
       if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
     }
 
@@ -1118,22 +1131,20 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: err instanceof Error ? err.message : "Failed to start mind" }, 500);
     }
   })
-  // Restart mind (supports name@variant) — admin only
+  // Restart mind (supports variants) — admin or self
   // Accepts optional JSON body: { context?: { type: string, name?: string, summary?: string, ... } }
-  .post("/:name/restart", requireAdmin, async (c) => {
+  .post("/:name/restart", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const [baseName, variantName] = name.split("@", 2);
 
-    const entry = findMind(baseName);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    let targetPort = entry.port;
-    if (variantName) {
-      const variant = findVariant(baseName, variantName);
-      if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
-      targetPort = variant.port;
+    const baseName = entry.parent ?? name;
+    const targetPort = entry.port;
+    if (entry.parent) {
+      if (!entry.dir) return c.json({ error: `Variant ${name} has no directory` }, 404);
     } else {
-      const dir = mindDir(baseName);
+      const dir = mindDir(name);
       if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
     }
 
@@ -1163,31 +1174,38 @@ const app = new Hono<AuthEnv>()
         }
       }
 
-      // Stop running mind and connectors
+      // Stop running mind
       if (manager.isRunning(name)) {
         await stopMindFullService(name);
       }
 
       // Handle mind-initiated merge: perform merge operations directly
-      if (context?.type === "merge" && context.name && !variantName) {
+      if (context?.type === "merge" && context.name && !entry.parent) {
         const mergeVariantName = String(context.name);
         const branchErr = validateBranchName(mergeVariantName);
         if (branchErr) {
           return c.json({ error: `Invalid variant name: ${branchErr}` }, 400);
         }
         log.error(`merging variant for ${baseName}: ${mergeVariantName}`);
-        const variant = findVariant(baseName, mergeVariantName);
-        if (variant) {
+        const variantEntry = await findMind(mergeVariantName);
+        if (
+          variantEntry &&
+          variantEntry.parent === baseName &&
+          variantEntry.dir &&
+          variantEntry.branch
+        ) {
           const projectRoot = mindDir(baseName);
 
           // Auto-commit variant worktree
-          if (existsSync(variant.path)) {
-            const status = (await gitExec(["status", "--porcelain"], { cwd: variant.path })).trim();
+          if (existsSync(variantEntry.dir)) {
+            const status = (
+              await gitExec(["status", "--porcelain"], { cwd: variantEntry.dir })
+            ).trim();
             if (status) {
               try {
-                await gitExec(["add", "-A"], { cwd: variant.path });
+                await gitExec(["add", "-A"], { cwd: variantEntry.dir });
                 await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
-                  cwd: variant.path,
+                  cwd: variantEntry.dir,
                 });
               } catch (e) {
                 log.error(
@@ -1214,8 +1232,8 @@ const app = new Hono<AuthEnv>()
           }
 
           // Merge, cleanup worktree/branch, reinstall
-          await gitExec(["merge", variant.branch], { cwd: projectRoot });
-          await cleanupVariant(baseName, mergeVariantName, projectRoot, variant.path);
+          await gitExec(["merge", variantEntry.branch], { cwd: projectRoot });
+          await cleanupVariant(mergeVariantName, projectRoot, variantEntry.dir);
           try {
             await npmInstallAsMind(projectRoot, baseName);
           } catch (e) {
@@ -1231,15 +1249,16 @@ const app = new Hono<AuthEnv>()
       }
 
       // Inject "[seed has sprouted]" system message into active volute conversations
-      if (context?.type === "sprouted" && !variantName) {
+      if (context?.type === "sprouted" && !entry.parent) {
         try {
           const db = await getDb();
           const activeConvs = await db
-            .select({ id: conversations.id })
+            .select({ id: conversations.id, channel: conversations.channel })
             .from(conversations)
             .where(eq(conversations.mind_name, baseName))
             .all();
           for (const conv of activeConvs) {
+            await recordInbound(baseName, conv.channel, "system", "[seed has sprouted]");
             await addMessage(conv.id, "assistant", "system", [
               { type: "text", text: "[seed has sprouted]" },
             ]);
@@ -1255,18 +1274,12 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: err instanceof Error ? err.message : "Failed to restart mind" }, 500);
     }
   })
-  // Stop mind (supports name@variant) — admin only
-  .post("/:name/stop", requireAdmin, async (c) => {
+  // Stop mind (supports variants) — admin only
+  .post("/:name/stop", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const [baseName, variantName] = name.split("@", 2);
 
-    const entry = findMind(baseName);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
-
-    if (variantName) {
-      const variant = findVariant(baseName, variantName);
-      if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
-    }
 
     const manager = getMindManager();
     if (!manager.isRunning(name)) {
@@ -1281,9 +1294,9 @@ const app = new Hono<AuthEnv>()
     }
   })
   // Get sleep state
-  .get("/:name/sleep", requireAdmin, async (c) => {
+  .get("/:name/sleep", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
@@ -1293,9 +1306,9 @@ const app = new Hono<AuthEnv>()
     return c.json(sm.getState(name));
   })
   // Initiate sleep — admin only
-  .post("/:name/sleep", requireAdmin, async (c) => {
+  .post("/:name/sleep", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
@@ -1321,9 +1334,9 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true });
   })
   // Wake a sleeping mind — admin only
-  .post("/:name/wake", requireAdmin, async (c) => {
+  .post("/:name/wake", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
@@ -1343,9 +1356,9 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true });
   })
   // Flush queued sleep messages — admin only
-  .post("/:name/sleep/messages", requireAdmin, async (c) => {
+  .post("/:name/sleep/messages", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
@@ -1356,32 +1369,38 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true, flushed });
   })
   // Sprout a seed mind — admin only
-  .post("/:name/sprout", requireAdmin, async (c) => {
+  .post("/:name/sprout", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
     if (entry.stage !== "seed") {
       return c.json({ error: `Mind is not a seed (stage: ${entry.stage})` }, 409);
     }
-    setMindStage(name, "sprouted");
+    await setMindStage(name, "sprouted");
     return c.json({ ok: true });
   })
   // Delete mind — admin only
   .delete("/:name", requireAdmin, async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(name);
     const force = c.req.query("force") === "true";
 
-    // Stop connectors and mind if running
+    // Stop mind if running
     const manager = getMindManager();
     if (manager.isRunning(name)) {
       await stopMindFullService(name);
     }
 
-    removeAllVariants(name);
+    // Stop and clean up any running variants before deleting parent
+    const variants = await findVariants(name);
+    for (const s of variants) {
+      if (s.dir) {
+        await cleanupVariant(s.name, dir, s.dir, { stop: true });
+      }
+    }
 
     // Clean up shared worktree (best effort)
     try {
@@ -1390,7 +1409,7 @@ const app = new Hono<AuthEnv>()
       log.warn(`failed to clean up shared worktree for ${name}`, log.errorData(err));
     }
 
-    removeMind(name);
+    await removeMind(name);
     await deleteMindUser(name);
 
     // Clean up centralized state directory (logs, env, channels)
@@ -1413,15 +1432,15 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true });
   })
   // Upgrade mind — admin only
-  .post("/:name/upgrade", requireAdmin, async (c) => {
+  .post("/:name/upgrade", requireSelf(), async (c) => {
     const mindName = c.req.param("name");
-    const entry = findMind(mindName);
+    const entry = await findMind(mindName);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(mindName);
     if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
 
-    let body: { template?: string; continue?: boolean; abort?: boolean } = {};
+    let body: { template?: string; continue?: boolean; abort?: boolean; accept?: boolean } = {};
     try {
       body = await c.req.json();
     } catch {
@@ -1429,10 +1448,11 @@ const app = new Hono<AuthEnv>()
     }
 
     const template = body.template ?? entry.template ?? "claude";
-    const UPGRADE_VARIANT = "upgrade";
+    const UPGRADE_BRANCH = "upgrade";
+    const upgradeVariantName = `${mindName}-upgrade`;
+    const worktreeDir = resolve(dir, ".variants", UPGRADE_BRANCH);
 
     if (body.abort) {
-      const worktreeDir = resolve(dir, ".variants", UPGRADE_VARIANT);
       if (!existsSync(worktreeDir)) {
         return c.json({ error: "No upgrade in progress" }, 400);
       }
@@ -1447,7 +1467,15 @@ const app = new Hono<AuthEnv>()
           }
         } catch {}
 
-        await cleanupVariant(mindName, UPGRADE_VARIANT, dir, worktreeDir, { stop: true });
+        await cleanupVariant(upgradeVariantName, dir, worktreeDir, { stop: true });
+
+        // Also delete the upgrade branch directly — cleanupVariant uses the variant
+        // name as fallback branch, but the actual branch is UPGRADE_BRANCH
+        try {
+          await gitExec(["branch", "-D", UPGRADE_BRANCH], { cwd: dir });
+        } catch {
+          // Branch may already be deleted by cleanupVariant
+        }
 
         return c.json({ ok: true });
       } catch (err) {
@@ -1460,7 +1488,6 @@ const app = new Hono<AuthEnv>()
 
     if (body.continue) {
       // Continue upgrade after conflict resolution
-      const worktreeDir = resolve(dir, ".variants", UPGRADE_VARIANT);
       if (!existsSync(worktreeDir)) {
         return c.json({ error: "No upgrade in progress" }, 400);
       }
@@ -1494,25 +1521,19 @@ const app = new Hono<AuthEnv>()
       try {
         await npmInstallAsMind(worktreeDir, mindName);
 
-        const variantPort = nextPort();
-        addVariant(mindName, {
-          name: UPGRADE_VARIANT,
-          branch: UPGRADE_VARIANT,
-          path: worktreeDir,
-          port: variantPort,
-          created: new Date().toISOString(),
-        });
+        const variantPort = await nextPort();
+        await addVariant(upgradeVariantName, mindName, variantPort, worktreeDir, UPGRADE_BRANCH);
 
-        await getMindManager().startMind(`${mindName}@${UPGRADE_VARIANT}`);
+        await getMindManager().startMind(upgradeVariantName);
 
         return c.json({
           ok: true,
           name: mindName,
-          variant: UPGRADE_VARIANT,
+          variant: UPGRADE_BRANCH,
           port: variantPort,
         });
       } catch (err) {
-        await cleanupVariant(mindName, UPGRADE_VARIANT, dir, worktreeDir);
+        await cleanupVariant(upgradeVariantName, dir, worktreeDir);
         return c.json(
           { error: err instanceof Error ? err.message : "Failed to continue upgrade" },
           500,
@@ -1520,8 +1541,83 @@ const app = new Hono<AuthEnv>()
       }
     }
 
+    if (body.accept) {
+      // Accept upgrade — merge the upgrade variant back into the parent mind
+      if (!existsSync(worktreeDir)) {
+        return c.json({ error: "No upgrade in progress" }, 400);
+      }
+
+      const variantEntry = await findMind(upgradeVariantName);
+      if (!variantEntry) {
+        return c.json({ error: "Upgrade variant not found in DB" }, 400);
+      }
+
+      // Auto-commit any uncommitted changes in the upgrade worktree
+      const status = (await gitExec(["status", "--porcelain"], { cwd: worktreeDir })).trim();
+      if (status) {
+        try {
+          await gitExec(["add", "-A"], { cwd: worktreeDir });
+          await gitExec(["commit", "-m", "Auto-commit before upgrade merge"], {
+            cwd: worktreeDir,
+          });
+        } catch {
+          return c.json({ error: "Failed to auto-commit upgrade changes before merge" }, 500);
+        }
+      }
+
+      // Auto-commit any uncommitted changes in the main worktree
+      const mainStatus = (await gitExec(["status", "--porcelain"], { cwd: dir })).trim();
+      if (mainStatus) {
+        try {
+          await gitExec(["add", "-A"], { cwd: dir });
+          await gitExec(["commit", "-m", "Auto-commit before upgrade merge"], { cwd: dir });
+        } catch (_e) {
+          return c.json({ error: "Failed to auto-commit main changes before merge" }, 500);
+        }
+      }
+
+      // Merge upgrade branch
+      try {
+        await gitExec(["merge", UPGRADE_BRANCH], { cwd: dir });
+      } catch {
+        return c.json({ error: "Merge failed. Resolve conflicts manually." }, 500);
+      }
+
+      await cleanupVariant(upgradeVariantName, dir, worktreeDir, { stop: true });
+
+      // Update template hash
+      try {
+        await setMindTemplateHash(mindName, computeTemplateHash(template));
+      } catch (err) {
+        log.warn(`failed to update template hash for ${mindName}`, log.errorData(err));
+      }
+
+      // Reinstall dependencies
+      try {
+        await npmInstallAsMind(dir, mindName);
+      } catch (err) {
+        log.warn(`npm install failed after upgrade merge for ${mindName}`, log.errorData(err));
+      }
+
+      // Restart mind
+      const manager = getMindManager();
+      try {
+        if (manager.isRunning(mindName)) {
+          await manager.stopMind(mindName);
+        }
+        manager.setPendingContext(mindName, { type: "merged", name: upgradeVariantName });
+        await manager.startMind(mindName);
+      } catch (e) {
+        return c.json({
+          ok: true,
+          warning: `Upgrade merged but mind restart failed: ${e instanceof Error ? e.message : String(e)}`,
+        });
+      }
+
+      return c.json({ ok: true });
+    }
+
     // Fresh upgrade
-    const worktreeDir = resolve(dir, ".variants", UPGRADE_VARIANT);
 
     if (existsSync(worktreeDir)) {
       return c.json(
@@ -1555,7 +1651,7 @@ const app = new Hono<AuthEnv>()
     // Clean up stale worktree refs and leftover branch
     await gitExec(["worktree", "prune"], { cwd: dir });
     try {
-      await gitExec(["branch", "-D", UPGRADE_VARIANT], { cwd: dir });
+      await gitExec(["branch", "-D", UPGRADE_BRANCH], { cwd: dir });
     } catch {
       // branch doesn't exist
     }
@@ -1581,10 +1677,53 @@ const app = new Hono<AuthEnv>()
       mkdirSync(parentDir, { recursive: true });
     }
 
-    await gitExec(["worktree", "add", "-b", UPGRADE_VARIANT, worktreeDir], { cwd: dir });
+    await gitExec(["worktree", "add", "-b", UPGRADE_BRANCH, worktreeDir], { cwd: dir });
+
+    // Prepare home/ allowlist migration: untrack home files so template
+    // branch removal doesn't cause conflicts or deletions
+    await gitExec(["rm", "-r", "--cached", "--ignore-unmatch", "home/"], {
+      cwd: worktreeDir,
+    });
+    // Re-add VOLUTE.md so template merge can update it
+    try {
+      await gitExec(["checkout", "HEAD", "--", "home/VOLUTE.md"], { cwd: worktreeDir });
+      await gitExec(["add", "home/VOLUTE.md"], { cwd: worktreeDir });
+    } catch (err) {
+      const msg = String((err as Error)?.message ?? err);
+      if (!msg.includes("did not match")) {
+        log.warn(
+          `unexpected error restoring VOLUTE.md during upgrade for ${mindName}`,
+          log.errorData(err),
+        );
+      }
+    }
+    // Commit prep step if there are changes
+    try {
+      await gitExec(["diff", "--cached", "--quiet"], { cwd: worktreeDir });
+    } catch {
+      await gitExec(["commit", "-m", "prepare for home/ allowlist migration"], {
+        cwd: worktreeDir,
+      });
+    }
 
     // Merge template branch
     const hasConflicts = await mergeTemplateBranch(worktreeDir);
+
+    if (!hasConflicts) {
+      // Re-add home files that match the new .gitignore allowlist patterns
+      try {
+        await gitExec(["add", "home/"], { cwd: worktreeDir });
+      } catch (err) {
+        log.warn(`failed to re-add home files during upgrade for ${mindName}`, log.errorData(err));
+      }
+      try {
+        await gitExec(["diff", "--cached", "--quiet"], { cwd: worktreeDir });
+      } catch {
+        await gitExec(["commit", "-m", "re-add allowlisted home files"], {
+          cwd: worktreeDir,
+        });
+      }
+    }
 
     // Fix ownership — daemon runs as root but mind needs to own its files
     chownMindDir(dir, mindName);
@@ -1602,222 +1741,97 @@ const app = new Hono<AuthEnv>()
     try {
       await npmInstallAsMind(worktreeDir, mindName);
 
-      const variantPort = nextPort();
-      addVariant(mindName, {
-        name: UPGRADE_VARIANT,
-        branch: UPGRADE_VARIANT,
-        path: worktreeDir,
-        port: variantPort,
-        created: new Date().toISOString(),
-      });
+      const variantPort = await nextPort();
+      await addVariant(upgradeVariantName, mindName, variantPort, worktreeDir, UPGRADE_BRANCH);
 
-      await getMindManager().startMind(`${mindName}@${UPGRADE_VARIANT}`);
+      await getMindManager().startMind(upgradeVariantName);
 
       return c.json({
         ok: true,
         name: mindName,
-        variant: UPGRADE_VARIANT,
+        variant: UPGRADE_BRANCH,
         port: variantPort,
       });
     } catch (err) {
-      await cleanupVariant(mindName, UPGRADE_VARIANT, dir, worktreeDir);
+      await cleanupVariant(upgradeVariantName, dir, worktreeDir);
       return c.json(
         { error: err instanceof Error ? err.message : "Failed to complete upgrade" },
         500,
       );
     }
   })
-  // Proxy message to mind — enriches, then delegates to delivery manager
-  .post("/:name/message", async (c) => {
+  // All conversations for a mind (across all channels)
+  .get("/:name/conversations", async (c) => {
     const name = c.req.param("name");
-    const [baseName, variantName] = name.split("@", 2);
-
-    const entry = findMind(baseName);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
-
-    if (variantName) {
-      const variant = findVariant(baseName, variantName);
-      if (!variant) return c.json({ error: `Unknown variant: ${variantName}` }, 404);
+    const user = c.get("user");
+    const convs = await listConversationsForMind(name);
+    // Strip lastMessage from private conversations for non-participants/non-admins
+    const filtered = convs.map((conv) => {
+      if (conv.private !== 1) return conv;
+      if (user.role === "admin") return conv;
+      const userIsParticipant = conv.participants.some((p) => p.userId === user.id);
+      if (userIsParticipant) return conv;
+      const { lastMessage: _, ...rest } = conv;
+      return rest;
+    });
+    return c.json(filtered);
+  })
+  // Read messages from a mind's conversation (privacy-enforced)
+  .get("/:name/conversations/:convId/messages", async (c) => {
+    const name = c.req.param("name");
+    const convId = c.req.param("convId");
+    const entry = await findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+    // Verify conversation belongs to this mind
+    const belongs = await isConversationForMind(name, convId);
+    if (!belongs) {
+      return c.json({ error: "Conversation not found" }, 404);
     }
-
-    // If the mind is sleeping, queue the message
-    try {
-      const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
-      const sm = getSleepManagerIfReady();
-      if (sm?.isSleeping(baseName)) {
-        const body = await c.req.text();
-        let parsed: Record<string, unknown> | null = null;
-        try {
-          parsed = JSON.parse(body);
-        } catch {}
-        if (parsed) {
-          const payload = {
-            channel: (parsed.channel as string) ?? "unknown",
-            sender: (parsed.sender as string) ?? null,
-            content: parsed.content,
-            isDM: parsed.isDM as boolean | undefined,
-          };
-          if (sm.checkWakeTrigger(baseName, payload)) {
-            await sm.queueSleepMessage(baseName, payload);
-            sm.initiateWake(baseName, { trigger: { channel: payload.channel } }).catch((err) =>
-              log.error(`failed to trigger-wake ${baseName}`, log.errorData(err)),
-            );
-            return c.json({ ok: true, queued: true, triggerWake: true });
-          }
-          await sm.queueSleepMessage(baseName, payload);
-          return c.json({ ok: true, queued: true });
+    // Enforce privacy: if conversation is private, require participant or admin
+    const conv = await getConversation(convId);
+    if (!conv) {
+      return c.json({ error: "Conversation not found" }, 404);
+    }
+    if (conv.private === 1) {
+      const user = c.get("user");
+      if (user.role !== "admin") {
+        const participant = await isParticipant(convId, user.id);
+        if (!participant) {
+          return c.json({ error: "This is a private conversation" }, 403);
         }
-        return c.json({ error: "Invalid JSON" }, 400);
-      }
-    } catch (err) {
-      log.error(`failed to check sleep state for ${baseName}`, log.errorData(err));
-    }
-
-    if (!getMindManager().isRunning(name)) {
-      return c.json({ error: "Mind is not running" }, 409);
-    }
-
-    const body = await c.req.text();
-    let parsed: Record<string, unknown> | null = null;
-    try {
-      parsed = JSON.parse(body);
-    } catch (err) {
-      log.error(`failed to parse message body for ${baseName}`, log.errorData(err));
-    }
-
-    const channel = (parsed?.channel as string) ?? "unknown";
-
-    // Record inbound message (persist + publish to live event stream)
-    if (parsed) {
-      const sender = (parsed.sender as string) ?? null;
-      const content = extractTextContent(parsed.content);
-      await recordInbound(baseName, channel, sender, content);
-    }
-
-    // Check token budget before forwarding
-    const budget = getTokenBudget();
-    const budgetStatus = budget.checkBudget(baseName);
-
-    if (budgetStatus === "exceeded") {
-      const textContent = parsed ? extractTextContent(parsed.content) : "";
-
-      budget.enqueue(baseName, {
-        channel,
-        sender: (parsed?.sender as string) ?? null,
-        textContent,
-      });
-
-      return c.json({ error: "Token budget exceeded — message queued for next period" }, 429);
-    }
-
-    if (!parsed) return c.json({ error: "Invalid JSON" }, 400);
-
-    // Enrich payload with currently-typing senders (exclude the receiving mind
-    // and the message sender — they just sent a message, so they're not typing)
-    const typingMap = getTypingMap();
-    const sender = (parsed.sender as string) ?? "";
-    if (sender) typingMap.delete(channel, sender);
-    const currentlyTyping = typingMap.get(channel).filter((s) => s !== baseName);
-    if (currentlyTyping.length > 0) {
-      parsed.typing = currentlyTyping;
-    }
-
-    // Sign message BEFORE content mutation (budget warnings, seed nudges)
-    // so the signature covers the original content the sender intended
-    if (sender && findMind(sender)) {
-      try {
-        const senderDir = mindDir(sender);
-        const senderPrivateKey = getPrivateKey(senderDir);
-        const senderPublicKey = getPublicKey(senderDir);
-        if (senderPrivateKey && senderPublicKey) {
-          const textContent = extractTextContent(parsed.content);
-          const timestamp = new Date().toISOString();
-          parsed.signature = signMessage(senderPrivateKey, textContent, timestamp);
-          parsed.signatureTimestamp = timestamp;
-          parsed.signerFingerprint = getFingerprint(senderPublicKey);
-        }
-      } catch (err) {
-        log.warn(`failed to sign message from ${sender}`, { error: (err as Error).message });
       }
     }
-
-    // Inject one-time budget warning (triggers once at >=80% per period)
-    if (budgetStatus === "warning") {
-      const usage = budget.getUsage(baseName);
-      const pct = usage?.percentUsed ?? 80;
-      const warningText = `\n[System: Token budget is at ${pct}% — conserve tokens to avoid message queuing]`;
-      if (typeof parsed.content === "string") {
-        parsed.content = parsed.content + warningText;
-      } else if (Array.isArray(parsed.content)) {
-        parsed.content = [...parsed.content, { type: "text", text: warningText }];
-      }
-      budget.acknowledgeWarning(baseName);
+    const beforeStr = c.req.query("before");
+    const limitStr = c.req.query("limit");
+    if (!beforeStr && !limitStr) {
+      const msgs = await getMessages(convId);
+      return c.json({ items: msgs, hasMore: false });
     }
-
-    // Nudge seed minds toward sprouting after extended conversation
-    const seedEntry = findMind(baseName);
-    if (seedEntry?.stage === "seed") {
-      try {
-        const db = await getDb();
-        const countResult = await db
-          .select({ count: sql<number>`count(*)` })
-          .from(mindHistory)
-          .where(eq(mindHistory.mind, baseName));
-        const msgCount = countResult[0]?.count ?? 0;
-        if (msgCount >= 10 && msgCount % 10 === 0) {
-          const nudge =
-            "\n[You've been exploring for a while. Whenever you feel ready, write your SOUL.md and MEMORY.md, then run volute mind sprout.]";
-          if (typeof parsed.content === "string") {
-            parsed.content = parsed.content + nudge;
-          } else if (Array.isArray(parsed.content)) {
-            parsed.content = [...parsed.content, { type: "text", text: nudge }];
-          }
-        }
-      } catch (err) {
-        log.error(`failed to check seed message count for ${baseName}`, log.errorData(err));
-      }
+    const before = beforeStr ? parseInt(beforeStr, 10) : undefined;
+    const limit = limitStr ? parseInt(limitStr, 10) : undefined;
+    if (
+      (before !== undefined && Number.isNaN(before)) ||
+      (limit !== undefined && Number.isNaN(limit))
+    ) {
+      return c.json({ error: "Invalid pagination parameters" }, 400);
     }
-
-    // Delegate to delivery manager for routing + delivery
-    const deliveryPayload: Record<string, unknown> = {
-      channel: parsed.channel as string,
-      sender: (parsed.sender as string) ?? null,
-      content: parsed.content,
-      conversationId: (parsed.conversationId as string) ?? undefined,
-      typing: parsed.typing as string[] | undefined,
-      platform: (parsed.platform as string) ?? undefined,
-      isDM: (parsed.isDM as boolean) ?? undefined,
-      participants: (parsed.participants as string[]) ?? undefined,
-      participantCount: (parsed.participantCount as number) ?? undefined,
-    };
-    // Pass through signature fields for verification by mind
-    if (parsed.signature) {
-      deliveryPayload.signature = parsed.signature;
-      deliveryPayload.signatureTimestamp = parsed.signatureTimestamp;
-      deliveryPayload.signerFingerprint = parsed.signerFingerprint;
-    }
-
-    // Fire-and-forget: delivery manager handles routing, timing, and HTTP delivery
-    getDeliveryManager()
-      .routeAndDeliver(name, deliveryPayload as any)
-      .catch((err) => {
-        log.error(`delivery failed for ${name}`, log.errorData(err));
-      });
-
-    return c.json({ ok: true });
+    const result = await getMessagesPaginated(convId, { before, limit });
+    return c.json({ items: result.messages, hasMore: result.hasMore });
   })
   // Budget status
   .get("/:name/budget", async (c) => {
     const name = c.req.param("name");
-    const [baseName] = name.split("@", 2);
+    const baseName = await getBaseName(name);
     const usage = getTokenBudget().getUsage(baseName);
     if (!usage) return c.json({ error: "No budget configured" }, 404);
     return c.json(usage);
   })
   // Get mind config (registry + volute.json + env)
-  .get("/:name/config", (c) => {
+  .get("/:name/config", async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(name);
@@ -1854,10 +1868,10 @@ const app = new Hono<AuthEnv>()
       },
     });
   })
-  // Update mind config — admin only
+  // Update mind config
   .put(
     "/:name/config",
-    requireAdmin,
+    requireSelf(),
     zValidator(
       "json",
       z.object({
@@ -1869,7 +1883,7 @@ const app = new Hono<AuthEnv>()
     ),
     async (c) => {
       const name = c.req.param("name");
-      const entry = findMind(name);
+      const entry = await findMind(name);
       if (!entry) return c.json({ error: "Mind not found" }, 404);
 
       const dir = mindDir(name);
@@ -1905,7 +1919,7 @@ const app = new Hono<AuthEnv>()
   // Get pending/gated delivery messages
   .get("/:name/delivery/pending", async (c) => {
     const name = c.req.param("name");
-    const [baseName] = name.split("@", 2);
+    const baseName = await getBaseName(name);
     try {
       const pending = await getDeliveryManager().getPending(baseName);
       return c.json(pending);
@@ -1917,10 +1931,26 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Failed to retrieve pending messages" }, 500);
     }
   })
+  // AI completion proxy for minds
+  .post("/:name/ai/complete", requireSelf(), async (c) => {
+    const body = (await c.req.json()) as { systemPrompt: string; message: string; model?: string };
+    if (!body.systemPrompt || !body.message) {
+      return c.json({ error: "systemPrompt and message required" }, 400);
+    }
+    const { aiComplete: aiCompleteFn, isAiConfigured } = await import("../../lib/ai-service.js");
+    if (!isAiConfigured()) {
+      return c.json({ error: "AI service not configured" }, 503);
+    }
+    const text = await aiCompleteFn(body.systemPrompt, body.message, body.model);
+    if (text == null) {
+      return c.json({ error: "AI completion failed" }, 502);
+    }
+    return c.json({ text });
+  })
   // Receive events from mind, persist to mind_history, publish to pub-sub
-  .post("/:name/events", async (c) => {
+  .post("/:name/events", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const [baseName] = name.split("@", 2);
+    const baseName = await getBaseName(name);
 
     let body: {
       type: string;
@@ -1940,21 +1970,68 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "type required" }, 400);
     }
 
+    // Assign session to sessionless turn on first session_start
+    if (body.type === "session_start" && body.session) {
+      const activeTurnId = getActiveTurnId(baseName);
+      if (activeTurnId) {
+        await assignSession(baseName, activeTurnId, body.session);
+      }
+    }
+
+    // Look up active turn for this event; create one if missing for substantive events.
+    // Turns are created per-session when the mind starts processing, not when inbound arrives.
+    let turnId = getActiveTurnId(baseName, body.session);
+    if (!turnId && SUBSTANTIVE_TYPES.has(body.type)) {
+      turnId = await createTurn(baseName);
+      if (!turnId) {
+        // DB failure — skip turn tracking for this event
+        log.warn(`skipping turn tracking for ${baseName}: createTurn failed`);
+      } else {
+        publishMindEvent(baseName, { mind: baseName, type: "turn_created", turnId });
+        if (body.session) {
+          await assignSession(baseName, turnId, body.session);
+        }
+        // Link trigger and retroactively tag recent untagged inbound events/messages
+        try {
+          await tagUntaggedInbound(baseName, turnId, {
+            setTrigger: true,
+            channel: body.channel,
+          });
+        } catch (err) {
+          log.warn(
+            `failed to link trigger/tag inbounds for turn ${turnId} (mind: ${baseName})`,
+            log.errorData(err),
+          );
+        }
+      } // end if (turnId) after createTurn
+    }
+
     // Persist to mind_history
     const db = await getDb();
+    let insertedId: number | undefined;
     try {
-      await db.insert(mindHistory).values({
-        mind: baseName,
-        type: body.type,
-        session: body.session ?? null,
-        channel: body.channel ?? null,
-        message_id: body.messageId ?? null,
-        content: body.content ?? null,
-        metadata: body.metadata ? JSON.stringify(body.metadata) : null,
-      });
+      const result = await db
+        .insert(mindHistory)
+        .values({
+          mind: baseName,
+          type: body.type,
+          session: body.session ?? null,
+          channel: body.channel ?? null,
+          message_id: body.messageId ?? null,
+          content: body.content ?? null,
+          metadata: body.metadata ? JSON.stringify(body.metadata) : null,
+          turn_id: turnId ?? null,
+        })
+        .returning({ id: mindHistory.id });
+      insertedId = result[0]?.id;
     } catch (err) {
       log.error(`failed to persist event for ${baseName}`, log.errorData(err));
       // Continue — persistence is best-effort, don't block real-time streaming
+    }
+
+    // Track tool_use events for source_event_id linking
+    if (body.type === "tool_use" && insertedId != null) {
+      trackToolUse(baseName, body.session, insertedId);
     }
 
     // Publish to in-process pub-sub
@@ -1966,6 +2043,7 @@ const app = new Hono<AuthEnv>()
       messageId: body.messageId,
       content: body.content,
       metadata: body.metadata,
+      turnId: turnId ?? undefined,
     });
 
     // Track mind activity for dashboard timeline
@@ -1986,12 +2064,42 @@ const app = new Hono<AuthEnv>()
       publishTypingForChannels(affected, map);
       // Broadcast mind_done to SSE subscribers (ephemeral — not persisted to DB)
       broadcast({ type: "mind_done", mind: baseName, summary: "Finished processing" });
-      // Notify delivery manager of session completion
+      // Notify delivery manager of session completion (must await so activeCount
+      // is decremented before the busy check below)
       try {
-        getDeliveryManager().sessionDone(baseName, body.session);
+        await getDeliveryManager().sessionDone(baseName, body.session);
       } catch (err) {
         if (!(err instanceof Error && err.message.includes("not initialized"))) {
           log.error(`delivery manager sessionDone failed for ${baseName}`, log.errorData(err));
+        }
+      }
+      // Complete the turn if the session has no more pending deliveries.
+      // When messages arrive mid-turn, their incrementActive() keeps the
+      // count > 0, so we skip here. The subsequent done will re-check.
+      try {
+        // Only gate on delivery busy state when we have a session to check.
+        // Sessionless done events (e.g., background/system work) complete immediately
+        // to avoid being blocked by unrelated active sessions.
+        const dm = getDeliveryManager();
+        const busy = body.session ? dm.isSessionBusy(baseName, body.session) : false;
+        if (!busy) {
+          const completedTurnId = await completeTurn(baseName, body.session);
+          if (insertedId != null) {
+            summarizeTurn(baseName, body.session, body.channel, insertedId, completedTurnId).catch(
+              (err) => log.error("turn summarization failed", log.errorData(err)),
+            );
+          }
+        }
+      } catch (err) {
+        if (!(err instanceof Error && err.message.includes("not initialized"))) {
+          log.error("turn completion check failed", log.errorData(err));
+        }
+        // DM unavailable — complete immediately as fallback
+        const completedTurnId = await completeTurn(baseName, body.session);
+        if (insertedId != null) {
+          summarizeTurn(baseName, body.session, body.channel, insertedId, completedTurnId).catch(
+            (err) => log.error("turn summarization failed", log.errorData(err)),
+          );
         }
       }
     }
@@ -2008,9 +2116,9 @@ const app = new Hono<AuthEnv>()
   // SSE endpoint for mind events
   .get("/:name/events", async (c) => {
     const name = c.req.param("name");
-    const [baseName] = name.split("@", 2);
+    const baseName = await getBaseName(name);
 
-    const entry = findMind(baseName);
+    const entry = await findMind(baseName);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     // Parse optional filters from query params
@@ -2072,9 +2180,9 @@ const app = new Hono<AuthEnv>()
     });
   })
   // Persist external channel send to mind_history
-  .post("/:name/history", async (c) => {
+  .post("/:name/history", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const [baseName] = name.split("@", 2);
+    const baseName = await getBaseName(name);
 
     let body: { channel: string; content: string; sender?: string };
     try {
@@ -2087,6 +2195,10 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "channel and content required" }, 400);
     }
 
+    // Look up active turn for this mind (outbound happens during a turn)
+    const mindSession = c.get("mindSession");
+    const outboundTurnId = getActiveTurnId(baseName, mindSession);
+
     const db = await getDb();
     try {
       await db.insert(mindHistory).values({
@@ -2095,6 +2207,7 @@ const app = new Hono<AuthEnv>()
         channel: body.channel,
         sender: body.sender ?? baseName,
         content: body.content,
+        turn_id: outboundTurnId ?? null,
       });
     } catch (err) {
       log.error(`failed to persist external send for ${baseName}`, log.errorData(err));
@@ -2133,10 +2246,300 @@ const app = new Hono<AuthEnv>()
   })
   .get("/:name/history/export", async (c) => {
     const name = c.req.param("name");
-    if (!findMind(name)) return c.json({ error: "Mind not found" }, 404);
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
 
     const db = await getDb();
     const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, name));
+    return c.json(rows);
+  })
+  .get("/:name/history/turns", async (c) => {
+    const name = c.req.param("name");
+    const turnIdFilter = c.req.query("turnId");
+    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
+    const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
+
+    const db = await getDb();
+
+    // 1. Get turns for this mind
+    const conditions = [eq(turns.mind, name)];
+    if (turnIdFilter) conditions.push(eq(turns.id, turnIdFilter));
+    const turnRows = await db
+      .select()
+      .from(turns)
+      .where(and(...conditions))
+      .orderBy(desc(turns.created_at))
+      .limit(limit)
+      .offset(offset);
+
+    if (turnRows.length === 0) return c.json([]);
+
+    const turnIds = turnRows.map((t) => t.id);
+
+    // 2. Get summaries
+    const summaryRows = await db
+      .select()
+      .from(mindHistory)
+      .where(
+        and(
+          eq(mindHistory.mind, name),
+          eq(mindHistory.type, "summary"),
+          inArray(mindHistory.turn_id, turnIds),
+        ),
+      );
+    const summaryByTurn = new Map<string, { content: string; metadata: string | null }>();
+    for (const s of summaryRows) {
+      if (s.turn_id)
+        summaryByTurn.set(s.turn_id, { content: s.content ?? "", metadata: s.metadata });
+    }
+
+    // 3. Get conversation messages linked to these turns
+    const msgRows = await db
+      .select({
+        id: messages.id,
+        conversation_id: messages.conversation_id,
+        role: messages.role,
+        sender_name: messages.sender_name,
+        content: messages.content,
+        source_event_id: messages.source_event_id,
+        turn_id: messages.turn_id,
+        created_at: messages.created_at,
+      })
+      .from(messages)
+      .where(inArray(messages.turn_id, turnIds))
+      .orderBy(messages.created_at);
+
+    // Group messages by turn and conversation
+    type MsgRow = (typeof msgRows)[number];
+    const msgsByTurnConv = new Map<string, Map<string, MsgRow[]>>();
+    const convIds = new Set<string>();
+    for (const m of msgRows) {
+      if (!m.turn_id) continue;
+      let byConv = msgsByTurnConv.get(m.turn_id);
+      if (!byConv) {
+        byConv = new Map();
+        msgsByTurnConv.set(m.turn_id, byConv);
+      }
+      let arr = byConv.get(m.conversation_id);
+      if (!arr) {
+        arr = [];
+        byConv.set(m.conversation_id, arr);
+      }
+      arr.push(m);
+      convIds.add(m.conversation_id);
+    }
+
+    // Fetch conversation metadata + participants for referenced conversations
+    type ConvMeta = { id: string; type: string; name: string | null; title: string | null };
+    const convMeta = new Map<string, ConvMeta>();
+    const convParticipantsMap = new Map<
+      string,
+      { username: string; displayName: string | null }[]
+    >();
+    if (convIds.size > 0) {
+      const convIdsArr = [...convIds];
+      const convRows = await db
+        .select({
+          id: conversations.id,
+          type: conversations.type,
+          name: conversations.name,
+          title: conversations.title,
+        })
+        .from(conversations)
+        .where(inArray(conversations.id, convIdsArr));
+      for (const c2 of convRows) convMeta.set(c2.id, c2);
+
+      const cpRows = await db
+        .select({
+          conversationId: conversationParticipants.conversation_id,
+          username: users.username,
+          displayName: users.display_name,
+        })
+        .from(conversationParticipants)
+        .innerJoin(users, eq(conversationParticipants.user_id, users.id))
+        .where(inArray(conversationParticipants.conversation_id, convIdsArr));
+      for (const cp of cpRows) {
+        let arr = convParticipantsMap.get(cp.conversationId);
+        if (!arr) {
+          arr = [];
+          convParticipantsMap.set(cp.conversationId, arr);
+        }
+        arr.push({ username: cp.username, displayName: cp.displayName });
+      }
+    }
+
+    // Build conversation label
+    function getConvLabel(convId: string): string {
+      const meta = convMeta.get(convId);
+      if (!meta) return "Conversation";
+      if (meta.type === "channel" && meta.name) return `#${meta.name}`;
+      const parts = convParticipantsMap.get(convId) ?? [];
+      if (meta.type === "dm" && parts.length === 2) {
+        const other = parts.find((p) => p.username !== name);
+        if (other) return `@${other.displayName || other.username}`;
+      }
+      if (meta.title) return meta.title;
+      return "Conversation";
+    }
+
+    // 4. Get activities linked to these turns
+    const activityRows = await db
+      .select()
+      .from(activity)
+      .where(inArray(activity.turn_id, turnIds))
+      .orderBy(activity.created_at);
+
+    const activitiesByTurn = new Map<string, typeof activityRows>();
+    for (const a of activityRows) {
+      if (!a.turn_id) continue;
+      let arr = activitiesByTurn.get(a.turn_id);
+      if (!arr) {
+        arr = [];
+        activitiesByTurn.set(a.turn_id, arr);
+      }
+      arr.push(a);
+    }
+
+    // 5. Fetch trigger events for turns that have trigger_event_id
+    const triggerIds = turnRows
+      .filter((t) => t.trigger_event_id != null)
+      .map((t) => t.trigger_event_id!);
+    const triggerMap = new Map<
+      number,
+      { channel: string | null; sender: string | null; content: string | null }
+    >();
+    if (triggerIds.length > 0) {
+      const triggerRows = await db
+        .select({
+          id: mindHistory.id,
+          channel: mindHistory.channel,
+          sender: mindHistory.sender,
+          content: mindHistory.content,
+        })
+        .from(mindHistory)
+        .where(inArray(mindHistory.id, triggerIds));
+      for (const r of triggerRows) triggerMap.set(r.id, r);
+    }
+
+    // 6. Assemble response
+    const result = turnRows.map((t) => {
+      const summary = summaryByTurn.get(t.id);
+      const turnConvs = msgsByTurnConv.get(t.id) ?? new Map<string, MsgRow[]>();
+      const convEntries = [...turnConvs.entries()].map(([convId, msgs]) => {
+        const meta = convMeta.get(convId);
+        return {
+          id: convId,
+          label: getConvLabel(convId),
+          type: (meta?.type ?? "dm") as "dm" | "channel",
+          messages: msgs.map((m) => {
+            let content: unknown[];
+            try {
+              const parsed = JSON.parse(m.content);
+              content = Array.isArray(parsed) ? parsed : [{ type: "text", text: m.content }];
+            } catch {
+              content = [{ type: "text", text: m.content }];
+            }
+            return {
+              id: m.id,
+              role: m.role,
+              sender_name: m.sender_name,
+              content,
+              source_event_id: m.source_event_id,
+              created_at: m.created_at,
+            };
+          }),
+        };
+      });
+
+      const turnActivities = (activitiesByTurn.get(t.id) ?? []).map((a) => {
+        let metadata: Record<string, unknown> | null = null;
+        if (a.metadata) {
+          try {
+            metadata = JSON.parse(a.metadata);
+          } catch (err) {
+            log.debug(`malformed activity metadata for activity ${a.id}`, log.errorData(err));
+          }
+        }
+        return {
+          id: a.id,
+          type: a.type,
+          summary: a.summary,
+          metadata,
+          source_event_id: a.source_event_id,
+          created_at: a.created_at,
+        };
+      });
+
+      let summaryMeta: Record<string, unknown> | null = null;
+      if (summary?.metadata) {
+        try {
+          summaryMeta = JSON.parse(summary.metadata);
+        } catch (err) {
+          log.debug(`malformed summary metadata for turn ${t.id}`, log.errorData(err));
+        }
+      }
+
+      const trigger = t.trigger_event_id ? triggerMap.get(t.trigger_event_id) : null;
+
+      return {
+        id: t.id,
+        summary: summary?.content ?? null,
+        summary_meta: summaryMeta,
+        status: t.status,
+        created_at: t.created_at,
+        trigger: trigger
+          ? { channel: trigger.channel, sender: trigger.sender, content: trigger.content }
+          : null,
+        conversations: convEntries,
+        activities: turnActivities,
+      };
+    });
+
+    return c.json(result);
+  })
+  .get("/:name/history/turn", async (c) => {
+    const name = c.req.param("name");
+    const turnId = c.req.query("turn_id");
+
+    const db = await getDb();
+
+    // Prefer turn_id-based query; fall back to legacy session+range
+    if (turnId) {
+      const rows = await db
+        .select()
+        .from(mindHistory)
+        .where(
+          and(
+            eq(mindHistory.mind, name),
+            eq(mindHistory.turn_id, turnId),
+            sql`${mindHistory.type} IN ('inbound','outbound','tool_use','tool_result','text','thinking')`,
+          ),
+        )
+        .orderBy(mindHistory.id);
+      return c.json(rows);
+    }
+
+    // Legacy: session + from_id/to_id range
+    const session = c.req.query("session");
+    const fromId = parseInt(c.req.query("from_id") ?? "", 10);
+    const toId = parseInt(c.req.query("to_id") ?? "", 10);
+    if (!session || Number.isNaN(fromId) || Number.isNaN(toId)) {
+      return c.json({ error: "turn_id, or session with from_id and to_id, required" }, 400);
+    }
+
+    const rows = await db
+      .select()
+      .from(mindHistory)
+      .where(
+        and(
+          eq(mindHistory.mind, name),
+          eq(mindHistory.session, session),
+          sql`${mindHistory.id} >= ${fromId}`,
+          sql`${mindHistory.id} <= ${toId}`,
+          sql`${mindHistory.type} IN ('inbound','outbound','tool_use','tool_result','text','thinking')`,
+        ),
+      )
+      .orderBy(mindHistory.id);
+
     return c.json(rows);
   })
   .get("/:name/history", async (c) => {
@@ -2144,6 +2547,12 @@ const app = new Hono<AuthEnv>()
     const channel = c.req.query("channel");
     const session = c.req.query("session");
     const full = c.req.query("full") === "true";
+    const preset = c.req.query("preset") as
+      | "summary"
+      | "conversation"
+      | "detailed"
+      | "all"
+      | undefined;
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
     const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
 
@@ -2155,9 +2564,24 @@ const app = new Hono<AuthEnv>()
     if (session) {
       conditions.push(eq(mindHistory.session, session));
     }
-    // Default to conversation view (inbound/outbound only)
-    if (!full) {
-      conditions.push(sql`${mindHistory.type} IN ('inbound', 'outbound')`);
+
+    // Preset-based type filtering
+    const effectivePreset = full ? "all" : preset;
+    switch (effectivePreset) {
+      case "all":
+        // No type filter
+        break;
+      case "conversation":
+        conditions.push(sql`${mindHistory.type} IN ('summary','inbound','outbound','tool_use')`);
+        break;
+      case "detailed":
+        conditions.push(
+          sql`${mindHistory.type} IN ('summary','inbound','outbound','tool_use','tool_result','text','thinking')`,
+        );
+        break;
+      default:
+        conditions.push(sql`${mindHistory.type} IN ('summary')`);
+        break;
     }
 
     const rows = await db

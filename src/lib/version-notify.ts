@@ -1,9 +1,9 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { deliverMessage } from "./delivery/message-delivery.js";
 import log from "./logger.js";
-import { readRegistry, voluteHome, writeRegistry } from "./registry.js";
+import { readRegistry, setMindTemplateHash, voluteSystemDir } from "./registry.js";
 import { parseReleaseNotes } from "./release-notes.js";
+import { sendSystemMessage } from "./system-chat.js";
 import { computeTemplateHash } from "./template-hash.js";
 import { getCurrentVersion } from "./update-check.js";
 
@@ -12,7 +12,7 @@ type VersionNotifyState = {
 };
 
 function statePath(): string {
-  return resolve(voluteHome(), "version-notify.json");
+  return resolve(voluteSystemDir(), "version-notify.json");
 }
 
 function readState(): VersionNotifyState | null {
@@ -32,9 +32,8 @@ function writeState(state: VersionNotifyState): void {
  * Backfill templateHash for minds that don't have one.
  * Uses the current template hash so existing minds won't get a false upgrade notification.
  */
-export function backfillTemplateHashes(): void {
-  const entries = readRegistry();
-  let changed = false;
+export async function backfillTemplateHashes(): Promise<void> {
+  const entries = await readRegistry();
 
   for (const entry of entries) {
     if (entry.templateHash != null) continue;
@@ -42,15 +41,11 @@ export function backfillTemplateHashes(): void {
 
     const tmpl = entry.template ?? "claude";
     try {
-      entry.templateHash = computeTemplateHash(tmpl);
-      changed = true;
+      const hash = computeTemplateHash(tmpl);
+      await setMindTemplateHash(entry.name, hash);
     } catch (err) {
       log.warn(`failed to compute template hash for ${entry.name}`, log.errorData(err));
     }
-  }
-
-  if (changed) {
-    writeRegistry(entries);
   }
 }
 
@@ -72,7 +67,7 @@ export async function notifyVersionUpdate(): Promise<void> {
   // Version unchanged: nothing to do
   if (state.lastNotifiedVersion === currentVersion) return;
 
-  const entries = readRegistry();
+  const entries = await readRegistry();
   const runningMinds = entries.filter((e) => e.running && e.stage !== "seed");
 
   if (runningMinds.length === 0) {
@@ -105,11 +100,7 @@ export async function notifyVersionUpdate(): Promise<void> {
 
     const message = formatNotification(currentVersion, releaseNotes, needsUpgrade, entry.name);
 
-    await deliverMessage(entry.name, {
-      channel: "system:version",
-      sender: "volute",
-      content: message,
-    });
+    await sendSystemMessage(entry.name, message);
   });
 
   const results = await Promise.allSettled(promises);
@@ -135,7 +126,7 @@ function formatNotification(
   }
 
   if (needsUpgrade) {
-    message += `\n\n---\n\nA template update is available for you. To upgrade, your operator can run:\n  volute mind upgrade ${mindName}`;
+    message += `\n\n---\n\nA template update is available for you. To upgrade, run:\n  volute mind upgrade ${mindName}`;
   }
 
   return message;

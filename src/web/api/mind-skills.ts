@@ -9,12 +9,12 @@ import {
   uninstallSkill,
   updateSkill,
 } from "../../lib/skills.js";
-import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
+import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
 const app = new Hono<AuthEnv>()
   .get("/:name/skills", async (c) => {
     const name = c.req.param("name");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(name);
@@ -23,11 +23,11 @@ const app = new Hono<AuthEnv>()
   })
   .post(
     "/:name/skills/install",
-    requireAdmin,
+    requireSelf(),
     zValidator("json", z.object({ skillId: z.string() })),
     async (c) => {
       const name = c.req.param("name");
-      const entry = findMind(name);
+      const entry = await findMind(name);
       if (!entry) return c.json({ error: "Mind not found" }, 404);
 
       const { skillId } = c.req.valid("json");
@@ -44,11 +44,11 @@ const app = new Hono<AuthEnv>()
   )
   .post(
     "/:name/skills/update",
-    requireAdmin,
+    requireSelf(),
     zValidator("json", z.object({ skillId: z.string() })),
     async (c) => {
       const name = c.req.param("name");
-      const entry = findMind(name);
+      const entry = await findMind(name);
       if (!entry) return c.json({ error: "Mind not found" }, 404);
 
       const { skillId } = c.req.valid("json");
@@ -65,11 +65,11 @@ const app = new Hono<AuthEnv>()
   )
   .post(
     "/:name/skills/publish",
-    requireAdmin,
+    requireSelf(),
     zValidator("json", z.object({ skillId: z.string() })),
     async (c) => {
       const name = c.req.param("name");
-      const entry = findMind(name);
+      const entry = await findMind(name);
       if (!entry) return c.json({ error: "Mind not found" }, 404);
 
       const { skillId } = c.req.valid("json");
@@ -84,10 +84,10 @@ const app = new Hono<AuthEnv>()
       }
     },
   )
-  .delete("/:name/skills/:skill", requireAdmin, async (c) => {
+  .delete("/:name/skills/:skill", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const skillName = c.req.param("skill");
-    const entry = findMind(name);
+    const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const dir = mindDir(name);

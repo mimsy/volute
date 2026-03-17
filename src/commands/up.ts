@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { parseArgs } from "../lib/parse-args.js";
-import { voluteHome } from "../lib/registry.js";
+import { voluteHome, voluteSystemDir } from "../lib/registry.js";
 import { getServiceMode, modeLabel, pollHealth, startService } from "../lib/service-mode.js";
 import { readGlobalConfig } from "../lib/setup.js";
 
@@ -44,7 +44,8 @@ export async function run(args: string[]) {
   const port = flags.port ?? config.port ?? 1618;
   const hostname = flags.host ?? config.hostname ?? "127.0.0.1";
   const home = voluteHome();
-  const pidPath = resolve(home, "daemon.pid");
+  const systemDir = voluteSystemDir();
+  const pidPath = resolve(systemDir, "daemon.pid");
 
   // Check for stale PID file
   if (existsSync(pidPath)) {
@@ -113,7 +114,8 @@ export async function run(args: string[]) {
 
   // Spawn daemon as detached child process (daemon manages its own log rotation)
   mkdirSync(home, { recursive: true });
-  const logFile = resolve(home, "daemon.log");
+  mkdirSync(systemDir, { recursive: true });
+  const logFile = resolve(systemDir, "daemon.log");
   const logFd = openSync(logFile, "a");
 
   const daemonArgs = [daemonModule, "--port", String(port), "--host", hostname];

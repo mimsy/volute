@@ -115,12 +115,9 @@ export function createVoluteServer(options: {
             channels: Record<string, any[]>;
           };
           router.dispatchBatch(batch, body.session ?? "main", body);
-        } else if (body.session) {
-          // Pre-routed by daemon delivery manager — dispatch directly
-          router.dispatch(body.content, body.session, body);
         } else {
-          // Legacy: local routing (for minds running with old daemon)
-          router.route(body.content, body);
+          // Pre-routed by daemon delivery manager — dispatch directly
+          router.dispatch(body.content, body.session ?? "main", body);
         }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true }));

@@ -13,6 +13,8 @@ export type MindEvent = {
   messageId?: string;
   content?: string;
   metadata?: Record<string, unknown>;
+  turnId?: string;
+  sender?: string;
   createdAt?: string;
 };
 

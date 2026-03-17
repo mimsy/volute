@@ -2,8 +2,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { execInherit } from "./exec.js";
-import { voluteHome } from "./registry.js";
+import { exec, execInherit } from "./exec.js";
+import { voluteSystemDir } from "./registry.js";
 
 // --- Constants ---
 
@@ -137,11 +137,26 @@ export async function startService(mode: ManagedServiceMode): Promise<void> {
       await execInherit("systemctl", ["--user", "start", "volute"]);
       break;
     case "system-launchd":
-      await execInherit("sudo", ["launchctl", "load", SYSTEM_LAUNCHD_PLIST_PATH]);
+      await exec("sudo", ["launchctl", "bootout", `system/${LAUNCHD_PLIST_LABEL}`]).catch((err) =>
+        console.warn(
+          `Warning: launchctl bootout failed (may not be loaded): ${err instanceof Error ? err.message : err}`,
+        ),
+      );
+      await execInherit("sudo", ["launchctl", "bootstrap", "system", SYSTEM_LAUNCHD_PLIST_PATH]);
+      await execInherit("sudo", ["launchctl", "kickstart", `system/${LAUNCHD_PLIST_LABEL}`]);
       break;
-    case "user-launchd":
-      await execInherit("launchctl", ["load", LAUNCHD_PLIST_PATH]);
+    case "user-launchd": {
+      const uid = `gui/${process.getuid!()}`;
+      await exec("launchctl", ["bootout", `${uid}/${LAUNCHD_PLIST_LABEL}`]).catch((err) =>
+        console.warn(
+          `Warning: launchctl bootout failed (may not be loaded): ${err instanceof Error ? err.message : err}`,
+        ),
+      );
+      await execInherit("launchctl", ["bootstrap", uid, LAUNCHD_PLIST_PATH]);
+      // kickstart ensures the job actually runs (RunAtLoad isn't always honored after bootout/bootstrap)
+      await execInherit("launchctl", ["kickstart", `${uid}/${LAUNCHD_PLIST_LABEL}`]);
       break;
+    }
   }
 }
 
@@ -154,10 +169,13 @@ export async function stopService(mode: ManagedServiceMode): Promise<void> {
       await execInherit("systemctl", ["--user", "stop", "volute"]);
       break;
     case "system-launchd":
-      await execInherit("sudo", ["launchctl", "unload", SYSTEM_LAUNCHD_PLIST_PATH]);
+      await execInherit("sudo", ["launchctl", "bootout", `system/${LAUNCHD_PLIST_LABEL}`]);
       break;
     case "user-launchd":
-      await execInherit("launchctl", ["unload", LAUNCHD_PLIST_PATH]);
+      await execInherit("launchctl", [
+        "bootout",
+        `gui/${process.getuid!()}/${LAUNCHD_PLIST_LABEL}`,
+      ]);
       break;
   }
 }
@@ -171,27 +189,25 @@ export async function restartService(mode: ManagedServiceMode): Promise<void> {
       await execInherit("systemctl", ["--user", "restart", "volute"]);
       break;
     case "system-launchd":
-      try {
-        await execInherit("sudo", ["launchctl", "unload", SYSTEM_LAUNCHD_PLIST_PATH]);
-      } catch (err) {
+      await exec("sudo", ["launchctl", "bootout", `system/${LAUNCHD_PLIST_LABEL}`]).catch((err) =>
         console.warn(
-          `Warning: launchctl unload failed: ${err instanceof Error ? err.message : err}`,
-        );
-      }
-      await execInherit("sudo", ["launchctl", "load", SYSTEM_LAUNCHD_PLIST_PATH]);
+          `Warning: launchctl bootout failed (may not be loaded): ${err instanceof Error ? err.message : err}`,
+        ),
+      );
+      await execInherit("sudo", ["launchctl", "bootstrap", "system", SYSTEM_LAUNCHD_PLIST_PATH]);
+      await execInherit("sudo", ["launchctl", "kickstart", `system/${LAUNCHD_PLIST_LABEL}`]);
       break;
-    case "user-launchd":
-      // launchd doesn't have a "restart" — unload then load
-      try {
-        await execInherit("launchctl", ["unload", LAUNCHD_PLIST_PATH]);
-      } catch (err) {
-        // May not be loaded — warn but continue to load
+    case "user-launchd": {
+      const uid = `gui/${process.getuid!()}`;
+      await exec("launchctl", ["bootout", `${uid}/${LAUNCHD_PLIST_LABEL}`]).catch((err) =>
         console.warn(
-          `Warning: launchctl unload failed: ${err instanceof Error ? err.message : err}`,
-        );
-      }
-      await execInherit("launchctl", ["load", LAUNCHD_PLIST_PATH]);
+          `Warning: launchctl bootout failed (may not be loaded): ${err instanceof Error ? err.message : err}`,
+        ),
+      );
+      await execInherit("launchctl", ["bootstrap", uid, LAUNCHD_PLIST_PATH]);
+      await execInherit("launchctl", ["kickstart", `${uid}/${LAUNCHD_PLIST_LABEL}`]);
       break;
+    }
   }
 }
 
@@ -202,7 +218,7 @@ export function readDaemonConfig(): {
   internalPort?: number;
   token?: string;
 } {
-  const configPath = resolve(voluteHome(), "daemon.json");
+  const configPath = resolve(voluteSystemDir(), "daemon.json");
   if (!existsSync(configPath)) return { hostname: "127.0.0.1", port: 1618 };
   try {
     const config = JSON.parse(readFileSync(configPath, "utf-8"));

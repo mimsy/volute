@@ -18,21 +18,15 @@ export async function run(args: string[]) {
       await import("./delete.js").then((m) => m.run(args.slice(1)));
       break;
     case "list":
-      await import("./status.js").then((m) => m.run(args.slice(1)));
+      await import("./mind-list.js").then((m) => m.run(args.slice(1)));
       break;
-    case "status": {
-      const rest = args.slice(1);
-      if (!rest[0] && process.env.VOLUTE_MIND) {
-        rest.unshift(process.env.VOLUTE_MIND);
-      }
-      await import("./status.js").then((m) => m.run(rest));
+    case "status":
+      await import("./mind-status.js").then((m) => m.run(args.slice(1)));
       break;
-    }
-    case "logs": {
-      // Transform positional name to --mind flag for compatibility
+    case "history": {
       const rest = args.slice(1);
-      const logsArgs = transformMindFlag(rest);
-      await import("./logs.js").then((m) => m.run(logsArgs));
+      const historyArgs = transformMindFlag(rest);
+      await import("./history.js").then((m) => m.run(historyArgs));
       break;
     }
     case "upgrade":
@@ -44,12 +38,6 @@ export async function run(args: string[]) {
     case "export":
       await import("./export.js").then((m) => m.run(args.slice(1)));
       break;
-    case "connect":
-      await import("./connector.js").then((m) => m.run(["connect", ...args.slice(1)]));
-      break;
-    case "disconnect":
-      await import("./connector.js").then((m) => m.run(["disconnect", ...args.slice(1)]));
-      break;
     case "seed":
       await import("./seed.js").then((m) => m.run(args.slice(1)));
       break;
@@ -57,10 +45,18 @@ export async function run(args: string[]) {
       await import("./sprout.js").then((m) => m.run(args.slice(1)));
       break;
     case "sleep":
+      // Legacy alias — redirect to clock sleep
       await import("./mind-sleep.js").then((m) => m.run(args.slice(1)));
       break;
     case "wake":
+      // Legacy alias — redirect to clock wake
       await import("./mind-wake.js").then((m) => m.run(args.slice(1)));
+      break;
+    case "split":
+      await import("./split.js").then((m) => m.run(args.slice(1)));
+      break;
+    case "join":
+      await import("./join.js").then((m) => m.run(args.slice(1)));
       break;
     case "--help":
     case "-h":
@@ -91,15 +87,15 @@ function printUsage() {
   volute mind delete [name] [--force]
   volute mind list
   volute mind status [name]
-  volute mind logs [name] [--follow] [-n N]
-  volute mind connect <type> [--mind <name>]
-  volute mind disconnect <type> [--mind <name>]
+  volute mind history [name] [--channel <ch>] [--limit N] [--full]
   volute mind sprout
   volute mind sleep [name] [--wake-at <time>]
   volute mind wake [name]
-  volute mind upgrade [name] [--template <name>] [--continue]
+  volute mind split <name> [--from <mind>] [--soul "..."] [--port N] [--no-start] [--json]
+  volute mind join <variant-name> [--summary "..." --justification "..." --memory "..."] [--skip-verify]
+  volute mind upgrade [name] [--template <name>] [--continue] [--accept]
   volute mind import <path> [--name <name>] [--session <path>] [--template <name>]
-  volute mind export <name> [--include-env] [--include-identity] [--include-connectors] [--include-history] [--include-sessions] [--all] [--output <path>]
+  volute mind export <name> [--include-env] [--include-identity] [--include-history] [--include-sessions] [--all] [--output <path>]
 
 Mind name can be omitted (where shown as [name]) if VOLUTE_MIND is set.`);
 }

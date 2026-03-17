@@ -65,6 +65,20 @@ function formatRow(row: HistoryRow): string {
       }
       return `[${time}] [log] ${category}${row.content ?? ""}`;
     }
+    case "summary": {
+      let range = "";
+      if (row.metadata) {
+        try {
+          const meta = JSON.parse(row.metadata);
+          if (meta.from_time && meta.to_time) {
+            const from = new Date(normalizeTimestamp(meta.from_time)).toLocaleTimeString();
+            const to = new Date(normalizeTimestamp(meta.to_time)).toLocaleTimeString();
+            range = ` (${from}\u2013${to})`;
+          }
+        } catch {}
+      }
+      return `[${time}] [summary${range}] ${row.content ?? ""}`;
+    }
     case "session_start":
       return `[${time}] [session_start] ${row.session ?? ""}`;
     default:

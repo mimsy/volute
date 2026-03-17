@@ -97,7 +97,7 @@ const app = new Hono<AuthEnv>()
 
     // Resolve the invitee: try as existing user first, then as a mind
     let user = await getUserByUsername(username);
-    if (!user && findMind(username)) {
+    if (!user && (await findMind(username))) {
       user = await getOrCreateMindUser(username);
     }
     if (!user) return c.json({ error: "User not found" }, 404);

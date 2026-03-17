@@ -1,6 +1,6 @@
 {
   "name": "volute",
-  "version": "0.25.0",
+  "version": "0.31.0",
   "description": "CLI for creating and managing self-modifying AI minds powered by the Claude Agent SDK",
   "type": "module",
   "license": "MIT",
@@ -16,7 +16,8 @@
     "anthropic"
   ],
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "packages/extensions/*"
   ],
   "engines": {
     "node": ">=24"
@@ -33,11 +34,16 @@
   "files": [
     "dist/",
     "drizzle/",
-    "templates/"
+    "templates/",
+    "packages/extensions/notes/dist/ui/",
+    "packages/extensions/notes/skills/",
+    "packages/extensions/pages/dist/ui/",
+    "packages/extensions/pages/skills/"
   ],
   "scripts": {
     "dev": "tsx src/cli.ts",
-    "build": "tsup && cp -r skills dist/skills && npm run build:web",
+    "build": "npm run build:ext && tsup && cp -r skills dist/skills && npm run build:web",
+    "build:ext": "npm run build:ui --workspace=packages/extensions/notes && npm run build:ui --workspace=packages/extensions/pages",
     "build:web": "vite build --config src/web/ui/vite.config.ts",
     "dev:web": "vite --config src/web/ui/vite.config.ts",
     "test": "node --import tsx --import ./test/setup.ts --test --test-force-exit --test-concurrency=4 $(find test -name '*.test.ts' ! -name 'daemon-e2e.test.ts' | sort)",
@@ -60,6 +66,7 @@
     "@hono/node-server": "^1.19.9",
     "@hono/zod-validator": "^0.7.6",
     "@libsql/client": "^0.17.0",
+    "@mariozechner/pi-ai": "^0.58.1",
     "@slack/bolt": "^4.6.0",
     "adm-zip": "^0.5.16",
     "bcryptjs": "^3.0.3",
@@ -67,14 +74,14 @@
     "discord.js": "^14.25.1",
     "drizzle-orm": "^0.45.1",
     "hono": "^4.11.7",
+    "libsql": "^0.5.22",
     "telegraf": "^4.16.3",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.34",
     "@biomejs/biome": "2.3.14",
-    "@mariozechner/pi-ai": "^0.52.7",
-    "@mariozechner/pi-coding-agent": "^0.52.7",
+    "@mariozechner/pi-coding-agent": "^0.58.1",
     "@sveltejs/vite-plugin-svelte": "^6.2.4",
     "@types/adm-zip": "^0.5.7",
     "@types/bcryptjs": "^2.4.6",
@@ -83,7 +90,6 @@
     "dompurify": "^3.3.1",
     "drizzle-kit": "^0.31.8",
     "lefthook": "^2.1.0",
-    "libsql": "^0.5.22",
     "marked": "^17.0.1",
     "svelte": "^5.53.0",
     "tsup": "^8.0.0",

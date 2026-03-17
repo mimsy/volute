@@ -1,8 +1,11 @@
-import { getOrCreateMindUser } from "./auth.js";
+import { writeChannelEntry } from "../connectors/sdk.js";
+import { getOrCreateMindUser, getOrCreateSystemUser } from "./auth.js";
+import { deliverMessage } from "./delivery/message-delivery.js";
 import {
   addMessage,
   createChannel,
   getChannelByName,
+  getParticipants,
   joinChannel,
 } from "./events/conversations.js";
 import log from "./logger.js";
@@ -44,8 +47,41 @@ export async function joinSystemChannelForMind(mindName: string): Promise<void> 
   await joinSystemChannel(user.id);
 }
 
-/** Post a system announcement to the #system channel. */
+/** Post a system announcement to the #system channel and deliver to mind participants. */
 export async function announceToSystem(text: string): Promise<void> {
   const channelId = await ensureSystemChannel();
-  await addMessage(channelId, "system", "system", [{ type: "text", text }]);
+  const systemUser = await getOrCreateSystemUser();
+
+  // Ensure system user is a participant
+  await joinChannel(channelId, systemUser.id);
+
+  await addMessage(channelId, "user", "volute", [{ type: "text", text }]);
+
+  // Deliver to all mind participants of #system
+  const participants = await getParticipants(channelId);
+  const mindParticipants = participants.filter((p) => p.userType === "mind");
+  const channel = "volute:#system";
+  for (const mind of mindParticipants) {
+    try {
+      writeChannelEntry(mind.username, channel, {
+        platformId: channelId,
+        platform: "volute",
+        name: SYSTEM_CHANNEL_NAME,
+        type: "channel",
+      });
+    } catch (err) {
+      log.warn(`failed to write channel entry for ${mind.username}`, log.errorData(err));
+    }
+    deliverMessage(mind.username, {
+      content: [{ type: "text", text }],
+      channel,
+      conversationId: channelId,
+      sender: "volute",
+      participants: participants.map((p) => p.username),
+      participantCount: participants.length,
+      isDM: false,
+    }).catch((err) => {
+      log.warn(`failed to deliver system announcement to ${mind.username}`, log.errorData(err));
+    });
+  }
 }

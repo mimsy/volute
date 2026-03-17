@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { voluteHome } from "../src/lib/registry.js";
+import { addMind, removeMind, voluteHome, voluteSystemDir } from "../src/lib/registry.js";
 import {
   buildDenyRead,
   isSandboxEnabled,
@@ -11,11 +11,11 @@ import {
 } from "../src/lib/sandbox.js";
 
 function configPath() {
-  return resolve(voluteHome(), "config.json");
+  return resolve(voluteSystemDir(), "config.json");
 }
 
 function registryPath() {
-  return resolve(voluteHome(), "minds.json");
+  return resolve(voluteSystemDir(), "minds.json");
 }
 
 describe("sandbox", () => {
@@ -39,28 +39,28 @@ describe("sandbox", () => {
 
   it("isSandboxEnabled returns false when VOLUTE_SANDBOX=0", () => {
     process.env.VOLUTE_SANDBOX = "0";
-    mkdirSync(voluteHome(), { recursive: true });
+    mkdirSync(voluteSystemDir(), { recursive: true });
     writeFileSync(configPath(), JSON.stringify({ setup: { isolation: "sandbox" } }));
     assert.equal(isSandboxEnabled(), false);
   });
 
   it("isSandboxEnabled returns true when config has sandbox isolation", () => {
     delete process.env.VOLUTE_SANDBOX;
-    mkdirSync(voluteHome(), { recursive: true });
+    mkdirSync(voluteSystemDir(), { recursive: true });
     writeFileSync(configPath(), JSON.stringify({ setup: { isolation: "sandbox" } }));
     assert.equal(isSandboxEnabled(), true);
   });
 
   it("isSandboxEnabled returns false when config has user isolation", () => {
     delete process.env.VOLUTE_SANDBOX;
-    mkdirSync(voluteHome(), { recursive: true });
+    mkdirSync(voluteSystemDir(), { recursive: true });
     writeFileSync(configPath(), JSON.stringify({ setup: { isolation: "user" } }));
     assert.equal(isSandboxEnabled(), false);
   });
 
   it("isSandboxEnabled returns false when config has none isolation", () => {
     delete process.env.VOLUTE_SANDBOX;
-    mkdirSync(voluteHome(), { recursive: true });
+    mkdirSync(voluteSystemDir(), { recursive: true });
     writeFileSync(configPath(), JSON.stringify({ setup: { isolation: "none" } }));
     assert.equal(isSandboxEnabled(), false);
   });
@@ -72,7 +72,7 @@ describe("buildDenyRead", () => {
 
   afterEach(() => {
     try {
-      unlinkSync(resolve(voluteHome(), "minds.json"));
+      unlinkSync(resolve(voluteSystemDir(), "minds.json"));
     } catch {}
     if (origMindsDir === undefined) delete process.env.VOLUTE_MINDS_DIR;
     else process.env.VOLUTE_MINDS_DIR = origMindsDir;
@@ -80,75 +80,53 @@ describe("buildDenyRead", () => {
     else process.env.HOME = origHome;
   });
 
-  it("denies system state files", () => {
+  it("denies system directory", async () => {
     const home = voluteHome();
-    const deny = buildDenyRead("alice", resolve(home, "minds", "alice"));
-    assert.ok(deny.includes(resolve(home, "state")));
-    assert.ok(deny.includes(resolve(home, "volute.db")));
-    assert.ok(deny.includes(resolve(home, "env.json")));
-    assert.ok(deny.includes(resolve(home, "config.json")));
-    assert.ok(deny.includes(resolve(home, "daemon.json")));
-    assert.ok(deny.includes(resolve(home, "minds.json")));
-    assert.ok(deny.includes(resolve(home, "systems.json")));
+    const deny = await buildDenyRead("alice", resolve(home, "minds", "alice"));
+    assert.ok(deny.includes(voluteSystemDir()), "should block entire system directory");
   });
 
-  it("denies sensitive user directories", () => {
+  it("denies sensitive user directories", async () => {
     const userHome = process.env.HOME!;
-    const deny = buildDenyRead("alice", "/tmp/minds/alice");
+    const deny = await buildDenyRead("alice", "/tmp/minds/alice");
     assert.ok(deny.includes(resolve(userHome, ".ssh")));
     assert.ok(deny.includes(resolve(userHome, ".aws")));
     assert.ok(deny.includes(resolve(userHome, ".gnupg")));
     assert.ok(deny.includes(resolve(userHome, ".config")));
   });
 
-  it("denies other minds but not the current mind", () => {
+  it("denies other minds but not the current mind", async () => {
     const home = voluteHome();
-    mkdirSync(home, { recursive: true });
-    writeFileSync(
-      resolve(home, "minds.json"),
-      JSON.stringify([
-        { name: "alice", port: 4100 },
-        { name: "bob", port: 4101 },
-        { name: "carol", port: 4102 },
-      ]),
-    );
+    await addMind("alice", 4100);
+    await addMind("bob", 4101);
+    await addMind("carol", 4102);
 
     const mindsDir = resolve(home, "minds");
-    const deny = buildDenyRead("alice", resolve(mindsDir, "alice"));
+    const deny = await buildDenyRead("alice", resolve(mindsDir, "alice"));
     assert.ok(!deny.includes(resolve(mindsDir, "alice")), "should not deny own dir");
     assert.ok(deny.includes(resolve(mindsDir, "bob")), "should deny bob");
     assert.ok(deny.includes(resolve(mindsDir, "carol")), "should deny carol");
+    await removeMind("alice");
+    await removeMind("bob");
+    await removeMind("carol");
   });
 
-  it("handles variant names correctly", () => {
+  it("handles split names correctly", async () => {
     const home = voluteHome();
-    mkdirSync(home, { recursive: true });
-    writeFileSync(
-      resolve(home, "minds.json"),
-      JSON.stringify([
-        { name: "alice", port: 4100 },
-        { name: "bob", port: 4101 },
-      ]),
-    );
+    await addMind("alice", 4100);
+    await addMind("bob", 4101);
 
     const mindsDir = resolve(home, "minds");
-    const deny = buildDenyRead("alice@experiment", resolve(mindsDir, "alice"));
+    const deny = await buildDenyRead("alice", resolve(mindsDir, "alice"));
     assert.ok(!deny.includes(resolve(mindsDir, "alice")), "should not deny base mind dir");
     assert.ok(deny.includes(resolve(mindsDir, "bob")), "should deny other minds");
+    await removeMind("alice");
+    await removeMind("bob");
   });
 
-  it("handles missing minds.json without crashing", () => {
-    const deny = buildDenyRead("alice", "/tmp/minds/alice");
+  it("handles empty registry without crashing", async () => {
+    const deny = await buildDenyRead("alice", "/tmp/minds/alice");
     // Should still have system state and sensitive dirs
-    assert.ok(deny.length > 0);
-  });
-
-  it("handles corrupt minds.json without crashing", () => {
-    const home = voluteHome();
-    mkdirSync(home, { recursive: true });
-    writeFileSync(resolve(home, "minds.json"), "not json");
-
-    const deny = buildDenyRead("alice", "/tmp/minds/alice");
     assert.ok(deny.length > 0);
   });
 });

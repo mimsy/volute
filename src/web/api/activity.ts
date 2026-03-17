@@ -7,7 +7,6 @@ import { subscribe as subscribeConversation } from "../../lib/events/conversatio
 import { listConversationsWithParticipants } from "../../lib/events/conversations.js";
 import { getActiveMinds } from "../../lib/events/mind-activity-tracker.js";
 import log from "../../lib/logger.js";
-import { getCachedRecentPages, getCachedSites } from "../../lib/pages-watcher.js";
 import { activity } from "../../lib/schema.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
@@ -45,18 +44,12 @@ const app = new Hono<AuthEnv>().get("/events", async (c) => {
         log.error("[activity-sse] failed to fetch conversations", log.errorData(err));
       }
 
-      // Get cached pages data
-      const sites = getCachedSites();
-      const recentPages = getCachedRecentPages();
-
       // Send snapshot
       await stream.writeSSE({
         data: JSON.stringify({
           event: "snapshot",
           activity: recentActivity,
           conversations,
-          sites,
-          recentPages,
           activeMinds: getActiveMinds(),
         }),
       });

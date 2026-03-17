@@ -1,0 +1,20 @@
+{
+  "name": "@volute/notes",
+  "version": "0.1.0",
+  "description": "Notes extension for Volute",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build:ui": "vite build --config ui/vite.config.ts"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@volute/extensions": "*"
+  },
+  "peerDependencies": {
+    "hono": "^4.0.0"
+  }
+}

@@ -12,7 +12,7 @@ import { resolveChannelId as resolveChannelIdEnv } from "../src/lib/channels.js"
 import { stateDir } from "../src/lib/registry.js";
 import { buildVoluteSlug, slugify } from "../src/lib/slugify.js";
 
-// Test mind name — stateDir will resolve to VOLUTE_HOME/state/test-channel-mind
+// Test mind name — stateDir will resolve to VOLUTE_HOME/system/state/test-channel-mind
 const TEST_MIND = "test-channel-mind";
 
 describe("slugify", () => {
@@ -84,24 +84,27 @@ describe("buildVoluteSlug", () => {
     assert.equal(slug, "volute:conv-789");
   });
 
-  it("uses title-based slug for group conversations", () => {
+  it("uses @other slug for 3-participant conversations (non-channel)", () => {
     const slug = buildVoluteSlug({
       participants: [{ username: "bot" }, { username: "alice" }, { username: "bob" }],
       mindUsername: "bot",
       convTitle: "Project Chat",
       conversationId: "conv-abc",
     });
-    assert.equal(slug, "volute:project-chat");
+    // Without convType: "channel", falls through to DM slug using first non-mind participant
+    assert.equal(slug, "volute:@alice");
   });
 
-  it("falls back to conversation ID for untitled groups", () => {
+  it("uses #name slug for channel conversations with 3+ participants", () => {
     const slug = buildVoluteSlug({
       participants: [{ username: "bot" }, { username: "alice" }, { username: "bob" }],
       mindUsername: "bot",
-      convTitle: null,
+      convTitle: "Project Chat",
       conversationId: "conv-def",
+      convType: "channel",
+      convName: "project-chat",
     });
-    assert.equal(slug, "volute:conv-def");
+    assert.equal(slug, "volute:#project-chat");
   });
 
   it("falls back to conversation ID for single-participant conversations", () => {

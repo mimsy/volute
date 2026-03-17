@@ -8,22 +8,23 @@
   --text-0: #e8ecf4;
   --text-1: #a0aabb;
   --text-2: #6a7588;
-  --accent: #4ade80;
-  --accent-dim: #22613e;
-  --accent-bg: rgba(74, 222, 128, 0.08);
+  --accent: #e0a860;
+  --accent-dim: #5c4428;
+  --accent-bg: rgba(224, 168, 96, 0.08);
   --red: #f87171;
   --red-dim: #7f1d1d;
   --yellow: #fbbf24;
   --yellow-dim: #78350f;
   --blue: #60a5fa;
   --purple: #c084fc;
+  --green: #4ade80;
   --overlay: rgba(0, 0, 0, 0.6);
   --yellow-bg: rgba(251, 191, 36, 0.08);
   --blue-bg: rgba(96, 165, 250, 0.08);
   --red-bg: rgba(248, 113, 113, 0.08);
   --muted-bg: rgba(106, 117, 136, 0.08);
   --red-border: rgba(248, 113, 113, 0.2);
-  --accent-border: rgba(74, 222, 128, 0.2);
+  --accent-border: rgba(224, 168, 96, 0.2);
   --timeline-rail: #333;
   --mono: "Fira Code", "SF Mono", monospace;
   --sans: "Averia Sans Libre", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -227,4 +228,10 @@ a:focus-visible {
   border: none;
   border-top: 1px solid var(--border);
   margin: 12px 0;
+}
+
+/* Electron: titlebar safe area and window drag */
+html.electron {
+  --titlebar-height: 38px;
+  --traffic-light-width: 78px;
 }

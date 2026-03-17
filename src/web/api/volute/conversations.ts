@@ -8,6 +8,7 @@ import {
   findDMConversation,
   getConversation,
   getMessages,
+  getMessagesPaginated,
   getParticipants,
   isParticipantOrOwner,
   listConversationsForUser,
@@ -58,13 +59,23 @@ const app = new Hono<AuthEnv>()
     // Resolve participant names to IDs (auto-creating mind users for registered minds)
     if (body.participantNames) {
       for (const pname of body.participantNames) {
-        const existing = await getUserByUsername(pname);
+        let existing = await getUserByUsername(pname);
+        // Try un-slugifying: discord-user → discord:user (puppet usernames use platform:id format)
+        if (!existing) {
+          const hyphenIdx = pname.indexOf("-");
+          if (hyphenIdx > 0) {
+            const prefix = pname.slice(0, hyphenIdx);
+            if (["discord", "slack", "telegram"].includes(prefix)) {
+              existing = await getUserByUsername(`${prefix}:${pname.slice(hyphenIdx + 1)}`);
+            }
+          }
+        }
         if (existing) {
           participantSet.add(existing.id);
           continue;
         }
         // If name matches a registered mind, auto-create mind user
-        if (findMind(pname)) {
+        if (await findMind(pname)) {
           const au = await getOrCreateMindUser(pname);
           participantSet.add(au.id);
           continue;
@@ -81,6 +92,11 @@ const app = new Hono<AuthEnv>()
     }
 
     const participantIds = [...participantSet];
+
+    // Reject group DMs — use channels for 3+ participants
+    if (participantIds.length > 2) {
+      return c.json({ error: "Use channels for multi-participant conversations" }, 400);
+    }
 
     // DM reuse: if exactly 2 participants, return existing conversation if found
     if (participantIds.length === 2) {
@@ -112,8 +128,22 @@ const app = new Hono<AuthEnv>()
     if (user.id !== 0 && !(await isParticipantOrOwner(id, user.id))) {
       return c.json({ error: "Conversation not found" }, 404);
     }
-    const msgs = await getMessages(id);
-    return c.json(msgs);
+    const limitStr = c.req.query("limit");
+    const beforeStr = c.req.query("before");
+    if (!limitStr && !beforeStr) {
+      const msgs = await getMessages(id);
+      return c.json({ items: msgs, hasMore: false });
+    }
+    const limit = limitStr ? parseInt(limitStr, 10) : undefined;
+    const before = beforeStr ? parseInt(beforeStr, 10) : undefined;
+    if (
+      (limit !== undefined && !Number.isFinite(limit)) ||
+      (before !== undefined && !Number.isFinite(before))
+    ) {
+      return c.json({ error: "Invalid pagination parameters" }, 400);
+    }
+    const result = await getMessagesPaginated(id, { before, limit });
+    return c.json({ items: result.messages, hasMore: result.hasMore });
   })
   .get("/:name/conversations/:id/participants", async (c) => {
     const id = c.req.param("id");
