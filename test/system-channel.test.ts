@@ -1,14 +1,9 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
-import {
-  conversationParticipants,
-  conversations,
-  messages,
-  sessions,
-  users,
-} from "../src/lib/schema.js";
+import { messages, users } from "../src/lib/schema.js";
 import {
   announceToSystem,
   ensureSystemChannel,
@@ -16,14 +11,14 @@ import {
   resetSystemChannelCache,
 } from "../src/lib/system-channel.js";
 
+const TEST_USERNAMES = ["volute", "testbrain"];
+
 async function cleanup() {
   resetSystemChannelCache();
   const db = await getDb();
-  await db.delete(messages);
-  await db.delete(conversationParticipants);
-  await db.delete(sessions);
-  await db.delete(conversations);
-  await db.delete(users);
+  for (const username of TEST_USERNAMES) {
+    await db.delete(users).where(eq(users.username, username));
+  }
 }
 
 describe("system channel", () => {

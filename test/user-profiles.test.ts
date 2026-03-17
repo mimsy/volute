@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import {
   createUser,
   getOrCreateMindUser,
@@ -14,14 +15,27 @@ import {
   deleteConversation,
   getParticipants,
 } from "../src/lib/events/conversations.js";
-import { conversations, messages, users } from "../src/lib/schema.js";
+import { users } from "../src/lib/schema.js";
 import { formatPrefix } from "../templates/_base/src/lib/format-prefix.js";
+
+const TEST_USERNAMES = [
+  "profile-test",
+  "avatar-test",
+  "clear-test",
+  "fields-test",
+  "brain-profile",
+  "sync-mind",
+  "sync-clear",
+  "broadcast-test",
+  "no-broadcast",
+  "mind-profile",
+];
 
 async function cleanup() {
   const db = await getDb();
-  await db.delete(messages);
-  await db.delete(conversations);
-  await db.delete(users);
+  for (const username of TEST_USERNAMES) {
+    await db.delete(users).where(eq(users.username, username));
+  }
 }
 
 describe("user profiles", () => {

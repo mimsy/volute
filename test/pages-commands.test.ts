@@ -3,11 +3,12 @@ import { existsSync, mkdirSync, statSync, unlinkSync, writeFileSync } from "node
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { resolve } from "node:path";
 import { after, afterEach, before, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import { approveUser, createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
 import { loadAllExtensions } from "../src/lib/extensions.js";
 import { addMind, removeMind, voluteSystemDir } from "../src/lib/registry.js";
-import { sessions, users } from "../src/lib/schema.js";
+import { users } from "../src/lib/schema.js";
 import {
   deleteSystemsConfig,
   readSystemsConfig,
@@ -144,8 +145,7 @@ describe("system API routes", () => {
 
   async function cleanupAuth() {
     const db = await getDb();
-    await db.delete(sessions);
-    await db.delete(users);
+    await db.delete(users).where(eq(users.username, "pages-admin"));
   }
 
   async function setupAuth(): Promise<string> {

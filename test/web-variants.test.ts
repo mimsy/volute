@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
 import { addMind, findVariants, removeMind } from "../src/lib/registry.js";
-import { conversations, messages, sessions, users } from "../src/lib/schema.js";
+import { users } from "../src/lib/schema.js";
 import { authMiddleware, createSession } from "../src/web/middleware/auth.js";
 
 let sessionId: string;
@@ -12,10 +13,7 @@ const testMind = `web-variants-test-${Date.now()}`;
 
 async function cleanup() {
   const db = await getDb();
-  await db.delete(sessions);
-  await db.delete(messages);
-  await db.delete(conversations);
-  await db.delete(users);
+  await db.delete(users).where(eq(users.username, "variants-admin"));
   try {
     await removeMind(testMind);
   } catch {}

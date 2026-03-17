@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../src/lib/db.js";
-import { conversations, messages, sessions, users } from "../src/lib/schema.js";
+import { users } from "../src/lib/schema.js";
 import auth from "../src/web/api/auth.js";
 import { deleteSession } from "../src/web/middleware/auth.js";
+
+const TEST_USERNAMES = ["admin", "dupe", "loginuser", "meuser", "logoutuser"];
 
 function createApp() {
   const app = new Hono();
@@ -14,10 +17,9 @@ function createApp() {
 
 async function cleanup() {
   const db = await getDb();
-  await db.delete(sessions);
-  await db.delete(messages);
-  await db.delete(conversations);
-  await db.delete(users);
+  for (const username of TEST_USERNAMES) {
+    await db.delete(users).where(eq(users.username, username));
+  }
 }
 
 function extractCookie(res: Response, name: string): string | undefined {

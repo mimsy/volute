@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { approveUser, createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
@@ -12,14 +13,7 @@ import {
   getUnreadCounts,
   markConversationRead,
 } from "../src/lib/events/conversations.js";
-import {
-  conversationParticipants,
-  conversationReads,
-  conversations,
-  messages,
-  sessions,
-  users,
-} from "../src/lib/schema.js";
+import { users } from "../src/lib/schema.js";
 import v1ConversationsRoute from "../src/web/api/v1/conversations.js";
 import { authMiddleware, createSession, deleteSession } from "../src/web/middleware/auth.js";
 
@@ -143,14 +137,23 @@ function createApp() {
   return app;
 }
 
+const TEST_USERNAMES = [
+  "v1-admin",
+  "outsider",
+  "outsider2",
+  "unread-test",
+  "mark-read-test",
+  "new-after-read",
+  "multi-conv",
+  "user-a",
+  "user-b",
+];
+
 async function cleanup() {
   const db = await getDb();
-  await db.delete(sessions);
-  await db.delete(conversationReads);
-  await db.delete(messages);
-  await db.delete(conversationParticipants);
-  await db.delete(conversations);
-  await db.delete(users);
+  for (const username of TEST_USERNAMES) {
+    await db.delete(users).where(eq(users.username, username));
+  }
 }
 
 async function setupAuth() {

@@ -263,8 +263,10 @@ describe("import: importOpenClawConnectors", () => {
   const systemDir = resolve(scratchDir, "system");
   const bridgesPath = resolve(systemDir, "bridges.json");
   const envPath = resolve(systemDir, "env.json");
+  let origVoluteHome: string | undefined;
 
   beforeEach(() => {
+    origVoluteHome = process.env.VOLUTE_HOME;
     mkdirSync(resolve(scratchDir, "home/.config"), { recursive: true });
     mkdirSync(resolve(scratchDir, ".mind"), { recursive: true });
     mkdirSync(systemDir, { recursive: true });
@@ -274,7 +276,8 @@ describe("import: importOpenClawConnectors", () => {
 
   afterEach(() => {
     rmSync(scratchDir, { recursive: true, force: true });
-    delete process.env.VOLUTE_HOME;
+    if (origVoluteHome === undefined) delete process.env.VOLUTE_HOME;
+    else process.env.VOLUTE_HOME = origVoluteHome;
   });
 
   // Mirror of importOpenClawConnectors from import.ts (bridge-based version)

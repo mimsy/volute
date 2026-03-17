@@ -4,10 +4,11 @@ import { readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
-import { conversations, messages, sessions, users } from "../src/lib/schema.js";
+import { users } from "../src/lib/schema.js";
 import { authMiddleware, createSession } from "../src/web/middleware/auth.js";
 
 let sessionId: string;
@@ -17,10 +18,7 @@ const ALLOWED_FILES = new Set(["SOUL.md", "MEMORY.md", "CLAUDE.md", "VOLUTE.md"]
 
 async function cleanup() {
   const db = await getDb();
-  await db.delete(sessions);
-  await db.delete(messages);
-  await db.delete(conversations);
-  await db.delete(users);
+  await db.delete(users).where(eq(users.username, "files-admin"));
   if (testDir && existsSync(testDir)) rmSync(testDir, { recursive: true });
 }
 

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { approveUser, createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
@@ -11,13 +12,7 @@ import {
   getConversation,
   getMessages,
 } from "../src/lib/events/conversations.js";
-import {
-  conversationParticipants,
-  conversations,
-  messages,
-  sessions,
-  users,
-} from "../src/lib/schema.js";
+import { users } from "../src/lib/schema.js";
 import conversationsRoute from "../src/web/api/volute/conversations.js";
 import userConversationsRoute from "../src/web/api/volute/user-conversations.js";
 import { authMiddleware, createSession, deleteSession } from "../src/web/middleware/auth.js";
@@ -32,13 +27,20 @@ function createApp() {
   return app;
 }
 
+const TEST_USERNAMES = [
+  "conv-admin",
+  "other-user",
+  "other-user2",
+  "other-user3",
+  "group-member",
+  "privacy-outsider",
+];
+
 async function cleanup() {
   const db = await getDb();
-  await db.delete(sessions);
-  await db.delete(messages);
-  await db.delete(conversationParticipants);
-  await db.delete(conversations);
-  await db.delete(users);
+  for (const username of TEST_USERNAMES) {
+    await db.delete(users).where(eq(users.username, username));
+  }
 }
 
 async function setupAuth() {
