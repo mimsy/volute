@@ -10,7 +10,7 @@ import {
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
 import { extractImages, extractText } from "./lib/content.js";
-import { createEventHandler } from "./lib/event-handler.js";
+import { createEventHandler, emit } from "./lib/event-handler.js";
 import { log } from "./lib/logger.js";
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
@@ -189,12 +189,20 @@ export function createMind(options: {
       retry: { enabled: true, maxRetries: 3 },
     });
 
-    const sessionContextExtension = createSessionContextExtension({
-      currentSession: session.name,
-      mindDir: options.mindDir,
-    });
+    const sessionContextExtension = createSessionContextExtension(
+      {
+        currentSession: session.name,
+        mindDir: options.mindDir,
+      },
+      emit,
+      session,
+    );
 
-    const replyInstructionsExtension = createReplyInstructionsExtension(session.messageChannels);
+    const replyInstructionsExtension = createReplyInstructionsExtension(
+      session.messageChannels,
+      emit,
+      session,
+    );
 
     const resourceLoader = new DefaultResourceLoader({
       cwd: options.cwd,

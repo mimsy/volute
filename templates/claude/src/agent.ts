@@ -3,6 +3,7 @@ import { resolve as resolvePath } from "node:path";
 import type { HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { toSDKContent } from "./lib/content.js";
+import { daemonEmit } from "./lib/daemon-client.js";
 import { createAutoCommitHook } from "./lib/hooks/auto-commit.js";
 import { createIdentityReloadHook } from "./lib/hooks/identity-reload.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- used as value
@@ -127,6 +128,37 @@ export function createMind(options: {
     }
   }
 
+  // --- Context event emission ---
+
+  function wrapHookWithContextEmit(
+    hook: HookCallback,
+    source: string,
+    session: Session,
+  ): HookCallback {
+    return async (...args) => {
+      const result = await hook(...args);
+      const additionalContext = (result as any)?.hookSpecificOutput?.additionalContext;
+      if (additionalContext) {
+        const channel = session.currentMessageId
+          ? session.messageChannels.get(session.currentMessageId)
+          : undefined;
+        try {
+          daemonEmit({
+            type: "context",
+            content: additionalContext,
+            metadata: { source },
+            session: session.name,
+            channel,
+            messageId: session.currentMessageId,
+          });
+        } catch (err) {
+          log("mind", `context emit failed for ${source}:`, err);
+        }
+      }
+      return result;
+    };
+  }
+
   // --- SDK stream management ---
 
   function createStream(
@@ -159,7 +191,14 @@ export function createMind(options: {
         hooks: {
           PostToolUse: postToolUseHooks,
           PreCompact: [{ hooks: [preCompactHook] }],
-          UserPromptSubmit: [{ hooks: [sessionContext.hook, replyInstructions.hook] }],
+          UserPromptSubmit: [
+            {
+              hooks: [
+                wrapHookWithContextEmit(sessionContext.hook, "session-context", session),
+                wrapHookWithContextEmit(replyInstructions.hook, "reply-instructions", session),
+              ],
+            },
+          ],
         },
       },
     });
