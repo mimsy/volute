@@ -39,7 +39,12 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const htmlFiles = collectHtmlFiles(snapshotDir, snapshotDir);
 
         // Sync DB and get diff
-        const diff = syncPublishedPages(db, mindName, htmlFiles);
+        let diff: { added: string[]; removed: string[]; updated: string[] };
+        try {
+          diff = syncPublishedPages(db, mindName, htmlFiles);
+        } catch (err) {
+          return { error: `Failed to update page database: ${(err as Error).message}` };
+        }
 
         // Fire activity events for changes
         for (const file of diff.added) {
@@ -166,7 +171,8 @@ function collectHtmlFiles(dir: string, baseDir: string): string[] {
   let items: string[];
   try {
     items = readdirSync(dir);
-  } catch {
+  } catch (err) {
+    console.error(`[pages] failed to read directory ${dir}: ${(err as Error).message}`);
     return files;
   }
 
@@ -180,8 +186,8 @@ function collectHtmlFiles(dir: string, baseDir: string): string[] {
       } else if (s.isDirectory()) {
         files.push(...collectHtmlFiles(fullPath, baseDir));
       }
-    } catch {
-      // skip
+    } catch (err) {
+      console.error(`[pages] failed to stat ${fullPath}: ${(err as Error).message}`);
     }
   }
 
@@ -194,7 +200,8 @@ function collectAllFiles(dir: string, baseDir: string): string[] {
   let items: string[];
   try {
     items = readdirSync(dir);
-  } catch {
+  } catch (err) {
+    console.error(`[pages] failed to read directory ${dir}: ${(err as Error).message}`);
     return files;
   }
 
@@ -208,8 +215,8 @@ function collectAllFiles(dir: string, baseDir: string): string[] {
       } else if (s.isDirectory()) {
         files.push(...collectAllFiles(fullPath, baseDir));
       }
-    } catch {
-      // skip
+    } catch (err) {
+      console.error(`[pages] failed to stat ${fullPath}: ${(err as Error).message}`);
     }
   }
 

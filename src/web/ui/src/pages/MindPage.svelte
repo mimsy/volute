@@ -1,4 +1,6 @@
 <script lang="ts">
+import type { ConversationWithParticipants, Mind } from "@volute/api";
+import Chat from "../components/Chat.svelte";
 import MindInfo from "../components/MindInfo.svelte";
 import MindSkills from "../components/MindSkills.svelte";
 import PublicFiles from "../components/PublicFiles.svelte";
@@ -7,12 +9,28 @@ import { data } from "../lib/stores.svelte";
 
 let {
   name,
-  section = "info",
+  section = "chat",
   subpath,
+  username,
+  conversationId,
+  onConversationId,
+  minds,
+  conversations,
+  onSelectConversation,
+  onOpenMind,
+  onTypingNames,
 }: {
   name: string;
   section?: string;
   subpath?: string;
+  username?: string;
+  conversationId?: string | null;
+  onConversationId?: (id: string) => void;
+  minds?: Mind[];
+  conversations?: ConversationWithParticipants[];
+  onSelectConversation?: (id: string) => void;
+  onOpenMind?: (mind: Mind) => void;
+  onTypingNames?: (names: string[]) => void;
 } = $props();
 
 let mind = $derived(data.minds.find((m) => m.name === name));
@@ -22,7 +40,18 @@ let mind = $derived(data.minds.find((m) => m.name === name));
   <div class="not-found">Mind "{name}" not found.</div>
 {:else}
   <div class="mind-page">
-    {#if section === "info"}
+    {#if section === "chat" || !section}
+      <Chat
+        {name}
+        {username}
+        conversationId={conversationId ?? null}
+        onConversationId={onConversationId ?? (() => {})}
+        stage={mind.stage}
+        minds={minds ?? data.minds}
+        {onOpenMind}
+        {onTypingNames}
+      />
+    {:else if section === "info"}
       <TurnTimeline {name} />
     {:else if section?.startsWith("ext:")}
       {@const extParts = section.split(":")}

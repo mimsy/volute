@@ -399,8 +399,8 @@ function jumpToLatest() {
             <div class="turn-time">
               {formatRelativeTime(turn.created_at)}
             </div>
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div
+            <button
+              aria-label="Toggle turn details"
               class="turn-rail"
               class:turn-rail-expanded={expandedTurns.has(turn.id)}
               onclick={(e) => {
@@ -412,7 +412,7 @@ function jumpToLatest() {
               }}
             >
               <div class="turn-dot"></div>
-            </div>
+            </button>
             <div class="turn-body">
               <div class="turn-summary">
                 {#if turn.summary}
@@ -650,6 +650,9 @@ function jumpToLatest() {
     position: relative;
     min-height: 8px;
     overflow: visible;
+    border: none;
+    padding: 0;
+    cursor: pointer;
   }
 
   .turn-rail-expanded {
@@ -816,10 +819,6 @@ function jumpToLatest() {
     max-height: 200px;
     overflow: hidden;
     transition: border-color 0.15s;
-  }
-
-  .feed-card[role="button"] {
-    cursor: pointer;
   }
 
   .feed-card-header {
