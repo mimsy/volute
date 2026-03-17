@@ -3,13 +3,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { getOrCreateSystemUser, verifyUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
 import { validateMindName } from "../src/lib/registry.js";
-import {
-  conversationParticipants,
-  conversations,
-  messages,
-  sessions,
-  users,
-} from "../src/lib/schema.js";
+import { conversationParticipants, conversations, messages, users } from "../src/lib/schema.js";
 import {
   ensureSystemDM,
   generateSystemReply,
@@ -20,14 +14,14 @@ import {
 
 const { eq } = await import("drizzle-orm");
 
+const TEST_USERNAMES = ["volute", "testmind", "mind1", "mind2"];
+
 async function cleanup() {
   resetSystemDMCache();
   const db = await getDb();
-  await db.delete(messages);
-  await db.delete(conversationParticipants);
-  await db.delete(sessions);
-  await db.delete(conversations);
-  await db.delete(users);
+  for (const username of TEST_USERNAMES) {
+    await db.delete(users).where(eq(users.username, username));
+  }
 }
 
 describe("system user", () => {

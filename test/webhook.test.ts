@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server } from "node:http";
-import { after, before, describe, it } from "node:test";
+import { after, before, beforeEach, describe, it } from "node:test";
 import { broadcast } from "../src/lib/events/activity-events.js";
 import { fireWebhook, initWebhook } from "../src/lib/webhook.js";
 
@@ -41,10 +41,16 @@ describe("webhook", () => {
     });
   });
 
+  beforeEach(() => {
+    received = [];
+    statusCode = 200;
+    delete process.env.VOLUTE_WEBHOOK_URL;
+    delete process.env.VOLUTE_WEBHOOK_SECRET;
+  });
+
   after(() => {
     delete process.env.VOLUTE_WEBHOOK_URL;
     delete process.env.VOLUTE_WEBHOOK_SECRET;
-    statusCode = 200;
     server.close();
   });
 
@@ -76,8 +82,6 @@ describe("webhook", () => {
   });
 
   it("does nothing when webhook URL is not set", async () => {
-    delete process.env.VOLUTE_WEBHOOK_URL;
-    received = [];
     fireWebhook({ event: "mind_started", mind: "test", data: {}, timestamp: "" });
     await new Promise((r) => setTimeout(r, 200));
     assert.equal(received.length, 0);
@@ -86,19 +90,15 @@ describe("webhook", () => {
   it("includes Authorization header when VOLUTE_WEBHOOK_SECRET is set", async () => {
     process.env.VOLUTE_WEBHOOK_URL = `http://127.0.0.1:${port}`;
     process.env.VOLUTE_WEBHOOK_SECRET = "test-secret-token";
-    received = [];
     fireWebhook({ event: "mind_started", mind: "test", data: {}, timestamp: "" });
     await new Promise((r) => setTimeout(r, 200));
 
     assert.equal(received.length, 1);
     assert.equal(received[0].authorization, "Bearer test-secret-token");
-    delete process.env.VOLUTE_WEBHOOK_SECRET;
   });
 
   it("omits Authorization header when VOLUTE_WEBHOOK_SECRET is not set", async () => {
     process.env.VOLUTE_WEBHOOK_URL = `http://127.0.0.1:${port}`;
-    delete process.env.VOLUTE_WEBHOOK_SECRET;
-    received = [];
     fireWebhook({ event: "mind_stopped", mind: "test", data: {}, timestamp: "" });
     await new Promise((r) => setTimeout(r, 200));
 
@@ -109,12 +109,10 @@ describe("webhook", () => {
   it("does not throw on non-2xx response", async () => {
     process.env.VOLUTE_WEBHOOK_URL = `http://127.0.0.1:${port}`;
     statusCode = 500;
-    received = [];
     fireWebhook({ event: "mind_started", mind: "test", data: {}, timestamp: "" });
     await new Promise((r) => setTimeout(r, 200));
 
     assert.equal(received.length, 1);
-    statusCode = 200;
   });
 
   it("does not throw when webhook URL is unreachable", async () => {
@@ -125,7 +123,6 @@ describe("webhook", () => {
   });
 
   it("initWebhook returns no-op when URL is not set", () => {
-    delete process.env.VOLUTE_WEBHOOK_URL;
     const unsub = initWebhook();
     assert.equal(typeof unsub, "function");
     unsub(); // should not throw
@@ -136,12 +133,10 @@ describe("webhook", () => {
     const unsub = initWebhook();
     assert.equal(typeof unsub, "function");
     unsub();
-    delete process.env.VOLUTE_WEBHOOK_URL;
   });
 
   it("initWebhook forwards activity events to webhook", async () => {
     process.env.VOLUTE_WEBHOOK_URL = `http://127.0.0.1:${port}`;
-    received = [];
     const unsub = initWebhook();
 
     broadcast({

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
 import {
@@ -12,7 +13,7 @@ import {
   setMindStage,
   voluteHome,
 } from "../src/lib/registry.js";
-import { sessions, users } from "../src/lib/schema.js";
+import { users } from "../src/lib/schema.js";
 import { createSession } from "../src/web/middleware/auth.js";
 
 function postHeaders(cookie: string) {
@@ -65,8 +66,7 @@ describe("seed mind creation API", () => {
 
   async function cleanup() {
     const db = await getDb();
-    await db.delete(sessions);
-    await db.delete(users);
+    await db.delete(users).where(eq(users.username, "orient-admin"));
   }
 
   beforeEach(async () => {
@@ -121,8 +121,7 @@ describe("seed gating", () => {
 
   async function cleanup() {
     const db = await getDb();
-    await db.delete(sessions);
-    await db.delete(users);
+    await db.delete(users).where(eq(users.username, "gate-admin"));
     await removeMind(mindName);
   }
 

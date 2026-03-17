@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import { createRouter } from "../templates/_base/src/lib/router.js";
 import type {
   ChannelMeta,
@@ -67,6 +67,26 @@ function batchText(calls: { content: VoluteContentPart[] }[]): string {
 }
 
 describe("router", () => {
+  let activeRouter: ReturnType<typeof createRouter> | null = null;
+  const tempDirs: string[] = [];
+
+  function makeTempDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    tempDirs.push(dir);
+    return dir;
+  }
+
+  afterEach(() => {
+    activeRouter?.close();
+    activeRouter = null;
+    for (const dir of tempDirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {}
+    }
+    tempDirs.length = 0;
+  });
+
   it("routes to mind handler with default session", async () => {
     const mind = mockMindHandler();
     const router = createRouter({ mindHandler: mind.resolver });
@@ -78,7 +98,7 @@ describe("router", () => {
   });
 
   it("routes to file handler when configured", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
@@ -103,7 +123,7 @@ describe("router", () => {
   });
 
   it("emits done and discards when file destination but no fileHandler", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
@@ -125,7 +145,7 @@ describe("router", () => {
   });
 
   it("expands $new session to unique name", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
@@ -147,7 +167,7 @@ describe("router", () => {
   });
 
   it("batch (number) buffers messages and flushes on maxWait", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
@@ -158,11 +178,14 @@ describe("router", () => {
     );
 
     const mind = mockMindHandler();
-    const router = createRouter({ configPath, mindHandler: mind.resolver });
+    activeRouter = createRouter({ configPath, mindHandler: mind.resolver });
 
     // Route two messages — they should be buffered, not sent immediately
-    router.route([{ type: "text", text: "msg1" }], { channel: "discord:123", sender: "alice" });
-    router.route([{ type: "text", text: "msg2" }], { channel: "discord:123", sender: "bob" });
+    activeRouter.route([{ type: "text", text: "msg1" }], {
+      channel: "discord:123",
+      sender: "alice",
+    });
+    activeRouter.route([{ type: "text", text: "msg2" }], { channel: "discord:123", sender: "bob" });
 
     assert.equal(mind.calls.length, 0, "messages should be buffered");
 
@@ -176,12 +199,10 @@ describe("router", () => {
     assert.ok(text.includes("[Batch:"), "should have batch header");
     assert.ok(text.includes("msg1"));
     assert.ok(text.includes("msg2"));
-
-    router.close();
   });
 
   it("flush on close sends buffered batch", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
@@ -192,22 +213,23 @@ describe("router", () => {
     );
 
     const mind = mockMindHandler();
-    const router = createRouter({ configPath, mindHandler: mind.resolver });
+    activeRouter = createRouter({ configPath, mindHandler: mind.resolver });
 
-    router.route([{ type: "text", text: "buffered msg" }], {
+    activeRouter.route([{ type: "text", text: "buffered msg" }], {
       channel: "discord:123",
       sender: "alice",
     });
     assert.equal(mind.calls.length, 0);
 
-    router.close();
+    activeRouter.close();
+    activeRouter = null;
     assert.equal(mind.calls.length, 1, "close should flush pending batches");
   });
 
   // --- Debounce ---
 
   it("debounce flushes after quiet period", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
@@ -218,14 +240,17 @@ describe("router", () => {
     );
 
     const mind = mockMindHandler();
-    const router = createRouter({ configPath, mindHandler: mind.resolver });
+    activeRouter = createRouter({ configPath, mindHandler: mind.resolver });
 
-    router.route([{ type: "text", text: "msg1" }], { channel: "discord:123", sender: "alice" });
+    activeRouter.route([{ type: "text", text: "msg1" }], {
+      channel: "discord:123",
+      sender: "alice",
+    });
     assert.equal(mind.calls.length, 0);
 
     // Send another message before debounce fires — should reset the timer
     await new Promise((r) => setTimeout(r, 40));
-    router.route([{ type: "text", text: "msg2" }], { channel: "discord:123", sender: "bob" });
+    activeRouter.route([{ type: "text", text: "msg2" }], { channel: "discord:123", sender: "bob" });
     assert.equal(mind.calls.length, 0, "debounce should reset on new message");
 
     // Wait for debounce to fire after msg2
@@ -235,12 +260,10 @@ describe("router", () => {
     const text = batchText(mind.calls);
     assert.ok(text.includes("msg1"));
     assert.ok(text.includes("msg2"));
-
-    router.close();
   });
 
   it("maxWait forces flush even with continuous messages", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
@@ -253,13 +276,16 @@ describe("router", () => {
     );
 
     const mind = mockMindHandler();
-    const router = createRouter({ configPath, mindHandler: mind.resolver });
+    activeRouter = createRouter({ configPath, mindHandler: mind.resolver });
 
     // Send messages rapidly — debounce would keep resetting, but maxWait should force flush
-    router.route([{ type: "text", text: "msg1" }], { channel: "discord:123", sender: "alice" });
+    activeRouter.route([{ type: "text", text: "msg1" }], {
+      channel: "discord:123",
+      sender: "alice",
+    });
 
     await new Promise((r) => setTimeout(r, 50));
-    router.route([{ type: "text", text: "msg2" }], { channel: "discord:123", sender: "bob" });
+    activeRouter.route([{ type: "text", text: "msg2" }], { channel: "discord:123", sender: "bob" });
 
     // maxWait of 100ms should fire (debounce at 5s won't have fired)
     await new Promise((r) => setTimeout(r, 100));
@@ -268,14 +294,12 @@ describe("router", () => {
     const text = batchText(mind.calls);
     assert.ok(text.includes("msg1"));
     assert.ok(text.includes("msg2"));
-
-    router.close();
   });
 
   // --- Triggers ---
 
   it("trigger causes immediate flush", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
@@ -290,17 +314,17 @@ describe("router", () => {
     );
 
     const mind = mockMindHandler();
-    const router = createRouter({ configPath, mindHandler: mind.resolver });
+    activeRouter = createRouter({ configPath, mindHandler: mind.resolver });
 
     // First message doesn't trigger
-    router.route([{ type: "text", text: "hello everyone" }], {
+    activeRouter.route([{ type: "text", text: "hello everyone" }], {
       channel: "discord:123",
       sender: "alice",
     });
     assert.equal(mind.calls.length, 0, "non-trigger message should be buffered");
 
     // Second message contains trigger
-    router.route([{ type: "text", text: "hey @agent what do you think?" }], {
+    activeRouter.route([{ type: "text", text: "hey @agent what do you think?" }], {
       channel: "discord:123",
       sender: "bob",
     });
@@ -309,12 +333,10 @@ describe("router", () => {
     const text = batchText(mind.calls);
     assert.ok(text.includes("hello everyone"), "should include buffered message");
     assert.ok(text.includes("@agent"), "should include trigger message");
-
-    router.close();
   });
 
   it("trigger matching is case-insensitive", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
@@ -327,19 +349,17 @@ describe("router", () => {
     );
 
     const mind = mockMindHandler();
-    const router = createRouter({ configPath, mindHandler: mind.resolver });
+    activeRouter = createRouter({ configPath, mindHandler: mind.resolver });
 
-    router.route([{ type: "text", text: "hey @AGENT help" }], {
+    activeRouter.route([{ type: "text", text: "hey @AGENT help" }], {
       channel: "discord:123",
       sender: "alice",
     });
     assert.equal(mind.calls.length, 1, "trigger should match case-insensitively");
-
-    router.close();
   });
 
   it("batch with only triggers and no debounce/maxWait flushes immediately on trigger", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
@@ -352,10 +372,10 @@ describe("router", () => {
     );
 
     const mind = mockMindHandler();
-    const router = createRouter({ configPath, mindHandler: mind.resolver });
+    activeRouter = createRouter({ configPath, mindHandler: mind.resolver });
 
     // Non-trigger — no debounce or maxWait configured, so flushes immediately
-    router.route([{ type: "text", text: "casual message" }], {
+    activeRouter.route([{ type: "text", text: "casual message" }], {
       channel: "discord:123",
       sender: "alice",
     });
@@ -363,17 +383,15 @@ describe("router", () => {
     assert.equal(mind.calls.length, 1, "should flush immediately when no timers configured");
 
     // Trigger message also flushes immediately
-    router.route([{ type: "text", text: "urgent issue!" }], {
+    activeRouter.route([{ type: "text", text: "urgent issue!" }], {
       channel: "discord:123",
       sender: "bob",
     });
     assert.equal(mind.calls.length, 2, "trigger should also flush immediately");
-
-    router.close();
   });
 
   it("batch header includes channel URI alongside display name", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
@@ -386,10 +404,10 @@ describe("router", () => {
     );
 
     const mind = mockMindHandler();
-    const router = createRouter({ configPath, mindHandler: mind.resolver });
+    activeRouter = createRouter({ configPath, mindHandler: mind.resolver });
 
     // Send with channelName (human-readable) — URI should still appear
-    router.route([{ type: "text", text: "hello" }], {
+    activeRouter.route([{ type: "text", text: "hello" }], {
       channel: "discord:123",
       sender: "alice",
       channelName: "general",
@@ -398,7 +416,7 @@ describe("router", () => {
     assert.equal(mind.calls.length, 0, "first message should be buffered (no trigger)");
 
     // Second message triggers flush — both messages delivered together
-    router.route([{ type: "text", text: "flush please" }], {
+    activeRouter.route([{ type: "text", text: "flush please" }], {
       channel: "discord:123",
       sender: "bob",
       channelName: "general",
@@ -411,14 +429,12 @@ describe("router", () => {
     assert.ok(text.includes("#general"), "batch header should include channel display name");
     assert.ok(text.includes("hello"), "should include first message");
     assert.ok(text.includes("flush"), "should include trigger message");
-
-    router.close();
   });
 
   // --- Typing indicators ---
 
   it("direct dispatch appends typing suffix for single user", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
 
@@ -437,7 +453,7 @@ describe("router", () => {
   });
 
   it("direct dispatch appends typing suffix for multiple users", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
 
@@ -456,7 +472,7 @@ describe("router", () => {
   });
 
   it("direct dispatch omits typing suffix when no one is typing", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
 
@@ -475,7 +491,7 @@ describe("router", () => {
   });
 
   it("batch mode includes typing from last message", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
@@ -488,14 +504,14 @@ describe("router", () => {
     );
 
     const mind = mockMindHandler();
-    const router = createRouter({ configPath, mindHandler: mind.resolver });
+    activeRouter = createRouter({ configPath, mindHandler: mind.resolver });
 
-    router.route([{ type: "text", text: "msg1" }], {
+    activeRouter.route([{ type: "text", text: "msg1" }], {
       channel: "discord:123",
       sender: "alice",
       typing: ["bob"],
     });
-    router.route([{ type: "text", text: "flush" }], {
+    activeRouter.route([{ type: "text", text: "flush" }], {
       channel: "discord:123",
       sender: "bob",
       typing: ["charlie"],
@@ -508,12 +524,10 @@ describe("router", () => {
       !text.includes("[bob is typing]"),
       "batch should not use typing from earlier messages",
     );
-
-    router.close();
   });
 
   it("prepends session instructions to direct dispatch content", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
@@ -538,7 +552,7 @@ describe("router", () => {
   });
 
   it("mention mode: skips messages not mentioning the mind", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
@@ -571,7 +585,7 @@ describe("router", () => {
   });
 
   it("mention mode: does not match substring (word boundary)", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,
@@ -604,7 +618,7 @@ describe("router", () => {
   });
 
   it("mention mode: case-insensitive matching", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "router-test-"));
+    const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
     writeFileSync(
       configPath,

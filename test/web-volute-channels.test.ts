@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { createUser, getOrCreateMindUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
@@ -9,15 +10,11 @@ import {
   getMessages,
   getParticipants,
 } from "../src/lib/events/conversations.js";
-import {
-  conversationParticipants,
-  conversations,
-  messages,
-  sessions,
-  users,
-} from "../src/lib/schema.js";
+import { users } from "../src/lib/schema.js";
 import channelsRoute from "../src/web/api/volute/channels.js";
 import { authMiddleware, createSession } from "../src/web/middleware/auth.js";
+
+const TEST_USERNAMES = ["ch-admin", "bob", "test-mind"];
 
 let sessionId: string;
 let userId: number;
@@ -31,11 +28,9 @@ function createApp() {
 
 async function cleanup() {
   const db = await getDb();
-  await db.delete(sessions);
-  await db.delete(messages);
-  await db.delete(conversationParticipants);
-  await db.delete(conversations);
-  await db.delete(users);
+  for (const username of TEST_USERNAMES) {
+    await db.delete(users).where(eq(users.username, username));
+  }
 }
 
 async function setupAuth() {

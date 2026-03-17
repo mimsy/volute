@@ -131,9 +131,14 @@ describe("turn-summarizer", () => {
     // Summary should be tagged with turn_id
     assert.equal(summary.turn_id, turnId);
 
-    // Turn should have summary_event_id set (async, give it a moment)
-    await new Promise((r) => setTimeout(r, 50));
-    const turnRow = await db.select().from(turns).where(eq(turns.id, turnId)).get();
+    // Turn should have summary_event_id set (async update, poll until set)
+    let turnRow: typeof turns.$inferSelect | undefined;
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      turnRow = await db.select().from(turns).where(eq(turns.id, turnId)).get();
+      if (turnRow?.summary_event_id != null) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
     assert.equal(turnRow!.summary_event_id, summary.id);
 
     await clearMind(mind4);

@@ -1,21 +1,22 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
 import { addMind, removeMind } from "../src/lib/registry.js";
-import { conversations, messages, sessions, users } from "../src/lib/schema.js";
+import { users } from "../src/lib/schema.js";
 import { createSession } from "../src/web/middleware/auth.js";
 
 const TEST_MIND = "channels-test-mind";
+const TEST_USERNAMES = ["channels-admin"];
 
 let sessionId: string;
 
 async function cleanup() {
   const db = await getDb();
-  await db.delete(sessions);
-  await db.delete(messages);
-  await db.delete(conversations);
-  await db.delete(users);
+  for (const username of TEST_USERNAMES) {
+    await db.delete(users).where(eq(users.username, username));
+  }
   try {
     removeMind(TEST_MIND);
   } catch {
