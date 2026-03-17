@@ -106,8 +106,10 @@ $effect(() => {
           </div>
           {#if unread > 0}
             <span class="unread-badge">{unread}</span>
-          {:else if conv.id === activeId}
-            <button class="delete-btn" onclick={(e) => { e.stopPropagation(); onDelete(conv.id); }}>x</button>
+          {:else}
+            <button class="delete-btn" onclick={(e) => { e.stopPropagation(); onDelete(conv.id); }}>
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+            </button>
           {/if}
         </div>
       </div>
@@ -239,9 +241,7 @@ $effect(() => {
 
   .conv-item {
     padding: 6px 12px 6px 24px;
-    margin: 0 4px;
     cursor: pointer;
-    border-radius: var(--radius);
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -334,11 +334,30 @@ $effect(() => {
   }
 
   .delete-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
     background: transparent;
     color: var(--text-2);
-    font-size: 12px;
-    padding: 0 4px;
     flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.1s, color 0.1s;
+    padding: 0;
+  }
+
+  .delete-btn svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  .conv-item:hover .delete-btn {
+    opacity: 1;
+  }
+
+  .delete-btn:hover {
+    color: var(--text-0);
   }
 
   .menu-btn {
@@ -432,6 +451,10 @@ $effect(() => {
   @media (max-width: 767px) {
     .conv-item {
       padding: 10px 12px 10px 24px;
+    }
+
+    .delete-btn {
+      opacity: 1;
     }
 
     .menu-btn {

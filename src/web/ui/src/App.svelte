@@ -51,7 +51,7 @@ const CORE_MIND_SECTIONS: { key: string; label: string; icon: string; defaultPat
   {
     key: "info",
     label: "Info",
-    icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 7v4"/><circle cx="8" cy="5" r="0.5" fill="currentColor"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5"/><circle cx="15" cy="14" r="1.5"/><line x1="12" y1="4" x2="12" y2="8"/><circle cx="12" cy="3" r="1"/></svg>',
   },
   {
     key: "files",
@@ -418,9 +418,11 @@ function toggleRightPanel() {
 }
 
 function handleOpenMindModal(mind: Mind) {
-  // Navigate to mind page
-  selection = { kind: "mind", name: mind.name };
-  closeSidebar();
+  // Show mind details in right panel without navigating
+  selectedModalMind = mind;
+  activeModal = "mind";
+  rightPanelOpen = true;
+  rightPanelCollapsed = false;
 }
 
 function handleSelectConversation(id: string) {
@@ -771,7 +773,7 @@ function handleGlobalClick(e: MouseEvent) {
                 <MindRightPanel
                   mind={rightPanelMind}
                   onProfile={showRightPanelProfile ? () => {
-                    selection = { kind: "mind", name: rightPanelMind.name };
+                    selection = { kind: "mind", name: rightPanelMind.name, section: "info" };
                     if (activeModal === "mind") { activeModal = null; selectedModalMind = null; }
                   } : undefined}
                   onChat={showRightPanelChat ? () => handleNewChatCreated(rightPanelMind.name) : undefined}

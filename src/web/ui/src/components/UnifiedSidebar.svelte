@@ -59,7 +59,6 @@ function toggleSection(section: Section) {
 
 let mindNames = $derived(new Set(minds.map((m) => m.name)));
 
-// Map mind names to their DM conversation IDs for unread tracking
 let mindDmMap = $derived(
   new Map(
     conversations
@@ -105,22 +104,29 @@ let isSystemActive = $derived(
 <div class="sidebar-inner">
   <div class="sections">
     <!-- System -->
-    <button
-      class="system-item"
-      class:active={isSystemActive}
-      onclick={onHome}
-    >
-      System
-    </button>
+    <div class="section">
+      <div class="section-header-row" class:active={isSystemActive}>
+        <button
+          class="section-toggle"
+          class:active={isSystemActive}
+          onclick={onHome}
+        >
+          <svg class="section-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7.2a.8.8 0 0 1 .8.8 1.6 1.6 0 0 1-1.6 1.6A2.4 2.4 0 0 1 4.8 7.2a3.2 3.2 0 0 1 3.2-3.2 4 4 0 0 1 4 4 4.8 4.8 0 0 1-4.8 4.8A5.6 5.6 0 0 1 1.6 7.2 6.4 6.4 0 0 1 8 .8"/></svg>
+          <span>System</span>
+        </button>
+      </div>
+    </div>
 
     <!-- Minds -->
     <div class="section">
       <div class="section-header-row">
         <button class="section-toggle" onclick={() => toggleSection("minds")}>
-          <span class="toggle-icon">{collapsed.has("minds") ? "\u25B8" : "\u25BE"}</span>
+          <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5"/><circle cx="15" cy="14" r="1.5"/><line x1="12" y1="4" x2="12" y2="8"/><circle cx="12" cy="3" r="1"/></svg>
           <span>Minds</span>
         </button>
-        <button class="section-add" onclick={onSeed} title="Plant a seed">+</button>
+        <button class="section-action" onclick={(e) => { e.stopPropagation(); onSeed(); }} title="Plant a seed">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
+        </button>
       </div>
       {#if !collapsed.has("minds")}
         <div class="item-list">
@@ -162,10 +168,12 @@ let isSystemActive = $derived(
     <div class="section">
       <div class="section-header-row">
         <button class="section-toggle" onclick={() => toggleSection("channels")}>
-          <span class="toggle-icon">{collapsed.has("channels") ? "\u25B8" : "\u25BE"}</span>
+          <svg class="section-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3L5.5 13M10.5 3l-1 10M3 6h10M3 10h10"/></svg>
           <span>Channels</span>
         </button>
-        <button class="section-add" onclick={onBrowseChannels} title="Browse channels">+</button>
+        <button class="section-action" onclick={(e) => { e.stopPropagation(); onBrowseChannels(); }} title="Browse channels">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
+        </button>
       </div>
       {#if !collapsed.has("channels")}
         <ConversationList
@@ -201,42 +209,26 @@ let isSystemActive = $derived(
     margin-bottom: 2px;
   }
 
-  /* System — top-level category button */
-  .system-item {
-    display: block;
-    width: 100%;
-    padding: 10px 16px;
-    background: none;
-    color: var(--text-2);
-    font-size: 14px;
-    font-weight: 500;
-    text-align: left;
-    cursor: pointer;
-    border-bottom: 1px solid var(--border);
-    transition: color 0.1s, background 0.1s;
-  }
-
-  .system-item:hover {
-    color: var(--text-1);
-    background: var(--bg-2);
-  }
-
-  .system-item.active {
-    color: var(--text-0);
-    background: var(--bg-2);
-  }
-
-  /* Section headers — collapsible group labels */
+  /* Section headers */
   .section-header-row {
     display: flex;
     align-items: center;
     padding-right: 8px;
+    transition: background 0.1s;
+  }
+
+  .section-header-row:hover {
+    background: var(--bg-2);
+  }
+
+  .section-header-row.active {
+    background: var(--bg-2);
   }
 
   .section-toggle {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
     flex: 1;
     padding: 6px 12px;
     background: none;
@@ -246,32 +238,56 @@ let isSystemActive = $derived(
     letter-spacing: 0.04em;
     text-transform: uppercase;
     text-align: left;
+    transition: color 0.1s;
   }
 
-  .section-toggle:hover {
+  .section-header-row:hover .section-toggle {
     color: var(--text-1);
   }
 
-  .toggle-icon {
-    font-size: 9px;
-    width: 10px;
+  .section-toggle.active {
+    color: var(--text-0);
   }
 
-  .section-add {
+  .section-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    opacity: 0.6;
+  }
+
+  .section-toggle.active .section-icon {
+    opacity: 1;
+  }
+
+  .section-action {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
     background: none;
     color: var(--text-2);
-    font-size: 15px;
-    padding: 2px 6px;
-    border-radius: var(--radius);
     flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.1s, color 0.1s;
+    cursor: pointer;
   }
 
-  .section-add:hover {
+  .section-action svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .section-header-row:hover .section-action {
+    opacity: 1;
+  }
+
+  .section-action:hover {
     color: var(--text-0);
-    background: var(--bg-2);
   }
 
-  /* Nav items — shared style for minds and channels */
+  /* Nav items */
   .nav-item {
     display: flex;
     align-items: center;
@@ -285,8 +301,6 @@ let isSystemActive = $derived(
     cursor: pointer;
     background: none;
     text-align: left;
-    margin: 0 4px;
-    border-radius: var(--radius);
   }
 
   .nav-item:hover {
@@ -344,12 +358,12 @@ let isSystemActive = $derived(
       padding: 10px 12px 10px 24px;
     }
 
-    .system-item {
-      padding: 12px 16px;
-    }
-
     .section-toggle {
       padding: 8px 12px;
+    }
+
+    .section-action {
+      opacity: 1;
     }
 
     .status-dot {
