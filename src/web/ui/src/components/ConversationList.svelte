@@ -238,7 +238,7 @@ $effect(() => {
   }
 
   .conv-item {
-    padding: 6px 12px 6px 26px;
+    padding: 6px 12px 6px 24px;
     margin: 0 4px;
     cursor: pointer;
     border-radius: var(--radius);
@@ -431,7 +431,7 @@ $effect(() => {
 
   @media (max-width: 767px) {
     .conv-item {
-      padding: 10px 12px 10px 26px;
+      padding: 10px 12px 10px 24px;
     }
 
     .menu-btn {

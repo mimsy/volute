@@ -71,7 +71,7 @@ let allMindSections = $derived([
     (ext.mindSections ?? []).map((s) => ({
       key: `ext:${ext.id}:${s.id}`,
       label: s.label,
-      icon: s.icon,
+      icon: ext.icon,
       defaultPath: s.defaultPath,
     })),
   ),
@@ -689,7 +689,7 @@ function handleGlobalClick(e: MouseEvent) {
                       class:active={activeSystemSection === `ext:${ext.id}`}
                       onclick={() => handleSelectExtension(ext.id)}
                     >
-                      <span class="tab-icon">{@html ext.systemSection.icon ?? '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z"/></svg>'}</span>
+                      <span class="tab-icon">{@html ext.icon ?? '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z"/></svg>'}</span>
                       <span class="tab-tooltip">{ext.systemSection.label}</span>
                     </button>
                   {/if}
@@ -846,7 +846,6 @@ function handleGlobalClick(e: MouseEvent) {
     flex-shrink: 0;
     background: none;
     cursor: pointer;
-    border-bottom: 1px solid var(--border);
   }
 
   .header-logo-wrap {

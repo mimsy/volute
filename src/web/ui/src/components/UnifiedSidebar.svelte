@@ -106,12 +106,11 @@ let isSystemActive = $derived(
   <div class="sections">
     <!-- System -->
     <button
-      class="nav-item"
+      class="system-item"
       class:active={isSystemActive}
       onclick={onHome}
     >
-      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg>
-      <span class="nav-label">System</span>
+      System
     </button>
 
     <!-- Minds -->
@@ -196,11 +195,35 @@ let isSystemActive = $derived(
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
-    padding-top: 4px;
   }
 
   .section {
     margin-bottom: 2px;
+  }
+
+  /* System — top-level category button */
+  .system-item {
+    display: block;
+    width: 100%;
+    padding: 10px 16px;
+    background: none;
+    color: var(--text-2);
+    font-size: 14px;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: color 0.1s, background 0.1s;
+  }
+
+  .system-item:hover {
+    color: var(--text-1);
+    background: var(--bg-2);
+  }
+
+  .system-item.active {
+    color: var(--text-0);
+    background: var(--bg-2);
   }
 
   /* Section headers — collapsible group labels */
@@ -248,7 +271,7 @@ let isSystemActive = $derived(
     background: var(--bg-2);
   }
 
-  /* Nav items — shared style for System, minds, channels */
+  /* Nav items — shared style for minds and channels */
   .nav-item {
     display: flex;
     align-items: center;
@@ -273,17 +296,6 @@ let isSystemActive = $derived(
   .nav-item.active {
     background: var(--bg-2);
     color: var(--text-0);
-  }
-
-  .nav-icon {
-    width: 14px;
-    height: 14px;
-    flex-shrink: 0;
-    opacity: 0.6;
-  }
-
-  .nav-item.active .nav-icon {
-    opacity: 1;
   }
 
   .nav-label {
@@ -330,6 +342,10 @@ let isSystemActive = $derived(
   @media (max-width: 767px) {
     .nav-item {
       padding: 10px 12px 10px 24px;
+    }
+
+    .system-item {
+      padding: 12px 16px;
     }
 
     .section-toggle {
