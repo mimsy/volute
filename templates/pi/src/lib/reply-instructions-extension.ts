@@ -1,8 +1,14 @@
 import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import type { EventSession } from "./event-handler.js";
 import { loadPrompts } from "./startup.js";
 
 export function createReplyInstructionsExtension(
   messageChannels: Map<string, string>,
+  emitContext?: (
+    session: EventSession,
+    event: { type: "context"; content: string; metadata: Record<string, unknown> },
+  ) => void,
+  session?: EventSession,
 ): ExtensionFactory {
   const prompts = loadPrompts();
   return (pi) => {
@@ -15,10 +21,19 @@ export function createReplyInstructionsExtension(
 
       fired = true;
 
+      const content = prompts.reply_instructions.replace(/\$\{channel\}/g, channel);
+      if (emitContext && session) {
+        emitContext(session, {
+          type: "context",
+          content,
+          metadata: { source: "reply-instructions" },
+        });
+      }
+
       return {
         message: {
           customType: "reply-instructions",
-          content: prompts.reply_instructions.replace(/\$\{channel\}/g, channel),
+          content,
           display: true,
         },
       };

@@ -21,7 +21,7 @@ export type EventHandlerOptions = {
 // Loaded once at startup — mind restarts on config changes
 const preset = loadTransparencyPreset();
 
-function emit(
+export function emit(
   session: EventSession,
   event: { type: EventType; content?: string; metadata?: Record<string, unknown> },
 ) {
