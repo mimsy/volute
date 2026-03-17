@@ -720,7 +720,7 @@ function handleGlobalClick(e: MouseEvent) {
                   {#if userAvatar}
                     <img src={userAvatar} alt="" class="user-avatar-img" />
                   {:else}
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M6 9c2-3 5-4 9-3.5 2 .3 3 1.5 3.5 3"/><circle cx="9.5" cy="14" r="1.5"/><circle cx="14.5" cy="14" r="1.5"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="11" r="1.5"/><circle cx="15" cy="11" r="1.5"/><line x1="10" y1="16" x2="14" y2="16"/></svg>
                   {/if}
                 </button>
                 {#if showUserMenu}
