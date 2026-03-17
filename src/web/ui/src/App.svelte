@@ -61,7 +61,7 @@ const CORE_MIND_SECTIONS: { key: string; label: string; icon: string; defaultPat
   {
     key: "settings",
     label: "Settings",
-    icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M7 1h2l.3 1.5a5.5 5.5 0 0 1 1.6.9l1.5-.6 1 1.7-1.2 1a5.5 5.5 0 0 1 0 1.8l1.2 1-1 1.7-1.5-.6a5.5 5.5 0 0 1-1.6.9L9 15H7l-.3-1.5a5.5 5.5 0 0 1-1.6-.9l-1.5.6-1-1.7 1.2-1a5.5 5.5 0 0 1 0-1.8l-1.2-1 1-1.7 1.5.6a5.5 5.5 0 0 1 1.6-.9z"/></svg>',
+    icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="1.75"/><polygon points="7,2.5 9,2.5 9.5,4 11,3 12,4.5 10.5,5.5 11.5,7 13.5,7 13.5,9 11.5,9 10.5,10.5 12,11.5 11,13 9.5,12 9,13.5 7,13.5 6.5,12 5,13 4,11.5 5.5,10.5 4.5,9 2.5,9 2.5,7 4.5,7 5.5,5.5 4,4.5 5,3 6.5,4"/></svg>',
   },
 ];
 
@@ -709,7 +709,7 @@ function handleGlobalClick(e: MouseEvent) {
                   class:active={activeSystemSection === "settings"}
                   onclick={handleSelectSettings}
                 >
-                  <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M7 1h2l.3 1.5a5.5 5.5 0 0 1 1.6.9l1.5-.6 1 1.7-1.2 1a5.5 5.5 0 0 1 0 1.8l1.2 1-1 1.7-1.5-.6a5.5 5.5 0 0 1-1.6.9L9 15H7l-.3-1.5a5.5 5.5 0 0 1-1.6-.9l-1.5.6-1-1.7 1.2-1a5.5 5.5 0 0 1 0-1.8l-1.2-1 1-1.7 1.5.6a5.5 5.5 0 0 1 1.6-.9z"/></svg></span>
+                  <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="1.75"/><polygon points="7,2.5 9,2.5 9.5,4 11,3 12,4.5 10.5,5.5 11.5,7 13.5,7 13.5,9 11.5,9 10.5,10.5 12,11.5 11,13 9.5,12 9,13.5 7,13.5 6.5,12 5,13 4,11.5 5.5,10.5 4.5,9 2.5,9 2.5,7 4.5,7 5.5,5.5 4,4.5 5,3 6.5,4"/></svg></span>
                   <span class="tab-tooltip">Settings</span>
                 </button>
               </div>
@@ -720,7 +720,7 @@ function handleGlobalClick(e: MouseEvent) {
                   {#if userAvatar}
                     <img src={userAvatar} alt="" class="user-avatar-img" />
                   {:else}
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="7"/><circle cx="9.5" cy="13" r="1.5"/><circle cx="14.5" cy="13" r="1.5"/><path d="M9 5c1-2 5-2 6 0"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><circle cx="9" cy="11" r="1.5"/><circle cx="15" cy="11" r="1.5"/><path d="M10 16c.7.4 1.3.6 2 .6s1.3-.2 2-.6"/></svg>
                   {/if}
                 </button>
                 {#if showUserMenu}
