@@ -478,7 +478,6 @@ describe("syncBuiltinSkills", () => {
     const ids = skills.map((s) => s.id).sort();
     assert.ok(ids.includes("memory"), "should include memory skill");
     assert.ok(ids.includes("orientation"), "should include orientation skill");
-    assert.ok(ids.includes("sessions"), "should include sessions skill");
     assert.ok(ids.includes("volute-mind"), "should include volute-mind skill");
 
     // Verify files were copied to shared dir

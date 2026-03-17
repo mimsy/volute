@@ -24,7 +24,7 @@ const VALID_SKILL_ID = /^[a-zA-Z0-9_-]+$/;
 export const SEED_SKILLS = ["orientation", "memory"];
 
 /** Skills installed for fully sprouted minds */
-export const STANDARD_SKILLS = ["volute-mind", "memory", "sessions", "dreaming", "shared-files"];
+export const STANDARD_SKILLS = ["volute-mind", "memory", "dreaming", "shared-files"];
 
 /**
  * Returns the configured default skills for new minds.

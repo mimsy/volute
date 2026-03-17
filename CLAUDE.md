@@ -66,7 +66,6 @@ Each mind project (created from the template) has:
 │       ├── auto-commit.ts     # Auto-commits file changes in home/ via SDK hooks
 │       ├── transparency.ts    # Tool call transparency for connector channels
 │       ├── daemon-client.ts   # Mind-side daemon API client (daemonRestart, daemonSend)
-│       ├── session-monitor.ts # Session activity tracking and cross-session summaries
 │       ├── logger.ts          # Logging utilities
 │       ├── message-channel.ts # Async iterable for mind communication (claude template only)
 │       ├── content.ts         # Content extraction from SDK events (claude template only)
@@ -77,7 +76,6 @@ Each mind project (created from the template) has:
 │           ├── identity-reload.ts # Restart on SOUL.md/MEMORY.md change
 │           ├── pre-compact.ts     # Journal update before compaction
 │           ├── reply-instructions.ts # Reply format instructions
-│           └── session-context.ts # Startup context injection
 ├── home/                      # Mind working directory (cwd for the SDK)
 │   ├── SOUL.md                # System prompt / personality
 │   ├── MEMORY.md              # Long-term memory (included in system prompt)
@@ -90,7 +88,6 @@ Each mind project (created from the template) has:
 │   └── .claude/skills/        # Skills (volute CLI reference, memory system)
 └── .mind/                     # Mind-internal runtime state
     ├── sessions/              # Per-session SDK state (e.g. sessions/main.json)
-    ├── session-cursors.json   # Session polling cursors
     ├── identity/              # Ed25519 keypair (private.pem, public.pem)
     ├── connectors/            # Bridge configs (e.g. connectors/discord/config.json)
     └── schedules.json         # Cron schedules for this mind
@@ -112,7 +109,7 @@ Unified `users` table with `user_type` discrimination (`"brain"` or `"mind"`) st
 
 Templates have a `.init/` directory containing identity and config files. On `volute mind create`, these are copied into `home/` and `.init/` is deleted. On `volute mind upgrade`, `.init/` files are excluded so identity files are never overwritten.
 
-- **`_base/.init/`**: SOUL.md, MEMORY.md, memory/journal/, .config/prompts.json, .config/hooks/startup-context.sh, .config/scripts/session-reader.ts
+- **`_base/.init/`**: SOUL.md, MEMORY.md, memory/journal/, .config/prompts.json, .config/hooks/startup-context.sh, .config/hooks/pre-prompt/session-activity.ts
 - **`claude/.init/`**: CLAUDE.md, .claude/settings.json, .config/routes.json
 - **`pi/.init/`**: MINDS.md, .config/routes.json
 
