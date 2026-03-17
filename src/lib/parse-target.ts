@@ -22,7 +22,7 @@ export function parseTarget(target: string): ParsedTarget {
     return {
       platform: "volute",
       identifier: target,
-      uri: `volute:${target}`,
+      uri: target,
       isDM: true,
     };
   }
@@ -30,7 +30,7 @@ export function parseTarget(target: string): ParsedTarget {
   return {
     platform: "volute",
     identifier: target,
-    uri: `volute:${target}`,
+    uri: target,
     isDM: false,
   };
 }

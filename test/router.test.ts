@@ -543,7 +543,7 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "volute:#*", session: "channel", mode: "mention" }],
+        rules: [{ channel: "#*", session: "channel", mode: "mention" }],
       }),
     );
 
@@ -555,13 +555,13 @@ describe("router", () => {
 
       // Message without mention — should be skipped
       await waitForDone(router, [{ type: "text", text: "hello everyone" }], {
-        channel: "volute:#general",
+        channel: "#general",
       });
       assert.equal(mind.calls.length, 0, "should not dispatch when mind not mentioned");
 
       // Message with mention — should be dispatched
       await waitForDone(router, [{ type: "text", text: "hey test-mind what do you think?" }], {
-        channel: "volute:#general",
+        channel: "#general",
       });
       assert.equal(mind.calls.length, 1, "should dispatch when mind is mentioned");
     } finally {
@@ -576,7 +576,7 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "volute:#*", session: "channel", mode: "mention" }],
+        rules: [{ channel: "#*", session: "channel", mode: "mention" }],
       }),
     );
 
@@ -588,13 +588,13 @@ describe("router", () => {
 
       // "start" contains "art" as substring — should NOT match
       await waitForDone(router, [{ type: "text", text: "start here" }], {
-        channel: "volute:#general",
+        channel: "#general",
       });
       assert.equal(mind.calls.length, 0, "should not match 'art' inside 'start'");
 
       // Exact word "art" should match
       await waitForDone(router, [{ type: "text", text: "hey art check this" }], {
-        channel: "volute:#general",
+        channel: "#general",
       });
       assert.equal(mind.calls.length, 1, "should match 'art' as a whole word");
     } finally {
@@ -609,7 +609,7 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "volute:#*", session: "channel", mode: "mention" }],
+        rules: [{ channel: "#*", session: "channel", mode: "mention" }],
       }),
     );
 
@@ -620,7 +620,7 @@ describe("router", () => {
       const router = createRouter({ configPath, mindHandler: mind.resolver });
 
       await waitForDone(router, [{ type: "text", text: "hey TESTMIND check this" }], {
-        channel: "volute:#dev",
+        channel: "#dev",
       });
       assert.equal(mind.calls.length, 1, "should match case-insensitively");
     } finally {

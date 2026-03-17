@@ -188,7 +188,7 @@ describe("router invite gating", () => {
     const router = createRouter({ configPath, mindHandler, fileHandler });
 
     router.route([{ type: "text", text: "hey there" }], {
-      channel: "volute:conv-abc123",
+      channel: "conv-abc123",
       sender: "agent-x",
       participants: ["me", "agent-x"],
     });
@@ -198,9 +198,9 @@ describe("router invite gating", () => {
     assert.ok(mainCalls);
     assert.equal(mainCalls.length, 1);
     const text = (mainCalls[0].content[0] as { text: string }).text;
-    assert.ok(text.includes("volute:conv-abc123"));
+    assert.ok(text.includes("conv-abc123"));
 
-    const fileKey = "inbox/volute-conv-abc123.md";
+    const fileKey = "inbox/conv-abc123.md";
     assert.ok(fileCalls.has(fileKey), "should save to sanitized file path");
   });
 
@@ -248,7 +248,7 @@ describe("router invite gating", () => {
     const router = createRouter({ configPath, mindHandler, fileHandler });
 
     router.route([{ type: "text", text: "hey" }], {
-      channel: "volute:dm-123",
+      channel: "@dm-123",
       sender: "alice",
       participantCount: 2,
     });
@@ -294,7 +294,7 @@ describe("router invite gating", () => {
     const router = createRouter({ configPath, mindHandler, fileHandler });
 
     router.route([{ type: "text", text: "hi" }], {
-      channel: "volute:conv-xyz",
+      channel: "conv-xyz",
       sender: "alice",
     });
     await waitMicrotask();
@@ -302,7 +302,7 @@ describe("router invite gating", () => {
     const mainCalls = mindCalls.get("main")!;
     const text = (mainCalls[0].content[0] as { text: string }).text;
     assert.ok(
-      text.includes("volute chat send volute:conv-xyz"),
+      text.includes("volute chat send conv-xyz"),
       "should use channel send for volute channels",
     );
   });

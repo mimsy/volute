@@ -27,7 +27,6 @@ export type Channel = {
   name: string;
   displayName: string;
   status: "connected" | "disconnected";
-  showToolCalls: boolean;
   username?: string;
   connectedAt?: string;
 };

@@ -61,7 +61,7 @@ function handleSend() {
     inputEl.style.overflow = "hidden";
   }
   if (conversationId && mindName && username) {
-    reportTyping(mindName, `volute:${conversationId}`, username, false);
+    reportTyping(mindName, conversationId, username, false);
     typingTimer = 0;
   }
   onSend(message, images, files);
@@ -80,7 +80,7 @@ function handleInput(e: Event) {
     const now = Date.now();
     if (now - typingTimer > 3000) {
       typingTimer = now;
-      reportTyping(mindName, `volute:${conversationId}`, username, true);
+      reportTyping(mindName, conversationId, username, true);
     }
   }
   el.style.height = "auto";
@@ -91,7 +91,7 @@ function handleInput(e: Event) {
 
 function handleBlur() {
   if (conversationId && mindName && username && typingTimer > 0) {
-    reportTyping(mindName, `volute:${conversationId}`, username, false);
+    reportTyping(mindName, conversationId, username, false);
     typingTimer = 0;
   }
 }
@@ -134,7 +134,7 @@ function handleAttachFiles(files: FileList | null) {
 $effect(() => {
   return () => {
     if (conversationId && mindName && username && typingTimer > 0) {
-      reportTyping(mindName, `volute:${conversationId}`, username, false);
+      reportTyping(mindName, conversationId, username, false);
     }
   };
 });

@@ -2,7 +2,7 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
 import { publish } from "../../lib/events/conversation-events.js";
-import { getTypingMap } from "../../lib/typing.js";
+import { getTypingMap, isConversationId } from "../../lib/typing.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
 const typingSchema = z.object({
@@ -23,10 +23,8 @@ const app = new Hono<AuthEnv>()
     }
 
     // Push typing state to conversation SSE subscribers for volute channels
-    const volutePrefix = "volute:";
-    if (channel.startsWith(volutePrefix)) {
-      const conversationId = channel.slice(volutePrefix.length);
-      publish(conversationId, { type: "typing", senders: map.get(channel) });
+    if (isConversationId(channel)) {
+      publish(channel, { type: "typing", senders: map.get(channel) });
     }
 
     return c.json({ ok: true });

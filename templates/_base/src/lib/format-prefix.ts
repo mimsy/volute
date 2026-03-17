@@ -1,6 +1,7 @@
 import type { ChannelMeta, ParticipantProfile } from "./types.js";
 
 function derivePlatform(channel: string): string {
+  if (!channel.includes(":")) return "Volute";
   const name = channel.split(":")[0];
   return name.charAt(0).toUpperCase() + name.slice(1);
 }

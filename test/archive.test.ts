@@ -40,7 +40,6 @@ function setupMindDir() {
   // Create state dir files
   const state = stateDir(testMind);
   mkdirSync(state, { recursive: true });
-  writeFileSync(resolve(state, "channels.json"), '{"discord:general":"123"}\n');
   writeFileSync(resolve(state, "env.json"), '{"API_KEY":"secret"}\n');
 
   return dir;
@@ -128,13 +127,6 @@ describe("archive", () => {
       assert.ok(entries.includes("mind/.mind/connectors/discord/config.json"));
     });
 
-    it("always includes channels.json from state dir", () => {
-      const zip = createExportArchive({ name: testMind, template: "claude" });
-      const entry = zip.getEntry("state/channels.json");
-      assert.ok(entry);
-      assert.ok(entry.getData().toString("utf-8").includes("discord:general"));
-    });
-
     it("excludes env.json by default", () => {
       const zip = createExportArchive({ name: testMind, template: "claude" });
       const entry = zip.getEntry("state/env.json");
@@ -181,7 +173,6 @@ describe("archive", () => {
 
       const zip = createExportArchive({ name: testMind, template: "claude" });
       assert.ok(zip.getEntry("manifest.json"));
-      assert.ok(!zip.getEntry("state/channels.json"));
       assert.ok(!zip.getEntry("state/env.json"));
     });
 
@@ -408,7 +399,6 @@ describe("archive", () => {
         assert.equal(result.manifest.name, testMind);
         assert.ok(existsSync(resolve(result.mindDir, "home/SOUL.md")));
         assert.ok(existsSync(resolve(result.mindDir, "src/server.ts")));
-        assert.ok(result.channelsJson);
         assert.ok(result.envJson);
       } finally {
         rmSync(archivePath, { force: true });
@@ -499,9 +489,6 @@ describe("archive", () => {
         assert.ok(discordConfig.includes("secret"));
 
         // Check state preserved
-        const channels = readFileSync(result.channelsJson!, "utf-8");
-        assert.ok(channels.includes("discord:general"));
-
         const env = readFileSync(result.envJson!, "utf-8");
         assert.ok(env.includes("API_KEY"));
       } finally {

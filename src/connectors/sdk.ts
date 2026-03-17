@@ -1,6 +1,3 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { stateDir } from "../lib/registry.js";
 import { slugify } from "../lib/slugify.js";
 
 export { slugify } from "../lib/slugify.js";
@@ -47,20 +44,6 @@ export function loadEnv(): ConnectorEnv {
     : `http://127.0.0.1:${mindPort}`;
 
   return { mindPort, mindName, mindDir, baseUrl, daemonUrl, daemonToken };
-}
-
-export function loadFollowedChannels(env: ConnectorEnv, platform: string): string[] {
-  if (!env.mindDir) return [];
-  const configPath = resolve(env.mindDir, "home/.config/volute.json");
-  if (!existsSync(configPath)) return [];
-  try {
-    const config = JSON.parse(readFileSync(configPath, "utf-8"));
-    const platformConfig = config[platform];
-    return platformConfig?.channels ?? platformConfig?.chats ?? [];
-  } catch (err) {
-    console.warn(`Failed to load mind config: ${err}`);
-    return [];
-  }
 }
 
 export function splitMessage(text: string, maxLength: number): string[] {
@@ -151,14 +134,6 @@ export interface ChannelSlugMeta {
   platformId?: string;
 }
 
-export interface ChannelEntry {
-  platformId: string;
-  platform: string;
-  name?: string;
-  server?: string;
-  type?: "channel" | "dm";
-}
-
 export function buildChannelSlug(platform: string, meta: ChannelSlugMeta): string {
   if (meta.isDM) {
     if (meta.recipients && meta.recipients.length > 0) {
@@ -183,33 +158,4 @@ export function buildChannelSlug(platform: string, meta: ChannelSlugMeta): strin
   }
 
   return `${platform}:unknown`;
-}
-
-export function readChannelMap(mindName: string): Record<string, ChannelEntry> {
-  const filePath = join(stateDir(mindName), "channels.json");
-  if (!existsSync(filePath)) return {};
-  try {
-    return JSON.parse(readFileSync(filePath, "utf-8"));
-  } catch (err) {
-    console.error(`[sdk] failed to parse ${filePath}:`, err);
-    return {};
-  }
-}
-
-export function writeChannelEntry(mindName: string, slug: string, entry: ChannelEntry): void {
-  const dir = stateDir(mindName);
-  mkdirSync(dir, { recursive: true });
-  const filePath = join(dir, "channels.json");
-  const map = readChannelMap(mindName);
-  map[slug] = entry;
-  writeFileSync(filePath, `${JSON.stringify(map, null, 2)}\n`);
-}
-
-export function resolveChannelId(mindName: string, slug: string): string {
-  const map = readChannelMap(mindName);
-  if (map[slug]) {
-    return map[slug].platformId;
-  }
-  const colonIndex = slug.indexOf(":");
-  return colonIndex >= 0 ? slug.slice(colonIndex + 1) : slug;
 }

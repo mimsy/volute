@@ -45,7 +45,7 @@ describe("loadRoutingConfig", () => {
       path,
       JSON.stringify([
         { channel: "system", session: "system" },
-        { channel: "volute:@aswever", session: "volute-@aswever" },
+        { channel: "@aswever", session: "volute-@aswever" },
       ]),
     );
     const config = loadRoutingConfig(path);
@@ -336,15 +336,12 @@ describe("resolveRoute", () => {
       rules: [{ isDM: true, session: "dm" }],
       default: "main",
     };
+    assert.equal(expectMind(resolveRoute(config, { channel: "@abc", isDM: true })).session, "dm");
     assert.equal(
-      expectMind(resolveRoute(config, { channel: "volute:abc", isDM: true })).session,
-      "dm",
-    );
-    assert.equal(
-      expectMind(resolveRoute(config, { channel: "volute:abc", isDM: false })).session,
+      expectMind(resolveRoute(config, { channel: "@abc", isDM: false })).session,
       "main",
     );
-    assert.equal(expectMind(resolveRoute(config, { channel: "volute:abc" })).session, "main");
+    assert.equal(expectMind(resolveRoute(config, { channel: "@abc" })).session, "main");
   });
 
   it("matches isDM: false", () => {
@@ -353,15 +350,12 @@ describe("resolveRoute", () => {
       default: "main",
     };
     assert.equal(
-      expectMind(resolveRoute(config, { channel: "volute:abc", isDM: false })).session,
+      expectMind(resolveRoute(config, { channel: "@abc", isDM: false })).session,
       "group",
     );
     // isDM undefined treated as false
-    assert.equal(expectMind(resolveRoute(config, { channel: "volute:abc" })).session, "group");
-    assert.equal(
-      expectMind(resolveRoute(config, { channel: "volute:abc", isDM: true })).session,
-      "main",
-    );
+    assert.equal(expectMind(resolveRoute(config, { channel: "@abc" })).session, "group");
+    assert.equal(expectMind(resolveRoute(config, { channel: "@abc", isDM: true })).session, "main");
   });
 
   // --- participants matching ---
@@ -372,30 +366,30 @@ describe("resolveRoute", () => {
       default: "main",
     };
     assert.equal(
-      expectMind(resolveRoute(config, { channel: "volute:abc", participantCount: 2 })).session,
+      expectMind(resolveRoute(config, { channel: "@abc", participantCount: 2 })).session,
       "one-on-one",
     );
     assert.equal(
-      expectMind(resolveRoute(config, { channel: "volute:abc", participantCount: 5 })).session,
+      expectMind(resolveRoute(config, { channel: "@abc", participantCount: 5 })).session,
       "main",
     );
-    assert.equal(expectMind(resolveRoute(config, { channel: "volute:abc" })).session, "main");
+    assert.equal(expectMind(resolveRoute(config, { channel: "@abc" })).session, "main");
   });
 
   it("combines isDM with channel for routing", () => {
     const config: RoutingConfig = {
       rules: [
-        { channel: "volute:*", isDM: true, session: "volute-dm" },
-        { channel: "volute:*", session: "volute-group" },
+        { channel: "*", isDM: true, session: "volute-dm" },
+        { channel: "*", session: "volute-group" },
       ],
       default: "main",
     };
     assert.equal(
-      expectMind(resolveRoute(config, { channel: "volute:abc", isDM: true })).session,
+      expectMind(resolveRoute(config, { channel: "@abc", isDM: true })).session,
       "volute-dm",
     );
     assert.equal(
-      expectMind(resolveRoute(config, { channel: "volute:abc", isDM: false })).session,
+      expectMind(resolveRoute(config, { channel: "@abc", isDM: false })).session,
       "volute-group",
     );
   });
@@ -438,18 +432,18 @@ describe("resolveRoute", () => {
 
   it("passes mode through to resolved route", () => {
     const config: RoutingConfig = {
-      rules: [{ channel: "volute:#*", session: "channel", mode: "mention" }],
+      rules: [{ channel: "#*", session: "channel", mode: "mention" }],
     };
-    const r = expectMind(resolveRoute(config, { channel: "volute:#general" }));
+    const r = expectMind(resolveRoute(config, { channel: "#general" }));
     assert.equal(r.session, "channel");
     assert.equal(r.mode, "mention");
   });
 
   it("mode defaults to undefined (all)", () => {
     const config: RoutingConfig = {
-      rules: [{ channel: "volute:#general", session: "general" }],
+      rules: [{ channel: "#general", session: "general" }],
     };
-    const r = expectMind(resolveRoute(config, { channel: "volute:#general" }));
+    const r = expectMind(resolveRoute(config, { channel: "#general" }));
     assert.equal(r.mode, undefined);
   });
 
@@ -482,9 +476,9 @@ describe("resolveSessionConfig", () => {
 
   it("matches glob pattern", () => {
     const config: RoutingConfig = {
-      sessions: { "volute:*": { interrupt: false } },
+      sessions: { "@*": { interrupt: false } },
     };
-    const r = resolveSessionConfig(config, "volute:conv-abc");
+    const r = resolveSessionConfig(config, "@conv-abc");
     assert.equal(r.interrupt, false);
   });
 
