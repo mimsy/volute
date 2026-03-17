@@ -1227,6 +1227,39 @@ async function main() {
     } else if (cmd === "decay") {
       const result = runDecay(db, config);
       console.log(`decay pass: ${result.decayed}/${result.total} memories decayed`);
+    } else if (cmd === "search-hook") {
+      // Called by the pre-prompt hook shim — reads JSON from stdin, searches FTS
+      let input = "";
+      for await (const chunk of process.stdin) {
+        input += chunk;
+      }
+      let prompt = "";
+      try {
+        const parsed = JSON.parse(input);
+        prompt = parsed.prompt ?? "";
+      } catch {
+        // No valid input — output empty result
+        console.log("{}");
+        return;
+      }
+      if (!prompt) {
+        console.log("{}");
+        return;
+      }
+      const results = searchFts(db, prompt, 5, 0.3);
+      if (results.length === 0) {
+        console.log("{}");
+        return;
+      }
+      const lines = results.map(
+        (r) =>
+          `- [str:${r.strength.toFixed(2)}] ${r.content.slice(0, 200)}${r.content.length > 200 ? "..." : ""}`,
+      );
+      console.log(
+        JSON.stringify({
+          additionalContext: `Resonant memories:\n\n${lines.join("\n")}`,
+        }),
+      );
     } else {
       console.error(`unknown command: ${cmd}`);
       process.exit(1);

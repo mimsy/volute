@@ -4,6 +4,7 @@ import type { HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { toSDKContent } from "./lib/content.js";
 import { daemonEmit } from "./lib/daemon-client.js";
+import { runHooks } from "./lib/hook-loader.js";
 import { createAutoCommitHook } from "./lib/hooks/auto-commit.js";
 import { createIdentityReloadHook } from "./lib/hooks/identity-reload.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- used as value
@@ -128,17 +129,16 @@ export function createMind(options: {
     }
   }
 
-  // --- Context event emission ---
+  // --- Hook event emission ---
 
-  function wrapHookWithContextEmit(
-    hook: HookCallback,
-    source: string,
-    session: Session,
-  ): HookCallback {
+  const hooksDir = resolvePath(options.cwd, ".config/hooks");
+
+  function wrapHookWithEmit(hook: HookCallback, source: string, session: Session): HookCallback {
     return async (...args) => {
       const result = await hook(...args);
       const additionalContext = (result as any)?.hookSpecificOutput?.additionalContext;
-      if (additionalContext) {
+      const decision = (result as any)?.decision;
+      if (additionalContext || decision) {
         const channel = session.currentMessageId
           ? session.messageChannels.get(session.currentMessageId)
           : undefined;
@@ -146,16 +146,46 @@ export function createMind(options: {
           daemonEmit({
             type: "context",
             content: additionalContext,
-            metadata: { source },
+            metadata: { source, ...(decision ? { hookAction: decision } : {}) },
             session: session.name,
             channel,
             messageId: session.currentMessageId,
           });
         } catch (err) {
-          log("mind", `context emit failed for ${source}:`, err);
+          log("mind", `hook emit failed for ${source}:`, err);
         }
       }
       return result;
+    };
+  }
+
+  function createDynamicHook(event: string, session: Session): HookCallback {
+    return async (input) => {
+      const result = await runHooks(hooksDir, event, input as Record<string, unknown>);
+      if (result.additionalContext) {
+        const channel = session.currentMessageId
+          ? session.messageChannels.get(session.currentMessageId)
+          : undefined;
+        try {
+          daemonEmit({
+            type: "context",
+            content: result.additionalContext,
+            metadata: { source: `dynamic:${event}`, ...result.metadata },
+            session: session.name,
+            channel,
+            messageId: session.currentMessageId,
+          });
+        } catch (err) {
+          log("mind", `dynamic hook emit failed for ${event}:`, err);
+        }
+      }
+      if (!result.additionalContext) return {};
+      return {
+        hookSpecificOutput: {
+          hookEventName: "UserPromptSubmit" as const,
+          additionalContext: result.additionalContext,
+        },
+      };
     };
   }
 
@@ -189,13 +219,20 @@ export function createMind(options: {
         resume,
         agents,
         hooks: {
-          PostToolUse: postToolUseHooks,
-          PreCompact: [{ hooks: [preCompactHook] }],
+          PostToolUse: [
+            ...postToolUseHooks,
+            {
+              matcher: ".*",
+              hooks: [createDynamicHook("post-tool-use", session)],
+            },
+          ],
+          PreCompact: [{ hooks: [wrapHookWithEmit(preCompactHook, "pre-compact", session)] }],
           UserPromptSubmit: [
             {
               hooks: [
-                wrapHookWithContextEmit(sessionContext.hook, "session-context", session),
-                wrapHookWithContextEmit(replyInstructions.hook, "reply-instructions", session),
+                wrapHookWithEmit(sessionContext.hook, "session-context", session),
+                wrapHookWithEmit(replyInstructions.hook, "reply-instructions", session),
+                createDynamicHook("pre-prompt", session),
               ],
             },
           ],

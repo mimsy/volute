@@ -83,14 +83,29 @@ export function parseSkillMd(content: string): {
   name: string;
   description: string;
   npmDependencies: string[];
+  hooks: Record<string, string>;
 } {
   const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return { name: "", description: "", npmDependencies: [] };
+  if (!match) return { name: "", description: "", npmDependencies: [], hooks: {} };
   const frontmatter = match[1];
 
   const nameMatch = frontmatter.match(/^name:\s*(.+)$/m);
   const descMatch = frontmatter.match(/^description:\s*(.+)$/m);
   const depsMatch = frontmatter.match(/^\s*npm-dependencies:\s*(.+)$/m);
+
+  // Parse hooks from metadata block (indented under metadata:)
+  const hooks: Record<string, string> = {};
+  const hooksBlock = frontmatter.match(/^\s*hooks:\s*\n((?:\s+\S.*\n?)*)/m);
+  if (hooksBlock) {
+    const lines = hooksBlock[1].split("\n").filter(Boolean);
+    for (const line of lines) {
+      const hookMatch = line.match(/^\s+(\S+):\s*(.+)$/);
+      if (hookMatch) {
+        hooks[hookMatch[1].trim()] = hookMatch[2].trim();
+      }
+    }
+  }
+
   return {
     name: nameMatch?.[1].trim() ?? "",
     description: descMatch?.[1].trim() ?? "",
@@ -100,6 +115,7 @@ export function parseSkillMd(content: string): {
           .split(/[\s,]+/)
           .filter(Boolean)
       : [],
+    hooks,
   };
 }
 
@@ -256,6 +272,12 @@ export async function installSkill(
     }
   }
 
+  // Install hook shims if declared in SKILL.md frontmatter
+  if (existsSync(skillMdPath)) {
+    const { hooks } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
+    installHookShims(dir, skillId, hooks);
+  }
+
   // Read install notes if present
   let installNotes: string | null = null;
   const installMdPath = join(destDir, "references", "INSTALL.md");
@@ -296,8 +318,14 @@ export async function uninstallSkill(
   const skillDir = join(mindSkillsDir(dir), skillId);
   if (!existsSync(skillDir)) throw new Error(`Skill not installed: ${skillId}`);
 
+  // Remove hook shims for this skill
+  removeHookShims(dir, skillId);
+
   rmSync(skillDir, { recursive: true });
   await gitExec(["add", join("home", ".claude", "skills", skillId)], { cwd: dir });
+  // Also stage hook shim removals
+  const hooksBase = join("home", ".config", "hooks");
+  await gitExec(["add", hooksBase], { cwd: dir }).catch(() => {});
   await gitExec(["commit", "-m", `Uninstall skill: ${skillId}`], { cwd: dir });
 }
 
@@ -514,6 +542,45 @@ export async function publishSkill(
   if (!existsSync(skillMdPath)) throw new Error(`SKILL.md not found in ${skillId}`);
 
   return importSkillFromDir(skillDir, mindName);
+}
+
+// --- Hook shim management ---
+
+function shimContent(skillId: string, scriptPath: string): string {
+  const ext = scriptPath.split(".").pop() ?? "sh";
+  const skillScriptPath = `.claude/skills/${skillId}/${scriptPath}`;
+  if (ext === "ts") {
+    return `#!/bin/bash\nexec npx tsx ${skillScriptPath} "$@"\n`;
+  }
+  if (ext === "js") {
+    return `#!/bin/bash\nexec node ${skillScriptPath} "$@"\n`;
+  }
+  return `#!/bin/bash\nexec bash ${skillScriptPath} "$@"\n`;
+}
+
+export function installHookShims(
+  dir: string,
+  skillId: string,
+  hooks: Record<string, string>,
+): void {
+  for (const [event, scriptPath] of Object.entries(hooks)) {
+    const eventDir = join(dir, "home", ".config", "hooks", event);
+    mkdirSync(eventDir, { recursive: true });
+    const shimPath = join(eventDir, `50-${skillId}.sh`);
+    const content = shimContent(skillId, scriptPath);
+    writeFileSync(shimPath, content, { mode: 0o755 });
+  }
+}
+
+export function removeHookShims(dir: string, skillId: string): void {
+  const hooksBase = join(dir, "home", ".config", "hooks");
+  if (!existsSync(hooksBase)) return;
+
+  for (const eventDir of readdirSync(hooksBase, { withFileTypes: true })) {
+    if (!eventDir.isDirectory()) continue;
+    const shimPath = join(hooksBase, eventDir.name, `50-${skillId}.sh`);
+    if (existsSync(shimPath)) rmSync(shimPath);
+  }
 }
 
 // --- Helpers ---
