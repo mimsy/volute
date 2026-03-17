@@ -1,6 +1,7 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
 import { mindDotColor } from "../lib/format";
+import type { Selection } from "../lib/navigate";
 import { activeMinds, unreadCounts } from "../lib/stores.svelte";
 import ConversationList from "./ConversationList.svelte";
 import ProfileHoverCard from "./ProfileHoverCard.svelte";
@@ -8,25 +9,27 @@ import ProfileHoverCard from "./ProfileHoverCard.svelte";
 let {
   minds,
   conversations,
-  activeConversationId,
+  selection,
   username,
+  onHome,
+  onSelectMind,
   onSelectConversation,
   onDeleteConversation,
   onBrowseChannels,
   onOpenMind,
-  onSelectMind,
   onSeed,
   onHideConversation,
 }: {
   minds: Mind[];
   conversations: ConversationWithParticipants[];
-  activeConversationId: string | null;
+  selection: Selection;
   username: string;
+  onHome: () => void;
+  onSelectMind: (name: string) => void;
   onSelectConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
   onBrowseChannels: () => void;
   onOpenMind: (mind: Mind) => void;
-  onSelectMind: (name: string) => void;
   onSeed: () => void;
   onHideConversation?: (id: string) => void;
 } = $props();
@@ -35,7 +38,7 @@ type Section = "minds" | "channels";
 
 function loadCollapsed(): Set<Section> {
   try {
-    const stored = localStorage.getItem("volute:chat-sidebar-collapsed");
+    const stored = localStorage.getItem("volute:sidebar-collapsed");
     return stored ? new Set(JSON.parse(stored)) : new Set();
   } catch {
     return new Set();
@@ -44,8 +47,19 @@ function loadCollapsed(): Set<Section> {
 
 let collapsed = $state(loadCollapsed());
 
+function toggleSection(section: Section) {
+  if (collapsed.has(section)) {
+    collapsed.delete(section);
+  } else {
+    collapsed.add(section);
+  }
+  collapsed = new Set(collapsed);
+  localStorage.setItem("volute:sidebar-collapsed", JSON.stringify([...collapsed]));
+}
+
 let mindNames = $derived(new Set(minds.map((m) => m.name)));
 
+// Map mind names to their DM conversation IDs for unread tracking
 let mindDmMap = $derived(
   new Map(
     conversations
@@ -74,19 +88,26 @@ let sortedMinds = $derived(
 
 let channelConversations = $derived(conversations.filter((c) => c.type === "channel"));
 
-function toggleSection(section: Section) {
-  if (collapsed.has(section)) {
-    collapsed.delete(section);
-  } else {
-    collapsed.add(section);
-  }
-  collapsed = new Set(collapsed);
-  localStorage.setItem("volute:chat-sidebar-collapsed", JSON.stringify([...collapsed]));
-}
+let activeChannelId = $derived.by(() => {
+  if (selection.kind !== "channel") return null;
+  const conv = conversations.find((c) => c.type === "channel" && c.name === selection.slug);
+  return conv?.id ?? null;
+});
 </script>
 
 <div class="sidebar-inner">
   <div class="sections">
+    <!-- System -->
+    <div class="section">
+      <button
+        class="section-toggle"
+        class:active={selection.kind === "home" || selection.kind === "settings" || selection.kind === "extension" || selection.kind === "shared-files"}
+        onclick={onHome}
+      >
+        <span>System</span>
+      </button>
+    </div>
+
     <!-- Minds -->
     <div class="section">
       <div class="section-header-row">
@@ -103,7 +124,7 @@ function toggleSection(section: Section) {
             {@const mindUnread = dmId ? (unreadCounts.get(dmId) ?? 0) : 0}
             <button
               class="mind-item"
-              class:active={dmId === activeConversationId}
+              class:active={selection.kind === "mind" && selection.name === mind.name}
               onclick={() => onSelectMind(mind.name)}
             >
               <ProfileHoverCard profile={{
@@ -145,7 +166,7 @@ function toggleSection(section: Section) {
         <ConversationList
           conversations={channelConversations}
           {minds}
-          activeId={activeConversationId}
+          activeId={activeChannelId}
           {username}
           mode="channels"
           onSelect={onSelectConversation}
@@ -195,10 +216,17 @@ function toggleSection(section: Section) {
     font-weight: 300;
     letter-spacing: 0.02em;
     text-align: left;
+    border-radius: var(--radius);
+    margin: 0 4px;
   }
 
   .section-toggle:hover {
     color: var(--text-1);
+  }
+
+  .section-toggle.active {
+    color: var(--text-0);
+    background: var(--bg-2);
   }
 
   .toggle-icon {

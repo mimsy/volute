@@ -3,24 +3,16 @@ import type { Conversation, Mind } from "@volute/api";
 import { onMount } from "svelte";
 import ChannelBrowserModal from "./components/ChannelBrowserModal.svelte";
 import ChannelMembersPanel from "./components/ChannelMembersPanel.svelte";
-import ChatSidebar from "./components/ChatSidebar.svelte";
 import LoginPage from "./components/LoginPage.svelte";
 import MainFrame from "./components/MainFrame.svelte";
 import MindRightPanel from "./components/MindRightPanel.svelte";
 import SeedModal from "./components/SeedModal.svelte";
-import SystemSidebar from "./components/SystemSidebar.svelte";
-import TabSwitcher from "./components/TabSwitcher.svelte";
+import UnifiedSidebar from "./components/UnifiedSidebar.svelte";
 import UpdateBanner from "./components/UpdateBanner.svelte";
 import UserSettingsModal from "./components/UserSettingsModal.svelte";
 import { type AuthUser, fetchMe } from "./lib/auth";
 import { deleteConversation } from "./lib/client";
-import {
-  navigate,
-  parseSelection,
-  type Selection,
-  selectionToPath,
-  type Tab,
-} from "./lib/navigate";
+import { navigate, parseSelection, type Selection, selectionToPath } from "./lib/navigate";
 import { requestNotificationPermission } from "./lib/notifications";
 import {
   auth,
@@ -52,6 +44,11 @@ let selection = $state<Selection>(parseSelection(data.extensions));
 // Mind section tabs for page header
 const CORE_MIND_SECTIONS: { key: string; label: string; icon: string; defaultPath?: string }[] = [
   {
+    key: "chat",
+    label: "Chat",
+    icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>',
+  },
+  {
     key: "info",
     label: "Info",
     icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 7v4"/><circle cx="8" cy="5" r="0.5" fill="currentColor"/></svg>',
@@ -81,19 +78,17 @@ let allMindSections = $derived([
 ]);
 
 let activeMindName = $derived.by(() => {
-  if (selection.tab !== "system") return null;
   if (selection.kind === "mind") return selection.name;
   return null;
 });
 
 let activeMindSection = $derived.by(() => {
-  if (selection.tab !== "system") return null;
-  if (selection.kind === "mind") return selection.section ?? "info";
+  if (selection.kind === "mind") return selection.section ?? "chat";
   return null;
 });
 
-// System section tabs (shown when on system-level pages, not mind pages)
-let onSystemPage = $derived(selection.tab === "system" && selection.kind !== "mind");
+// System section tabs (shown when on system-level pages, not mind/channel pages)
+let onSystemPage = $derived(selection.kind !== "mind" && selection.kind !== "channel");
 
 let activeSystemSection = $derived.by((): string | null => {
   if (!onSystemPage) return null;
@@ -101,33 +96,6 @@ let activeSystemSection = $derived.by((): string | null => {
   if (selection.kind === "settings") return "settings";
   if (selection.kind === "shared-files") return "shared-files";
   return null;
-});
-
-// Tab context memory: remember last selection per tab
-let lastSystemSelection = $state<Selection>({ tab: "system", kind: "home" });
-let lastChatSelection = $state<Selection>({ tab: "chat", kind: "home" });
-
-// Keep tab memory up to date
-$effect(() => {
-  if (selection.tab === "system") {
-    lastSystemSelection = selection;
-  } else {
-    lastChatSelection = selection;
-  }
-});
-
-// Derived
-let activeTab = $derived<Tab>(selection.tab);
-
-// Total unread for chat badge (exclude hidden conversations)
-let chatUnreadCount = $derived.by(() => {
-  let total = 0;
-  for (const [id, count] of unreadCounts.entries()) {
-    if (!hiddenConversationIds.has(id)) {
-      total += count;
-    }
-  }
-  return total;
 });
 
 // Modals
@@ -161,10 +129,26 @@ $effect(() => {
   }
 });
 
-// Chat-specific derived values
-let activeConversationId = $derived(
-  selection.kind === "conversation" ? (selection.conversationId ?? null) : null,
-);
+// Active conversation ID — for mind DM views and channel views
+let activeConversationId = $derived.by(() => {
+  const sel = selection;
+  if (sel.kind === "channel") {
+    const conv = data.conversations.find((c) => c.type === "channel" && c.name === sel.slug);
+    return conv?.id ?? null;
+  }
+  if (sel.kind === "mind" && (!sel.section || sel.section === "chat")) {
+    // Find DM with this mind
+    const mindName = sel.name;
+    const conv = data.conversations.find((c) => {
+      if (c.type === "channel") return false;
+      const parts = c.participants ?? [];
+      if (parts.length !== 2) return false;
+      return parts.some((p) => p.username === mindName);
+    });
+    return conv?.id ?? null;
+  }
+  return null;
+});
 
 // Sync active conversation for unread tracking
 $effect(() => {
@@ -175,16 +159,15 @@ $effect(() => {
 // Right panel: auto-show mind details for DMs, channel members for channels
 let activeConv = $derived.by(() => {
   const sel = selection;
-  if (sel.kind !== "conversation") return undefined;
-  if (!sel.conversationId) return undefined;
-  return data.conversations.find((c) => c.id === sel.conversationId);
+  if (sel.kind === "channel") {
+    return data.conversations.find((c) => c.type === "channel" && c.name === sel.slug);
+  }
+  return undefined;
 });
 
 let contextMindName = $derived.by(() => {
-  if (selection.kind !== "conversation") return "";
-  if (selection.mindName) return selection.mindName;
-  if (!activeConv || activeConv.type === "channel") return "";
-  return activeConv.mind_name ?? "";
+  if (selection.kind === "mind") return selection.name;
+  return "";
 });
 
 let contextMind = $derived(
@@ -197,86 +180,85 @@ let rightPanelMind = $derived(
 
 let rightPanelIsManual = $derived(!!(activeModal === "mind" && selectedModalMind));
 
-// Show chat button in right panel unless already in a DM with that mind
+// Show chat button in right panel unless already in chat with that mind
 let showRightPanelChat = $derived.by(() => {
   if (!rightPanelMind) return false;
-  // In chat tab: hide if this is the natural DM context (not manually opened)
-  if (!rightPanelIsManual && activeConv?.type === "dm") return false;
+  if (!rightPanelIsManual && selection.kind === "mind") return false;
   return true;
 });
 
-// Show mind page button in right panel
 let showRightPanelProfile = $derived(!!rightPanelMind);
 
+// Show right panel for mind chat views and channel views
 let hasRightPanel = $derived(
-  activeTab === "chat" && (!!rightPanelMind || activeConv?.type === "channel"),
+  (selection.kind === "mind" &&
+    (!selection.section || selection.section === "chat") &&
+    !!rightPanelMind) ||
+    (selection.kind === "channel" && !!activeConv) ||
+    !!(activeModal === "mind" && selectedModalMind),
 );
 
 let showRightPanel = $derived(
   hasRightPanel && (!rightPanelCollapsed || (narrowViewport && rightPanelOpen)),
 );
 
-// Breadcrumb label for chat conversations
-let chatBreadcrumbLabel = $derived.by(() => {
-  if (selection.kind !== "conversation") return "";
+// Breadcrumbs
+let channelBreadcrumbLabel = $derived.by(() => {
+  if (selection.kind !== "channel") return "";
   if (activeConv?.type === "channel" && activeConv.name) return `#${activeConv.name}`;
-  if (contextMind) return contextMind.displayName ?? contextMind.name;
-  if (contextMindName) return contextMindName;
-  return "";
+  return selection.slug;
 });
 
-// Page breadcrumbs
 type Breadcrumb = { label: string; action?: () => void };
 let breadcrumbs = $derived.by((): Breadcrumb[] => {
   const sel = selection;
   const crumbs: Breadcrumb[] = [];
-  if (sel.tab === "system") {
+  if (sel.kind === "mind") {
     crumbs.push({ label: "system", action: handleSystemHome });
-    if (sel.kind === "mind") {
-      crumbs.push({ label: sel.name, action: () => navigate(`/minds/${sel.name}`) });
-      if (sel.section && sel.section !== "info") {
-        // Strip ext: prefix for display (e.g. "ext:notes:notes" → "notes")
-        let sectionLabel = sel.section;
-        if (sectionLabel.startsWith("ext:")) {
-          const parts = sectionLabel.split(":");
-          sectionLabel = parts[2] ?? parts[1];
-        }
-        crumbs.push({
-          label: sectionLabel,
-          action: sel.subpath ? () => navigate(`/minds/${sel.name}/${sectionLabel}`) : undefined,
-        });
-        if (sel.subpath) {
-          crumbs.push({ label: sel.subpath });
-        }
+    crumbs.push({ label: sel.name, action: () => navigate(`/minds/${sel.name}`) });
+    if (sel.section && sel.section !== "chat") {
+      let sectionLabel = sel.section;
+      if (sectionLabel.startsWith("ext:")) {
+        const parts = sectionLabel.split(":");
+        sectionLabel = parts[2] ?? parts[1];
       }
-    } else if (sel.kind === "extension") {
-      const ext = data.extensions.find((e) => e.id === sel.extensionId);
-      const extBase = ext?.systemSection?.urlPatterns?.[0];
       crumbs.push({
-        label: ext?.name ?? sel.extensionId,
-        action: sel.path ? () => navigate(extBase ?? `/ext/${sel.extensionId}`) : undefined,
+        label: sectionLabel,
+        action: sel.subpath ? () => navigate(`/minds/${sel.name}/${sectionLabel}`) : undefined,
       });
-      if (sel.path) {
-        const pathParts = sel.path.split("/");
-        for (let i = 0; i < pathParts.length; i++) {
-          const isLast = i === pathParts.length - 1;
-          const partialPath = pathParts.slice(0, i + 1).join("/");
-          crumbs.push({
-            label: pathParts[i],
-            action: !isLast && extBase ? () => navigate(`${extBase}/${partialPath}`) : undefined,
-          });
-        }
+      if (sel.subpath) {
+        crumbs.push({ label: sel.subpath });
       }
-    } else if (sel.kind === "settings") {
-      crumbs.push({ label: "settings" });
-    } else if (sel.kind === "shared-files") {
-      crumbs.push({ label: "shared files" });
     }
+  } else if (sel.kind === "channel") {
+    crumbs.push({ label: channelBreadcrumbLabel });
+  } else if (sel.kind === "extension") {
+    crumbs.push({ label: "system", action: handleSystemHome });
+    const ext = data.extensions.find((e) => e.id === sel.extensionId);
+    const extBase = ext?.systemSection?.urlPatterns?.[0];
+    crumbs.push({
+      label: ext?.name ?? sel.extensionId,
+      action: sel.path ? () => navigate(extBase ?? `/ext/${sel.extensionId}`) : undefined,
+    });
+    if (sel.path) {
+      const pathParts = sel.path.split("/");
+      for (let i = 0; i < pathParts.length; i++) {
+        const isLast = i === pathParts.length - 1;
+        const partialPath = pathParts.slice(0, i + 1).join("/");
+        crumbs.push({
+          label: pathParts[i],
+          action: !isLast && extBase ? () => navigate(`${extBase}/${partialPath}`) : undefined,
+        });
+      }
+    }
+  } else if (sel.kind === "settings") {
+    crumbs.push({ label: "system", action: handleSystemHome });
+    crumbs.push({ label: "settings" });
+  } else if (sel.kind === "shared-files") {
+    crumbs.push({ label: "system", action: handleSystemHome });
+    crumbs.push({ label: "shared files" });
   } else {
-    crumbs.push({ label: "chat" });
-    if (sel.kind === "conversation" && chatBreadcrumbLabel) {
-      crumbs.push({ label: chatBreadcrumbLabel });
-    }
+    crumbs.push({ label: "system" });
   }
   return crumbs;
 });
@@ -293,8 +275,6 @@ onMount(() => {
   mql.addEventListener("change", mqlHandler);
 
   // Listen for navigation messages from extension iframes.
-  // Only process when current selection is an extension view, so that
-  // late-arriving messages from iframes being hidden don't override tab switches.
   const messageHandler = (e: MessageEvent) => {
     if (e.origin !== window.location.origin) return;
     if (e.data?.type === "navigate" && typeof e.data.path === "string") {
@@ -338,18 +318,13 @@ $effect(() => {
     });
 });
 
-// Re-parse selection when extensions load (handles /notes, /pages URLs and
-// mind section URLs that couldn't resolve before extensions were fetched)
+// Re-parse selection when extensions load
 $effect(() => {
   if (data.extensions.length > 0) {
     const fresh = parseSelection(data.extensions);
-    // Extension URLs that initially parsed as "home"
     if (fresh.kind === "extension" && selection.kind === "home") {
       selection = fresh;
     }
-    // Mind section URLs that couldn't resolve ext: prefix without extensions.
-    // Only upgrade if the current section matches the URL section (e.g. "notes" → "ext:notes:notes"),
-    // not if the user intentionally navigated to a different section like "info".
     if (
       fresh.kind === "mind" &&
       selection.kind === "mind" &&
@@ -363,7 +338,7 @@ $effect(() => {
   }
 });
 
-// Track whether selection change came from popstate (to avoid pushing duplicate history)
+// Track whether selection change came from popstate
 let fromPopstate = $state(false);
 
 // URL sync: popstate → selection
@@ -373,7 +348,6 @@ $effect(() => {
     selection = parseSelection(data.extensions);
   };
   window.addEventListener("popstate", handler);
-  // Intercept internal link clicks for SPA navigation
   const handleClick = (e: MouseEvent) => {
     const link = (e.target as Element).closest("a");
     if (!link) return;
@@ -396,8 +370,6 @@ $effect(() => {
   const expected = selectionToPath(selection, data.extensions);
   const current = window.location.pathname + window.location.search;
   if (current !== expected) {
-    // Don't rewrite unknown URLs to "/" before extensions have loaded —
-    // they may resolve to an extension once the metadata arrives
     if (selection.kind === "home" && data.extensions.length === 0 && current !== "/") {
       // Skip — wait for extensions to load before deciding
     } else if (fromPopstate) {
@@ -407,6 +379,20 @@ $effect(() => {
     }
   }
   fromPopstate = false;
+});
+
+// Resolve backwards-compat __conv: slugs once conversations are loaded
+$effect(() => {
+  if (selection.kind !== "channel") return;
+  if (!selection.slug.startsWith("__conv:")) return;
+  const convId = selection.slug.replace("__conv:", "");
+  const conv = data.conversations.find((c) => c.id === convId);
+  if (!conv) return;
+  if (conv.type === "channel" && conv.name) {
+    selection = { kind: "channel", slug: conv.name };
+  } else if (conv.mind_name) {
+    selection = { kind: "mind", name: conv.mind_name };
+  }
 });
 
 // Actions
@@ -432,19 +418,25 @@ function toggleRightPanel() {
 }
 
 function handleOpenMindModal(mind: Mind) {
-  // In system tab, navigate to mind page. In chat tab, show right panel.
-  if (activeTab === "system") {
-    selection = { tab: "system", kind: "mind", name: mind.name };
-    closeSidebar();
-  } else {
-    selectedModalMind = mind;
-    activeModal = "mind";
-    rightPanelOpen = true;
-  }
+  // Navigate to mind page
+  selection = { kind: "mind", name: mind.name };
+  closeSidebar();
 }
 
 function handleSelectConversation(id: string) {
-  selection = { tab: "chat", kind: "conversation", conversationId: id };
+  // Determine if this is a channel or a DM and route appropriately
+  const conv = data.conversations.find((c) => c.id === id);
+  if (conv?.type === "channel" && conv.name) {
+    selection = { kind: "channel", slug: conv.name };
+  } else if (conv?.mind_name) {
+    selection = { kind: "mind", name: conv.mind_name };
+  } else {
+    // Fallback: find the other participant's name for DMs
+    const other = conv?.participants?.find((p) => p.username !== auth.user?.username);
+    if (other) {
+      selection = { kind: "mind", name: other.username };
+    }
+  }
   setActiveConversation(id);
   closeSidebar();
   if (activeModal === "mind") {
@@ -462,12 +454,11 @@ async function handleDeleteConversation(id: string) {
   }
   reconnectActivity();
   if (activeConversationId === id) {
-    selection = { tab: "chat", kind: "home" };
+    selection = { kind: "home" };
   }
 }
 
 function handleConversationId(id: string) {
-  selection = { tab: "chat", kind: "conversation", conversationId: id };
   setActiveConversation(id);
   reconnectActivity();
 }
@@ -476,21 +467,7 @@ function handleNewChatCreated(name: string) {
   activeModal = null;
   selectedModalMind = null;
   closeSidebar();
-  // Check for existing 2-person DM with this user
-  const existing = data.conversations.find((c) => {
-    if (c.type === "channel") return false;
-    const parts = c.participants ?? [];
-    if (parts.length !== 2) return false;
-    return parts.some((p) => p.username === name);
-  });
-  if (existing) {
-    if (hiddenConversationIds.has(existing.id)) {
-      unhideConversation(existing.id);
-    }
-    selection = { tab: "chat", kind: "conversation", conversationId: existing.id };
-  } else {
-    selection = { tab: "chat", kind: "conversation", mindName: name };
-  }
+  selection = { kind: "mind", name };
 }
 
 function handleChannelJoined(conv: Conversation) {
@@ -498,14 +475,16 @@ function handleChannelJoined(conv: Conversation) {
   selectedModalMind = null;
   closeSidebar();
   reconnectActivity();
-  selection = { tab: "chat", kind: "conversation", conversationId: conv.id };
+  if (conv.type === "channel" && conv.name) {
+    selection = { kind: "channel", slug: conv.name };
+  }
 }
 
 function handleSeedCreated(mindName: string) {
   activeModal = null;
   selectedModalMind = null;
   closeSidebar();
-  selection = { tab: "chat", kind: "conversation", mindName };
+  selection = { kind: "mind", name: mindName };
 }
 
 function onAuth(u: AuthUser) {
@@ -515,35 +494,29 @@ function onAuth(u: AuthUser) {
 function handleHideConversation(id: string) {
   hideConversation(id);
   if (activeConversationId === id) {
-    selection = { tab: "chat", kind: "home" };
+    selection = { kind: "home" };
   }
 }
 
-function handleTabSwitch(tab: Tab) {
-  if (tab === selection.tab) return;
-  selection = tab === "system" ? lastSystemSelection : lastChatSelection;
-  closeSidebar();
-}
-
 function handleSystemHome() {
-  selection = { tab: "system", kind: "home" };
+  selection = { kind: "home" };
 }
 
 function handleSelectMind(name: string) {
-  selection = { tab: "system", kind: "mind", name };
+  selection = { kind: "mind", name };
   closeSidebar();
 }
 
 function handleSelectMindSection(name: string, section: string, defaultPath?: string) {
-  selection = { tab: "system", kind: "mind", name, section: section as any, subpath: defaultPath };
+  selection = { kind: "mind", name, section: section as any, subpath: defaultPath };
 }
 
 function handleSelectSettings() {
-  selection = { tab: "system", kind: "settings" };
+  selection = { kind: "settings" };
 }
 
 function handleSelectExtension(extensionId: string, path?: string) {
-  selection = { tab: "system", kind: "extension", extensionId, path: path ?? "" };
+  selection = { kind: "extension", extensionId, path: path ?? "" };
   closeSidebar();
 }
 
@@ -651,30 +624,20 @@ function handleGlobalClick(e: MouseEvent) {
           </span>
           <span class="sidebar-title">volute</span>
         </button>
-        <TabSwitcher {activeTab} onSwitch={handleTabSwitch} {chatUnreadCount} />
-        {#if activeTab === "system"}
-          <SystemSidebar
-            minds={data.minds}
-            {selection}
-            onHome={handleSystemHome}
-            onSelectMind={handleSelectMind}
-            onSeed={() => (activeModal = "seed")}
-          />
-        {:else}
-          <ChatSidebar
-            minds={data.minds}
-            conversations={data.conversations.filter((c) => !hiddenConversationIds.has(c.id))}
-            {activeConversationId}
-            username={auth.user.username}
-            onSelectConversation={handleSelectConversation}
-            onDeleteConversation={handleDeleteConversation}
-            onBrowseChannels={() => (activeModal = "channelBrowser")}
-            onOpenMind={handleOpenMindModal}
-            onSelectMind={handleNewChatCreated}
-            onSeed={() => (activeModal = "seed")}
-            onHideConversation={handleHideConversation}
-          />
-        {/if}
+        <UnifiedSidebar
+          minds={data.minds}
+          conversations={data.conversations.filter((c) => !hiddenConversationIds.has(c.id))}
+          {selection}
+          username={auth.user.username}
+          onHome={handleSystemHome}
+          onSelectMind={handleSelectMind}
+          onSelectConversation={handleSelectConversation}
+          onDeleteConversation={handleDeleteConversation}
+          onBrowseChannels={() => (activeModal = "channelBrowser")}
+          onOpenMind={handleOpenMindModal}
+          onSeed={() => (activeModal = "seed")}
+          onHideConversation={handleHideConversation}
+        />
       </div>
       {#if layout.sidebarOpen}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -716,14 +679,6 @@ function handleGlobalClick(e: MouseEvent) {
                     <span class="tab-tooltip">{sec.label}</span>
                   </button>
                 {/each}
-                <button
-                  class="mind-section-tab mind-chat-btn"
-                  onclick={() => handleNewChatCreated(activeMindName!)}
-                  title="Chat"
-                >
-                  <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg></span>
-                  <span class="tab-tooltip">Chat</span>
-                </button>
               </div>
             {:else if onSystemPage}
               <div class="mind-section-tabs">
@@ -742,7 +697,7 @@ function handleGlobalClick(e: MouseEvent) {
                 <button
                   class="mind-section-tab"
                   class:active={activeSystemSection === "shared-files"}
-                  onclick={() => { selection = { tab: "system", kind: "shared-files" }; }}
+                  onclick={() => { selection = { kind: "shared-files" }; }}
                 >
                   <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h5l2-2h5v11H2V4z"/></svg></span>
                   <span class="tab-tooltip">Shared Files</span>
@@ -816,7 +771,7 @@ function handleGlobalClick(e: MouseEvent) {
                 <MindRightPanel
                   mind={rightPanelMind}
                   onProfile={showRightPanelProfile ? () => {
-                    selection = { tab: "system", kind: "mind", name: rightPanelMind.name };
+                    selection = { kind: "mind", name: rightPanelMind.name };
                     if (activeModal === "mind") { activeModal = null; selectedModalMind = null; }
                   } : undefined}
                   onChat={showRightPanelChat ? () => handleNewChatCreated(rightPanelMind.name) : undefined}

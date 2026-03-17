@@ -1,7 +1,6 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
 import type { Selection } from "../lib/navigate";
-import ChatHome from "../pages/ChatHome.svelte";
 import Home from "../pages/Home.svelte";
 import MindPage from "../pages/MindPage.svelte";
 import SystemSettingsPage from "../pages/SystemSettingsPage.svelte";
@@ -32,44 +31,37 @@ let {
   onOpenRightPanel?: () => void;
 } = $props();
 
-let chatMindName = $derived.by(() => {
-  if (selection.kind !== "conversation") return "";
-  if (selection.mindName) return selection.mindName;
-  const conv = conversations.find((c) => c.id === selection.conversationId);
-  if (conv?.type === "channel") return "";
-  return conv?.mind_name ?? "";
+// For channel views, resolve conversation from slug
+let channelConv = $derived.by(() => {
+  if (selection.kind !== "channel") return undefined;
+  return conversations.find((c) => c.type === "channel" && c.name === selection.slug);
 });
 
-let chatMind = $derived(chatMindName ? minds.find((m) => m.name === chatMindName) : undefined);
-
-let chatConvType = $derived.by(() => {
-  if (selection.kind !== "conversation") return "dm";
-  const conv = conversations.find((c) => c.id === selection.conversationId);
-  return conv?.type ?? "dm";
+let channelMindName = $derived.by(() => {
+  if (!channelConv) return "";
+  return channelConv.mind_name ?? "";
 });
 
-let conversationId = $derived(
-  selection.kind === "conversation" ? (selection.conversationId ?? null) : null,
-);
-
-let chatChannelName = $derived.by(() => {
-  if (selection.kind !== "conversation") return "";
-  const conv = conversations.find((c) => c.id === selection.conversationId);
-  return conv?.type === "channel" ? (conv.name ?? "") : "";
-});
-
-let chatParticipants = $derived.by(() => {
-  if (selection.kind !== "conversation") return [];
-  const conv = conversations.find((c) => c.id === selection.conversationId);
-  return conv?.participants ?? [];
+// For mind chat views, resolve the DM conversation ID
+let mindConversationId = $derived.by(() => {
+  if (selection.kind !== "mind") return null;
+  const conv = conversations.find((c) => {
+    if (c.type === "channel") return false;
+    const parts = c.participants ?? [];
+    if (parts.length !== 2) return false;
+    return parts.some((p) => p.username === selection.name);
+  });
+  return conv?.id ?? null;
 });
 
 let contextLabel = $derived.by(() => {
-  if (selection.kind !== "conversation") return "";
-  if (chatChannelName) return `#${chatChannelName}`;
-  const mind = chatMind ?? (chatMindName ? minds.find((m) => m.name === chatMindName) : undefined);
-  if (mind) return mind.displayName ?? mind.name;
-  if (chatMindName) return chatMindName;
+  if (selection.kind === "channel" && channelConv) {
+    return `#${channelConv.name ?? ""}`;
+  }
+  if (selection.kind === "mind") {
+    const mind = minds.find((m) => m.name === selection.name);
+    return mind?.displayName ?? selection.name;
+  }
   return "";
 });
 </script>
@@ -84,50 +76,58 @@ let contextLabel = $derived.by(() => {
     {/if}
   </div>
 
-  <!-- System tab views -->
-  {#if selection.tab === "system"}
-    {#if selection.kind === "mind"}
-      <div class="frame-content mind-frame">
-        <MindPage name={selection.name} section={selection.section} subpath={selection.subpath} />
-      </div>
-    {:else if selection.kind === "extension"}
-      <div class="frame-content">
-        <iframe src="/ext/{selection.extensionId}/#{selection.path ? '/' + selection.path : ''}" class="page-iframe" title="Extension"></iframe>
-      </div>
-    {:else if selection.kind === "settings"}
-      <div class="frame-content">
-        <SystemSettingsPage section={selection.section} />
-      </div>
-    {:else if selection.kind === "shared-files"}
-      <div class="frame-content">
-        <PublicFiles name="_system" rootLabel="shared" />
-      </div>
-    {:else}
-      <div class="frame-content padded">
-        <Home {username} {conversations} {onSelectConversation} />
-      </div>
-    {/if}
-
-  <!-- Chat tab views -->
-  {:else if selection.kind === "conversation"}
-    <div class="frame-content">
-      <Chat
-        name={chatMindName}
+  {#if selection.kind === "mind"}
+    <div class="frame-content mind-frame">
+      <MindPage
+        name={selection.name}
+        section={selection.section}
+        subpath={selection.subpath}
         {username}
-        {conversationId}
+        conversationId={mindConversationId}
         {onConversationId}
-        stage={chatMind?.stage}
-        convType={chatConvType}
-        channelName={chatChannelName}
         {minds}
-        participants={chatParticipants}
+        {conversations}
+        {onSelectConversation}
         {onOpenMind}
         {onTypingNames}
       />
     </div>
-  {:else}
+  {:else if selection.kind === "channel"}
     <div class="frame-content">
-      <ChatHome {conversations} {username} {onSelectConversation} />
+      {#if channelConv}
+        <Chat
+          name={channelMindName}
+          {username}
+          conversationId={channelConv.id}
+          {onConversationId}
+          convType="channel"
+          channelName={channelConv.name ?? ""}
+          {minds}
+          participants={channelConv.participants ?? []}
+          {onOpenMind}
+          {onTypingNames}
+        />
+      {:else}
+        <div class="frame-content padded">
+          <div class="not-found">Channel not found.</div>
+        </div>
+      {/if}
+    </div>
+  {:else if selection.kind === "extension"}
+    <div class="frame-content">
+      <iframe src="/ext/{selection.extensionId}/#{selection.path ? '/' + selection.path : ''}" class="page-iframe" title="Extension"></iframe>
+    </div>
+  {:else if selection.kind === "settings"}
+    <div class="frame-content">
+      <SystemSettingsPage section={selection.section} />
+    </div>
+  {:else if selection.kind === "shared-files"}
+    <div class="frame-content">
+      <PublicFiles name="_system" rootLabel="shared" />
+    </div>
+  {:else}
+    <div class="frame-content padded">
+      <Home {username} {conversations} {onSelectConversation} />
     </div>
   {/if}
 </div>
@@ -159,6 +159,13 @@ let contextLabel = $derived.by(() => {
     height: 100%;
     border: none;
     background: white;
+  }
+
+  .not-found {
+    color: var(--text-2);
+    font-size: 13px;
+    padding: 40px 0;
+    text-align: center;
   }
 
   .mobile-header {
