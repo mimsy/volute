@@ -48,7 +48,9 @@ function isBrainIridescent(username: string): boolean {
     <span class="panel-title">Members</span>
     <span class="member-count">{conversation.participants.length}</span>
     {#if isChannel}
-      <button class="invite-btn" onclick={() => showInvite = true} title="Invite">+</button>
+      <button class="invite-btn" onclick={() => showInvite = true} title="Invite">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
+      </button>
     {/if}
   </div>
   <div class="panel-body">
@@ -130,7 +132,7 @@ function isBrainIridescent(username: string): boolean {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 12px 16px;
+    padding: 12px 40px 12px 16px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
@@ -148,17 +150,26 @@ function isBrainIridescent(username: string): boolean {
   }
 
   .invite-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
     background: none;
     color: var(--text-2);
-    font-size: 15px;
-    padding: 2px 6px;
-    border-radius: var(--radius);
     flex-shrink: 0;
+    cursor: pointer;
+    padding: 0;
+    transition: color 0.1s;
+  }
+
+  .invite-btn svg {
+    width: 14px;
+    height: 14px;
   }
 
   .invite-btn:hover {
     color: var(--text-0);
-    background: var(--bg-2);
   }
 
   .panel-body {
