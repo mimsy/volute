@@ -11,6 +11,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { extractImages, extractText } from "./lib/content.js";
 import { createEventHandler, emit } from "./lib/event-handler.js";
+import { runHooks } from "./lib/hook-loader.js";
 import { log } from "./lib/logger.js";
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
@@ -109,6 +110,59 @@ export function createMind(options: {
       ? createSubagentExtension(subagents, { cwd: options.cwd, model, authStorage, modelRegistry })
       : undefined;
 
+  // --- Dynamic hook extension ---
+
+  const hooksDir = resolvePath(options.cwd, ".config/hooks");
+
+  function createDynamicHookExtension(session: PiSession): ExtensionFactory {
+    return (pi) => {
+      pi.on("before_agent_start", async () => {
+        try {
+          const result = await runHooks(hooksDir, "pre-prompt", {
+            event: "pre-prompt",
+            session: session.name,
+          });
+          if (result.additionalContext) {
+            emit(session, {
+              type: "context",
+              content: result.additionalContext,
+              metadata: { source: "dynamic:pre-prompt", ...result.metadata },
+            });
+            return {
+              message: {
+                customType: "dynamic-hook",
+                content: result.additionalContext,
+                display: true,
+              },
+            };
+          }
+        } catch (err) {
+          log("mind", "dynamic pre-prompt hook failed:", err);
+        }
+        return {};
+      });
+
+      pi.on("tool_execution_end", async (event: any) => {
+        try {
+          const result = await runHooks(hooksDir, "post-tool-use", {
+            event: "post-tool-use",
+            tool_name: event.toolName,
+            tool_input: event.args,
+          });
+          if (result.additionalContext) {
+            emit(session, {
+              type: "context",
+              content: result.additionalContext,
+              metadata: { source: "dynamic:post-tool-use", ...result.metadata },
+            });
+          }
+        } catch (err) {
+          log("mind", "dynamic post-tool-use hook failed:", err);
+        }
+      });
+    };
+  }
+
   // --- Session lifecycle ---
 
   function getOrCreateSession(name: string): PiSession {
@@ -204,6 +258,8 @@ export function createMind(options: {
       session,
     );
 
+    const dynamicHookExtension = createDynamicHookExtension(session);
+
     const resourceLoader = new DefaultResourceLoader({
       cwd: options.cwd,
       settingsManager,
@@ -213,6 +269,7 @@ export function createMind(options: {
         sessionContextExtension,
         replyInstructionsExtension,
         ...(subagentExtension ? [subagentExtension] : []),
+        dynamicHookExtension,
       ],
     });
     await resourceLoader.reload();

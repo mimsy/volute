@@ -3,6 +3,8 @@ name: Resonance
 description: Semantic memory engine — ingest text, search via full-text and/or vector similarity, find cross-memory connections, with strength/decay dynamics. Use for "resonance", "semantic search", "full-text search", "memory connections", "ingest memories", "decay", "resonance report".
 metadata:
   npm-dependencies: libsql
+  hooks:
+    pre-prompt: scripts/resonance-hook.sh
 ---
 
 # Resonance — Semantic Memory Engine

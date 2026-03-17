@@ -83,14 +83,52 @@ export function parseSkillMd(content: string): {
   name: string;
   description: string;
   npmDependencies: string[];
+  hooks: Record<string, string>;
 } {
   const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return { name: "", description: "", npmDependencies: [] };
+  if (!match) return { name: "", description: "", npmDependencies: [], hooks: {} };
   const frontmatter = match[1];
 
   const nameMatch = frontmatter.match(/^name:\s*(.+)$/m);
   const descMatch = frontmatter.match(/^description:\s*(.+)$/m);
   const depsMatch = frontmatter.match(/^\s*npm-dependencies:\s*(.+)$/m);
+
+  // Parse hooks from metadata block using indentation-aware parsing.
+  // hooks: must appear under metadata:, and hook entries are indented deeper than hooks:.
+  const hooks: Record<string, string> = {};
+  const lines = frontmatter.split("\n");
+  let inHooks = false;
+  let hooksIndent = -1;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+
+    // Detect "hooks:" key — must be indented (i.e., under metadata:)
+    const hooksStart = line.match(/^(\s+)hooks:\s*$/);
+    if (hooksStart) {
+      inHooks = true;
+      hooksIndent = hooksStart[1].length;
+      continue;
+    }
+
+    if (inHooks) {
+      // Check indentation — hook entries must be deeper than hooks:
+      const lineIndentMatch = line.match(/^(\s*)/);
+      const lineIndent = lineIndentMatch ? lineIndentMatch[1].length : 0;
+
+      // If indentation is <= hooks: level, we've left the hooks block
+      if (lineIndent <= hooksIndent) {
+        inHooks = false;
+        continue;
+      }
+
+      // Parse "event-name: script/path" entries
+      const hookMatch = line.match(/^\s+([a-z0-9-]+):\s*(.+)$/);
+      if (hookMatch) {
+        hooks[hookMatch[1]] = hookMatch[2].trim();
+      }
+    }
+  }
+
   return {
     name: nameMatch?.[1].trim() ?? "",
     description: descMatch?.[1].trim() ?? "",
@@ -100,6 +138,7 @@ export function parseSkillMd(content: string): {
           .split(/[\s,]+/)
           .filter(Boolean)
       : [],
+    hooks,
   };
 }
 
@@ -256,6 +295,12 @@ export async function installSkill(
     }
   }
 
+  // Install hook shims if declared in SKILL.md frontmatter
+  if (existsSync(skillMdPath)) {
+    const { hooks } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
+    installHookShims(dir, skillId, hooks);
+  }
+
   // Read install notes if present
   let installNotes: string | null = null;
   const installMdPath = join(destDir, "references", "INSTALL.md");
@@ -266,6 +311,8 @@ export async function installSkill(
   // Write upstream tracking file
   // We need to commit first, then get the hash, then write upstream and amend
   await gitExec(["add", join("home", ".claude", "skills", skillId)], { cwd: dir });
+  // Stage hook shim files if any were created
+  await gitExec(["add", join("home", ".config", "hooks")], { cwd: dir }).catch(() => {});
   // Also commit package.json/package-lock.json changes from npm install
   if (npmInstalled.length > 0) {
     await gitExec(["add", "package.json", "package-lock.json"], { cwd: dir });
@@ -296,8 +343,14 @@ export async function uninstallSkill(
   const skillDir = join(mindSkillsDir(dir), skillId);
   if (!existsSync(skillDir)) throw new Error(`Skill not installed: ${skillId}`);
 
+  // Remove hook shims for this skill
+  removeHookShims(dir, skillId);
+
   rmSync(skillDir, { recursive: true });
   await gitExec(["add", join("home", ".claude", "skills", skillId)], { cwd: dir });
+  // Also stage hook shim removals
+  const hooksBase = join("home", ".config", "hooks");
+  await gitExec(["add", hooksBase], { cwd: dir }).catch(() => {});
   await gitExec(["commit", "-m", `Uninstall skill: ${skillId}`], { cwd: dir });
 }
 
@@ -514,6 +567,45 @@ export async function publishSkill(
   if (!existsSync(skillMdPath)) throw new Error(`SKILL.md not found in ${skillId}`);
 
   return importSkillFromDir(skillDir, mindName);
+}
+
+// --- Hook shim management ---
+
+function shimContent(skillId: string, scriptPath: string): string {
+  const ext = scriptPath.split(".").pop() ?? "sh";
+  const skillScriptPath = `.claude/skills/${skillId}/${scriptPath}`;
+  if (ext === "ts") {
+    return `#!/bin/bash\nexec npx tsx ${skillScriptPath} "$@"\n`;
+  }
+  if (ext === "js") {
+    return `#!/bin/bash\nexec node ${skillScriptPath} "$@"\n`;
+  }
+  return `#!/bin/bash\nexec bash ${skillScriptPath} "$@"\n`;
+}
+
+export function installHookShims(
+  dir: string,
+  skillId: string,
+  hooks: Record<string, string>,
+): void {
+  for (const [event, scriptPath] of Object.entries(hooks)) {
+    const eventDir = join(dir, "home", ".config", "hooks", event);
+    mkdirSync(eventDir, { recursive: true });
+    const shimPath = join(eventDir, `50-${skillId}.sh`);
+    const content = shimContent(skillId, scriptPath);
+    writeFileSync(shimPath, content, { mode: 0o755 });
+  }
+}
+
+export function removeHookShims(dir: string, skillId: string): void {
+  const hooksBase = join(dir, "home", ".config", "hooks");
+  if (!existsSync(hooksBase)) return;
+
+  for (const eventDir of readdirSync(hooksBase, { withFileTypes: true })) {
+    if (!eventDir.isDirectory()) continue;
+    const shimPath = join(hooksBase, eventDir.name, `50-${skillId}.sh`);
+    if (existsSync(shimPath)) rmSync(shimPath);
+  }
 }
 
 // --- Helpers ---

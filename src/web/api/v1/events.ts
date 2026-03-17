@@ -16,7 +16,6 @@ import {
 import { bufferEvent, getEventsSince } from "../../../lib/events/event-sequencer.js";
 import { getActiveMinds } from "../../../lib/events/mind-activity-tracker.js";
 import log from "../../../lib/logger.js";
-import { getCachedRecentPages, getCachedSites } from "../../../lib/pages-watcher.js";
 import { activity } from "../../../lib/schema.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
 
@@ -75,15 +74,10 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
         log.error("[v1-events] failed to fetch conversations", log.errorData(err));
       }
 
-      const sites = await getCachedSites();
-      const recentPages = await getCachedRecentPages();
-
       const snapshotData = {
         event: "snapshot" as const,
         activity: recentActivity,
         conversations,
-        sites,
-        recentPages,
         activeMinds: getActiveMinds(),
         onlineBrains: getOnlineBrains(),
       };
