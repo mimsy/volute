@@ -84,14 +84,16 @@ export function parseSkillMd(content: string): {
   description: string;
   npmDependencies: string[];
   hooks: Record<string, string>;
+  bin: string | null;
 } {
   const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return { name: "", description: "", npmDependencies: [], hooks: {} };
+  if (!match) return { name: "", description: "", npmDependencies: [], hooks: {}, bin: null };
   const frontmatter = match[1];
 
   const nameMatch = frontmatter.match(/^name:\s*(.+)$/m);
   const descMatch = frontmatter.match(/^description:\s*(.+)$/m);
   const depsMatch = frontmatter.match(/^\s*npm-dependencies:\s*(.+)$/m);
+  const binMatch = frontmatter.match(/^\s*bin:\s*(.+)$/m);
 
   // Parse hooks from metadata block using indentation-aware parsing.
   // hooks: must appear under metadata:, and hook entries are indented deeper than hooks:.
@@ -139,6 +141,7 @@ export function parseSkillMd(content: string): {
           .filter(Boolean)
       : [],
     hooks,
+    bin: binMatch?.[1].trim() ?? null,
   };
 }
 
@@ -295,10 +298,11 @@ export async function installSkill(
     }
   }
 
-  // Install hook shims if declared in SKILL.md frontmatter
+  // Install hook shims and bin command if declared in SKILL.md frontmatter
   if (existsSync(skillMdPath)) {
-    const { hooks } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
+    const { hooks, bin } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
     installHookShims(dir, skillId, hooks);
+    if (bin) installBinShim(dir, skillId, bin);
   }
 
   // Read install notes if present
@@ -311,8 +315,9 @@ export async function installSkill(
   // Write upstream tracking file
   // We need to commit first, then get the hash, then write upstream and amend
   await gitExec(["add", join("home", ".claude", "skills", skillId)], { cwd: dir });
-  // Stage hook shim files if any were created
+  // Stage hook shim and bin command files if any were created
   await gitExec(["add", join("home", ".config", "hooks")], { cwd: dir }).catch(() => {});
+  await gitExec(["add", join("home", ".config", "bin")], { cwd: dir }).catch(() => {});
   // Also commit package.json/package-lock.json changes from npm install
   if (npmInstalled.length > 0) {
     await gitExec(["add", "package.json", "package-lock.json"], { cwd: dir });
@@ -343,14 +348,16 @@ export async function uninstallSkill(
   const skillDir = join(mindSkillsDir(dir), skillId);
   if (!existsSync(skillDir)) throw new Error(`Skill not installed: ${skillId}`);
 
-  // Remove hook shims for this skill
+  // Remove hook shims and bin command for this skill
   removeHookShims(dir, skillId);
+  removeBinShim(dir, skillId);
 
   rmSync(skillDir, { recursive: true });
   await gitExec(["add", join("home", ".claude", "skills", skillId)], { cwd: dir });
-  // Also stage hook shim removals
+  // Also stage hook shim and bin removals
   const hooksBase = join("home", ".config", "hooks");
   await gitExec(["add", hooksBase], { cwd: dir }).catch(() => {});
+  await gitExec(["add", join("home", ".config", "bin")], { cwd: dir }).catch(() => {});
   await gitExec(["commit", "-m", `Uninstall skill: ${skillId}`], { cwd: dir });
 }
 
@@ -606,6 +613,32 @@ export function removeHookShims(dir: string, skillId: string): void {
     const shimPath = join(hooksBase, eventDir.name, `50-${skillId}.sh`);
     if (existsSync(shimPath)) rmSync(shimPath);
   }
+}
+
+// --- Bin shim management ---
+
+function binShimContent(skillId: string, scriptPath: string): string {
+  const skillScriptPath = `.claude/skills/${skillId}/${scriptPath}`;
+  const ext = scriptPath.split(".").pop() ?? "sh";
+  if (ext === "ts") {
+    return `#!/bin/bash\nexec node --import tsx ${skillScriptPath} "$@"\n`;
+  }
+  if (ext === "js") {
+    return `#!/bin/bash\nexec node ${skillScriptPath} "$@"\n`;
+  }
+  return `#!/bin/bash\nexec bash ${skillScriptPath} "$@"\n`;
+}
+
+export function installBinShim(dir: string, skillId: string, scriptPath: string): void {
+  const binDir = join(dir, "home", ".config", "bin");
+  mkdirSync(binDir, { recursive: true });
+  const shimPath = join(binDir, skillId);
+  writeFileSync(shimPath, binShimContent(skillId, scriptPath), { mode: 0o755 });
+}
+
+export function removeBinShim(dir: string, skillId: string): void {
+  const shimPath = join(dir, "home", ".config", "bin", skillId);
+  if (existsSync(shimPath)) rmSync(shimPath);
 }
 
 // --- Helpers ---

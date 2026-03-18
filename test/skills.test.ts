@@ -9,12 +9,14 @@ import { sharedSkills } from "../src/lib/schema.js";
 import {
   getSharedSkill,
   importSkillFromDir,
+  installBinShim,
   installHookShims,
   installSkill,
   listMindSkills,
   listSharedSkills,
   parseSkillMd,
   publishSkill,
+  removeBinShim,
   removeHookShims,
   removeSharedSkill,
   sharedSkillsDir,
@@ -580,6 +582,63 @@ describe("hook shim management", () => {
     const dir = join(voluteHome(), "test-hooks-nodir");
     // Should not throw
     removeHookShims(dir, "resonance");
+  });
+
+  it("installs bin shim for skill with bin metadata", () => {
+    const dir = join(voluteHome(), "test-bin-shim");
+    mkdirSync(join(dir, "home", ".config", "bin"), { recursive: true });
+
+    installBinShim(dir, "dream", "scripts/dream.ts");
+
+    const shimPath = join(dir, "home", ".config", "bin", "dream");
+    assert.ok(existsSync(shimPath), "bin shim should exist");
+    const content = readFileSync(shimPath, "utf-8");
+    assert.ok(content.includes("node --import tsx"), "shim should use node --import tsx");
+    assert.ok(
+      content.includes(".claude/skills/dream/scripts/dream.ts"),
+      "shim should reference the skill script",
+    );
+    assert.ok(content.includes('"$@"'), "shim should pass through arguments");
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("removes bin shim on uninstall", () => {
+    const dir = join(voluteHome(), "test-bin-remove");
+    const binDir = join(dir, "home", ".config", "bin");
+    mkdirSync(binDir, { recursive: true });
+
+    writeFileSync(join(binDir, "resonance"), "#!/bin/bash\necho test", { mode: 0o755 });
+    writeFileSync(join(binDir, "other"), "#!/bin/bash\necho other", { mode: 0o755 });
+
+    removeBinShim(dir, "resonance");
+
+    assert.ok(!existsSync(join(binDir, "resonance")), "resonance shim should be removed");
+    assert.ok(existsSync(join(binDir, "other")), "other shim should be kept");
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("parseSkillMd extracts bin from metadata", () => {
+    const md = `---
+name: Test
+description: A test skill
+metadata:
+  bin: scripts/test.ts
+---
+# Test`;
+    const parsed = parseSkillMd(md);
+    assert.equal(parsed.bin, "scripts/test.ts");
+  });
+
+  it("parseSkillMd returns null bin when not specified", () => {
+    const md = `---
+name: Test
+description: A test skill
+---
+# Test`;
+    const parsed = parseSkillMd(md);
+    assert.equal(parsed.bin, null);
   });
 
   it("installs multiple hooks for different events", () => {

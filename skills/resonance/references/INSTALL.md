@@ -3,7 +3,7 @@
 Run the install command to set up the database, create a nightly schedule, and run initial ingestion:
 
 ```bash
-node --import tsx .claude/skills/resonance/scripts/resonance.ts install
+resonance install
 ```
 
 This works immediately — no API key required. Full-text search is available right away.
@@ -17,7 +17,7 @@ volute env set OPENROUTER_API_KEY <your-key>
 Then re-run `ingest-all` to generate embeddings for existing memories:
 
 ```bash
-node --import tsx .claude/skills/resonance/scripts/resonance.ts ingest-all
+resonance ingest-all
 ```
 
 Without an API key, `search` uses full-text matching. With one, it uses hybrid (vector + FTS) by default.

@@ -3,6 +3,7 @@ name: Resonance
 description: Semantic memory engine — ingest text, search via full-text and/or vector similarity, find cross-memory connections, with strength/decay dynamics. Use for "resonance", "semantic search", "full-text search", "memory connections", "ingest memories", "decay", "resonance report".
 metadata:
   npm-dependencies: libsql
+  bin: scripts/resonance.ts
   hooks:
     pre-prompt: scripts/resonance-hook.sh
 ---
@@ -22,7 +23,7 @@ Not an archive — a memory. Stores text chunks with full-text indexing and opti
 ## Commands
 
 ```bash
-node --import tsx .claude/skills/resonance/scripts/resonance.ts <command>
+resonance <command>
 ```
 
 | Command | Description |
