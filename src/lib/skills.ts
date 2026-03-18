@@ -359,8 +359,7 @@ export async function uninstallSkill(
   rmSync(skillDir, { recursive: true });
   await gitExec(["add", join("home", ".claude", "skills", skillId)], { cwd: dir });
   // Also stage hook shim and bin removals
-  const hooksBase = join("home", ".local", "hooks");
-  await gitExec(["add", hooksBase], { cwd: dir }).catch(() => {});
+  await gitExec(["add", join("home", ".local", "hooks")], { cwd: dir }).catch(() => {});
   await gitExec(["add", join("home", ".local", "bin")], { cwd: dir }).catch(() => {});
   await gitExec(["commit", "-m", `Uninstall skill: ${skillId}`], { cwd: dir });
 }
@@ -423,7 +422,9 @@ export async function updateSkill(
         try {
           baseContent = await gitExec(
             ["show", `${upstream.baseCommit}:${join(relSkillPath, file)}`],
-            { cwd: dir },
+            {
+              cwd: dir,
+            },
           );
         } catch {
           // File didn't exist in base — it was added locally, keep it
@@ -443,7 +444,9 @@ export async function updateSkill(
       try {
         baseContent = await gitExec(
           ["show", `${upstream.baseCommit}:${join(relSkillPath, file)}`],
-          { cwd: dir },
+          {
+            cwd: dir,
+          },
         );
       } catch {
         // File didn't exist at base commit — treat as empty

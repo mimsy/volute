@@ -45,8 +45,10 @@ async function handleSubmit(e: Event) {
     {#if step === "name"}
       <div class="subtitle">Welcome! Let's set up your system.</div>
       <form onsubmit={handleSubmit}>
-        <label class="label">System name</label>
+        <label class="label" for="system-name">System name</label>
+        <!-- svelte-ignore a11y_autofocus -->
         <input
+          id="system-name"
           type="text"
           placeholder="e.g. my-server"
           bind:value={systemName}

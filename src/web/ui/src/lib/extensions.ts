@@ -3,8 +3,9 @@ export type ExtensionInfo = {
   name: string;
   version: string;
   description?: string;
-  systemSection?: { id: string; label: string; icon?: string; urlPatterns?: string[] };
-  mindSections?: { id: string; label: string; defaultPath?: string; icon?: string }[];
+  icon?: string;
+  systemSection?: { id: string; label: string; urlPatterns?: string[] };
+  mindSections?: { id: string; label: string; defaultPath?: string }[];
   feedSource?: { endpoint: string; kind?: string };
 };
 

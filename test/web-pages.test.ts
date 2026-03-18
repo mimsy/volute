@@ -216,4 +216,44 @@ describe("web pages routes", () => {
     const res = await app.request("/pages/test-mind/index.html");
     assert.equal(res.status, 200);
   });
+
+  it("blocks path traversal via name parameter", async () => {
+    const dir = setupTestDir();
+    const app = createApp(dir);
+
+    // Traversal via name should return 404 (name check fails)
+    const res = await app.request("/pages/../../etc/passwd");
+    assert.ok(res.status === 403 || res.status === 404);
+  });
+});
+
+describe("createPublicRoutes name traversal", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  it("blocks traversal in the :name parameter", async () => {
+    const dir = setupTestDir();
+    const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
+
+    const ctx = {
+      dataDir: dir,
+      db: null,
+      getMindDir: () => null,
+      getSystemsConfig: () => null,
+      resolveUser: () => null,
+      publishActivity: () => {},
+    };
+    const publicApp = new Hono();
+    publicApp.route("/public", createPublicRoutes(ctx));
+
+    // Try traversal via the name segment
+    const traversalNames = ["../../../etc", "..%2F..%2Fetc", "..", "."];
+    for (const name of traversalNames) {
+      const res = await publicApp.request(`/public/${name}/passwd`);
+      assert.ok(
+        res.status === 403 || res.status === 404,
+        `Expected 403/404 for name="${name}", got ${res.status}`,
+      );
+    }
+  });
 });
