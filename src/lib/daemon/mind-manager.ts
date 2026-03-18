@@ -175,6 +175,22 @@ export class MindManager {
       }
     }
 
+    // For codex minds, inject OpenAI API key
+    if (target.template === "codex") {
+      try {
+        const apiKey = await resolveApiKey("openai");
+        if (apiKey) {
+          env.OPENAI_API_KEY = apiKey;
+        } else if (process.env.OPENAI_API_KEY) {
+          env.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+        } else {
+          mlog.warn(`no OpenAI API key found — mind ${name} may fail to start`);
+        }
+      } catch (err) {
+        mlog.error(`failed to inject OpenAI API key for ${name}`, log.errorData(err));
+      }
+    }
+
     // For claude minds, inject system Anthropic credentials.
     // OAuth: write Claude Code credential file (~/.claude/.credentials.json) so the
     // Agent SDK authenticates natively. API key: set ANTHROPIC_API_KEY env var.

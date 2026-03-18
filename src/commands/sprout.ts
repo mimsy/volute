@@ -49,12 +49,13 @@ export async function run(_args: string[]) {
   // Set up daemon client for API calls
   const { daemonFetch } = await import("../lib/daemon-client.js");
   const { getClient, urlOf } = await import("../lib/api-client.js");
+  const { mindSkillsDir } = await import("../lib/skills.js");
   const client = getClient();
 
   // Install standard skills from shared pool via daemon, remove orientation
   const failedSkills: string[] = [];
   for (const skillId of getStandardSkillsWithExtensions()) {
-    const skillDir = resolve(dir, "home", ".claude", "skills", skillId);
+    const skillDir = resolve(mindSkillsDir(dir), skillId);
     if (!existsSync(skillDir)) {
       const installRes = await daemonFetch(
         urlOf(client.api.minds[":name"].skills.install.$url({ param: { name: mindName } })),
@@ -73,7 +74,7 @@ export async function run(_args: string[]) {
   }
 
   // Remove orientation skill via daemon
-  const orientationDir = resolve(dir, "home", ".claude", "skills", "orientation");
+  const orientationDir = resolve(mindSkillsDir(dir), "orientation");
   if (existsSync(orientationDir)) {
     const delRes = await daemonFetch(
       urlOf(

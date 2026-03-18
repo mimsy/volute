@@ -6,7 +6,6 @@ import type {
   ChannelInfo,
   Conversation,
   ConversationWithParticipants,
-  FileContent,
   HistoryMessage,
   HistorySession,
   Message,
@@ -262,16 +261,6 @@ export function fetchTurns(
 
 export function fetchVariants(name: string): Promise<Variant[]> {
   return get(`${V1}/minds/${enc(name)}/variants`);
-}
-
-// --- Files ---
-
-export function fetchFiles(name: string): Promise<string[]> {
-  return get(`${V1}/minds/${enc(name)}/files`);
-}
-
-export function fetchFile(name: string, filename: string): Promise<FileContent> {
-  return get(`${V1}/minds/${enc(name)}/files/${enc(filename)}`);
 }
 
 // --- Config ---

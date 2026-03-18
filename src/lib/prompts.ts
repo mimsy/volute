@@ -72,7 +72,7 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
   },
   upgrade_message: {
     content:
-      "[system] Your framework has been upgraded to the latest version. You have been restarted. Check your skills and CLAUDE.md for any changes.",
+      "[system] Your framework has been upgraded to the latest version. You have been restarted. Check your skills for any changes.",
     description: "Sent after a template upgrade completes",
     variables: [],
     category: "system",
