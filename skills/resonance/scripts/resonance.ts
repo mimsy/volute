@@ -191,7 +191,7 @@ async function runInstall(config: ResonanceConfig): Promise<void> {
 
   // 4. Set up nightly schedule
   const scriptPath = ".claude/skills/resonance/scripts/resonance.ts";
-  const script = `npx tsx ${scriptPath} ingest-all && npx tsx ${scriptPath} decay`;
+  const script = `node --import tsx ${scriptPath} ingest-all && node --import tsx ${scriptPath} decay`;
   try {
     await execFileAsync("volute", [
       "schedule",
