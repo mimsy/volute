@@ -247,6 +247,12 @@ export function mindSkillsDir(dir: string): string {
   return resolve(home, subdir);
 }
 
+/** Relative path from mind dir to skills dir, e.g. "home/.agents/skills" */
+function relSkillsPath(dir: string): string {
+  const home = resolve(dir, "home");
+  return join("home", mindSkillsDir(dir).slice(home.length + 1));
+}
+
 type UpstreamInfo = {
   source: string;
   version: number;
@@ -330,7 +336,7 @@ export async function installSkill(
 
   // Write upstream tracking file
   // We need to commit first, then get the hash, then write upstream and amend
-  await gitExec(["add", join("home", ".claude", "skills", skillId)], { cwd: dir });
+  await gitExec(["add", join(relSkillsPath(dir), skillId)], { cwd: dir });
   // Stage hook shim files if any were created
   if (
     Object.keys(parseSkillMd(readFileSync(join(sourceDir, "SKILL.md"), "utf-8")).hooks).length > 0
@@ -350,7 +356,7 @@ export async function installSkill(
     baseCommit: commitHash,
   };
   writeFileSync(join(destDir, ".upstream.json"), `${JSON.stringify(upstream, null, 2)}\n`);
-  await gitExec(["add", join("home", ".claude", "skills", skillId, ".upstream.json")], {
+  await gitExec(["add", join(relSkillsPath(dir), skillId, ".upstream.json")], {
     cwd: dir,
   });
   await gitExec(["commit", "--amend", "--no-edit"], { cwd: dir });
@@ -371,7 +377,7 @@ export async function uninstallSkill(
   removeHookShims(dir, skillId);
 
   rmSync(skillDir, { recursive: true });
-  await gitExec(["add", join("home", ".claude", "skills", skillId)], { cwd: dir });
+  await gitExec(["add", join(relSkillsPath(dir), skillId)], { cwd: dir });
   // Also stage hook shim removals
   const hooksBase = join(dir, "home", ".config", "hooks");
   if (existsSync(hooksBase)) {
@@ -408,7 +414,7 @@ export async function updateSkill(
   if (!existsSync(sourceDir)) throw new Error(`Shared skill files missing: ${upstream.source}`);
 
   // Collect all files from current, base (git), and new (shared)
-  const relSkillPath = join("home", ".claude", "skills", skillId);
+  const relSkillPath = join(relSkillsPath(dir), skillId);
   const currentFiles = listFilesRecursive(skillDir).filter((f) => f !== ".upstream.json");
   const newFiles = listFilesRecursive(sourceDir).filter((f) => f !== ".upstream.json");
   const allFiles = [...new Set([...currentFiles, ...newFiles])];

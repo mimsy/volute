@@ -5,7 +5,14 @@ import { Hono } from "hono";
 import { findMind, mindDir } from "../../lib/registry.js";
 import { readVoluteConfig } from "../../lib/volute-config.js";
 
-const ALLOWED_FILES = new Set(["SOUL.md", "MEMORY.md", "CLAUDE.md", "VOLUTE.md"]);
+const ALLOWED_FILES = new Set([
+  "SOUL.md",
+  "MEMORY.md",
+  "VOLUTE.md",
+  "CLAUDE.md",
+  "MINDS.md",
+  "AGENTS.md",
+]);
 
 const AVATAR_MIME: Record<string, string> = {
   ".png": "image/png",

@@ -9,8 +9,12 @@ home/*
 # Core mind files
 !home/SOUL.md
 !home/MEMORY.md
-!home/CLAUDE.md
 !home/VOLUTE.md
+
+# Template-specific instruction files
+!home/CLAUDE.md
+!home/MINDS.md
+!home/AGENTS.md
 
 # Memory
 !home/memory/
@@ -20,8 +24,14 @@ home/*
 !home/.config/
 !home/.config/**
 
-# Claude settings and skills only (not debug/cache junk)
+# Skills (template-specific directories)
 !home/.claude/
 !home/.claude/skills/
 !home/.claude/skills/**
 !home/.claude/settings.json
+!home/.pi/
+!home/.pi/skills/
+!home/.pi/skills/**
+!home/.agents/
+!home/.agents/skills/
+!home/.agents/skills/**
