@@ -489,11 +489,15 @@ export class MindManager {
 
     this.stopping.delete(name);
     revokeMindToken(name);
-    clearTurnState(name);
+    await clearTurnState(name);
     try {
       const { getDeliveryManager } = await import("../delivery/delivery-manager.js");
       getDeliveryManager().clearMindSessions(name);
-    } catch {}
+    } catch (err) {
+      if (!(err instanceof Error && err.message.includes("not initialized"))) {
+        mlog.warn(`failed to clear delivery state for ${name} on stop`, log.errorData(err));
+      }
+    }
     if (this.restartTracker.reset(name)) this.saveCrashAttempts();
     rmSync(mindPidPath(name), { force: true });
 

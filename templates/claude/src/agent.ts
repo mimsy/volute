@@ -337,10 +337,12 @@ export function createMind(options: {
         log("mind", `session "${session.name}": compaction complete`);
       }
 
-      /** Emit done to both local listeners and the daemon. */
+      /** Emit done to both local listeners and the daemon (best-effort with retries). */
       function emitDone() {
         broadcastToSession(session, { type: "done" });
-        daemonEmit({ type: "done", session: session.name }).catch(() => {});
+        daemonEmit({ type: "done", session: session.name }).catch((err) => {
+          log("mind", `session "${session.name}": failed to emit done to daemon:`, err);
+        });
       }
 
       async function runStream(resume?: string) {

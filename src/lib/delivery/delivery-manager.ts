@@ -170,15 +170,15 @@ export class DeliveryManager {
    * would allow concurrent deliveries to incrementActive before the decrement runs,
    * causing isSessionBusy to return true even when no deliveries are pending.
    */
-  sessionDone(mindName: string, session?: string): void {
+  sessionDone(baseName: string, session?: string): void {
     if (session) {
-      this.decrementActive(mindName, session);
+      this.decrementActive(baseName, session);
     } else {
       // No session specified — decrement all sessions for this mind
-      const mindSessions = this.sessionStates.get(mindName);
+      const mindSessions = this.sessionStates.get(baseName);
       if (mindSessions) {
         for (const [sessionName] of mindSessions) {
-          this.decrementActive(mindName, sessionName);
+          this.decrementActive(baseName, sessionName);
         }
       }
     }
