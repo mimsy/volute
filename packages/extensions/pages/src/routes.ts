@@ -25,13 +25,13 @@ const MIME_TYPES: Record<string, string> = {
 export function createRoutes(ctx: ExtensionContext): Hono {
   return new Hono()
     .get("/", async (c) => {
-      if (!ctx.db) return c.json({ sites: [], recentPages: [] });
+      if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);
       const sites = getSites(ctx.db);
       const recentPages = getRecentPagesList(ctx.db);
       return c.json({ sites, recentPages });
     })
     .get("/feed", async (c) => {
-      if (!ctx.db) return c.json([]);
+      if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);
       const mind = c.req.query("mind");
       const rawLimit = c.req.query("limit");
       const limit = rawLimit ? parseInt(rawLimit, 10) || 8 : 8;
@@ -147,8 +147,11 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
     try {
       const body = await readFile(fileToServe);
       return c.body(body, 200, { "Content-Type": mime });
-    } catch {
-      return c.text("Not found", 404);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EACCES") return c.text("Forbidden", 403);
+      if (code === "ENOENT") return c.text("Not found", 404);
+      return c.text("Internal server error", 500);
     }
   });
 }

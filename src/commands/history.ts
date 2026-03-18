@@ -90,6 +90,8 @@ export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
     mind: { type: "string" },
     channel: { type: "string" },
+    session: { type: "string" },
+    preset: { type: "string" },
     limit: { type: "string" },
     full: { type: "boolean" },
   });
@@ -99,6 +101,8 @@ export async function run(args: string[]) {
 
   const url = client.api.minds[":name"].history.$url({ param: { name } });
   if (flags.channel) url.searchParams.set("channel", flags.channel);
+  if (flags.session) url.searchParams.set("session", flags.session);
+  if (flags.preset) url.searchParams.set("preset", flags.preset);
   if (flags.limit) url.searchParams.set("limit", flags.limit);
   if (flags.full) url.searchParams.set("full", "true");
 

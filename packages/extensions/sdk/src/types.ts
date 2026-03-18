@@ -56,7 +56,6 @@ export type MindSection = {
   id: string;
   label: string;
   defaultPath?: string;
-  icon?: string;
 };
 
 export type FeedSource = {
@@ -92,6 +91,8 @@ export type ExtensionManifest = {
   name: string;
   version: string;
   description?: string;
+  /** SVG icon for this extension (used in system tabs, mind tabs, etc.) */
+  icon?: string;
   routes: (ctx: ExtensionContext) => Hono;
   publicRoutes?: (ctx: ExtensionContext) => Hono;
   ui?: {

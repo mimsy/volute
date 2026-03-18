@@ -29,13 +29,9 @@ let cardColor = $derived(color ? `var(--${color})` : "var(--text-2)");
 let iframeLoaded = $state(false);
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div
+<button
   class="feed-card"
-  role="button"
-  tabindex="0"
   onclick={onclick}
-  onkeydown={(e) => { if (e.key === 'Enter') onclick?.(); }}
   style:border-color="color-mix(in srgb, {cardColor} 25%, var(--border))"
 >
   <div class="feed-card-header" style:border-bottom-color="color-mix(in srgb, {cardColor} 25%, var(--border))">
@@ -66,7 +62,7 @@ let iframeLoaded = $state(false);
       {/if}
     </div>
   {/if}
-</div>
+</button>
 
 <style>
   .feed-card {
@@ -79,6 +75,11 @@ let iframeLoaded = $state(false);
     overflow: hidden;
     transition: border-color 0.15s;
     cursor: pointer;
+    width: 100%;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    text-align: left;
   }
 
   .feed-card:hover {

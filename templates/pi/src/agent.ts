@@ -15,7 +15,6 @@ import { runHooks } from "./lib/hook-loader.js";
 import { log } from "./lib/logger.js";
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
-import { createSessionContextExtension } from "./lib/session-context-extension.js";
 import { loadPrompts, type SubagentConfig } from "./lib/startup.js";
 import { createSubagentExtension, type SubagentDefinition } from "./lib/subagents.js";
 import type {
@@ -243,15 +242,6 @@ export function createMind(options: {
       retry: { enabled: true, maxRetries: 3 },
     });
 
-    const sessionContextExtension = createSessionContextExtension(
-      {
-        currentSession: session.name,
-        mindDir: options.mindDir,
-      },
-      emit,
-      session,
-    );
-
     const replyInstructionsExtension = createReplyInstructionsExtension(
       session.messageChannels,
       emit,
@@ -266,7 +256,6 @@ export function createMind(options: {
       systemPrompt: options.systemPrompt,
       extensionFactories: [
         preCompactExtension,
-        sessionContextExtension,
         replyInstructionsExtension,
         ...(subagentExtension ? [subagentExtension] : []),
         dynamicHookExtension,
