@@ -67,7 +67,6 @@ Each mind project (created from the template) has:
 │       ├── transparency.ts    # Tool call transparency for connector channels
 │       ├── daemon-client.ts   # Mind-side daemon API client (daemonRestart, daemonSend)
 │       ├── hook-loader.ts     # Dynamic hook discovery and execution from .config/hooks/<event>/
-│       ├── session-monitor.ts # Session activity tracking and cross-session summaries
 │       ├── logger.ts          # Logging utilities
 │       ├── message-channel.ts # Async iterable for mind communication (claude template only)
 │       ├── content.ts         # Content extraction from SDK events (claude template only)
@@ -78,7 +77,6 @@ Each mind project (created from the template) has:
 │           ├── identity-reload.ts # Restart on SOUL.md/MEMORY.md change
 │           ├── pre-compact.ts     # Journal update before compaction
 │           ├── reply-instructions.ts # Reply format instructions
-│           └── session-context.ts # Startup context injection
 ├── home/                      # Mind working directory (cwd for the SDK)
 │   ├── SOUL.md                # System prompt / personality
 │   ├── MEMORY.md              # Long-term memory (included in system prompt)
@@ -93,7 +91,6 @@ Each mind project (created from the template) has:
 │   └── .claude/skills/        # Skills (volute CLI reference, memory system)
 └── .mind/                     # Mind-internal runtime state
     ├── sessions/              # Per-session SDK state (e.g. sessions/main.json)
-    ├── session-cursors.json   # Session polling cursors
     ├── identity/              # Ed25519 keypair (private.pem, public.pem)
     ├── connectors/            # Bridge configs (e.g. connectors/discord/config.json)
     └── schedules.json         # Cron schedules for this mind

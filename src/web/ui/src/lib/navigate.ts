@@ -1,21 +1,17 @@
 import type { ExtensionInfo } from "./extensions";
 
 export type Selection =
-  | { tab: "system"; kind: "home" }
+  | { kind: "home" }
   | {
-      tab: "system";
       kind: "mind";
       name: string;
       section?: string;
       subpath?: string;
     }
-  | { tab: "system"; kind: "extension"; extensionId: string; path: string }
-  | { tab: "system"; kind: "settings"; section?: string }
-  | { tab: "system"; kind: "shared-files" }
-  | { tab: "chat"; kind: "home" }
-  | { tab: "chat"; kind: "conversation"; conversationId?: string; mindName?: string };
-
-export type Tab = Selection["tab"];
+  | { kind: "extension"; extensionId: string; path: string }
+  | { kind: "settings"; section?: string }
+  | { kind: "shared-files" }
+  | { kind: "channel"; slug: string };
 
 /**
  * Convert a urlPattern like "/notes/:author/:slug" to a regex.
@@ -88,13 +84,11 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
   const path = window.location.pathname;
   const search = new URLSearchParams(window.location.search);
 
-  // System tab routes
-  if (path === "/shared-files") return { tab: "system", kind: "shared-files" };
-  if (path === "/settings") return { tab: "system", kind: "settings" };
+  if (path === "/shared-files") return { kind: "shared-files" };
+  if (path === "/settings") return { kind: "settings" };
 
   const settingsSectionMatch = path.match(/^\/settings\/(.+)$/);
-  if (settingsSectionMatch)
-    return { tab: "system", kind: "settings", section: settingsSectionMatch[1] };
+  if (settingsSectionMatch) return { kind: "settings", section: settingsSectionMatch[1] };
 
   // Mind detail pages — must be checked before extension URL patterns
   // because /minds/:name/:section could overlap
@@ -102,42 +96,48 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
   if (mindSubpathMatch) {
     const [, name, sectionId, subpath] = mindSubpathMatch;
     const extSection = resolveExtensionMindSection(sectionId, extensions);
-    return { tab: "system", kind: "mind", name, section: extSection ?? sectionId, subpath };
+    return { kind: "mind", name, section: extSection ?? sectionId, subpath };
   }
 
   const mindSectionMatch = path.match(/^\/minds\/([^/]+)\/([^/]+)$/);
   if (mindSectionMatch) {
     const [, name, sectionId] = mindSectionMatch;
     const extSection = resolveExtensionMindSection(sectionId, extensions);
-    return { tab: "system", kind: "mind", name, section: extSection ?? sectionId };
+    return { kind: "mind", name, section: extSection ?? sectionId };
   }
 
   const mindMatch = path.match(/^\/minds\/([^/]+)$/);
-  if (mindMatch) return { tab: "system", kind: "mind", name: mindMatch[1] };
+  if (mindMatch) return { kind: "mind", name: mindMatch[1] };
+
+  // Channel pages
+  const channelMatch = path.match(/^\/channels\/(.+)$/);
+  if (channelMatch) return { kind: "channel", slug: channelMatch[1] };
 
   // Dynamic extension URL pattern matching (e.g. /notes, /pages/:site)
   const extUrlMatch = matchExtensionUrl(path, extensions);
   if (extUrlMatch)
     return {
-      tab: "system",
       kind: "extension",
       extensionId: extUrlMatch.extensionId,
       path: extUrlMatch.path,
     };
 
-  // Chat tab routes
+  // Backwards compat: /chat/:id → redirect to channel or mind
   const chatIdMatch = path.match(/^\/chat\/(.+)$/);
-  if (chatIdMatch) return { tab: "chat", kind: "conversation", conversationId: chatIdMatch[1] };
+  if (chatIdMatch) {
+    // Return a channel selection with the conversation ID as slug;
+    // the caller will resolve this to the proper route
+    return { kind: "channel", slug: `__conv:${chatIdMatch[1]}` };
+  }
 
   if (path === "/chat") {
     const mind = search.get("mind");
-    return mind
-      ? { tab: "chat", kind: "conversation", mindName: mind }
-      : { tab: "chat", kind: "home" };
+    if (mind) return { kind: "mind", name: mind };
+    return { kind: "home" };
   }
 
-  // Default: system home
-  return { tab: "system", kind: "home" };
+  // Default: home
+  return { kind: "home" };
 }
 
 /**
@@ -148,7 +148,7 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
 export function selectionToPath(selection: Selection, extensions: ExtensionInfo[] = []): string {
   switch (selection.kind) {
     case "home":
-      return selection.tab === "chat" ? "/chat" : "/";
+      return "/";
     case "mind": {
       let section = selection.section;
       // Convert ext:pages:pages → pages for clean URLs
@@ -156,8 +156,9 @@ export function selectionToPath(selection: Selection, extensions: ExtensionInfo[
         const parts = section.split(":");
         section = parts[2] ?? parts[1];
       }
+      // "chat" is the default section — omit from URL
       const base =
-        section && section !== "info"
+        section && section !== "chat"
           ? `/minds/${selection.name}/${section}`
           : `/minds/${selection.name}`;
       return selection.subpath ? `${base}/${selection.subpath}` : base;
@@ -177,10 +178,13 @@ export function selectionToPath(selection: Selection, extensions: ExtensionInfo[
       return selection.section ? `/settings/${selection.section}` : "/settings";
     case "shared-files":
       return "/shared-files";
-    case "conversation":
-      if (selection.conversationId) return `/chat/${selection.conversationId}`;
-      if (selection.mindName) return `/chat?mind=${selection.mindName}`;
-      return "/chat";
+    case "channel": {
+      // Don't serialize backwards-compat conv IDs to URL
+      if (selection.slug.startsWith("__conv:")) {
+        return `/chat/${selection.slug.replace("__conv:", "")}`;
+      }
+      return `/channels/${selection.slug}`;
+    }
     default:
       return "/";
   }

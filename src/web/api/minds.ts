@@ -730,6 +730,17 @@ const createMindSchema = z.object({
 });
 
 // Create mind — admin only
+function formatTimeAgo(date: Date): string {
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 const app = new Hono<AuthEnv>()
   .post("/", requireAdmin, zValidator("json", createMindSchema), async (c) => {
     const body = c.req.valid("json");
@@ -2566,6 +2577,84 @@ const app = new Hono<AuthEnv>()
       .orderBy(mindHistory.id);
 
     return c.json(rows);
+  })
+  .get("/:name/history/cross-session", async (c) => {
+    const name = c.req.param("name");
+    const currentSession = c.req.query("session");
+
+    const db = await getDb();
+
+    // Find the "since" timestamp: the start of the last turn in the current session.
+    // This ensures we capture activity that happened during the current turn, not just after it.
+    let sinceTimestamp: string | null = null;
+
+    if (currentSession) {
+      // Get the first event of the last turn in the current session
+      const lastTurn = await db
+        .select({ turn_id: mindHistory.turn_id })
+        .from(mindHistory)
+        .where(
+          and(
+            eq(mindHistory.mind, name),
+            eq(mindHistory.session, currentSession),
+            sql`${mindHistory.turn_id} IS NOT NULL`,
+          ),
+        )
+        .orderBy(desc(mindHistory.created_at))
+        .limit(1);
+
+      if (lastTurn.length > 0 && lastTurn[0].turn_id) {
+        const firstEvent = await db
+          .select({ created_at: mindHistory.created_at })
+          .from(mindHistory)
+          .where(eq(mindHistory.turn_id, lastTurn[0].turn_id))
+          .orderBy(mindHistory.created_at)
+          .limit(1);
+
+        if (firstEvent.length > 0) {
+          sinceTimestamp = firstEvent[0].created_at;
+        }
+      }
+    }
+
+    // Fall back to last 1h if no prior events (first message in session)
+    if (!sinceTimestamp) {
+      sinceTimestamp = new Date(Date.now() - 3600_000).toISOString().replace("T", " ").slice(0, 19);
+    }
+
+    // Query summaries from other sessions since the timestamp
+    const conditions = [
+      eq(mindHistory.mind, name),
+      eq(mindHistory.type, "summary"),
+      sql`${mindHistory.created_at} > ${sinceTimestamp}`,
+    ];
+    if (currentSession) {
+      conditions.push(sql`${mindHistory.session} != ${currentSession}`);
+    }
+
+    const rows = await db
+      .select({
+        session: mindHistory.session,
+        content: mindHistory.content,
+        created_at: mindHistory.created_at,
+      })
+      .from(mindHistory)
+      .where(and(...conditions))
+      .orderBy(desc(mindHistory.created_at))
+      .limit(50);
+
+    if (rows.length === 0) {
+      return c.json({ context: null });
+    }
+
+    // Format as [Session Activity] block
+    const lines = rows.map((row) => {
+      const ts = new Date(row.created_at.endsWith("Z") ? row.created_at : `${row.created_at}Z`);
+      const ago = formatTimeAgo(ts);
+      return `- ${row.session ?? "unknown"} (${ago}): ${row.content ?? ""}`;
+    });
+
+    return c.json({ context: `[Session Activity]\n${lines.join("\n")}` });
   })
   .get("/:name/history", async (c) => {
     const name = c.req.param("name");

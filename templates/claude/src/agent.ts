@@ -10,7 +10,6 @@ import { createIdentityReloadHook } from "./lib/hooks/identity-reload.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- used as value
 import { createPreCompactHook } from "./lib/hooks/pre-compact.js";
 import { createReplyInstructionsHook } from "./lib/hooks/reply-instructions.js";
-import { createSessionContextHook } from "./lib/hooks/session-context.js";
 import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
 import { createSessionStore } from "./lib/session-store.js";
@@ -203,12 +202,6 @@ export function createMind(options: {
     preCompactHook: HookCallback,
     resume?: string,
   ) {
-    const sessionContext = createSessionContextHook({
-      currentSession: session.name,
-      sessionsDir: options.sessionsDir,
-      cwd: options.cwd,
-    });
-
     const replyInstructions = createReplyInstructionsHook(session.messageChannels);
 
     return query({
@@ -236,7 +229,6 @@ export function createMind(options: {
           UserPromptSubmit: [
             {
               hooks: [
-                wrapHookWithEmit(sessionContext.hook, "session-context", session),
                 wrapHookWithEmit(replyInstructions.hook, "reply-instructions", session),
                 createDynamicHook("pre-prompt", session),
               ],

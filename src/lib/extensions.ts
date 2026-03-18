@@ -39,6 +39,7 @@ export type ExtensionInfo = {
   name: string;
   version: string;
   description?: string;
+  icon?: string;
   systemSection?: SystemSection;
   mindSections?: MindSection[];
   feedSource?: FeedSource;
@@ -482,6 +483,7 @@ export function getLoadedExtensions(): ExtensionInfo[] {
       name: manifest.name,
       version: manifest.version,
       description: manifest.description,
+      icon: manifest.icon,
       systemSection: manifest.ui?.systemSection,
       mindSections: manifest.ui?.mindSections,
       feedSource: manifest.ui?.feedSource,
