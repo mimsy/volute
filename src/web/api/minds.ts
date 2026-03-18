@@ -2100,10 +2100,11 @@ const app = new Hono<AuthEnv>()
       publishTypingForChannels(affected, map);
       // Broadcast mind_done to SSE subscribers (ephemeral — not persisted to DB)
       broadcast({ type: "mind_done", mind: baseName, summary: "Finished processing" });
-      // Notify delivery manager of session completion (must await so activeCount
-      // is decremented before the busy check below)
+      // Notify delivery manager of session completion (synchronous — decrement
+      // must happen atomically before the busy check to avoid race conditions
+      // where a concurrent delivery's incrementActive interleaves)
       try {
-        await getDeliveryManager().sessionDone(baseName, body.session);
+        getDeliveryManager().sessionDone(baseName, body.session);
       } catch (err) {
         if (!(err instanceof Error && err.message.includes("not initialized"))) {
           log.error(`delivery manager sessionDone failed for ${baseName}`, log.errorData(err));

@@ -420,6 +420,19 @@ export class MindManager {
         mlog.warn(`failed to check sleep state for ${name}`, log.errorData(err));
       }
 
+      // Clear turn state and delivery session state so ghost counts don't accumulate
+      clearTurnState(name).catch((err) =>
+        mlog.warn(`failed to clear turn state for ${name} after crash`, log.errorData(err)),
+      );
+      try {
+        const { getDeliveryManager } = await import("../delivery/delivery-manager.js");
+        getDeliveryManager().clearMindSessions(name);
+      } catch (err) {
+        if (!(err instanceof Error && err.message.includes("not initialized"))) {
+          mlog.warn(`failed to clear delivery state for ${name} after crash`, log.errorData(err));
+        }
+      }
+
       // Clear activity tracking and publish crash as mind_stopped
       import("../events/mind-activity-tracker.js")
         .then(({ markIdle }) => markIdle(name))
@@ -476,7 +489,15 @@ export class MindManager {
 
     this.stopping.delete(name);
     revokeMindToken(name);
-    clearTurnState(name);
+    await clearTurnState(name);
+    try {
+      const { getDeliveryManager } = await import("../delivery/delivery-manager.js");
+      getDeliveryManager().clearMindSessions(name);
+    } catch (err) {
+      if (!(err instanceof Error && err.message.includes("not initialized"))) {
+        mlog.warn(`failed to clear delivery state for ${name} on stop`, log.errorData(err));
+      }
+    }
     if (this.restartTracker.reset(name)) this.saveCrashAttempts();
     rmSync(mindPidPath(name), { force: true });
 

@@ -164,10 +164,13 @@ export class DeliveryManager {
   /**
    * Called when a mind's session emits a "done" event — decrements active count
    * and may trigger batch flush if session goes idle.
+   *
+   * This method is intentionally synchronous to avoid race conditions: the caller
+   * has already resolved baseName, and any async yield here (e.g. getBaseName)
+   * would allow concurrent deliveries to incrementActive before the decrement runs,
+   * causing isSessionBusy to return true even when no deliveries are pending.
    */
-  async sessionDone(mindName: string, session?: string): Promise<void> {
-    const baseName = await getBaseName(mindName);
-
+  sessionDone(baseName: string, session?: string): void {
     if (session) {
       this.decrementActive(baseName, session);
     } else {
@@ -286,6 +289,24 @@ export class DeliveryManager {
       if (state.activeCount > 0) return true;
     }
     return false;
+  }
+
+  /**
+   * Clear all session state for a specific mind (called on mind stop/crash).
+   * Resets active counts and cleans up batch buffers so ghost counts don't accumulate.
+   */
+  clearMindSessions(mindName: string): void {
+    this.sessionStates.delete(mindName);
+    // Clean up any batch buffers for this mind
+    const toDelete: string[] = [];
+    for (const [bufferKey, buffer] of this.batchBuffers) {
+      if (bufferKey.startsWith(`${mindName}:`)) {
+        if (buffer.debounceTimer) clearTimeout(buffer.debounceTimer);
+        if (buffer.maxWaitTimer) clearTimeout(buffer.maxWaitTimer);
+        toDelete.push(bufferKey);
+      }
+    }
+    for (const k of toDelete) this.batchBuffers.delete(k);
   }
 
   /**
