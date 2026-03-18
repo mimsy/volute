@@ -317,7 +317,7 @@ export async function installSkill(
   await gitExec(["add", join("home", ".claude", "skills", skillId)], { cwd: dir });
   // Stage hook shim and bin command files if any were created
   await gitExec(["add", join("home", ".config", "hooks")], { cwd: dir }).catch(() => {});
-  await gitExec(["add", join("home", ".config", "bin")], { cwd: dir }).catch(() => {});
+  await gitExec(["add", join("home", ".local", "bin")], { cwd: dir }).catch(() => {});
   // Also commit package.json/package-lock.json changes from npm install
   if (npmInstalled.length > 0) {
     await gitExec(["add", "package.json", "package-lock.json"], { cwd: dir });
@@ -357,7 +357,7 @@ export async function uninstallSkill(
   // Also stage hook shim and bin removals
   const hooksBase = join("home", ".config", "hooks");
   await gitExec(["add", hooksBase], { cwd: dir }).catch(() => {});
-  await gitExec(["add", join("home", ".config", "bin")], { cwd: dir }).catch(() => {});
+  await gitExec(["add", join("home", ".local", "bin")], { cwd: dir }).catch(() => {});
   await gitExec(["commit", "-m", `Uninstall skill: ${skillId}`], { cwd: dir });
 }
 
@@ -630,14 +630,14 @@ function binShimContent(skillId: string, scriptPath: string): string {
 }
 
 export function installBinShim(dir: string, skillId: string, scriptPath: string): void {
-  const binDir = join(dir, "home", ".config", "bin");
+  const binDir = join(dir, "home", ".local", "bin");
   mkdirSync(binDir, { recursive: true });
   const shimPath = join(binDir, skillId);
   writeFileSync(shimPath, binShimContent(skillId, scriptPath), { mode: 0o755 });
 }
 
 export function removeBinShim(dir: string, skillId: string): void {
-  const shimPath = join(dir, "home", ".config", "bin", skillId);
+  const shimPath = join(dir, "home", ".local", "bin", skillId);
   if (existsSync(shimPath)) rmSync(shimPath);
 }
 

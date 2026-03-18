@@ -586,11 +586,11 @@ describe("hook shim management", () => {
 
   it("installs bin shim for skill with bin metadata", () => {
     const dir = join(voluteHome(), "test-bin-shim");
-    mkdirSync(join(dir, "home", ".config", "bin"), { recursive: true });
+    mkdirSync(join(dir, "home", ".local", "bin"), { recursive: true });
 
     installBinShim(dir, "dream", "scripts/dream.ts");
 
-    const shimPath = join(dir, "home", ".config", "bin", "dream");
+    const shimPath = join(dir, "home", ".local", "bin", "dream");
     assert.ok(existsSync(shimPath), "bin shim should exist");
     const content = readFileSync(shimPath, "utf-8");
     assert.ok(content.includes("node --import tsx"), "shim should use node --import tsx");
@@ -605,7 +605,7 @@ describe("hook shim management", () => {
 
   it("removes bin shim on uninstall", () => {
     const dir = join(voluteHome(), "test-bin-remove");
-    const binDir = join(dir, "home", ".config", "bin");
+    const binDir = join(dir, "home", ".local", "bin");
     mkdirSync(binDir, { recursive: true });
 
     writeFileSync(join(binDir, "resonance"), "#!/bin/bash\necho test", { mode: 0o755 });
