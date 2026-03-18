@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node --import tsx \"$CLAUDE_PROJECT_DIR\"/.config/hooks/startup-context.ts"
+            "command": "node --import tsx \"$CLAUDE_PROJECT_DIR\"/.local/hooks/startup-context.ts"
           }
         ]
       }

@@ -316,7 +316,7 @@ export async function installSkill(
   // We need to commit first, then get the hash, then write upstream and amend
   await gitExec(["add", join("home", ".claude", "skills", skillId)], { cwd: dir });
   // Stage hook shim and bin command files if any were created
-  await gitExec(["add", join("home", ".config", "hooks")], { cwd: dir }).catch(() => {});
+  await gitExec(["add", join("home", ".local", "hooks")], { cwd: dir }).catch(() => {});
   await gitExec(["add", join("home", ".local", "bin")], { cwd: dir }).catch(() => {});
   // Also commit package.json/package-lock.json changes from npm install
   if (npmInstalled.length > 0) {
@@ -355,7 +355,7 @@ export async function uninstallSkill(
   rmSync(skillDir, { recursive: true });
   await gitExec(["add", join("home", ".claude", "skills", skillId)], { cwd: dir });
   // Also stage hook shim and bin removals
-  const hooksBase = join("home", ".config", "hooks");
+  const hooksBase = join("home", ".local", "hooks");
   await gitExec(["add", hooksBase], { cwd: dir }).catch(() => {});
   await gitExec(["add", join("home", ".local", "bin")], { cwd: dir }).catch(() => {});
   await gitExec(["commit", "-m", `Uninstall skill: ${skillId}`], { cwd: dir });
@@ -596,7 +596,7 @@ export function installHookShims(
   hooks: Record<string, string>,
 ): void {
   for (const [event, scriptPath] of Object.entries(hooks)) {
-    const eventDir = join(dir, "home", ".config", "hooks", event);
+    const eventDir = join(dir, "home", ".local", "hooks", event);
     mkdirSync(eventDir, { recursive: true });
     const shimPath = join(eventDir, `50-${skillId}.sh`);
     const content = shimContent(skillId, scriptPath);
@@ -605,7 +605,7 @@ export function installHookShims(
 }
 
 export function removeHookShims(dir: string, skillId: string): void {
-  const hooksBase = join(dir, "home", ".config", "hooks");
+  const hooksBase = join(dir, "home", ".local", "hooks");
   if (!existsSync(hooksBase)) return;
 
   for (const eventDir of readdirSync(hooksBase, { withFileTypes: true })) {

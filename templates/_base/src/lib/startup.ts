@@ -79,8 +79,8 @@ export function loadPackageInfo(): { name: string; version: string } {
 
 export async function handleStartupContext(sendMessage: (content: string) => void): Promise<void> {
   // Prefer .ts, fall back to .sh for backwards compatibility
-  const tsPath = resolve("home/.config/hooks/startup-context.ts");
-  const shPath = resolve("home/.config/hooks/startup-context.sh");
+  const tsPath = resolve("home/.local/hooks/startup-context.ts");
+  const shPath = resolve("home/.local/hooks/startup-context.sh");
   const scriptPath = existsSync(tsPath) ? tsPath : existsSync(shPath) ? shPath : null;
   if (!scriptPath) return;
 

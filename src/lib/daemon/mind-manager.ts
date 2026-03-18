@@ -123,9 +123,8 @@ export class MindManager {
     const logStream = new RotatingLog(resolve(logsDir, "mind.log"));
     const mindToken = generateMindToken(name);
     const mindEnv = loadMergedEnv(name);
-    // Prepend mind's bin dirs to PATH: .local/bin for skill commands, .config/bin for volute wrapper
+    // Prepend mind's .local/bin to PATH for skill commands and volute wrapper
     const mindLocalBin = resolve(dir, "home", ".local", "bin");
-    const mindBinDir = resolve(dir, "home", ".config", "bin");
     const currentPath = process.env.PATH ?? "";
     const env: Record<string, string | undefined> = {
       ...process.env,
@@ -135,7 +134,7 @@ export class MindManager {
       VOLUTE_MIND_DIR: dir,
       VOLUTE_MIND_PORT: String(port),
       VOLUTE_DAEMON_TOKEN: mindToken,
-      PATH: `${mindLocalBin}:${mindBinDir}:${currentPath}`,
+      PATH: `${mindLocalBin}:${currentPath}`,
       // Strip CLAUDECODE so the Agent SDK can spawn Claude Code subprocesses
       CLAUDECODE: undefined,
     };

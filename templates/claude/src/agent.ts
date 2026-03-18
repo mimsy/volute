@@ -130,7 +130,7 @@ export function createMind(options: {
 
   // --- Hook event emission ---
 
-  const hooksDir = resolvePath(options.cwd, ".config/hooks");
+  const hooksDir = resolvePath(options.cwd, ".local/hooks");
 
   function wrapHookWithEmit(hook: HookCallback, source: string, session: Session): HookCallback {
     return async (...args) => {

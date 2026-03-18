@@ -13,7 +13,7 @@ REAL_VOLUTE=""
 OLDIFS="$IFS"
 IFS=:
 for dir in $PATH; do
-  case "$dir" in */.config/bin) continue ;; esac
+  case "$dir" in */.local/bin) continue ;; esac
   if [ -x "$dir/volute" ]; then
     REAL_VOLUTE="$dir/volute"
     break

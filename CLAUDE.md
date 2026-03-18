@@ -109,7 +109,7 @@ Unified `users` table with `user_type` discrimination (`"brain"` or `"mind"`) st
 
 Templates have a `.init/` directory containing identity and config files. On `volute mind create`, these are copied into `home/` and `.init/` is deleted. On `volute mind upgrade`, `.init/` files are excluded so identity files are never overwritten.
 
-- **`_base/.init/`**: SOUL.md, MEMORY.md, memory/journal/, .config/prompts.json, .config/hooks/startup-context.sh, .config/hooks/pre-prompt/session-activity.ts
+- **`_base/.init/`**: SOUL.md, MEMORY.md, memory/journal/, .config/prompts.json, .local/hooks/startup-context.ts, .local/hooks/pre-prompt/session-activity.ts, .local/bin/volute
 - **`claude/.init/`**: CLAUDE.md, .claude/settings.json, .config/routes.json
 - **`pi/.init/`**: MINDS.md, .config/routes.json
 

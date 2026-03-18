@@ -18,7 +18,7 @@ export type AggregatedResult = {
 const DEFAULT_TIMEOUT = 5000;
 
 /**
- * Discover hook scripts in `.config/hooks/<event>/`, sorted alphabetically.
+ * Discover hook scripts in `.local/hooks/<event>/`, sorted alphabetically.
  */
 export function discoverHooks(hooksDir: string, event: string): string[] {
   const dir = resolve(hooksDir, event);

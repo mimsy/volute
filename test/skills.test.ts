@@ -523,13 +523,13 @@ describe("syncBuiltinSkills", () => {
 describe("hook shim management", () => {
   it("installs hook shims for declared hooks", () => {
     const dir = join(voluteHome(), "test-hooks-mind");
-    mkdirSync(join(dir, "home", ".config", "hooks"), { recursive: true });
+    mkdirSync(join(dir, "home", ".local", "hooks"), { recursive: true });
 
     installHookShims(dir, "resonance", {
       "pre-prompt": "scripts/resonance-hook.sh",
     });
 
-    const shimPath = join(dir, "home", ".config", "hooks", "pre-prompt", "50-resonance.sh");
+    const shimPath = join(dir, "home", ".local", "hooks", "pre-prompt", "50-resonance.sh");
     assert.ok(existsSync(shimPath), "shim file should exist");
     const content = readFileSync(shimPath, "utf-8");
     assert.ok(content.includes("exec bash"), "shim should use bash for .sh scripts");
@@ -543,13 +543,13 @@ describe("hook shim management", () => {
 
   it("installs .ts hook shims with node --import tsx", () => {
     const dir = join(voluteHome(), "test-hooks-ts");
-    mkdirSync(join(dir, "home", ".config", "hooks"), { recursive: true });
+    mkdirSync(join(dir, "home", ".local", "hooks"), { recursive: true });
 
     installHookShims(dir, "test-skill", {
       "post-tool-use": "scripts/hook.ts",
     });
 
-    const shimPath = join(dir, "home", ".config", "hooks", "post-tool-use", "50-test-skill.sh");
+    const shimPath = join(dir, "home", ".local", "hooks", "post-tool-use", "50-test-skill.sh");
     assert.ok(existsSync(shimPath));
     const content = readFileSync(shimPath, "utf-8");
     assert.ok(
@@ -562,7 +562,7 @@ describe("hook shim management", () => {
 
   it("removes hook shims for a skill", () => {
     const dir = join(voluteHome(), "test-hooks-remove");
-    const eventDir = join(dir, "home", ".config", "hooks", "pre-prompt");
+    const eventDir = join(dir, "home", ".local", "hooks", "pre-prompt");
     mkdirSync(eventDir, { recursive: true });
 
     // Create a shim
@@ -643,15 +643,15 @@ description: A test skill
 
   it("installs multiple hooks for different events", () => {
     const dir = join(voluteHome(), "test-hooks-multi");
-    mkdirSync(join(dir, "home", ".config", "hooks"), { recursive: true });
+    mkdirSync(join(dir, "home", ".local", "hooks"), { recursive: true });
 
     installHookShims(dir, "my-skill", {
       "pre-prompt": "scripts/pre.sh",
       "post-tool-use": "scripts/post.sh",
     });
 
-    assert.ok(existsSync(join(dir, "home", ".config", "hooks", "pre-prompt", "50-my-skill.sh")));
-    assert.ok(existsSync(join(dir, "home", ".config", "hooks", "post-tool-use", "50-my-skill.sh")));
+    assert.ok(existsSync(join(dir, "home", ".local", "hooks", "pre-prompt", "50-my-skill.sh")));
+    assert.ok(existsSync(join(dir, "home", ".local", "hooks", "post-tool-use", "50-my-skill.sh")));
 
     rmSync(dir, { recursive: true });
   });
