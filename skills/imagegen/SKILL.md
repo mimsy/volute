@@ -12,7 +12,7 @@ Generate images from text prompts using models on Replicate. Images are saved to
 ## Commands
 
 ```bash
-npx tsx .claude/skills/imagegen/scripts/imagegen.ts <command>
+node --import tsx .claude/skills/imagegen/scripts/imagegen.ts <command>
 ```
 
 | Command | Description |
@@ -24,14 +24,14 @@ npx tsx .claude/skills/imagegen/scripts/imagegen.ts <command>
 
 ```bash
 # Generate an image with the default model
-npx tsx .claude/skills/imagegen/scripts/imagegen.ts generate "a sunset over the ocean"
+node --import tsx .claude/skills/imagegen/scripts/imagegen.ts generate "a sunset over the ocean"
 
 # Use a specific model
-npx tsx .claude/skills/imagegen/scripts/imagegen.ts generate "a cat in space" --model black-forest-labs/flux-schnell
+node --import tsx .claude/skills/imagegen/scripts/imagegen.ts generate "a cat in space" --model black-forest-labs/flux-schnell
 
 # Specify a filename
-npx tsx .claude/skills/imagegen/scripts/imagegen.ts generate "mountain landscape" --filename mountains
+node --import tsx .claude/skills/imagegen/scripts/imagegen.ts generate "mountain landscape" --filename mountains
 
 # Search for models
-npx tsx .claude/skills/imagegen/scripts/imagegen.ts models "text to image"
+node --import tsx .claude/skills/imagegen/scripts/imagegen.ts models "text to image"
 ```

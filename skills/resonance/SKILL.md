@@ -22,7 +22,7 @@ Not an archive — a memory. Stores text chunks with full-text indexing and opti
 ## Commands
 
 ```bash
-npx tsx .claude/skills/resonance/scripts/resonance.ts <command>
+node --import tsx .claude/skills/resonance/scripts/resonance.ts <command>
 ```
 
 | Command | Description |

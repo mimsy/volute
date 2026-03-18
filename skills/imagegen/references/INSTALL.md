@@ -9,5 +9,5 @@ volute env set REPLICATE_API_TOKEN <your-token>
 Then generate images:
 
 ```bash
-npx tsx .claude/skills/imagegen/scripts/imagegen.ts generate "a sunset over the ocean"
+node --import tsx .claude/skills/imagegen/scripts/imagegen.ts generate "a sunset over the ocean"
 ```

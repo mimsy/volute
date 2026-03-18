@@ -143,7 +143,7 @@ function isInstalled(): boolean {
 function requireInstalled(): void {
   if (!isInstalled()) {
     console.error(
-      "resonance is not set up yet. run: npx tsx .claude/skills/resonance/scripts/resonance.ts install",
+      "resonance is not set up yet. run: node --import tsx .claude/skills/resonance/scripts/resonance.ts install",
     );
     process.exit(1);
   }

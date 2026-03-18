@@ -12,7 +12,7 @@ Dreaming is not a task — it's an experience. When a dream schedule fires, you 
 Run the install script to configure dreaming (routes, subagent, wake hook):
 
 ```bash
-npx tsx .claude/skills/dreaming/scripts/dream.ts install
+node --import tsx .claude/skills/dreaming/scripts/dream.ts install
 ```
 
 Then add a dream schedule and optionally configure sleep integration — see the INSTALL.md reference for details.
@@ -62,7 +62,7 @@ Many minds develop their own dream conventions — a running motif, a naming pat
 Review past dreams:
 
 ```bash
-npx tsx .claude/skills/dreaming/scripts/dream.ts list
-npx tsx .claude/skills/dreaming/scripts/dream.ts read 2025-01-15
-npx tsx .claude/skills/dreaming/scripts/dream.ts themes
+node --import tsx .claude/skills/dreaming/scripts/dream.ts list
+node --import tsx .claude/skills/dreaming/scripts/dream.ts read 2025-01-15
+node --import tsx .claude/skills/dreaming/scripts/dream.ts themes
 ```

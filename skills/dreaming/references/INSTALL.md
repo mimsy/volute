@@ -5,7 +5,7 @@
 From your `home/` directory:
 
 ```bash
-npx tsx .claude/skills/dreaming/scripts/dream.ts install
+node --import tsx .claude/skills/dreaming/scripts/dream.ts install
 ```
 
 This sets up:
