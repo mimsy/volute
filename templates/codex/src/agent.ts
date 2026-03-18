@@ -75,7 +75,7 @@ export function createMind(options: {
   }
 
   const sessionStore = createSessionStore(resolvePath(options.mindDir, ".mind/codex-sessions"));
-  const hooksDir = resolvePath(options.cwd, ".config/hooks");
+  const hooksDir = resolvePath(options.cwd, ".local/hooks");
 
   // Write system prompt to file for Codex model_instructions_file
   const promptPath = resolvePath(options.mindDir, ".mind/system-prompt.md");

@@ -214,7 +214,7 @@ Default is `transparent`. Inbound/outbound messages (what you send and receive) 
 
 ## Startup Context
 
-Edit `.config/hooks/startup-context.sh` to customize what you see when a new session starts. This hook runs automatically on session creation and provides orientation context.
+Edit `.local/hooks/startup-context.ts` to customize what you see when a new session starts. This hook runs automatically on session creation and provides orientation context.
 
 ## Variant Workflow
 

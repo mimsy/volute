@@ -41,9 +41,9 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, ".init/MEMORY.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/CLAUDE.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/memory/journal/.gitkeep")));
-      assert.ok(existsSync(resolve(composedDir, ".init/.config/hooks/startup-context.sh")));
+      assert.ok(existsSync(resolve(composedDir, ".init/.local/hooks/startup-context.ts")));
       assert.ok(
-        existsSync(resolve(composedDir, ".init/.config/hooks/pre-prompt/session-activity.ts")),
+        existsSync(resolve(composedDir, ".init/.local/hooks/pre-prompt/session-activity.ts")),
       );
       assert.ok(existsSync(resolve(composedDir, ".init/.claude/settings.json")));
 
@@ -106,7 +106,7 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, ".init/MINDS.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/.config/routes.json")));
       assert.ok(
-        existsSync(resolve(composedDir, ".init/.config/hooks/pre-prompt/session-activity.ts")),
+        existsSync(resolve(composedDir, ".init/.local/hooks/pre-prompt/session-activity.ts")),
       );
 
       // Pi overrides home/.config/config.json.tmpl with its own default model

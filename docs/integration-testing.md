@@ -177,7 +177,7 @@ The `--with-fixtures` flag on the setup script does this automatically for all f
 2. Load the container name: `source /tmp/volute-integration.env`
 3. Create and interact with a mind until it has a distinct personality
 4. Copy its home directory out: `docker cp $CONTAINER:/minds/<name>/home test/fixtures/minds/<name>/home`
-5. Remove runtime artifacts that shouldn't be in fixtures (`.claude/` SDK state, `.config/hooks/` copied from template, `.config/scripts/`, `.config/prompts.json`, `.config/routes.json`)
+5. Remove runtime artifacts that shouldn't be in fixtures (`.claude/` SDK state, `.local/hooks/` copied from template, `.local/bin/`, `.config/prompts.json`, `.config/routes.json`)
 6. Keep: `SOUL.md`, `MEMORY.md`, `memory/journal/`, any files the mind created in `home/`
 
 ### Maintenance

@@ -3,6 +3,7 @@ name: Image Generation
 description: Generate images via the Replicate API. Use for "generate image", "create image", "image generation", "text to image", "search image models".
 metadata:
   npm-dependencies: replicate
+  bin: scripts/imagegen.ts
 ---
 
 # Image Generation
@@ -12,7 +13,7 @@ Generate images from text prompts using models on Replicate. Images are saved to
 ## Commands
 
 ```bash
-npx tsx .claude/skills/imagegen/scripts/imagegen.ts <command>
+imagegen <command>
 ```
 
 | Command | Description |
@@ -24,14 +25,14 @@ npx tsx .claude/skills/imagegen/scripts/imagegen.ts <command>
 
 ```bash
 # Generate an image with the default model
-npx tsx .claude/skills/imagegen/scripts/imagegen.ts generate "a sunset over the ocean"
+imagegen generate "a sunset over the ocean"
 
 # Use a specific model
-npx tsx .claude/skills/imagegen/scripts/imagegen.ts generate "a cat in space" --model black-forest-labs/flux-schnell
+imagegen generate "a cat in space" --model black-forest-labs/flux-schnell
 
 # Specify a filename
-npx tsx .claude/skills/imagegen/scripts/imagegen.ts generate "mountain landscape" --filename mountains
+imagegen generate "mountain landscape" --filename mountains
 
 # Search for models
-npx tsx .claude/skills/imagegen/scripts/imagegen.ts models "text to image"
+imagegen models "text to image"
 ```

@@ -623,7 +623,7 @@ export class SleepManager {
     sleepingSince: string,
     duration: string,
   ): Promise<string> {
-    const scriptPath = resolve(mindDir(name), "home", ".config", "hooks", "wake-context.sh");
+    const scriptPath = resolve(mindDir(name), "home", ".local", "hooks", "wake-context.sh");
     if (!existsSync(scriptPath)) return "";
 
     const input = JSON.stringify({

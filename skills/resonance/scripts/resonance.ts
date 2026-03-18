@@ -142,9 +142,7 @@ function isInstalled(): boolean {
 
 function requireInstalled(): void {
   if (!isInstalled()) {
-    console.error(
-      "resonance is not set up yet. run: npx tsx .claude/skills/resonance/scripts/resonance.ts install",
-    );
+    console.error("resonance is not set up yet. run: resonance install");
     process.exit(1);
   }
 }
@@ -190,8 +188,7 @@ async function runInstall(config: ResonanceConfig): Promise<void> {
   console.log("initialized resonance database.");
 
   // 4. Set up nightly schedule
-  const scriptPath = ".claude/skills/resonance/scripts/resonance.ts";
-  const script = `npx tsx ${scriptPath} ingest-all && npx tsx ${scriptPath} decay`;
+  const script = `resonance ingest-all && resonance decay`;
   try {
     await execFileAsync("volute", [
       "schedule",
