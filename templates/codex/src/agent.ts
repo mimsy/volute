@@ -131,6 +131,7 @@ export function createMind(options: {
           workingDirectory: options.cwd,
           model: options.model,
           skipGitRepoCheck: true,
+          sandboxMode: "danger-full-access",
         });
         return;
       }
@@ -140,6 +141,7 @@ export function createMind(options: {
       workingDirectory: options.cwd,
       model: options.model,
       skipGitRepoCheck: true,
+      sandboxMode: "danger-full-access",
     });
     log("mind", `session "${session.name}": new thread started`);
   }
