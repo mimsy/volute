@@ -46,22 +46,6 @@ Show daemon status, version, and running minds.
 volute status
 ```
 
-## service install
-
-Install as a user-level auto-start service (macOS launchd or Linux systemd user service).
-
-```sh
-volute service install [--port <N>] [--host <H>]
-```
-
-## service uninstall
-
-Remove the user-level service.
-
-```sh
-volute service uninstall
-```
-
 ## service status
 
 Check service status.
@@ -70,24 +54,6 @@ Check service status.
 volute service status
 ```
 
-## service install --system
-
-Install as a system-level service (Linux, requires root).
-
-```sh
-sudo volute service install --system [--port <N>] [--host <H>]
-```
-
-Creates a systemd service at `/etc/systemd/system/volute.service` with data at `/var/lib/volute` and user isolation enabled.
-
-## service uninstall --system
-
-Remove the system service.
-
-```sh
-sudo volute service uninstall --system [--force]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--force` | Also remove data directory and created users |
+:::note
+Service installation and uninstallation are handled by `volute setup`. See [setup](/volute/docs/commands/setup/) for details.
+:::

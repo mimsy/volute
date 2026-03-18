@@ -68,3 +68,13 @@ Uninstall a skill from a mind.
 ```sh
 volute skill uninstall <name> --mind <name>
 ```
+
+## skill defaults
+
+Manage the default skill set for new minds.
+
+```sh
+volute skill defaults list
+volute skill defaults add <name>
+volute skill defaults remove <name>
+```

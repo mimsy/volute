@@ -1,9 +1,11 @@
 @import url("https://fonts.googleapis.com/css2?family=Averia+Serif+Libre:wght@300;400;700&family=Averia+Sans+Libre:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Fira+Code:wght@300;400;500;600&display=swap");
 
+/* Force dark theme */
 :root {
   --sl-font: "Averia Sans Libre", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --sl-font-system-mono: "Fira Code", "SF Mono", monospace;
   --sl-font-system: "Averia Sans Libre", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --sl-font-serif: "Averia Serif Libre", Georgia, serif;
   --sl-text-xs: 0.8125rem;
   --sl-text-sm: 0.875rem;
   --sl-text-base: 0.9375rem;
@@ -13,10 +15,6 @@
   --sl-text-3xl: 1.625rem;
   --sl-text-4xl: 2rem;
   --sl-line-height: 1.6;
-}
-
-/* Force dark theme */
-:root {
   color-scheme: dark;
   --sl-color-bg: #0a0c0f;
   --sl-color-bg-nav: #11141a;
@@ -38,11 +36,14 @@
   --sl-color-accent: #e0a860;
   --sl-color-accent-high: #f0d4a0;
   --sl-color-text-invert: #0a0c0f;
+  --sl-color-card-bg: #0f1218;
+  --sl-color-card-bg-hover: #131820;
+  --sl-color-terminal-bg: #0c0e12;
 }
 
 ::selection {
   background: rgba(224, 168, 96, 0.25);
-  color: #e0a860;
+  color: var(--sl-color-accent);
 }
 
 a {
@@ -50,11 +51,11 @@ a {
 }
 
 pre {
-  border: 1px solid #2a3040 !important;
+  border: 1px solid var(--sl-color-hairline) !important;
 }
 
 .sidebar-content a[aria-current="page"] {
-  color: #e0a860;
+  color: var(--sl-color-accent);
 }
 
 ::-webkit-scrollbar {
@@ -65,11 +66,11 @@ pre {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2a3040;
+  background: var(--sl-color-hairline);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a4560;
+  background: var(--sl-color-gray-3);
 }
 
 /* ===== LANDING PAGE ===== */
@@ -95,7 +96,7 @@ pre {
   opacity: 0.9;
 }
 .hero-wordmark {
-  font-family: "Averia Serif Libre", Georgia, serif;
+  font-family: var(--sl-font-serif);
   font-size: 5rem;
   font-weight: 300;
   color: var(--sl-color-text);
@@ -105,7 +106,7 @@ pre {
 
 /* Tagline — the main statement */
 .hero-tagline {
-  font-family: "Averia Serif Libre", Georgia, serif;
+  font-family: var(--sl-font-serif);
   font-size: 1.625rem;
   font-weight: 300;
   color: var(--sl-color-gray-1);
@@ -162,19 +163,19 @@ pre {
 }
 .install-command code {
   display: inline-block;
-  background: #11141a;
-  border: 1px solid #2a3040;
+  background: var(--sl-color-bg-nav);
+  border: 1px solid var(--sl-color-hairline);
   border-radius: 6px;
   padding: 0.625rem 1.25rem;
-  font-family: "Fira Code", "SF Mono", monospace;
+  font-family: var(--sl-font-system-mono);
   font-size: 0.875rem;
-  color: #a0aabb;
+  color: var(--sl-color-gray-1);
 }
 .install-command .prompt {
-  color: #6a7588;
+  color: var(--sl-color-gray-2);
 }
 .install-command .cmd {
-  color: #e0a860;
+  color: var(--sl-color-accent);
 }
 
 /* Feature cards — 2x2 grid with subtle glow on hover */
@@ -182,29 +183,29 @@ pre {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 1px;
-  background: #2a3040;
-  border: 1px solid #2a3040;
+  background: var(--sl-color-hairline);
+  border: 1px solid var(--sl-color-hairline);
   border-radius: 12px;
   overflow: hidden;
   margin-bottom: 4rem;
 }
 .feature-card {
-  background: #0f1218;
+  background: var(--sl-color-card-bg);
   padding: 2rem;
   transition: background 0.2s;
 }
 .feature-card:hover {
-  background: #131820;
+  background: var(--sl-color-card-bg-hover);
 }
 .feature-card h3 {
-  font-family: "Averia Serif Libre", Georgia, serif;
-  color: #e8ecf4;
+  font-family: var(--sl-font-serif);
+  color: var(--sl-color-text);
   font-size: 1.0625rem;
   font-weight: 400;
   margin: 0 0 0.5rem;
 }
 .feature-card p {
-  color: #6a7588;
+  color: var(--sl-color-gray-2);
   font-size: 0.8125rem;
   line-height: 1.65;
   margin: 0;
@@ -225,17 +226,17 @@ pre {
   font-style: italic;
 }
 .philosophy-teaser a {
-  color: #e0a860;
+  color: var(--sl-color-accent);
   font-style: normal;
 }
 
 /* Terminal demo — with fake window chrome */
 .terminal-demo {
-  background: #0c0e12;
-  border: 1px solid #2a3040;
+  background: var(--sl-color-terminal-bg);
+  border: 1px solid var(--sl-color-hairline);
   border-radius: 12px;
   margin: 0 0 2rem;
-  font-family: "Fira Code", "SF Mono", monospace;
+  font-family: var(--sl-font-system-mono);
   font-size: 0.8125rem;
   line-height: 1.8;
   overflow: hidden;
@@ -245,44 +246,44 @@ pre {
   align-items: center;
   gap: 6px;
   padding: 12px 16px;
-  background: #11141a;
-  border-bottom: 1px solid #1f2430;
+  background: var(--sl-color-bg-nav);
+  border-bottom: 1px solid var(--sl-color-hairline-light);
 }
 .terminal-dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #2a3040;
+  background: var(--sl-color-hairline);
 }
 .terminal-body {
   padding: 1.25rem 1.5rem;
 }
 .terminal-demo .prompt {
-  color: #6a7588;
+  color: var(--sl-color-gray-2);
 }
 .terminal-demo .cmd {
-  color: #e0a860;
+  color: var(--sl-color-accent);
 }
 .terminal-demo .output {
-  color: #a0aabb;
+  color: var(--sl-color-gray-1);
 }
 .terminal-demo .accent {
   color: #60a5fa;
 }
 .terminal-demo .dim {
-  color: #6a7588;
+  color: var(--sl-color-gray-2);
 }
 
 /* ===== DOCS PAGES ===== */
 
 /* Headings use display font */
 .sl-markdown-content :is(h1, h2, h3, h4, h5, h6) {
-  font-family: "Averia Serif Libre", Georgia, serif;
+  font-family: var(--sl-font-serif);
 }
 
 /* Site title in nav — lowercase with spiral */
 .site-title {
-  font-family: "Averia Serif Libre", Georgia, serif !important;
+  font-family: var(--sl-font-serif) !important;
   font-weight: 300;
   letter-spacing: 0.04em;
   color: var(--sl-color-text) !important;
@@ -301,8 +302,8 @@ pre {
   opacity: 0.9;
 }
 
-/* GitHub icon — white, not accent */
-header .sl-flex[class*="astro-wy4te6ga"] {
+/* GitHub icon — white, not accent. Targets Starlight social links container. */
+header .social-icons a {
   color: var(--sl-color-text) !important;
 }
 

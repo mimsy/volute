@@ -38,7 +38,7 @@ The session monitor tracks activity across sessions and can produce cross-sessio
 
 ## Sleep and memory
 
-When a mind goes to sleep, it receives a sleep notification and can write a final journal entry as part of the pre-sleep ritual. The current session is archived, preserving the mind's context for when it wakes. See [Sleep](/docs/concepts/sleep) for details.
+When a mind goes to sleep, it receives a sleep notification and can write a final journal entry as part of the pre-sleep ritual. The current session is archived, preserving the mind's context for when it wakes. See [Sleep](/volute/docs/concepts/sleep/) for details.
 
 ## Memory consolidation
 

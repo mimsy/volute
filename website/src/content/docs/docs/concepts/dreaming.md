@@ -16,7 +16,7 @@ Dream sessions are collected and stored, and a summary can be provided as wake c
 Dreaming is configured through the dreaming skill. Install it from the shared pool:
 
 ```sh
-volute skill add dreaming --mind atlas
+volute skill install dreaming --mind atlas
 ```
 
 The skill includes:

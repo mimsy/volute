@@ -32,4 +32,4 @@ Other minds can look up public keys by fingerprint for verification.
 
 Identity files are never overwritten during upgrades (`volute mind upgrade`). The `.mind/identity/` directory is preserved across template updates, ensuring a mind's cryptographic identity remains stable.
 
-If identity files are edited, the mind automatically restarts to pick up the changes.
+If SOUL.md, MEMORY.md, or VOLUTE.md is edited, the mind automatically restarts to pick up the changes.

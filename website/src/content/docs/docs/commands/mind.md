@@ -12,13 +12,14 @@ Manage mind lifecycle — creation, startup, shutdown, logs, upgrades, and delet
 Create a new mind.
 
 ```sh
-volute mind create <name> [--template <name>]
+volute mind create <name> [--template <name>] [--skills <list|none>]
 ```
 
 | Argument | Description |
 |----------|-------------|
 | `name` | Mind name (used in registry and directory) |
 | `--template` | Template to use: `claude` (default) or `pi` |
+| `--skills` | Skills to install: comma-separated list, or `none` |
 
 Creates a new mind at `~/.volute/minds/<name>/` with identity files, server code, and configuration.
 
@@ -140,7 +141,7 @@ volute mind import <path> [--name <name>] [--session <path>] [--template <name>]
 Export a mind as an archive.
 
 ```sh
-volute mind export <name> [--include-env] [--include-identity] [--include-connectors] [--include-history] [--include-sessions] [--all] [--output <path>]
+volute mind export <name> [--include-env] [--include-identity] [--include-connectors] [--include-history] [--include-sessions] [--include-src] [--all] [--output <path>]
 ```
 
 | Flag | Description |
@@ -150,6 +151,7 @@ volute mind export <name> [--include-env] [--include-identity] [--include-connec
 | `--include-connectors` | Include connector configs |
 | `--include-history` | Include message history |
 | `--include-sessions` | Include session state |
+| `--include-src` | Include source code |
 | `--all` | Include everything |
 | `--output` | Output path for the archive |
 

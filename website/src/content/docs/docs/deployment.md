@@ -17,12 +17,11 @@ Run `volute setup` once to configure your system name and isolation mode (defaul
 
 ## User-level service
 
-Auto-start Volute on login using macOS launchd or Linux systemd user service:
+Auto-start Volute on login using macOS launchd or Linux systemd user service. Service installation is handled by `volute setup`:
 
 ```sh
-volute service install [--port N] [--host H]
+volute setup --service [--port N] [--host H]
 volute service status
-volute service uninstall
 ```
 
 ## Docker
@@ -62,7 +61,7 @@ This runs setup and installs a system-level service with:
 - Minds at `/minds`
 - User isolation enabled
 
-Check status with `systemctl status volute`. Uninstall with `sudo volute service uninstall --system --force`.
+Check status with `systemctl status volute`.
 
 ## Mind isolation
 
