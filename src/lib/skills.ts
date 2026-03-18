@@ -350,7 +350,11 @@ export async function uninstallSkill(
 
   // Remove hook shims and bin command for this skill
   removeHookShims(dir, skillId);
-  removeBinShim(dir, skillId);
+  const skillMdPath = join(skillDir, "SKILL.md");
+  if (existsSync(skillMdPath)) {
+    const { bin } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
+    if (bin) removeBinShim(dir, bin);
+  }
 
   rmSync(skillDir, { recursive: true });
   await gitExec(["add", join("home", ".claude", "skills", skillId)], { cwd: dir });
@@ -629,15 +633,22 @@ function binShimContent(skillId: string, scriptPath: string): string {
   return `#!/bin/bash\nexec bash ${skillScriptPath} "$@"\n`;
 }
 
+/** Derive command name from script path: `scripts/dream.ts` → `dream` */
+function binCommandName(scriptPath: string): string {
+  return basename(scriptPath).replace(/\.[^.]+$/, "");
+}
+
 export function installBinShim(dir: string, skillId: string, scriptPath: string): void {
   const binDir = join(dir, "home", ".local", "bin");
   mkdirSync(binDir, { recursive: true });
-  const shimPath = join(binDir, skillId);
+  const cmdName = binCommandName(scriptPath);
+  const shimPath = join(binDir, cmdName);
   writeFileSync(shimPath, binShimContent(skillId, scriptPath), { mode: 0o755 });
 }
 
-export function removeBinShim(dir: string, skillId: string): void {
-  const shimPath = join(dir, "home", ".local", "bin", skillId);
+export function removeBinShim(dir: string, scriptPath: string): void {
+  const cmdName = binCommandName(scriptPath);
+  const shimPath = join(dir, "home", ".local", "bin", cmdName);
   if (existsSync(shimPath)) rmSync(shimPath);
 }
 

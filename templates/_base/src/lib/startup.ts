@@ -117,7 +117,7 @@ export async function handleStartupContext(sendMessage: (content: string) => voi
       log("server", "sent startup context");
     }
   } catch (e) {
-    log("server", "failed to run startup-context.sh:", e);
+    log("server", "failed to run startup context hook:", e);
   }
 }
 

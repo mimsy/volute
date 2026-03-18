@@ -584,18 +584,23 @@ describe("hook shim management", () => {
     removeHookShims(dir, "resonance");
   });
 
-  it("installs bin shim for skill with bin metadata", () => {
+  it("installs bin shim named after script, not skill ID", () => {
     const dir = join(voluteHome(), "test-bin-shim");
     mkdirSync(join(dir, "home", ".local", "bin"), { recursive: true });
 
-    installBinShim(dir, "dream", "scripts/dream.ts");
+    // Skill ID is "dreaming" but script is "dream.ts" — command should be "dream"
+    installBinShim(dir, "dreaming", "scripts/dream.ts");
 
     const shimPath = join(dir, "home", ".local", "bin", "dream");
+    assert.ok(
+      !existsSync(join(dir, "home", ".local", "bin", "dreaming")),
+      "should NOT use skill ID",
+    );
     assert.ok(existsSync(shimPath), "bin shim should exist");
     const content = readFileSync(shimPath, "utf-8");
     assert.ok(content.includes("node --import tsx"), "shim should use node --import tsx");
     assert.ok(
-      content.includes(".claude/skills/dream/scripts/dream.ts"),
+      content.includes(".claude/skills/dreaming/scripts/dream.ts"),
       "shim should reference the skill script",
     );
     assert.ok(content.includes('"$@"'), "shim should pass through arguments");
@@ -611,7 +616,7 @@ describe("hook shim management", () => {
     writeFileSync(join(binDir, "resonance"), "#!/bin/bash\necho test", { mode: 0o755 });
     writeFileSync(join(binDir, "other"), "#!/bin/bash\necho other", { mode: 0o755 });
 
-    removeBinShim(dir, "resonance");
+    removeBinShim(dir, "scripts/resonance.ts");
 
     assert.ok(!existsSync(join(binDir, "resonance")), "resonance shim should be removed");
     assert.ok(existsSync(join(binDir, "other")), "other shim should be kept");
