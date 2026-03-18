@@ -18,9 +18,17 @@ import type {
   VoluteEvent,
 } from "./lib/types.js";
 
+/** Minimal interface for a Codex SDK thread — typed to the methods we actually use */
+type CodexThread = {
+  runStreamed(
+    text: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<{ events: AsyncIterable<Record<string, any>> }>;
+};
+
 type CodexSession = {
   name: string;
-  thread: any; // Codex Thread instance
+  thread: CodexThread | null;
   listeners: Set<Listener>;
   currentMessageId?: string;
   messageQueue: Array<{ text: string; meta: HandlerMeta }>;
@@ -29,7 +37,6 @@ type CodexSession = {
   messageChannels: Map<string, string>;
   firstMessagePerChannel: Set<string>;
   cumulativeInputTokens: number;
-  compactionState: "idle" | "warned" | "compacting";
 };
 
 // Loaded once at startup
@@ -57,15 +64,10 @@ export function createMind(options: {
   mindDir: string;
   model?: string;
   reasoningEffort?: string;
-  compactionMessage?: string;
   maxContextTokens?: number;
 }): { resolve: HandlerResolver } {
   const sessions = new Map<string, CodexSession>();
   const prompts = loadPrompts();
-  const today = new Date().toLocaleDateString("en-CA");
-  const compactionMessage =
-    options.compactionMessage ?? prompts.compaction_warning.replace("${date}", today);
-  const compactionInstructions = prompts.compaction_instructions;
   const maxContextTokens = options.maxContextTokens;
 
   if (maxContextTokens) {
@@ -81,18 +83,23 @@ export function createMind(options: {
     try {
       // Re-read and re-compose the system prompt (picks up MEMORY.md changes)
       writeFileSync(promptPath, loadSystemPrompt());
-    } catch {
+    } catch (err) {
+      warn("mind", "failed to refresh system prompt, using initial prompt:", err);
       writeFileSync(promptPath, options.systemPrompt);
     }
   }
   refreshSystemPrompt();
 
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY is not set — cannot start codex mind");
+  }
+
   const codex = new Codex({
     apiKey: process.env.OPENAI_API_KEY,
     config: {
       model_instructions_file: promptPath,
-      // Disable auto-compact so we control it manually
-      model_auto_compact_token_limit: 999999999,
+      // Let the SDK handle compaction natively when a threshold is configured
+      model_auto_compact_token_limit: maxContextTokens ?? 999999999,
     },
   });
 
@@ -111,7 +118,6 @@ export function createMind(options: {
       messageChannels: new Map(),
       firstMessagePerChannel: new Set(),
       cumulativeInputTokens: 0,
-      compactionState: "idle",
     };
     sessions.set(name, session);
 
@@ -126,24 +132,32 @@ export function createMind(options: {
     if (!isEphemeral) {
       const savedThreadId = sessionStore.load(session.name);
       if (savedThreadId) {
-        log("mind", `session "${session.name}": resuming thread ${savedThreadId}`);
-        session.thread = codex.resumeThread(savedThreadId, {
-          workingDirectory: options.cwd,
-          model: options.model,
-          skipGitRepoCheck: true,
-          sandboxMode: "danger-full-access",
-        });
-        return;
+        try {
+          log("mind", `session "${session.name}": resuming thread ${savedThreadId}`);
+          session.thread = codex.resumeThread(savedThreadId, {
+            workingDirectory: options.cwd,
+            model: options.model,
+            skipGitRepoCheck: true,
+            sandboxMode: "danger-full-access",
+          });
+          return;
+        } catch (err) {
+          warn("mind", `session "${session.name}": failed to resume thread, starting new:`, err);
+        }
       }
     }
 
-    session.thread = codex.startThread({
-      workingDirectory: options.cwd,
-      model: options.model,
-      skipGitRepoCheck: true,
-      sandboxMode: "danger-full-access",
-    });
-    log("mind", `session "${session.name}": new thread started`);
+    try {
+      session.thread = codex.startThread({
+        workingDirectory: options.cwd,
+        model: options.model,
+        skipGitRepoCheck: true,
+        sandboxMode: "danger-full-access",
+      });
+      log("mind", `session "${session.name}": new thread started`);
+    } catch (err) {
+      warn("mind", `session "${session.name}": failed to start thread:`, err);
+    }
   }
 
   // --- Event broadcasting ---
@@ -187,7 +201,7 @@ export function createMind(options: {
         text = `${hookResult.additionalContext}\n\n${text}`;
       }
     } catch (err) {
-      log("mind", "pre-prompt hook failed:", err);
+      warn("mind", "pre-prompt hook failed:", err);
     }
 
     // Reply instructions on first message per channel
@@ -396,7 +410,7 @@ export function createMind(options: {
             }
           }
         } catch (err) {
-          log("mind", `session "${session.name}": event handler error (${event?.type}):`, err);
+          warn("mind", `session "${session.name}": event handler error (${event?.type}):`, err);
         }
       }
 
@@ -409,31 +423,12 @@ export function createMind(options: {
         daemonRestart({ type: "reload" }).catch((err) => log("mind", "daemonRestart failed:", err));
       }
 
-      // Compaction check
-      if (maxContextTokens && session.compactionState === "idle") {
-        if (session.cumulativeInputTokens >= maxContextTokens) {
-          session.compactionState = "warned";
-          log(
-            "mind",
-            `session "${session.name}": ${session.cumulativeInputTokens} tokens >= ${maxContextTokens} — triggering compaction warning`,
-          );
-          // Queue compaction warning as next message
-          session.messageQueue.unshift({
-            text: compactionMessage,
-            meta: { messageId: `compaction-warn-${Date.now()}`, channel: "system" },
-          });
-        }
-      } else if (session.compactionState === "warned") {
-        // Mind has had a chance to save state; now compact
-        session.compactionState = "compacting";
-        log("mind", `session "${session.name}": compacting with custom instructions`);
-        session.messageQueue.unshift({
-          text: `/compact ${compactionInstructions}`,
-          meta: { messageId: `compaction-${Date.now()}`, channel: "system" },
-        });
-      } else if (session.compactionState === "compacting") {
-        session.compactionState = "idle";
-        log("mind", `session "${session.name}": compaction complete`);
+      // Compaction warning — actual compaction is handled by the Codex SDK via model_auto_compact_token_limit
+      if (maxContextTokens && session.cumulativeInputTokens >= maxContextTokens) {
+        log(
+          "mind",
+          `session "${session.name}": ${session.cumulativeInputTokens} tokens >= ${maxContextTokens} — SDK auto-compaction will handle`,
+        );
       }
 
       log("mind", `session "${session.name}": turn done`);
@@ -497,7 +492,7 @@ export function createMind(options: {
         }
 
         processQueue(session).catch((err) => {
-          log("mind", `session "${sessionName}": queue processing failed:`, err);
+          warn("mind", `session "${sessionName}": queue processing failed:`, err);
           broadcast(session, { type: "done" });
         });
 

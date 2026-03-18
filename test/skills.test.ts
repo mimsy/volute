@@ -13,6 +13,7 @@ import {
   installSkill,
   listMindSkills,
   listSharedSkills,
+  mindSkillsDir,
   parseSkillMd,
   publishSkill,
   removeHookShims,
@@ -590,6 +591,77 @@ describe("hook shim management", () => {
 
     assert.ok(existsSync(join(dir, "home", ".config", "hooks", "pre-prompt", "50-my-skill.sh")));
     assert.ok(existsSync(join(dir, "home", ".config", "hooks", "post-tool-use", "50-my-skill.sh")));
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("installs hook shims with correct path for codex template", () => {
+    const dir = join(voluteHome(), "test-hooks-codex");
+    mkdirSync(join(dir, "home", ".config", "hooks"), { recursive: true });
+    // Create AGENTS.md marker file to indicate codex template
+    writeFileSync(join(dir, "home", "AGENTS.md"), "");
+
+    installHookShims(dir, "resonance", {
+      "pre-prompt": "scripts/resonance-hook.sh",
+    });
+
+    const shimPath = join(dir, "home", ".config", "hooks", "pre-prompt", "50-resonance.sh");
+    assert.ok(existsSync(shimPath), "shim file should exist");
+    const content = readFileSync(shimPath, "utf-8");
+    assert.ok(
+      content.includes(".agents/skills/resonance/scripts/resonance-hook.sh"),
+      "codex shim should reference .agents/skills path",
+    );
+    assert.ok(
+      !content.includes(".claude/skills"),
+      "codex shim should not reference .claude/skills path",
+    );
+
+    rmSync(dir, { recursive: true });
+  });
+});
+
+describe("mindSkillsDir template detection", () => {
+  it("resolves to .claude/skills by default", () => {
+    const dir = join(voluteHome(), "test-skills-dir-claude");
+    mkdirSync(join(dir, "home"), { recursive: true });
+
+    const result = mindSkillsDir(dir);
+    assert.ok(result.endsWith(join("home", ".claude", "skills")));
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("resolves to .agents/skills when AGENTS.md exists", () => {
+    const dir = join(voluteHome(), "test-skills-dir-codex");
+    mkdirSync(join(dir, "home"), { recursive: true });
+    writeFileSync(join(dir, "home", "AGENTS.md"), "");
+
+    const result = mindSkillsDir(dir);
+    assert.ok(result.endsWith(join("home", ".agents", "skills")));
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("resolves to .pi/skills when MINDS.md exists", () => {
+    const dir = join(voluteHome(), "test-skills-dir-pi");
+    mkdirSync(join(dir, "home"), { recursive: true });
+    writeFileSync(join(dir, "home", "MINDS.md"), "");
+
+    const result = mindSkillsDir(dir);
+    assert.ok(result.endsWith(join("home", ".pi", "skills")));
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("prefers AGENTS.md over MINDS.md when both exist", () => {
+    const dir = join(voluteHome(), "test-skills-dir-both");
+    mkdirSync(join(dir, "home"), { recursive: true });
+    writeFileSync(join(dir, "home", "AGENTS.md"), "");
+    writeFileSync(join(dir, "home", "MINDS.md"), "");
+
+    const result = mindSkillsDir(dir);
+    assert.ok(result.endsWith(join("home", ".agents", "skills")));
 
     rmSync(dir, { recursive: true });
   });

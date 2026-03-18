@@ -1,6 +1,13 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { resolve as resolvePath } from "node:path";
-import { log } from "./logger.js";
+import { log, warn } from "./logger.js";
 
 export type SessionStore = {
   load(name: string): string | undefined;
@@ -15,12 +22,18 @@ export function createSessionStore(sessionsDir: string): SessionStore {
 
   return {
     load(name: string): string | undefined {
+      const path = filePath(name);
       try {
-        const data = JSON.parse(readFileSync(filePath(name), "utf-8"));
+        const data = JSON.parse(readFileSync(path, "utf-8"));
         return typeof data.threadId === "string" ? data.threadId : undefined;
       } catch (err: any) {
-        if (err?.code !== "ENOENT") {
-          log("mind", `failed to load session file for "${name}":`, err);
+        if (err?.code === "ENOENT") return undefined;
+        // Corrupt or unreadable file — rename it so a fresh session can be saved
+        warn("mind", `corrupt session file for "${name}", renaming to .corrupt:`, err);
+        try {
+          renameSync(path, `${path}.corrupt`);
+        } catch {
+          // Best effort — ignore rename failures
         }
         return undefined;
       }

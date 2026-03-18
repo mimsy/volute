@@ -31,7 +31,6 @@ const mind = createMind({
   mindDir,
   model: config.model,
   reasoningEffort: config.reasoningEffort,
-  compactionMessage: config.compactionMessage,
   maxContextTokens: config.compaction?.maxContextTokens,
 });
 
