@@ -18,6 +18,7 @@ import {
   importPiSession,
   parseNameFromIdentity,
 } from "../../commands/import.js";
+import { resolveTemplate } from "../../lib/ai-service.js";
 import { type ExportManifest, isHomeOnlyArchive } from "../../lib/archive.js";
 import { deleteMindUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
@@ -40,7 +41,6 @@ import {
 } from "../../lib/daemon/turn-tracker.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
-import { extractTextContent } from "../../lib/delivery/delivery-router.js";
 import { recordInbound, tagUntaggedInbound } from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import {
@@ -727,6 +727,7 @@ const createMindSchema = z.object({
   model: z.string().optional(),
   seedSoul: z.string().optional(),
   skills: z.array(z.string()).optional(),
+  createdBy: z.string().optional(),
 });
 
 // Create mind — admin only
@@ -734,7 +735,8 @@ const app = new Hono<AuthEnv>()
   .post("/", requireAdmin, zValidator("json", createMindSchema), async (c) => {
     const body = c.req.valid("json");
 
-    const { name, template = "claude" } = body;
+    const { name } = body;
+    const template = body.template ?? resolveTemplate(body.model);
 
     const nameErr = validateMindName(name);
     if (nameErr) return c.json({ error: nameErr }, 400);
@@ -801,7 +803,9 @@ const app = new Hono<AuthEnv>()
       );
 
       const port = await nextPort();
-      await addMind(name, port, body.stage, template);
+      // Use createdBy from body, or fall back to the authenticated user's username
+      const createdBy = body.createdBy ?? c.get("user")?.username;
+      await addMind(name, port, body.stage, template, createdBy);
       try {
         await setMindTemplateHash(name, computeTemplateHash(template));
       } catch (err) {

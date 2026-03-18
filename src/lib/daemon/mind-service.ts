@@ -34,13 +34,36 @@ export async function startMindFull(name: string): Promise<void> {
   // Seed minds get the server + initial orientation, no schedules or budget
   if (!entry || entry.stage === "seed") {
     if (entry?.stage === "seed") {
+      const creatorNote = entry.createdBy
+        ? ` Your creator is ${entry.createdBy}. Send them a message to introduce yourself.`
+        : "";
       // sendSystemMessage calls ensureSystemDM internally
       sendSystemMessage(
         baseName,
-        "You've just been created. A human planted you as a seed. Start a conversation with them — introduce yourself, ask questions, and begin exploring who you want to be.",
+        `You've just been created. A human planted you as a seed. Start a conversation with them — introduce yourself, ask questions, and begin exploring who you want to be.${creatorNote}`,
       ).catch((err: unknown) =>
         log.error(`failed to send seed orientation for ${baseName}`, log.errorData(err)),
       );
+
+      // If a creator is set, ensure a DM exists between the seed and the creator
+      if (entry.createdBy) {
+        import("../events/conversations.js")
+          .then(async ({ findDMConversation, createConversation }) => {
+            const { getOrCreateMindUser, getUserByUsername } = await import("../auth.js");
+            const mindUser = await getOrCreateMindUser(baseName);
+            const creatorUser = await getUserByUsername(entry.createdBy!);
+            if (!creatorUser) return;
+            const existing = await findDMConversation(baseName, [mindUser.id, creatorUser.id]);
+            if (!existing) {
+              await createConversation(baseName, entry.createdBy!, {
+                participantIds: [mindUser.id, creatorUser.id],
+              });
+            }
+          })
+          .catch((err: unknown) =>
+            log.error(`failed to ensure creator DM for ${baseName}`, log.errorData(err)),
+          );
+      }
     } else {
       ensureSystemDM(baseName).catch((err: unknown) =>
         log.error(`failed to ensure system DM for ${baseName}`, log.errorData(err)),
@@ -110,6 +133,33 @@ export async function wakeMind(name: string): Promise<void> {
     mind: name,
     summary: `${name} is waking`,
   }).catch((err) => log.error("failed to publish mind_waking activity", log.errorData(err)));
+}
+
+/**
+ * Start a spirit process. Simpler lifecycle than minds — no schedules, sleep, budget, etc.
+ */
+export async function startSpiritFull(name: string): Promise<void> {
+  await getMindManager().startMind(name);
+
+  publishActivity({
+    type: "mind_started",
+    mind: name,
+    summary: `${name} spirit started`,
+  }).catch((err) => log.error("failed to publish spirit_started activity", log.errorData(err)));
+}
+
+/**
+ * Stop a spirit process.
+ */
+export async function stopSpiritFull(name: string): Promise<void> {
+  markIdle(name);
+  await getMindManager().stopMind(name);
+
+  publishActivity({
+    type: "mind_stopped",
+    mind: name,
+    summary: `${name} spirit stopped`,
+  }).catch((err) => log.error("failed to publish spirit_stopped activity", log.errorData(err)));
 }
 
 export async function stopMindFull(name: string): Promise<void> {

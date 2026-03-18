@@ -214,6 +214,20 @@ export async function startDaemon(opts: {
     await Promise.all(workers);
   }
 
+  // Start system spirit (non-fatal — system works without it)
+  try {
+    const { ensureSpiritProject, syncSpiritTemplate } = await import("./lib/spirit.js");
+    const { startSpiritFull } = await import("./lib/daemon/mind-service.js");
+    await ensureSpiritProject();
+    await syncSpiritTemplate();
+    await startSpiritFull("volute");
+  } catch (err) {
+    log.warn(
+      "failed to start system spirit — system replies will use aiComplete fallback",
+      log.errorData(err),
+    );
+  }
+
   // Start system-level bridges (non-blocking)
   bridgeManager.startBridges(daemonPort).catch((err) => {
     log.warn("failed to start bridges", log.errorData(err));

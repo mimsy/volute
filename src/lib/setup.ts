@@ -25,6 +25,7 @@ export type AiProviderConfig = {
 export type AiConfig = {
   providers: Record<string, AiProviderConfig>;
   models?: string[];
+  utilityModel?: string;
 };
 
 export type GlobalConfig = {
@@ -37,6 +38,8 @@ export type GlobalConfig = {
   /** Skills explicitly removed from defaults by an admin (not re-added on restart) */
   removedDefaultSkills?: string[];
   ai?: AiConfig;
+  /** Model ID for the system spirit */
+  spiritModel?: string;
 };
 
 export function configPath(): string {

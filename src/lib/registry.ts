@@ -2,9 +2,11 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { eq, isNull } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "./db.js";
 import { minds } from "./schema.js";
+
+export type MindType = "mind" | "spirit";
 
 export type MindEntry = {
   name: string;
@@ -17,6 +19,8 @@ export type MindEntry = {
   parent?: string;
   dir?: string;
   branch?: string;
+  mindType: MindType;
+  createdBy?: string;
 };
 
 export function voluteHome(): string {
@@ -70,6 +74,8 @@ type RawMindRow = {
   template: string | null;
   template_hash: string | null;
   running: number;
+  mind_type: string;
+  created_by: string | null;
   created_at: string;
 };
 
@@ -85,13 +91,18 @@ function rowToEntry(row: RawMindRow): MindEntry {
     parent: row.parent ?? undefined,
     dir: row.dir ?? undefined,
     branch: row.branch ?? undefined,
+    mindType: (row.mind_type as MindType) ?? "mind",
+    createdBy: row.created_by ?? undefined,
   };
 }
 
-/** Read base minds (no parent) from DB. */
+/** Read base minds (no parent, no spirits) from DB. */
 export async function readRegistry(): Promise<MindEntry[]> {
   const db = await getDb();
-  const rows = await db.select().from(minds).where(isNull(minds.parent));
+  const rows = await db
+    .select()
+    .from(minds)
+    .where(and(isNull(minds.parent), eq(minds.mind_type, "mind")));
   return (rows as unknown as RawMindRow[]).map(rowToEntry);
 }
 
@@ -124,17 +135,54 @@ export async function addMind(
   port: number,
   stage?: "seed" | "sprouted",
   template?: string,
+  createdBy?: string,
 ) {
   const err = validateMindName(name);
   if (err) throw new Error(err);
   const db = await getDb();
   await db
     .insert(minds)
-    .values({ name, port, stage: stage ?? null, template: template ?? null })
+    .values({
+      name,
+      port,
+      stage: stage ?? null,
+      template: template ?? null,
+      created_by: createdBy ?? null,
+    })
     .onConflictDoUpdate({
       target: minds.name,
-      set: { port, stage: stage ?? null, template: template ?? null },
+      set: {
+        port,
+        stage: stage ?? null,
+        template: template ?? null,
+        created_by: createdBy ?? null,
+      },
     });
+}
+
+export async function addSpirit(name: string, port: number, template: string, dir: string) {
+  const db = await getDb();
+  await db
+    .insert(minds)
+    .values({
+      name,
+      port,
+      template,
+      dir,
+      mind_type: "spirit",
+      stage: "sprouted",
+    })
+    .onConflictDoUpdate({
+      target: minds.name,
+      set: { port, template, dir, mind_type: "spirit" },
+    });
+}
+
+/** Read all spirits from DB. */
+export async function readSpirits(): Promise<MindEntry[]> {
+  const db = await getDb();
+  const rows = await db.select().from(minds).where(eq(minds.mind_type, "spirit"));
+  return (rows as unknown as RawMindRow[]).map(rowToEntry);
 }
 
 export async function addVariant(

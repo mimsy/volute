@@ -71,6 +71,56 @@ export function isAiConfigured(): boolean {
   return getEnabledModels().length > 0;
 }
 
+/** Get the utility model ID (for turn summaries, consolidation, etc.). */
+export function getUtilityModel(): string | undefined {
+  const ai = getAiConfig();
+  return ai?.utilityModel;
+}
+
+/** Set the utility model ID. */
+export function setUtilityModel(modelId: string | undefined): void {
+  const ai = getAiConfig() ?? { providers: {} };
+  ai.utilityModel = modelId;
+  const config = readGlobalConfig();
+  writeGlobalConfig({ ...config, ai });
+}
+
+/** Complete using the utility model (falls back to default auto-selection). */
+export async function aiCompleteUtility(
+  systemPrompt: string,
+  userMessage: string,
+): Promise<string | null> {
+  const utilityModel = getUtilityModel();
+  return aiComplete(systemPrompt, userMessage, utilityModel);
+}
+
+/**
+ * Resolve the best template for a given model ID.
+ * Anthropic models → "claude", everything else → "pi".
+ */
+export function resolveTemplate(modelId?: string): string {
+  if (!modelId) {
+    // Check first enabled model's provider
+    const enabled = getEnabledModels();
+    if (enabled.length > 0) {
+      const model = findModel(enabled[0]);
+      if (model) return model.provider === "anthropic" ? "claude" : "pi";
+    }
+    // Check configured providers
+    const providers = getConfiguredProviders();
+    if (providers.length === 1 && providers[0] === "anthropic") return "claude";
+    if (providers.length > 0 && !providers.includes("anthropic")) return "pi";
+    return "claude"; // default
+  }
+  // Parse provider from model ID (pi format: "provider:model-name")
+  if (modelId.includes(":")) {
+    const provider = modelId.split(":")[0];
+    return provider === "anthropic" ? "claude" : "pi";
+  }
+  // No colon → likely an anthropic model ID
+  return "claude";
+}
+
 /** Get the admin-configured list of enabled model IDs. */
 export function getEnabledModels(): string[] {
   const ai = getAiConfig();

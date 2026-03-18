@@ -1,0 +1,7 @@
+{
+  "id": "0004_spirits",
+  "prevId": "0003_turn_feed_links",
+  "version": "6",
+  "dialect": "sqlite",
+  "tables": {}
+}

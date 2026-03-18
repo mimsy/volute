@@ -13,9 +13,14 @@ export const minds = sqliteTable(
     template: text("template"),
     template_hash: text("template_hash"),
     running: integer("running").notNull().default(0),
+    mind_type: text("mind_type").notNull().default("mind"),
+    created_by: text("created_by"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
   },
-  (table) => [index("idx_minds_parent").on(table.parent)],
+  (table) => [
+    index("idx_minds_parent").on(table.parent),
+    index("idx_minds_mind_type").on(table.mind_type),
+  ],
 );
 
 export const users = sqliteTable("users", {

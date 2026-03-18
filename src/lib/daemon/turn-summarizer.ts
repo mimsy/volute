@@ -1,5 +1,5 @@
 import { and, desc, eq, gt, lt, sql } from "drizzle-orm";
-import { aiComplete } from "../ai-service.js";
+import { aiCompleteUtility } from "../ai-service.js";
 import { getDb } from "../db.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { summarizeTool } from "../format-tool.js";
@@ -257,7 +257,7 @@ export async function summarizeTurn(
   const transcript = buildTranscript(events);
   if (transcript.trim()) {
     const summaryPrompt = await getPrompt("turn_summary");
-    const aiResult = await aiComplete(summaryPrompt, transcript);
+    const aiResult = await aiCompleteUtility(summaryPrompt, transcript);
     if (aiResult) {
       summaryText = aiResult;
       deterministic = false;

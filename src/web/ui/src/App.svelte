@@ -356,7 +356,7 @@ $effect(() => {
       fresh.section?.startsWith("ext:") &&
       selection.section &&
       !selection.section.startsWith("ext:") &&
-      fresh.section.endsWith(":" + selection.section)
+      fresh.section.endsWith(`:${selection.section}`)
     ) {
       selection = fresh;
     }
@@ -631,7 +631,15 @@ function handleGlobalClick(e: MouseEvent) {
   </div>
 {:else if !auth.setupComplete}
   <div class="app full-height">
-    <SetupPage onComplete={() => { auth.setupComplete = true; }} />
+    <SetupPage onComplete={(spiritConversationId) => {
+      auth.setupComplete = true;
+      // After setup renders the shell, navigate to spirit DM
+      if (spiritConversationId) {
+        requestAnimationFrame(() => {
+          selection = { tab: "chat", kind: "conversation", conversationId: spiritConversationId };
+        });
+      }
+    }} />
   </div>
 {:else if !auth.user}
   <div class="app full-height">
