@@ -26,6 +26,11 @@ export async function ensureSystemDM(mindName: string): Promise<{ conversationId
   const systemUser = await getOrCreateSystemUser();
   const mindUser = await getOrCreateMindUser(mindName);
 
+  // Spirit "volute" shares the system user — can't DM yourself
+  if (systemUser.id === mindUser.id) {
+    throw new Error(`Cannot create system DM: mind "${mindName}" is the system user`);
+  }
+
   const existing = await findDMConversation(mindName, [systemUser.id, mindUser.id]);
   if (existing) {
     dmCache.set(mindName, existing);
@@ -89,12 +94,8 @@ export async function sendSystemMessageDirect(
  * Check if the system spirit is running and can handle replies.
  */
 async function isSpiritAvailable(): Promise<boolean> {
-  try {
-    const spiritEntry = await findMind("volute");
-    return !!(spiritEntry?.running && spiritEntry.mindType === "spirit");
-  } catch {
-    return false;
-  }
+  const spiritEntry = await findMind("volute");
+  return !!(spiritEntry?.running && spiritEntry.mindType === "spirit");
 }
 
 /**
@@ -120,7 +121,7 @@ export async function generateSystemReply(
       });
       return;
     } catch (err) {
-      slog.warn(`failed to route to spirit, falling back to aiComplete`, log.errorData(err));
+      slog.warn(`failed to route to spirit, falling back to aiCompleteUtility`, log.errorData(err));
     }
   }
 

@@ -47,22 +47,9 @@ export async function startMindFull(name: string): Promise<void> {
 
       // If a creator is set, ensure a DM exists between the seed and the creator
       if (entry.createdBy) {
-        import("../events/conversations.js")
-          .then(async ({ findDMConversation, createConversation }) => {
-            const { getOrCreateMindUser, getUserByUsername } = await import("../auth.js");
-            const mindUser = await getOrCreateMindUser(baseName);
-            const creatorUser = await getUserByUsername(entry.createdBy!);
-            if (!creatorUser) return;
-            const existing = await findDMConversation(baseName, [mindUser.id, creatorUser.id]);
-            if (!existing) {
-              await createConversation(baseName, entry.createdBy!, {
-                participantIds: [mindUser.id, creatorUser.id],
-              });
-            }
-          })
-          .catch((err: unknown) =>
-            log.error(`failed to ensure creator DM for ${baseName}`, log.errorData(err)),
-          );
+        ensureCreatorDM(baseName, entry.createdBy).catch((err: unknown) =>
+          log.error(`failed to ensure creator DM for ${baseName}`, log.errorData(err)),
+        );
       }
     } else {
       ensureSystemDM(baseName).catch((err: unknown) =>
@@ -139,6 +126,13 @@ export async function wakeMind(name: string): Promise<void> {
  * Start a spirit process. Simpler lifecycle than minds — no schedules, sleep, budget, etc.
  */
 export async function startSpiritFull(name: string): Promise<void> {
+  // Register the spirit's custom directory for routing config resolution
+  const entry = await findMind(name);
+  if (entry?.dir) {
+    const { registerMindDir } = await import("../delivery/delivery-router.js");
+    registerMindDir(name, entry.dir);
+  }
+
   await getMindManager().startMind(name);
 
   publishActivity({
@@ -160,6 +154,25 @@ export async function stopSpiritFull(name: string): Promise<void> {
     mind: name,
     summary: `${name} spirit stopped`,
   }).catch((err) => log.error("failed to publish spirit_stopped activity", log.errorData(err)));
+}
+
+async function ensureCreatorDM(mindName: string, creatorUsername: string): Promise<void> {
+  const { getOrCreateMindUser, getUserByUsername } = await import("../auth.js");
+  const { findDMConversation, createConversation } = await import("../events/conversations.js");
+
+  const mindUser = await getOrCreateMindUser(mindName);
+  const creatorUser = await getUserByUsername(creatorUsername);
+  if (!creatorUser) {
+    log.warn(`creator user '${creatorUsername}' not found for seed ${mindName} DM`);
+    return;
+  }
+
+  const existing = await findDMConversation(mindName, [mindUser.id, creatorUser.id]);
+  if (!existing) {
+    await createConversation(mindName, creatorUsername, {
+      participantIds: [mindUser.id, creatorUser.id],
+    });
+  }
 }
 
 export async function stopMindFull(name: string): Promise<void> {

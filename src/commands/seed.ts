@@ -70,12 +70,24 @@ export async function run(args: string[]) {
     template = resolveTemplate(model);
   }
 
-  // For pi template, prompt for model selection if not specified
+  // For pi template, resolve model if not specified
   if (template === "pi" && !model) {
-    model = await chooseModel(daemonFetch);
+    // Non-interactive (e.g. mind running a command): use the spirit model as default
+    if (process.env.VOLUTE_MIND || !process.stdin.isTTY) {
+      const { getSpiritModel } = await import("../lib/spirit.js");
+      const { qualifyModelId } = await import("../lib/ai-service.js");
+      const spiritModel = getSpiritModel();
+      if (spiritModel) {
+        model = qualifyModelId(spiritModel);
+      }
+    }
+    // Interactive: prompt for model selection
     if (!model) {
-      console.error("No AI models configured. Set up providers in the web dashboard first.");
-      process.exit(1);
+      model = await chooseModel(daemonFetch);
+      if (!model) {
+        console.error("No AI models configured. Set up providers in the web dashboard first.");
+        process.exit(1);
+      }
     }
   }
 

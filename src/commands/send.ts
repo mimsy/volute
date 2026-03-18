@@ -139,7 +139,9 @@ export async function run(args: string[]) {
   });
 
   const target = positional[0];
-  const message = positional[1] ?? (await readStdin());
+  const rawMessage = positional[1] ?? (await readStdin());
+  // Unescape \n sequences — models often generate these as literal characters in shell args
+  const message = rawMessage?.replace(/\\n/g, "\n");
 
   const images = flags.image ? [loadImage(flags.image)] : undefined;
 

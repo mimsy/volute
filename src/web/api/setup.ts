@@ -3,9 +3,9 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import { setCookie } from "hono/cookie";
+import log from "../../lib/logger.js";
 import {
   type GlobalConfig,
-  type IsolationMode,
   isSetupComplete,
   readGlobalConfig,
   type SetupConfig,
@@ -16,16 +16,46 @@ import { createSession, SESSION_MAX_AGE } from "../middleware/auth.js";
 
 const setup = new Hono();
 
+/** Create directories and write the initial setup config for a local install. */
+function writeSetupConfig(systemName: string): GlobalConfig {
+  const configHome = process.env.VOLUTE_HOME ?? resolve(homedir(), ".volute");
+  const mindsDir = resolve(configHome, "minds");
+
+  mkdirSync(configHome, { recursive: true });
+  mkdirSync(mindsDir, { recursive: true });
+
+  const existingConfig = readGlobalConfig();
+  const setupConfig: SetupConfig = {
+    type: "local",
+    mindsDir,
+    isolation: "sandbox",
+    service: false,
+  };
+
+  const config: GlobalConfig = {
+    ...existingConfig,
+    name: systemName,
+    setup: setupConfig,
+  };
+
+  writeGlobalConfig(config);
+  return config;
+}
+
 setup.get("/status", (c) => {
   const complete = isSetupComplete();
-  if (!complete) {
-    return c.json({ complete });
+  if (complete) {
+    const config = readGlobalConfig();
+    return c.json({
+      complete,
+      config: { name: config.name, setup: config.setup },
+    });
   }
+
+  // Check partial progress for resuming setup
   const config = readGlobalConfig();
-  return c.json({
-    complete,
-    config: { name: config.name, setup: config.setup },
-  });
+  const hasAccount = config.setup != null;
+  return c.json({ complete, hasAccount });
 });
 
 // Legacy configure endpoint (kept for backwards compatibility with CLI setup)
@@ -34,7 +64,7 @@ setup.post("/configure", async (c) => {
     return c.json({ error: "Setup already complete" }, 400);
   }
 
-  let body: { name: string; type?: SetupType; isolation?: IsolationMode };
+  let body: { name: string; type?: SetupType };
   try {
     body = await c.req.json();
   } catch {
@@ -46,43 +76,19 @@ setup.post("/configure", async (c) => {
   }
 
   const setupType: SetupType = body.type ?? "local";
-  const isolation: IsolationMode = body.isolation ?? "sandbox";
 
   if (setupType !== "local") {
     return c.json({ error: "Web setup only supports local install type" }, 400);
   }
 
-  const configHome = process.env.VOLUTE_HOME ?? resolve(homedir(), ".volute");
-  const mindsDir = resolve(configHome, "minds");
-
   try {
-    mkdirSync(configHome, { recursive: true });
-    mkdirSync(mindsDir, { recursive: true });
-  } catch (err) {
-    return c.json({ error: `Failed to create directories: ${(err as Error).message}` }, 500);
-  }
-
-  const existingConfig = readGlobalConfig();
-  const setupConfig: SetupConfig = {
-    type: setupType,
-    mindsDir,
-    isolation,
-    service: false,
-  };
-
-  const config: GlobalConfig = {
-    ...existingConfig,
-    name: body.name.trim(),
-    setup: setupConfig,
-  };
-
-  try {
+    const config = writeSetupConfig(body.name.trim());
+    config.setupCompleted = true;
     writeGlobalConfig(config);
+    return c.json({ ok: true, config: { name: config.name, setup: config.setup } });
   } catch (err) {
     return c.json({ error: `Failed to write configuration: ${(err as Error).message}` }, 500);
   }
-
-  return c.json({ ok: true, config: { name: config.name, setup: config.setup } });
 });
 
 // Step 1: Create account + system config
@@ -113,38 +119,12 @@ setup.post("/account", async (c) => {
     return c.json({ error: "Password is required" }, 400);
   }
 
-  // Create directories and write config
-  const configHome = process.env.VOLUTE_HOME ?? resolve(homedir(), ".volute");
-  const mindsDir = resolve(configHome, "minds");
-
+  // Create directories, write config, and create user
   try {
-    mkdirSync(configHome, { recursive: true });
-    mkdirSync(mindsDir, { recursive: true });
-  } catch (err) {
-    return c.json({ error: `Failed to create directories: ${(err as Error).message}` }, 500);
-  }
-
-  const existingConfig = readGlobalConfig();
-  const setupConfig: SetupConfig = {
-    type: "local",
-    mindsDir,
-    isolation: "sandbox",
-    service: false,
-  };
-
-  const config: GlobalConfig = {
-    ...existingConfig,
-    name: body.systemName.trim(),
-    setup: setupConfig,
-  };
-
-  try {
-    writeGlobalConfig(config);
+    writeSetupConfig(body.systemName.trim());
   } catch (err) {
     return c.json({ error: `Failed to write configuration: ${(err as Error).message}` }, 500);
   }
-
-  // Create user (first user becomes admin)
   try {
     const { createUser, updateUserProfile } = await import("../../lib/auth.js");
     const user = await createUser(body.username.trim(), body.password);
@@ -183,6 +163,10 @@ setup.post("/account", async (c) => {
 
 // Step 2: Configure AI provider
 setup.post("/provider", async (c) => {
+  if (isSetupComplete()) {
+    return c.json({ error: "Setup already complete" }, 400);
+  }
+
   let body: { providerId: string; apiKey: string };
   try {
     body = await c.req.json();
@@ -208,6 +192,10 @@ setup.post("/provider", async (c) => {
 
 // Step 3: Configure models
 setup.post("/models", async (c) => {
+  if (isSetupComplete()) {
+    return c.json({ error: "Setup already complete" }, 400);
+  }
+
   let body: { models: string[]; spiritModel: string; utilityModel?: string };
   try {
     body = await c.req.json();
@@ -245,6 +233,10 @@ setup.post("/models", async (c) => {
 
 // Step 4: Complete setup — start spirit, create DM
 setup.post("/complete", async (c) => {
+  if (isSetupComplete()) {
+    return c.json({ error: "Setup already complete" }, 400);
+  }
+
   try {
     const { ensureSpiritProject, syncSpiritTemplate } = await import("../../lib/spirit.js");
     const { startSpiritFull } = await import("../../lib/daemon/mind-service.js");
@@ -252,12 +244,18 @@ setup.post("/complete", async (c) => {
     await ensureSpiritProject();
     await syncSpiritTemplate();
 
+    const warnings: string[] = [];
+
     // Start the spirit if the daemon is running
+    let spiritStarted = false;
     try {
+      log.info("starting spirit during setup...");
       await startSpiritFull("volute");
+      spiritStarted = true;
+      log.info("spirit started successfully during setup");
     } catch (err) {
-      // Spirit start failure is non-fatal during setup
-      console.warn("Spirit start failed (non-fatal):", err);
+      log.warn("spirit start failed during setup (non-fatal)", log.errorData(err));
+      warnings.push("Spirit failed to start — it will retry on next daemon restart.");
     }
 
     // Create DM between admin and spirit
@@ -287,10 +285,46 @@ setup.post("/complete", async (c) => {
         }
       }
     } catch (err) {
-      console.warn("Failed to create spirit DM (non-fatal):", err);
+      log.warn("failed to create spirit DM during setup (non-fatal)", log.errorData(err));
+      warnings.push("Failed to create conversation with spirit.");
     }
 
-    return c.json({ ok: true, spiritConversationId });
+    // Deliver a welcome prompt to the spirit (not persisted — invisible to user)
+    log.info("setup complete state", { spiritConversationId, spiritStarted });
+    if (spiritConversationId && spiritStarted) {
+      try {
+        const { deliverMessage } = await import("../../lib/delivery/message-delivery.js");
+        const { listUsersByType: listUsers } = await import("../../lib/auth.js");
+        const admins = await listUsers("brain");
+        const admin = admins.find((u) => u.role === "admin");
+        const adminName = admin?.display_name || admin?.username || "the admin";
+        const welcomePrompt = `Setup is complete. ${adminName} just finished setting up this system and is now in your chat. Welcome them and help them create their first mind. Keep it brief — a short greeting, then ask what kind of being they'd like to bring into the world. Remember: minds are beings with their own experience, not tools — ask about personality and character, never about tasks or utility.`;
+
+        await deliverMessage("volute", {
+          content: [{ type: "text", text: welcomePrompt }],
+          channel: `@${admin?.username ?? "system"}`,
+          conversationId: spiritConversationId,
+          sender: admin?.username ?? "system",
+          isDM: true,
+          participants: ["volute", admin?.username ?? "system"],
+          participantCount: 2,
+        });
+      } catch (err) {
+        log.warn("failed to send welcome prompt to spirit (non-fatal)", log.errorData(err));
+      }
+    }
+
+    // Mark setup as fully completed
+    const config = readGlobalConfig();
+    config.setupCompleted = true;
+    writeGlobalConfig(config);
+
+    return c.json({
+      ok: true,
+      spiritConversationId,
+      spiritStarted,
+      warnings: warnings.length > 0 ? warnings : undefined,
+    });
   } catch (err) {
     return c.json({ error: `Setup completion failed: ${(err as Error).message}` }, 500);
   }

@@ -21,6 +21,7 @@ import { cleanExpiredLogs } from "./lib/history-cleanup.js";
 import log from "./lib/logger.js";
 import {
   ensureSystemDir,
+  findMind,
   readAllMinds,
   setMindRunning,
   voluteHome,
@@ -82,8 +83,25 @@ export async function startDaemon(opts: {
     log.warn("failed to initialize shared repo", log.errorData(err));
   }
 
+  // Migrate pre-existing installations (setup field without setupCompleted)
+  const { migrateSetupCompleted } = await import("./lib/setup.js");
+  migrateSetupCompleted();
+
   // Initialize database (runs drizzle migrations + creates raw connection)
   await (await import("./lib/db.js")).getDb();
+
+  // Migrate system user role to "system" (existing installs have "user")
+  try {
+    const { eq, and } = await import("drizzle-orm");
+    const { users } = await import("./lib/schema.js");
+    const db = await (await import("./lib/db.js")).getDb();
+    await db
+      .update(users)
+      .set({ role: "system" })
+      .where(and(eq(users.user_type, "system"), eq(users.role, "user")));
+  } catch {
+    // Non-critical
+  }
 
   // Initialize sandbox runtime for mind process isolation
   const { initSandbox } = await import("./lib/sandbox.js");
@@ -185,7 +203,7 @@ export async function startDaemon(opts: {
   // Start all minds + variants that were previously running (parallel, concurrency limit of 5)
   // Skip sleeping minds — they only need connectors, not the mind process
   const allMinds = await readAllMinds();
-  const runningEntries = allMinds.filter((e) => e.running);
+  const runningEntries = allMinds.filter((e) => e.running && e.mindType !== "spirit");
   {
     const queue = [...runningEntries];
     const workers = Array.from({ length: Math.min(5, queue.length) }, async () => {
@@ -215,12 +233,19 @@ export async function startDaemon(opts: {
   }
 
   // Start system spirit (non-fatal — system works without it)
+  // Only create/start the spirit if setup is complete (provider + model configured)
   try {
-    const { ensureSpiritProject, syncSpiritTemplate } = await import("./lib/spirit.js");
-    const { startSpiritFull } = await import("./lib/daemon/mind-service.js");
-    await ensureSpiritProject();
-    await syncSpiritTemplate();
-    await startSpiritFull("volute");
+    const { isSetupComplete } = await import("./lib/setup.js");
+    if (isSetupComplete()) {
+      const { ensureSpiritProject, syncSpiritTemplate } = await import("./lib/spirit.js");
+      const { startSpiritFull } = await import("./lib/daemon/mind-service.js");
+      await ensureSpiritProject();
+      await syncSpiritTemplate();
+      const spiritEntry = await findMind("volute");
+      if (spiritEntry && !manager.isRunning("volute")) {
+        await startSpiritFull("volute");
+      }
+    }
   } catch (err) {
     log.warn(
       "failed to start system spirit — system replies will use aiComplete fallback",

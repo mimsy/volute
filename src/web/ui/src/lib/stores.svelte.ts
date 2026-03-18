@@ -15,6 +15,7 @@ export const auth = $state({
   systemName: null as string | null,
   setupComplete: true,
   setupChecked: false,
+  setupProgress: null as { hasAccount?: boolean } | null,
 });
 
 export async function checkSetup() {
@@ -23,6 +24,9 @@ export async function checkSetup() {
     if (res.ok) {
       const data = await res.json();
       auth.setupComplete = data.complete;
+      if (!data.complete) {
+        auth.setupProgress = { hasAccount: data.hasAccount };
+      }
     }
   } catch {
     // If the endpoint doesn't exist, assume setup is complete (older daemon)
@@ -33,7 +37,7 @@ export async function checkSetup() {
 
 export async function checkAuth() {
   await checkSetup();
-  if (!auth.setupComplete) {
+  if (!auth.setupComplete && !auth.setupProgress?.hasAccount) {
     auth.checked = true;
     return;
   }

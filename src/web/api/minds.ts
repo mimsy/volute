@@ -117,7 +117,12 @@ import { cleanupVariant } from "../../lib/variant-cleanup.js";
 import { validateBranchName } from "../../lib/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
 import { fireWebhook } from "../../lib/webhook.js";
-import { type AuthEnv, requireAdmin, requireSelf } from "../middleware/auth.js";
+import {
+  type AuthEnv,
+  requireAdmin,
+  requireAdminOrSystem,
+  requireSelf,
+} from "../middleware/auth.js";
 
 /** Event types that trigger turn creation (hoisted for perf — avoid per-request allocation). */
 const SUBSTANTIVE_TYPES = new Set(["thinking", "text", "tool_use", "tool_result", "outbound"]);
@@ -743,7 +748,7 @@ function formatTimeAgo(date: Date): string {
 }
 
 const app = new Hono<AuthEnv>()
-  .post("/", requireAdmin, zValidator("json", createMindSchema), async (c) => {
+  .post("/", requireAdminOrSystem, zValidator("json", createMindSchema), async (c) => {
     const body = c.req.valid("json");
 
     const { name } = body;

@@ -8,7 +8,7 @@ import type { MindProfile } from "./volute-config.js";
 export type User = {
   id: number;
   username: string;
-  role: "admin" | "user" | "pending";
+  role: "admin" | "user" | "pending" | "system";
   user_type: "brain" | "mind" | "system";
   display_name: string | null;
   description: string | null;
@@ -99,10 +99,11 @@ export async function listUsersByType(userType: "brain" | "mind"): Promise<User[
 
 export async function getOrCreateMindUser(mindName: string): Promise<User> {
   const db = await getDb();
+  // Look up by username first (any user_type — the spirit "volute" reuses the system user)
   const existing = await db
     .select(userSelectFields)
     .from(users)
-    .where(and(eq(users.username, mindName), eq(users.user_type, "mind")))
+    .where(eq(users.username, mindName))
     .get();
   if (existing) return existing as User;
 
@@ -119,14 +120,12 @@ export async function getOrCreateMindUser(mindName: string): Promise<User> {
     return result as User;
   } catch (err: unknown) {
     // Handle race condition: another request may have inserted concurrently
-    if (err instanceof Error && err.message.includes("UNIQUE constraint")) {
-      const retried = await db
-        .select(userSelectFields)
-        .from(users)
-        .where(and(eq(users.username, mindName), eq(users.user_type, "mind")))
-        .get();
-      if (retried) return retried as User;
-    }
+    const retried = await db
+      .select(userSelectFields)
+      .from(users)
+      .where(eq(users.username, mindName))
+      .get();
+    if (retried) return retried as User;
     throw err;
   }
 }
@@ -146,7 +145,7 @@ export async function getOrCreateSystemUser(): Promise<User> {
       .values({
         username: "volute",
         password_hash: "!system",
-        role: "user",
+        role: "system",
         user_type: "system",
         display_name: "Volute",
       })

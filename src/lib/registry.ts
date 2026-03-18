@@ -250,6 +250,12 @@ export function mindDir(name: string): string {
   return resolve(voluteHome(), "minds", name);
 }
 
+/** Resolve the actual directory for a mind, checking DB for custom dir (e.g. spirits). */
+export async function resolveMindDir(name: string): Promise<string> {
+  const entry = await findMind(name);
+  return entry?.dir ?? mindDir(name);
+}
+
 export function stateDir(name: string): string {
   return resolve(voluteSystemDir(), "state", name);
 }

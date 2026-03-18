@@ -40,6 +40,8 @@ export type GlobalConfig = {
   ai?: AiConfig;
   /** Model ID for the system spirit */
   spiritModel?: string;
+  /** True once the full setup flow (account + provider + models + complete) has finished */
+  setupCompleted?: boolean;
 };
 
 export function configPath(): string {
@@ -63,8 +65,17 @@ export function writeGlobalConfig(config: GlobalConfig): void {
   writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
 }
 
-/** Check if setup has been completed. Returns true if config.json has a setup field. */
+/** Check if setup has been completed. Returns true once the full setup flow has finished. */
 export function isSetupComplete(): boolean {
   const config = readGlobalConfig();
-  return config.setup != null;
+  return config.setupCompleted === true;
+}
+
+/** Migrate pre-existing installations that have setup but not setupCompleted. */
+export function migrateSetupCompleted(): void {
+  const config = readGlobalConfig();
+  if (config.setup != null && config.setupCompleted == null) {
+    config.setupCompleted = true;
+    writeGlobalConfig(config);
+  }
 }

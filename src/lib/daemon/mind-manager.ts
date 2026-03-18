@@ -51,7 +51,7 @@ export class MindManager {
       return { dir: entry.dir, port: entry.port, baseName: entry.parent, template: entry.template };
     }
 
-    const dir = mindDir(name);
+    const dir = entry.dir ?? mindDir(name);
     if (!existsSync(dir)) throw new Error(`Mind directory missing: ${dir}`);
     return { dir, port: entry.port, baseName: name, template: entry.template };
   }

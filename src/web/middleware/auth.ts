@@ -69,6 +69,15 @@ export const requireAdmin = createMiddleware<AuthEnv>(async (c, next) => {
   await next();
 });
 
+/** Allow admin users and the system user (role: "system"). */
+export const requireAdminOrSystem = createMiddleware<AuthEnv>(async (c, next) => {
+  const user = c.get("user");
+  if (user.role !== "admin" && user.role !== "system") {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+  await next();
+});
+
 async function resolveSession(sessionId: string): Promise<User | null> {
   // Check session cache first
   const cached = sessionCache.get(sessionId);
@@ -154,7 +163,7 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
 export const requireSelf = (paramName = "name") =>
   createMiddleware<AuthEnv>(async (c, next) => {
     const user = c.get("user");
-    if (user.role !== "admin") {
+    if (user.role !== "admin" && user.role !== "system") {
       const target = c.req.param(paramName) ?? "";
       const baseName = await getBaseName(target);
       if (user.username !== baseName) {

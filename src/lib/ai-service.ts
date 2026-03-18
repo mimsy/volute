@@ -117,7 +117,10 @@ export function resolveTemplate(modelId?: string): string {
     const provider = modelId.split(":")[0];
     return provider === "anthropic" ? "claude" : "pi";
   }
-  // No colon → likely an anthropic model ID
+  // Try to resolve the model to determine its provider
+  const model = findModel(modelId);
+  if (model) return model.provider === "anthropic" ? "claude" : "pi";
+  // Unknown model without colon — default to claude
   return "claude";
 }
 
@@ -174,6 +177,14 @@ export async function resolveApiKey(providerId: string): Promise<string | undefi
   if (providerConfig?.apiKey) return providerConfig.apiKey;
 
   return getEnvApiKey(providerId) ?? undefined;
+}
+
+/** Resolve a model ID to the full provider:model format needed by the pi template. */
+export function qualifyModelId(modelId: string): string {
+  if (modelId.includes(":")) return modelId;
+  const model = findModel(modelId);
+  if (model) return `${model.provider}:${model.id}`;
+  return modelId;
 }
 
 function findModel(modelId: string): Model<Api> | undefined {
