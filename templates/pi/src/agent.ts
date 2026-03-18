@@ -111,7 +111,7 @@ export function createMind(options: {
 
   // --- Dynamic hook extension ---
 
-  const hooksDir = resolvePath(options.cwd, ".config/hooks");
+  const hooksDir = resolvePath(options.cwd, ".local/hooks");
 
   function createDynamicHookExtension(session: PiSession): ExtensionFactory {
     return (pi) => {

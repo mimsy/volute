@@ -66,7 +66,7 @@ Each mind project (created from the template) has:
 │       ├── auto-commit.ts     # Auto-commits file changes in home/ via SDK hooks
 │       ├── transparency.ts    # Tool call transparency for connector channels
 │       ├── daemon-client.ts   # Mind-side daemon API client (daemonRestart, daemonSend)
-│       ├── hook-loader.ts     # Dynamic hook discovery and execution from .config/hooks/<event>/
+│       ├── hook-loader.ts     # Dynamic hook discovery and execution from .local/hooks/<event>/
 │       ├── logger.ts          # Logging utilities
 │       ├── message-channel.ts # Async iterable for mind communication (claude template only)
 │       ├── content.ts         # Content extraction from SDK events (claude template only)
@@ -86,7 +86,8 @@ Each mind project (created from the template) has:
 │   │   ├── config.json        # SDK config (model, compaction settings)
 │   │   ├── volute.json        # Volute config (identity, schedules, profile, sleep, token budget)
 │   │   └── routes.json        # Message routing config (optional)
-│   ├── .config/hooks/          # Custom hooks: .config/hooks/<event>/<script>.sh|.ts|.js
+│   ├── .local/hooks/           # Custom hooks: .local/hooks/<event>/<script>.sh|.ts|.js
+│   ├── .local/bin/             # Skill command shims and volute wrapper
 │   ├── memory/journal/        # Daily journal entries (YYYY-MM-DD.md)
 │   └── .claude/skills/        # Skills (volute CLI reference, memory system)
 └── .mind/                     # Mind-internal runtime state
@@ -112,7 +113,7 @@ Unified `users` table with `user_type` discrimination (`"brain"` or `"mind"`) st
 
 Templates have a `.init/` directory containing identity and config files. On `volute mind create`, these are copied into `home/` and `.init/` is deleted. On `volute mind upgrade`, `.init/` files are excluded so identity files are never overwritten.
 
-- **`_base/.init/`**: SOUL.md, MEMORY.md, memory/journal/, .config/prompts.json, .config/hooks/startup-context.sh, .config/hooks/wake-context.sh, .config/scripts/session-reader.ts, .config/bin/volute
+- **`_base/.init/`**: SOUL.md, MEMORY.md, memory/journal/, .config/prompts.json, .local/hooks/startup-context.ts, .local/hooks/pre-prompt/session-activity.ts, .local/bin/volute
 - **`claude/.init/`**: CLAUDE.md, .claude/settings.json, .config/routes.json
 - **`pi/.init/`**: MINDS.md, .config/routes.json
 
