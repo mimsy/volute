@@ -223,8 +223,28 @@ export async function removeSharedSkill(id: string): Promise<void> {
 
 // --- Mind skill operations ---
 
+const TEMPLATE_SKILLS_DIR: Record<string, string> = {
+  claude: ".claude/skills",
+  pi: ".pi/skills",
+  codex: ".agents/skills",
+};
+
+/**
+ * Resolve the skills directory for a mind.
+ * Detects the template from marker files in the mind directory:
+ * - home/AGENTS.md → codex (.agents/skills)
+ * - home/MINDS.md → pi (.pi/skills)
+ * - otherwise → claude (.claude/skills)
+ */
 export function mindSkillsDir(dir: string): string {
-  return resolve(dir, "home", ".claude", "skills");
+  const home = resolve(dir, "home");
+  let subdir = TEMPLATE_SKILLS_DIR.claude;
+  if (existsSync(join(home, "AGENTS.md"))) {
+    subdir = TEMPLATE_SKILLS_DIR.codex;
+  } else if (existsSync(join(home, "MINDS.md"))) {
+    subdir = TEMPLATE_SKILLS_DIR.pi;
+  }
+  return resolve(home, subdir);
 }
 
 type UpstreamInfo = {
@@ -577,9 +597,9 @@ export async function publishSkill(
 
 // --- Hook shim management ---
 
-function shimContent(skillId: string, scriptPath: string): string {
+function shimContent(skillId: string, scriptPath: string, skillsSubdir: string): string {
   const ext = scriptPath.split(".").pop() ?? "sh";
-  const skillScriptPath = `.claude/skills/${skillId}/${scriptPath}`;
+  const skillScriptPath = `${skillsSubdir}/${skillId}/${scriptPath}`;
   if (ext === "ts") {
     return `#!/bin/bash\nexec npx tsx ${skillScriptPath} "$@"\n`;
   }
@@ -594,11 +614,14 @@ export function installHookShims(
   skillId: string,
   hooks: Record<string, string>,
 ): void {
+  const home = resolve(dir, "home");
+  const skillsDir = mindSkillsDir(dir);
+  const skillsSubdir = skillsDir.slice(home.length + 1); // e.g. ".claude/skills"
   for (const [event, scriptPath] of Object.entries(hooks)) {
     const eventDir = join(dir, "home", ".config", "hooks", event);
     mkdirSync(eventDir, { recursive: true });
     const shimPath = join(eventDir, `50-${skillId}.sh`);
-    const content = shimContent(skillId, scriptPath);
+    const content = shimContent(skillId, scriptPath, skillsSubdir);
     writeFileSync(shimPath, content, { mode: 0o755 });
   }
 }

@@ -1,4 +1,3 @@
-import { existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { createMind } from "./agent.js";
 import { createFileHandlerResolver } from "./lib/file-handler.js";
@@ -25,15 +24,6 @@ const pkg = loadPackageInfo();
 
 const mindDir = resolve(".");
 const cwd = resolve("home");
-
-// Symlink home/.agents/skills/ → home/.claude/skills/ so Codex discovers Volute-installed skills
-const claudeSkillsDir = resolve(cwd, ".claude/skills");
-const agentsSkillsDir = resolve(cwd, ".agents/skills");
-if (existsSync(claudeSkillsDir) && !existsSync(agentsSkillsDir)) {
-  mkdirSync(resolve(cwd, ".agents"), { recursive: true });
-  symlinkSync(claudeSkillsDir, agentsSkillsDir);
-  log("server", "symlinked .agents/skills → .claude/skills");
-}
 
 const mind = createMind({
   systemPrompt,
