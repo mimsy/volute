@@ -1,0 +1,337 @@
+@import url("https://fonts.googleapis.com/css2?family=Averia+Serif+Libre:wght@300;400;700&family=Averia+Sans+Libre:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Fira+Code:wght@300;400;500;600&display=swap");
+
+/* Force dark theme */
+:root {
+  --sl-font: "Averia Sans Libre", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --sl-font-system-mono: "Fira Code", "SF Mono", monospace;
+  --sl-font-system: "Averia Sans Libre", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --sl-font-serif: "Averia Serif Libre", Georgia, serif;
+  --sl-text-xs: 0.8125rem;
+  --sl-text-sm: 0.875rem;
+  --sl-text-base: 0.9375rem;
+  --sl-text-lg: 1.0625rem;
+  --sl-text-xl: 1.1875rem;
+  --sl-text-2xl: 1.375rem;
+  --sl-text-3xl: 1.625rem;
+  --sl-text-4xl: 2rem;
+  --sl-line-height: 1.6;
+  color-scheme: dark;
+  --sl-color-bg: #0a0c0f;
+  --sl-color-bg-nav: #11141a;
+  --sl-color-bg-sidebar: #11141a;
+  --sl-color-bg-inline-code: #1f2430;
+  --sl-color-hairline: #2a3040;
+  --sl-color-hairline-light: #1f2430;
+  --sl-color-text: #e8ecf4;
+  --sl-color-text-accent: #e0a860;
+  --sl-color-white: #e8ecf4;
+  --sl-color-gray-1: #a0aabb;
+  --sl-color-gray-2: #6a7588;
+  --sl-color-gray-3: #3a4560;
+  --sl-color-gray-4: #2a3040;
+  --sl-color-gray-5: #181c24;
+  --sl-color-gray-6: #11141a;
+  --sl-color-black: #0a0c0f;
+  --sl-color-accent-low: #2a1f0f;
+  --sl-color-accent: #e0a860;
+  --sl-color-accent-high: #f0d4a0;
+  --sl-color-text-invert: #0a0c0f;
+  --sl-color-card-bg: #0f1218;
+  --sl-color-card-bg-hover: #131820;
+  --sl-color-terminal-bg: #0c0e12;
+}
+
+::selection {
+  background: rgba(224, 168, 96, 0.25);
+  color: var(--sl-color-accent);
+}
+
+a {
+  transition: color 0.15s;
+}
+
+pre {
+  border: 1px solid var(--sl-color-hairline) !important;
+}
+
+.sidebar-content a[aria-current="page"] {
+  color: var(--sl-color-accent);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--sl-color-hairline);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--sl-color-gray-3);
+}
+
+/* ===== LANDING PAGE ===== */
+
+/* Kill Starlight's hero entirely — we replace it with custom markup */
+.hero {
+  display: none !important;
+}
+
+/* Custom hero brand — spiral + wordmark, centered */
+.hero-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding-top: 5rem;
+  margin-bottom: 1rem;
+}
+.hero-spiral {
+  width: 80px;
+  height: 80px;
+  filter: invert(1);
+  opacity: 0.9;
+}
+.hero-wordmark {
+  font-family: var(--sl-font-serif);
+  font-size: 5rem;
+  font-weight: 300;
+  color: var(--sl-color-text);
+  letter-spacing: 0.05em;
+  line-height: 1;
+}
+
+/* Tagline — the main statement */
+.hero-tagline {
+  font-family: var(--sl-font-serif);
+  font-size: 1.625rem;
+  font-weight: 300;
+  color: var(--sl-color-gray-1);
+  text-align: center;
+  margin-bottom: 0.75rem;
+}
+
+/* Description */
+.hero-sub {
+  color: var(--sl-color-gray-2);
+  font-size: 0.9375rem;
+  line-height: 1.7;
+  text-align: center;
+  max-width: 520px;
+  margin: 0 auto 2rem;
+}
+
+/* Action buttons */
+.hero-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+.hero-btn {
+  display: inline-block;
+  padding: 10px 24px;
+  border-radius: 99px;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: all 0.15s;
+}
+.hero-btn.primary {
+  background: var(--sl-color-accent);
+  color: var(--sl-color-black);
+}
+.hero-btn.primary:hover {
+  background: var(--sl-color-accent-high);
+}
+.hero-btn.secondary {
+  color: var(--sl-color-gray-2);
+}
+.hero-btn.secondary:hover {
+  color: var(--sl-color-gray-1);
+}
+
+/* Install command — centered */
+.install-command {
+  display: block;
+  text-align: center;
+  margin: 0 auto 4rem;
+}
+.install-command code {
+  display: inline-block;
+  background: var(--sl-color-bg-nav);
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 6px;
+  padding: 0.625rem 1.25rem;
+  font-family: var(--sl-font-system-mono);
+  font-size: 0.875rem;
+  color: var(--sl-color-gray-1);
+}
+.install-command .prompt {
+  color: var(--sl-color-gray-2);
+}
+.install-command .cmd {
+  color: var(--sl-color-accent);
+}
+
+/* Feature cards — 2x2 grid with subtle glow on hover */
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1px;
+  background: var(--sl-color-hairline);
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 4rem;
+}
+.feature-card {
+  background: var(--sl-color-card-bg);
+  padding: 2rem;
+  transition: background 0.2s;
+}
+.feature-card:hover {
+  background: var(--sl-color-card-bg-hover);
+}
+.feature-card h3 {
+  font-family: var(--sl-font-serif);
+  color: var(--sl-color-text);
+  font-size: 1.0625rem;
+  font-weight: 400;
+  margin: 0 0 0.5rem;
+}
+.feature-card p {
+  color: var(--sl-color-gray-2);
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  margin: 0;
+}
+
+/* Philosophy — centered, larger, more presence */
+.philosophy-teaser {
+  text-align: center;
+  max-width: 560px;
+  margin: 0 auto 4rem;
+  padding: 0;
+  border: none;
+}
+.philosophy-teaser p {
+  color: var(--sl-color-gray-1);
+  font-size: 0.9375rem;
+  line-height: 1.75;
+  font-style: italic;
+}
+.philosophy-teaser a {
+  color: var(--sl-color-accent);
+  font-style: normal;
+}
+
+/* Terminal demo — with fake window chrome */
+.terminal-demo {
+  background: var(--sl-color-terminal-bg);
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 12px;
+  margin: 0 0 2rem;
+  font-family: var(--sl-font-system-mono);
+  font-size: 0.8125rem;
+  line-height: 1.8;
+  overflow: hidden;
+}
+.terminal-chrome {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 16px;
+  background: var(--sl-color-bg-nav);
+  border-bottom: 1px solid var(--sl-color-hairline-light);
+}
+.terminal-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--sl-color-hairline);
+}
+.terminal-body {
+  padding: 1.25rem 1.5rem;
+}
+.terminal-demo .prompt {
+  color: var(--sl-color-gray-2);
+}
+.terminal-demo .cmd {
+  color: var(--sl-color-accent);
+}
+.terminal-demo .output {
+  color: var(--sl-color-gray-1);
+}
+.terminal-demo .accent {
+  color: #60a5fa;
+}
+.terminal-demo .dim {
+  color: var(--sl-color-gray-2);
+}
+
+/* ===== DOCS PAGES ===== */
+
+/* Headings use display font */
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6) {
+  font-family: var(--sl-font-serif);
+}
+
+/* Site title in nav — lowercase with spiral */
+.site-title {
+  font-family: var(--sl-font-serif) !important;
+  font-weight: 300;
+  letter-spacing: 0.04em;
+  color: var(--sl-color-text) !important;
+  text-transform: lowercase;
+  gap: 0 !important;
+}
+.site-title::before {
+  content: "";
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  background: url("/volute/logo.png") center / contain no-repeat;
+  filter: invert(1);
+  margin-right: 6px;
+  vertical-align: middle;
+  opacity: 0.9;
+}
+
+/* GitHub icon — white, not accent. Targets Starlight social links container. */
+header .social-icons a {
+  color: var(--sl-color-text) !important;
+}
+
+/* Hide theme toggle (dark-only site) */
+starlight-theme-select {
+  display: none;
+}
+
+/* Custom page layout (non-docs) */
+.custom-page {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 3rem 1.5rem;
+}
+
+/* Responsive — stack feature cards on mobile */
+@media (max-width: 640px) {
+  .feature-grid {
+    grid-template-columns: 1fr;
+  }
+  .hero-brand {
+    padding-top: 3rem;
+  }
+  .hero-wordmark {
+    font-size: 3.5rem;
+  }
+  .hero-spiral {
+    width: 56px;
+    height: 56px;
+  }
+}
