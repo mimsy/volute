@@ -219,7 +219,7 @@ export function createMind(options: {
           switch (event.type) {
             case "thread.started": {
               // Save thread ID for session resume
-              const threadId = event.threadId ?? event.thread?.id;
+              const threadId = event.thread_id ?? event.threadId ?? event.thread?.id;
               if (threadId && !session.name.startsWith("new-")) {
                 sessionStore.save(session.name, threadId);
                 log("mind", `session "${session.name}": saved thread ${threadId}`);
