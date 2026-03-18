@@ -164,18 +164,21 @@ export class DeliveryManager {
   /**
    * Called when a mind's session emits a "done" event — decrements active count
    * and may trigger batch flush if session goes idle.
+   *
+   * This method is intentionally synchronous to avoid race conditions: the caller
+   * has already resolved baseName, and any async yield here (e.g. getBaseName)
+   * would allow concurrent deliveries to incrementActive before the decrement runs,
+   * causing isSessionBusy to return true even when no deliveries are pending.
    */
-  async sessionDone(mindName: string, session?: string): Promise<void> {
-    const baseName = await getBaseName(mindName);
-
+  sessionDone(mindName: string, session?: string): void {
     if (session) {
-      this.decrementActive(baseName, session);
+      this.decrementActive(mindName, session);
     } else {
       // No session specified — decrement all sessions for this mind
-      const mindSessions = this.sessionStates.get(baseName);
+      const mindSessions = this.sessionStates.get(mindName);
       if (mindSessions) {
         for (const [sessionName] of mindSessions) {
-          this.decrementActive(baseName, sessionName);
+          this.decrementActive(mindName, sessionName);
         }
       }
     }
