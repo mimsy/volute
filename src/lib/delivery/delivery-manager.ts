@@ -292,6 +292,24 @@ export class DeliveryManager {
   }
 
   /**
+   * Clear all session state for a specific mind (called on mind stop/crash).
+   * Resets active counts and cleans up batch buffers so ghost counts don't accumulate.
+   */
+  clearMindSessions(mindName: string): void {
+    this.sessionStates.delete(mindName);
+    // Clean up any batch buffers for this mind
+    const toDelete: string[] = [];
+    for (const [bufferKey, buffer] of this.batchBuffers) {
+      if (bufferKey.startsWith(`${mindName}:`)) {
+        if (buffer.debounceTimer) clearTimeout(buffer.debounceTimer);
+        if (buffer.maxWaitTimer) clearTimeout(buffer.maxWaitTimer);
+        toDelete.push(bufferKey);
+      }
+    }
+    for (const k of toDelete) this.batchBuffers.delete(k);
+  }
+
+  /**
    * Cleanup all timers and subscriptions.
    */
   dispose(): void {

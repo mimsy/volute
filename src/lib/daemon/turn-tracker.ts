@@ -21,6 +21,10 @@ function key(mind: string, session?: string | null): string {
 /**
  * Create a turn for a mind (or reuse an existing active one).
  * Initially sessionless — keyed as `mind:*`.
+ *
+ * The in-memory map entry is set BEFORE the DB insert to prevent a race where
+ * two concurrent substantive events both pass the existence check. If the DB
+ * insert fails, the entry is rolled back.
  */
 export async function createTurn(mind: string): Promise<string | undefined> {
   const k = key(mind);
@@ -28,15 +32,20 @@ export async function createTurn(mind: string): Promise<string | undefined> {
   if (existing) return existing.turnId;
 
   const turnId = randomUUID();
+  const entry: ActiveTurn = { turnId, lastToolUseEventId: undefined };
+  // Reserve the slot synchronously to prevent concurrent callers from creating duplicates
+  activeTurns.set(k, entry);
+
   try {
     const db = await getDb();
     await db.insert(turns).values({ id: turnId, mind, status: "active" });
   } catch (err) {
     tlog.error(`failed to create turn for ${mind}`, log.errorData(err));
+    // Roll back the in-memory reservation
+    if (activeTurns.get(k) === entry) activeTurns.delete(k);
     return undefined;
   }
 
-  activeTurns.set(k, { turnId, lastToolUseEventId: undefined });
   return turnId;
 }
 
@@ -116,6 +125,24 @@ export async function setSummaryEventId(turnId: string, summaryEventId: number):
     await db.update(turns).set({ summary_event_id: summaryEventId }).where(eq(turns.id, turnId));
   } catch (err) {
     tlog.error(`failed to set summary event for turn ${turnId}`, log.errorData(err));
+  }
+}
+
+/**
+ * Mark any orphaned `active` turns as `complete` in the DB.
+ * Called on daemon startup to clean up turns from a previous daemon instance
+ * that exited without completing them.
+ */
+export async function completeOrphanedTurns(): Promise<void> {
+  try {
+    const db = await getDb();
+    // Count first so we can log meaningfully
+    const active = await db.select({ id: turns.id }).from(turns).where(eq(turns.status, "active"));
+    if (active.length === 0) return;
+    await db.update(turns).set({ status: "complete" }).where(eq(turns.status, "active"));
+    tlog.info(`completed ${active.length} orphaned active turn(s) from previous daemon session`);
+  } catch (err) {
+    tlog.error("failed to complete orphaned turns on startup", log.errorData(err));
   }
 }
 

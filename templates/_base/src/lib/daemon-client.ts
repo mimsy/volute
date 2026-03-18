@@ -77,20 +77,24 @@ export async function daemonEmit(event: DaemonEvent): Promise<void> {
     }
     return;
   }
-  try {
-    const res = await fetch(
-      `http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/events`,
-      {
-        method: "POST",
-        headers: headers(),
-        body: JSON.stringify(event),
-      },
-    );
-    if (!res.ok) {
+  const url = `http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/events`;
+  const body = JSON.stringify(event);
+  // Critical events (done) get retries — if lost, turns stay stuck forever
+  const maxAttempts = event.type === "done" ? 3 : 1;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(url, { method: "POST", headers: headers(), body });
+      if (res.ok) return;
       console.error(`[volute] event emit failed: ${res.status}`);
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 500 * attempt));
+      }
+    } catch {
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 500 * attempt));
+      }
+      // Best-effort — don't let event emission failures break the mind
     }
-  } catch {
-    // Best-effort — don't let event emission failures break the mind
   }
 }
 

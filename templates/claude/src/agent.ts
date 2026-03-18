@@ -337,13 +337,19 @@ export function createMind(options: {
         log("mind", `session "${session.name}": compaction complete`);
       }
 
+      /** Emit done to both local listeners and the daemon. */
+      function emitDone() {
+        broadcastToSession(session, { type: "done" });
+        daemonEmit({ type: "done", session: session.name }).catch(() => {});
+      }
+
       async function runStream(resume?: string) {
         const q = createStream(session, streamAbort, preCompact.hook, resume);
         session.currentQuery = q;
         await consumeStream(q, session, callbacks);
         if (session.currentMessageId !== undefined) {
           session.messageChannels.delete(session.currentMessageId);
-          broadcastToSession(session, { type: "done" });
+          emitDone();
           session.currentMessageId = undefined;
         }
       }
@@ -396,12 +402,12 @@ export function createMind(options: {
             await runStream();
           } catch (retryErr) {
             log("mind", `session "${session.name}": stream consumer error:`, retryErr);
-            broadcastToSession(session, { type: "done" });
+            emitDone();
             sessions.delete(session.name);
           }
         } else {
           log("mind", `session "${session.name}": stream consumer error:`, err);
-          broadcastToSession(session, { type: "done" });
+          emitDone();
           sessions.delete(session.name);
         }
       }
