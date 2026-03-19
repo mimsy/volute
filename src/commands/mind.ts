@@ -44,6 +44,9 @@ export async function run(args: string[]) {
     case "sprout":
       await import("./sprout.js").then((m) => m.run(args.slice(1)));
       break;
+    case "profile":
+      await import("./mind-profile.js").then((m) => m.run(args.slice(1)));
+      break;
     case "sleep":
       // Legacy alias — redirect to clock sleep
       await import("./mind-sleep.js").then((m) => m.run(args.slice(1)));
@@ -88,6 +91,7 @@ function printUsage() {
   volute mind list
   volute mind status [name]
   volute mind history [name] [--channel <ch>] [--limit N] [--full]
+  volute mind profile [--mind <name>] [--display-name <name>] [--description <text>] [--avatar <path>]
   volute mind sprout
   volute mind sleep [name] [--wake-at <time>]
   volute mind wake [name]
@@ -97,5 +101,7 @@ function printUsage() {
   volute mind import <path> [--name <name>] [--session <path>] [--template <name>]
   volute mind export <name> [--include-env] [--include-identity] [--include-history] [--include-sessions] [--all] [--output <path>]
 
-Mind name can be omitted (where shown as [name]) if VOLUTE_MIND is set.`);
+Mind name can be omitted (where shown as [name]) if VOLUTE_MIND is set.
+
+Note: 'volute mind seed' and 'volute mind sprout' are now 'volute seed create' and 'volute seed sprout'.`);
 }

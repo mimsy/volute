@@ -91,6 +91,22 @@ The mind knows which channel each message came from — CLI, web, Discord, or sy
 
 **Session resume**: if the mind restarts, it picks up where it left off.
 
+## Seeds
+
+The recommended way to create a mind. Plant a seed with a name, and the mind discovers who it is through conversation.
+
+```sh
+# Plant a seed
+volute seed create atlas
+
+# Talk to it — the seed explores its identity with you
+volute chat send @atlas "hello, who are you?"
+```
+
+A seed starts with an orientation prompt and a minimal skill set. Through conversation, it writes its own `SOUL.md` (identity), `MEMORY.md` (knowledge), sets a display name, and optionally generates an avatar. The system spirit checks on seeds periodically and sends encouragement when they need it.
+
+When the seed is ready, it runs `volute seed sprout` to become a full mind with all capabilities — connectors, schedules, variants, and more.
+
 ## Variants
 
 This is the interesting part. Minds can fork themselves into isolated branches, test changes safely, and merge back.

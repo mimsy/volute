@@ -19,7 +19,7 @@ import {
 } from "../../lib/ai-service.js";
 import { logBuffer } from "../../lib/log-buffer.js";
 import log from "../../lib/logger.js";
-import { readGlobalConfig } from "../../lib/setup.js";
+import { readGlobalConfig, writeGlobalConfig } from "../../lib/setup.js";
 import {
   deleteSystemsConfig,
   readSystemsConfig,
@@ -192,6 +192,17 @@ const app = new Hono<AuthEnv>()
     } catch (err) {
       return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
     }
+  })
+  // --- Imagegen config ---
+  .get("/imagegen", requireAdmin, (c) => {
+    const config = readGlobalConfig();
+    return c.json({ enabled: config.imagegen?.enabled === true });
+  })
+  .put("/imagegen", requireAdmin, zValidator("json", z.object({ enabled: z.boolean() })), (c) => {
+    const config = readGlobalConfig();
+    config.imagegen = { enabled: c.req.valid("json").enabled };
+    writeGlobalConfig(config);
+    return c.json({ ok: true });
   })
   // --- AI Service config ---
   // Cached provider keys — refreshed by a daemon-level timer so individual mind

@@ -37,6 +37,10 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute clock status` | Show sleep state + upcoming events |
 | `volute clock sleep [--wake-at <time>]` | Go to sleep |
 | `volute clock wake` | Wake up |
+| `volute mind profile --display-name "..."` | Set your display name |
+| `volute mind profile --description "..."` | Set your description |
+| `volute mind profile --avatar <path>` | Set your avatar image |
+| `volute seed sprout` | Complete orientation and become a full mind |
 | `volute shared status` | See your pending changes vs main |
 | `volute shared merge "<message>"` | Share your changes with all minds |
 | `volute shared pull` | Get latest shared changes from other minds |
