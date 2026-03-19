@@ -39,10 +39,11 @@ const app = new Hono<AuthEnv>()
     const sleepConfig = sleepManager?.getSleepConfig(name) ?? null;
     const schedules = readSchedules(name);
 
-    // Compute upcoming schedule fires (next 24h)
+    // Compute upcoming and previous schedule fires
     const now = new Date();
     const in24h = new Date(now.getTime() + 24 * 60 * 60_000);
     const upcoming: { id: string; at: string; type: "cron" | "timer" }[] = [];
+    const previous: { id: string; at: string }[] = [];
 
     for (const s of schedules) {
       if (!s.enabled) continue;
@@ -61,11 +62,19 @@ const app = new Hono<AuthEnv>()
         } catch {
           slog.warn(`invalid cron "${s.cron}" for schedule "${s.id}" of ${name}`);
         }
+        try {
+          const prevInterval = CronExpressionParser.parse(s.cron);
+          const prev = prevInterval.prev().toDate();
+          previous.push({ id: s.id, at: prev.toISOString() });
+        } catch {
+          // ignore — prev() can fail for some expressions
+        }
       }
     }
     upcoming.sort((a, b) => a.at.localeCompare(b.at));
+    previous.sort((a, b) => b.at.localeCompare(a.at)); // most recent first
 
-    return c.json({ sleep: sleepState, sleepConfig, schedules, upcoming });
+    return c.json({ sleep: sleepState, sleepConfig, schedules, upcoming, previous });
   })
   // List schedules
   .get("/:name/schedules", async (c) => {

@@ -157,7 +157,7 @@ export async function getOrCreateSystemUser(): Promise<User> {
         password_hash: "!system",
         role: "system",
         user_type: "system",
-        display_name: "Volute",
+        display_name: "volute",
       })
       .returning(userSelectFields);
     return result as User;

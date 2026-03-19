@@ -4,6 +4,7 @@ import { mindDotColor } from "../lib/format";
 import type { Selection } from "../lib/navigate";
 import { activeMinds, unreadCounts } from "../lib/stores.svelte";
 import ConversationList from "./ConversationList.svelte";
+import Icon from "./Icon.svelte";
 import ProfileHoverCard from "./ProfileHoverCard.svelte";
 
 let {
@@ -111,7 +112,7 @@ let isSystemActive = $derived(
           class:active={isSystemActive}
           onclick={onHome}
         >
-          <svg class="section-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7.2a.8.8 0 0 1 .8.8 1.6 1.6 0 0 1-1.6 1.6A2.4 2.4 0 0 1 4.8 7.2a3.2 3.2 0 0 1 3.2-3.2 4 4 0 0 1 4 4 4.8 4.8 0 0 1-4.8 4.8A5.6 5.6 0 0 1 1.6 7.2 6.4 6.4 0 0 1 8 .8"/></svg>
+          <Icon kind="spiral" class="section-icon" />
           <span>System</span>
         </button>
       </div>
@@ -121,7 +122,7 @@ let isSystemActive = $derived(
     <div class="section">
       <div class="section-header-row">
         <button class="section-toggle" onclick={() => toggleSection("minds")}>
-          <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5"/><circle cx="15" cy="14" r="1.5"/><line x1="12" y1="4" x2="12" y2="8"/><circle cx="12" cy="3" r="1"/></svg>
+          <Icon kind="mind" class="section-icon" />
           <span>Minds</span>
         </button>
         <button class="section-action" onclick={(e) => { e.stopPropagation(); onSeed(); }} title="Plant a seed">
@@ -249,14 +250,14 @@ let isSystemActive = $derived(
     color: var(--text-0);
   }
 
-  .section-icon {
+  .section-toggle :global(.section-icon) {
     width: 14px;
     height: 14px;
     flex-shrink: 0;
     opacity: 0.6;
   }
 
-  .section-toggle.active .section-icon {
+  .section-toggle.active :global(.section-icon) {
     opacity: 1;
   }
 

@@ -2,6 +2,7 @@
 import type { Mind } from "@volute/api";
 import { getDisplayStatus } from "../lib/format";
 import { data } from "../lib/stores.svelte";
+import Icon from "./Icon.svelte";
 import MindClock from "./MindClock.svelte";
 import StatusBadge from "./StatusBadge.svelte";
 import TurnTimeline from "./TurnTimeline.svelte";
@@ -32,13 +33,15 @@ function formatCreated(dateStr: string): string {
   {#if onChat || onProfile}
     <div class="floating-btns">
       {#if onChat}
-        <button class="floating-btn" onclick={onChat} title="Chat">
+        <button class="floating-btn" onclick={onChat}>
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+          <span class="btn-tooltip">Chat</span>
         </button>
       {/if}
       {#if onProfile}
-        <button class="floating-btn" onclick={onProfile} title="Mind page">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5"/><circle cx="15" cy="14" r="1.5"/><line x1="12" y1="4" x2="12" y2="8"/><circle cx="12" cy="3" r="1"/></svg>
+        <button class="floating-btn" onclick={onProfile}>
+          <Icon kind="history" class="history-icon" />
+          <span class="btn-tooltip">History</span>
         </button>
       {/if}
     </div>
@@ -89,6 +92,7 @@ function formatCreated(dateStr: string): string {
   }
 
   .floating-btn {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -111,6 +115,35 @@ function formatCreated(dateStr: string): string {
   .floating-btn svg {
     width: 16px;
     height: 16px;
+  }
+
+  .floating-btn :global(.history-icon) {
+    width: 13px;
+    height: 13px;
+  }
+
+  .btn-tooltip {
+    position: absolute;
+    left: 100%;
+    top: 50%;
+    transform: translateY(-50%);
+    margin-left: 6px;
+    padding: 4px 10px;
+    background: var(--bg-3);
+    color: var(--text-0);
+    font-family: var(--sans);
+    font-size: 12px;
+    border-radius: var(--radius);
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    border: 1px solid var(--border);
+    z-index: 10;
+  }
+
+  .floating-btn:hover .btn-tooltip {
+    opacity: 1;
   }
 
   .panel-body {

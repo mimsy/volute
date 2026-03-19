@@ -515,6 +515,7 @@ export interface ClockStatus {
     channel?: string;
   }[];
   upcoming: { id: string; at: string; type: "cron" | "timer" }[];
+  previous: { id: string; at: string }[];
 }
 
 export function fetchClockStatus(name: string): Promise<ClockStatus> {
