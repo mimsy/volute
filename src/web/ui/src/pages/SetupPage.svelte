@@ -16,11 +16,12 @@ import { auth, handleAuth } from "../lib/stores.svelte";
 
 let { onComplete }: { onComplete: (spiritConversationId?: string) => void } = $props();
 
-type Step = "welcome" | "account" | "provider" | "starting";
+type Step = "welcome" | "system" | "account" | "provider" | "starting";
 
 function initialStep(): Step {
   const p = auth.setupProgress;
   if (p?.hasAccount) return "provider";
+  if (p?.hasSystem) return "account";
   return "welcome";
 }
 
@@ -28,12 +29,24 @@ let step = $state<Step>(initialStep());
 let error = $state("");
 let loading = $state(false);
 
-// Step 2: Account
+// Step 2: System
+let systemName = $state("");
+let systemDescription = $state("");
+let systemsRegistered = $state(false);
+let systemsName = $state("");
+let showSystemsRegister = $state(false);
+let systemsSlug = $state("");
+let systemsSlugManuallyEdited = $state(false);
+let systemsApiKey = $state("");
+let showSystemsLogin = $state(false);
+let systemsError = $state("");
+let systemsLoading = $state(false);
+
+// Step 3: Account
 let displayName = $state("");
 let username = $state("");
 let usernameManuallyEdited = $state(false);
 let password = $state("");
-let systemName = $state("");
 
 function deriveUsername(name: string): string {
   return name
@@ -45,6 +58,21 @@ function deriveUsername(name: string): string {
 function handleDisplayNameInput() {
   if (!usernameManuallyEdited) {
     username = deriveUsername(displayName);
+  }
+}
+
+function deriveSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 32);
+}
+
+function handleSystemNameInput() {
+  if (!systemsSlugManuallyEdited) {
+    systemsSlug = deriveSlug(systemName);
   }
 }
 
@@ -118,13 +146,13 @@ let modelSuggestions = $derived(
     : aiModels.filter((m) => !m.enabled && m.provider === modelSearchProvider).slice(0, 12),
 );
 
-const STEP_ORDER: Step[] = ["welcome", "account", "provider", "starting"];
+const STEP_ORDER: Step[] = ["welcome", "system", "account", "provider", "starting"];
 let stepIndex = $derived(STEP_ORDER.indexOf(step));
 
 function canAdvance(): boolean {
   if (step === "welcome") return true;
-  if (step === "account")
-    return !!displayName.trim() && !!username.trim() && !!password && !!systemName.trim();
+  if (step === "system") return !!systemName.trim();
+  if (step === "account") return !!displayName.trim() && !!username.trim() && !!password;
   if (step === "provider") return enabledModels.length > 0 && !!spiritModel;
   return false;
 }
@@ -137,6 +165,31 @@ function goBack() {
   }
 }
 
+async function handleSystemSubmit(e: Event) {
+  e.preventDefault();
+  if (!canAdvance()) return;
+  error = "";
+  loading = true;
+  try {
+    const res = await fetch("/api/setup/system", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: systemName.trim(),
+        description: systemDescription.trim() || undefined,
+      }),
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(data.error || `System setup failed: ${res.status}`);
+    }
+    step = "account";
+  } catch (err) {
+    error = err instanceof Error ? err.message : "Something went wrong";
+  }
+  loading = false;
+}
+
 async function handleAccountSubmit(e: Event) {
   e.preventDefault();
   if (!canAdvance()) return;
@@ -147,7 +200,6 @@ async function handleAccountSubmit(e: Event) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        systemName: systemName.trim(),
         username: username.trim(),
         password,
         displayName: displayName.trim(),
@@ -166,6 +218,68 @@ async function handleAccountSubmit(e: Event) {
     error = err instanceof Error ? err.message : "Something went wrong";
   }
   loading = false;
+}
+
+async function handleSystemsRegister() {
+  if (!systemsSlug.trim()) return;
+  systemsError = "";
+  systemsLoading = true;
+  try {
+    const res = await fetch("/api/setup/system/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug: systemsSlug.trim() }),
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(data.error || `Registration failed: ${res.status}`);
+    }
+    const data = (await res.json()) as { system: string };
+    systemsRegistered = true;
+    systemsName = data.system;
+    showSystemsRegister = false;
+  } catch (err) {
+    systemsError = err instanceof Error ? err.message : "Registration failed";
+  }
+  systemsLoading = false;
+}
+
+async function handleSystemsLogin() {
+  if (!systemsApiKey.trim()) return;
+  systemsError = "";
+  systemsLoading = true;
+  try {
+    const res = await fetch("/api/setup/system/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: systemsApiKey.trim() }),
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(data.error || `Login failed: ${res.status}`);
+    }
+    const data = (await res.json()) as { system: string };
+    systemsRegistered = true;
+    systemsName = data.system;
+    showSystemsLogin = false;
+    systemsApiKey = "";
+  } catch (err) {
+    systemsError = err instanceof Error ? err.message : "Login failed";
+  }
+  systemsLoading = false;
+}
+
+async function handleSystemsDisconnect() {
+  systemsError = "";
+  systemsLoading = true;
+  try {
+    await fetch("/api/setup/system/disconnect", { method: "POST" });
+    systemsRegistered = false;
+    systemsName = "";
+  } catch (err) {
+    systemsError = err instanceof Error ? err.message : "Disconnect failed";
+  }
+  systemsLoading = false;
 }
 
 async function loadProviderData() {
@@ -399,6 +513,21 @@ async function waitForSpiritReply(conversationId: string) {
   // Timed out — proceed anyway
 }
 
+// Load systems status when entering the system step
+$effect(() => {
+  if (step === "system" && !systemsRegistered) {
+    fetch("/api/setup/system/systems-status")
+      .then((r) => r.json())
+      .then((data: any) => {
+        if (data.registered) {
+          systemsRegistered = true;
+          systemsName = data.system;
+        }
+      })
+      .catch(() => {});
+  }
+});
+
 // Load provider + model data when entering the provider step
 $effect(() => {
   if (step === "provider" && providers.length === 0 && !providerLoadError) {
@@ -437,11 +566,109 @@ $effect(() => {
           A platform for AI experience. Create minds with persistent memory,
           continuous identity, and the freedom to grow.
         </div>
-        <button class="submit-btn" onclick={() => (step = "account")}>Get started</button>
+        <button class="submit-btn" onclick={() => (step = "system")}>Get started</button>
       </div>
 
+    {:else if step === "system"}
+      <div class="step-title">Your system</div>
+      <form onsubmit={handleSystemSubmit}>
+        <label class="label" for="systemName">System name</label>
+        <input
+          id="systemName"
+          type="text"
+          placeholder="e.g. My Garden"
+          bind:value={systemName}
+          oninput={handleSystemNameInput}
+          class="input"
+        />
+        <div class="hint">A display name for this Volute installation.</div>
+
+        <label class="label mt" for="systemDescription">Description <span class="optional">(optional)</span></label>
+        <textarea
+          id="systemDescription"
+          placeholder="What is this system for?"
+          bind:value={systemDescription}
+          class="input textarea"
+          rows="2"
+        ></textarea>
+
+        <div class="systems-section">
+          {#if systemsRegistered}
+            <div class="systems-status">
+              <span class="systems-label">Registered as <strong>{systemsName}</strong></span>
+              <button type="button" class="link-btn" onclick={handleSystemsDisconnect} disabled={systemsLoading}>Disconnect</button>
+            </div>
+          {:else if showSystemsRegister}
+            <div class="systems-register">
+              <label class="label" for="systemsSlug">System username</label>
+              <div class="slug-row">
+                <input
+                  id="systemsSlug"
+                  type="text"
+                  placeholder="my-garden"
+                  bind:value={systemsSlug}
+                  oninput={() => { systemsSlugManuallyEdited = true; }}
+                  class="input"
+                />
+                <button type="button" class="save-btn" onclick={handleSystemsRegister} disabled={systemsLoading || !systemsSlug.trim()}>
+                  {systemsLoading ? "..." : "Register"}
+                </button>
+              </div>
+              <div class="hint">Used for your subdomain on volute.systems.</div>
+              <button type="button" class="link-btn mt-sm" onclick={() => { showSystemsRegister = false; showSystemsLogin = true; }}>
+                or login with an existing key
+              </button>
+            </div>
+          {:else if showSystemsLogin}
+            <div class="systems-login">
+              <label class="label" for="systemsApiKey">API key</label>
+              <div class="slug-row">
+                <input
+                  id="systemsApiKey"
+                  type="password"
+                  placeholder="Paste your API key"
+                  bind:value={systemsApiKey}
+                  class="input"
+                />
+                <button type="button" class="save-btn" onclick={handleSystemsLogin} disabled={systemsLoading || !systemsApiKey.trim()}>
+                  {systemsLoading ? "..." : "Login"}
+                </button>
+              </div>
+              <button type="button" class="link-btn mt-sm" onclick={() => { showSystemsLogin = false; showSystemsRegister = true; }}>
+                back to registration
+              </button>
+            </div>
+          {:else}
+            <button type="button" class="systems-btn" onclick={() => { showSystemsRegister = true; }}>
+              Register with volute.systems
+            </button>
+            <button type="button" class="link-btn" onclick={() => { showSystemsLogin = true; }}>
+              or login with an existing key
+            </button>
+          {/if}
+          {#if systemsError}
+            <div class="error">{systemsError}</div>
+          {/if}
+        </div>
+
+        {#if error}
+          <div class="error">{error}</div>
+        {/if}
+        <div class="button-row">
+          <button type="button" class="back-btn" onclick={goBack}>Back</button>
+          <button
+            type="submit"
+            disabled={loading || !canAdvance()}
+            class="submit-btn flex-1"
+            style:opacity={loading ? 0.5 : 1}
+          >
+            {loading ? "Setting up..." : "Continue"}
+          </button>
+        </div>
+      </form>
+
     {:else if step === "account"}
-      <div class="step-title">About you</div>
+      <div class="step-title">Your account</div>
       <form onsubmit={handleAccountSubmit}>
         <label class="label" for="displayName">Display name</label>
         <input
@@ -474,16 +701,6 @@ $effect(() => {
           class="input"
           autocomplete="new-password"
         />
-
-        <label class="label mt" for="systemName">System name</label>
-        <input
-          id="systemName"
-          type="text"
-          placeholder="e.g. my-server"
-          bind:value={systemName}
-          class="input"
-        />
-        <div class="hint">A name to identify this Volute installation.</div>
 
         {#if error}
           <div class="error">{error}</div>
@@ -1272,4 +1489,55 @@ $effect(() => {
   @keyframes spin {
     to { transform: rotate(360deg); }
   }
+
+  .textarea {
+    resize: vertical;
+    min-height: 44px;
+  }
+
+  .systems-section {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+
+  .systems-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 13px;
+    color: var(--text-1);
+  }
+
+  .systems-label strong {
+    color: var(--text-0);
+  }
+
+  .systems-btn {
+    display: block;
+    width: 100%;
+    padding: 8px 16px;
+    background: var(--bg-2);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    color: var(--text-2);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    margin-bottom: 4px;
+  }
+
+  .systems-btn:hover {
+    color: var(--text-1);
+    border-color: var(--border-bright);
+  }
+
+  .slug-row {
+    display: flex;
+    gap: 6px;
+  }
+
+  .slug-row .input { flex: 1; }
+
+  .mt-sm { margin-top: 6px; }
 </style>

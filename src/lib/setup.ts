@@ -30,6 +30,7 @@ export type AiConfig = {
 
 export type GlobalConfig = {
   name?: string;
+  description?: string;
   hostname?: string;
   port?: number;
   setup?: SetupConfig;

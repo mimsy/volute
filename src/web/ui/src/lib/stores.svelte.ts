@@ -15,7 +15,7 @@ export const auth = $state({
   systemName: null as string | null,
   setupComplete: true,
   setupChecked: false,
-  setupProgress: null as { hasAccount?: boolean } | null,
+  setupProgress: null as { hasSystem?: boolean; hasAccount?: boolean } | null,
 });
 
 export async function checkSetup() {
@@ -25,7 +25,7 @@ export async function checkSetup() {
       const data = await res.json();
       auth.setupComplete = data.complete;
       if (!data.complete) {
-        auth.setupProgress = { hasAccount: data.hasAccount };
+        auth.setupProgress = { hasSystem: data.hasSystem, hasAccount: data.hasAccount };
       }
     }
   } catch {

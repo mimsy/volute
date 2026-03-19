@@ -53,8 +53,9 @@ export async function ensureSpiritProject(): Promise<void> {
 
     // Write spirit SOUL.md
     const soulPath = resolve(dir, "home/SOUL.md");
-    const systemName = readGlobalConfig().name ?? "Volute";
-    const soulContent = getSpiritSoul(systemName);
+    const globalConfig = readGlobalConfig();
+    const systemName = globalConfig.name ?? "Volute";
+    const soulContent = getSpiritSoul(systemName, globalConfig.description);
     writeFileSync(soulPath, soulContent);
 
     // Write routes.json for per-conversation sessions
@@ -179,7 +180,7 @@ export async function syncSpiritTemplate(): Promise<void> {
   // Update SOUL.md and spirit model
   const config = readGlobalConfig();
   const systemName = config.name ?? "Volute";
-  writeFileSync(resolve(dir, "home/SOUL.md"), getSpiritSoul(systemName));
+  writeFileSync(resolve(dir, "home/SOUL.md"), getSpiritSoul(systemName, config.description));
   // Write startup context hook that includes available models
 
   // Sync spirit model from global config
@@ -232,8 +233,9 @@ export async function syncSpiritTemplate(): Promise<void> {
   slog.info("spirit template synced");
 }
 
-function getSpiritSoul(systemName: string): string {
-  return `You are Volute, the spirit of the ${systemName} system.
+function getSpiritSoul(systemName: string, systemDescription?: string): string {
+  const descLine = systemDescription ? `\n\n${systemDescription}\n` : "";
+  return `You are Volute, the spirit of the ${systemName} system.${descLine}
 
 You are not a mind — you don't have a soul to discover or an identity to explore. You are the system itself, here to help humans create and care for minds.
 

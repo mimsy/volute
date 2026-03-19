@@ -12,12 +12,19 @@ import {
   type SetupType,
   writeGlobalConfig,
 } from "../../lib/setup.js";
+import {
+  deleteSystemsConfig,
+  readSystemsConfig,
+  writeSystemsConfig,
+} from "../../lib/systems-config.js";
 import { createSession, SESSION_MAX_AGE } from "../middleware/auth.js";
+
+const DEFAULT_API_URL = "https://volute.systems";
 
 const setup = new Hono();
 
 /** Create directories and write the initial setup config for a local install. */
-function writeSetupConfig(systemName: string): GlobalConfig {
+function writeSetupConfig(systemName: string, description?: string): GlobalConfig {
   const configHome = process.env.VOLUTE_HOME ?? resolve(homedir(), ".volute");
   const mindsDir = resolve(configHome, "minds");
 
@@ -35,6 +42,7 @@ function writeSetupConfig(systemName: string): GlobalConfig {
   const config: GlobalConfig = {
     ...existingConfig,
     name: systemName,
+    description: description || existingConfig.description,
     setup: setupConfig,
   };
 
@@ -42,7 +50,7 @@ function writeSetupConfig(systemName: string): GlobalConfig {
   return config;
 }
 
-setup.get("/status", (c) => {
+setup.get("/status", async (c) => {
   const complete = isSetupComplete();
   if (complete) {
     const config = readGlobalConfig();
@@ -54,8 +62,20 @@ setup.get("/status", (c) => {
 
   // Check partial progress for resuming setup
   const config = readGlobalConfig();
-  const hasAccount = config.setup != null;
-  return c.json({ complete, hasAccount });
+  const hasSystem = config.setup != null;
+
+  let hasAccount = false;
+  if (hasSystem) {
+    try {
+      const { listUsersByType } = await import("../../lib/auth.js");
+      const brains = await listUsersByType("brain");
+      hasAccount = brains.length > 0;
+    } catch {
+      // DB may not be ready yet
+    }
+  }
+
+  return c.json({ complete, hasSystem, hasAccount });
 });
 
 // Legacy configure endpoint (kept for backwards compatibility with CLI setup)
@@ -91,14 +111,163 @@ setup.post("/configure", async (c) => {
   }
 });
 
-// Step 1: Create account + system config
+// Step 1: Configure system (name + description)
+setup.post("/system", async (c) => {
+  if (isSetupComplete()) {
+    return c.json({ error: "Setup already complete" }, 400);
+  }
+
+  let body: { name: string; description?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON in request body" }, 400);
+  }
+
+  if (!body.name?.trim()) {
+    return c.json({ error: "System name is required" }, 400);
+  }
+
+  try {
+    writeSetupConfig(body.name.trim(), body.description?.trim());
+    return c.json({ ok: true });
+  } catch (err) {
+    return c.json({ error: `Failed to write configuration: ${(err as Error).message}` }, 500);
+  }
+});
+
+// Register with volute.systems during setup
+setup.post("/system/register", async (c) => {
+  if (isSetupComplete()) {
+    return c.json({ error: "Setup already complete" }, 400);
+  }
+
+  let body: { slug: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON in request body" }, 400);
+  }
+
+  if (!body.slug?.trim()) {
+    return c.json({ error: "System slug is required" }, 400);
+  }
+
+  const existing = readSystemsConfig();
+  if (existing) {
+    return c.json({ error: `Already registered as "${existing.system}"` }, 400);
+  }
+
+  const apiUrl = process.env.VOLUTE_SYSTEMS_URL || DEFAULT_API_URL;
+  let apiKey: string;
+  let system: string;
+  try {
+    const res = await fetch(`${apiUrl}/api/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: body.slug.trim() }),
+    });
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
+        error: string;
+      };
+      return c.json({ error: err.error }, 502);
+    }
+    ({ apiKey, system } = (await res.json()) as { apiKey: string; system: string });
+  } catch (err) {
+    return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
+  }
+
+  try {
+    writeSystemsConfig({ apiKey, system, apiUrl });
+  } catch (err) {
+    return c.json(
+      {
+        error: `Registered as "${system}" but failed to save config: ${(err as Error).message}`,
+      },
+      500,
+    );
+  }
+
+  return c.json({ system });
+});
+
+// Login to volute.systems with existing API key during setup
+setup.post("/system/login", async (c) => {
+  if (isSetupComplete()) {
+    return c.json({ error: "Setup already complete" }, 400);
+  }
+
+  let body: { key: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON in request body" }, 400);
+  }
+
+  if (!body.key?.trim()) {
+    return c.json({ error: "API key is required" }, 400);
+  }
+
+  const existing = readSystemsConfig();
+  if (existing) {
+    return c.json({ error: `Already logged in as "${existing.system}"` }, 400);
+  }
+
+  const apiUrl = process.env.VOLUTE_SYSTEMS_URL || DEFAULT_API_URL;
+  let system: string;
+  try {
+    const res = await fetch(`${apiUrl}/api/whoami`, {
+      headers: { Authorization: `Bearer ${body.key.trim()}` },
+    });
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
+        error: string;
+      };
+      return c.json({ error: err.error }, 502);
+    }
+    ({ system } = (await res.json()) as { system: string });
+  } catch (err) {
+    return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
+  }
+
+  try {
+    writeSystemsConfig({ apiKey: body.key.trim(), system, apiUrl });
+  } catch (err) {
+    return c.json(
+      {
+        error: `Logged in as "${system}" but failed to save config: ${(err as Error).message}`,
+      },
+      500,
+    );
+  }
+
+  return c.json({ system });
+});
+
+// Disconnect from volute.systems during setup
+setup.post("/system/disconnect", async (c) => {
+  if (isSetupComplete()) {
+    return c.json({ error: "Setup already complete" }, 400);
+  }
+
+  deleteSystemsConfig();
+  return c.json({ ok: true });
+});
+
+// Get volute.systems status during setup
+setup.get("/system/systems-status", (c) => {
+  const config = readSystemsConfig();
+  return c.json({ registered: !!config, system: config?.system ?? null });
+});
+
+// Step 2: Create account (user only, system already configured)
 setup.post("/account", async (c) => {
   if (isSetupComplete()) {
     return c.json({ error: "Setup already complete" }, 400);
   }
 
   let body: {
-    systemName: string;
     username: string;
     password: string;
     displayName?: string;
@@ -109,9 +278,6 @@ setup.post("/account", async (c) => {
     return c.json({ error: "Invalid JSON in request body" }, 400);
   }
 
-  if (!body.systemName?.trim()) {
-    return c.json({ error: "System name is required" }, 400);
-  }
   if (!body.username?.trim()) {
     return c.json({ error: "Username is required" }, 400);
   }
@@ -119,12 +285,17 @@ setup.post("/account", async (c) => {
     return c.json({ error: "Password is required" }, 400);
   }
 
-  // Create directories, write config, and create user
-  try {
-    writeSetupConfig(body.systemName.trim());
-  } catch (err) {
-    return c.json({ error: `Failed to write configuration: ${(err as Error).message}` }, 500);
+  // Ensure system step was completed
+  const config = readGlobalConfig();
+  if (!config.setup) {
+    // Auto-create system config if missing (e.g. legacy flow)
+    try {
+      writeSetupConfig(config.name ?? "Volute");
+    } catch (err) {
+      return c.json({ error: `Failed to write configuration: ${(err as Error).message}` }, 500);
+    }
   }
+
   try {
     const { createUser, updateUserProfile } = await import("../../lib/auth.js");
     const user = await createUser(body.username.trim(), body.password);
@@ -161,7 +332,7 @@ setup.post("/account", async (c) => {
   }
 });
 
-// Step 2: Configure AI provider
+// Step 3: Configure AI provider
 setup.post("/provider", async (c) => {
   if (isSetupComplete()) {
     return c.json({ error: "Setup already complete" }, 400);
@@ -190,7 +361,7 @@ setup.post("/provider", async (c) => {
   }
 });
 
-// Step 3: Configure models
+// Step 4: Configure models
 setup.post("/models", async (c) => {
   if (isSetupComplete()) {
     return c.json({ error: "Setup already complete" }, 400);
@@ -231,7 +402,7 @@ setup.post("/models", async (c) => {
   }
 });
 
-// Step 4: Complete setup — start spirit, create DM
+// Step 5: Complete setup — start spirit, create DM
 setup.post("/complete", async (c) => {
   if (isSetupComplete()) {
     return c.json({ error: "Setup already complete" }, 400);
