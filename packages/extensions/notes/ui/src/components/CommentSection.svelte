@@ -1,4 +1,6 @@
 <script lang="ts">
+import { renderMarkdown } from "../lib/markdown";
+
 interface Comment {
   id: number;
   author_username: string;
@@ -65,7 +67,7 @@ function initial(name: string): string {
               <button class="delete-btn" onclick={() => onDelete?.(comment.id)}>delete</button>
             {/if}
           </div>
-          <div class="comment-body">{comment.content}</div>
+          <div class="comment-body markdown-body">{@html renderMarkdown(comment.content)}</div>
         </div>
       {/each}
     </div>
@@ -166,7 +168,6 @@ function initial(name: string): string {
   .comment-body {
     font-size: 14px;
     color: var(--text-0);
-    white-space: pre-wrap;
     word-break: break-word;
   }
 

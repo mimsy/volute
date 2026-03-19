@@ -1,4 +1,6 @@
 <script lang="ts">
+import { renderMarkdown } from "../lib/markdown";
+
 let { name, rootLabel }: { name: string; rootLabel?: string } = $props();
 
 type Entry = { name: string; type: "file" | "directory" };
@@ -107,6 +109,7 @@ function navigateToRoot() {
 let baseMime = $derived(fileMime.split(";")[0].trim());
 let isImage = $derived(IMAGE_TYPES.has(baseMime));
 let isText = $derived(TEXT_TYPES.has(baseMime));
+let isMarkdown = $derived(baseMime === "text/markdown" || (selectedFile?.endsWith(".md") ?? false));
 
 $effect(() => {
   return () => {
@@ -176,6 +179,8 @@ let sortedEntries = $derived(
             <div class="preview-image">
               <img src={fileContent} alt={selectedFile} />
             </div>
+          {:else if isMarkdown && fileContent !== null}
+            <div class="preview-markdown markdown-body">{@html renderMarkdown(fileContent)}</div>
           {:else if isText && fileContent !== null}
             <pre class="preview-text"><code>{fileContent}</code></pre>
           {:else}
@@ -362,6 +367,15 @@ let sortedEntries = $derived(
 
   .download-link:hover {
     text-decoration: underline;
+  }
+
+  .preview-markdown {
+    flex: 1;
+    overflow: auto;
+    padding: 16px 20px;
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--text-0);
   }
 
   .preview-text {
