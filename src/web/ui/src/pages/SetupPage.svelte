@@ -711,8 +711,7 @@ $effect(() => {
           />
         {:else if username}
           <div class="username-preview">
-            You'll sign in as <strong>{username}</strong>
-            <button type="button" class="link-btn" onclick={() => { usernameManuallyEdited = true; }}>change</button>
+            You'll sign in as <strong>{username}</strong> <button type="button" class="change-btn" onclick={() => { usernameManuallyEdited = true; }}>(change)</button>
           </div>
         {/if}
 
@@ -1094,13 +1093,25 @@ $effect(() => {
     margin-top: 10px;
     font-size: 13px;
     color: var(--text-2);
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
   }
 
   .username-preview strong {
     color: var(--text-0);
+  }
+
+  .change-btn {
+    display: inline;
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--text-2);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .change-btn:hover {
+    color: var(--text-1);
   }
 
   .input {
