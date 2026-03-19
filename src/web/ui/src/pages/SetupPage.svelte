@@ -678,7 +678,7 @@ $effect(() => {
             type="submit"
             disabled={loading || !canAdvance()}
             class="submit-btn flex-1"
-            style:opacity={loading ? 0.5 : 1}
+
           >
             {loading ? "Setting up..." : "Continue"}
           </button>
@@ -734,7 +734,7 @@ $effect(() => {
             type="submit"
             disabled={loading || !canAdvance()}
             class="submit-btn flex-1"
-            style:opacity={loading ? 0.5 : 1}
+
           >
             {loading ? "Setting up..." : "Continue"}
           </button>
@@ -820,7 +820,7 @@ $effect(() => {
             type="submit"
             disabled={loading || !canAdvance()}
             class="submit-btn flex-1"
-            style:opacity={loading ? 0.5 : 1}
+
           >
             {loading ? "Setting up..." : "Finish setup"}
           </button>
@@ -1155,17 +1155,27 @@ $effect(() => {
   .submit-btn {
     width: 100%;
     padding: 10px 16px;
-    background: var(--accent-dim);
-    color: var(--accent);
+    background: var(--accent);
+    color: var(--bg-0, #1a1a1a);
     border-radius: var(--radius);
     font-size: 14px;
     font-weight: 500;
     font-family: inherit;
     border: 1px solid transparent;
     cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
   }
 
-  .submit-btn:disabled { opacity: 0.4; cursor: default; }
+  .submit-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 85%, white);
+  }
+
+  .submit-btn:disabled {
+    background: var(--bg-2);
+    color: var(--text-2);
+    border-color: var(--border);
+    cursor: default;
+  }
 
   .back-btn {
     padding: 10px 16px;
