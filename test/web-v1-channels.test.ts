@@ -21,8 +21,8 @@ let userId: number;
 
 function createApp() {
   const app = new Hono();
-  app.use("/api/volute/*", authMiddleware);
-  app.route("/api/volute/channels", channelsRoute);
+  app.use("/api/v1/channels/*", authMiddleware);
+  app.route("/api/v1/channels", channelsRoute);
   return app;
 }
 
@@ -40,18 +40,18 @@ async function setupAuth() {
   return sessionId;
 }
 
-describe("web volute channels routes", () => {
+describe("web v1 channels routes", () => {
   beforeEach(cleanup);
   afterEach(cleanup);
 
-  it("GET /api/volute/channels — lists channels with isMember and participantCount", async () => {
+  it("GET /api/v1/channels — lists channels with isMember and participantCount", async () => {
     const cookie = await setupAuth();
     const app = createApp();
 
     // Create a channel with the user as creator (auto-joined)
     const ch = await createChannel("general", userId);
 
-    const res = await app.request("/api/volute/channels", {
+    const res = await app.request("/api/v1/channels", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
@@ -65,14 +65,14 @@ describe("web volute channels routes", () => {
     await deleteConversation(ch.id);
   });
 
-  it("GET /api/volute/channels — isMember false when not joined", async () => {
+  it("GET /api/v1/channels — isMember false when not joined", async () => {
     const cookie = await setupAuth();
     const app = createApp();
 
     // Create a channel without the current user
     const ch = await createChannel("private");
 
-    const res = await app.request("/api/volute/channels", {
+    const res = await app.request("/api/v1/channels", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
@@ -84,11 +84,11 @@ describe("web volute channels routes", () => {
     await deleteConversation(ch.id);
   });
 
-  it("POST /api/volute/channels — creates channel (201)", async () => {
+  it("POST /api/v1/channels — creates channel (201)", async () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const res = await app.request("/api/volute/channels", {
+    const res = await app.request("/api/v1/channels", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -104,13 +104,13 @@ describe("web volute channels routes", () => {
     await deleteConversation(body.id);
   });
 
-  it("POST /api/volute/channels — 409 for duplicate name", async () => {
+  it("POST /api/v1/channels — 409 for duplicate name", async () => {
     const cookie = await setupAuth();
     const app = createApp();
 
     await createChannel("duped", userId);
 
-    const res = await app.request("/api/volute/channels", {
+    const res = await app.request("/api/v1/channels", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -123,12 +123,12 @@ describe("web volute channels routes", () => {
     assert.ok(body.error);
   });
 
-  it("POST /api/volute/channels — 400 for invalid name", async () => {
+  it("POST /api/v1/channels — 400 for invalid name", async () => {
     const cookie = await setupAuth();
     const app = createApp();
 
     // Uppercase
-    let res = await app.request("/api/volute/channels", {
+    let res = await app.request("/api/v1/channels", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -139,7 +139,7 @@ describe("web volute channels routes", () => {
     assert.equal(res.status, 400);
 
     // Starts with hyphen
-    res = await app.request("/api/volute/channels", {
+    res = await app.request("/api/v1/channels", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -150,7 +150,7 @@ describe("web volute channels routes", () => {
     assert.equal(res.status, 400);
 
     // Special characters
-    res = await app.request("/api/volute/channels", {
+    res = await app.request("/api/v1/channels", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -167,7 +167,7 @@ describe("web volute channels routes", () => {
 
     const ch = await createChannel("joinable");
 
-    const res = await app.request("/api/volute/channels/joinable/join", {
+    const res = await app.request("/api/v1/channels/joinable/join", {
       method: "POST",
       headers: { Cookie: `volute_session=${cookie}` },
     });
@@ -187,7 +187,7 @@ describe("web volute channels routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const res = await app.request("/api/volute/channels/nope/join", {
+    const res = await app.request("/api/v1/channels/nope/join", {
       method: "POST",
       headers: { Cookie: `volute_session=${cookie}` },
     });
@@ -204,7 +204,7 @@ describe("web volute channels routes", () => {
     let participants = await getParticipants(ch.id);
     assert.ok(participants.some((p) => p.userId === userId));
 
-    const res = await app.request("/api/volute/channels/leavable/leave", {
+    const res = await app.request("/api/v1/channels/leavable/leave", {
       method: "POST",
       headers: { Cookie: `volute_session=${cookie}` },
     });
@@ -223,7 +223,7 @@ describe("web volute channels routes", () => {
 
     const ch = await createChannel("members-test", userId);
 
-    const res = await app.request("/api/volute/channels/members-test/members", {
+    const res = await app.request("/api/v1/channels/members-test/members", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
@@ -242,7 +242,7 @@ describe("web volute channels routes", () => {
     const ch = await createChannel("team", userId);
     const invitee = await createUser("bob", "pass");
 
-    const res = await app.request("/api/volute/channels/team/invite", {
+    const res = await app.request("/api/v1/channels/team/invite", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -275,7 +275,7 @@ describe("web volute channels routes", () => {
     // Create a mind user directly (simulating a registered mind)
     const mindUser = await getOrCreateMindUser("test-mind");
 
-    const res = await app.request("/api/volute/channels/minds-ch/invite", {
+    const res = await app.request("/api/v1/channels/minds-ch/invite", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -298,7 +298,7 @@ describe("web volute channels routes", () => {
     // Create channel with admin already as member
     const ch = await createChannel("solo", userId);
 
-    const res = await app.request("/api/volute/channels/solo/invite", {
+    const res = await app.request("/api/v1/channels/solo/invite", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -317,7 +317,7 @@ describe("web volute channels routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const res = await app.request("/api/volute/channels/nope/invite", {
+    const res = await app.request("/api/v1/channels/nope/invite", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -334,7 +334,7 @@ describe("web volute channels routes", () => {
 
     const ch = await createChannel("inv-test", userId);
 
-    const res = await app.request("/api/volute/channels/inv-test/invite", {
+    const res = await app.request("/api/v1/channels/inv-test/invite", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -351,7 +351,7 @@ describe("web volute channels routes", () => {
 
   it("requires auth — 401 without cookie", async () => {
     const app = createApp();
-    const res = await app.request("/api/volute/channels");
+    const res = await app.request("/api/v1/channels");
     assert.equal(res.status, 401);
   });
 });

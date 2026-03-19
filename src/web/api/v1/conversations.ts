@@ -10,6 +10,7 @@ import {
   isParticipantOrOwner,
   listConversationsWithParticipants,
   markConversationRead,
+  setConversationPrivate,
 } from "../../../lib/events/conversations.js";
 import { findMind } from "../../../lib/registry.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
@@ -84,6 +85,10 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "At least one mind participant is required" }, 400);
     }
 
+    if (participantIds.size > 2) {
+      return c.json({ error: "Use channels for multi-participant conversations" }, 400);
+    }
+
     const conv = await createConversation(firstMindName, "volute", {
       userId: user.id !== 0 ? user.id : undefined,
       title: body.title,
@@ -100,6 +105,16 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Conversation not found" }, 404);
     }
     await markConversationRead(user.id, id);
+    return c.json({ ok: true });
+  })
+  .put("/:id/private", zValidator("json", z.object({ private: z.boolean() })), async (c) => {
+    const id = c.req.param("id");
+    const user = c.get("user");
+    if (!(await isParticipantOrOwner(id, user.id))) {
+      return c.json({ error: "Forbidden" }, 403);
+    }
+    const body = c.req.valid("json");
+    await setConversationPrivate(id, body.private);
     return c.json({ ok: true });
   })
   .delete("/:id", async (c) => {
