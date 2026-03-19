@@ -371,9 +371,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `api/volute/channels.ts` | Volute platform channel operations |
 | `api/volute/chat.ts` | POST /chat — fire-and-forget to minds; GET /conversations/:id/events — SSE |
 | `api/volute/conversations.ts` | Conversation CRUD, group creation, participant management |
-| `api/volute/user-conversations.ts` | User-facing conversation list and management |
-| `api/v1/chat.ts` | V1 API: chat endpoints |
-| `api/v1/conversations.ts` | V1 API: conversation endpoints |
+| `api/v1/conversations.ts` | V1 API: conversation endpoints (also mounted at /api/conversations) |
 | `api/v1/events.ts` | V1 API: event streaming |
 
 ## Tech stack
