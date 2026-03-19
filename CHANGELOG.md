@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.32.0](https://github.com/mimsy/volute/compare/volute-v0.31.0...volute-v0.32.0) (2026-03-19)
+
+
+### Features
+
+* add codex template for OpenAI-powered minds ([#234](https://github.com/mimsy/volute/issues/234)) ([7fb8757](https://github.com/mimsy/volute/commit/7fb8757f0e8dcfff982652beb3063c39a692bdfb))
+* add markdown rendering to file viewer and notes extension ([#235](https://github.com/mimsy/volute/issues/235)) ([547ec6d](https://github.com/mimsy/volute/commit/547ec6de8aacdf37560f8267edbd0a5904f13523))
+* extensible mind hooks system ([#228](https://github.com/mimsy/volute/issues/228)) ([263c5c5](https://github.com/mimsy/volute/commit/263c5c512e5a11789128e3b13f1bad6002e2edcc))
+* friendly setup flow with spirits, utility model, and auto-template ([#236](https://github.com/mimsy/volute/issues/236)) ([967d7d5](https://github.com/mimsy/volute/commit/967d7d520b86d4e3287e3a6b7c90bbe097a9f3ff))
+* record injected context as mind_history events ([#225](https://github.com/mimsy/volute/issues/225)) ([1fd91bd](https://github.com/mimsy/volute/commit/1fd91bdafe690491552daee33cb786ed9cffe260))
+* replace session monitor with daemon history API ([#230](https://github.com/mimsy/volute/issues/230)) ([0fe9c03](https://github.com/mimsy/volute/commit/0fe9c03cb012c04ec447d73fd1f8c10595247763))
+* snapshot-based page publishing with DB-backed metadata ([#227](https://github.com/mimsy/volute/issues/227)) ([8f09007](https://github.com/mimsy/volute/commit/8f09007ccbb544f19d04f9b60a0928a44e3ee7d9))
+
+
+### Bug Fixes
+
+* improve test reliability and eliminate flaky failures ([#223](https://github.com/mimsy/volute/issues/223)) ([835810b](https://github.com/mimsy/volute/commit/835810ba35c34a35de7e48e0b87ccc665c29f15c))
+* prevent turns from getting stuck in active state ([#233](https://github.com/mimsy/volute/issues/233)) ([951d9fa](https://github.com/mimsy/volute/commit/951d9fa240c555a02c92b9eb9ceae8fd2dd633ff))
+
 ## [0.31.0](https://github.com/mimsy/volute/compare/volute-v0.30.1...volute-v0.31.0) (2026-03-17)
 
 
