@@ -90,15 +90,7 @@ import {
   stateDir,
   validateMindName,
 } from "../../lib/registry.js";
-import {
-  activity,
-  conversationParticipants,
-  conversations,
-  messages,
-  mindHistory,
-  turns,
-  users,
-} from "../../lib/schema.js";
+import { activity, conversations, mindHistory, turns } from "../../lib/schema.js";
 import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
 import { getStandardSkillsWithExtensions, installSkill, SEED_SKILLS } from "../../lib/skills.js";
 import { announceToSystem } from "../../lib/system-channel.js";
