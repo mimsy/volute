@@ -17,7 +17,6 @@ let { onClose, onCreated }: { onClose: () => void; onCreated: (name: string) => 
 
 let name = $state("");
 let description = $state("");
-let template = $state("claude");
 let model = $state("");
 let loading = $state(false);
 let error = $state("");
@@ -28,10 +27,26 @@ let defaultSeedSoul = $state("");
 let sharedSkills = $state<SharedSkill[]>([]);
 let selectedSkills = $state<Set<string>>(new Set(SEED_DEFAULTS));
 let aiModels = $state<AiModel[]>([]);
+let modelSearch = $state("");
+let showModelPicker = $state(false);
 
 let enabledModels = $derived(aiModels.filter((m) => m.enabled));
-let piNeedsModel = $derived(template === "pi" && enabledModels.length > 0 && !model);
-let canSubmit = $derived(!loading && !!name.trim() && !piNeedsModel);
+let selectedModel = $derived(enabledModels.find((m) => m.id === model));
+let modelSuggestions = $derived(
+  modelSearch.trim()
+    ? enabledModels
+        .filter((m) => {
+          const q = modelSearch.toLowerCase();
+          return (
+            m.id.toLowerCase().includes(q) ||
+            m.name.toLowerCase().includes(q) ||
+            m.provider.toLowerCase().includes(q)
+          );
+        })
+        .slice(0, 12)
+    : enabledModels.slice(0, 12),
+);
+let canSubmit = $derived(!loading && !!name.trim());
 
 onMount(() => {
   nameInput?.focus();
@@ -82,8 +97,7 @@ async function handleSubmit() {
     const customSkills = showAdvanced ? [...selectedSkills] : undefined;
     await createSeedMind(trimmed, {
       description: description.trim() || undefined,
-      template,
-      model: model.trim() || undefined,
+      model: model || undefined,
       seedSoul: customSoul,
       skills: customSkills,
     });
@@ -121,34 +135,38 @@ async function handleSubmit() {
       />
     </label>
 
-    <label class="field">
-      <span class="label">Template</span>
-      <select bind:value={template} class="input select" onchange={() => model = ""}>
-        <option value="claude">claude</option>
-        <option value="pi">pi</option>
-      </select>
-    </label>
-
-    {#if template === "pi" && enabledModels.length > 0}
-      <label class="field">
-        <span class="label">Model</span>
-        <select bind:value={model} class="input select">
-          <option value="">Select a model...</option>
-          {#each enabledModels as m}
-            <option value="{m.provider}:{m.id}">{m.name} ({m.provider})</option>
-          {/each}
-        </select>
-      </label>
-    {:else}
-      <label class="field">
+    {#if enabledModels.length > 0}
+      <div class="field">
         <span class="label">Model (optional)</span>
-        <input
-          bind:value={model}
-          placeholder={template === "pi" ? "e.g. openrouter:moonshotai/kimi-k2.5" : "e.g. claude-sonnet-4-5-20250929"}
-          onkeydown={(e) => e.key === "Enter" && handleSubmit()}
-          class="input"
-        />
-      </label>
+        {#if selectedModel}
+          <button class="model-selected" onclick={() => { model = ""; showModelPicker = true; modelSearch = ""; }} type="button">
+            <span class="model-selected-name">{selectedModel.name}</span>
+            <span class="model-selected-provider">{selectedModel.provider}</span>
+            <span class="model-selected-clear">×</span>
+          </button>
+        {:else}
+          <div class="model-picker">
+            <input
+              type="text"
+              class="input"
+              placeholder="Search models..."
+              bind:value={modelSearch}
+              onfocus={() => { showModelPicker = true; }}
+              onblur={() => { setTimeout(() => { showModelPicker = false; }, 150); }}
+            />
+            {#if showModelPicker && modelSuggestions.length > 0}
+              <div class="model-dropdown">
+                {#each modelSuggestions as m (m.id)}
+                  <button class="model-option" onclick={() => { model = m.id; showModelPicker = false; modelSearch = ""; }} type="button">
+                    <span class="model-option-name">{m.name}</span>
+                    <span class="model-option-provider">{m.provider}</span>
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
     {/if}
 
     <button class="advanced-toggle" onclick={() => showAdvanced = !showAdvanced}>
@@ -240,8 +258,91 @@ async function handleSubmit() {
     font-family: inherit;
   }
 
-  .select {
-    appearance: auto;
+  /* --- Model picker --- */
+
+  .model-picker {
+    position: relative;
+  }
+
+  .model-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 10;
+    max-height: 200px;
+    overflow-y: auto;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 var(--radius) var(--radius);
+  }
+
+  .model-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 8px 10px;
+    font-size: 13px;
+    font-family: inherit;
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-0);
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .model-option:last-child { border-bottom: none; }
+  .model-option:hover { background: var(--bg-3); }
+
+  .model-option-name {
+    color: var(--text-0);
+  }
+
+  .model-option-provider {
+    color: var(--text-2);
+    font-size: 11px;
+  }
+
+  .model-selected {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-0);
+    font-size: 14px;
+    font-family: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .model-selected:hover {
+    border-color: var(--border-bright);
+  }
+
+  .model-selected-name {
+    flex: 1;
+  }
+
+  .model-selected-provider {
+    color: var(--text-2);
+    font-size: 11px;
+  }
+
+  .model-selected-clear {
+    color: var(--text-2);
+    font-size: 14px;
+    margin-left: 4px;
+  }
+
+  .model-selected-clear:hover {
+    color: var(--red);
   }
 
   .error {

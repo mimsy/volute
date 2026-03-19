@@ -325,25 +325,9 @@ async function removeModel(modelId: string) {
 
   <!-- Add provider button -->
   {#if unconfiguredProviders.length > 0}
-    <div class="add-provider-area">
-      {#if oauthProviders.length > 0}
-        <span class="add-provider-heading">Sign in with</span>
-        <div class="oauth-buttons">
-          {#each oauthProviders as p (p.id)}
-            <button
-              class="btn-provider"
-              onclick={() => { showAddProvider = true; handleOAuth(p.id); }}
-              disabled={saving}
-            >
-              {shortProviderLabel(p)}
-            </button>
-          {/each}
-        </div>
-      {/if}
-      <button class="link-btn" onclick={openAddProvider}>
-        {oauthProviders.length > 0 ? "or add an API key" : "Add an API key"}
-      </button>
-    </div>
+    <button class="add-provider-btn" onclick={openAddProvider} type="button">
+      + Add a provider
+    </button>
   {/if}
 
   <!-- System / utility model selection -->
@@ -610,24 +594,26 @@ async function removeModel(modelId: string) {
 
   .add-model-btn:hover { color: var(--text-0); border-color: var(--border-bright); }
 
-  /* --- Add provider area --- */
+  /* --- Add provider button --- */
 
-  .add-provider-area {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-    margin-top: 12px;
-    padding: 20px 16px;
+  .add-provider-btn {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+    padding: 10px 16px;
     background: var(--bg-2);
-    border: 1px solid var(--border);
+    border: 1px dashed var(--border);
     border-radius: var(--radius-lg);
+    color: var(--text-2);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
   }
 
-  .add-provider-heading {
-    font-size: 13px;
-    color: var(--text-2);
-    letter-spacing: 0.02em;
+  .add-provider-btn:hover {
+    color: var(--text-1);
+    border-color: var(--border-bright);
   }
 
   .oauth-heading {
