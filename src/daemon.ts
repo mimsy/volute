@@ -100,8 +100,8 @@ export async function startDaemon(opts: {
       .update(users)
       .set({ role: "system" })
       .where(and(eq(users.user_type, "system"), eq(users.role, "user")));
-  } catch {
-    // Non-critical
+  } catch (err) {
+    log.warn("failed to migrate system user role", log.errorData(err));
   }
 
   // Initialize sandbox runtime for mind process isolation

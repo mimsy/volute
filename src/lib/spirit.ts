@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { qualifyModelId, resolveTemplate } from "./ai-service.js";
 import { exec } from "./exec.js";
@@ -108,6 +108,7 @@ export async function ensureSpiritProject(): Promise<void> {
     slog.info("spirit project created");
   } catch (err) {
     slog.error("failed to create spirit project", log.errorData(err));
+    rmSync(dir, { recursive: true, force: true });
     throw err;
   }
 }
@@ -142,11 +143,7 @@ export async function syncSpiritTemplate(): Promise<void> {
     const newPkg = resolve(newComposed.composedDir, "package.json");
     if (existsSync(newPkg)) {
       cpSync(newPkg, resolve(dir, "package.json"));
-      try {
-        await exec("npm", ["install", "--ignore-scripts"], { cwd: dir });
-      } catch (err) {
-        slog.warn("npm install failed during spirit template change", log.errorData(err));
-      }
+      await exec("npm", ["install", "--ignore-scripts"], { cwd: dir });
     }
     // Update DB template
     const db = await (await import("./db.js")).getDb();
@@ -209,18 +206,10 @@ export async function syncSpiritTemplate(): Promise<void> {
       if (composedContent !== currentContent) {
         cpSync(composedPkg, currentPkg);
       }
-      try {
-        await exec("npm", ["install", "--ignore-scripts"], { cwd: dir });
-      } catch (err) {
-        slog.warn("npm install failed during spirit sync", log.errorData(err));
-      }
+      await exec("npm", ["install", "--ignore-scripts"], { cwd: dir });
     }
   } else if (nodeModulesMissing) {
-    try {
-      await exec("npm", ["install", "--ignore-scripts"], { cwd: dir });
-    } catch (err) {
-      slog.warn("npm install failed during spirit sync", log.errorData(err));
-    }
+    await exec("npm", ["install", "--ignore-scripts"], { cwd: dir });
   }
 
   // Restore preserved files

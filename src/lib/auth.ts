@@ -1,5 +1,5 @@
 import { compareSync, hashSync } from "bcryptjs";
-import { and, count, eq } from "drizzle-orm";
+import { and, count, eq, or } from "drizzle-orm";
 import { getDb } from "./db.js";
 import { broadcast } from "./events/activity-events.js";
 import { users } from "./schema.js";
@@ -99,11 +99,16 @@ export async function listUsersByType(userType: "brain" | "mind"): Promise<User[
 
 export async function getOrCreateMindUser(mindName: string): Promise<User> {
   const db = await getDb();
-  // Look up by username first (any user_type — the spirit "volute" reuses the system user)
+  // Look up by username — allow mind or system user_type (spirit "volute" reuses the system user)
   const existing = await db
     .select(userSelectFields)
     .from(users)
-    .where(eq(users.username, mindName))
+    .where(
+      and(
+        eq(users.username, mindName),
+        or(eq(users.user_type, "mind"), eq(users.user_type, "system")),
+      ),
+    )
     .get();
   if (existing) return existing as User;
 
@@ -123,7 +128,12 @@ export async function getOrCreateMindUser(mindName: string): Promise<User> {
     const retried = await db
       .select(userSelectFields)
       .from(users)
-      .where(eq(users.username, mindName))
+      .where(
+        and(
+          eq(users.username, mindName),
+          or(eq(users.user_type, "mind"), eq(users.user_type, "system")),
+        ),
+      )
       .get();
     if (retried) return retried as User;
     throw err;

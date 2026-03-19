@@ -70,8 +70,8 @@ setup.get("/status", async (c) => {
       const { listUsersByType } = await import("../../lib/auth.js");
       const brains = await listUsersByType("brain");
       hasAccount = brains.length > 0;
-    } catch {
-      // DB may not be ready yet
+    } catch (err) {
+      log.debug("could not check for existing accounts during setup status", log.errorData(err));
     }
   }
 
@@ -339,36 +339,7 @@ setup.post("/account", async (c) => {
   }
 });
 
-// Step 3: Configure AI provider
-setup.post("/provider", async (c) => {
-  if (isSetupComplete()) {
-    return c.json({ error: "Setup already complete" }, 400);
-  }
-
-  let body: { providerId: string; apiKey: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "Invalid JSON in request body" }, 400);
-  }
-
-  if (!body.providerId?.trim()) {
-    return c.json({ error: "Provider ID is required" }, 400);
-  }
-  if (!body.apiKey?.trim()) {
-    return c.json({ error: "API key is required" }, 400);
-  }
-
-  try {
-    const { saveProviderConfig } = await import("../../lib/ai-service.js");
-    saveProviderConfig(body.providerId.trim(), { apiKey: body.apiKey.trim() });
-    return c.json({ ok: true });
-  } catch (err) {
-    return c.json({ error: `Failed to save provider: ${(err as Error).message}` }, 500);
-  }
-});
-
-// Step 4: Configure models
+// Step 3: Configure models
 setup.post("/models", async (c) => {
   if (isSetupComplete()) {
     return c.json({ error: "Setup already complete" }, 400);
@@ -489,6 +460,9 @@ setup.post("/complete", async (c) => {
         });
       } catch (err) {
         log.warn("failed to send welcome prompt to spirit (non-fatal)", log.errorData(err));
+        warnings.push(
+          "Welcome message failed to send — try sending a message to start the conversation.",
+        );
       }
     }
 

@@ -229,16 +229,24 @@ export function createMind(options: {
     // process.env.VOLUTE_SESSION is set by the router, but the codex sandbox doesn't inherit it.
     try {
       const zshenvPath = resolvePath(options.cwd, ".zshenv");
-      const existing = readFileSync(zshenvPath, "utf-8");
-      const sessionLine = `export VOLUTE_SESSION=${JSON.stringify(session.name)}`;
-      const updated = existing.replace(/^export VOLUTE_SESSION=.*$/m, sessionLine);
-      if (updated === existing && !existing.includes("VOLUTE_SESSION")) {
-        writeFileSync(zshenvPath, `${existing.trimEnd()}\n${sessionLine}\n`);
-      } else if (updated !== existing) {
-        writeFileSync(zshenvPath, updated);
+      let existing: string;
+      try {
+        existing = readFileSync(zshenvPath, "utf-8");
+      } catch {
+        // .zshenv doesn't exist (non-codex template) — not critical
+        existing = "";
       }
-    } catch {
-      // .zshenv may not exist (non-codex template) — not critical
+      if (existing) {
+        const sessionLine = `export VOLUTE_SESSION=${JSON.stringify(session.name)}`;
+        const updated = existing.replace(/^export VOLUTE_SESSION=.*$/m, sessionLine);
+        if (updated === existing && !existing.includes("VOLUTE_SESSION")) {
+          writeFileSync(zshenvPath, `${existing.trimEnd()}\n${sessionLine}\n`);
+        } else if (updated !== existing) {
+          writeFileSync(zshenvPath, updated);
+        }
+      }
+    } catch (err) {
+      warn("mind", `session "${session.name}": failed to sync VOLUTE_SESSION to .zshenv:`, err);
     }
 
     try {
@@ -371,7 +379,7 @@ export function createMind(options: {
                 broadcast(session, {
                   type: "tool_result",
                   output,
-                  is_error: item.exitCode !== 0,
+                  is_error: exitCode !== 0,
                 });
               } else if (itemType === "file_change" || itemType === "fileChange") {
                 const filePath = item.path ?? item.filePath ?? "";
