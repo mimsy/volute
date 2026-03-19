@@ -378,13 +378,14 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     const conv = (await createRes.json()) as { id: string };
     assert.ok(conv.id);
 
-    // Send a message via the per-mind chat endpoint
-    const chatRes = await daemonRequest(`/api/minds/${TEST_MIND}/chat`, {
+    // Send a message via the unified chat endpoint
+    const chatRes = await daemonRequest("/api/v1/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         conversationId: conv.id,
         message: "hello from integration test",
+        targetMind: TEST_MIND,
       }),
     });
     assert.equal(chatRes.status, 200, `Chat: ${await chatRes.clone().text()}`);

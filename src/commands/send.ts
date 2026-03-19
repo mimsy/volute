@@ -288,19 +288,17 @@ export async function run(args: string[]) {
     if (convId) waitConversationId = convId;
 
     // Send via daemon chat API
-    const sendRes = await daemonFetch(
-      urlOf(client.api.minds[":name"].chat.$url({ param: { name: contextMind } })),
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: message ?? "",
-          conversationId: convId,
-          images,
-          sender,
-        }),
-      },
-    );
+    const sendRes = await daemonFetch("/api/v1/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: message ?? "",
+        conversationId: convId,
+        images,
+        sender,
+        targetMind: contextMind,
+      }),
+    });
     if (!sendRes.ok) {
       const data = await sendRes.json().catch(() => ({ error: "Unknown error" }));
       console.error((data as { error: string }).error);
@@ -342,19 +340,17 @@ export async function run(args: string[]) {
       process.exit(1);
     }
 
-    const sendRes = await daemonFetch(
-      urlOf(client.api.minds[":name"].chat.$url({ param: { name: contextMind } })),
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: message ?? "",
-          conversationId: channelData.id,
-          images,
-          sender,
-        }),
-      },
-    );
+    const sendRes = await daemonFetch("/api/v1/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: message ?? "",
+        conversationId: channelData.id,
+        images,
+        sender,
+        targetMind: contextMind,
+      }),
+    });
     if (!sendRes.ok) {
       const data = await sendRes.json().catch(() => ({ error: "Unknown error" }));
       console.error((data as { error: string }).error);
