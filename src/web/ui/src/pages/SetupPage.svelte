@@ -108,6 +108,7 @@ let oauthUrl = $state("");
 let oauthFlowId = $state("");
 let oauthPolling = $state(false);
 let oauthNeedsCode = $state(false);
+let oauthWaitingForCode = $state(false);
 let oauthCodeInput = $state("");
 // Model add modal
 let showModelSearch = $state(false);
@@ -378,9 +379,13 @@ async function pollOAuth() {
     try {
       const status = await pollAiOAuthStatus(oauthFlowId);
       errors = 0;
+      if (status.waitingForCode) {
+        oauthWaitingForCode = true;
+      }
       if (status.status === "complete") {
         oauthPolling = false;
         oauthUrl = "";
+        oauthWaitingForCode = false;
         const addedProvider = oauthProvider;
         oauthProvider = "";
         showAddProvider = false;
@@ -393,6 +398,7 @@ async function pollOAuth() {
       } else if (status.status === "error") {
         oauthPolling = false;
         oauthUrl = "";
+        oauthWaitingForCode = false;
         providerError = status.error ?? "OAuth failed";
         oauthProvider = "";
         return;
@@ -410,14 +416,26 @@ async function pollOAuth() {
   }
 }
 
+let oauthCodeSubmitting = $state(false);
+
 async function handleOAuthCodeSubmit() {
   if (!oauthCodeInput.trim() || !oauthFlowId) return;
   providerError = "";
+  oauthCodeSubmitting = true;
   try {
     await submitAiOAuthCode(oauthFlowId, oauthCodeInput.trim());
     oauthCodeInput = "";
   } catch (err) {
     providerError = err instanceof Error ? err.message : "Failed to submit code";
+  }
+  oauthCodeSubmitting = false;
+}
+
+function handleOAuthCodeInput() {
+  // Auto-submit if the pasted value looks like a valid callback URL
+  const val = oauthCodeInput.trim();
+  if (val && /^https?:\/\//.test(val)) {
+    handleOAuthCodeSubmit();
   }
 }
 
@@ -848,13 +866,15 @@ $effect(() => {
 
       {#if oauthProvider}
         <!-- OAuth flow in progress -->
-        {#if oauthUrl && oauthNeedsCode && isRemote}
+        {#if oauthCodeSubmitting}
+          <div class="loading-text">Verifying...</div>
+        {:else if oauthUrl && (oauthNeedsCode && isRemote || oauthWaitingForCode)}
           <div class="oauth-steps">
             <div class="oauth-step"><span class="step-num">1</span> Authorize in the opened window</div>
             <div class="oauth-step"><span class="step-num">2</span> Copy the redirect URL and paste below</div>
           </div>
           <form class="api-key-form" onsubmit={(e) => { e.preventDefault(); handleOAuthCodeSubmit(); }}>
-            <input type="text" bind:value={oauthCodeInput} placeholder="Paste the redirect URL here" class="input" />
+            <input type="text" bind:value={oauthCodeInput} oninput={handleOAuthCodeInput} placeholder="Paste the redirect URL here" class="input" />
             <button type="submit" class="save-btn" disabled={!oauthCodeInput.trim()}>Submit</button>
           </form>
         {:else if oauthPolling}
