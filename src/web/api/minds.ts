@@ -1512,8 +1512,10 @@ const app = new Hono<AuthEnv>()
 
     const db = await getDb();
     const ORIENTATION_MARKER = "You don't have a soul yet";
-    const creatorThreshold = Number(process.env.VOLUTE_NURTURE_CREATOR_MINUTES) || 5;
-    const spiritThreshold = Number(process.env.VOLUTE_NURTURE_SPIRIT_MINUTES) || 15;
+    const rawCreator = Number(process.env.VOLUTE_NURTURE_CREATOR_MINUTES);
+    const creatorThreshold = Number.isNaN(rawCreator) ? 5 : rawCreator;
+    const rawSpirit = Number(process.env.VOLUTE_NURTURE_SPIRIT_MINUTES);
+    const spiritThreshold = Number.isNaN(rawSpirit) ? 15 : rawSpirit;
 
     // Last creator message (inbound, sender is not "volute" and not the seed itself)
     const lastCreatorMsg = await db
@@ -1605,7 +1607,7 @@ const app = new Hono<AuthEnv>()
 
     return c.json({ output: lines.join("\n") });
   })
-  // Sprout a seed mind — admin only
+  // Sprout a seed mind — admin or self
   .post("/:name/sprout", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);

@@ -9,8 +9,8 @@ export function isIsolationEnabled(): boolean {
 /** Username for a mind. Prefix configurable via VOLUTE_USER_PREFIX (default: "mind-"). */
 export function mindUserName(mindName: string): string {
   const err = validateMindName(mindName);
-  // Allow reserved names (e.g. "volute" spirit) — they get the prefix too (mind-volute)
-  if (err && !err.includes("reserved")) {
+  // Allow the "volute" spirit — it's a reserved name but gets the prefix too (mind-volute)
+  if (err && mindName !== "volute") {
     throw new Error(`Invalid mind name for isolation: ${err}`);
   }
   const prefix = process.env.VOLUTE_USER_PREFIX ?? "mind-";

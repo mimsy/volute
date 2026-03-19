@@ -79,12 +79,6 @@ export async function ensureSpiritProject(): Promise<void> {
     // npm install — must succeed before DB registration
     await exec("npm", ["install", "--ignore-scripts"], { cwd: dir });
 
-    // Set up per-mind user isolation (creates mind-volute user, chowns project dir)
-    const { createMindUser, chownMindDir, ensureVoluteGroup } = await import("./isolation.js");
-    ensureVoluteGroup();
-    createMindUser("volute", resolve(dir, "home"));
-    chownMindDir(dir, "volute");
-
     // git init (before skill install, which does git add)
     try {
       await exec("git", ["init"], { cwd: dir });
@@ -106,6 +100,14 @@ export async function ensureSpiritProject(): Promise<void> {
         slog.warn(`failed to install skill ${skillId} for spirit`, log.errorData(err));
       }
     }
+
+    // Set up per-mind user isolation (creates mind-volute user, chowns project dir).
+    // Must be AFTER all file creation (npm install, git init, skill install) so the
+    // chown covers everything and the spirit process can write to all files.
+    const { createMindUser, chownMindDir, ensureVoluteGroup } = await import("./isolation.js");
+    ensureVoluteGroup();
+    createMindUser("volute", resolve(dir, "home"));
+    chownMindDir(dir, "volute");
 
     // Register in DB
     const port = await nextPort();

@@ -13,7 +13,9 @@ export async function run(args: string[]) {
   const res = await daemonFetch(`/api/minds/${encodeURIComponent(name)}/seed-check`);
 
   if (!res.ok) {
-    // Mind not found or other error — exit silently
+    if (res.status !== 404) {
+      console.error(`seed check failed for ${name}: HTTP ${res.status}`);
+    }
     return;
   }
 

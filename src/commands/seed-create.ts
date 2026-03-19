@@ -50,7 +50,7 @@ export async function run(args: string[]) {
   const name = positional[0];
   if (!name) {
     console.error(
-      "Usage: volute mind seed <name> [--template <name>] [--model <model>] [--description <text>] [--skills <list|none>] [--created-by <username>]",
+      "Usage: volute seed create <name> [--template <name>] [--model <model>] [--description <text>] [--skills <list|none>] [--created-by <username>]",
     );
     process.exit(1);
   }

@@ -124,7 +124,8 @@ export async function wakeMind(name: string): Promise<void> {
 }
 
 /**
- * Start a spirit process. Simpler lifecycle than minds — no schedules, sleep, budget, etc.
+ * Start a spirit process. Simpler lifecycle than minds — no sleep, budget, or mail,
+ * but does load schedules (for seed nurture).
  */
 export async function startSpiritFull(name: string): Promise<void> {
   // Register the spirit's custom directory for routing config resolution

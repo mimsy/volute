@@ -70,8 +70,8 @@ async function loadImagegen() {
   try {
     const config = await fetchImagegenConfig();
     imagegenEnabled = config.enabled;
-  } catch {
-    // Ignore — feature may not be available
+  } catch (err) {
+    console.warn("Failed to load imagegen config:", err);
   }
 }
 
@@ -80,8 +80,8 @@ async function toggleImagegen() {
   try {
     await saveImagegenConfig(!imagegenEnabled);
     imagegenEnabled = !imagegenEnabled;
-  } catch {
-    // Revert on failure
+  } catch (err) {
+    aiError = `Failed to update image generation: ${err instanceof Error ? err.message : "unknown error"}`;
   } finally {
     imagegenSaving = false;
   }

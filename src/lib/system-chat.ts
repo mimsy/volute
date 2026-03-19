@@ -50,6 +50,9 @@ export async function ensureSystemDM(mindName: string): Promise<{ conversationId
  * Send a system message to a mind through the normal delivery pipeline.
  * Persists to the conversation and routes through deliverMessage (which handles
  * sleep queueing, routing, mind_history recording, etc.).
+ *
+ * When the target is the spirit ("volute"), skips conversation persistence
+ * since the spirit cannot DM itself, and delivers directly.
  */
 export async function sendSystemMessage(
   mindName: string,
