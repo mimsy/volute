@@ -115,6 +115,38 @@ const chatSchema = z.object({
   files: z.array(fileSchema).optional(),
 });
 
+const MAX_FILE_SIZE = 50 * 1024 * 1024;
+
+function stageFilesForMinds(
+  files: z.infer<typeof fileSchema>[],
+  targetMinds: string[],
+  senderName: string,
+): { notifications: string[]; error?: { message: string; status: 400 | 413 } } {
+  const notifications: string[] = [];
+  for (const file of files) {
+    const pathErr = validateFilePath(file.filename);
+    if (pathErr)
+      return { notifications, error: { message: `Invalid filename: ${pathErr}`, status: 400 } };
+    const content = Buffer.from(file.data, "base64");
+    if (content.length > MAX_FILE_SIZE) {
+      return {
+        notifications,
+        error: {
+          message: `File too large: ${file.filename} (${formatFileSize(content.length)}, max ${formatFileSize(MAX_FILE_SIZE)})`,
+          status: 413,
+        },
+      };
+    }
+    for (const mind of targetMinds) {
+      const { id } = stageFile(mind, senderName, file.filename, content, file.filename);
+      notifications.push(
+        `[file] ${senderName} sent ${file.filename} (${formatFileSize(content.length)}) — run: volute chat accept ${id}`,
+      );
+    }
+  }
+  return { notifications };
+}
+
 export const unifiedChatApp = new Hono<AuthEnv>().post(
   "/chat",
   zValidator("json", chatSchema),
@@ -157,8 +189,6 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       const entry = await findMind(baseName);
       if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-      const mindUser = await getOrCreateMindUser(baseName);
-
       if (conversationId) {
         // Daemon token (id: 0) can access any conversation
         if (user.id !== 0 && !(await isParticipantOrOwner(conversationId, user.id))) {
@@ -166,6 +196,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
         }
       } else {
         // Auto-create/reuse DM conversation
+        const mindUser = await getOrCreateMindUser(baseName);
         const participantIds: number[] = [];
         if (user.id !== 0) {
           participantIds.push(user.id);
@@ -205,73 +236,30 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       }
     } else {
       // --- conversationId-only flow (was unified endpoint) ---
-      const conv = await getConversation(conversationId!);
-      if (!conv) return c.json({ error: "Conversation not found" }, 404);
-
       if (user.id !== 0 && !(await isParticipantOrOwner(conversationId!, user.id))) {
         return c.json({ error: "Conversation not found" }, 404);
       }
     }
 
     const conv = await getConversation(conversationId!);
-    const convTitle = conv?.title ?? null;
+    if (!conv) return c.json({ error: "Conversation not found" }, 404);
+    const convTitle = conv.title;
 
     // Stage files
     const fileNotifications: string[] = [];
     if (body.files && body.files.length > 0) {
-      const MAX_FILE_SIZE = 50 * 1024 * 1024;
-
+      let fileTargets: string[];
       if (baseName) {
-        // targetMind flow: stage to the target mind
-        for (const file of body.files) {
-          const pathErr = validateFilePath(file.filename);
-          if (pathErr) return c.json({ error: `Invalid filename: ${pathErr}` }, 400);
-          const content = Buffer.from(file.data, "base64");
-          if (content.length > MAX_FILE_SIZE) {
-            return c.json(
-              {
-                error: `File too large: ${file.filename} (${formatFileSize(content.length)}, max ${formatFileSize(MAX_FILE_SIZE)})`,
-              },
-              413,
-            );
-          }
-          const { id } = stageFile(baseName, senderName, file.filename, content, file.filename);
-          fileNotifications.push(
-            `[file] ${senderName} sent ${file.filename} (${formatFileSize(content.length)}) — run: volute chat accept ${id}`,
-          );
-        }
+        fileTargets = [baseName];
       } else {
-        // conversationId-only flow: stage to all mind participants
         const participants = await getParticipants(conversationId!);
-        const mindParticipants = participants.filter(
-          (p) => p.userType === "mind" && p.username !== senderName,
-        );
-        for (const file of body.files) {
-          const pathErr = validateFilePath(file.filename);
-          if (pathErr) return c.json({ error: `Invalid filename: ${pathErr}` }, 400);
-          const content = Buffer.from(file.data, "base64");
-          if (content.length > MAX_FILE_SIZE) {
-            return c.json(
-              {
-                error: `File too large: ${file.filename} (${formatFileSize(content.length)}, max ${formatFileSize(MAX_FILE_SIZE)})`,
-              },
-              413,
-            );
-          }
-          for (const mind of mindParticipants) {
-            const { id } = stageFile(
-              mind.username,
-              senderName,
-              file.filename,
-              content,
-              file.filename,
-            );
-            fileNotifications.push(
-              `[file] ${senderName} sent ${file.filename} (${formatFileSize(content.length)}) — run: volute chat accept ${id}`,
-            );
-          }
-        }
+        fileTargets = participants
+          .filter((p) => p.userType === "mind" && p.username !== senderName)
+          .map((p) => p.username);
       }
+      const { notifications, error } = stageFilesForMinds(body.files, fileTargets, senderName);
+      if (error) return c.json({ error: error.message }, error.status);
+      fileNotifications.push(...notifications);
     }
 
     // Build content blocks
@@ -307,13 +295,13 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
         log.warn("outbound bridge routing failed", log.errorData(err));
       });
       // Record outbound event in mind_history for turn timeline
-      const participants = await getParticipants(conversationId!);
       const channel = buildVoluteSlug({
-        participants,
+        participants: await getParticipants(conversationId!),
         mindUsername: senderName,
         convTitle,
         conversationId: conversationId!,
-        ...(conv ? { convType: conv.type as "dm" | "channel", convName: conv.name } : {}),
+        convType: conv.type as "dm" | "channel",
+        convName: conv.name,
       });
       recordOutbound(senderName, channel, extractTextContent(contentBlocks), {
         turnId,
@@ -324,16 +312,14 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     }
 
     // Fan out to running mind participants
-    const isDM = conv?.type === "dm";
+    const isDM = conv.type === "dm";
     await fanOutToMinds({
       conversationId: conversationId!,
       contentBlocks,
       senderName,
       convTitle,
       isDM,
-      slugExtra: conv
-        ? { convType: conv.type as "dm" | "channel", convName: conv.name }
-        : undefined,
+      slugExtra: { convType: conv.type as "dm" | "channel", convName: conv.name },
       // Variant-aware targeting: when targetMind is a variant, route to the variant name
       targetName: baseName
         ? (username) => (username === baseName ? variantName! : username)
