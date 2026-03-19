@@ -186,7 +186,16 @@ export class MindManager {
       } else if (process.env.OPENAI_API_KEY) {
         env.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
       }
-      // If neither is set, codex CLI uses its own auth — no warning needed
+
+      // Write .zshenv in the mind's home dir — the codex sandbox runs commands in
+      // /bin/zsh -lc which resets the environment. ZDOTDIR is set via codex config
+      // so the login shell sources this file to restore VOLUTE vars and PATH.
+      const homeDir = resolve(dir, "home");
+      const zshenvLines = Object.entries(env)
+        .filter(([k, v]) => k.startsWith("VOLUTE_") && v != null)
+        .map(([k, v]) => `export ${k}=${JSON.stringify(v)}`);
+      zshenvLines.push(`export PATH=${JSON.stringify(env.PATH ?? "")}`);
+      writeFileSync(resolve(homeDir, ".zshenv"), zshenvLines.join("\n") + "\n", { mode: 0o600 });
     }
 
     // For claude minds, inject system Anthropic credentials.
