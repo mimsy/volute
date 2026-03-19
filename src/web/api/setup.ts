@@ -178,11 +178,11 @@ setup.post("/system/register", async (c) => {
       const err = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
         error: string;
       };
-      return c.json({ error: err.error }, 502);
+      return c.json({ error: `volute.systems: ${err.error}` }, 502);
     }
     ({ apiKey, system } = (await res.json()) as { apiKey: string; system: string });
   } catch (err) {
-    return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
+    return c.json({ error: `Could not reach volute.systems: ${(err as Error).message}` }, 502);
   }
 
   try {
@@ -231,11 +231,11 @@ setup.post("/system/login", async (c) => {
       const err = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
         error: string;
       };
-      return c.json({ error: err.error }, 502);
+      return c.json({ error: `volute.systems: ${err.error}` }, 502);
     }
     ({ system } = (await res.json()) as { system: string });
   } catch (err) {
-    return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
+    return c.json({ error: `Could not reach volute.systems: ${(err as Error).message}` }, 502);
   }
 
   try {
