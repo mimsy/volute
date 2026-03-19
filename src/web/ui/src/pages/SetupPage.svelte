@@ -699,16 +699,22 @@ $effect(() => {
           autocomplete="name"
         />
 
-        <label class="label mt" for="username">Username</label>
-        <input
-          id="username"
-          type="text"
-          placeholder="username"
-          bind:value={username}
-          class="input"
-          autocomplete="username"
-          oninput={() => { usernameManuallyEdited = true; }}
-        />
+        {#if usernameManuallyEdited}
+          <label class="label mt" for="username">Username</label>
+          <input
+            id="username"
+            type="text"
+            placeholder="username"
+            bind:value={username}
+            class="input"
+            autocomplete="username"
+          />
+        {:else if username}
+          <div class="username-preview">
+            You'll sign in as <strong>{username}</strong>
+            <button type="button" class="link-btn" onclick={() => { usernameManuallyEdited = true; }}>change</button>
+          </div>
+        {/if}
 
         <label class="label mt" for="password">Password</label>
         <input
@@ -1083,6 +1089,19 @@ $effect(() => {
   }
 
   .mt { margin-top: 14px; }
+
+  .username-preview {
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--text-2);
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  .username-preview strong {
+    color: var(--text-0);
+  }
 
   .input {
     width: 100%;
