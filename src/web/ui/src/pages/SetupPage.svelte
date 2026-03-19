@@ -837,10 +837,8 @@ $effect(() => {
 
 <!-- Add provider modal -->
 {#if showAddProvider || oauthProvider}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="modal-backdrop" onclick={() => { if (!oauthPolling) { showAddProvider = false; oauthProvider = ""; } }}>
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="modal-content" onclick={(e) => e.stopPropagation()}>
+  <div class="modal-backdrop" role="button" tabindex="-1" onclick={() => { if (!oauthPolling) { showAddProvider = false; oauthProvider = ""; } }} onkeydown={(e) => { if (e.key === "Escape" && !oauthPolling) { showAddProvider = false; oauthProvider = ""; } }}>
+    <div class="modal-content" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
       <div class="modal-title">Add a provider</div>
 
       {#if oauthProvider}
@@ -918,10 +916,8 @@ $effect(() => {
 
 <!-- Model search modal -->
 {#if showModelSearch}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="modal-backdrop" onclick={() => { showModelSearch = false; }}>
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="modal-content" onclick={(e) => e.stopPropagation()}>
+  <div class="modal-backdrop" role="button" tabindex="-1" onclick={() => { showModelSearch = false; }} onkeydown={(e) => { if (e.key === "Escape") showModelSearch = false; }}>
+    <div class="modal-content" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
       <div class="modal-title">Add model — {modelSearchProvider}</div>
       <input
         type="text"
@@ -1116,11 +1112,6 @@ $effect(() => {
     margin-top: 8px;
   }
 
-  .success {
-    color: var(--green);
-    font-size: 13px;
-    margin-top: 8px;
-  }
 
   .loading-text {
     color: var(--text-2);
