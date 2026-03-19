@@ -63,7 +63,9 @@ export async function run(args: string[]) {
   const minutesSinceSpirit = spiritTime ? (now - spiritTime) / 60_000 : Infinity;
 
   // No nudge if creator was active recently AND spirit messaged recently
-  if (minutesSinceCreator < 5 && minutesSinceSpirit < 15) {
+  const creatorThreshold = Number(process.env.VOLUTE_NURTURE_CREATOR_MINUTES) || 5;
+  const spiritThreshold = Number(process.env.VOLUTE_NURTURE_SPIRIT_MINUTES) || 15;
+  if (minutesSinceCreator < creatorThreshold && minutesSinceSpirit < spiritThreshold) {
     return;
   }
 

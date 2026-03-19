@@ -912,7 +912,7 @@ const app = new Hono<AuthEnv>()
             if (!schedules.some((s) => s.id === nurtureId)) {
               schedules.push({
                 id: nurtureId,
-                cron: "*/5 * * * *",
+                cron: process.env.VOLUTE_NURTURE_CRON ?? "*/5 * * * *",
                 script: `volute seed check ${name}`,
                 enabled: true,
                 whileSleeping: "skip",

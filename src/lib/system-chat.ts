@@ -56,14 +56,20 @@ export async function sendSystemMessage(
   text: string,
   opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
 ): Promise<void> {
-  const { conversationId } = await ensureSystemDM(mindName);
+  // Spirit can't DM itself — deliver directly without conversation persistence
+  const isSpirit = mindName === "volute";
+  let conversationId: string | undefined;
 
-  await addMessage(conversationId, "user", "volute", [{ type: "text", text }]);
+  if (!isSpirit) {
+    const dm = await ensureSystemDM(mindName);
+    conversationId = dm.conversationId;
+    await addMessage(conversationId, "user", "volute", [{ type: "text", text }]);
+  }
 
   await deliverMessage(mindName, {
     content: [{ type: "text", text }],
     channel: "@volute",
-    conversationId,
+    ...(conversationId ? { conversationId } : {}),
     sender: "volute",
     isDM: true,
     participants: ["volute", mindName],
