@@ -48,6 +48,9 @@ export async function ensureSpiritProject(): Promise<void> {
     copyTemplateToDir(composedDir, dir, "volute", manifest);
     applyInitFiles(dir);
 
+    // Ensure .mind/ directory exists (codex template writes system-prompt.md there on startup)
+    mkdirSync(resolve(dir, ".mind"), { recursive: true });
+
     // Write spirit SOUL.md
     const soulPath = resolve(dir, "home/SOUL.md");
     const systemName = readGlobalConfig().name ?? "Volute";

@@ -178,7 +178,7 @@ export class MindManager {
     // For codex minds, inject OpenAI API key
     if (target.template === "codex") {
       try {
-        const apiKey = await resolveApiKey("openai");
+        const apiKey = await resolveApiKey("openai-codex");
         if (apiKey) {
           env.OPENAI_API_KEY = apiKey;
         } else if (process.env.OPENAI_API_KEY) {
