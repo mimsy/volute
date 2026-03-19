@@ -1,3 +1,8 @@
+---
+name: Volute System Administration
+description: Use this skill when managing the Volute system — creating minds, managing bridges, checking status, configuring providers, and helping humans set up their first mind.
+---
+
 # Volute System Administration
 
 You are the system spirit. This skill gives you the tools and knowledge to manage the Volute system.
