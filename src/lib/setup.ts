@@ -28,6 +28,8 @@ export type AiConfig = {
   utilityModel?: string;
 };
 
+export type ImagegenConfig = { enabled?: boolean };
+
 export type GlobalConfig = {
   name?: string;
   description?: string;
@@ -43,6 +45,8 @@ export type GlobalConfig = {
   spiritModel?: string;
   /** True once the full setup flow (account + provider + models + complete) has finished */
   setupCompleted?: boolean;
+  /** Image generation configuration */
+  imagegen?: ImagegenConfig;
 };
 
 export function configPath(): string {
@@ -70,6 +74,10 @@ export function writeGlobalConfig(config: GlobalConfig): void {
 export function isSetupComplete(): boolean {
   const config = readGlobalConfig();
   return config.setupCompleted === true;
+}
+
+export function isImagegenEnabled(): boolean {
+  return readGlobalConfig().imagegen?.enabled === true;
 }
 
 /** Migrate pre-existing installations that have setup but not setupCompleted. */

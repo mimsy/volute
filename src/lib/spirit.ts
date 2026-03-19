@@ -89,7 +89,7 @@ export async function ensureSpiritProject(): Promise<void> {
     }
 
     // Install spirit skills from shared pool (after git init)
-    const spiritSkills = ["volute-admin", "orientation", "memory"];
+    const spiritSkills = ["volute-admin", "orientation", "memory", "seed-nurture"];
     for (const skillId of spiritSkills) {
       try {
         const shared = await getSharedSkill(skillId);

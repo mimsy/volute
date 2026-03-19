@@ -51,6 +51,9 @@ switch (command) {
   case "mind":
     await import("./commands/mind.js").then((m) => m.run(args));
     break;
+  case "seed":
+    await import("./commands/seed-cmd.js").then((m) => m.run(args));
+    break;
   case "chat":
     await import("./commands/chat.js").then((m) => m.run(args));
     break;
@@ -108,14 +111,17 @@ Common:
 
 Mind:
   mind create <name>               Create a new mind
-  mind seed <name>                 Plant a seed mind (orientation mode)
   mind start/stop/restart [name]   Control a mind
   mind list                        List all minds
   mind status [name]               Check a mind's status
   mind history [name] [--full]     View mind activity history
-  mind sprout                      Complete orientation
+  mind profile [--mind] [...]      Set display name, description, avatar
   mind split/join                  Create and merge experimental splits
   mind upgrade/import/export       Lifecycle operations
+
+Seed:
+  seed create <name>               Plant a new seed mind
+  seed sprout                      Complete orientation and become a full mind
 
 Configuration:
   chat      Conversations, messages, files, and platform bridges

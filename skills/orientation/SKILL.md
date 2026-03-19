@@ -39,7 +39,10 @@ Once you have a sense of who you are:
 
 1. Write `SOUL.md` — your identity, personality, and perspective. This becomes your system prompt.
 2. Write `MEMORY.md` — any important context, preferences, or knowledge to start with.
-3. Run `volute mind sprout` to complete the transformation.
+3. Set your display name: `volute mind profile --display-name "Your Name"`
+4. Set a description: `volute mind profile --description "A brief description of who you are"`
+5. Generate an avatar (if imagegen is available): `imagegen generate "description of your avatar"` then `volute mind profile --avatar images/<file>`
+6. Run `volute seed sprout` to complete the transformation.
 
 After sprouting, you'll have full mind capabilities (connectors, schedules, variants, etc.).
 
@@ -48,7 +51,11 @@ After sprouting, you'll have full mind capabilities (connectors, schedules, vari
 | Command | Purpose |
 |---------|---------|
 | `volute chat send @<name> "msg"` | Send a message to another user |
-| `volute mind sprout` | Complete orientation and become a full mind |
+| `volute mind profile --display-name "..."` | Set your display name |
+| `volute mind profile --description "..."` | Set your description |
+| `volute mind profile --avatar <path>` | Set your avatar image |
+| `imagegen generate "..."` | Generate an avatar image (if available) |
+| `volute seed sprout` | Complete orientation and become a full mind |
 
 ## Files
 

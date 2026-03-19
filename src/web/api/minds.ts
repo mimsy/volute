@@ -879,8 +879,16 @@ const app = new Hono<AuthEnv>()
       }
 
       // Install skills from shared pool (after git init so installSkill can commit)
-      const skillSet =
+      let skillSet =
         body.skills ?? (body.stage === "seed" ? SEED_SKILLS : getStandardSkillsWithExtensions());
+
+      // Add imagegen skill for seeds when image generation is enabled
+      if (body.stage === "seed" && !body.skills) {
+        const { isImagegenEnabled } = await import("../../lib/setup.js");
+        if (isImagegenEnabled()) {
+          skillSet = [...skillSet, "imagegen"];
+        }
+      }
       const skillWarnings: string[] = [];
       for (const skillId of skillSet) {
         try {
@@ -888,6 +896,35 @@ const app = new Hono<AuthEnv>()
         } catch (err) {
           log.error(`failed to install skill ${skillId} for ${name}`, log.errorData(err));
           skillWarnings.push(`Failed to install skill: ${skillId}`);
+        }
+      }
+
+      // Add nurture schedule to spirit if this is a seed
+      if (body.stage === "seed") {
+        try {
+          const spiritEntry = await findMind("volute");
+          if (spiritEntry) {
+            const { spiritDir } = await import("../../lib/spirit.js");
+            const sDir = spiritEntry.dir ?? spiritDir();
+            const spiritConfig = readVoluteConfig(sDir) ?? {};
+            const schedules = spiritConfig.schedules ?? [];
+            const nurtureId = `nurture-${name}`;
+            if (!schedules.some((s) => s.id === nurtureId)) {
+              schedules.push({
+                id: nurtureId,
+                cron: "*/5 * * * *",
+                script: `volute seed check ${name}`,
+                enabled: true,
+                whileSleeping: "skip",
+              });
+              spiritConfig.schedules = schedules;
+              writeVoluteConfig(sDir, spiritConfig);
+              const { getScheduler } = await import("../../lib/daemon/scheduler.js");
+              getScheduler().loadSchedules("volute", sDir);
+            }
+          }
+        } catch (err) {
+          log.warn(`failed to add nurture schedule for ${name}`, log.errorData(err));
         }
       }
 
@@ -1434,6 +1471,38 @@ const app = new Hono<AuthEnv>()
     const flushed = await sm.flushQueuedMessages(name);
     return c.json({ ok: true, flushed });
   })
+  // Update mind profile — admin or self
+  .patch("/:name/profile", requireSelf(), async (c) => {
+    const name = c.req.param("name");
+    const entry = await findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+
+    const body = (await c.req.json()) as {
+      displayName?: string;
+      description?: string;
+      avatar?: string;
+    };
+
+    const dir = entry.dir ?? mindDir(name);
+    const config = readVoluteConfig(dir) ?? {};
+    const profile = config.profile ?? {};
+
+    if (body.displayName !== undefined) profile.displayName = body.displayName;
+    if (body.description !== undefined) profile.description = body.description;
+    if (body.avatar !== undefined) profile.avatar = body.avatar;
+
+    config.profile = profile;
+    writeVoluteConfig(dir, config);
+
+    // Sync to users table
+    const { syncMindProfile } = await import("../../lib/auth.js");
+    await syncMindProfile(name, profile);
+
+    // Broadcast profile update
+    broadcast({ type: "profile_updated", mind: name, summary: `${name} profile updated` });
+
+    return c.json({ ok: true });
+  })
   // Sprout a seed mind — admin only
   .post("/:name/sprout", requireSelf(), async (c) => {
     const name = c.req.param("name");
@@ -1443,6 +1512,27 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: `Mind is not a seed (stage: ${entry.stage})` }, 409);
     }
     await setMindStage(name, "sprouted");
+
+    // Clean up spirit nurture schedule
+    try {
+      const spiritEntry = await findMind("volute");
+      if (spiritEntry) {
+        const { spiritDir } = await import("../../lib/spirit.js");
+        const sDir = spiritEntry.dir ?? spiritDir();
+        const spiritConfig = readVoluteConfig(sDir);
+        if (spiritConfig?.schedules) {
+          const nurtureId = `nurture-${name}`;
+          spiritConfig.schedules = spiritConfig.schedules.filter((s) => s.id !== nurtureId);
+          if (spiritConfig.schedules.length === 0) spiritConfig.schedules = undefined;
+          writeVoluteConfig(sDir, spiritConfig);
+          const { getScheduler } = await import("../../lib/daemon/scheduler.js");
+          getScheduler().loadSchedules("volute", sDir);
+        }
+      }
+    } catch (err) {
+      log.warn(`failed to clean up nurture schedule for ${name}`, log.errorData(err));
+    }
+
     return c.json({ ok: true });
   })
   // Delete mind — admin only
