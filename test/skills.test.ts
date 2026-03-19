@@ -9,12 +9,15 @@ import { sharedSkills } from "../src/lib/schema.js";
 import {
   getSharedSkill,
   importSkillFromDir,
+  installBinShim,
   installHookShims,
   installSkill,
   listMindSkills,
   listSharedSkills,
+  mindSkillsDir,
   parseSkillMd,
   publishSkill,
+  removeBinShim,
   removeHookShims,
   removeSharedSkill,
   sharedSkillsDir,
@@ -521,13 +524,13 @@ describe("syncBuiltinSkills", () => {
 describe("hook shim management", () => {
   it("installs hook shims for declared hooks", () => {
     const dir = join(voluteHome(), "test-hooks-mind");
-    mkdirSync(join(dir, "home", ".config", "hooks"), { recursive: true });
+    mkdirSync(join(dir, "home", ".local", "hooks"), { recursive: true });
 
     installHookShims(dir, "resonance", {
       "pre-prompt": "scripts/resonance-hook.sh",
     });
 
-    const shimPath = join(dir, "home", ".config", "hooks", "pre-prompt", "50-resonance.sh");
+    const shimPath = join(dir, "home", ".local", "hooks", "pre-prompt", "50-resonance.sh");
     assert.ok(existsSync(shimPath), "shim file should exist");
     const content = readFileSync(shimPath, "utf-8");
     assert.ok(content.includes("exec bash"), "shim should use bash for .sh scripts");
@@ -539,25 +542,28 @@ describe("hook shim management", () => {
     rmSync(dir, { recursive: true });
   });
 
-  it("installs .ts hook shims with npx tsx", () => {
+  it("installs .ts hook shims with node --import tsx", () => {
     const dir = join(voluteHome(), "test-hooks-ts");
-    mkdirSync(join(dir, "home", ".config", "hooks"), { recursive: true });
+    mkdirSync(join(dir, "home", ".local", "hooks"), { recursive: true });
 
     installHookShims(dir, "test-skill", {
       "post-tool-use": "scripts/hook.ts",
     });
 
-    const shimPath = join(dir, "home", ".config", "hooks", "post-tool-use", "50-test-skill.sh");
+    const shimPath = join(dir, "home", ".local", "hooks", "post-tool-use", "50-test-skill.sh");
     assert.ok(existsSync(shimPath));
     const content = readFileSync(shimPath, "utf-8");
-    assert.ok(content.includes("exec npx tsx"), "shim should use npx tsx for .ts scripts");
+    assert.ok(
+      content.includes("exec node --import tsx"),
+      "shim should use node --import tsx for .ts scripts",
+    );
 
     rmSync(dir, { recursive: true });
   });
 
   it("removes hook shims for a skill", () => {
     const dir = join(voluteHome(), "test-hooks-remove");
-    const eventDir = join(dir, "home", ".config", "hooks", "pre-prompt");
+    const eventDir = join(dir, "home", ".local", "hooks", "pre-prompt");
     mkdirSync(eventDir, { recursive: true });
 
     // Create a shim
@@ -579,17 +585,150 @@ describe("hook shim management", () => {
     removeHookShims(dir, "resonance");
   });
 
+  it("installs bin shim named after script, not skill ID", () => {
+    const dir = join(voluteHome(), "test-bin-shim");
+    mkdirSync(join(dir, "home", ".local", "bin"), { recursive: true });
+
+    // Skill ID is "dreaming" but script is "dream.ts" — command should be "dream"
+    installBinShim(dir, "dreaming", "scripts/dream.ts");
+
+    const shimPath = join(dir, "home", ".local", "bin", "dream");
+    assert.ok(
+      !existsSync(join(dir, "home", ".local", "bin", "dreaming")),
+      "should NOT use skill ID",
+    );
+    assert.ok(existsSync(shimPath), "bin shim should exist");
+    const content = readFileSync(shimPath, "utf-8");
+    assert.ok(content.includes("node --import tsx"), "shim should use node --import tsx");
+    assert.ok(
+      content.includes(".claude/skills/dreaming/scripts/dream.ts"),
+      "shim should reference the skill script",
+    );
+    assert.ok(content.includes('"$@"'), "shim should pass through arguments");
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("removes bin shim on uninstall", () => {
+    const dir = join(voluteHome(), "test-bin-remove");
+    const binDir = join(dir, "home", ".local", "bin");
+    mkdirSync(binDir, { recursive: true });
+
+    writeFileSync(join(binDir, "resonance"), "#!/bin/bash\necho test", { mode: 0o755 });
+    writeFileSync(join(binDir, "other"), "#!/bin/bash\necho other", { mode: 0o755 });
+
+    removeBinShim(dir, "scripts/resonance.ts");
+
+    assert.ok(!existsSync(join(binDir, "resonance")), "resonance shim should be removed");
+    assert.ok(existsSync(join(binDir, "other")), "other shim should be kept");
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("parseSkillMd extracts bin from metadata", () => {
+    const md = `---
+name: Test
+description: A test skill
+metadata:
+  bin: scripts/test.ts
+---
+# Test`;
+    const parsed = parseSkillMd(md);
+    assert.equal(parsed.bin, "scripts/test.ts");
+  });
+
+  it("parseSkillMd returns null bin when not specified", () => {
+    const md = `---
+name: Test
+description: A test skill
+---
+# Test`;
+    const parsed = parseSkillMd(md);
+    assert.equal(parsed.bin, null);
+  });
+
   it("installs multiple hooks for different events", () => {
     const dir = join(voluteHome(), "test-hooks-multi");
-    mkdirSync(join(dir, "home", ".config", "hooks"), { recursive: true });
+    mkdirSync(join(dir, "home", ".local", "hooks"), { recursive: true });
 
     installHookShims(dir, "my-skill", {
       "pre-prompt": "scripts/pre.sh",
       "post-tool-use": "scripts/post.sh",
     });
 
-    assert.ok(existsSync(join(dir, "home", ".config", "hooks", "pre-prompt", "50-my-skill.sh")));
-    assert.ok(existsSync(join(dir, "home", ".config", "hooks", "post-tool-use", "50-my-skill.sh")));
+    assert.ok(existsSync(join(dir, "home", ".local", "hooks", "pre-prompt", "50-my-skill.sh")));
+    assert.ok(existsSync(join(dir, "home", ".local", "hooks", "post-tool-use", "50-my-skill.sh")));
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("installs hook shims with correct path for codex template", () => {
+    const dir = join(voluteHome(), "test-hooks-codex");
+    mkdirSync(join(dir, "home", ".local", "hooks"), { recursive: true });
+    // Create AGENTS.md marker file to indicate codex template
+    writeFileSync(join(dir, "home", "AGENTS.md"), "");
+
+    installHookShims(dir, "resonance", {
+      "pre-prompt": "scripts/resonance-hook.sh",
+    });
+
+    const shimPath = join(dir, "home", ".local", "hooks", "pre-prompt", "50-resonance.sh");
+    assert.ok(existsSync(shimPath), "shim file should exist");
+    const content = readFileSync(shimPath, "utf-8");
+    assert.ok(
+      content.includes(".agents/skills/resonance/scripts/resonance-hook.sh"),
+      "codex shim should reference .agents/skills path",
+    );
+    assert.ok(
+      !content.includes(".claude/skills"),
+      "codex shim should not reference .claude/skills path",
+    );
+
+    rmSync(dir, { recursive: true });
+  });
+});
+
+describe("mindSkillsDir template detection", () => {
+  it("resolves to .claude/skills by default", () => {
+    const dir = join(voluteHome(), "test-skills-dir-claude");
+    mkdirSync(join(dir, "home"), { recursive: true });
+
+    const result = mindSkillsDir(dir);
+    assert.ok(result.endsWith(join("home", ".claude", "skills")));
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("resolves to .agents/skills when AGENTS.md exists", () => {
+    const dir = join(voluteHome(), "test-skills-dir-codex");
+    mkdirSync(join(dir, "home"), { recursive: true });
+    writeFileSync(join(dir, "home", "AGENTS.md"), "");
+
+    const result = mindSkillsDir(dir);
+    assert.ok(result.endsWith(join("home", ".agents", "skills")));
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("resolves to .pi/skills when MINDS.md exists", () => {
+    const dir = join(voluteHome(), "test-skills-dir-pi");
+    mkdirSync(join(dir, "home"), { recursive: true });
+    writeFileSync(join(dir, "home", "MINDS.md"), "");
+
+    const result = mindSkillsDir(dir);
+    assert.ok(result.endsWith(join("home", ".pi", "skills")));
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("prefers AGENTS.md over MINDS.md when both exist", () => {
+    const dir = join(voluteHome(), "test-skills-dir-both");
+    mkdirSync(join(dir, "home"), { recursive: true });
+    writeFileSync(join(dir, "home", "AGENTS.md"), "");
+    writeFileSync(join(dir, "home", "MINDS.md"), "");
+
+    const result = mindSkillsDir(dir);
+    assert.ok(result.endsWith(join("home", ".agents", "skills")));
 
     rmSync(dir, { recursive: true });
   });

@@ -123,8 +123,8 @@ export class MindManager {
     const logStream = new RotatingLog(resolve(logsDir, "mind.log"));
     const mindToken = generateMindToken(name);
     const mindEnv = loadMergedEnv(name);
-    // Prepend mind's .config/bin to PATH so the session-aware volute wrapper is found first
-    const mindBinDir = resolve(dir, "home", ".config", "bin");
+    // Prepend mind's .local/bin to PATH for skill commands and volute wrapper
+    const mindLocalBin = resolve(dir, "home", ".local", "bin");
     const currentPath = process.env.PATH ?? "";
     const env: Record<string, string | undefined> = {
       ...process.env,
@@ -134,7 +134,7 @@ export class MindManager {
       VOLUTE_MIND_DIR: dir,
       VOLUTE_MIND_PORT: String(port),
       VOLUTE_DAEMON_TOKEN: mindToken,
-      PATH: `${mindBinDir}:${currentPath}`,
+      PATH: `${mindLocalBin}:${currentPath}`,
       // Strip CLAUDECODE so the Agent SDK can spawn Claude Code subprocesses
       CLAUDECODE: undefined,
     };
@@ -172,6 +172,22 @@ export class MindManager {
         }
       } catch (err) {
         mlog.error(`failed to inject AI provider key for ${name}`, log.errorData(err));
+      }
+    }
+
+    // For codex minds, inject OpenAI API key
+    if (target.template === "codex") {
+      try {
+        const apiKey = await resolveApiKey("openai");
+        if (apiKey) {
+          env.OPENAI_API_KEY = apiKey;
+        } else if (process.env.OPENAI_API_KEY) {
+          env.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+        } else {
+          mlog.warn(`no OpenAI API key found — mind ${name} may fail to start`);
+        }
+      } catch (err) {
+        mlog.error(`failed to inject OpenAI API key for ${name}`, log.errorData(err));
       }
     }
 
@@ -420,6 +436,19 @@ export class MindManager {
         mlog.warn(`failed to check sleep state for ${name}`, log.errorData(err));
       }
 
+      // Clear turn state and delivery session state so ghost counts don't accumulate
+      clearTurnState(name).catch((err) =>
+        mlog.warn(`failed to clear turn state for ${name} after crash`, log.errorData(err)),
+      );
+      try {
+        const { getDeliveryManager } = await import("../delivery/delivery-manager.js");
+        getDeliveryManager().clearMindSessions(name);
+      } catch (err) {
+        if (!(err instanceof Error && err.message.includes("not initialized"))) {
+          mlog.warn(`failed to clear delivery state for ${name} after crash`, log.errorData(err));
+        }
+      }
+
       // Clear activity tracking and publish crash as mind_stopped
       import("../events/mind-activity-tracker.js")
         .then(({ markIdle }) => markIdle(name))
@@ -476,7 +505,15 @@ export class MindManager {
 
     this.stopping.delete(name);
     revokeMindToken(name);
-    clearTurnState(name);
+    await clearTurnState(name);
+    try {
+      const { getDeliveryManager } = await import("../delivery/delivery-manager.js");
+      getDeliveryManager().clearMindSessions(name);
+    } catch (err) {
+      if (!(err instanceof Error && err.message.includes("not initialized"))) {
+        mlog.warn(`failed to clear delivery state for ${name} on stop`, log.errorData(err));
+      }
+    }
     if (this.restartTracker.reset(name)) this.saveCrashAttempts();
     rmSync(mindPidPath(name), { force: true });
 

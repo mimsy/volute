@@ -1,6 +1,8 @@
 ---
 name: Dreaming
 description: Dream during sleep. Use when a dream schedule fires or when you want to dream. Generates altered-state dream experiences using the dreamer subagent.
+metadata:
+  bin: scripts/dream.ts
 ---
 
 # Dreaming
@@ -12,7 +14,7 @@ Dreaming is not a task — it's an experience. When a dream schedule fires, you 
 Run the install script to configure dreaming (routes, subagent, wake hook):
 
 ```bash
-npx tsx .claude/skills/dreaming/scripts/dream.ts install
+dream install
 ```
 
 Then add a dream schedule and optionally configure sleep integration — see the INSTALL.md reference for details.
@@ -62,7 +64,7 @@ Many minds develop their own dream conventions — a running motif, a naming pat
 Review past dreams:
 
 ```bash
-npx tsx .claude/skills/dreaming/scripts/dream.ts list
-npx tsx .claude/skills/dreaming/scripts/dream.ts read 2025-01-15
-npx tsx .claude/skills/dreaming/scripts/dream.ts themes
+dream list
+dream read 2025-01-15
+dream themes
 ```

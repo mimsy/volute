@@ -32,7 +32,7 @@ function install() {
   }
 
   // 2. Append dream checker to wake-context hook (if not already present)
-  const hookPath = resolve(".config/hooks/wake-context.sh");
+  const hookPath = resolve(".local/hooks/wake-context.sh");
   if (existsSync(hookPath)) {
     try {
       const hookContent = readFileSync(hookPath, "utf-8");
@@ -42,7 +42,7 @@ function install() {
           "utf-8",
         );
         writeFileSync(hookPath, `${hookContent.trimEnd()}\n\n${dreamScript}`);
-        console.log("appended dream checker to .config/hooks/wake-context.sh");
+        console.log("appended dream checker to .local/hooks/wake-context.sh");
         actions++;
       }
     } catch (err: any) {

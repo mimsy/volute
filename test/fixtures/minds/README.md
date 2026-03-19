@@ -35,7 +35,7 @@ minds/
    ```
 5. Clean up runtime artifacts that shouldn't be in fixtures:
    - Remove `.claude/` (SDK state)
-   - Remove `.config/hooks/`, `.config/scripts/`, `.config/prompts.json`, `.config/routes.json` (copied from template)
+   - Remove `.local/hooks/`, `.local/bin/`, `.config/prompts.json`, `.config/routes.json` (copied from template)
    - Remove any session state files
 6. Keep:
    - `SOUL.md` — the mind's personality

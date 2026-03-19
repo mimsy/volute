@@ -5,12 +5,12 @@
 From your `home/` directory:
 
 ```bash
-npx tsx .claude/skills/dreaming/scripts/dream.ts install
+dream install
 ```
 
 This sets up:
 - `dreamer` subagent in `.config/config.json`
-- Dream checker in `.config/hooks/wake-context.sh`
+- Dream checker in `.local/hooks/wake-context.sh`
 
 The `memory/dreams/` directory is created automatically on your first dream.
 

@@ -84,14 +84,16 @@ export function parseSkillMd(content: string): {
   description: string;
   npmDependencies: string[];
   hooks: Record<string, string>;
+  bin: string | null;
 } {
   const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return { name: "", description: "", npmDependencies: [], hooks: {} };
+  if (!match) return { name: "", description: "", npmDependencies: [], hooks: {}, bin: null };
   const frontmatter = match[1];
 
   const nameMatch = frontmatter.match(/^name:\s*(.+)$/m);
   const descMatch = frontmatter.match(/^description:\s*(.+)$/m);
   const depsMatch = frontmatter.match(/^\s*npm-dependencies:\s*(.+)$/m);
+  const binMatch = frontmatter.match(/^\s*bin:\s*(.+)$/m);
 
   // Parse hooks from metadata block using indentation-aware parsing.
   // hooks: must appear under metadata:, and hook entries are indented deeper than hooks:.
@@ -139,6 +141,7 @@ export function parseSkillMd(content: string): {
           .filter(Boolean)
       : [],
     hooks,
+    bin: binMatch?.[1].trim() ?? null,
   };
 }
 
@@ -223,8 +226,34 @@ export async function removeSharedSkill(id: string): Promise<void> {
 
 // --- Mind skill operations ---
 
+const TEMPLATE_SKILLS_DIR: Record<string, string> = {
+  claude: ".claude/skills",
+  pi: ".pi/skills",
+  codex: ".agents/skills",
+};
+
+/**
+ * Resolve the skills directory for a mind.
+ * Detects the template from marker files in the mind directory:
+ * - home/AGENTS.md → codex (.agents/skills)
+ * - home/MINDS.md → pi (.pi/skills)
+ * - otherwise → claude (.claude/skills)
+ */
 export function mindSkillsDir(dir: string): string {
-  return resolve(dir, "home", ".claude", "skills");
+  const home = resolve(dir, "home");
+  let subdir = TEMPLATE_SKILLS_DIR.claude;
+  if (existsSync(join(home, "AGENTS.md"))) {
+    subdir = TEMPLATE_SKILLS_DIR.codex;
+  } else if (existsSync(join(home, "MINDS.md"))) {
+    subdir = TEMPLATE_SKILLS_DIR.pi;
+  }
+  return resolve(home, subdir);
+}
+
+/** Relative path from mind dir to skills dir, e.g. "home/.agents/skills" */
+function relSkillsPath(dir: string): string {
+  const home = resolve(dir, "home");
+  return join("home", mindSkillsDir(dir).slice(home.length + 1));
 }
 
 type UpstreamInfo = {
@@ -295,10 +324,11 @@ export async function installSkill(
     }
   }
 
-  // Install hook shims if declared in SKILL.md frontmatter
+  // Install hook shims and bin command if declared in SKILL.md frontmatter
   if (existsSync(skillMdPath)) {
-    const { hooks } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
+    const { hooks, bin } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
     installHookShims(dir, skillId, hooks);
+    if (bin) installBinShim(dir, skillId, bin);
   }
 
   // Read install notes if present
@@ -310,13 +340,10 @@ export async function installSkill(
 
   // Write upstream tracking file
   // We need to commit first, then get the hash, then write upstream and amend
-  await gitExec(["add", join("home", ".claude", "skills", skillId)], { cwd: dir });
-  // Stage hook shim files if any were created
-  if (
-    Object.keys(parseSkillMd(readFileSync(join(sourceDir, "SKILL.md"), "utf-8")).hooks).length > 0
-  ) {
-    await gitExec(["add", join("home", ".config", "hooks")], { cwd: dir });
-  }
+  await gitExec(["add", join(relSkillsPath(dir), skillId)], { cwd: dir });
+  // Stage hook shim and bin command files if any were created
+  await gitExec(["add", join("home", ".local", "hooks")], { cwd: dir }).catch(() => {});
+  await gitExec(["add", join("home", ".local", "bin")], { cwd: dir }).catch(() => {});
   // Also commit package.json/package-lock.json changes from npm install
   if (npmInstalled.length > 0) {
     await gitExec(["add", "package.json", "package-lock.json"], { cwd: dir });
@@ -330,7 +357,7 @@ export async function installSkill(
     baseCommit: commitHash,
   };
   writeFileSync(join(destDir, ".upstream.json"), `${JSON.stringify(upstream, null, 2)}\n`);
-  await gitExec(["add", join("home", ".claude", "skills", skillId, ".upstream.json")], {
+  await gitExec(["add", join(relSkillsPath(dir), skillId, ".upstream.json")], {
     cwd: dir,
   });
   await gitExec(["commit", "--amend", "--no-edit"], { cwd: dir });
@@ -347,16 +374,19 @@ export async function uninstallSkill(
   const skillDir = join(mindSkillsDir(dir), skillId);
   if (!existsSync(skillDir)) throw new Error(`Skill not installed: ${skillId}`);
 
-  // Remove hook shims for this skill
+  // Remove hook shims and bin command for this skill
   removeHookShims(dir, skillId);
+  const skillMdPath = join(skillDir, "SKILL.md");
+  if (existsSync(skillMdPath)) {
+    const { bin } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
+    if (bin) removeBinShim(dir, bin);
+  }
 
   rmSync(skillDir, { recursive: true });
-  await gitExec(["add", join("home", ".claude", "skills", skillId)], { cwd: dir });
-  // Also stage hook shim removals
-  const hooksBase = join(dir, "home", ".config", "hooks");
-  if (existsSync(hooksBase)) {
-    await gitExec(["add", join("home", ".config", "hooks")], { cwd: dir });
-  }
+  await gitExec(["add", join(relSkillsPath(dir), skillId)], { cwd: dir });
+  // Also stage hook shim and bin removals
+  await gitExec(["add", join("home", ".local", "hooks")], { cwd: dir }).catch(() => {});
+  await gitExec(["add", join("home", ".local", "bin")], { cwd: dir }).catch(() => {});
   await gitExec(["commit", "-m", `Uninstall skill: ${skillId}`], { cwd: dir });
 }
 
@@ -388,7 +418,7 @@ export async function updateSkill(
   if (!existsSync(sourceDir)) throw new Error(`Shared skill files missing: ${upstream.source}`);
 
   // Collect all files from current, base (git), and new (shared)
-  const relSkillPath = join("home", ".claude", "skills", skillId);
+  const relSkillPath = join(relSkillsPath(dir), skillId);
   const currentFiles = listFilesRecursive(skillDir).filter((f) => f !== ".upstream.json");
   const newFiles = listFilesRecursive(sourceDir).filter((f) => f !== ".upstream.json");
   const allFiles = [...new Set([...currentFiles, ...newFiles])];
@@ -418,7 +448,9 @@ export async function updateSkill(
         try {
           baseContent = await gitExec(
             ["show", `${upstream.baseCommit}:${join(relSkillPath, file)}`],
-            { cwd: dir },
+            {
+              cwd: dir,
+            },
           );
         } catch {
           // File didn't exist in base — it was added locally, keep it
@@ -438,7 +470,9 @@ export async function updateSkill(
       try {
         baseContent = await gitExec(
           ["show", `${upstream.baseCommit}:${join(relSkillPath, file)}`],
-          { cwd: dir },
+          {
+            cwd: dir,
+          },
         );
       } catch {
         // File didn't exist at base commit — treat as empty
@@ -577,11 +611,11 @@ export async function publishSkill(
 
 // --- Hook shim management ---
 
-function shimContent(skillId: string, scriptPath: string): string {
+function shimContent(skillId: string, scriptPath: string, skillsSubdir: string): string {
   const ext = scriptPath.split(".").pop() ?? "sh";
-  const skillScriptPath = `.claude/skills/${skillId}/${scriptPath}`;
+  const skillScriptPath = `${skillsSubdir}/${skillId}/${scriptPath}`;
   if (ext === "ts") {
-    return `#!/bin/bash\nexec npx tsx ${skillScriptPath} "$@"\n`;
+    return `#!/bin/bash\nexec node --import tsx ${skillScriptPath} "$@"\n`;
   }
   if (ext === "js") {
     return `#!/bin/bash\nexec node ${skillScriptPath} "$@"\n`;
@@ -594,17 +628,19 @@ export function installHookShims(
   skillId: string,
   hooks: Record<string, string>,
 ): void {
+  const home = resolve(dir, "home");
+  const skillsSubdir = mindSkillsDir(dir).slice(home.length + 1); // e.g. ".claude/skills"
   for (const [event, scriptPath] of Object.entries(hooks)) {
-    const eventDir = join(dir, "home", ".config", "hooks", event);
+    const eventDir = join(dir, "home", ".local", "hooks", event);
     mkdirSync(eventDir, { recursive: true });
     const shimPath = join(eventDir, `50-${skillId}.sh`);
-    const content = shimContent(skillId, scriptPath);
+    const content = shimContent(skillId, scriptPath, skillsSubdir);
     writeFileSync(shimPath, content, { mode: 0o755 });
   }
 }
 
 export function removeHookShims(dir: string, skillId: string): void {
-  const hooksBase = join(dir, "home", ".config", "hooks");
+  const hooksBase = join(dir, "home", ".local", "hooks");
   if (!existsSync(hooksBase)) return;
 
   for (const eventDir of readdirSync(hooksBase, { withFileTypes: true })) {
@@ -612,6 +648,41 @@ export function removeHookShims(dir: string, skillId: string): void {
     const shimPath = join(hooksBase, eventDir.name, `50-${skillId}.sh`);
     if (existsSync(shimPath)) rmSync(shimPath);
   }
+}
+
+// --- Bin shim management ---
+
+function binShimContent(skillId: string, scriptPath: string, skillsSubdir: string): string {
+  const skillScriptPath = `${skillsSubdir}/${skillId}/${scriptPath}`;
+  const ext = scriptPath.split(".").pop() ?? "sh";
+  if (ext === "ts") {
+    return `#!/bin/bash\nexec node --import tsx ${skillScriptPath} "$@"\n`;
+  }
+  if (ext === "js") {
+    return `#!/bin/bash\nexec node ${skillScriptPath} "$@"\n`;
+  }
+  return `#!/bin/bash\nexec bash ${skillScriptPath} "$@"\n`;
+}
+
+/** Derive command name from script path: `scripts/dream.ts` → `dream` */
+function binCommandName(scriptPath: string): string {
+  return basename(scriptPath).replace(/\.[^.]+$/, "");
+}
+
+export function installBinShim(dir: string, skillId: string, scriptPath: string): void {
+  const home = resolve(dir, "home");
+  const skillsSubdir = mindSkillsDir(dir).slice(home.length + 1);
+  const binDir = join(dir, "home", ".local", "bin");
+  mkdirSync(binDir, { recursive: true });
+  const cmdName = binCommandName(scriptPath);
+  const shimPath = join(binDir, cmdName);
+  writeFileSync(shimPath, binShimContent(skillId, scriptPath, skillsSubdir), { mode: 0o755 });
+}
+
+export function removeBinShim(dir: string, scriptPath: string): void {
+  const cmdName = binCommandName(scriptPath);
+  const shimPath = join(dir, "home", ".local", "bin", cmdName);
+  if (existsSync(shimPath)) rmSync(shimPath);
 }
 
 // --- Helpers ---

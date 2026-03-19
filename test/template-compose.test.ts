@@ -41,9 +41,9 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, ".init/MEMORY.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/CLAUDE.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/memory/journal/.gitkeep")));
-      assert.ok(existsSync(resolve(composedDir, ".init/.config/hooks/startup-context.sh")));
+      assert.ok(existsSync(resolve(composedDir, ".init/.local/hooks/startup-context.ts")));
       assert.ok(
-        existsSync(resolve(composedDir, ".init/.config/hooks/pre-prompt/session-activity.ts")),
+        existsSync(resolve(composedDir, ".init/.local/hooks/pre-prompt/session-activity.ts")),
       );
       assert.ok(existsSync(resolve(composedDir, ".init/.claude/settings.json")));
 
@@ -106,10 +106,58 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, ".init/MINDS.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/.config/routes.json")));
       assert.ok(
-        existsSync(resolve(composedDir, ".init/.config/hooks/pre-prompt/session-activity.ts")),
+        existsSync(resolve(composedDir, ".init/.local/hooks/pre-prompt/session-activity.ts")),
       );
 
       // Pi overrides home/.config/config.json.tmpl with its own default model
+      assert.ok(existsSync(resolve(composedDir, "home/.config/config.json.tmpl")));
+
+      // Skills no longer bundled in template (managed via shared pool)
+      assert.ok(!existsSync(resolve(composedDir, "_skills")), "_skills should not exist");
+    } finally {
+      rmSync(composedDir, { recursive: true, force: true });
+    }
+  });
+
+  it("composes codex template with all expected files", () => {
+    const { composedDir } = composeTemplate(templatesRoot, "codex");
+    try {
+      // Base files
+      assert.ok(existsSync(resolve(composedDir, ".gitignore")));
+      assert.ok(existsSync(resolve(composedDir, "tsconfig.json")));
+
+      // Base shared source
+      assert.ok(existsSync(resolve(composedDir, "src/lib/types.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/logger.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/volute-server.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/auto-commit.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/format-prefix.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/startup.ts")));
+      // Base router + file handler
+      assert.ok(existsSync(resolve(composedDir, "src/lib/router.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/file-handler.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/routing.ts")));
+
+      // Template-specific source
+      assert.ok(existsSync(resolve(composedDir, "src/server.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/agent.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/content.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/session-store.ts")));
+
+      // No claude-template-specific files
+      assert.ok(!existsSync(resolve(composedDir, "src/lib/message-channel.ts")));
+      assert.ok(!existsSync(resolve(composedDir, "src/lib/hooks")));
+
+      // Init files
+      assert.ok(existsSync(resolve(composedDir, ".init/SOUL.md")));
+      assert.ok(existsSync(resolve(composedDir, ".init/MEMORY.md")));
+      assert.ok(existsSync(resolve(composedDir, ".init/AGENTS.md")));
+      assert.ok(existsSync(resolve(composedDir, ".init/.config/routes.json")));
+      assert.ok(
+        existsSync(resolve(composedDir, ".init/.config/hooks/pre-prompt/session-activity.ts")),
+      );
+
+      // Codex overrides home/.config/config.json.tmpl with its own defaults
       assert.ok(existsSync(resolve(composedDir, "home/.config/config.json.tmpl")));
 
       // Skills no longer bundled in template (managed via shared pool)
