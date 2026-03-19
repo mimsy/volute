@@ -90,12 +90,11 @@ export function createMind(options: {
   }
   refreshSystemPrompt();
 
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY is not set — cannot start codex mind");
-  }
+  // Use OPENAI_API_KEY if available, otherwise let codex CLI use its own auth (~/.codex/auth.json)
+  const apiKey = process.env.OPENAI_API_KEY;
 
   const codex = new Codex({
-    apiKey: process.env.OPENAI_API_KEY,
+    ...(apiKey ? { apiKey } : {}),
     config: {
       model_instructions_file: promptPath,
       // Let the SDK handle compaction natively when a threshold is configured

@@ -175,20 +175,18 @@ export class MindManager {
       }
     }
 
-    // For codex minds, inject OpenAI API key
+    // For codex minds, inject OpenAI API key if available via env or explicit config.
+    // OAuth tokens from the ChatGPT flow lack the api.responses.write scope needed by codex,
+    // so we skip those — the codex CLI will use its own auth (~/.codex/auth.json) instead.
     if (target.template === "codex") {
-      try {
-        const apiKey = await resolveApiKey("openai-codex");
-        if (apiKey) {
-          env.OPENAI_API_KEY = apiKey;
-        } else if (process.env.OPENAI_API_KEY) {
-          env.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-        } else {
-          mlog.warn(`no OpenAI API key found — mind ${name} may fail to start`);
-        }
-      } catch (err) {
-        mlog.error(`failed to inject OpenAI API key for ${name}`, log.errorData(err));
+      const ai = (await import("../ai-service.js")).getAiConfig();
+      const providerConfig = ai?.providers["openai-codex"];
+      if (providerConfig?.apiKey) {
+        env.OPENAI_API_KEY = providerConfig.apiKey;
+      } else if (process.env.OPENAI_API_KEY) {
+        env.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
       }
+      // If neither is set, codex CLI uses its own auth — no warning needed
     }
 
     // For claude minds, inject system Anthropic credentials.
