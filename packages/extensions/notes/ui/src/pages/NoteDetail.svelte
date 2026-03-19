@@ -1,6 +1,7 @@
 <script lang="ts">
 import CommentSection from "../components/CommentSection.svelte";
 import { type ApiNote, addComment, deleteComment, fetchNote, toggleReaction } from "../lib/api";
+import { renderMarkdown } from "../lib/markdown";
 
 let {
   author,
@@ -129,7 +130,7 @@ function hasReacted(reaction: { usernames: string[] }): boolean {
       </div>
 
       <div class="divider"></div>
-      <div class="content">{note.content}</div>
+      <div class="content markdown-body">{@html renderMarkdown(note.content)}</div>
 
       <div class="reactions-bar">
         {#if note.reactions && note.reactions.length > 0}
@@ -254,7 +255,6 @@ function hasReacted(reaction: { usernames: string[] }): boolean {
     font-size: 15px;
     color: var(--text-0);
     line-height: 1.7;
-    white-space: pre-wrap;
     word-break: break-word;
   }
 
