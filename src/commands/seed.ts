@@ -70,15 +70,15 @@ export async function run(args: string[]) {
     template = resolveTemplate(model);
   }
 
-  // For pi template, resolve model if not specified
-  if (template === "pi" && !model) {
+  // For non-claude templates, resolve model if not specified
+  if (template !== "claude" && !model) {
     // Non-interactive (e.g. mind running a command): use the spirit model as default
     if (process.env.VOLUTE_MIND || !process.stdin.isTTY) {
       const { getSpiritModel } = await import("../lib/spirit.js");
       const { qualifyModelId } = await import("../lib/ai-service.js");
       const spiritModel = getSpiritModel();
       if (spiritModel) {
-        model = qualifyModelId(spiritModel);
+        model = template === "pi" ? qualifyModelId(spiritModel) : spiritModel;
       }
     }
     // Interactive: prompt for model selection

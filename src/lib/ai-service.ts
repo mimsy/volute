@@ -94,9 +94,16 @@ export async function aiCompleteUtility(
   return aiComplete(systemPrompt, userMessage, utilityModel);
 }
 
+/** Map a provider ID to its native template. */
+function templateForProvider(provider: string): string {
+  if (provider === "anthropic") return "claude";
+  if (provider === "openai-codex") return "codex";
+  return "pi";
+}
+
 /**
  * Resolve the best template for a given model ID.
- * Anthropic models → "claude", everything else → "pi".
+ * Anthropic models → "claude", OpenAI Codex models → "codex", everything else → "pi".
  */
 export function resolveTemplate(modelId?: string): string {
   if (!modelId) {
@@ -104,22 +111,24 @@ export function resolveTemplate(modelId?: string): string {
     const enabled = getEnabledModels();
     if (enabled.length > 0) {
       const model = findModel(enabled[0]);
-      if (model) return model.provider === "anthropic" ? "claude" : "pi";
+      if (model) return templateForProvider(model.provider);
     }
     // Check configured providers
     const providers = getConfiguredProviders();
-    if (providers.length === 1 && providers[0] === "anthropic") return "claude";
-    if (providers.length > 0 && !providers.includes("anthropic")) return "pi";
+    if (providers.length === 1) return templateForProvider(providers[0]);
+    if (providers.length > 0 && !providers.includes("anthropic")) {
+      return templateForProvider(providers[0]);
+    }
     return "claude"; // default
   }
   // Parse provider from model ID (pi format: "provider:model-name")
   if (modelId.includes(":")) {
     const provider = modelId.split(":")[0];
-    return provider === "anthropic" ? "claude" : "pi";
+    return templateForProvider(provider);
   }
   // Try to resolve the model to determine its provider
   const model = findModel(modelId);
-  if (model) return model.provider === "anthropic" ? "claude" : "pi";
+  if (model) return templateForProvider(model.provider);
   // Unknown model without colon — default to claude
   return "claude";
 }
