@@ -5,7 +5,8 @@ import { z } from "zod";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js";
 import { routeOutboundBridge } from "../../../lib/bridge-outbound.js";
 import { getActiveTurnId, getLastToolUseEventId } from "../../../lib/daemon/turn-tracker.js";
-import { deliverMessage } from "../../../lib/delivery/message-delivery.js";
+import { extractTextContent } from "../../../lib/delivery/delivery-router.js";
+import { deliverMessage, recordOutbound } from "../../../lib/delivery/message-delivery.js";
 import { subscribe } from "../../../lib/events/conversation-events.js";
 import {
   addMessage,
@@ -239,13 +240,28 @@ const app = new Hono<AuthEnv>()
     }
 
     // Save user message
-    await addMessage(conversationId, "user", senderName, contentBlocks, {
+    const message = await addMessage(conversationId, "user", senderName, contentBlocks, {
       sourceEventId,
       turnId,
     });
     if (senderIsMind) {
       routeOutboundBridge(conversationId!, senderName, contentBlocks).catch((err) => {
         log.warn("outbound bridge routing failed", log.errorData(err));
+      });
+      // Record outbound event in mind_history for turn timeline
+      const participants = await getParticipants(conversationId!);
+      const channel = buildVoluteSlug({
+        participants,
+        mindUsername: senderName,
+        convTitle,
+        conversationId: conversationId!,
+        ...(conv ? { convType: conv.type as "dm" | "channel", convName: conv.name } : {}),
+      });
+      recordOutbound(senderName, channel, extractTextContent(contentBlocks), {
+        turnId,
+        messageId: message?.id != null ? String(message.id) : undefined,
+      }).catch((err) => {
+        log.warn("recordOutbound failed", log.errorData(err));
       });
     }
 
@@ -396,15 +412,37 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       unifiedSourceEventId = getLastToolUseEventId(senderName, unifiedMindSession);
       unifiedTurnId = getActiveTurnId(senderName, unifiedMindSession);
     }
-    await addMessage(body.conversationId, "user", senderName, contentBlocks, {
-      sourceEventId: unifiedSourceEventId,
-      turnId: unifiedTurnId,
-    });
+    const unifiedMessage = await addMessage(
+      body.conversationId,
+      "user",
+      senderName,
+      contentBlocks,
+      {
+        sourceEventId: unifiedSourceEventId,
+        turnId: unifiedTurnId,
+      },
+    );
 
     // If sender is a mind, check for outbound bridge routing (fire-and-forget)
     if (user.user_type === "mind") {
       routeOutboundBridge(body.conversationId, senderName, contentBlocks).catch((err) => {
         log.warn("outbound bridge routing failed", log.errorData(err));
+      });
+      // Record outbound event in mind_history for turn timeline
+      const participants = await getParticipants(body.conversationId);
+      const channel = buildVoluteSlug({
+        participants,
+        mindUsername: senderName,
+        convTitle: conv.title,
+        conversationId: body.conversationId,
+        convType: conv.type as "dm" | "channel",
+        convName: conv.name,
+      });
+      recordOutbound(senderName, channel, extractTextContent(contentBlocks), {
+        turnId: unifiedTurnId,
+        messageId: unifiedMessage?.id != null ? String(unifiedMessage.id) : undefined,
+      }).catch((err) => {
+        log.warn("recordOutbound failed", log.errorData(err));
       });
     }
 

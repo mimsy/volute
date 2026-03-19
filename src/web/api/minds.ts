@@ -2356,22 +2356,40 @@ const app = new Hono<AuthEnv>()
       )
       .orderBy(mindHistory.created_at);
 
-    // Group by turn and channel (mind_history uses channel slugs, not conversation IDs)
-    type HistMsgRow = (typeof historyMsgRows)[number];
-    const msgsByTurnChannel = new Map<string, Map<string, HistMsgRow[]>>();
-    for (const m of historyMsgRows) {
-      if (!m.turn_id || !m.channel) continue;
-      let byChannel = msgsByTurnChannel.get(m.turn_id);
+    // Group all events by turn and channel
+    type ConvEvent = {
+      id: number;
+      role: "user" | "assistant";
+      sender: string | null;
+      content: string | null;
+      created_at: string | null;
+    };
+    const msgsByTurnChannel = new Map<string, Map<string, ConvEvent[]>>();
+
+    function addToTurnChannel(turnId: string, channel: string, event: ConvEvent) {
+      let byChannel = msgsByTurnChannel.get(turnId);
       if (!byChannel) {
         byChannel = new Map();
-        msgsByTurnChannel.set(m.turn_id, byChannel);
+        msgsByTurnChannel.set(turnId, byChannel);
       }
-      let arr = byChannel.get(m.channel);
+      let arr = byChannel.get(channel);
       if (!arr) {
         arr = [];
-        byChannel.set(m.channel, arr);
+        byChannel.set(channel, arr);
       }
-      arr.push(m);
+      arr.push(event);
+    }
+
+    // Add inbound and outbound events from mind_history
+    for (const m of historyMsgRows) {
+      if (!m.turn_id || !m.channel) continue;
+      addToTurnChannel(m.turn_id, m.channel, {
+        id: m.id,
+        role: m.type === "inbound" ? "user" : "assistant",
+        sender: m.type === "inbound" ? (m.sender ?? null) : name,
+        content: m.content,
+        created_at: m.created_at,
+      });
     }
 
     // Build conversation label from channel slug
@@ -2425,7 +2443,7 @@ const app = new Hono<AuthEnv>()
     // 6. Assemble response
     const result = turnRows.map((t) => {
       const summary = summaryByTurn.get(t.id);
-      const turnChannels = msgsByTurnChannel.get(t.id) ?? new Map<string, HistMsgRow[]>();
+      const turnChannels = msgsByTurnChannel.get(t.id) ?? new Map<string, ConvEvent[]>();
       const convEntries = [...turnChannels.entries()].map(([channel, evts]) => {
         const { label, type } = getChannelLabel(channel);
         return {
@@ -2434,8 +2452,8 @@ const app = new Hono<AuthEnv>()
           type,
           messages: evts.map((m) => ({
             id: m.id,
-            role: m.type === "inbound" ? "user" : ("assistant" as string),
-            sender_name: m.type === "inbound" ? (m.sender ?? null) : name,
+            role: m.role as string,
+            sender_name: m.sender,
             content: [{ type: "text", text: m.content ?? "" }],
             source_event_id: m.id,
             created_at: m.created_at,
