@@ -99,6 +99,8 @@ export function createMind(options: {
       model_instructions_file: promptPath,
       // Let the SDK handle compaction natively when a threshold is configured
       model_auto_compact_token_limit: maxContextTokens ?? 999999999,
+      // Inherit all env vars so VOLUTE_* and PATH are available to commands
+      shell_environment_policy: { inherit: "all" },
     },
   });
 
@@ -336,12 +338,14 @@ export function createMind(options: {
                 }
                 itemText.delete(id);
               } else if (itemType === "command_execution" || itemType === "commandExecution") {
+                const rawOutput = item.aggregated_output ?? item.output;
                 const output =
-                  typeof item.output === "string" ? item.output : JSON.stringify(item.output ?? "");
+                  typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput ?? "");
+                const exitCode = item.exit_code ?? item.exitCode;
                 emit(session, {
                   type: "tool_result",
                   content: output,
-                  metadata: { name: "command", is_error: item.exitCode !== 0 },
+                  metadata: { name: "command", is_error: exitCode !== 0 },
                 });
                 broadcast(session, {
                   type: "tool_result",
