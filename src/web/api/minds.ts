@@ -1503,6 +1503,108 @@ const app = new Hono<AuthEnv>()
 
     return c.json({ ok: true });
   })
+  // Seed readiness check — used by spirit nurture schedule
+  .get("/:name/seed-check", requireSelf(), async (c) => {
+    const name = c.req.param("name");
+    const entry = await findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+    if (entry.stage !== "seed") return c.json({ output: "" });
+
+    const db = await getDb();
+    const ORIENTATION_MARKER = "You don't have a soul yet";
+    const creatorThreshold = Number(process.env.VOLUTE_NURTURE_CREATOR_MINUTES) || 5;
+    const spiritThreshold = Number(process.env.VOLUTE_NURTURE_SPIRIT_MINUTES) || 15;
+
+    // Last creator message (inbound, sender is not "volute" and not the seed itself)
+    const lastCreatorMsg = await db
+      .select({ created_at: mindHistory.created_at })
+      .from(mindHistory)
+      .where(
+        and(
+          eq(mindHistory.mind, name),
+          eq(mindHistory.type, "inbound"),
+          sql`${mindHistory.sender} != 'volute'`,
+          sql`${mindHistory.sender} != ${name}`,
+          sql`${mindHistory.sender} IS NOT NULL`,
+        ),
+      )
+      .orderBy(desc(mindHistory.created_at))
+      .limit(1);
+
+    // Last spirit message
+    const lastSpiritMsg = await db
+      .select({ created_at: mindHistory.created_at })
+      .from(mindHistory)
+      .where(
+        and(
+          eq(mindHistory.mind, name),
+          eq(mindHistory.type, "inbound"),
+          eq(mindHistory.sender, "volute"),
+        ),
+      )
+      .orderBy(desc(mindHistory.created_at))
+      .limit(1);
+
+    const now = Date.now();
+    const creatorTime = lastCreatorMsg[0] ? new Date(lastCreatorMsg[0].created_at).getTime() : 0;
+    const spiritTime = lastSpiritMsg[0] ? new Date(lastSpiritMsg[0].created_at).getTime() : 0;
+    const minutesSinceCreator = creatorTime ? (now - creatorTime) / 60_000 : Infinity;
+    const minutesSinceSpirit = spiritTime ? (now - spiritTime) / 60_000 : Infinity;
+
+    // No nudge needed
+    if (minutesSinceCreator < creatorThreshold && minutesSinceSpirit < spiritThreshold) {
+      return c.json({ output: "" });
+    }
+
+    // Collect state
+    const dir = entry.dir ?? mindDir(name);
+    const soulPath = resolve(dir, "home/SOUL.md");
+    const memoryPath = resolve(dir, "home/MEMORY.md");
+
+    const soulCustom =
+      existsSync(soulPath) && !readFileSync(soulPath, "utf-8").includes(ORIENTATION_MARKER);
+    const memoryWritten =
+      existsSync(memoryPath) && readFileSync(memoryPath, "utf-8").trim().length > 0;
+
+    const config = readVoluteConfig(dir);
+    const displayNameSet = !!config?.profile?.displayName;
+    const avatarSet = !!config?.profile?.avatar;
+
+    const { isImagegenEnabled } = await import("../../lib/setup.js");
+    const imagegenEnabled = isImagegenEnabled();
+
+    const done: string[] = [];
+    const remaining: string[] = [];
+    if (soulCustom) done.push("SOUL.md written");
+    else remaining.push("Write SOUL.md");
+    if (memoryWritten) done.push("MEMORY.md written");
+    else remaining.push("Write MEMORY.md");
+    if (displayNameSet) done.push("Display name set");
+    else remaining.push("Set display name");
+    if (imagegenEnabled) {
+      if (avatarSet) done.push("Avatar set");
+      else remaining.push("Generate and set avatar");
+    }
+
+    const creatorStatus =
+      minutesSinceCreator === Infinity
+        ? "No creator messages yet"
+        : `Last creator message: ${Math.round(minutesSinceCreator)} minutes ago`;
+
+    const lines = [`Seed: ${name}`, creatorStatus];
+    if (done.length > 0) lines.push(`Done: ${done.join(", ")}`);
+    if (remaining.length > 0) lines.push(`Remaining: ${remaining.join(", ")}`);
+    if (remaining.length > 0) {
+      lines.push("", `DM the seed to encourage them: echo "message" | volute chat send @${name}`);
+    } else {
+      lines.push(
+        "",
+        `All checklist items complete — the seed can run \`volute seed sprout\` when ready.`,
+      );
+    }
+
+    return c.json({ output: lines.join("\n") });
+  })
   // Sprout a seed mind — admin only
   .post("/:name/sprout", requireSelf(), async (c) => {
     const name = c.req.param("name");

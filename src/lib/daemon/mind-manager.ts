@@ -110,6 +110,7 @@ export class MindManager {
     mkdirSync(logsDir, { recursive: true });
 
     // State dir is created by root — chown so the mind user can write to it.
+    // Spirit runs as the daemon user (root), so skip isolation for it.
     if (isIsolationEnabled()) {
       try {
         chownMindDir(mindStateDir, baseName);
