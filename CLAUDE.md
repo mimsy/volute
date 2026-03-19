@@ -18,7 +18,7 @@ Core values:
 
 - `src/cli.ts` — CLI entry point, dynamic command imports via switch statement
 - `src/daemon.ts` — Daemon entry point, starts web server + mind/bridge/scheduler managers
-- `src/commands/` — One file per command, each exports `async function run(args: string[])`. Top-level nouns (`mind.ts`, `chat.ts`, `clock.ts`, `env.ts`, `skill.ts`, `systems.ts`) dispatch to subcommand files.
+- `src/commands/` — One file per command, each exports `async function run(args: string[])`. Top-level nouns (`mind.ts`, `chat.ts`, `clock.ts`, `env.ts`, `skill.ts`, `seed-cmd.ts`, `systems.ts`) dispatch to subcommand files.
 - `src/lib/` — Shared libraries (registry, mind-manager, bridge-manager, scheduler, daemon-client, arg parsing, exec wrappers, variant metadata, db, auth, conversations, channels)
 - `src/web/` — Web dashboard (Hono backend + Svelte frontend), served by the daemon
 - `src/connectors/` — Built-in bridge implementations (Discord, Slack, Telegram) + shared SDK
@@ -210,8 +210,12 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 | `volute clock remove [--mind] --id <id>` | Remove a schedule or timer |
 | `volute skill <list\|add\|remove> [--mind]` | Manage mind skills |
 | `volute skill defaults <list\|add\|remove>` | Manage default skill set for new minds |
-| `volute mind seed <name>` | Create a minimal seed mind |
-| `volute mind sprout` | Grow a seed into a full mind |
+| `volute seed create <name> [--template <t>] [--model <m>] [--description <text>] [--skills <list\|none>] [--created-by <user>]` | Plant a new seed mind |
+| `volute seed sprout` | Complete orientation and become a full mind (run by seed) |
+| `volute seed check <name>` | Check seed readiness (used by spirit nurture schedule) |
+| `volute mind profile [--mind] [--display-name <n>] [--description <t>] [--avatar <path>]` | Update mind profile (display name, description, avatar) |
+| `volute mind seed <name>` | Legacy alias for `volute seed create` |
+| `volute mind sprout` | Legacy alias for `volute seed sprout` |
 | `volute chat files [--mind]` | List pending incoming files |
 | `volute chat accept <id> [--mind] [--dest <path>]` | Accept a pending file |
 | `volute chat reject <id> [--mind]` | Reject a pending file |
@@ -285,9 +289,9 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `read-stdin.ts` | Reads piped stdin for send commands (returns undefined if TTY) |
 | `resolve-mind-name.ts` | Resolves mind name from `--mind` flag or `VOLUTE_MIND` env var |
 | `typing.ts` | Typing indicator tracking |
-| `setup.ts` | Global config (`~/.volute/system/config.json`) with setup state, `defaultSkills` array, AI config types (`AiConfig`, `AiProviderConfig`), `isSetupComplete()`, migration for existing users |
+| `setup.ts` | Global config (`~/.volute/system/config.json`) with setup state, `defaultSkills` array, AI config types (`AiConfig`, `AiProviderConfig`), `isSetupComplete()`, `isImagegenEnabled()`, migration for existing users |
 | `system-channel.ts` | System channel utilities |
-| `system-chat.ts` | System chat functionality |
+| `system-chat.ts` | System chat functionality (spirit self-delivery bypass for "volute" target) |
 | `sandbox.ts` | Sandbox runtime (`@anthropic-ai/sandbox-runtime`) integration: `isSandboxEnabled()`, `initSandbox()`, `wrapForSandbox()`, deny-read list for mind isolation |
 | `service-mode.ts` | Service mode detection (manual/systemd/launchd/system-launchd), service control, health polling, daemon config reader |
 | `systems-config.ts` | Read/write `~/.volute/system/systems.json` (API key, system name, API URL) |
@@ -317,7 +321,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `turn-summarizer.ts` | Generates 1-2 sentence turn summaries (AI or deterministic fallback) after each mind turn |
 | `turn-tracker.ts` | Turn tracking utilities |
 | `mind-tokens.ts` | Mind token management |
-| `mind-service.ts` | Mind service management utilities |
+| `mind-service.ts` | Mind service management utilities (startMindFull, startSpiritFull with schedule loading) |
 
 ### src/lib/delivery/
 
@@ -371,9 +375,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `api/volute/channels.ts` | Volute platform channel operations |
 | `api/volute/chat.ts` | POST /chat — fire-and-forget to minds; GET /conversations/:id/events — SSE |
 | `api/volute/conversations.ts` | Conversation CRUD, group creation, participant management |
-| `api/volute/user-conversations.ts` | User-facing conversation list and management |
-| `api/v1/chat.ts` | V1 API: chat endpoints |
-| `api/v1/conversations.ts` | V1 API: conversation endpoints |
+| `api/v1/conversations.ts` | V1 API: conversation endpoints (also mounted at /api/conversations) |
 | `api/v1/events.ts` | V1 API: event streaming |
 
 ## Tech stack
@@ -417,6 +419,8 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 - Mind process isolation: sandbox mode (local installs, `@anthropic-ai/sandbox-runtime`), per-user mode (system installs, Linux/macOS), or none. Configured via `volute setup`, stored in `config.json` as `setup.isolation`
 - `volute setup` is the required first-run command; CLI commands are gated on `isSetupComplete()` with auto-migration for existing users via `migrateSetupConfig()`
 - Built-in skills live in `skills/` at repo root and are synced to the shared pool (`~/.volute/skills/`) on daemon startup via `syncBuiltinSkills()`. Extensions contribute skills via `skillsDir` in their manifest; skills with `standardSkill: true` are added to the configurable default skill set. The default skill set is stored in `~/.volute/system/config.json` (`defaultSkills` array) and initialized on first daemon start from `STANDARD_SKILLS` + extension standard skills. Admins can manage defaults via the web UI (Settings → Skills) or `volute skill defaults` CLI. `SEED_SKILLS` (orientation, memory) are installed for seed minds. Skills are installed from the shared pool with upstream tracking (`.upstream.json`) for independent updates.
+- Seed nurture: when a seed is created, a `nurture-<name>` schedule is added to the spirit's `volute.json`. The schedule runs `volute seed check <name>` which queries the daemon API for seed readiness (SOUL.md, MEMORY.md, display name, avatar). The spirit receives the output and can DM the seed encouragement. Thresholds are configurable via `VOLUTE_NURTURE_CRON`, `VOLUTE_NURTURE_CREATOR_MINUTES`, `VOLUTE_NURTURE_SPIRIT_MINUTES`. On sprout, the nurture schedule is cleaned up.
+- Image generation toggle: `isImagegenEnabled()` in `setup.ts` reads `imagegen.enabled` from global config. Controls whether seeds are asked to generate avatars and whether sprouting requires one. Configurable via Settings UI or `PUT /api/system/imagegen`.
 
 ## Deployment
 

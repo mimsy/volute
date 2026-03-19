@@ -9,6 +9,7 @@ import {
   type ContentBlock,
   createConversation,
   deleteConversation,
+  getConversation,
   getMessagesPaginated,
   getUnreadCounts,
   markConversationRead,
@@ -318,6 +319,65 @@ describe("v1 conversations HTTP routes", () => {
       headers: { Cookie: `volute_session=${cookie2}` },
     });
     assert.equal(res.status, 404);
+
+    await deleteSession(cookie2);
+    await deleteConversation(conv.id);
+  });
+});
+
+// --- Privacy toggle tests ---
+
+describe("v1 conversation privacy toggle", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  it("PUT /:id/private — participant can toggle privacy", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const conv = await createConversation("test-mind", "volute", {
+      participantIds: [userId],
+    });
+
+    const res = await app.request(`/api/v1/conversations/${conv.id}/private`, {
+      method: "PUT",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ private: true }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.ok);
+
+    const updated = await getConversation(conv.id);
+    assert.equal(updated!.private, 1);
+
+    await deleteConversation(conv.id);
+  });
+
+  it("PUT /:id/private — non-participant gets 403", async () => {
+    await setupAuth();
+    const app = createApp();
+
+    const conv = await createConversation("test-mind", "volute", {
+      participantIds: [userId],
+    });
+
+    const user2 = await createUser("outsider", "pass");
+    await approveUser(user2.id);
+    const cookie2 = await createSession(user2.id);
+
+    const res = await app.request(`/api/v1/conversations/${conv.id}/private`, {
+      method: "PUT",
+      headers: {
+        Cookie: `volute_session=${cookie2}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ private: true }),
+    });
+    assert.equal(res.status, 403);
 
     await deleteSession(cookie2);
     await deleteConversation(conv.id);

@@ -11,6 +11,7 @@ const slog = log.child("scheduler");
 
 export class Scheduler {
   private schedules = new Map<string, Schedule[]>();
+  private mindDirs = new Map<string, string>(); // mindName → dir override
   private interval: ReturnType<typeof setInterval> | null = null;
   private lastFired = new Map<string, number>(); // "mind:scheduleId" → epoch minute
 
@@ -39,9 +40,10 @@ export class Scheduler {
     clearJsonMap(this.statePath, this.lastFired);
   }
 
-  loadSchedules(mindName: string): void {
-    const dir = mindDir(mindName);
-    const config = readVoluteConfig(dir);
+  loadSchedules(mindName: string, dir?: string): void {
+    if (dir) this.mindDirs.set(mindName, dir);
+    const resolvedDir = this.mindDirs.get(mindName) ?? mindDir(mindName);
+    const config = readVoluteConfig(resolvedDir);
     if (!config) return; // Config read failed — keep existing schedules
     const schedules = config.schedules ?? [];
     if (schedules.length > 0) {
@@ -53,6 +55,7 @@ export class Scheduler {
 
   unloadSchedules(mindName: string): void {
     this.schedules.delete(mindName);
+    this.mindDirs.delete(mindName);
   }
 
   private tick(): void {
@@ -121,7 +124,7 @@ export class Scheduler {
     try {
       let text: string;
       if (schedule.script) {
-        const homeDir = resolve(mindDir(mindName), "home");
+        const homeDir = resolve(this.mindDirs.get(mindName) ?? mindDir(mindName), "home");
         try {
           const output = await this.runScript(schedule.script, homeDir, mindName);
           if (!output.trim()) {
@@ -169,7 +172,7 @@ export class Scheduler {
     }
 
     try {
-      const dir = mindDir(mindName);
+      const dir = this.mindDirs.get(mindName) ?? mindDir(mindName);
       const config = readVoluteConfig(dir);
       if (!config?.schedules) return;
       config.schedules = config.schedules.filter((s) => s.id !== scheduleId);

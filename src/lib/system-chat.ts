@@ -50,20 +50,29 @@ export async function ensureSystemDM(mindName: string): Promise<{ conversationId
  * Send a system message to a mind through the normal delivery pipeline.
  * Persists to the conversation and routes through deliverMessage (which handles
  * sleep queueing, routing, mind_history recording, etc.).
+ *
+ * When the target is the spirit ("volute"), skips conversation persistence
+ * since the spirit cannot DM itself, and delivers directly.
  */
 export async function sendSystemMessage(
   mindName: string,
   text: string,
   opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
 ): Promise<void> {
-  const { conversationId } = await ensureSystemDM(mindName);
+  // Spirit can't DM itself — deliver directly without conversation persistence
+  const isSpirit = mindName === "volute";
+  let conversationId: string | undefined;
 
-  await addMessage(conversationId, "user", "volute", [{ type: "text", text }]);
+  if (!isSpirit) {
+    const dm = await ensureSystemDM(mindName);
+    conversationId = dm.conversationId;
+    await addMessage(conversationId, "user", "volute", [{ type: "text", text }]);
+  }
 
   await deliverMessage(mindName, {
     content: [{ type: "text", text }],
     channel: "@volute",
-    conversationId,
+    ...(conversationId ? { conversationId } : {}),
     sender: "volute",
     isDM: true,
     participants: ["volute", mindName],

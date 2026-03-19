@@ -89,7 +89,7 @@ export async function ensureSpiritProject(): Promise<void> {
     }
 
     // Install spirit skills from shared pool (after git init)
-    const spiritSkills = ["volute-admin", "orientation", "memory"];
+    const spiritSkills = ["volute-admin", "orientation", "memory", "seed-nurture"];
     for (const skillId of spiritSkills) {
       try {
         const shared = await getSharedSkill(skillId);
@@ -100,6 +100,14 @@ export async function ensureSpiritProject(): Promise<void> {
         slog.warn(`failed to install skill ${skillId} for spirit`, log.errorData(err));
       }
     }
+
+    // Set up per-mind user isolation (creates mind-volute user, chowns project dir).
+    // Must be AFTER all file creation (npm install, git init, skill install) so the
+    // chown covers everything and the spirit process can write to all files.
+    const { createMindUser, chownMindDir, ensureVoluteGroup } = await import("./isolation.js");
+    ensureVoluteGroup();
+    createMindUser("volute", resolve(dir, "home"));
+    chownMindDir(dir, "volute");
 
     // Register in DB
     const port = await nextPort();

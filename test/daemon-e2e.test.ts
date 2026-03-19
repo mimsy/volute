@@ -329,7 +329,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     await ensureTestMind();
 
     // Create a channel
-    const createRes = await daemonRequest("/api/volute/channels", {
+    const createRes = await daemonRequest("/api/v1/channels", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "test-bridge-channel" }),
@@ -339,13 +339,13 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.ok(created.id);
 
     // List channels — should include the new one
-    const listRes = await daemonRequest("/api/volute/channels");
+    const listRes = await daemonRequest("/api/v1/channels");
     assert.equal(listRes.status, 200);
     const channels = (await listRes.json()) as { name: string; id: string }[];
     assert.ok(channels.some((ch) => ch.name === "test-bridge-channel"));
 
     // Invite the test mind to the channel
-    const inviteRes = await daemonRequest("/api/volute/channels/test-bridge-channel/invite", {
+    const inviteRes = await daemonRequest("/api/v1/channels/test-bridge-channel/invite", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: TEST_MIND }),
@@ -353,7 +353,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.equal(inviteRes.status, 200, `Invite: ${await inviteRes.clone().text()}`);
 
     // List members — should include the mind
-    const membersRes = await daemonRequest("/api/volute/channels/test-bridge-channel/members");
+    const membersRes = await daemonRequest("/api/v1/channels/test-bridge-channel/members");
     assert.equal(membersRes.status, 200);
     const members = (await membersRes.json()) as { username: string }[];
     assert.ok(
@@ -407,7 +407,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.ok(text.includes("hello from integration test"), `Message text: ${text}`);
   });
 
-  it("unified chat: send via /api/volute/chat", async () => {
+  it("unified chat: send via /api/v1/chat", async () => {
     // Create a conversation first
     const createRes = await daemonRequest(`/api/minds/${TEST_MIND}/conversations`, {
       method: "POST",
@@ -421,7 +421,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     const conv = (await createRes.json()) as { id: string };
 
     // Send via unified endpoint
-    const chatRes = await daemonRequest("/api/volute/chat", {
+    const chatRes = await daemonRequest("/api/v1/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

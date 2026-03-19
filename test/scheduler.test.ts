@@ -47,6 +47,33 @@ describe("scheduler", () => {
     assert.ok(true);
   });
 
+  it("loadSchedules accepts explicit dir parameter", () => {
+    const scheduler = new TestScheduler();
+    // This will fail to read config (no file) but shouldn't throw
+    scheduler.loadSchedules("test-spirit", "/tmp/nonexistent-dir");
+    // unload should clear the dir cache
+    scheduler.unloadSchedules("test-spirit");
+    assert.ok(true);
+  });
+
+  it("fire uses cached dir for script cwd", async () => {
+    const scheduler = new TestScheduler();
+    scheduler.scriptResult = "output";
+
+    // Set up dir cache by calling loadSchedules with dir
+    scheduler.loadSchedules("spirit-test", "/tmp/test-spirit-dir");
+
+    await (scheduler as any).fire("spirit-test", {
+      id: "test-script",
+      cron: "* * * * *",
+      script: "echo hi",
+      enabled: true,
+    });
+
+    assert.equal(scheduler.scriptCalls.length, 1);
+    assert.equal(scheduler.scriptCalls[0].cwd, "/tmp/test-spirit-dir/home");
+  });
+
   it("fire delivers message via system chat", async () => {
     const scheduler = new TestScheduler();
     await (scheduler as any).fire("test-mind", {

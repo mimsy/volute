@@ -4,6 +4,7 @@ import { markIdle } from "../events/mind-activity-tracker.js";
 import { notifyExtensionsMindStart, notifyExtensionsMindStop } from "../extensions.js";
 import log from "../logger.js";
 import { findMind, getBaseName, mindDir } from "../registry.js";
+import { spiritDir } from "../spirit.js";
 import { joinSystemChannelForMind } from "../system-channel.js";
 import { ensureSystemDM, sendSystemMessage } from "../system-chat.js";
 import { readVoluteConfig } from "../volute-config.js";
@@ -123,7 +124,8 @@ export async function wakeMind(name: string): Promise<void> {
 }
 
 /**
- * Start a spirit process. Simpler lifecycle than minds — no schedules, sleep, budget, etc.
+ * Start a spirit process. Simpler lifecycle than minds — no sleep, budget, or mail,
+ * but does load schedules (for seed nurture).
  */
 export async function startSpiritFull(name: string): Promise<void> {
   // Register the spirit's custom directory for routing config resolution
@@ -134,6 +136,9 @@ export async function startSpiritFull(name: string): Promise<void> {
   }
 
   await getMindManager().startMind(name);
+
+  // Load spirit schedules with explicit dir (spirit lives outside ~/.volute/minds/)
+  getScheduler().loadSchedules(name, entry?.dir ?? spiritDir());
 
   publishActivity({
     type: "mind_started",
@@ -147,6 +152,7 @@ export async function startSpiritFull(name: string): Promise<void> {
  */
 export async function stopSpiritFull(name: string): Promise<void> {
   markIdle(name);
+  getScheduler().unloadSchedules(name);
   await getMindManager().stopMind(name);
 
   publishActivity({

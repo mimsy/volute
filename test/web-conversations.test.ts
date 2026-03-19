@@ -13,8 +13,8 @@ import {
   getMessages,
 } from "../src/lib/events/conversations.js";
 import { users } from "../src/lib/schema.js";
+import v1ConversationsRoute from "../src/web/api/v1/conversations.js";
 import conversationsRoute from "../src/web/api/volute/conversations.js";
-import userConversationsRoute from "../src/web/api/volute/user-conversations.js";
 import { authMiddleware, createSession, deleteSession } from "../src/web/middleware/auth.js";
 
 let sessionId: string;
@@ -384,8 +384,8 @@ describe("conversation privacy toggle", () => {
 
   function createUserConvApp() {
     const app = new Hono();
-    app.use("/api/conversations/*", authMiddleware);
-    app.route("/api/conversations", userConversationsRoute);
+    app.use("/api/v1/conversations/*", authMiddleware);
+    app.route("/api/v1/conversations", v1ConversationsRoute);
     return app;
   }
 
@@ -398,7 +398,7 @@ describe("conversation privacy toggle", () => {
     });
 
     // Set to private
-    const res = await app.request(`/api/conversations/${conv.id}/private`, {
+    const res = await app.request(`/api/v1/conversations/${conv.id}/private`, {
       method: "PUT",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -415,7 +415,7 @@ describe("conversation privacy toggle", () => {
     assert.equal(updated!.private, 1);
 
     // Set back to public
-    const res2 = await app.request(`/api/conversations/${conv.id}/private`, {
+    const res2 = await app.request(`/api/v1/conversations/${conv.id}/private`, {
       method: "PUT",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -444,7 +444,7 @@ describe("conversation privacy toggle", () => {
     await approveUser(user2.id);
     const cookie2 = await createSession(user2.id);
 
-    const res = await app.request(`/api/conversations/${conv.id}/private`, {
+    const res = await app.request(`/api/v1/conversations/${conv.id}/private`, {
       method: "PUT",
       headers: {
         Cookie: `volute_session=${cookie2}`,

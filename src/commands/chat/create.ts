@@ -28,7 +28,7 @@ export async function run(args: string[]) {
 
   if (flags.channel) {
     // Create a channel via the channels API
-    const res = await daemonFetch("/api/volute/channels", {
+    const res = await daemonFetch("/api/v1/channels", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

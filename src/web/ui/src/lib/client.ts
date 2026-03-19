@@ -469,6 +469,16 @@ export function saveEnabledModels(models: string[]): Promise<void> {
   return put(`${V1}/system/ai/models`, { models });
 }
 
+// --- Imagegen ---
+
+export function fetchImagegenConfig(): Promise<{ enabled: boolean }> {
+  return get(`${V1}/system/imagegen`);
+}
+
+export function saveImagegenConfig(enabled: boolean): Promise<void> {
+  return put(`${V1}/system/imagegen`, { enabled });
+}
+
 // --- Auth (these stay on /api/ since they're not mind-scoped) ---
 
 export function fetchAvailableUsers(type?: string): Promise<AvailableUser[]> {

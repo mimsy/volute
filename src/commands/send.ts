@@ -324,7 +324,7 @@ export async function run(args: string[]) {
     const sender = flags.sender || mindSelf || userInfo().username;
 
     // Look up channel conversation ID
-    const channelRes = await daemonFetch(`/api/volute/channels/${encodeURIComponent(channelName)}`);
+    const channelRes = await daemonFetch(`/api/v1/channels/${encodeURIComponent(channelName)}`);
     if (!channelRes.ok) {
       console.error(`Channel "${channelName}" not found. Create it first or check the name.`);
       process.exit(1);
