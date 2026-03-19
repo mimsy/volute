@@ -26,14 +26,12 @@ import skills from "./api/skills.js";
 import system from "./api/system.js";
 import typing from "./api/typing.js";
 import update from "./api/update.js";
-import v1Chat from "./api/v1/chat.js";
 import v1Conversations from "./api/v1/conversations.js";
 import v1Events from "./api/v1/events.js";
 import variants from "./api/variants.js";
 import voluteChannels from "./api/volute/channels.js";
 import chat, { unifiedChatApp } from "./api/volute/chat.js";
 import conversations from "./api/volute/conversations.js";
-import userConversations from "./api/volute/user-conversations.js";
 import { authMiddleware } from "./middleware/auth.js";
 
 const httpLog = log.child("http");
@@ -97,7 +95,6 @@ app.use("/api/*", csrf());
 app.use("/api/activity/*", authMiddleware);
 app.use("/api/minds/*", authMiddleware);
 app.use("/api/conversations/*", authMiddleware);
-app.use("/api/volute/*", authMiddleware);
 app.use("/api/system/*", authMiddleware);
 app.use("/api/env/*", authMiddleware);
 app.use("/api/prompts/*", authMiddleware);
@@ -141,18 +138,17 @@ const routes = app
   .route("/api/env", sharedEnvApp)
   .route("/api/prompts", prompts)
   .route("/api/skills", skills)
-  .route("/api/conversations", userConversations)
-  .route("/api/volute/channels", voluteChannels)
-  .route("/api/volute", unifiedChatApp)
   .route("/api/bridges", bridges)
   .route("/api/extensions", extensionsRoutes)
   // v1 API routes
   .route("/api/v1/conversations", v1Conversations)
   .route("/api/v1/events", v1Events)
-  .route("/api/v1", v1Chat);
+  .route("/api/v1", unifiedChatApp)
+  .route("/api/v1/channels", voluteChannels);
 
 // v1 re-mounts of existing modules (not chained to preserve AppType)
 app.route("/api/v1/minds", minds);
+app.route("/api/v1/minds", chat);
 app.route("/api/v1/minds", typing);
 app.route("/api/v1/minds", variants);
 app.route("/api/v1/minds", files);
@@ -165,7 +161,7 @@ app.route("/api/v1/system", update);
 app.route("/api/v1/prompts", prompts);
 app.route("/api/v1/skills", skills);
 app.route("/api/v1/env", sharedEnvApp);
-app.route("/api/v1/channels", voluteChannels);
+app.route("/api/conversations", v1Conversations);
 
 export default app;
 export type AppType = typeof routes;

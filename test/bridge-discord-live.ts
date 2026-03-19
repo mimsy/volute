@@ -65,7 +65,7 @@ async function main() {
 
   // Step 1: Create volute channel
   console.log(`Creating volute channel: ${voluteChannelName}`);
-  const createRes = await api("/api/volute/channels", {
+  const createRes = await api("/api/v1/channels", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: voluteChannelName }),
@@ -121,7 +121,7 @@ async function main() {
   const deadline = Date.now() + 120_000;
   let found = false;
   while (Date.now() < deadline) {
-    const channelsRes = await api("/api/volute/channels");
+    const channelsRes = await api("/api/v1/channels");
     const channels = (await channelsRes.json()) as Channel[];
     const ch = channels.find((c) => c.name === voluteChannelName);
 
