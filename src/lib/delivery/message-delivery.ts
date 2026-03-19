@@ -94,7 +94,7 @@ export async function tagUntaggedInbound(
         .where(eq(turns.id, turnId));
     }
   }
-  // Tag recent untagged conversation messages
+  // Tag recent untagged conversation messages (only inbound, i.e. not sent by the mind itself)
   const recentMsgs = await db
     .select({ id: messages.id })
     .from(messages)
@@ -103,6 +103,7 @@ export async function tagUntaggedInbound(
       and(
         eq(conversations.mind_name, mind),
         sql`${messages.turn_id} IS NULL`,
+        sql`${messages.sender_name} != ${mind}`,
         sql`${messages.created_at} > datetime('now', '-60 seconds')`,
       ),
     )
