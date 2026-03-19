@@ -76,6 +76,20 @@ function handleSystemNameInput() {
   }
 }
 
+const SLUG_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+let slugValid = $derived(
+  systemsSlug.length >= 3 && systemsSlug.length <= 32 && SLUG_RE.test(systemsSlug),
+);
+let slugError = $derived(
+  systemsSlug.length > 0 && !slugValid
+    ? systemsSlug.length < 3
+      ? "Must be at least 3 characters"
+      : !SLUG_RE.test(systemsSlug)
+        ? "Lowercase letters, numbers, and hyphens only (no leading/trailing hyphens)"
+        : "Must be 32 characters or fewer"
+    : "",
+);
+
 // Step 3: Provider + Models (combined)
 let providers = $state<AiProvider[]>([]);
 let aiModels = $state<AiModel[]>([]);
@@ -610,11 +624,15 @@ $effect(() => {
                   oninput={() => { systemsSlugManuallyEdited = true; }}
                   class="input"
                 />
-                <button type="button" class="save-btn" onclick={handleSystemsRegister} disabled={systemsLoading || !systemsSlug.trim()}>
+                <button type="button" class="save-btn" onclick={handleSystemsRegister} disabled={systemsLoading || !slugValid}>
                   {systemsLoading ? "..." : "Register"}
                 </button>
               </div>
-              <div class="hint">Used for your subdomain on volute.systems.</div>
+              {#if slugError}
+                <div class="error">{slugError}</div>
+              {:else}
+                <div class="hint">Used for your subdomain on volute.systems.</div>
+              {/if}
               <button type="button" class="link-btn mt-sm" onclick={() => { showSystemsRegister = false; showSystemsLogin = true; }}>
                 or login with an existing key
               </button>

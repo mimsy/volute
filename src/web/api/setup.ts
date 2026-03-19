@@ -158,6 +158,9 @@ setup.post("/system/register", async (c) => {
     return c.json({ error: `Already registered as "${existing.system}"` }, 400);
   }
 
+  // Pass display name and description from global config
+  const config = readGlobalConfig();
+
   const apiUrl = process.env.VOLUTE_SYSTEMS_URL || DEFAULT_API_URL;
   let apiKey: string;
   let system: string;
@@ -165,7 +168,11 @@ setup.post("/system/register", async (c) => {
     const res = await fetch(`${apiUrl}/api/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: body.slug.trim() }),
+      body: JSON.stringify({
+        name: body.slug.trim(),
+        displayName: config.name || undefined,
+        description: config.description || undefined,
+      }),
     });
     if (!res.ok) {
       const err = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
