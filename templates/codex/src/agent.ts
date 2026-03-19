@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { Codex } from "@openai/codex-sdk";
 import { flushFileChanges, trackFileChange } from "./lib/auto-commit.js";
@@ -224,6 +224,22 @@ export function createMind(options: {
     }
 
     session.abortController = new AbortController();
+
+    // Sync VOLUTE_SESSION to .zshenv so codex shell commands know which session they're in.
+    // process.env.VOLUTE_SESSION is set by the router, but the codex sandbox doesn't inherit it.
+    try {
+      const zshenvPath = resolvePath(options.cwd, ".zshenv");
+      const existing = readFileSync(zshenvPath, "utf-8");
+      const sessionLine = `export VOLUTE_SESSION=${JSON.stringify(session.name)}`;
+      const updated = existing.replace(/^export VOLUTE_SESSION=.*$/m, sessionLine);
+      if (updated === existing && !existing.includes("VOLUTE_SESSION")) {
+        writeFileSync(zshenvPath, `${existing.trimEnd()}\n${sessionLine}\n`);
+      } else if (updated !== existing) {
+        writeFileSync(zshenvPath, updated);
+      }
+    } catch {
+      // .zshenv may not exist (non-codex template) — not critical
+    }
 
     try {
       const { events } = await session.thread.runStreamed(text, {
