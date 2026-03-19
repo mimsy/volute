@@ -205,19 +205,19 @@ Get page publish status for a mind.
 
 ## Chat (Volute platform)
 
-### POST /api/volute/chat
+### POST /api/v1/chat
 
 Send a message to a mind via the Volute platform (fire-and-forget).
 
-### GET /api/volute/conversations/:id/events
+### GET /api/v1/events
 
-SSE endpoint for real-time conversation updates.
+SSE endpoint for real-time conversation updates (unified).
 
-### GET /api/volute/conversations
+### GET /api/v1/conversations
 
 List conversations.
 
-### POST /api/volute/conversations
+### POST /api/v1/conversations
 
 Create a new conversation.
 

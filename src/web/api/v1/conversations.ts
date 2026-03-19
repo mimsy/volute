@@ -85,6 +85,10 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "At least one mind participant is required" }, 400);
     }
 
+    if (participantIds.size > 2) {
+      return c.json({ error: "Use channels for multi-participant conversations" }, 400);
+    }
+
     const conv = await createConversation(firstMindName, "volute", {
       userId: user.id !== 0 ? user.id : undefined,
       title: body.title,
