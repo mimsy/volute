@@ -18,7 +18,7 @@ import {
   importPiSession,
   parseNameFromIdentity,
 } from "../../commands/import.js";
-import { resolveTemplate } from "../../lib/ai-service.js";
+import { qualifyModelId, resolveTemplate, unqualifyModelId } from "../../lib/ai-service.js";
 import { type ExportManifest, isHomeOnlyArchive } from "../../lib/archive.js";
 import { deleteMindUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
@@ -807,7 +807,9 @@ const app = new Hono<AuthEnv>()
         const existing = existsSync(configPath)
           ? JSON.parse(readFileSync(configPath, "utf-8"))
           : {};
-        existing.model = body.model;
+        // Pi template needs provider:model format; other templates need bare model ID
+        existing.model =
+          template === "pi" ? qualifyModelId(body.model) : unqualifyModelId(body.model);
         writeFileSync(configPath, `${JSON.stringify(existing, null, 2)}\n`);
       }
 

@@ -196,6 +196,12 @@ export function qualifyModelId(modelId: string): string {
   return modelId;
 }
 
+/** Strip provider prefix from a qualified model ID (e.g. "openai-codex:gpt-5.4" → "gpt-5.4"). */
+export function unqualifyModelId(modelId: string): string {
+  const idx = modelId.indexOf(":");
+  return idx >= 0 ? modelId.slice(idx + 1) : modelId;
+}
+
 function findModel(modelId: string): Model<Api> | undefined {
   const providers = getConfiguredProviders();
   for (const provider of providers) {
