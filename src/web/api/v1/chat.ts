@@ -33,7 +33,9 @@ async function fanOutToMinds(opts: {
   targetName?: (username: string) => string;
 }): Promise<void> {
   const participants = await getParticipants(opts.conversationId);
-  const mindParticipants = participants.filter((p) => p.userType === "mind");
+  const mindParticipants = participants.filter(
+    (p) => p.userType === "mind" || p.userType === "system",
+  );
   const participantNames = participants.map((p) => p.username);
   const isDM = opts.isDM ?? participants.length === 2;
 

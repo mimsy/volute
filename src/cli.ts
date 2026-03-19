@@ -20,7 +20,22 @@ if (command === "--version" || command === "-v") {
 }
 
 // Gate commands on setup — skip for setup itself, help, version, and update
-const ungatedCommands = new Set(["setup", "--help", "-h", "--version", "-v", "update", undefined]);
+const ungatedCommands = new Set([
+  "setup",
+  "--help",
+  "-h",
+  "--version",
+  "-v",
+  "update",
+  "up",
+  "down",
+  "restart",
+  "status",
+  "login",
+  "logout",
+  "service",
+  undefined,
+]);
 if (!ungatedCommands.has(command)) {
   const { isSetupComplete } = await import("./lib/setup.js");
   if (!isSetupComplete()) {
@@ -50,6 +65,9 @@ switch (command) {
     break;
   case "env":
     await import("./commands/env.js").then((m) => m.run(args));
+    break;
+  case "config":
+    await import("./commands/config.js").then((m) => m.run(args));
     break;
   case "up":
     await import("./commands/up.js").then((m) => m.run(args));

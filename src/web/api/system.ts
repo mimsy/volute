@@ -19,6 +19,7 @@ import {
 } from "../../lib/ai-service.js";
 import { logBuffer } from "../../lib/log-buffer.js";
 import log from "../../lib/logger.js";
+import { readGlobalConfig } from "../../lib/setup.js";
 import {
   deleteSystemsConfig,
   readSystemsConfig,
@@ -77,6 +78,7 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: `Already registered as "${existing.system}"` }, 400);
       }
       const { name } = c.req.valid("json");
+      const config = readGlobalConfig();
       const apiUrl = process.env.VOLUTE_SYSTEMS_URL || DEFAULT_API_URL;
       let apiKey: string;
       let system: string;
@@ -84,7 +86,11 @@ const app = new Hono<AuthEnv>()
         const res = await fetch(`${apiUrl}/api/register`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: name.trim() }),
+          body: JSON.stringify({
+            name: name.trim(),
+            displayName: config.name || undefined,
+            description: config.description || undefined,
+          }),
         });
         if (!res.ok) {
           const err = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {

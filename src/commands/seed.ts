@@ -44,30 +44,50 @@ export async function run(args: string[]) {
     model: { type: "string" },
     description: { type: "string" },
     skills: { type: "string" },
+    "created-by": { type: "string" },
   });
 
   const name = positional[0];
   if (!name) {
     console.error(
-      "Usage: volute mind seed <name> [--template <name>] [--model <model>] [--description <text>] [--skills <list|none>]",
+      "Usage: volute mind seed <name> [--template <name>] [--model <model>] [--description <text>] [--skills <list|none>] [--created-by <username>]",
     );
     process.exit(1);
   }
 
-  const template = flags.template ?? "claude";
   const skills = flags.skills === "none" ? [] : flags.skills ? flags.skills.split(",") : undefined;
+  const createdBy = flags["created-by"];
 
   const { daemonFetch } = await import("../lib/daemon-client.js");
   const { getClient, urlOf } = await import("../lib/api-client.js");
   const client = getClient();
 
-  // For pi template, prompt for model selection if not specified
+  // Auto-resolve template if not specified
   let model = flags.model;
-  if (template === "pi" && !model) {
-    model = await chooseModel(daemonFetch);
+  let template = flags.template;
+  if (!template) {
+    const { resolveTemplate } = await import("../lib/ai-service.js");
+    template = resolveTemplate(model);
+  }
+
+  // For non-claude templates, resolve model if not specified
+  if (template !== "claude" && !model) {
+    // Non-interactive (e.g. mind running a command): use the spirit model as default
+    if (process.env.VOLUTE_MIND || !process.stdin.isTTY) {
+      const { getSpiritModel } = await import("../lib/spirit.js");
+      const { qualifyModelId } = await import("../lib/ai-service.js");
+      const spiritModel = getSpiritModel();
+      if (spiritModel) {
+        model = template === "pi" ? qualifyModelId(spiritModel) : spiritModel;
+      }
+    }
+    // Interactive: prompt for model selection
     if (!model) {
-      console.error("No AI models configured. Set up providers in the web dashboard first.");
-      process.exit(1);
+      model = await chooseModel(daemonFetch);
+      if (!model) {
+        console.error("No AI models configured. Set up providers in the web dashboard first.");
+        process.exit(1);
+      }
     }
   }
 
@@ -82,6 +102,7 @@ export async function run(args: string[]) {
       description: flags.description,
       model,
       skills,
+      createdBy,
     }),
   });
 

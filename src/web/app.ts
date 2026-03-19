@@ -8,6 +8,7 @@ import activityRoutes from "./api/activity.js";
 import auth from "./api/auth.js";
 import bridges from "./api/bridges.js";
 import channels from "./api/channels.js";
+import configRoutes from "./api/config.js";
 import envRoutes, { sharedEnvApp } from "./api/env.js";
 import extensionsRoutes from "./api/extensions.js";
 import fileSharing from "./api/file-sharing.js";
@@ -103,6 +104,7 @@ app.use("/api/prompts/*", authMiddleware);
 app.use("/api/skills/*", authMiddleware);
 app.use("/api/extensions/*", authMiddleware);
 app.use("/api/bridges/*", authMiddleware);
+app.use("/api/config/*", authMiddleware);
 
 // v1 API auth
 app.use("/api/v1/*", authMiddleware);
@@ -112,6 +114,9 @@ app.route("/api/setup", setup);
 
 // Public routes (no auth)
 app.route("/public", publicFiles);
+
+// Config routes (authenticated, no admin required — accessible to minds)
+app.route("/api/config", configRoutes);
 
 // Chain route registrations to capture types
 const routes = app

@@ -11,6 +11,7 @@ export type Selection =
   | { kind: "extension"; extensionId: string; path: string }
   | { kind: "settings"; section?: string }
   | { kind: "shared-files" }
+  | { kind: "system-chat" }
   | { kind: "channel"; slug: string };
 
 /**
@@ -85,6 +86,7 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
   const search = new URLSearchParams(window.location.search);
 
   if (path === "/shared-files") return { kind: "shared-files" };
+  if (path === "/system/chat") return { kind: "system-chat" };
   if (path === "/settings") return { kind: "settings" };
 
   const settingsSectionMatch = path.match(/^\/settings\/(.+)$/);
@@ -178,6 +180,8 @@ export function selectionToPath(selection: Selection, extensions: ExtensionInfo[
       return selection.section ? `/settings/${selection.section}` : "/settings";
     case "shared-files":
       return "/shared-files";
+    case "system-chat":
+      return "/system/chat";
     case "channel": {
       // Don't serialize backwards-compat conv IDs to URL
       if (selection.slug.startsWith("__conv:")) {

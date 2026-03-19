@@ -1,5 +1,5 @@
 import { compareSync, hashSync } from "bcryptjs";
-import { and, count, eq } from "drizzle-orm";
+import { and, count, eq, or } from "drizzle-orm";
 import { getDb } from "./db.js";
 import { broadcast } from "./events/activity-events.js";
 import { users } from "./schema.js";
@@ -8,7 +8,7 @@ import type { MindProfile } from "./volute-config.js";
 export type User = {
   id: number;
   username: string;
-  role: "admin" | "user" | "pending";
+  role: "admin" | "user" | "pending" | "system";
   user_type: "brain" | "mind" | "system";
   display_name: string | null;
   description: string | null;
@@ -99,10 +99,16 @@ export async function listUsersByType(userType: "brain" | "mind"): Promise<User[
 
 export async function getOrCreateMindUser(mindName: string): Promise<User> {
   const db = await getDb();
+  // Look up by username — allow mind or system user_type (spirit "volute" reuses the system user)
   const existing = await db
     .select(userSelectFields)
     .from(users)
-    .where(and(eq(users.username, mindName), eq(users.user_type, "mind")))
+    .where(
+      and(
+        eq(users.username, mindName),
+        or(eq(users.user_type, "mind"), eq(users.user_type, "system")),
+      ),
+    )
     .get();
   if (existing) return existing as User;
 
@@ -119,14 +125,17 @@ export async function getOrCreateMindUser(mindName: string): Promise<User> {
     return result as User;
   } catch (err: unknown) {
     // Handle race condition: another request may have inserted concurrently
-    if (err instanceof Error && err.message.includes("UNIQUE constraint")) {
-      const retried = await db
-        .select(userSelectFields)
-        .from(users)
-        .where(and(eq(users.username, mindName), eq(users.user_type, "mind")))
-        .get();
-      if (retried) return retried as User;
-    }
+    const retried = await db
+      .select(userSelectFields)
+      .from(users)
+      .where(
+        and(
+          eq(users.username, mindName),
+          or(eq(users.user_type, "mind"), eq(users.user_type, "system")),
+        ),
+      )
+      .get();
+    if (retried) return retried as User;
     throw err;
   }
 }
@@ -146,7 +155,7 @@ export async function getOrCreateSystemUser(): Promise<User> {
       .values({
         username: "volute",
         password_hash: "!system",
-        role: "user",
+        role: "system",
         user_type: "system",
         display_name: "Volute",
       })

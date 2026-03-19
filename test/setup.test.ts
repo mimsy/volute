@@ -74,10 +74,19 @@ describe("setup config", () => {
     assert.equal(isSetupComplete(), false);
   });
 
-  it("isSetupComplete returns true when setup field exists", () => {
+  it("isSetupComplete returns false when setup field exists but setupCompleted is not set", () => {
     writeGlobalConfig({
       name: "test",
       setup: { type: "local", mindsDir: "/tmp", isolation: "sandbox", service: false },
+    });
+    assert.equal(isSetupComplete(), false);
+  });
+
+  it("isSetupComplete returns true when setupCompleted is true", () => {
+    writeGlobalConfig({
+      name: "test",
+      setup: { type: "local", mindsDir: "/tmp", isolation: "sandbox", service: false },
+      setupCompleted: true,
     });
     assert.equal(isSetupComplete(), true);
   });

@@ -47,13 +47,13 @@ let iframeLoaded = $state(false);
   {#if iframeUrl || bodyHtml}
     <div class="feed-card-body">
       {#if iframeUrl}
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <iframe
           src={iframeUrl}
           class="page-preview"
           class:loaded={iframeLoaded}
           title={title}
           sandbox="allow-same-origin"
+          role="presentation"
           onpointerdown={(e) => e.preventDefault()}
           onload={() => iframeLoaded = true}
         ></iframe>

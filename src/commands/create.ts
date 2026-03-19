@@ -7,7 +7,11 @@ export async function run(args: string[]) {
   });
 
   const name = positional[0];
-  const template = flags.template ?? "claude";
+  let template = flags.template;
+  if (!template) {
+    const { resolveTemplate } = await import("../lib/ai-service.js");
+    template = resolveTemplate();
+  }
 
   if (!name) {
     console.error("Usage: volute mind create <name> [--template <name>] [--skills <list|none>]");

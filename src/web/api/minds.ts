@@ -18,6 +18,7 @@ import {
   importPiSession,
   parseNameFromIdentity,
 } from "../../commands/import.js";
+import { qualifyModelId, resolveTemplate, unqualifyModelId } from "../../lib/ai-service.js";
 import { type ExportManifest, isHomeOnlyArchive } from "../../lib/archive.js";
 import { deleteMindUser } from "../../lib/auth.js";
 import { CHANNELS } from "../../lib/channels.js";
@@ -40,7 +41,6 @@ import {
 } from "../../lib/daemon/turn-tracker.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
-import { extractTextContent } from "../../lib/delivery/delivery-router.js";
 import { recordInbound, tagUntaggedInbound } from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import {
@@ -117,7 +117,12 @@ import { cleanupVariant } from "../../lib/variant-cleanup.js";
 import { validateBranchName } from "../../lib/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
 import { fireWebhook } from "../../lib/webhook.js";
-import { type AuthEnv, requireAdmin, requireSelf } from "../middleware/auth.js";
+import {
+  type AuthEnv,
+  requireAdmin,
+  requireAdminOrSystem,
+  requireSelf,
+} from "../middleware/auth.js";
 
 /** Event types that trigger turn creation (hoisted for perf — avoid per-request allocation). */
 const SUBSTANTIVE_TYPES = new Set(["thinking", "text", "tool_use", "tool_result", "outbound"]);
@@ -727,6 +732,7 @@ const createMindSchema = z.object({
   model: z.string().optional(),
   seedSoul: z.string().optional(),
   skills: z.array(z.string()).optional(),
+  createdBy: z.string().optional(),
 });
 
 // Create mind — admin only
@@ -742,10 +748,11 @@ function formatTimeAgo(date: Date): string {
 }
 
 const app = new Hono<AuthEnv>()
-  .post("/", requireAdmin, zValidator("json", createMindSchema), async (c) => {
+  .post("/", requireAdminOrSystem, zValidator("json", createMindSchema), async (c) => {
     const body = c.req.valid("json");
 
-    const { name, template = "claude" } = body;
+    const { name } = body;
+    const template = body.template ?? resolveTemplate(body.model);
 
     const nameErr = validateMindName(name);
     if (nameErr) return c.json({ error: nameErr }, 400);
@@ -800,7 +807,9 @@ const app = new Hono<AuthEnv>()
         const existing = existsSync(configPath)
           ? JSON.parse(readFileSync(configPath, "utf-8"))
           : {};
-        existing.model = body.model;
+        // Pi template needs provider:model format; other templates need bare model ID
+        existing.model =
+          template === "pi" ? qualifyModelId(body.model) : unqualifyModelId(body.model);
         writeFileSync(configPath, `${JSON.stringify(existing, null, 2)}\n`);
       }
 
@@ -812,7 +821,9 @@ const app = new Hono<AuthEnv>()
       );
 
       const port = await nextPort();
-      await addMind(name, port, body.stage, template);
+      // Use createdBy from body, or fall back to the authenticated user's username
+      const createdBy = body.createdBy ?? c.get("user")?.username;
+      await addMind(name, port, body.stage, template, createdBy);
       try {
         await setMindTemplateHash(name, computeTemplateHash(template));
       } catch (err) {

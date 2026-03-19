@@ -423,6 +423,7 @@ export async function run(args: string[]) {
     ...existingConfig,
     name: systemName,
     setup,
+    setupCompleted: true,
   };
   if (port != null) config.port = port;
   if (host) config.hostname = host;

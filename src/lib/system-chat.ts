@@ -1,4 +1,4 @@
-import { aiComplete } from "./ai-service.js";
+import { aiCompleteUtility } from "./ai-service.js";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "./auth.js";
 import { deliverMessage } from "./delivery/message-delivery.js";
 import { addMessage, createConversation, findDMConversation } from "./events/conversations.js";
@@ -25,6 +25,11 @@ export async function ensureSystemDM(mindName: string): Promise<{ conversationId
 
   const systemUser = await getOrCreateSystemUser();
   const mindUser = await getOrCreateMindUser(mindName);
+
+  // Spirit "volute" shares the system user — can't DM yourself
+  if (systemUser.id === mindUser.id) {
+    throw new Error(`Cannot create system DM: mind "${mindName}" is the system user`);
+  }
 
   const existing = await findDMConversation(mindName, [systemUser.id, mindUser.id]);
   if (existing) {
@@ -86,14 +91,41 @@ export async function sendSystemMessageDirect(
 }
 
 /**
+ * Check if the system spirit is running and can handle replies.
+ */
+async function isSpiritAvailable(): Promise<boolean> {
+  const spiritEntry = await findMind("volute");
+  return !!(spiritEntry?.running && spiritEntry.mindType === "spirit");
+}
+
+/**
  * Generate an AI-powered reply from the system user to a mind's message.
- * Gathers mind context (config, state) and uses aiComplete for the response.
+ * Routes through the system spirit when available, falls back to aiCompleteUtility.
  */
 export async function generateSystemReply(
   conversationId: string,
   mindName: string,
   message: string,
 ): Promise<void> {
+  // If the system spirit is running, deliver through it
+  if (await isSpiritAvailable()) {
+    try {
+      await deliverMessage("volute", {
+        content: [{ type: "text", text: message }],
+        channel: `@${mindName}`,
+        conversationId,
+        sender: mindName,
+        isDM: true,
+        participants: ["volute", mindName],
+        participantCount: 2,
+      });
+      return;
+    } catch (err) {
+      slog.warn(`failed to route to spirit, falling back to aiCompleteUtility`, log.errorData(err));
+    }
+  }
+
+  // Fallback: generate reply via utility model
   const entry = await findMind(mindName);
   const dir = mindDir(mindName);
   const config = readVoluteConfig(dir);
@@ -143,7 +175,7 @@ export async function generateSystemReply(
 
   const systemPrompt = contextParts.join("\n");
 
-  const response = await aiComplete(systemPrompt, message);
+  const response = await aiCompleteUtility(systemPrompt, message);
   if (!response) {
     slog.warn(`no AI model available for system reply to ${mindName}`);
     const fallback =

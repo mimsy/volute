@@ -129,7 +129,7 @@ export type FileContent = {
 export type AvailableUser = {
   id: number;
   username: string;
-  role: "admin" | "user" | "pending" | "mind";
+  role: "admin" | "user" | "pending" | "mind" | "system";
   user_type: "brain" | "mind" | "system";
   display_name?: string | null;
   description?: string | null;

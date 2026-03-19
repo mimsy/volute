@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { Codex } from "@openai/codex-sdk";
 import { flushFileChanges, trackFileChange } from "./lib/auto-commit.js";
@@ -90,16 +90,22 @@ export function createMind(options: {
   }
   refreshSystemPrompt();
 
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY is not set — cannot start codex mind");
-  }
+  // Use OPENAI_API_KEY if available, otherwise let codex CLI use its own auth (~/.codex/auth.json)
+  const apiKey = process.env.OPENAI_API_KEY;
 
   const codex = new Codex({
-    apiKey: process.env.OPENAI_API_KEY,
+    ...(apiKey ? { apiKey } : {}),
     config: {
       model_instructions_file: promptPath,
       // Let the SDK handle compaction natively when a threshold is configured
       model_auto_compact_token_limit: maxContextTokens ?? 999999999,
+      // The codex sandbox runs commands in /bin/zsh -lc which resets the environment.
+      // Set ZDOTDIR so the login shell sources our .zshenv with VOLUTE env vars and PATH.
+      shell_environment_policy: {
+        inherit: "all",
+        ignore_default_excludes: true,
+        set: { ZDOTDIR: options.cwd },
+      },
     },
   });
 
@@ -219,6 +225,30 @@ export function createMind(options: {
 
     session.abortController = new AbortController();
 
+    // Sync VOLUTE_SESSION to .zshenv so codex shell commands know which session they're in.
+    // process.env.VOLUTE_SESSION is set by the router, but the codex sandbox doesn't inherit it.
+    try {
+      const zshenvPath = resolvePath(options.cwd, ".zshenv");
+      let existing: string;
+      try {
+        existing = readFileSync(zshenvPath, "utf-8");
+      } catch {
+        // .zshenv doesn't exist (non-codex template) — not critical
+        existing = "";
+      }
+      if (existing) {
+        const sessionLine = `export VOLUTE_SESSION=${JSON.stringify(session.name)}`;
+        const updated = existing.replace(/^export VOLUTE_SESSION=.*$/m, sessionLine);
+        if (updated === existing && !existing.includes("VOLUTE_SESSION")) {
+          writeFileSync(zshenvPath, `${existing.trimEnd()}\n${sessionLine}\n`);
+        } else if (updated !== existing) {
+          writeFileSync(zshenvPath, updated);
+        }
+      }
+    } catch (err) {
+      warn("mind", `session "${session.name}": failed to sync VOLUTE_SESSION to .zshenv:`, err);
+    }
+
     try {
       const { events } = await session.thread.runStreamed(text, {
         signal: session.abortController.signal,
@@ -337,17 +367,19 @@ export function createMind(options: {
                 }
                 itemText.delete(id);
               } else if (itemType === "command_execution" || itemType === "commandExecution") {
+                const rawOutput = item.aggregated_output ?? item.output;
                 const output =
-                  typeof item.output === "string" ? item.output : JSON.stringify(item.output ?? "");
+                  typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput ?? "");
+                const exitCode = item.exit_code ?? item.exitCode;
                 emit(session, {
                   type: "tool_result",
                   content: output,
-                  metadata: { name: "command", is_error: item.exitCode !== 0 },
+                  metadata: { name: "command", is_error: exitCode !== 0 },
                 });
                 broadcast(session, {
                   type: "tool_result",
                   output,
-                  is_error: item.exitCode !== 0,
+                  is_error: exitCode !== 0,
                 });
               } else if (itemType === "file_change" || itemType === "fileChange") {
                 const filePath = item.path ?? item.filePath ?? "";

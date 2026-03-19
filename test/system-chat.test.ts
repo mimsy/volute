@@ -33,7 +33,7 @@ describe("system user", () => {
     assert.equal(user.username, "volute");
     assert.equal(user.user_type, "system");
     assert.equal(user.display_name, "Volute");
-    assert.equal(user.role, "user");
+    assert.equal(user.role, "system");
   });
 
   it("getOrCreateSystemUser is idempotent", async () => {

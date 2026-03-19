@@ -32,6 +32,7 @@ describe("web setup routes", () => {
     writeGlobalConfig({
       name: "test",
       setup: { type: "local", mindsDir: "/tmp/minds", isolation: "sandbox", service: false },
+      setupCompleted: true,
     });
     const app = createApp();
     const res = await app.request("/api/setup/status");
@@ -74,6 +75,7 @@ describe("web setup routes", () => {
     writeGlobalConfig({
       name: "test",
       setup: { type: "local", mindsDir: "/tmp/minds", isolation: "sandbox", service: false },
+      setupCompleted: true,
     });
     const app = createApp();
     const res = await app.request("/api/setup/configure", {

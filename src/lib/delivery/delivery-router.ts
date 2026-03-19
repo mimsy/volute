@@ -107,8 +107,17 @@ const STAT_TTL_MS = 5_000;
 
 const dlog = log.child("delivery-router");
 
+// Cache of mind name → directory overrides (e.g. spirits with custom dirs)
+const dirOverrides = new Map<string, string>();
+
+/** Register a custom directory for a mind (called when spirits/variants start). */
+export function registerMindDir(name: string, dir: string): void {
+  dirOverrides.set(name, dir);
+}
+
 function configPath(mindName: string): string {
-  return resolve(mindDir(mindName), "home/.config/routes.json");
+  const dir = dirOverrides.get(mindName) ?? mindDir(mindName);
+  return resolve(dir, "home/.config/routes.json");
 }
 
 export function getRoutingConfig(mindName: string): RoutingConfig {
