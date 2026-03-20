@@ -260,10 +260,17 @@ async function handleClick() {
         <span class="summary-text">{event.content}</span>
       {/if}
     </div>
-  {:else if compact && (event.type === "inbound" || event.type === "outbound")}
-    <div class="compact-msg" class:compact-msg-inbound={event.type === "inbound"}>
-      <span class="compact-msg-sender" class:compact-msg-sender-user={event.type === "inbound"}>{event.type === "inbound" ? (event.sender ?? "user") : mindName}</span>
-      <span class="compact-msg-text">{event.content}</span>
+  {:else if event.type === "inbound" || event.type === "outbound"}
+    <div class="compact-msg">
+      <div class="compact-msg-header">
+        <svg class="compact-msg-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+        {#if event.channel}<span class="compact-msg-channel">{event.channel}</span>{/if}
+        <span class="compact-msg-time">{formatTime(event.created_at)}</span>
+      </div>
+      <div class="compact-msg-body">
+        <span class="compact-msg-sender" class:compact-msg-sender-user={event.type === "inbound"}>{event.type === "inbound" ? (event.sender ?? "user") : mindName}</span>
+        <span class="compact-msg-text">{event.content}</span>
+      </div>
     </div>
   {:else}
     <div class="event-header">
@@ -278,15 +285,7 @@ async function handleClick() {
     </div>
 
     <div class="event-body">
-      {#if event.type === "inbound"}
-        <span class="sender inbound">{event.sender ?? "user"}</span>
-        <div class="user-text">{event.content}</div>
-      {:else if event.type === "outbound"}
-        <span class="sender outbound">mind</span>
-        <div class="markdown-body">
-          {@html renderMarkdown(event.content)}
-        </div>
-      {:else if event.type === "text"}
+      {#if event.type === "text"}
         <div class="markdown-body">
           {@html renderMarkdown(event.content)}
         </div>
@@ -676,9 +675,44 @@ async function handleClick() {
     color: var(--blue);
   }
 
-  /* Compact inbound/outbound message card */
+  /* Inbound/outbound message card */
   .compact-msg {
-    padding: 4px 8px;
+    background: var(--bg-0);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .compact-msg-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-1);
+    border-bottom: 1px solid var(--border);
+  }
+  .compact-msg-icon {
+    width: 12px;
+    height: 12px;
+    color: var(--blue);
+    flex-shrink: 0;
+  }
+  .compact-msg-channel {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .compact-msg-time {
+    font-size: 11px;
+    color: var(--text-2);
+    font-weight: 400;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+  .compact-msg-body {
+    padding: 6px 10px;
     font-family: var(--mono);
     font-size: 13px;
     line-height: 1.5;

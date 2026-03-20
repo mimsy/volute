@@ -559,27 +559,6 @@ function jumpToLatest() {
                   <HistoryEvent event={ev} mindName={ev.mind || name || ""} compact />
                 {/each}
               </div>
-              <div class="turn-cards">
-                {#each getStreamingConversations(pendingInbounds, name ?? "") as conv (conv.channel)}
-                  <div class="feed-card-wrapper">
-                    <div class="feed-card card-chat">
-                      <div class="feed-card-header header-chat">
-                        <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                        <span class="feed-card-label">{conv.label}</span>
-                        <span class="feed-card-meta">{conv.messages.length} message{conv.messages.length === 1 ? '' : 's'}</span>
-                      </div>
-                      <div class="feed-card-body chat-body">
-                        {#each conv.messages.slice(-5) as msg, i (i)}
-                          <div class="chat-entry">
-                            <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender ?? name ?? ""}</span>
-                            <span class="chat-entry-content">{msg.content}</span>
-                          </div>
-                        {/each}
-                      </div>
-                    </div>
-                  </div>
-                {/each}
-              </div>
             </div>
           </div>
         {/if}
@@ -957,6 +936,8 @@ function jumpToLatest() {
     padding: 8px 0;
     animation: pulse 1.5s infinite;
   }
+
+
 
   .empty-hint {
     color: var(--text-2);
