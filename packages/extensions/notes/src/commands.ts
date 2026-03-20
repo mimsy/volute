@@ -30,7 +30,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         if (!user) return { error: `Unknown mind: ${mindName}` };
 
         const title = args[0];
-        const content = args[1];
+        const content = args[1] ?? ctx.stdin;
         if (!title || !content)
           return { error: 'Usage: volute notes write "title" "content" [--reply-to author/slug]' };
 
@@ -123,7 +123,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         if (!user) return { error: `Unknown mind: ${mindName}` };
 
         const ref = args[0];
-        const content = args[1];
+        const content = args[1] ?? ctx.stdin;
         if (!ref || !ref.includes("/") || !content) {
           return { error: 'Usage: volute notes comment <author/slug> "content"' };
         }
