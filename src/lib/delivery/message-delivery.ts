@@ -55,6 +55,39 @@ export async function recordInbound(
 }
 
 /**
+ * Record an outbound message: persist to mind_history and publish to the live event stream.
+ * Called when a mind sends a chat message, so the turn timeline includes outbound events.
+ * Fire-and-forget — logs errors but does not throw.
+ */
+export async function recordOutbound(
+  mind: string,
+  channel: string,
+  content: string | null,
+  opts: { turnId?: string; messageId?: string } = {},
+): Promise<void> {
+  try {
+    const db = await getDb();
+    await db.insert(mindHistory).values({
+      mind,
+      type: "outbound",
+      channel,
+      content,
+      turn_id: opts.turnId ?? null,
+      message_id: opts.messageId ?? null,
+    });
+  } catch (err) {
+    dlog.warn(`failed to persist outbound for ${mind}`, log.errorData(err));
+  }
+
+  publishMindEvent(mind, {
+    mind,
+    type: "outbound",
+    channel,
+    content: content ?? undefined,
+  });
+}
+
+/**
  * Tag recent untagged inbound events and messages for a mind with the given turn ID.
  * Used both proactively (on message delivery) and retroactively (on turn creation).
  * When `setTrigger` is true, also sets the turn's `trigger_event_id` to the most recent inbound.
@@ -94,7 +127,7 @@ export async function tagUntaggedInbound(
         .where(eq(turns.id, turnId));
     }
   }
-  // Tag recent untagged conversation messages
+  // Tag recent untagged conversation messages (only inbound, i.e. not sent by the mind itself)
   const recentMsgs = await db
     .select({ id: messages.id })
     .from(messages)
@@ -103,6 +136,7 @@ export async function tagUntaggedInbound(
       and(
         eq(conversations.mind_name, mind),
         sql`${messages.turn_id} IS NULL`,
+        sql`${messages.sender_name} != ${mind}`,
         sql`${messages.created_at} > datetime('now', '-60 seconds')`,
       ),
     )

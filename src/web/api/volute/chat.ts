@@ -5,7 +5,8 @@ import { z } from "zod";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js";
 import { routeOutboundBridge } from "../../../lib/bridge-outbound.js";
 import { getActiveTurnId, getLastToolUseEventId } from "../../../lib/daemon/turn-tracker.js";
-import { deliverMessage } from "../../../lib/delivery/message-delivery.js";
+import { extractTextContent } from "../../../lib/delivery/delivery-router.js";
+import { deliverMessage, recordOutbound } from "../../../lib/delivery/message-delivery.js";
 import { subscribe } from "../../../lib/events/conversation-events.js";
 import {
   addMessage,
@@ -101,6 +102,7 @@ const fileSchema = z.object({
 const chatSchema = z.object({
   message: z.string().optional(),
   conversationId: z.string().optional(),
+  targetMind: z.string().optional(),
   sender: z.string().optional(),
   images: z
     .array(
@@ -113,216 +115,46 @@ const chatSchema = z.object({
   files: z.array(fileSchema).optional(),
 });
 
-const app = new Hono<AuthEnv>()
-  .post("/:name/chat", zValidator("json", chatSchema), async (c) => {
-    const name = c.req.param("name");
-    const baseName = await getBaseName(name);
+const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
-    const entry = await findMind(baseName);
-    if (!entry) return c.json({ error: "Mind not found" }, 404);
-
-    const body = c.req.valid("json");
-    if (
-      !body.message &&
-      (!body.images || body.images.length === 0) &&
-      (!body.files || body.files.length === 0)
-    ) {
-      return c.json({ error: "message, images, or files required" }, 400);
+function stageFilesForMinds(
+  files: z.infer<typeof fileSchema>[],
+  targetMinds: string[],
+  senderName: string,
+): { notifications: string[]; error?: { message: string; status: 400 | 413 } } {
+  const notifications: string[] = [];
+  for (const file of files) {
+    const pathErr = validateFilePath(file.filename);
+    if (pathErr)
+      return { notifications, error: { message: `Invalid filename: ${pathErr}`, status: 400 } };
+    const content = Buffer.from(file.data, "base64");
+    if (content.length > MAX_FILE_SIZE) {
+      return {
+        notifications,
+        error: {
+          message: `File too large: ${file.filename} (${formatFileSize(content.length)}, max ${formatFileSize(MAX_FILE_SIZE)})`,
+          status: 413,
+        },
+      };
     }
-
-    const user = c.get("user");
-    const mindUser = await getOrCreateMindUser(baseName);
-
-    // Daemon token callers can override the sender name
-    const senderName = user.id === 0 && body.sender ? body.sender : user.username;
-
-    // Resolve or create conversation
-    let conversationId = body.conversationId;
-    if (conversationId) {
-      // Daemon token (id: 0) can access any conversation
-      if (user.id !== 0 && !(await isParticipantOrOwner(conversationId, user.id))) {
-        return c.json({ error: "Conversation not found" }, 404);
-      }
-    } else {
-      // If sender is a registered mind, include them as a participant
-      const participantIds: number[] = [];
-      if (user.id !== 0) {
-        participantIds.push(user.id);
-      } else if (body.sender) {
-        // Check if sender is the system user or a mind
-        if (body.sender === "volute") {
-          const systemUser = await getOrCreateSystemUser();
-          participantIds.push(systemUser.id);
-        } else {
-          const senderMind = await findMind(body.sender);
-          if (senderMind) {
-            const senderMindUser = await getOrCreateMindUser(body.sender);
-            participantIds.push(senderMindUser.id);
-          }
-        }
-      }
-      participantIds.push(mindUser.id);
-
-      // DM reuse: if exactly 2 participants, look for an existing conversation
-      if (participantIds.length === 2) {
-        const existing = await findDMConversation(baseName, participantIds as [number, number]);
-        if (existing) {
-          conversationId = existing;
-        }
-      }
-
-      if (!conversationId) {
-        // Title from participant names (e.g. "alice, mystery")
-        const participantNames = new Set([senderName, baseName]);
-        const title = [...participantNames].join(", ");
-
-        const conv = await createConversation(baseName, "volute", {
-          userId: user.id !== 0 ? user.id : undefined,
-          title,
-          participantIds,
-        });
-        conversationId = conv.id;
-      }
+    for (const mind of targetMinds) {
+      const { id } = stageFile(mind, senderName, file.filename, content, file.filename);
+      notifications.push(
+        `[file] ${senderName} sent ${file.filename} (${formatFileSize(content.length)}) — run: volute chat accept ${id}`,
+      );
     }
-
-    const conv = await getConversation(conversationId);
-    const convTitle = conv?.title ?? null;
-
-    // Stage files if any
-    const fileNotifications: string[] = [];
-    if (body.files && body.files.length > 0) {
-      const MAX_FILE_SIZE = 50 * 1024 * 1024;
-      for (const file of body.files) {
-        const pathErr = validateFilePath(file.filename);
-        if (pathErr) return c.json({ error: `Invalid filename: ${pathErr}` }, 400);
-        const content = Buffer.from(file.data, "base64");
-        if (content.length > MAX_FILE_SIZE) {
-          return c.json(
-            {
-              error: `File too large: ${file.filename} (${formatFileSize(content.length)}, max ${formatFileSize(MAX_FILE_SIZE)})`,
-            },
-            413,
-          );
-        }
-        const { id } = stageFile(baseName, senderName, file.filename, content, file.filename);
-        fileNotifications.push(
-          `[file] ${senderName} sent ${file.filename} (${formatFileSize(content.length)}) — run: volute chat accept ${id}`,
-        );
-      }
-    }
-
-    // Build content blocks
-    const contentBlocks: ContentBlock[] = [];
-    if (body.message) {
-      contentBlocks.push({ type: "text", text: body.message });
-    }
-    for (const note of fileNotifications) {
-      contentBlocks.push({ type: "text", text: note });
-    }
-    if (body.images) {
-      for (const img of body.images) {
-        contentBlocks.push({ type: "image", media_type: img.media_type, data: img.data });
-      }
-    }
-
-    // Link message to a turn:
-    // - If sender is a mind, use the sender's active turn (outbound from that mind)
-    // - Inbound user messages don't get turn_id — the turn is created per-session
-    //   when the mind starts processing, avoiding cross-session turn merging
-    const senderIsMind = user.id === 0 && body.sender && (await findMind(body.sender));
-    const mindSession = c.get("mindSession");
-    let sourceEventId: number | undefined;
-    let turnId: string | undefined;
-    if (senderIsMind) {
-      sourceEventId = getLastToolUseEventId(body.sender!, mindSession);
-      turnId = getActiveTurnId(body.sender!, mindSession);
-    }
-
-    // Save user message
-    await addMessage(conversationId, "user", senderName, contentBlocks, {
-      sourceEventId,
-      turnId,
-    });
-    if (senderIsMind) {
-      routeOutboundBridge(conversationId!, senderName, contentBlocks).catch((err) => {
-        log.warn("outbound bridge routing failed", log.errorData(err));
-      });
-    }
-
-    // Fan out to all running mind participants
-    const isDM = conv?.type === "dm";
-    await fanOutToMinds({
-      conversationId: conversationId!,
-      contentBlocks,
-      senderName,
-      convTitle,
-      isDM,
-      slugExtra: conv
-        ? { convType: conv.type as "dm" | "channel", convName: conv.name }
-        : undefined,
-      targetName: (username) => (username === baseName ? name : username),
-    });
-
-    // Check if a mind is messaging a system DM — generate AI reply
-    if (senderIsMind && body.message) {
-      const participants = await getParticipants(conversationId!);
-      const hasSystemUser = participants.some((p) => p.userType === "system");
-      if (hasSystemUser) {
-        generateSystemReply(conversationId!, baseName, body.message).catch((err) =>
-          log.error(`system reply generation failed for ${baseName}`, log.errorData(err)),
-        );
-      }
-    }
-
-    return c.json({ ok: true, conversationId });
-  })
-  // SSE endpoint for conversation events (new messages + typing)
-  .get("/:name/conversations/:id/events", async (c) => {
-    const conversationId = c.req.param("id");
-    const user = c.get("user");
-    // Daemon token (id: 0) bypasses participant check
-    if (user.id !== 0 && !(await isParticipantOrOwner(conversationId, user.id))) {
-      return c.json({ error: "Conversation not found" }, 404);
-    }
-
-    return streamSSE(c, async (stream) => {
-      const unsubscribe = subscribe(conversationId, (event) => {
-        stream.writeSSE({ data: JSON.stringify(event) }).catch((err) => {
-          if (!stream.aborted) console.error("[chat] SSE write error:", err);
-        });
-      });
-
-      // Keep-alive ping every 15s
-      const keepAlive = setInterval(() => {
-        stream.writeSSE({ data: "" }).catch((err) => {
-          if (!stream.aborted) console.error("[chat] SSE ping error:", err);
-        });
-      }, 15000);
-
-      // Wait until the client disconnects
-      await new Promise<void>((resolve) => {
-        stream.onAbort(() => {
-          unsubscribe();
-          clearInterval(keepAlive);
-          resolve();
-        });
-      });
-    });
-  });
-
-const unifiedChatSchema = z.object({
-  message: z.string().optional(),
-  conversationId: z.string(),
-  images: z.array(z.object({ media_type: z.string(), data: z.string() })).optional(),
-  files: z.array(fileSchema).optional(),
-});
+  }
+  return { notifications };
+}
 
 export const unifiedChatApp = new Hono<AuthEnv>().post(
   "/chat",
-  zValidator("json", unifiedChatSchema),
+  zValidator("json", chatSchema),
   async (c) => {
     const user = c.get("user");
     const body = c.req.valid("json");
+
+    // Validate content
     if (
       !body.message &&
       (!body.images || body.images.length === 0) &&
@@ -331,50 +163,103 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       return c.json({ error: "message, images, or files required" }, 400);
     }
 
-    const conv = await getConversation(body.conversationId);
-    if (!conv) return c.json({ error: "Conversation not found" }, 404);
-
-    if (user.id !== 0 && !(await isParticipantOrOwner(body.conversationId, user.id))) {
-      return c.json({ error: "Conversation not found" }, 404);
+    // Must have conversationId or targetMind
+    if (!body.conversationId && !body.targetMind) {
+      return c.json({ error: "conversationId or targetMind required" }, 400);
     }
 
-    const senderName = user.username;
+    // Resolve sender: daemon token + body.sender → override, else user.username
+    const senderName = user.id === 0 && body.sender ? body.sender : user.username;
 
-    // Determine the target mind for file staging
-    // For conversations, stage files to all mind participants
-    const fileNotifications: string[] = [];
-    if (body.files && body.files.length > 0) {
-      const participants = await getParticipants(body.conversationId);
-      const mindParticipants = participants.filter(
-        (p) => p.userType === "mind" && p.username !== senderName,
-      );
-      const MAX_FILE_SIZE = 50 * 1024 * 1024;
+    // Detect if sender is a mind
+    const senderIsMind =
+      (user.id === 0 && body.sender && (await findMind(body.sender))) || user.user_type === "mind";
 
-      for (const file of body.files) {
-        const pathErr = validateFilePath(file.filename);
-        if (pathErr) return c.json({ error: `Invalid filename: ${pathErr}` }, 400);
-        const content = Buffer.from(file.data, "base64");
-        if (content.length > MAX_FILE_SIZE) {
-          return c.json(
-            {
-              error: `File too large: ${file.filename} (${formatFileSize(content.length)}, max ${formatFileSize(MAX_FILE_SIZE)})`,
-            },
-            413,
-          );
+    // Track baseName and variant-aware targetName callback for the targetMind flow
+    let baseName: string | undefined;
+    let variantName: string | undefined;
+
+    let conversationId = body.conversationId;
+
+    if (body.targetMind) {
+      // --- targetMind flow (was mind-scoped endpoint) ---
+      variantName = body.targetMind;
+      baseName = await getBaseName(body.targetMind);
+
+      const entry = await findMind(baseName);
+      if (!entry) return c.json({ error: "Mind not found" }, 404);
+
+      if (conversationId) {
+        // Daemon token (id: 0) can access any conversation
+        if (user.id !== 0 && !(await isParticipantOrOwner(conversationId, user.id))) {
+          return c.json({ error: "Conversation not found" }, 404);
         }
-        for (const mind of mindParticipants) {
-          const { id } = stageFile(
-            mind.username,
-            senderName,
-            file.filename,
-            content,
-            file.filename,
-          );
-          fileNotifications.push(
-            `[file] ${senderName} sent ${file.filename} (${formatFileSize(content.length)}) — run: volute chat accept ${id}`,
-          );
+      } else {
+        // Auto-create/reuse DM conversation
+        const mindUser = await getOrCreateMindUser(baseName);
+        const participantIds: number[] = [];
+        if (user.id !== 0) {
+          participantIds.push(user.id);
+        } else if (body.sender) {
+          if (body.sender === "volute") {
+            const systemUser = await getOrCreateSystemUser();
+            participantIds.push(systemUser.id);
+          } else {
+            const senderMind = await findMind(body.sender);
+            if (senderMind) {
+              const senderMindUser = await getOrCreateMindUser(body.sender);
+              participantIds.push(senderMindUser.id);
+            }
+          }
+        }
+        participantIds.push(mindUser.id);
+
+        // DM reuse: if exactly 2 participants, look for an existing conversation
+        if (participantIds.length === 2) {
+          const existing = await findDMConversation(baseName, participantIds as [number, number]);
+          if (existing) {
+            conversationId = existing;
+          }
+        }
+
+        if (!conversationId) {
+          const participantNames = new Set([senderName, baseName]);
+          const title = [...participantNames].join(", ");
+
+          const conv = await createConversation(baseName, "volute", {
+            userId: user.id !== 0 ? user.id : undefined,
+            title,
+            participantIds,
+          });
+          conversationId = conv.id;
         }
       }
+    } else {
+      // --- conversationId-only flow (was unified endpoint) ---
+      if (user.id !== 0 && !(await isParticipantOrOwner(conversationId!, user.id))) {
+        return c.json({ error: "Conversation not found" }, 404);
+      }
+    }
+
+    const conv = await getConversation(conversationId!);
+    if (!conv) return c.json({ error: "Conversation not found" }, 404);
+    const convTitle = conv.title;
+
+    // Stage files
+    const fileNotifications: string[] = [];
+    if (body.files && body.files.length > 0) {
+      let fileTargets: string[];
+      if (baseName) {
+        fileTargets = [baseName];
+      } else {
+        const participants = await getParticipants(conversationId!);
+        fileTargets = participants
+          .filter((p) => p.userType === "mind" && p.username !== senderName)
+          .map((p) => p.username);
+      }
+      const { notifications, error } = stageFilesForMinds(body.files, fileTargets, senderName);
+      if (error) return c.json({ error: error.message }, error.status);
+      fileNotifications.push(...notifications);
     }
 
     // Build content blocks
@@ -389,49 +274,106 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       }
     }
 
-    const unifiedMindSession = c.get("mindSession");
-    let unifiedSourceEventId: number | undefined;
-    let unifiedTurnId: string | undefined;
-    if (user.user_type === "mind") {
-      unifiedSourceEventId = getLastToolUseEventId(senderName, unifiedMindSession);
-      unifiedTurnId = getActiveTurnId(senderName, unifiedMindSession);
+    // Turn tracking
+    const mindSession = c.get("mindSession");
+    let sourceEventId: number | undefined;
+    let turnId: string | undefined;
+    if (senderIsMind) {
+      const senderForTurn = body.sender ?? senderName;
+      sourceEventId = getLastToolUseEventId(senderForTurn, mindSession);
+      turnId = getActiveTurnId(senderForTurn, mindSession);
     }
-    await addMessage(body.conversationId, "user", senderName, contentBlocks, {
-      sourceEventId: unifiedSourceEventId,
-      turnId: unifiedTurnId,
+
+    // Save message
+    const message = await addMessage(conversationId!, "user", senderName, contentBlocks, {
+      sourceEventId,
+      turnId,
     });
 
-    // If sender is a mind, check for outbound bridge routing (fire-and-forget)
-    if (user.user_type === "mind") {
-      routeOutboundBridge(body.conversationId, senderName, contentBlocks).catch((err) => {
+    if (senderIsMind) {
+      routeOutboundBridge(conversationId!, senderName, contentBlocks).catch((err) => {
         log.warn("outbound bridge routing failed", log.errorData(err));
+      });
+      // Record outbound event in mind_history for turn timeline
+      const channel = buildVoluteSlug({
+        participants: await getParticipants(conversationId!),
+        mindUsername: senderName,
+        convTitle,
+        conversationId: conversationId!,
+        convType: conv.type as "dm" | "channel",
+        convName: conv.name,
+      });
+      recordOutbound(senderName, channel, extractTextContent(contentBlocks), {
+        turnId,
+        messageId: message?.id != null ? String(message.id) : undefined,
+      }).catch((err) => {
+        log.warn("recordOutbound failed", log.errorData(err));
       });
     }
 
     // Fan out to running mind participants
     const isDM = conv.type === "dm";
     await fanOutToMinds({
-      conversationId: body.conversationId,
+      conversationId: conversationId!,
       contentBlocks,
       senderName,
-      convTitle: conv.title,
+      convTitle,
       isDM,
       slugExtra: { convType: conv.type as "dm" | "channel", convName: conv.name },
+      // Variant-aware targeting: when targetMind is a variant, route to the variant name
+      targetName: baseName
+        ? (username) => (username === baseName ? variantName! : username)
+        : undefined,
     });
 
     // Check if a mind is messaging a system DM — generate AI reply
-    if (user.user_type === "mind" && body.message) {
-      const participants = await getParticipants(body.conversationId);
+    const systemReplyTarget = baseName ?? senderName;
+    if (senderIsMind && body.message) {
+      const participants = await getParticipants(conversationId!);
       const hasSystemUser = participants.some((p) => p.userType === "system");
       if (hasSystemUser) {
-        generateSystemReply(body.conversationId, senderName, body.message).catch((err) =>
-          log.error(`system reply generation failed for ${senderName}`, log.errorData(err)),
+        generateSystemReply(conversationId!, systemReplyTarget, body.message).catch((err) =>
+          log.error(`system reply generation failed for ${systemReplyTarget}`, log.errorData(err)),
         );
       }
     }
 
-    return c.json({ ok: true, conversationId: body.conversationId });
+    return c.json({ ok: true, conversationId });
   },
 );
+
+// Default export: SSE endpoint only (keeps existing mount points at /api/minds and /api/v1/minds)
+const app = new Hono<AuthEnv>().get("/:name/conversations/:id/events", async (c) => {
+  const conversationId = c.req.param("id");
+  const user = c.get("user");
+  // Daemon token (id: 0) bypasses participant check
+  if (user.id !== 0 && !(await isParticipantOrOwner(conversationId, user.id))) {
+    return c.json({ error: "Conversation not found" }, 404);
+  }
+
+  return streamSSE(c, async (stream) => {
+    const unsubscribe = subscribe(conversationId, (event) => {
+      stream.writeSSE({ data: JSON.stringify(event) }).catch((err) => {
+        if (!stream.aborted) console.error("[chat] SSE write error:", err);
+      });
+    });
+
+    // Keep-alive ping every 15s
+    const keepAlive = setInterval(() => {
+      stream.writeSSE({ data: "" }).catch((err) => {
+        if (!stream.aborted) console.error("[chat] SSE ping error:", err);
+      });
+    }, 15000);
+
+    // Wait until the client disconnects
+    await new Promise<void>((resolve) => {
+      stream.onAbort(() => {
+        unsubscribe();
+        clearInterval(keepAlive);
+        resolve();
+      });
+    });
+  });
+});
 
 export default app;

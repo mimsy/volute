@@ -156,32 +156,19 @@ export function setConversationPrivate(id: string, isPrivate: boolean): Promise<
 
 // --- Chat ---
 
-export function sendChat(
-  name: string,
-  message: string,
-  conversationId?: string,
-  images?: Array<{ media_type: string; data: string }>,
-  files?: Array<{ filename: string; data: string }>,
-): Promise<{ ok: boolean; conversationId: string }> {
-  return post(`${V1}/minds/${enc(name)}/chat`, {
-    message: message || undefined,
-    conversationId,
-    images: images && images.length > 0 ? images : undefined,
-    files: files && files.length > 0 ? files : undefined,
-  });
-}
-
-export function sendChatUnified(
-  conversationId: string,
-  message: string,
-  images?: Array<{ media_type: string; data: string }>,
-  files?: Array<{ filename: string; data: string }>,
-): Promise<{ ok: boolean; conversationId: string }> {
+export function sendChat(opts: {
+  message: string;
+  conversationId?: string;
+  targetMind?: string;
+  images?: Array<{ media_type: string; data: string }>;
+  files?: Array<{ filename: string; data: string }>;
+}): Promise<{ ok: boolean; conversationId: string }> {
   return post(`${V1}/chat`, {
-    message: message || undefined,
-    conversationId,
-    images: images && images.length > 0 ? images : undefined,
-    files: files && files.length > 0 ? files : undefined,
+    message: opts.message || undefined,
+    conversationId: opts.conversationId,
+    targetMind: opts.targetMind,
+    images: opts.images && opts.images.length > 0 ? opts.images : undefined,
+    files: opts.files && opts.files.length > 0 ? opts.files : undefined,
   });
 }
 

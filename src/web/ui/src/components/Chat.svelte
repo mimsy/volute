@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { ContentBlock, Message, Mind, Participant } from "@volute/api";
-import { fetchConversationMessages, reportTyping, sendChat, sendChatUnified } from "../lib/client";
+import { fetchConversationMessages, reportTyping, sendChat } from "../lib/client";
 import { subscribe } from "../lib/connection.svelte";
 import type { ChatEntry } from "../lib/types";
 import MessageInput from "./MessageInput.svelte";
@@ -201,25 +201,14 @@ async function handleSend(
   messageList?.scrollToBottom(true);
 
   try {
-    let resultConvId: string;
-    if (convType === "channel" && currentConvId) {
-      const result = await sendChatUnified(
-        currentConvId,
-        message,
-        images.length > 0 ? images : undefined,
-        files.length > 0 ? files : undefined,
-      );
-      resultConvId = result.conversationId;
-    } else {
-      const result = await sendChat(
-        name,
-        message,
-        currentConvId ?? undefined,
-        images.length > 0 ? images : undefined,
-        files.length > 0 ? files : undefined,
-      );
-      resultConvId = result.conversationId;
-    }
+    const result = await sendChat({
+      message,
+      conversationId: currentConvId ?? undefined,
+      targetMind: convType === "channel" ? undefined : name,
+      images: images.length > 0 ? images : undefined,
+      files: files.length > 0 ? files : undefined,
+    });
+    const resultConvId = result.conversationId;
     currentConvId = resultConvId;
     onConversationId(resultConvId);
   } catch (err) {
