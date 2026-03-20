@@ -134,6 +134,7 @@ export function createMind(options: {
   function initSession(session: CodexSession) {
     const isEphemeral = session.name.startsWith("new-");
     log("mind", `session "${session.name}": ${isEphemeral ? "ephemeral" : "persistent"}`);
+    emit(session, { type: "session_start" });
 
     if (!isEphemeral) {
       const savedThreadId = sessionStore.load(session.name);

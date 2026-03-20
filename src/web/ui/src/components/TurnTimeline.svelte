@@ -422,16 +422,25 @@ function jumpToLatest() {
                     </div>
                   {/each}
                   {#each turn.activities as act (act.id)}
-                    {@const actAuthor = typeof act.metadata?.author === 'string' ? act.metadata.author : turn.mind}
-                    {@const actUrl = act.metadata?.slug ? `/minds/${actAuthor}/notes/${act.metadata.slug}` : ''}
+                    {@const actColor = typeof act.metadata?.color === 'string' ? act.metadata.color : 'yellow'}
+                    {@const actIcon = typeof act.metadata?.icon === 'string' ? act.metadata.icon : ''}
+                    {@const actUrl = typeof act.metadata?.iframeUrl === 'string' ? act.metadata.iframeUrl : typeof act.metadata?.slug === 'string' ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : turn.mind}/notes/${act.metadata.slug}` : ''}
                     <div class="peek-anchor">
-                      <button class="peek-btn peek-btn-activity" aria-label="View activity" onclick={(e) => { e.stopPropagation(); if (actUrl) navigate(actUrl); }}>
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                      <button class="peek-btn" style:color="var(--{actColor})" aria-label="View activity" onclick={(e) => { e.stopPropagation(); if (actUrl) navigate(actUrl); }}>
+                        {#if actIcon}
+                          {@html actIcon}
+                        {:else}
+                          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                        {/if}
                       </button>
                       <div class="peek-popover">
-                        <div class="peek-card peek-card-activity">
-                          <div class="peek-card-header">
-                            <svg class="peek-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                        <div class="peek-card" style:border-color="color-mix(in srgb, var(--{actColor}) 25%, var(--border))">
+                          <div class="peek-card-header" style:border-bottom-color="color-mix(in srgb, var(--{actColor}) 25%, var(--border))">
+                            {#if actIcon}
+                              <span class="peek-card-icon" style:color="var(--{actColor})">{@html actIcon}</span>
+                            {:else}
+                              <svg class="peek-card-icon" style:color="var(--{actColor})" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                            {/if}
                             <span class="peek-card-label">{act.summary}</span>
                           </div>
                           {#if typeof act.metadata?.iframeUrl === 'string' && act.metadata.iframeUrl}
@@ -810,10 +819,6 @@ function jumpToLatest() {
     border-color: var(--border-bright);
   }
 
-  .peek-btn-activity {
-    color: var(--yellow);
-  }
-
   .peek-popover {
     display: none;
     position: absolute;
@@ -858,19 +863,6 @@ function jumpToLatest() {
     color: var(--blue);
   }
 
-  .peek-card-activity {
-    border-color: color-mix(in srgb, var(--yellow) 25%, var(--border));
-  }
-  .peek-card-activity:hover {
-    border-color: color-mix(in srgb, var(--yellow) 50%, var(--border));
-  }
-  .peek-card-activity .peek-card-header {
-    border-bottom-color: color-mix(in srgb, var(--yellow) 25%, var(--border));
-  }
-  .peek-card-activity .peek-card-icon {
-    color: var(--yellow);
-  }
-
   .peek-card-header {
     padding: 5px 10px;
     font-size: 13px;
@@ -886,6 +878,12 @@ function jumpToLatest() {
     width: 13px;
     height: 13px;
     flex-shrink: 0;
+    display: flex;
+  }
+
+  .peek-card-icon :global(svg) {
+    width: 13px;
+    height: 13px;
   }
 
   .peek-card-label {

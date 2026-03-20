@@ -2,13 +2,33 @@
 import type { HistoryMessage, TurnActivity, TurnConversation } from "@volute/api";
 import { tick } from "svelte";
 import { fetchTurnEvents } from "../lib/client";
-import { extractTextContent } from "../lib/feed-utils";
 import { normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
 import { groupToolEvents } from "../lib/tool-groups";
+import { getToolCategory } from "../lib/tool-names";
 import ExtensionFeedCard from "./ExtensionFeedCard.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
 import ToolGroupComponent from "./ToolGroup.svelte";
+
+const defaultActivityIcon =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>';
+
+function activityColor(act: TurnActivity): string {
+  return typeof act.metadata?.color === "string" ? act.metadata.color : "yellow";
+}
+
+function activityIcon(act: TurnActivity): string {
+  return typeof act.metadata?.icon === "string" ? act.metadata.icon : defaultActivityIcon;
+}
+
+function activityUrl(act: TurnActivity, mindName: string): string {
+  if (typeof act.metadata?.iframeUrl === "string") return act.metadata.iframeUrl;
+  if (typeof act.metadata?.slug === "string") {
+    const author = typeof act.metadata?.author === "string" ? act.metadata.author : mindName;
+    return `/minds/${author}/notes/${act.metadata.slug}`;
+  }
+  return "";
+}
 
 let {
   event,
@@ -35,6 +55,9 @@ let turnExpanded = $state(false);
 let turnLoading = $state(false);
 let turnError = $state("");
 let turnEvents = $state<HistoryMessage[]>([]);
+let detailEvents = $state<HistoryMessage[]>([]);
+let fullDetail = $state(false);
+let detailLoading = $state(false);
 const typeColors: Record<string, string> = {
   inbound: "var(--blue)",
   outbound: "var(--blue)",
@@ -47,6 +70,7 @@ const typeColors: Record<string, string> = {
   session_start: "var(--accent)",
   done: "var(--text-2)",
   summary: "var(--text-0)",
+  activity: "var(--yellow)",
 };
 
 let color = $derived(typeColors[event.type] ?? "var(--text-2)");
@@ -149,6 +173,41 @@ async function handleClick() {
     <div class="marker marker-icon" style:color="var(--blue)">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
     </div>
+  {:else if event.type === "text"}
+    <div class="marker marker-icon" style:color="var(--blue)">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h10M3 8h7M3 12h9"/></svg>
+    </div>
+  {:else if event.type === "thinking"}
+    <div class="marker marker-icon" style:color="var(--purple)">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12C1.5 12 0 10.5 0 8.5 0 7 1 5.5 2.5 5 2.5 3 4 1.5 6 1.5c1.5 0 2.8.8 3.3 2 .4-.2.8-.3 1.2-.3 1.7 0 3 1.3 3 3 1.2.4 2.5 1.4 2.5 3 0 1.7-1.3 3.8-3.5 3.8H4z"/></svg>
+    </div>
+  {:else if event.type === "tool_use" || event.type === "tool_result"}
+    {@const toolMeta = meta}
+    {@const toolName = typeof toolMeta?.name === "string" ? toolMeta.name : "tool"}
+    {@const cat = getToolCategory(toolName)}
+    <div class="marker marker-icon" style:color={cat === "shell" ? "var(--red)" : cat === "file" ? "var(--blue)" : cat === "search" ? "var(--yellow)" : cat === "web" ? "var(--purple)" : "var(--text-1)"}>
+      {#if cat === "shell"}
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5l4 3-4 3"/><path d="M9 12h4"/></svg>
+      {:else if cat === "file"}
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/></svg>
+      {:else if cat === "search"}
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M10 10l3 3"/></svg>
+      {:else if cat === "web"}
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M2 8h12"/><path d="M8 2c2 2 3 4 3 6s-1 4-3 6"/><path d="M8 2c-2 2-3 4-3 6s1 4 3 6"/></svg>
+      {:else}
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="10" height="10" rx="1"/><path d="M6 6h4M6 8h4M6 10h2"/></svg>
+      {/if}
+    </div>
+  {:else if event.type === "activity"}
+    {@const actMeta = meta}
+    {@const actColor = typeof actMeta?.color === "string" ? `var(--${actMeta.color})` : "var(--yellow)"}
+    <div class="marker marker-icon" style:color={actColor}>
+      {#if typeof actMeta?.icon === "string"}
+        {@html actMeta.icon}
+      {:else}
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+      {/if}
+    </div>
   {:else}
     <div class="marker" style:background={color}></div>
   {/if}
@@ -164,6 +223,33 @@ async function handleClick() {
             <span class="time">{formatTime(meta.from_time)} – {formatTime(meta.to_time)}</span>
           {:else}
             <span class="time">{formatTime(event.created_at)}</span>
+          {/if}
+          {#if turnExpanded}
+            <button class="detail-toggle" onclick={async (e) => {
+              e.stopPropagation();
+              if (!fullDetail && detailEvents.length === 0) {
+                detailLoading = true;
+                try {
+                  const hasTurnId = !!event.turn_id;
+                  const hasLegacy = event.session && meta?.from_id && meta?.to_id;
+                  if (hasTurnId || hasLegacy) {
+                    detailEvents = await fetchTurnEvents(
+                      mindName,
+                      hasTurnId
+                        ? { turnId: event.turn_id!, detail: true }
+                        : { session: event.session!, fromId: meta.from_id, toId: meta.to_id, detail: true },
+                    );
+                  }
+                } catch (err) {
+                  console.warn("Failed to fetch detail events:", err);
+                } finally {
+                  detailLoading = false;
+                }
+              }
+              fullDetail = !fullDetail;
+            }}>
+              {detailLoading ? "loading..." : fullDetail ? "grouped" : "detail"}
+            </button>
           {/if}
           {#if expandable}
             <span class="chevron">{turnExpanded ? "▼" : "▶"}</span>
@@ -186,134 +272,34 @@ async function handleClick() {
             <div class="turn-loading">loading turn...</div>
           {:else if turnError}
             <div class="turn-loading">{turnError}</div>
+          {:else if fullDetail}
+            {#each detailEvents as ev (ev.id)}
+              <HistoryEvent event={ev} {mindName} />
+            {/each}
           {:else}
             {@const items = groupToolEvents(turnEvents, turnConversations, turnActivities)}
             {#each items as item (item.kind === "tool-group" ? `tg-${item.toolUse.id}` : `ev-${item.event.id}`)}
               {#if item.kind === "tool-group"}
-                {@const linkedConvs = turnConversations.filter((c) => c.messages.some((m) => m.source_event_id === item.toolUse.id))}
-                {@const linkedActs = turnActivities.filter((a) => a.source_event_id === item.toolUse.id)}
-                <div class="event-group" class:has-linked={linkedConvs.length > 0 || linkedActs.length > 0}>
-                  <div class="tool-group-wrapper">
-                    <div class="marker" style:background="var(--yellow)"></div>
-                    <ToolGroupComponent group={item} {mindName} turnStatus="complete" />
+                {@const catColor = item.category === "shell" ? "var(--red)" : item.category === "file" ? "var(--blue)" : item.category === "search" ? "var(--yellow)" : item.category === "web" ? "var(--purple)" : "var(--text-1)"}
+                <div class="tool-group-wrapper">
+                  <div class="marker marker-icon" style:color={catColor}>
+                    {#if item.category === "shell"}
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5l4 3-4 3"/><path d="M9 12h4"/></svg>
+                    {:else if item.category === "file"}
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/></svg>
+                    {:else if item.category === "search"}
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M10 10l3 3"/></svg>
+                    {:else if item.category === "web"}
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M2 8h12"/><path d="M8 2c2 2 3 4 3 6s-1 4-3 6"/><path d="M8 2c-2 2-3 4-3 6s1 4 3 6"/></svg>
+                    {:else}
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="10" height="10" rx="1"/><path d="M6 6h4M6 8h4M6 10h2"/></svg>
+                    {/if}
                   </div>
-                  {#each linkedConvs as conv (conv.id)}
-                    <div class="linked-card linked-card-with-marker">
-                      <div class="marker marker-icon" style:color="var(--blue)">
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                      </div>
-                      <div class="linked-card-chat">
-                        <div class="linked-card-header">
-                          <svg class="linked-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                          <span class="linked-card-label">{conv.label}</span>
-                        </div>
-                        {#each conv.messages.filter((m) => m.source_event_id === item.toolUse.id) as msg (msg.id)}
-                          <div class="linked-card-msg">
-                            <span class="linked-card-sender" class:linked-card-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : mindName)}</span>
-                            {extractTextContent(msg.content)}
-                          </div>
-                        {/each}
-                      </div>
-                    </div>
-                  {/each}
-                  {#each linkedActs as act (act.id)}
-                    <div class="linked-card linked-card-with-marker">
-                      <div class="marker marker-icon" style:color="var(--yellow)">
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
-                      </div>
-                      <ExtensionFeedCard
-                        title={act.summary}
-                        url={act.metadata?.slug ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : mindName}/notes/${act.metadata.slug}` : ''}
-                        date={act.created_at}
-                        author={typeof act.metadata?.author === 'string' ? act.metadata.author : undefined}
-                        bodyHtml={typeof act.metadata?.bodyHtml === 'string' ? act.metadata.bodyHtml : ''}
-                        iframeUrl={typeof act.metadata?.iframeUrl === 'string' ? act.metadata.iframeUrl : undefined}
-                        icon='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>'
-                        color={act.type === 'page_updated' ? 'purple' : 'yellow'}
-                      />
-                    </div>
-                  {/each}
+                  <ToolGroupComponent group={item} {mindName} turnStatus="complete" />
                 </div>
               {:else}
-                {@const ev = item.event}
-                {@const linkedConvs = (ev.type === "inbound" || ev.type === "outbound") ? turnConversations.filter((c) => c.messages.some((m) => m.source_event_id === ev.id)) : []}
-                {@const linkedActs = (ev.type === "inbound" || ev.type === "outbound") ? turnActivities.filter((a) => a.source_event_id === ev.id) : []}
-                <div class="event-group" class:has-linked={linkedConvs.length > 0 || linkedActs.length > 0}>
-                  <HistoryEvent event={ev} {mindName} />
-                  {#each linkedConvs as conv (conv.id)}
-                    <div class="linked-card linked-card-with-marker">
-                      <div class="marker marker-icon" style:color="var(--blue)">
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                      </div>
-                      <div class="linked-card-chat">
-                        <div class="linked-card-header">
-                          <svg class="linked-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                          <span class="linked-card-label">{conv.label}</span>
-                        </div>
-                        {#each conv.messages.filter((m) => m.source_event_id === ev.id) as msg (msg.id)}
-                          <div class="linked-card-msg">
-                            <span class="linked-card-sender" class:linked-card-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : mindName)}</span>
-                            {extractTextContent(msg.content)}
-                          </div>
-                        {/each}
-                      </div>
-                    </div>
-                  {/each}
-                  {#each linkedActs as act (act.id)}
-                    <div class="linked-card linked-card-with-marker">
-                      <div class="marker marker-icon" style:color="var(--yellow)">
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
-                      </div>
-                      <ExtensionFeedCard
-                        title={act.summary}
-                        url={act.metadata?.slug ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : mindName}/notes/${act.metadata.slug}` : ''}
-                        date={act.created_at}
-                        author={typeof act.metadata?.author === 'string' ? act.metadata.author : undefined}
-                        bodyHtml={typeof act.metadata?.bodyHtml === 'string' ? act.metadata.bodyHtml : ''}
-                        iframeUrl={typeof act.metadata?.iframeUrl === 'string' ? act.metadata.iframeUrl : undefined}
-                        icon='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>'
-                        color={act.type === 'page_updated' ? 'purple' : 'yellow'}
-                      />
-                    </div>
-                  {/each}
-                </div>
+                <HistoryEvent event={item.event} {mindName} />
               {/if}
-            {/each}
-            <!-- Unlinked cards (no source_event_id) appear before the summary -->
-            {#each turnConversations.filter((c) => c.messages.every((m) => !m.source_event_id || !turnEvents.some((e) => e.id === m.source_event_id))) as conv (conv.id)}
-              <div class="linked-card linked-card-with-marker">
-                <div class="marker marker-icon" style:color="var(--blue)">
-                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                </div>
-                <div class="linked-card-chat">
-                  <div class="linked-card-header">
-                    <svg class="linked-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                    <span class="linked-card-label">{conv.label}</span>
-                  </div>
-                  {#each conv.messages as msg (msg.id)}
-                    <div class="linked-card-msg">
-                      <span class="linked-card-sender" class:linked-card-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : mindName)}</span>
-                      {extractTextContent(msg.content)}
-                    </div>
-                  {/each}
-                </div>
-              </div>
-            {/each}
-            {#each turnActivities.filter((a) => !a.source_event_id || !turnEvents.some((e) => e.id === a.source_event_id)) as act (act.id)}
-              <div class="linked-card linked-card-with-marker">
-                <div class="marker marker-icon" style:color="var(--yellow)">
-                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
-                </div>
-                <ExtensionFeedCard
-                  title={act.summary}
-                  url={act.metadata?.slug ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : mindName}/notes/${act.metadata.slug}` : ''}
-                  date={act.created_at}
-                  author={typeof act.metadata?.author === 'string' ? act.metadata.author : undefined}
-                  bodyHtml=""
-                  icon='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>'
-                  color={act.type === 'page_updated' ? 'purple' : 'yellow'}
-                />
-              </div>
             {/each}
           {/if}
           <button class="branch-summary" onclick={() => { turnExpanded = false; }}>
@@ -328,6 +314,20 @@ async function handleClick() {
       {:else}
         <span class="summary-text">{event.content}</span>
       {/if}
+    </div>
+  {:else if event.type === "activity"}
+    {@const actMeta = meta}
+    <div class="activity-card">
+      <ExtensionFeedCard
+        title={event.content}
+        url={activityUrl({ type: actMeta?.type ?? "", metadata: actMeta } as TurnActivity, mindName)}
+        date={event.created_at}
+        author={typeof actMeta?.author === 'string' ? actMeta.author : undefined}
+        bodyHtml={typeof actMeta?.bodyHtml === 'string' ? actMeta.bodyHtml : ''}
+        iframeUrl={typeof actMeta?.iframeUrl === 'string' ? actMeta.iframeUrl : undefined}
+        icon={typeof actMeta?.icon === 'string' ? actMeta.icon : defaultActivityIcon}
+        color={typeof actMeta?.color === 'string' ? actMeta.color : 'yellow'}
+      />
     </div>
   {:else if event.type === "inbound" || event.type === "outbound"}
     <div class="compact-msg">
@@ -575,6 +575,22 @@ async function handleClick() {
     font-size: 12px;
   }
 
+  .detail-toggle {
+    font-size: 11px;
+    color: var(--text-2);
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    padding: 1px 6px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-family: var(--mono);
+    margin-left: auto;
+  }
+  .detail-toggle:hover {
+    background: var(--bg-2);
+    color: var(--text-0);
+  }
+
   .session-id {
     font-size: 12px;
     color: var(--text-1);
@@ -679,98 +695,20 @@ async function handleClick() {
     position: relative;
     padding: 4px 8px 4px 20px;
   }
-  .tool-group-wrapper > .marker {
-    position: absolute;
-    left: -5px;
-    top: 10px;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    z-index: 1;
+  .tool-group-wrapper > .marker-icon {
+    left: -10px;
+    top: 9px;
   }
 
-  /* Event group: wraps an event + its linked cards */
-  .event-group {
-    position: relative;
-  }
-  /* Group-level rail highlight — covers event + linked cards */
-  .event-group.has-linked::after {
-    content: "";
-    position: absolute;
-    left: -2px;
-    top: 12px;
-    bottom: -20px;
-    width: 2px;
-    background: var(--yellow);
-    opacity: 0;
-    transition: opacity 0.15s;
-    z-index: 1;
-  }
-  .event-group.has-linked:hover::after {
-    opacity: 1;
-  }
-  /* Suppress the inner event's own highlight when in a group */
-  .event-group.has-linked > :global(.event::after) {
-    display: none;
-  }
-
-  /* Linked feed cards inline with turn events */
-  .linked-card {
-    margin: 4px 0 4px 20px;
+  /* Activity card */
+  .activity-card {
     max-width: 480px;
-  }
-  .linked-card-with-marker {
-    position: relative;
-  }
-  .linked-card-with-marker > .marker-icon {
-    left: -29px;
-    top: 8px;
-  }
-  .linked-card-chat {
-    background: var(--bg-0);
-    border: 1px solid color-mix(in srgb, var(--blue) 25%, var(--border));
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-    font-size: 13px;
-  }
-  .linked-card-header {
-    padding: 4px 8px;
-    font-weight: 500;
-    color: var(--text-1);
-    border-bottom: 1px solid color-mix(in srgb, var(--blue) 25%, var(--border));
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .linked-card-icon {
-    width: 12px;
-    height: 12px;
-    color: var(--blue);
-    flex-shrink: 0;
-  }
-  .linked-card-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .linked-card-msg {
-    padding: 2px 8px;
-    font-family: var(--mono);
-    font-size: 12px;
-  }
-  .linked-card-sender {
-    font-weight: 600;
-    color: var(--accent);
-    margin-right: 6px;
-  }
-  .linked-card-sender-user {
-    color: var(--blue);
   }
 
   /* Inbound/outbound message card */
   .compact-msg {
     background: var(--bg-0);
-    border: 1px solid var(--border);
+    border: 1px solid color-mix(in srgb, var(--blue) 25%, var(--border));
     border-radius: var(--radius-lg);
     overflow: hidden;
   }
@@ -782,7 +720,7 @@ async function handleClick() {
     font-size: 13px;
     font-weight: 500;
     color: var(--text-1);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid color-mix(in srgb, var(--blue) 25%, var(--border));
   }
   .compact-msg-icon {
     width: 12px;

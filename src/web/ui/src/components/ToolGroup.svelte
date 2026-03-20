@@ -51,9 +51,18 @@ let categoryColor = $derived.by(() => {
   }
 });
 
+let shellCommand = $derived.by(() => {
+  if (group.category !== "shell") return "";
+  try {
+    const args = JSON.parse(group.toolUse.content);
+    return String(args.command ?? "");
+  } catch {
+    return group.toolUse.content ?? "";
+  }
+});
+
 function formatOutput(content: string): string {
   if (!content) return "";
-  // Strip volute correlation markers
   return content.replace(/\[volute:[^\]]*\]\s*/g, "");
 }
 
@@ -69,9 +78,10 @@ function formatArgs(args: unknown): string {
 }
 </script>
 
-<div class="tool-group" class:expanded class:error={isError}>
-  <button class="tool-group-header" onclick={() => { expanded = !expanded; }} style:--cat-color={categoryColor}>
-    <span class="tool-icon">
+<div class="tool-card" style:--cat-color={categoryColor}>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="tool-card-header" onclick={() => { expanded = !expanded; }} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); expanded = !expanded; } }}>
+    <span class="tool-card-icon">
       {#if group.category === "shell"}
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5l4 3-4 3"/><path d="M9 12h4"/></svg>
       {:else if group.category === "file"}
@@ -84,8 +94,8 @@ function formatArgs(args: unknown): string {
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="10" height="10" rx="1"/><path d="M6 6h4M6 8h4M6 10h2"/></svg>
       {/if}
     </span>
-    <span class="tool-label">{label}</span>
-    <span class="tool-status">
+    <span class="tool-card-label">{label}</span>
+    <span class="tool-card-status">
       {#if isRunning}
         <span class="status-running">running...</span>
       {:else if isError}
@@ -95,94 +105,85 @@ function formatArgs(args: unknown): string {
       {/if}
     </span>
     <span class="chevron">{expanded ? "▼" : "▶"}</span>
-  </button>
+  </div>
 
   {#if expanded}
-    <div class="tool-group-body">
-      {#if group.category === "shell"}
-        <div class="shell-block">
-          {#if isRunning}
-            <div class="shell-running">running...</div>
-          {:else if group.toolResult}
-            <pre class="shell-output" class:error={isError}>{formatOutput(group.toolResult.content)}</pre>
-          {/if}
-        </div>
-      {:else if group.category === "file" || group.category === "search"}
+    {#if group.category === "shell"}
+      <div class="terminal">
+        <div class="terminal-cmd"><span class="terminal-prompt">$</span> {shellCommand}</div>
+        {#if isRunning}
+          <div class="terminal-running">running...</div>
+        {:else if group.toolResult}
+          <pre class="terminal-output" class:error={isError}>{formatOutput(group.toolResult.content)}</pre>
+        {/if}
+      </div>
+    {:else}
+      <div class="tool-card-body">
         {#if group.toolUse.content}
           <div class="section-label">input</div>
           <pre class="tool-pre">{formatArgs(group.toolUse.content)}</pre>
         {/if}
         {#if isRunning}
-          <div class="shell-running">running...</div>
+          <div class="terminal-running">running...</div>
         {:else if group.toolResult}
           <div class="section-label">output</div>
           <pre class="tool-pre tool-output" class:error={isError}>{formatOutput(group.toolResult.content)}</pre>
         {/if}
-      {:else}
-        {#if group.toolUse.content}
-          <div class="section-label">input</div>
-          <pre class="tool-pre">{formatArgs(group.toolUse.content)}</pre>
-        {/if}
-        {#if isRunning}
-          <div class="shell-running">running...</div>
-        {:else if group.toolResult}
-          <div class="section-label">output</div>
-          <pre class="tool-pre tool-output" class:error={isError}>{formatOutput(group.toolResult.content)}</pre>
-        {/if}
-      {/if}
-    </div>
+      </div>
+    {/if}
   {/if}
 </div>
 
 <style>
-  .tool-group {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+  .tool-card {
+    border: 1px solid color-mix(in srgb, var(--cat-color) 25%, var(--border));
+    border-radius: var(--radius-lg);
     overflow: hidden;
     margin: 2px 0;
+    background: var(--bg-0);
   }
 
-  .tool-group-header {
-    width: 100%;
+  .tool-card-header {
     display: flex;
     align-items: center;
     gap: 6px;
     padding: 4px 8px;
-    background: var(--bg-3);
     font-size: 13px;
-    font-family: var(--mono);
-    text-align: left;
-    color: var(--cat-color);
+    font-weight: 500;
+    color: var(--text-1);
     cursor: pointer;
-    border: none;
   }
 
-  .tool-group-header:hover {
-    background: var(--bg-2);
+  .tool-card-header:hover {
+    background: var(--bg-3);
   }
 
-  .tool-icon {
+  .tool-card-icon {
     flex-shrink: 0;
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
+    color: var(--cat-color);
     display: flex;
     align-items: center;
   }
 
-  .tool-icon svg {
-    width: 14px;
-    height: 14px;
+  .tool-card-icon svg {
+    width: 12px;
+    height: 12px;
   }
 
-  .tool-label {
+  .tool-card-label {
     flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-family: var(--mono);
+    font-weight: 400;
+    color: var(--cat-color);
   }
 
-  .tool-status {
+  .tool-card-status {
     flex-shrink: 0;
     font-size: 11px;
   }
@@ -206,10 +207,54 @@ function formatArgs(args: unknown): string {
     flex-shrink: 0;
   }
 
-  .tool-group-body {
+  /* Terminal style for shell commands */
+  .terminal {
+    background: #0d0d0d;
+    border-top: 1px solid color-mix(in srgb, var(--cat-color) 25%, var(--border));
+    padding: 8px 10px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.6;
+    max-height: 200px;
+    overflow: auto;
+  }
+
+  .terminal-cmd {
+    color: #e0e0e0;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  .terminal-prompt {
+    color: var(--accent);
+    margin-right: 6px;
+    user-select: none;
+  }
+
+  .terminal-output {
+    color: #a0a0a0;
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin: 4px 0 0 0;
+  }
+
+  .terminal-output.error {
+    color: var(--red);
+  }
+
+  .terminal-running {
+    color: var(--text-2);
+    font-style: italic;
+    padding: 4px 0;
+    animation: pulse 1.5s infinite;
+  }
+
+  /* Generic tool body */
+  .tool-card-body {
+    border-top: 1px solid color-mix(in srgb, var(--cat-color) 25%, var(--border));
     padding: 8px;
-    background: var(--bg-1);
-    border-top: 1px solid var(--border);
+    max-height: 200px;
+    overflow: auto;
   }
 
   .section-label {
@@ -223,35 +268,6 @@ function formatArgs(args: unknown): string {
     margin-top: 0;
   }
 
-  .shell-block {
-    background: var(--bg-0);
-    border-radius: var(--radius);
-  }
-
-  .shell-output {
-    font-family: var(--mono);
-    font-size: 12px;
-    line-height: 1.5;
-    color: var(--text-0);
-    white-space: pre-wrap;
-    word-break: break-all;
-    max-height: 300px;
-    overflow: auto;
-    margin: 0;
-  }
-
-  .shell-output.error {
-    color: var(--red);
-  }
-
-  .shell-running {
-    font-size: 12px;
-    color: var(--text-2);
-    font-style: italic;
-    padding: 4px 0;
-    animation: pulse 1.5s infinite;
-  }
-
   .tool-pre {
     font-family: var(--mono);
     font-size: 12px;
@@ -260,8 +276,6 @@ function formatArgs(args: unknown): string {
     white-space: pre-wrap;
     word-break: break-all;
     margin: 0;
-    max-height: 300px;
-    overflow: auto;
   }
 
   .tool-output {

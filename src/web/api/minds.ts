@@ -96,7 +96,7 @@ import {
   stateDir,
   validateMindName,
 } from "../../lib/registry.js";
-import { conversations, mindHistory } from "../../lib/schema.js";
+import { activity as activityTable, conversations, mindHistory } from "../../lib/schema.js";
 import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
 import { getStandardSkillsWithExtensions, installSkill, SEED_SKILLS } from "../../lib/skills.js";
 import { announceToSystem } from "../../lib/system-channel.js";
@@ -2525,46 +2525,87 @@ const app = new Hono<AuthEnv>()
   .get("/:name/history/turn", async (c) => {
     const name = c.req.param("name");
     const turnId = c.req.query("turn_id");
+    const detail = c.req.query("detail") === "1";
 
     const db = await getDb();
 
+    const typeFilter = detail
+      ? undefined
+      : sql`${mindHistory.type} IN ('inbound','outbound','tool_use','tool_result','text','thinking')`;
+
     // Prefer turn_id-based query; fall back to legacy session+range
+    let rows: Array<typeof mindHistory.$inferSelect>;
     if (turnId) {
-      const rows = await db
+      rows = await db
+        .select()
+        .from(mindHistory)
+        .where(and(eq(mindHistory.mind, name), eq(mindHistory.turn_id, turnId), typeFilter))
+        .orderBy(mindHistory.id);
+    } else {
+      // Legacy: session + from_id/to_id range
+      const session = c.req.query("session");
+      const fromId = parseInt(c.req.query("from_id") ?? "", 10);
+      const toId = parseInt(c.req.query("to_id") ?? "", 10);
+      if (!session || Number.isNaN(fromId) || Number.isNaN(toId)) {
+        return c.json({ error: "turn_id, or session with from_id and to_id, required" }, 400);
+      }
+
+      rows = await db
         .select()
         .from(mindHistory)
         .where(
           and(
             eq(mindHistory.mind, name),
-            eq(mindHistory.turn_id, turnId),
-            sql`${mindHistory.type} IN ('inbound','outbound','tool_use','tool_result','text','thinking')`,
+            eq(mindHistory.session, session),
+            sql`${mindHistory.id} >= ${fromId}`,
+            sql`${mindHistory.id} <= ${toId}`,
+            typeFilter,
           ),
         )
         .orderBy(mindHistory.id);
-      return c.json(rows);
     }
 
-    // Legacy: session + from_id/to_id range
-    const session = c.req.query("session");
-    const fromId = parseInt(c.req.query("from_id") ?? "", 10);
-    const toId = parseInt(c.req.query("to_id") ?? "", 10);
-    if (!session || Number.isNaN(fromId) || Number.isNaN(toId)) {
-      return c.json({ error: "turn_id, or session with from_id and to_id, required" }, 400);
-    }
+    // Merge activities into the event stream as synthetic "activity" events
+    if (turnId) {
+      const actRows = await db
+        .select()
+        .from(activityTable)
+        .where(eq(activityTable.turn_id, turnId))
+        .orderBy(activityTable.created_at);
 
-    const rows = await db
-      .select()
-      .from(mindHistory)
-      .where(
-        and(
-          eq(mindHistory.mind, name),
-          eq(mindHistory.session, session),
-          sql`${mindHistory.id} >= ${fromId}`,
-          sql`${mindHistory.id} <= ${toId}`,
-          sql`${mindHistory.type} IN ('inbound','outbound','tool_use','tool_result','text','thinking')`,
-        ),
-      )
-      .orderBy(mindHistory.id);
+      if (actRows.length > 0) {
+        const actEvents = actRows.map((a) => ({
+          id: -a.id, // negative to avoid collisions with history IDs
+          mind: a.mind,
+          type: "activity" as const,
+          session: null,
+          channel: "",
+          sender: null,
+          message_id: null,
+          content: a.summary,
+          metadata: a.metadata,
+          turn_id: a.turn_id,
+          created_at: a.created_at,
+        }));
+        // Interleave by source_event_id position or timestamp
+        const merged: typeof rows = [];
+        let actIdx = 0;
+        for (const row of rows) {
+          merged.push(row);
+          // Insert activities whose source_event_id matches this event
+          while (actIdx < actRows.length && actRows[actIdx].source_event_id === row.id) {
+            merged.push(actEvents[actIdx]);
+            actIdx++;
+          }
+        }
+        // Append any remaining unlinked activities at the end
+        while (actIdx < actEvents.length) {
+          merged.push(actEvents[actIdx]);
+          actIdx++;
+        }
+        return c.json(merged);
+      }
+    }
 
     return c.json(rows);
   })

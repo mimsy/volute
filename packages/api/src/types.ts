@@ -94,6 +94,9 @@ export type ActivityEventType =
   | "mind_sleeping"
   | "mind_waking"
   | "page_updated"
+  | "page_published"
+  | "page_removed"
+  | "note_created"
   | "brain_online"
   | "brain_offline"
   | "profile_updated";

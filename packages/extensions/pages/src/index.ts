@@ -20,6 +20,7 @@ export default createExtension({
   skillsDir,
   standardSkill: true,
   icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 5h14"/><circle cx="3" cy="3.5" r="0.5" fill="currentColor" stroke="none"/><circle cx="5" cy="3.5" r="0.5" fill="currentColor" stroke="none"/></svg>',
+  color: "purple",
   ui: {
     assetsDir,
     systemSection: {
