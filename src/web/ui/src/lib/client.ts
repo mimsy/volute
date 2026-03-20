@@ -494,8 +494,13 @@ export function saveEnabledImagegenModels(models: string[]): Promise<void> {
   return put(`${V1}/system/imagegen/models`, { models });
 }
 
-export function searchImagegenModels(query: string): Promise<ImagegenModelSearchResult[]> {
-  return get(`${V1}/system/imagegen/models/search?q=${enc(query)}`);
+export function searchImagegenModels(
+  query: string,
+  provider?: string,
+): Promise<ImagegenModelSearchResult[]> {
+  const params = new URLSearchParams({ q: query });
+  if (provider) params.set("provider", provider);
+  return get(`${V1}/system/imagegen/models/search?${params}`);
 }
 
 // --- Auth (these stay on /api/ since they're not mind-scoped) ---

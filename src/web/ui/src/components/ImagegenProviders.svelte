@@ -26,6 +26,7 @@ let showModelModal = $state(false);
 let modelSearch = $state("");
 let modelSearchResults = $state<ImagegenModelSearchResult[]>([]);
 let searching = $state(false);
+let searchProvider = $state("");
 
 let configuredProviders = $derived(providers.filter((p) => p.configured));
 let unconfiguredProviders = $derived(providers.filter((p) => !p.configured));
@@ -55,6 +56,7 @@ function resetModalState() {
   apiKeyInput = "";
   modelSearch = "";
   modelSearchResults = [];
+  searchProvider = "";
   error = "";
 }
 
@@ -99,7 +101,10 @@ async function handleModelSearch() {
   if (!modelSearch.trim()) return;
   searching = true;
   try {
-    modelSearchResults = await searchImagegenModels(modelSearch.trim());
+    modelSearchResults = await searchImagegenModels(
+      modelSearch.trim(),
+      searchProvider || undefined,
+    );
   } catch (err) {
     error = err instanceof Error ? err.message : "Search failed";
   } finally {
@@ -213,13 +218,21 @@ async function removeModel(modelId: string) {
 
 <!-- Model Search Modal -->
 {#if showModelModal}
-  <Modal onClose={() => { showModelModal = false; modelSearch = ""; modelSearchResults = []; }} size="480px" title="Add model">
+  <Modal onClose={() => { showModelModal = false; modelSearch = ""; modelSearchResults = []; searchProvider = ""; }} size="480px" title="Add model">
     <div class="modal-body">
+      {#if configuredProviders.length > 1}
+        <select bind:value={searchProvider} class="system-input modal-select">
+          <option value="">All providers</option>
+          {#each configuredProviders as p (p.id)}
+            <option value={p.id}>{p.id}</option>
+          {/each}
+        </select>
+      {/if}
       <form class="modal-form" onsubmit={(e) => { e.preventDefault(); handleModelSearch(); }}>
         <input
           type="text"
           bind:value={modelSearch}
-          placeholder="Search Replicate models..."
+          placeholder={searchProvider ? `Search ${searchProvider} models...` : "Search models..."}
           class="system-input"
         />
         <button type="submit" class="btn btn-edit" disabled={searching || !modelSearch.trim()}>

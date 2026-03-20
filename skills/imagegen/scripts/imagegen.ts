@@ -6,6 +6,8 @@
  * Usage:
  *   imagegen generate "prompt" [--model M] [--filename F]   # generate an image
  *   imagegen models "query"                                 # search for models
+ *
+ * Model IDs are provider-prefixed: replicate:owner/model, openrouter:owner/model
  */
 
 import { mkdirSync } from "node:fs";
@@ -62,7 +64,7 @@ async function generateViaDaemon(model: string, prompt: string): Promise<Buffer 
         error: string;
       };
       // Not configured — fall back to direct Replicate
-      if (err.error?.includes("No Replicate API key")) return null;
+      if (err.error?.includes("not configured") || err.error?.match(/No .* API key/)) return null;
       throw new Error(err.error || `Daemon returned ${res.status}`);
     }
     return Buffer.from(await res.arrayBuffer());
@@ -103,6 +105,19 @@ async function searchViaDaemon(query: string): Promise<unknown[] | null> {
 }
 
 async function generateDirect(model: string, prompt: string): Promise<Buffer> {
+  // Parse provider prefix — direct fallback only supports replicate
+  let replicateModel = model;
+  const colonIdx = model.indexOf(":");
+  if (colonIdx !== -1) {
+    const provider = model.slice(0, colonIdx);
+    if (provider !== "replicate") {
+      throw new Error(
+        `Direct generation only supports replicate: prefix. Configure ${provider} via Settings.`,
+      );
+    }
+    replicateModel = model.slice(colonIdx + 1);
+  }
+
   if (!process.env.REPLICATE_API_TOKEN) {
     throw new Error(
       "No image generation configured. Ask an admin to set up a provider in Settings, or set REPLICATE_API_TOKEN.",
@@ -111,9 +126,11 @@ async function generateDirect(model: string, prompt: string): Promise<Buffer> {
   const { default: Replicate } = await import("replicate");
   const replicate = new Replicate();
 
-  const output = await replicate.run(model as `${string}/${string}`, { input: { prompt } });
+  const output = await replicate.run(replicateModel as `${string}/${string}`, {
+    input: { prompt },
+  });
   const file = Array.isArray(output) ? output[0] : output;
-  if (!file) throw new Error(`Model ${model} returned no output`);
+  if (!file) throw new Error(`Model ${replicateModel} returned no output`);
 
   const chunks: Uint8Array[] = [];
   for await (const chunk of file as AsyncIterable<Uint8Array>) {
@@ -129,7 +146,7 @@ async function generate(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const model = getFlag(args, "--model") || "prunaai/z-image-turbo";
+  const model = getFlag(args, "--model") || "replicate:prunaai/z-image-turbo";
   const filename = getFlag(args, "--filename") || slugify(prompt) || `image-${Date.now()}`;
 
   console.log(`generating image with ${model}...`);
@@ -186,7 +203,7 @@ async function models(args: string[]): Promise<void> {
 
   for (const m of results) {
     const desc = m.description ? ` — ${m.description.slice(0, 100)}` : "";
-    console.log(`${m.owner}/${m.name}${desc}`);
+    console.log(`replicate:${m.owner}/${m.name}${desc}`);
   }
 }
 

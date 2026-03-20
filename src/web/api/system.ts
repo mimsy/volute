@@ -245,8 +245,9 @@ const app = new Hono<AuthEnv>()
   )
   .get("/imagegen/models/search", async (c) => {
     const q = c.req.query("q");
+    const provider = c.req.query("provider");
     try {
-      const results = await searchModels(q || undefined);
+      const results = await searchModels(q || undefined, provider || undefined);
       return c.json(results);
     } catch (err) {
       igLog.error("model search failed", log.errorData(err));
