@@ -181,10 +181,12 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
             mind = cmdArgs[mindIdx + 1];
             cmdArgs.splice(mindIdx, 2);
           }
+          const { readStdin } = await import("./lib/read-stdin.js");
+          const stdin = await readStdin();
           const cmdRes = await daemonFetch(`/api/ext/${command}/commands/${subcommand}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ args: cmdArgs, mind }),
+            body: JSON.stringify({ args: cmdArgs, mind, stdin }),
           });
           if (!cmdRes.ok) {
             const text = await cmdRes.text().catch(() => "");

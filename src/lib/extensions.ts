@@ -182,7 +182,7 @@ async function loadExtension(
   if (manifest.commands) {
     for (const [cmdName, cmd] of Object.entries(manifest.commands)) {
       app.post(`${extApiPath}/commands/${cmdName}`, async (c: Context<AuthEnv>) => {
-        let body: { args?: string[]; mind?: string };
+        let body: { args?: string[]; mind?: string; stdin?: string };
         try {
           body = await c.req.json();
         } catch {
@@ -219,6 +219,7 @@ async function loadExtension(
             },
             mindName,
             session,
+            stdin: body.stdin,
           });
           // Wait for all activity publishes and collect their IDs
           const activityIds = (await Promise.all(activityPromises)).filter((id) => id > 0);
