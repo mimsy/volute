@@ -143,7 +143,13 @@ async function handleClick() {
   style:--type-color={color}
   bind:this={eventEl}
 >
-  <div class="marker" style:background={color}></div>
+  {#if event.type === "inbound" || event.type === "outbound"}
+    <div class="marker marker-icon" style:color="var(--blue)">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+    </div>
+  {:else}
+    <div class="marker" style:background={color}></div>
+  {/if}
   {#if event.type === "summary" && turnExpanded}
     <div class="turn-connector"></div>
   {/if}
@@ -185,7 +191,10 @@ async function handleClick() {
               <div class="event-group" class:has-linked={linkedConvs.length > 0 || linkedActs.length > 0}>
                 <HistoryEvent event={turnEv} {mindName} />
                 {#each linkedConvs as conv (conv.id)}
-                  <div class="linked-card">
+                  <div class="linked-card linked-card-with-marker">
+                    <div class="marker marker-icon" style:color="var(--blue)">
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                    </div>
                     <div class="linked-card-chat">
                       <div class="linked-card-header">
                         <svg class="linked-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
@@ -201,7 +210,10 @@ async function handleClick() {
                   </div>
                 {/each}
                 {#each linkedActs as act (act.id)}
-                  <div class="linked-card">
+                  <div class="linked-card linked-card-with-marker">
+                    <div class="marker marker-icon" style:color="var(--yellow)">
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                    </div>
                     <ExtensionFeedCard
                       title={act.summary}
                       url={act.metadata?.slug ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : mindName}/notes/${act.metadata.slug}` : ''}
@@ -218,7 +230,10 @@ async function handleClick() {
             {/each}
             <!-- Unlinked cards (no source_event_id) appear before the summary -->
             {#each turnConversations.filter((c) => c.messages.every((m) => !m.source_event_id || !turnEvents.some((e) => e.id === m.source_event_id))) as conv (conv.id)}
-              <div class="linked-card">
+              <div class="linked-card linked-card-with-marker">
+                <div class="marker marker-icon" style:color="var(--blue)">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                </div>
                 <div class="linked-card-chat">
                   <div class="linked-card-header">
                     <svg class="linked-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
@@ -234,7 +249,10 @@ async function handleClick() {
               </div>
             {/each}
             {#each turnActivities.filter((a) => !a.source_event_id || !turnEvents.some((e) => e.id === a.source_event_id)) as act (act.id)}
-              <div class="linked-card">
+              <div class="linked-card linked-card-with-marker">
+                <div class="marker marker-icon" style:color="var(--yellow)">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                </div>
                 <ExtensionFeedCard
                   title={act.summary}
                   url={act.metadata?.slug ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : mindName}/notes/${act.metadata.slug}` : ''}
@@ -398,6 +416,23 @@ async function handleClick() {
     height: 8px;
     border-radius: 50%;
     z-index: 1;
+  }
+
+  .marker-icon {
+    width: 14px;
+    height: 14px;
+    left: -8px;
+    top: 9px;
+    border-radius: 0;
+    background: var(--bg-1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .marker-icon svg {
+    width: 12px;
+    height: 12px;
   }
 
   .event-header {
@@ -615,6 +650,9 @@ async function handleClick() {
   .linked-card {
     margin: 4px 0 4px 20px;
     max-width: 480px;
+  }
+  .linked-card-with-marker {
+    position: relative;
   }
   .linked-card-chat {
     background: var(--bg-0);
