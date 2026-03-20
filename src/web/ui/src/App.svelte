@@ -95,6 +95,7 @@ let onSystemPage = $derived(selection.kind !== "mind" && selection.kind !== "cha
 let activeSystemSection = $derived.by((): string | null => {
   if (!onSystemPage) return null;
   if (selection.kind === "system-chat") return "system-chat";
+  if (selection.kind === "system-history") return "system-history";
   if (selection.kind === "extension") return `ext:${selection.extensionId}`;
   if (selection.kind === "settings") return "settings";
   if (selection.kind === "shared-files") return "shared-files";
@@ -268,6 +269,9 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
   } else if (sel.kind === "system-chat") {
     crumbs.push({ label: "system", action: handleSystemHome });
     crumbs.push({ label: "chat" });
+  } else if (sel.kind === "system-history") {
+    crumbs.push({ label: "system", action: handleSystemHome });
+    crumbs.push({ label: "history" });
   } else if (sel.kind === "settings") {
     crumbs.push({ label: "system", action: handleSystemHome });
     crumbs.push({ label: "settings" });
@@ -718,6 +722,14 @@ function handleGlobalClick(e: MouseEvent) {
                 >
                   <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg></span>
                   <span class="tab-tooltip">Chat</span>
+                </button>
+                <button
+                  class="mind-section-tab"
+                  class:active={activeSystemSection === "system-history"}
+                  onclick={() => { selection = { kind: "system-history" }; }}
+                >
+                  <span class="tab-icon">{@html icons.history}</span>
+                  <span class="tab-tooltip">History</span>
                 </button>
                 {#each data.extensions as ext}
                   {#if ext.systemSection}

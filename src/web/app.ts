@@ -13,6 +13,7 @@ import envRoutes, { sharedEnvApp } from "./api/env.js";
 import extensionsRoutes from "./api/extensions.js";
 import fileSharing from "./api/file-sharing.js";
 import files from "./api/files.js";
+import historyRoutes from "./api/history.js";
 import keys from "./api/keys.js";
 import logs from "./api/logs.js";
 import mindSkills from "./api/mind-skills.js";
@@ -144,7 +145,8 @@ const routes = app
   .route("/api/v1/conversations", v1Conversations)
   .route("/api/v1/events", v1Events)
   .route("/api/v1", unifiedChatApp)
-  .route("/api/v1/channels", voluteChannels);
+  .route("/api/v1/channels", voluteChannels)
+  .route("/api/v1/history", historyRoutes);
 
 // v1 re-mounts of existing modules (not chained to preserve AppType)
 app.route("/api/v1/minds", minds);

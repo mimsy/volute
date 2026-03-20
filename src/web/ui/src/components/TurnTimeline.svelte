@@ -14,7 +14,7 @@ import ExtensionFeedCard from "./ExtensionFeedCard.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
 import ReadOnlyChatModal from "./ReadOnlyChatModal.svelte";
 
-let { name }: { name: string } = $props();
+let { name }: { name?: string } = $props();
 
 // --- Turns data ---
 const PAGE_SIZE = 100;
@@ -40,7 +40,7 @@ function buildHistoryMessage(
 ): HistoryMessage {
   return {
     id: nextSyntheticId--,
-    mind: name,
+    mind: (d.mind as string) ?? name ?? "",
     channel: (d.channel as string) ?? "",
     session: (d.session as string) ?? null,
     sender: (d.sender as string) ?? null,
@@ -67,7 +67,7 @@ function upsertTurnRows(rows: TurnRow[]) {
 function openConversation(conv: TurnConversation, turn: TurnRow) {
   readOnlyConv = {
     id: conv.id,
-    mind_name: name,
+    mind_name: turn.mind,
     channel: "",
     type: conv.type,
     name: conv.type === "channel" ? conv.label.replace(/^#/, "") : null,
@@ -96,7 +96,7 @@ type StreamingConv = {
   messages: { role: "user" | "assistant"; sender: string | null; content: string }[];
 };
 
-function getStreamingConversations(events: HistoryMessage[]): StreamingConv[] {
+function getStreamingConversations(events: HistoryMessage[], mindName: string): StreamingConv[] {
   const byChannel = new Map<string, StreamingConv>();
   for (const ev of events) {
     if ((ev.type !== "inbound" && ev.type !== "outbound") || !ev.channel) continue;
@@ -117,7 +117,7 @@ function getStreamingConversations(events: HistoryMessage[]): StreamingConv[] {
     }
     conv.messages.push({
       role: ev.type === "inbound" ? "user" : "assistant",
-      sender: ev.type === "inbound" ? ev.sender : name,
+      sender: ev.type === "inbound" ? ev.sender : mindName,
       content: ev.content,
     });
   }
@@ -131,7 +131,8 @@ let eventSource: EventSource | null = null;
 
 function connectSSE() {
   disconnectSSE();
-  const url = `/api/minds/${encodeURIComponent(name)}/events`;
+  const params = name ? `?mind=${encodeURIComponent(name)}` : "";
+  const url = `/api/v1/history/events${params}`;
   const es = new EventSource(url);
   es.onmessage = (e) => {
     let d: Record<string, unknown>;
@@ -154,6 +155,7 @@ function connectSSE() {
           ...turnsData,
           {
             id: turnId,
+            mind: (d.mind as string) ?? name ?? "",
             summary: null,
             summary_meta: null,
             status: "active",
@@ -176,8 +178,9 @@ function connectSSE() {
       // Fetch turn events from DB after a short delay to allow retroactive inbound tagging.
       // DB events are authoritative — replace synthetic SSE events entirely.
       // Any SSE events arriving after this .then() runs are appended normally.
+      const turnMind = (d.mind as string) ?? name ?? "";
       new Promise((r) => setTimeout(r, 500))
-        .then(() => fetchTurnEvents(name, { turnId }))
+        .then(() => fetchTurnEvents(turnMind, { turnId }))
         .then((dbEvents) => {
           if (!streamingEvents.has(turnId)) return; // turn already completed
           streamingEvents.set(turnId, dbEvents);
@@ -189,7 +192,7 @@ function connectSSE() {
       doneFallbackTimers.delete(turnId);
       const prevStreaming = streamingEvents.get(turnId);
       streamingEvents.delete(turnId);
-      fetchTurns(name, { turnId })
+      fetchTurns({ mind: name, turnId })
         .then((rows) => {
           upsertTurnRows(rows);
           // Scroll the completed turn into view after DOM update
@@ -217,7 +220,7 @@ function connectSSE() {
             if (streamingEvents.has(tid)) {
               streamingEvents.delete(tid);
               // Refresh the turn from the server
-              fetchTurns(name, { turnId: tid })
+              fetchTurns({ mind: name, turnId: tid })
                 .then((rows) => upsertTurnRows(rows))
                 .catch((err) =>
                   console.warn("[TurnTimeline] Failed to refresh turn after done:", err),
@@ -263,7 +266,7 @@ async function loadTurns(offset: number) {
   loading = true;
   historyError = "";
   try {
-    const rows = await fetchTurns(name, { limit: PAGE_SIZE, offset });
+    const rows = await fetchTurns({ mind: name, limit: PAGE_SIZE, offset });
     const chronological = [...rows].reverse();
     if (offset === 0) {
       turnsData = chronological;
@@ -273,7 +276,7 @@ async function loadTurns(offset: number) {
     hasMore = rows.length === PAGE_SIZE;
 
     // Check for recent untagged inbound events (message sent but turn not yet started)
-    if (offset === 0 && pendingInbounds.length === 0) {
+    if (offset === 0 && pendingInbounds.length === 0 && name) {
       fetchHistory(name, { preset: "all", limit: 10 })
         .then((recent) => {
           const untagged = recent.filter((e) => e.type === "inbound" && !e.turn_id);
@@ -288,7 +291,7 @@ async function loadTurns(offset: number) {
     for (const turn of turnsData) {
       if (turn.status === "active" && !streamingEvents.has(turn.id)) {
         streamingEvents.set(turn.id, []);
-        fetchTurnEvents(name, { turnId: turn.id })
+        fetchTurnEvents(turn.mind, { turnId: turn.id })
           .then((dbEvents) => {
             if (!streamingEvents.has(turn.id)) return; // turn completed while fetching
             streamingEvents.set(turn.id, dbEvents);
@@ -333,7 +336,7 @@ function stopScrollTimer() {
 }
 
 // Reload when mind name changes
-let prevName = "";
+let prevName: string | undefined = "";
 $effect(() => {
   const n = name;
   if (n !== prevName) {
@@ -397,6 +400,9 @@ function jumpToLatest() {
         {#each turnsData as turn (turn.id)}
           <div class="turn-row" data-turn-id={turn.id}>
             <div class="turn-time">
+              {#if !name}
+                <button class="mind-badge" onclick={() => navigate(`/minds/${turn.mind}/history`)}>{turn.mind}</button>
+              {/if}
               {formatRelativeTime(turn.created_at)}
             </div>
             <button
@@ -419,7 +425,7 @@ function jumpToLatest() {
                   <HistoryEvent
                     event={{
                       id: 0,
-                      mind: name,
+                      mind: turn.mind,
                       channel: "",
                       session: null,
                       sender: null,
@@ -430,7 +436,7 @@ function jumpToLatest() {
                       turn_id: turn.id,
                       created_at: turn.created_at,
                     }}
-                    mindName={name}
+                    mindName={turn.mind}
                     expandable
                     compact
                     turnConversations={turn.conversations}
@@ -442,7 +448,7 @@ function jumpToLatest() {
                   <HistoryEvent
                     event={{
                       id: 0,
-                      mind: name,
+                      mind: turn.mind,
                       channel: turn.trigger?.channel ?? "",
                       session: null,
                       sender: turn.trigger?.sender ?? null,
@@ -453,7 +459,7 @@ function jumpToLatest() {
                       turn_id: turn.id,
                       created_at: turn.created_at,
                     }}
-                    mindName={name}
+                    mindName={turn.mind}
                     expandable
                     compact
                     turnConversations={turn.conversations}
@@ -466,7 +472,7 @@ function jumpToLatest() {
                     <div class="turn-pending">processing...</div>
                   {:else}
                     {#each events as ev (ev.id)}
-                      <HistoryEvent event={ev} mindName={name} compact />
+                      <HistoryEvent event={ev} mindName={turn.mind} compact />
                     {/each}
                   {/if}
                 {/if}
@@ -474,7 +480,7 @@ function jumpToLatest() {
               {#if !expandedTurns.has(turn.id)}
               <div class="turn-cards">
                 {#if !turn.summary}
-                  {@const sConvs = getStreamingConversations(streamingEvents.get(turn.id) ?? [])}
+                  {@const sConvs = getStreamingConversations(streamingEvents.get(turn.id) ?? [], turn.mind)}
                   {#each sConvs as conv (conv.channel)}
                     <div class="feed-card-wrapper">
                       <div class="feed-card card-chat">
@@ -486,7 +492,7 @@ function jumpToLatest() {
                         <div class="feed-card-body chat-body">
                           {#each conv.messages.slice(-5) as msg, i (i)}
                             <div class="chat-entry">
-                              <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender ?? name}</span>
+                              <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender ?? turn.mind}</span>
                               <span class="chat-entry-content">{msg.content}</span>
                             </div>
                           {/each}
@@ -509,7 +515,7 @@ function jumpToLatest() {
                       <div class="feed-card-body chat-body">
                         {#each conv.messages.slice(-5) as msg (msg.id)}
                           <div class="chat-entry">
-                            <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : name)}</span>
+                            <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : turn.mind)}</span>
                             <span class="chat-entry-content">{extractTextContent(msg.content)}</span>
                           </div>
                         {/each}
@@ -518,7 +524,7 @@ function jumpToLatest() {
                   </div>
                 {/each}
                 {#each turn.activities as act (act.id)}
-                  {@const actAuthor = typeof act.metadata?.author === 'string' ? act.metadata.author : name}
+                  {@const actAuthor = typeof act.metadata?.author === 'string' ? act.metadata.author : turn.mind}
                   {@const actUrl = act.metadata?.slug ? `/minds/${actAuthor}/notes/${act.metadata.slug}` : ''}
                   <div class="feed-card-wrapper">
                     <ExtensionFeedCard
@@ -550,11 +556,11 @@ function jumpToLatest() {
             <div class="turn-body">
               <div class="turn-summary">
                 {#each pendingInbounds as ev (ev.id)}
-                  <HistoryEvent event={ev} mindName={name} compact />
+                  <HistoryEvent event={ev} mindName={ev.mind || name || ""} compact />
                 {/each}
               </div>
               <div class="turn-cards">
-                {#each getStreamingConversations(pendingInbounds) as conv (conv.channel)}
+                {#each getStreamingConversations(pendingInbounds, name ?? "") as conv (conv.channel)}
                   <div class="feed-card-wrapper">
                     <div class="feed-card card-chat">
                       <div class="feed-card-header header-chat">
@@ -565,7 +571,7 @@ function jumpToLatest() {
                       <div class="feed-card-body chat-body">
                         {#each conv.messages.slice(-5) as msg, i (i)}
                           <div class="chat-entry">
-                            <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender ?? name}</span>
+                            <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender ?? name ?? ""}</span>
                             <span class="chat-entry-content">{msg.content}</span>
                           </div>
                         {/each}
@@ -594,7 +600,7 @@ function jumpToLatest() {
 
 {#if readOnlyConv}
   <ReadOnlyChatModal
-    mindName={name}
+    mindName={readOnlyConv.mind_name ?? name ?? ""}
     conversation={readOnlyConv}
     canChat={false}
     onClose={() => { readOnlyConv = null; }}
@@ -640,6 +646,22 @@ function jumpToLatest() {
     text-align: right;
     padding-right: 8px;
     white-space: nowrap;
+  }
+
+  .mind-badge {
+    display: block;
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    cursor: pointer;
+    text-align: right;
+  }
+
+  .mind-badge:hover {
+    text-decoration: underline;
   }
 
   .turn-rail {

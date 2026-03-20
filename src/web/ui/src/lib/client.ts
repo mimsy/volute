@@ -245,16 +245,19 @@ export function fetchHistoryChannels(name: string): Promise<string[]> {
   return get(`${V1}/minds/${enc(name)}/history/channels`);
 }
 
-export function fetchTurns(
-  name: string,
-  opts?: { limit?: number; offset?: number; turnId?: string },
-): Promise<TurnRow[]> {
+export function fetchTurns(opts?: {
+  mind?: string;
+  limit?: number;
+  offset?: number;
+  turnId?: string;
+}): Promise<TurnRow[]> {
   const params = new URLSearchParams();
+  if (opts?.mind) params.set("mind", opts.mind);
   if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
   if (opts?.offset !== undefined) params.set("offset", String(opts.offset));
   if (opts?.turnId) params.set("turnId", opts.turnId);
   const qs = params.toString();
-  return get(`${V1}/minds/${enc(name)}/history/turns${qs ? `?${qs}` : ""}`);
+  return get(`${V1}/history/turns${qs ? `?${qs}` : ""}`);
 }
 
 // --- Variants ---
