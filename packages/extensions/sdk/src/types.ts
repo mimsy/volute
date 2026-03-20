@@ -76,7 +76,7 @@ export type ExtensionFeedItem = {
 
 export type CommandHandler = (
   args: string[],
-  ctx: ExtensionContext & { mindName?: string; session?: string },
+  ctx: ExtensionContext & { mindName?: string; session?: string; stdin?: string },
 ) => Promise<{ output: string } | { error: string }>;
 
 export type ExtensionCommand = {
