@@ -654,6 +654,10 @@ async function handleClick() {
   .linked-card-with-marker {
     position: relative;
   }
+  .linked-card-with-marker > .marker-icon {
+    left: -27px;
+    top: 8px;
+  }
   .linked-card-chat {
     background: var(--bg-0);
     border: 1px solid color-mix(in srgb, var(--blue) 25%, var(--border));
