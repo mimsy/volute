@@ -458,12 +458,41 @@ export function saveEnabledModels(models: string[]): Promise<void> {
 
 // --- Imagegen ---
 
-export function fetchImagegenConfig(): Promise<{ enabled: boolean }> {
-  return get(`${V1}/system/imagegen`);
+export type ImagegenProvider = {
+  id: string;
+  configured: boolean;
+  authMethod: "api_key" | "env_var" | null;
+};
+
+export type ImagegenModelSearchResult = {
+  id: string;
+  name: string;
+  description?: string;
+  owner: string;
+};
+
+export function fetchImagegenProviders(): Promise<ImagegenProvider[]> {
+  return get(`${V1}/system/imagegen/providers`);
 }
 
-export function saveImagegenConfig(enabled: boolean): Promise<void> {
-  return put(`${V1}/system/imagegen`, { enabled });
+export function saveImagegenProviderConfig(id: string, apiKey: string): Promise<void> {
+  return put(`${V1}/system/imagegen/providers/${enc(id)}`, { apiKey });
+}
+
+export function removeImagegenProviderConfig(id: string): Promise<void> {
+  return del(`${V1}/system/imagegen/providers/${enc(id)}`);
+}
+
+export function fetchImagegenModels(): Promise<{ models: string[] }> {
+  return get(`${V1}/system/imagegen/models`);
+}
+
+export function saveEnabledImagegenModels(models: string[]): Promise<void> {
+  return put(`${V1}/system/imagegen/models`, { models });
+}
+
+export function searchImagegenModels(query: string): Promise<ImagegenModelSearchResult[]> {
+  return get(`${V1}/system/imagegen/models/search?q=${enc(query)}`);
 }
 
 // --- Auth (these stay on /api/ since they're not mind-scoped) ---

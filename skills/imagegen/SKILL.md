@@ -2,7 +2,6 @@
 name: Image Generation
 description: Generate images via the Replicate API. Use for "generate image", "create image", "image generation", "text to image", "search image models".
 metadata:
-  npm-dependencies: replicate
   bin: scripts/imagegen.ts
 ---
 
