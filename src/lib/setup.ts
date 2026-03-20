@@ -28,7 +28,14 @@ export type AiConfig = {
   utilityModel?: string;
 };
 
-export type ImagegenConfig = { enabled?: boolean };
+/** Shared across daemon services (imagegen, future TTS, etc.) */
+export type ServiceProviderConfig = { apiKey?: string };
+
+export type ImagegenConfig = {
+  enabled?: boolean;
+  providers?: Record<string, ServiceProviderConfig>;
+  models?: string[];
+};
 
 export type GlobalConfig = {
   name?: string;
@@ -77,7 +84,14 @@ export function isSetupComplete(): boolean {
 }
 
 export function isImagegenEnabled(): boolean {
-  return readGlobalConfig().imagegen?.enabled === true;
+  const config = readGlobalConfig();
+  const ig = config.imagegen;
+  if (!ig) return false;
+  // Legacy: explicit toggle
+  if (ig.enabled === true) return true;
+  // New: enabled if any provider is configured
+  if (ig.providers && Object.keys(ig.providers).length > 0) return true;
+  return false;
 }
 
 /** Migrate pre-existing installations that have setup but not setupCompleted. */
