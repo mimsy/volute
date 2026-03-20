@@ -10,7 +10,6 @@ import { fetchHistory, fetchTurnEvents, fetchTurns } from "../lib/client";
 import { extractTextContent } from "../lib/feed-utils";
 import { formatRelativeTime } from "../lib/format";
 import { navigate } from "../lib/navigate";
-import ExtensionFeedCard from "./ExtensionFeedCard.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
 import ReadOnlyChatModal from "./ReadOnlyChatModal.svelte";
 
@@ -87,41 +86,6 @@ function handleExpand(turnId: string, expanded: boolean) {
     expandedTurns.delete(turnId);
   }
   expandedTurns = new Set(expandedTurns);
-}
-
-type StreamingConv = {
-  channel: string;
-  label: string;
-  type: "dm" | "channel";
-  messages: { role: "user" | "assistant"; sender: string | null; content: string }[];
-};
-
-function getStreamingConversations(events: HistoryMessage[], mindName: string): StreamingConv[] {
-  const byChannel = new Map<string, StreamingConv>();
-  for (const ev of events) {
-    if ((ev.type !== "inbound" && ev.type !== "outbound") || !ev.channel) continue;
-    let conv = byChannel.get(ev.channel);
-    if (!conv) {
-      // Derive label from channel slug: "@user" → "@user", "discord:server/chan" → "#server/chan"
-      const slug = ev.channel;
-      const colonIdx = slug.indexOf(":");
-      const raw = colonIdx >= 0 ? slug.substring(colonIdx + 1) : slug;
-      const isDM = slug.startsWith("@");
-      conv = {
-        channel: slug,
-        label: isDM ? raw : raw.startsWith("#") ? raw : `#${raw}`,
-        type: isDM ? "dm" : "channel",
-        messages: [],
-      };
-      byChannel.set(slug, conv);
-    }
-    conv.messages.push({
-      role: ev.type === "inbound" ? "user" : "assistant",
-      sender: ev.type === "inbound" ? ev.sender : mindName,
-      content: ev.content,
-    });
-  }
-  return [...byChannel.values()];
 }
 
 // --- SSE ---
@@ -418,6 +382,57 @@ function jumpToLatest() {
               }}
             >
               <div class="turn-dot"></div>
+              {#if !expandedTurns.has(turn.id) && turn.status !== "active" && (turn.conversations.length > 0 || turn.activities.length > 0)}
+                <div class="turn-peek-icons">
+                  {#each turn.conversations as conv (conv.id)}
+                    <div class="peek-anchor">
+                      <button class="peek-btn" aria-label="View conversation" onclick={(e) => e.stopPropagation()}>
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                      </button>
+                      <div class="peek-popover">
+                        <div class="peek-card" role="button" tabindex="0"
+                          onclick={(e) => { e.stopPropagation(); openConversation(conv, turn); }}
+                          onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); openConversation(conv, turn); } }}
+                        >
+                          <div class="peek-card-header">
+                            <svg class="peek-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                            <span class="peek-card-label">{conv.label}</span>
+                            <span class="peek-card-meta">{conv.messages.length} msg{conv.messages.length === 1 ? '' : 's'}</span>
+                          </div>
+                          <div class="peek-card-body">
+                            {#each conv.messages.slice(-5) as msg (msg.id)}
+                              <div class="peek-msg">
+                                <span class="peek-msg-sender" class:peek-msg-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : turn.mind)}</span>
+                                <span>{extractTextContent(msg.content)}</span>
+                              </div>
+                            {/each}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  {/each}
+                  {#each turn.activities as act (act.id)}
+                    {@const actAuthor = typeof act.metadata?.author === 'string' ? act.metadata.author : turn.mind}
+                    {@const actUrl = act.metadata?.slug ? `/minds/${actAuthor}/notes/${act.metadata.slug}` : ''}
+                    <div class="peek-anchor">
+                      <button class="peek-btn peek-btn-activity" aria-label="View activity" onclick={(e) => { e.stopPropagation(); if (actUrl) navigate(actUrl); }}>
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                      </button>
+                      <div class="peek-popover">
+                        <div class="peek-card">
+                          <div class="peek-card-header">
+                            <svg class="peek-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                            <span class="peek-card-label">{act.summary}</span>
+                          </div>
+                          {#if typeof act.metadata?.bodyHtml === 'string' && act.metadata.bodyHtml}
+                            <div class="peek-card-body peek-card-html">{@html act.metadata.bodyHtml}</div>
+                          {/if}
+                        </div>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
             </button>
             <div class="turn-body">
               <div class="turn-summary">
@@ -477,71 +492,6 @@ function jumpToLatest() {
                   {/if}
                 {/if}
               </div>
-              {#if !expandedTurns.has(turn.id) && turn.status !== "active"}
-              <div class="turn-cards">
-                {#if !turn.summary}
-                  {@const sConvs = getStreamingConversations(streamingEvents.get(turn.id) ?? [], turn.mind)}
-                  {#each sConvs as conv (conv.channel)}
-                    <div class="feed-card-wrapper">
-                      <div class="feed-card card-chat">
-                        <div class="feed-card-header header-chat">
-                          <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                          <span class="feed-card-label">{conv.label}</span>
-                          <span class="feed-card-meta">{conv.messages.length} message{conv.messages.length === 1 ? '' : 's'}</span>
-                        </div>
-                        <div class="feed-card-body chat-body">
-                          {#each conv.messages.slice(-5) as msg, i (i)}
-                            <div class="chat-entry">
-                              <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender ?? turn.mind}</span>
-                              <span class="chat-entry-content">{msg.content}</span>
-                            </div>
-                          {/each}
-                        </div>
-                      </div>
-                    </div>
-                  {/each}
-                {/if}
-                {#each turn.conversations as conv (conv.id)}
-                  <div class="feed-card-wrapper">
-                    <div class="feed-card card-chat" role="button" tabindex="0"
-                      onclick={() => openConversation(conv, turn)}
-                      onkeydown={(e) => { if (e.key === 'Enter') openConversation(conv, turn); }}
-                    >
-                      <div class="feed-card-header header-chat">
-                        <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                        <span class="feed-card-label">{conv.label}</span>
-                        <span class="feed-card-meta">{conv.messages.length} message{conv.messages.length === 1 ? '' : 's'}</span>
-                      </div>
-                      <div class="feed-card-body chat-body">
-                        {#each conv.messages.slice(-5) as msg (msg.id)}
-                          <div class="chat-entry">
-                            <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : turn.mind)}</span>
-                            <span class="chat-entry-content">{extractTextContent(msg.content)}</span>
-                          </div>
-                        {/each}
-                      </div>
-                    </div>
-                  </div>
-                {/each}
-                {#each turn.activities as act (act.id)}
-                  {@const actAuthor = typeof act.metadata?.author === 'string' ? act.metadata.author : turn.mind}
-                  {@const actUrl = act.metadata?.slug ? `/minds/${actAuthor}/notes/${act.metadata.slug}` : ''}
-                  <div class="feed-card-wrapper">
-                    <ExtensionFeedCard
-                      title={act.summary}
-                      url={actUrl}
-                      date={act.created_at}
-                      author={actAuthor}
-                      bodyHtml={typeof act.metadata?.bodyHtml === 'string' ? act.metadata.bodyHtml : ''}
-                      iframeUrl={typeof act.metadata?.iframeUrl === 'string' ? act.metadata.iframeUrl : undefined}
-                      icon='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>'
-                      color={act.type === 'page_updated' ? 'purple' : 'yellow'}
-                      onclick={actUrl ? () => navigate(actUrl) : undefined}
-                    />
-                  </div>
-                {/each}
-              </div>
-              {/if}
             </div>
           </div>
         {/each}
@@ -607,7 +557,7 @@ function jumpToLatest() {
   .turn-track {
     position: relative;
     min-height: 100%;
-    max-width: 1100px;
+    max-width: 720px;
     margin: 0 auto;
   }
 
@@ -792,60 +742,100 @@ function jumpToLatest() {
     }
   }
 
-  @container (min-width: 600px) {
-    .turn-body {
-      flex-direction: row;
-    }
-    .turn-summary {
-      flex: 1 1 300px;
-      min-width: 200px;
-    }
-    .turn-cards {
-      flex: 0 1 360px;
-      min-width: 240px;
-    }
-  }
-
-  /* Feed cards */
-  .feed-card-wrapper {
-    padding: 4px 0;
-  }
-
-  .feed-card {
-    background: var(--bg-0);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+  /* Peek icon buttons on the timeline rail */
+  .turn-peek-icons {
     display: flex;
     flex-direction: column;
-    max-height: 200px;
-    overflow: hidden;
-    transition: border-color 0.15s;
+    align-items: center;
+    gap: 4px;
+    margin-top: 4px;
+    position: relative;
+    z-index: 4;
   }
 
-  .feed-card-header {
-    padding: 6px 8px 6px 10px;
+  .peek-anchor {
+    position: relative;
+  }
+
+  .peek-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--blue);
+    cursor: pointer;
+    padding: 0;
+    transition: background 0.1s, border-color 0.1s;
+  }
+
+  .peek-btn svg {
+    width: 10px;
+    height: 10px;
+  }
+
+  .peek-btn:hover {
+    background: var(--bg-2);
+    border-color: var(--border-bright);
+  }
+
+  .peek-btn-activity {
+    color: var(--yellow);
+  }
+
+  .peek-popover {
+    display: none;
+    position: absolute;
+    top: -4px;
+    left: calc(100% + 8px);
+    z-index: 20;
+    min-width: 260px;
+    max-width: 380px;
+  }
+
+  .peek-anchor:hover .peek-popover {
+    display: block;
+  }
+
+  .peek-card {
+    background: var(--bg-0);
+    border: 1px solid color-mix(in srgb, var(--blue) 25%, var(--border));
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    transition: border-color 0.15s;
+    color: var(--text-0);
+    text-align: left;
+    font: inherit;
+  }
+
+  .peek-card:hover {
+    border-color: color-mix(in srgb, var(--blue) 50%, var(--border));
+  }
+
+  .peek-card-header {
+    padding: 5px 8px;
     font-size: 13px;
     font-weight: 500;
     color: var(--text-1);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--blue) 25%, var(--border));
     display: flex;
     align-items: center;
     gap: 6px;
   }
 
-  .feed-card-icon {
+  .peek-card-icon {
+    width: 12px;
+    height: 12px;
+    color: var(--blue);
     flex-shrink: 0;
-    width: 14px;
-    height: 14px;
   }
 
-  .card-chat .feed-card-icon { color: var(--blue); }
-  .card-chat { border-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
-  .card-chat .feed-card-header { border-bottom-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
-  .card-chat:hover { border-color: color-mix(in srgb, var(--blue) 50%, var(--border)); }
-
-  .feed-card-label {
+  .peek-card-label {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -853,45 +843,39 @@ function jumpToLatest() {
     flex: 1;
   }
 
-  .feed-card-meta {
+  .peek-card-meta {
     font-size: 11px;
     color: var(--text-2);
     font-weight: 400;
     flex-shrink: 0;
-    margin-left: auto;
   }
 
-  .feed-card-body {
-    flex: 1;
-    overflow: auto;
-    padding: 10px 12px;
-    min-height: 0;
+  .peek-card-body {
+    padding: 6px 10px;
+    max-height: 200px;
+    overflow-y: auto;
+    color: var(--text-0);
   }
 
-  .chat-body {
-    padding: 8px 12px;
+  .peek-card-html :global(*) {
+    color: var(--text-0);
   }
 
-  .chat-entry {
+  .peek-msg {
     padding: 1px 0;
-  }
-  .chat-entry:first-child {
-    margin-top: 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-0);
   }
 
-  .chat-sender {
-    font-size: 12px;
+  .peek-msg-sender {
     font-weight: 600;
     color: var(--accent);
-  }
-  .chat-sender-user {
-    color: var(--blue);
+    margin-right: 6px;
   }
 
-  .chat-entry-content {
-    min-width: 0;
-    font-family: var(--mono);
-    font-size: 13px;
+  .peek-msg-sender-user {
+    color: var(--blue);
   }
 
   /* Controls */
