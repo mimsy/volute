@@ -11,8 +11,10 @@ import { extractTextContent } from "../lib/feed-utils";
 import { formatRelativeTime } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
 import { navigate } from "../lib/navigate";
+import { groupToolEvents } from "../lib/tool-groups";
 import HistoryEvent from "./HistoryEvent.svelte";
 import ReadOnlyChatModal from "./ReadOnlyChatModal.svelte";
+import ToolGroupComponent from "./ToolGroup.svelte";
 
 let { name }: { name?: string } = $props();
 
@@ -503,8 +505,15 @@ function jumpToLatest() {
                   {#if events.length === 0}
                     <div class="turn-pending">processing...</div>
                   {:else}
-                    {#each events as ev (ev.id)}
-                      <HistoryEvent event={ev} mindName={turn.mind} compact />
+                    {@const groups = groupToolEvents(events, [], [])}
+                    {#each groups as item (item.kind === "tool-group" ? `tg-${item.toolUse.id}` : `ev-${item.event.id}`)}
+                      {#if item.kind === "tool-group"}
+                        <div class="streaming-tool-group">
+                          <ToolGroupComponent group={item} mindName={turn.mind} turnStatus="active" />
+                        </div>
+                      {:else}
+                        <HistoryEvent event={item.event} mindName={turn.mind} compact />
+                      {/if}
                     {/each}
                   {/if}
                 {/if}
@@ -969,7 +978,9 @@ function jumpToLatest() {
     animation: pulse 1.5s infinite;
   }
 
-
+  .streaming-tool-group {
+    margin: 2px 0;
+  }
 
   .empty-hint {
     color: var(--text-2);

@@ -5,8 +5,10 @@ import { fetchTurnEvents } from "../lib/client";
 import { extractTextContent } from "../lib/feed-utils";
 import { normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
+import { groupToolEvents } from "../lib/tool-groups";
 import ExtensionFeedCard from "./ExtensionFeedCard.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
+import ToolGroupComponent from "./ToolGroup.svelte";
 
 let {
   event,
@@ -185,48 +187,97 @@ async function handleClick() {
           {:else if turnError}
             <div class="turn-loading">{turnError}</div>
           {:else}
-            {#each turnEvents as turnEv (turnEv.id)}
-              {@const linkedConvs = turnEv.type === "tool_use" ? turnConversations.filter((c) => c.messages.some((m) => m.source_event_id === turnEv.id)) : []}
-              {@const linkedActs = turnEv.type === "tool_use" ? turnActivities.filter((a) => a.source_event_id === turnEv.id) : []}
-              <div class="event-group" class:has-linked={linkedConvs.length > 0 || linkedActs.length > 0}>
-                <HistoryEvent event={turnEv} {mindName} />
-                {#each linkedConvs as conv (conv.id)}
-                  <div class="linked-card linked-card-with-marker">
-                    <div class="marker marker-icon" style:color="var(--blue)">
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                    </div>
-                    <div class="linked-card-chat">
-                      <div class="linked-card-header">
-                        <svg class="linked-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                        <span class="linked-card-label">{conv.label}</span>
+            {@const items = groupToolEvents(turnEvents, turnConversations, turnActivities)}
+            {#each items as item (item.kind === "tool-group" ? `tg-${item.toolUse.id}` : `ev-${item.event.id}`)}
+              {#if item.kind === "tool-group"}
+                {@const linkedConvs = turnConversations.filter((c) => c.messages.some((m) => m.source_event_id === item.toolUse.id))}
+                {@const linkedActs = turnActivities.filter((a) => a.source_event_id === item.toolUse.id)}
+                <div class="event-group" class:has-linked={linkedConvs.length > 0 || linkedActs.length > 0}>
+                  <div class="tool-group-wrapper">
+                    <div class="marker" style:background="var(--yellow)"></div>
+                    <ToolGroupComponent group={item} {mindName} turnStatus="complete" />
+                  </div>
+                  {#each linkedConvs as conv (conv.id)}
+                    <div class="linked-card linked-card-with-marker">
+                      <div class="marker marker-icon" style:color="var(--blue)">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
                       </div>
-                      {#each conv.messages.filter((m) => m.source_event_id === turnEv.id) as msg (msg.id)}
-                        <div class="linked-card-msg">
-                          <span class="linked-card-sender" class:linked-card-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : mindName)}</span>
-                          {extractTextContent(msg.content)}
+                      <div class="linked-card-chat">
+                        <div class="linked-card-header">
+                          <svg class="linked-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                          <span class="linked-card-label">{conv.label}</span>
                         </div>
-                      {/each}
+                        {#each conv.messages.filter((m) => m.source_event_id === item.toolUse.id) as msg (msg.id)}
+                          <div class="linked-card-msg">
+                            <span class="linked-card-sender" class:linked-card-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : mindName)}</span>
+                            {extractTextContent(msg.content)}
+                          </div>
+                        {/each}
+                      </div>
                     </div>
-                  </div>
-                {/each}
-                {#each linkedActs as act (act.id)}
-                  <div class="linked-card linked-card-with-marker">
-                    <div class="marker marker-icon" style:color="var(--yellow)">
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                  {/each}
+                  {#each linkedActs as act (act.id)}
+                    <div class="linked-card linked-card-with-marker">
+                      <div class="marker marker-icon" style:color="var(--yellow)">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                      </div>
+                      <ExtensionFeedCard
+                        title={act.summary}
+                        url={act.metadata?.slug ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : mindName}/notes/${act.metadata.slug}` : ''}
+                        date={act.created_at}
+                        author={typeof act.metadata?.author === 'string' ? act.metadata.author : undefined}
+                        bodyHtml={typeof act.metadata?.bodyHtml === 'string' ? act.metadata.bodyHtml : ''}
+                        iframeUrl={typeof act.metadata?.iframeUrl === 'string' ? act.metadata.iframeUrl : undefined}
+                        icon='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>'
+                        color={act.type === 'page_updated' ? 'purple' : 'yellow'}
+                      />
                     </div>
-                    <ExtensionFeedCard
-                      title={act.summary}
-                      url={act.metadata?.slug ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : mindName}/notes/${act.metadata.slug}` : ''}
-                      date={act.created_at}
-                      author={typeof act.metadata?.author === 'string' ? act.metadata.author : undefined}
-                      bodyHtml={typeof act.metadata?.bodyHtml === 'string' ? act.metadata.bodyHtml : ''}
-                      iframeUrl={typeof act.metadata?.iframeUrl === 'string' ? act.metadata.iframeUrl : undefined}
-                      icon='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>'
-                      color={act.type === 'page_updated' ? 'purple' : 'yellow'}
-                    />
-                  </div>
-                {/each}
-              </div>
+                  {/each}
+                </div>
+              {:else}
+                {@const ev = item.event}
+                {@const linkedConvs = (ev.type === "inbound" || ev.type === "outbound") ? turnConversations.filter((c) => c.messages.some((m) => m.source_event_id === ev.id)) : []}
+                {@const linkedActs = (ev.type === "inbound" || ev.type === "outbound") ? turnActivities.filter((a) => a.source_event_id === ev.id) : []}
+                <div class="event-group" class:has-linked={linkedConvs.length > 0 || linkedActs.length > 0}>
+                  <HistoryEvent event={ev} {mindName} />
+                  {#each linkedConvs as conv (conv.id)}
+                    <div class="linked-card linked-card-with-marker">
+                      <div class="marker marker-icon" style:color="var(--blue)">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                      </div>
+                      <div class="linked-card-chat">
+                        <div class="linked-card-header">
+                          <svg class="linked-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                          <span class="linked-card-label">{conv.label}</span>
+                        </div>
+                        {#each conv.messages.filter((m) => m.source_event_id === ev.id) as msg (msg.id)}
+                          <div class="linked-card-msg">
+                            <span class="linked-card-sender" class:linked-card-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : mindName)}</span>
+                            {extractTextContent(msg.content)}
+                          </div>
+                        {/each}
+                      </div>
+                    </div>
+                  {/each}
+                  {#each linkedActs as act (act.id)}
+                    <div class="linked-card linked-card-with-marker">
+                      <div class="marker marker-icon" style:color="var(--yellow)">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                      </div>
+                      <ExtensionFeedCard
+                        title={act.summary}
+                        url={act.metadata?.slug ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : mindName}/notes/${act.metadata.slug}` : ''}
+                        date={act.created_at}
+                        author={typeof act.metadata?.author === 'string' ? act.metadata.author : undefined}
+                        bodyHtml={typeof act.metadata?.bodyHtml === 'string' ? act.metadata.bodyHtml : ''}
+                        iframeUrl={typeof act.metadata?.iframeUrl === 'string' ? act.metadata.iframeUrl : undefined}
+                        icon='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>'
+                        color={act.type === 'page_updated' ? 'purple' : 'yellow'}
+                      />
+                    </div>
+                  {/each}
+                </div>
+              {/if}
             {/each}
             <!-- Unlinked cards (no source_event_id) appear before the summary -->
             {#each turnConversations.filter((c) => c.messages.every((m) => !m.source_event_id || !turnEvents.some((e) => e.id === m.source_event_id))) as conv (conv.id)}
@@ -620,6 +671,21 @@ async function handleClick() {
     height: 8px;
     border-radius: 50%;
     background: var(--text-0);
+    z-index: 1;
+  }
+
+  /* Tool group wrapper: positions marker like a regular event */
+  .tool-group-wrapper {
+    position: relative;
+    padding: 4px 8px 4px 20px;
+  }
+  .tool-group-wrapper > .marker {
+    position: absolute;
+    left: -5px;
+    top: 10px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
     z-index: 1;
   }
 
