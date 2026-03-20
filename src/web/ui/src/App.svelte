@@ -3,6 +3,7 @@ import type { Conversation, Mind } from "@volute/api";
 import { onMount } from "svelte";
 import ChannelBrowserModal from "./components/ChannelBrowserModal.svelte";
 import ChannelMembersPanel from "./components/ChannelMembersPanel.svelte";
+import Icon from "./components/Icon.svelte";
 import LoginPage from "./components/LoginPage.svelte";
 import MainFrame from "./components/MainFrame.svelte";
 import MindRightPanel from "./components/MindRightPanel.svelte";
@@ -12,6 +13,7 @@ import UpdateBanner from "./components/UpdateBanner.svelte";
 import UserSettingsModal from "./components/UserSettingsModal.svelte";
 import { type AuthUser, fetchMe } from "./lib/auth";
 import { deleteConversation } from "./lib/client";
+import { icons } from "./lib/icons";
 import { navigate, parseSelection, type Selection, selectionToPath } from "./lib/navigate";
 import { requestNotificationPermission } from "./lib/notifications";
 import {
@@ -49,9 +51,9 @@ const CORE_MIND_SECTIONS: { key: string; label: string; icon: string; defaultPat
     icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>',
   },
   {
-    key: "info",
-    label: "Info",
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5"/><circle cx="15" cy="14" r="1.5"/><line x1="12" y1="4" x2="12" y2="8"/><circle cx="12" cy="3" r="1"/></svg>',
+    key: "history",
+    label: "History",
+    icon: icons.history,
   },
   {
     key: "files",
@@ -753,7 +755,7 @@ function handleGlobalClick(e: MouseEvent) {
                   {#if userAvatar}
                     <img src={userAvatar} alt="" class="user-avatar-img" />
                   {:else}
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="11" r="1.5"/><circle cx="15" cy="11" r="1.5"/><line x1="10" y1="16" x2="14" y2="16"/></svg>
+                    <Icon kind="brain" />
                   {/if}
                 </button>
                 {#if showUserMenu}
@@ -809,7 +811,7 @@ function handleGlobalClick(e: MouseEvent) {
                 <MindRightPanel
                   mind={rightPanelMind}
                   onProfile={showRightPanelProfile ? () => {
-                    selection = { kind: "mind", name: rightPanelMind.name, section: "info" };
+                    selection = { kind: "mind", name: rightPanelMind.name, section: "history" };
                     if (activeModal === "mind") { activeModal = null; selectedModalMind = null; }
                   } : undefined}
                   onChat={showRightPanelChat ? () => handleNewChatCreated(rightPanelMind.name) : undefined}
@@ -1146,7 +1148,7 @@ function handleGlobalClick(e: MouseEvent) {
     object-fit: cover;
   }
 
-  .user-avatar-btn svg {
+  .user-avatar-btn :global(svg) {
     width: 14px;
     height: 14px;
   }

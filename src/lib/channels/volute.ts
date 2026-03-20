@@ -95,7 +95,7 @@ export async function send(
     env.VOLUTE_SESSION || (env.VOLUTE_MIND_DIR ? readSessionFile(env.VOLUTE_MIND_DIR) : undefined);
   if (voluteSession) headers["X-Volute-Session"] = voluteSession;
 
-  const res = await fetch(`${url}/api/minds/${encodeURIComponent(mindName)}/chat`, {
+  const res = await fetch(`${url}/api/v1/chat`, {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -103,6 +103,7 @@ export async function send(
       conversationId,
       sender: env.VOLUTE_SENDER ?? mindName,
       images,
+      targetMind: mindName,
     }),
   });
   if (!res.ok) {

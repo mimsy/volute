@@ -2,6 +2,7 @@
 import type { ConversationWithParticipants, Mind } from "@volute/api";
 import { mindDotColor } from "../lib/format";
 import { activeMinds, onlineBrains } from "../lib/stores.svelte";
+import Icon from "./Icon.svelte";
 import InviteModal from "./InviteModal.svelte";
 import ProfileHoverCard from "./ProfileHoverCard.svelte";
 
@@ -81,7 +82,7 @@ function isBrainIridescent(username: string): boolean {
                 style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
               ></span>
               <span class="member-name">{participant.displayName ?? participant.username}</span>
-              <svg class="type-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5"/><circle cx="15" cy="14" r="1.5"/><line x1="12" y1="4" x2="12" y2="8"/><circle cx="12" cy="3" r="1"/></svg>
+              <Icon kind="mind" class="type-icon" />
             </button>
           {/snippet}
         </ProfileHoverCard>
@@ -89,7 +90,7 @@ function isBrainIridescent(username: string): boolean {
         <div class="member-row">
           <span class="status-dot" style:background="var(--text-2)"></span>
           <span class="member-name">{participant.username}</span>
-          <svg class="type-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5"/><circle cx="15" cy="14" r="1.5"/><line x1="12" y1="4" x2="12" y2="8"/><circle cx="12" cy="3" r="1"/></svg>
+          <Icon kind="mind" class="type-icon" />
         </div>
       {/if}
     {/each}
@@ -99,19 +100,26 @@ function isBrainIridescent(username: string): boolean {
         displayName: participant.displayName,
         description: participant.description,
         avatarUrl: participant.avatar ? `/api/auth/avatars/${encodeURIComponent(participant.avatar)}` : null,
-        userType: "brain",
+        userType: participant.userType,
       }}>
         {#snippet children()}
           <div class="member-row">
-            <span
-              class="status-dot"
-              class:iridescent={isBrainIridescent(participant.username)}
-              style:background={brainDotColor(participant.username)}
-            ></span>
+            {#if participant.userType === "system"}
+              <span
+                class="status-dot"
+                style:background="var(--text-0)"
+              ></span>
+            {:else}
+              <span
+                class="status-dot"
+                class:iridescent={isBrainIridescent(participant.username)}
+                style:background={brainDotColor(participant.username)}
+              ></span>
+            {/if}
             <span class="member-name">
               {participant.displayName ?? participant.username}
             </span>
-            <svg class="type-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="11" r="1.5"/><circle cx="15" cy="11" r="1.5"/><line x1="10" y1="16" x2="14" y2="16"/></svg>
+            <Icon kind={participant.userType === "system" ? "spiral" : "brain"} class="type-icon" />
           </div>
         {/snippet}
       </ProfileHoverCard>
@@ -225,9 +233,9 @@ function isBrainIridescent(username: string): boolean {
     color: var(--text-0);
   }
 
-  .type-icon {
-    width: 18px;
-    height: 18px;
+  .member-row :global(.type-icon) {
+    width: 15px;
+    height: 15px;
     flex-shrink: 0;
     color: var(--text-1);
   }

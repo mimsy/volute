@@ -90,15 +90,7 @@ import {
   stateDir,
   validateMindName,
 } from "../../lib/registry.js";
-import {
-  activity,
-  conversationParticipants,
-  conversations,
-  messages,
-  mindHistory,
-  turns,
-  users,
-} from "../../lib/schema.js";
+import { activity, conversations, mindHistory, turns } from "../../lib/schema.js";
 import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
 import { getStandardSkillsWithExtensions, installSkill, SEED_SKILLS } from "../../lib/skills.js";
 import { announceToSystem } from "../../lib/system-channel.js";
@@ -2534,93 +2526,73 @@ const app = new Hono<AuthEnv>()
         summaryByTurn.set(s.turn_id, { content: s.content ?? "", metadata: s.metadata });
     }
 
-    // 3. Get conversation messages linked to these turns
-    const msgRows = await db
+    // 3. Get inbound/outbound events from mind_history for these turns.
+    // We use mind_history instead of the messages table because mind_history has
+    // correct per-mind turn_id tagging. The messages table can only hold one turn_id,
+    // so mind-to-mind messages get tagged with the sender's turn, not the receiver's.
+    const historyMsgRows = await db
       .select({
-        id: messages.id,
-        conversation_id: messages.conversation_id,
-        role: messages.role,
-        sender_name: messages.sender_name,
-        content: messages.content,
-        source_event_id: messages.source_event_id,
-        turn_id: messages.turn_id,
-        created_at: messages.created_at,
+        id: mindHistory.id,
+        type: mindHistory.type,
+        channel: mindHistory.channel,
+        sender: mindHistory.sender,
+        content: mindHistory.content,
+        turn_id: mindHistory.turn_id,
+        created_at: mindHistory.created_at,
       })
-      .from(messages)
-      .where(inArray(messages.turn_id, turnIds))
-      .orderBy(messages.created_at);
+      .from(mindHistory)
+      .where(
+        and(
+          eq(mindHistory.mind, name),
+          inArray(mindHistory.turn_id, turnIds),
+          sql`${mindHistory.type} IN ('inbound', 'outbound')`,
+        ),
+      )
+      .orderBy(mindHistory.created_at);
 
-    // Group messages by turn and conversation
-    type MsgRow = (typeof msgRows)[number];
-    const msgsByTurnConv = new Map<string, Map<string, MsgRow[]>>();
-    const convIds = new Set<string>();
-    for (const m of msgRows) {
-      if (!m.turn_id) continue;
-      let byConv = msgsByTurnConv.get(m.turn_id);
-      if (!byConv) {
-        byConv = new Map();
-        msgsByTurnConv.set(m.turn_id, byConv);
+    // Group all events by turn and channel
+    type ConvEvent = {
+      id: number;
+      role: "user" | "assistant";
+      sender: string | null;
+      content: string | null;
+      created_at: string | null;
+    };
+    const msgsByTurnChannel = new Map<string, Map<string, ConvEvent[]>>();
+
+    function addToTurnChannel(turnId: string, channel: string, event: ConvEvent) {
+      let byChannel = msgsByTurnChannel.get(turnId);
+      if (!byChannel) {
+        byChannel = new Map();
+        msgsByTurnChannel.set(turnId, byChannel);
       }
-      let arr = byConv.get(m.conversation_id);
+      let arr = byChannel.get(channel);
       if (!arr) {
         arr = [];
-        byConv.set(m.conversation_id, arr);
+        byChannel.set(channel, arr);
       }
-      arr.push(m);
-      convIds.add(m.conversation_id);
+      arr.push(event);
     }
 
-    // Fetch conversation metadata + participants for referenced conversations
-    type ConvMeta = { id: string; type: string; name: string | null; title: string | null };
-    const convMeta = new Map<string, ConvMeta>();
-    const convParticipantsMap = new Map<
-      string,
-      { username: string; displayName: string | null }[]
-    >();
-    if (convIds.size > 0) {
-      const convIdsArr = [...convIds];
-      const convRows = await db
-        .select({
-          id: conversations.id,
-          type: conversations.type,
-          name: conversations.name,
-          title: conversations.title,
-        })
-        .from(conversations)
-        .where(inArray(conversations.id, convIdsArr));
-      for (const c2 of convRows) convMeta.set(c2.id, c2);
-
-      const cpRows = await db
-        .select({
-          conversationId: conversationParticipants.conversation_id,
-          username: users.username,
-          displayName: users.display_name,
-        })
-        .from(conversationParticipants)
-        .innerJoin(users, eq(conversationParticipants.user_id, users.id))
-        .where(inArray(conversationParticipants.conversation_id, convIdsArr));
-      for (const cp of cpRows) {
-        let arr = convParticipantsMap.get(cp.conversationId);
-        if (!arr) {
-          arr = [];
-          convParticipantsMap.set(cp.conversationId, arr);
-        }
-        arr.push({ username: cp.username, displayName: cp.displayName });
-      }
+    // Add inbound and outbound events from mind_history
+    for (const m of historyMsgRows) {
+      if (!m.turn_id || !m.channel) continue;
+      addToTurnChannel(m.turn_id, m.channel, {
+        id: m.id,
+        role: m.type === "inbound" ? "user" : "assistant",
+        sender: m.type === "inbound" ? (m.sender ?? null) : name,
+        content: m.content,
+        created_at: m.created_at,
+      });
     }
 
-    // Build conversation label
-    function getConvLabel(convId: string): string {
-      const meta = convMeta.get(convId);
-      if (!meta) return "Conversation";
-      if (meta.type === "channel" && meta.name) return `#${meta.name}`;
-      const parts = convParticipantsMap.get(convId) ?? [];
-      if (meta.type === "dm" && parts.length === 2) {
-        const other = parts.find((p) => p.username !== name);
-        if (other) return `@${other.displayName || other.username}`;
-      }
-      if (meta.title) return meta.title;
-      return "Conversation";
+    // Build conversation label from channel slug
+    function getChannelLabel(channel: string): { label: string; type: "dm" | "channel" } {
+      const isDM = channel.startsWith("@");
+      const colonIdx = channel.indexOf(":");
+      const raw = colonIdx >= 0 ? channel.substring(colonIdx + 1) : channel;
+      const label = isDM ? raw : raw.startsWith("#") ? raw : `#${raw}`;
+      return { label, type: isDM ? "dm" : "channel" };
     }
 
     // 4. Get activities linked to these turns
@@ -2665,30 +2637,21 @@ const app = new Hono<AuthEnv>()
     // 6. Assemble response
     const result = turnRows.map((t) => {
       const summary = summaryByTurn.get(t.id);
-      const turnConvs = msgsByTurnConv.get(t.id) ?? new Map<string, MsgRow[]>();
-      const convEntries = [...turnConvs.entries()].map(([convId, msgs]) => {
-        const meta = convMeta.get(convId);
+      const turnChannels = msgsByTurnChannel.get(t.id) ?? new Map<string, ConvEvent[]>();
+      const convEntries = [...turnChannels.entries()].map(([channel, evts]) => {
+        const { label, type } = getChannelLabel(channel);
         return {
-          id: convId,
-          label: getConvLabel(convId),
-          type: (meta?.type ?? "dm") as "dm" | "channel",
-          messages: msgs.map((m) => {
-            let content: unknown[];
-            try {
-              const parsed = JSON.parse(m.content);
-              content = Array.isArray(parsed) ? parsed : [{ type: "text", text: m.content }];
-            } catch {
-              content = [{ type: "text", text: m.content }];
-            }
-            return {
-              id: m.id,
-              role: m.role,
-              sender_name: m.sender_name,
-              content,
-              source_event_id: m.source_event_id,
-              created_at: m.created_at,
-            };
-          }),
+          id: channel,
+          label,
+          type,
+          messages: evts.map((m) => ({
+            id: m.id,
+            role: m.role as string,
+            sender_name: m.sender,
+            content: [{ type: "text", text: m.content ?? "" }],
+            source_event_id: m.id,
+            created_at: m.created_at,
+          })),
         };
       });
 
