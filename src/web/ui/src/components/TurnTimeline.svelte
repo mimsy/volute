@@ -9,12 +9,12 @@ import { SvelteMap } from "svelte/reactivity";
 import { fetchHistory, fetchTurnEvents, fetchTurns } from "../lib/client";
 import { extractTextContent } from "../lib/feed-utils";
 import { formatRelativeTime } from "../lib/format";
+import { renderMarkdown } from "../lib/markdown";
 import { navigate } from "../lib/navigate";
-import ExtensionFeedCard from "./ExtensionFeedCard.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
 import ReadOnlyChatModal from "./ReadOnlyChatModal.svelte";
 
-let { name }: { name: string } = $props();
+let { name }: { name?: string } = $props();
 
 // --- Turns data ---
 const PAGE_SIZE = 100;
@@ -40,7 +40,7 @@ function buildHistoryMessage(
 ): HistoryMessage {
   return {
     id: nextSyntheticId--,
-    mind: name,
+    mind: (d.mind as string) ?? name ?? "",
     channel: (d.channel as string) ?? "",
     session: (d.session as string) ?? null,
     sender: (d.sender as string) ?? null,
@@ -67,7 +67,7 @@ function upsertTurnRows(rows: TurnRow[]) {
 function openConversation(conv: TurnConversation, turn: TurnRow) {
   readOnlyConv = {
     id: conv.id,
-    mind_name: name,
+    mind_name: turn.mind,
     channel: "",
     type: conv.type,
     name: conv.type === "channel" ? conv.label.replace(/^#/, "") : null,
@@ -89,41 +89,6 @@ function handleExpand(turnId: string, expanded: boolean) {
   expandedTurns = new Set(expandedTurns);
 }
 
-type StreamingConv = {
-  channel: string;
-  label: string;
-  type: "dm" | "channel";
-  messages: { role: "user" | "assistant"; sender: string | null; content: string }[];
-};
-
-function getStreamingConversations(events: HistoryMessage[]): StreamingConv[] {
-  const byChannel = new Map<string, StreamingConv>();
-  for (const ev of events) {
-    if ((ev.type !== "inbound" && ev.type !== "outbound") || !ev.channel) continue;
-    let conv = byChannel.get(ev.channel);
-    if (!conv) {
-      // Derive label from channel slug: "@user" → "@user", "discord:server/chan" → "#server/chan"
-      const slug = ev.channel;
-      const colonIdx = slug.indexOf(":");
-      const raw = colonIdx >= 0 ? slug.substring(colonIdx + 1) : slug;
-      const isDM = slug.startsWith("@");
-      conv = {
-        channel: slug,
-        label: isDM ? raw : raw.startsWith("#") ? raw : `#${raw}`,
-        type: isDM ? "dm" : "channel",
-        messages: [],
-      };
-      byChannel.set(slug, conv);
-    }
-    conv.messages.push({
-      role: ev.type === "inbound" ? "user" : "assistant",
-      sender: ev.type === "inbound" ? ev.sender : name,
-      content: ev.content,
-    });
-  }
-  return [...byChannel.values()];
-}
-
 // --- SSE ---
 let scrollContainer: HTMLDivElement | undefined = $state();
 let userScrolledUp = $state(false);
@@ -131,7 +96,8 @@ let eventSource: EventSource | null = null;
 
 function connectSSE() {
   disconnectSSE();
-  const url = `/api/minds/${encodeURIComponent(name)}/events`;
+  const params = name ? `?mind=${encodeURIComponent(name)}` : "";
+  const url = `/api/v1/history/events${params}`;
   const es = new EventSource(url);
   es.onmessage = (e) => {
     let d: Record<string, unknown>;
@@ -154,6 +120,7 @@ function connectSSE() {
           ...turnsData,
           {
             id: turnId,
+            mind: (d.mind as string) ?? name ?? "",
             summary: null,
             summary_meta: null,
             status: "active",
@@ -176,8 +143,9 @@ function connectSSE() {
       // Fetch turn events from DB after a short delay to allow retroactive inbound tagging.
       // DB events are authoritative — replace synthetic SSE events entirely.
       // Any SSE events arriving after this .then() runs are appended normally.
+      const turnMind = (d.mind as string) ?? name ?? "";
       new Promise((r) => setTimeout(r, 500))
-        .then(() => fetchTurnEvents(name, { turnId }))
+        .then(() => fetchTurnEvents(turnMind, { turnId }))
         .then((dbEvents) => {
           if (!streamingEvents.has(turnId)) return; // turn already completed
           streamingEvents.set(turnId, dbEvents);
@@ -189,7 +157,7 @@ function connectSSE() {
       doneFallbackTimers.delete(turnId);
       const prevStreaming = streamingEvents.get(turnId);
       streamingEvents.delete(turnId);
-      fetchTurns(name, { turnId })
+      fetchTurns({ mind: name, turnId })
         .then((rows) => {
           upsertTurnRows(rows);
           // Scroll the completed turn into view after DOM update
@@ -217,7 +185,7 @@ function connectSSE() {
             if (streamingEvents.has(tid)) {
               streamingEvents.delete(tid);
               // Refresh the turn from the server
-              fetchTurns(name, { turnId: tid })
+              fetchTurns({ mind: name, turnId: tid })
                 .then((rows) => upsertTurnRows(rows))
                 .catch((err) =>
                   console.warn("[TurnTimeline] Failed to refresh turn after done:", err),
@@ -263,7 +231,7 @@ async function loadTurns(offset: number) {
   loading = true;
   historyError = "";
   try {
-    const rows = await fetchTurns(name, { limit: PAGE_SIZE, offset });
+    const rows = await fetchTurns({ mind: name, limit: PAGE_SIZE, offset });
     const chronological = [...rows].reverse();
     if (offset === 0) {
       turnsData = chronological;
@@ -273,7 +241,7 @@ async function loadTurns(offset: number) {
     hasMore = rows.length === PAGE_SIZE;
 
     // Check for recent untagged inbound events (message sent but turn not yet started)
-    if (offset === 0 && pendingInbounds.length === 0) {
+    if (offset === 0 && pendingInbounds.length === 0 && name) {
       fetchHistory(name, { preset: "all", limit: 10 })
         .then((recent) => {
           const untagged = recent.filter((e) => e.type === "inbound" && !e.turn_id);
@@ -288,7 +256,7 @@ async function loadTurns(offset: number) {
     for (const turn of turnsData) {
       if (turn.status === "active" && !streamingEvents.has(turn.id)) {
         streamingEvents.set(turn.id, []);
-        fetchTurnEvents(name, { turnId: turn.id })
+        fetchTurnEvents(turn.mind, { turnId: turn.id })
           .then((dbEvents) => {
             if (!streamingEvents.has(turn.id)) return; // turn completed while fetching
             streamingEvents.set(turn.id, dbEvents);
@@ -333,7 +301,7 @@ function stopScrollTimer() {
 }
 
 // Reload when mind name changes
-let prevName = "";
+let prevName: string | undefined = "";
 $effect(() => {
   const n = name;
   if (n !== prevName) {
@@ -395,12 +363,16 @@ function jumpToLatest() {
     {:else}
       <div class="turn-track">
         {#each turnsData as turn (turn.id)}
-          <div class="turn-row" data-turn-id={turn.id}>
+          {@const peekCount = (!expandedTurns.has(turn.id) && turn.status !== "active") ? turn.conversations.length + turn.activities.length : 0}
+          <div class="turn-row" data-turn-id={turn.id} style:min-height={peekCount > 0 ? `${36 + peekCount * 48}px` : undefined}>
             <div class="turn-time">
+              {#if !name}
+                <button class="mind-badge" onclick={() => navigate(`/minds/${turn.mind}/history`)}>{turn.mind}</button>
+              {/if}
               {formatRelativeTime(turn.created_at)}
             </div>
-            <button
-              aria-label="Toggle turn details"
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
               class="turn-rail"
               class:turn-rail-expanded={expandedTurns.has(turn.id)}
               onclick={(e) => {
@@ -410,16 +382,82 @@ function jumpToLatest() {
                 const summaryEl = rowEl?.querySelector(':scope > .turn-body > .turn-summary > .event');
                 if (summaryEl) (summaryEl as HTMLElement).click();
               }}
+              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (e.currentTarget as HTMLElement).click(); } }}
             >
               <div class="turn-dot"></div>
-            </button>
+              {#if !expandedTurns.has(turn.id) && turn.status !== "active" && (turn.conversations.length > 0 || turn.activities.length > 0)}
+                <div class="turn-peek-icons">
+                  {#each turn.conversations as conv (conv.id)}
+                    <div class="peek-anchor">
+                      <button class="peek-btn" aria-label="View conversation" onclick={(e) => e.stopPropagation()}>
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                      </button>
+                      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                      <div class="peek-popover" role="button" tabindex="0"
+                        onclick={(e) => { e.stopPropagation(); openConversation(conv, turn); }}
+                        onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); openConversation(conv, turn); } }}
+                      >
+                        <div class="peek-card peek-card-chat">
+                          <div class="peek-card-header">
+                            <svg class="peek-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                            <span class="peek-card-label">{conv.label}</span>
+                            <span class="peek-card-meta">{conv.messages.length} msg{conv.messages.length === 1 ? '' : 's'}</span>
+                          </div>
+                          <div class="peek-card-body">
+                            {#each conv.messages.slice(-5) as msg (msg.id)}
+                              <div class="peek-msg">
+                                <span class="peek-msg-sender" class:peek-msg-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : turn.mind)}</span>
+                                {#if msg.role === "assistant"}
+                                  <span class="peek-msg-md markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</span>
+                                {:else}
+                                  <span>{extractTextContent(msg.content)}</span>
+                                {/if}
+                              </div>
+                            {/each}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  {/each}
+                  {#each turn.activities as act (act.id)}
+                    {@const actAuthor = typeof act.metadata?.author === 'string' ? act.metadata.author : turn.mind}
+                    {@const actUrl = act.metadata?.slug ? `/minds/${actAuthor}/notes/${act.metadata.slug}` : ''}
+                    <div class="peek-anchor">
+                      <button class="peek-btn peek-btn-activity" aria-label="View activity" onclick={(e) => { e.stopPropagation(); if (actUrl) navigate(actUrl); }}>
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                      </button>
+                      <div class="peek-popover">
+                        <div class="peek-card peek-card-activity">
+                          <div class="peek-card-header">
+                            <svg class="peek-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                            <span class="peek-card-label">{act.summary}</span>
+                          </div>
+                          {#if typeof act.metadata?.iframeUrl === 'string' && act.metadata.iframeUrl}
+                            <div class="peek-card-body peek-card-iframe">
+                              <iframe
+                                src={act.metadata.iframeUrl}
+                                title={act.summary}
+                                sandbox="allow-same-origin"
+                                role="presentation"
+                              ></iframe>
+                            </div>
+                          {:else if typeof act.metadata?.bodyHtml === 'string' && act.metadata.bodyHtml}
+                            <div class="peek-card-body markdown-body">{@html renderMarkdown(act.metadata.bodyHtml)}</div>
+                          {/if}
+                        </div>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
             <div class="turn-body">
               <div class="turn-summary">
                 {#if turn.summary}
                   <HistoryEvent
                     event={{
                       id: 0,
-                      mind: name,
+                      mind: turn.mind,
                       channel: "",
                       session: null,
                       sender: null,
@@ -430,7 +468,7 @@ function jumpToLatest() {
                       turn_id: turn.id,
                       created_at: turn.created_at,
                     }}
-                    mindName={name}
+                    mindName={turn.mind}
                     expandable
                     compact
                     turnConversations={turn.conversations}
@@ -442,7 +480,7 @@ function jumpToLatest() {
                   <HistoryEvent
                     event={{
                       id: 0,
-                      mind: name,
+                      mind: turn.mind,
                       channel: turn.trigger?.channel ?? "",
                       session: null,
                       sender: turn.trigger?.sender ?? null,
@@ -453,7 +491,7 @@ function jumpToLatest() {
                       turn_id: turn.id,
                       created_at: turn.created_at,
                     }}
-                    mindName={name}
+                    mindName={turn.mind}
                     expandable
                     compact
                     turnConversations={turn.conversations}
@@ -466,76 +504,11 @@ function jumpToLatest() {
                     <div class="turn-pending">processing...</div>
                   {:else}
                     {#each events as ev (ev.id)}
-                      <HistoryEvent event={ev} mindName={name} compact />
+                      <HistoryEvent event={ev} mindName={turn.mind} compact />
                     {/each}
                   {/if}
                 {/if}
               </div>
-              {#if !expandedTurns.has(turn.id)}
-              <div class="turn-cards">
-                {#if !turn.summary}
-                  {@const sConvs = getStreamingConversations(streamingEvents.get(turn.id) ?? [])}
-                  {#each sConvs as conv (conv.channel)}
-                    <div class="feed-card-wrapper">
-                      <div class="feed-card card-chat">
-                        <div class="feed-card-header header-chat">
-                          <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                          <span class="feed-card-label">{conv.label}</span>
-                          <span class="feed-card-meta">{conv.messages.length} message{conv.messages.length === 1 ? '' : 's'}</span>
-                        </div>
-                        <div class="feed-card-body chat-body">
-                          {#each conv.messages.slice(-5) as msg, i (i)}
-                            <div class="chat-entry">
-                              <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender ?? name}</span>
-                              <span class="chat-entry-content">{msg.content}</span>
-                            </div>
-                          {/each}
-                        </div>
-                      </div>
-                    </div>
-                  {/each}
-                {/if}
-                {#each turn.conversations as conv (conv.id)}
-                  <div class="feed-card-wrapper">
-                    <div class="feed-card card-chat" role="button" tabindex="0"
-                      onclick={() => openConversation(conv, turn)}
-                      onkeydown={(e) => { if (e.key === 'Enter') openConversation(conv, turn); }}
-                    >
-                      <div class="feed-card-header header-chat">
-                        <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                        <span class="feed-card-label">{conv.label}</span>
-                        <span class="feed-card-meta">{conv.messages.length} message{conv.messages.length === 1 ? '' : 's'}</span>
-                      </div>
-                      <div class="feed-card-body chat-body">
-                        {#each conv.messages.slice(-5) as msg (msg.id)}
-                          <div class="chat-entry">
-                            <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : name)}</span>
-                            <span class="chat-entry-content">{extractTextContent(msg.content)}</span>
-                          </div>
-                        {/each}
-                      </div>
-                    </div>
-                  </div>
-                {/each}
-                {#each turn.activities as act (act.id)}
-                  {@const actAuthor = typeof act.metadata?.author === 'string' ? act.metadata.author : name}
-                  {@const actUrl = act.metadata?.slug ? `/minds/${actAuthor}/notes/${act.metadata.slug}` : ''}
-                  <div class="feed-card-wrapper">
-                    <ExtensionFeedCard
-                      title={act.summary}
-                      url={actUrl}
-                      date={act.created_at}
-                      author={actAuthor}
-                      bodyHtml={typeof act.metadata?.bodyHtml === 'string' ? act.metadata.bodyHtml : ''}
-                      iframeUrl={typeof act.metadata?.iframeUrl === 'string' ? act.metadata.iframeUrl : undefined}
-                      icon='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>'
-                      color={act.type === 'page_updated' ? 'purple' : 'yellow'}
-                      onclick={actUrl ? () => navigate(actUrl) : undefined}
-                    />
-                  </div>
-                {/each}
-              </div>
-              {/if}
             </div>
           </div>
         {/each}
@@ -550,28 +523,7 @@ function jumpToLatest() {
             <div class="turn-body">
               <div class="turn-summary">
                 {#each pendingInbounds as ev (ev.id)}
-                  <HistoryEvent event={ev} mindName={name} compact />
-                {/each}
-              </div>
-              <div class="turn-cards">
-                {#each getStreamingConversations(pendingInbounds) as conv (conv.channel)}
-                  <div class="feed-card-wrapper">
-                    <div class="feed-card card-chat">
-                      <div class="feed-card-header header-chat">
-                        <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                        <span class="feed-card-label">{conv.label}</span>
-                        <span class="feed-card-meta">{conv.messages.length} message{conv.messages.length === 1 ? '' : 's'}</span>
-                      </div>
-                      <div class="feed-card-body chat-body">
-                        {#each conv.messages.slice(-5) as msg, i (i)}
-                          <div class="chat-entry">
-                            <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender ?? name}</span>
-                            <span class="chat-entry-content">{msg.content}</span>
-                          </div>
-                        {/each}
-                      </div>
-                    </div>
-                  </div>
+                  <HistoryEvent event={ev} mindName={ev.mind || name || ""} compact />
                 {/each}
               </div>
             </div>
@@ -594,7 +546,7 @@ function jumpToLatest() {
 
 {#if readOnlyConv}
   <ReadOnlyChatModal
-    mindName={name}
+    mindName={readOnlyConv.mind_name ?? name ?? ""}
     conversation={readOnlyConv}
     canChat={false}
     onClose={() => { readOnlyConv = null; }}
@@ -622,7 +574,7 @@ function jumpToLatest() {
   .turn-track {
     position: relative;
     min-height: 100%;
-    max-width: 1100px;
+    max-width: 720px;
     margin: 0 auto;
   }
 
@@ -640,6 +592,22 @@ function jumpToLatest() {
     text-align: right;
     padding-right: 8px;
     white-space: nowrap;
+  }
+
+  .mind-badge {
+    display: block;
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    cursor: pointer;
+    text-align: right;
+  }
+
+  .mind-badge:hover {
+    text-decoration: underline;
   }
 
   .turn-rail {
@@ -791,60 +759,127 @@ function jumpToLatest() {
     }
   }
 
-  @container (min-width: 600px) {
-    .turn-body {
-      flex-direction: row;
-    }
-    .turn-summary {
-      flex: 1 1 300px;
-      min-width: 200px;
-    }
-    .turn-cards {
-      flex: 0 1 360px;
-      min-width: 240px;
-    }
+  /* Peek icon buttons on the timeline rail */
+  .turn-peek-icons {
+    position: absolute;
+    top: 40px; /* below the dot (dot is at top:12px, generous gap) */
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 30px;
+    z-index: 4;
   }
 
-  /* Feed cards */
-  .feed-card-wrapper {
-    padding: 4px 0;
+  .peek-anchor {
+    position: relative;
   }
 
-  .feed-card {
+  .peek-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--blue);
+    cursor: pointer;
+    padding: 0;
+    transition: background 0.1s, border-color 0.1s;
+  }
+
+  .peek-btn svg {
+    width: 10px;
+    height: 10px;
+  }
+
+  .peek-btn:hover {
+    background: var(--bg-2);
+    border-color: var(--border-bright);
+  }
+
+  .peek-btn-activity {
+    color: var(--yellow);
+  }
+
+  .peek-popover {
+    display: none;
+    position: absolute;
+    top: -4px;
+    left: calc(100% + 8px);
+    z-index: 20;
+    min-width: 280px;
+    max-width: 400px;
+    cursor: pointer;
+    /* Invisible bridge from button to popover so hover persists */
+    padding-left: 12px;
+    margin-left: -12px;
+  }
+
+  .peek-anchor:hover .peek-popover {
+    display: block;
+  }
+
+  .peek-card {
     background: var(--bg-0);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    display: flex;
-    flex-direction: column;
-    max-height: 200px;
     overflow: hidden;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    cursor: pointer;
     transition: border-color 0.15s;
+    color: var(--text-0);
+    text-align: left;
+    font: inherit;
   }
 
-  .feed-card-header {
-    padding: 6px 8px 6px 10px;
+  .peek-card-chat {
+    border-color: color-mix(in srgb, var(--blue) 25%, var(--border));
+  }
+  .peek-card-chat:hover {
+    border-color: color-mix(in srgb, var(--blue) 50%, var(--border));
+  }
+  .peek-card-chat .peek-card-header {
+    border-bottom-color: color-mix(in srgb, var(--blue) 25%, var(--border));
+  }
+  .peek-card-chat .peek-card-icon {
+    color: var(--blue);
+  }
+
+  .peek-card-activity {
+    border-color: color-mix(in srgb, var(--yellow) 25%, var(--border));
+  }
+  .peek-card-activity:hover {
+    border-color: color-mix(in srgb, var(--yellow) 50%, var(--border));
+  }
+  .peek-card-activity .peek-card-header {
+    border-bottom-color: color-mix(in srgb, var(--yellow) 25%, var(--border));
+  }
+  .peek-card-activity .peek-card-icon {
+    color: var(--yellow);
+  }
+
+  .peek-card-header {
+    padding: 5px 10px;
     font-size: 13px;
     font-weight: 500;
     color: var(--text-1);
     border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
     display: flex;
     align-items: center;
     gap: 6px;
   }
 
-  .feed-card-icon {
+  .peek-card-icon {
+    width: 13px;
+    height: 13px;
     flex-shrink: 0;
-    width: 14px;
-    height: 14px;
   }
 
-  .card-chat .feed-card-icon { color: var(--blue); }
-  .card-chat { border-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
-  .card-chat .feed-card-header { border-bottom-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
-  .card-chat:hover { border-color: color-mix(in srgb, var(--blue) 50%, var(--border)); }
-
-  .feed-card-label {
+  .peek-card-label {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -852,45 +887,49 @@ function jumpToLatest() {
     flex: 1;
   }
 
-  .feed-card-meta {
+  .peek-card-meta {
     font-size: 11px;
     color: var(--text-2);
     font-weight: 400;
     flex-shrink: 0;
-    margin-left: auto;
   }
 
-  .feed-card-body {
-    flex: 1;
-    overflow: auto;
-    padding: 10px 12px;
-    min-height: 0;
+  .peek-card-body {
+    padding: 8px 10px;
+    max-height: 300px;
+    overflow-y: auto;
+    color: var(--text-0);
   }
 
-  .chat-body {
-    padding: 8px 12px;
+  .peek-msg {
+    padding: 2px 0;
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-0);
+    line-height: 1.5;
   }
 
-  .chat-entry {
-    padding: 1px 0;
-  }
-  .chat-entry:first-child {
-    margin-top: 0;
-  }
-
-  .chat-sender {
-    font-size: 12px;
+  .peek-msg-sender {
     font-weight: 600;
     color: var(--accent);
+    margin-right: 6px;
+    font-size: 12px;
   }
-  .chat-sender-user {
+
+  .peek-msg-sender-user {
     color: var(--blue);
   }
 
-  .chat-entry-content {
-    min-width: 0;
-    font-family: var(--mono);
-    font-size: 13px;
+  .peek-msg-md :global(p) {
+    margin: 0;
+    display: inline;
+  }
+
+  .peek-card-iframe iframe {
+    width: 100%;
+    height: 200px;
+    border: none;
+    pointer-events: none;
   }
 
   /* Controls */
@@ -935,6 +974,8 @@ function jumpToLatest() {
     padding: 8px 0;
     animation: pulse 1.5s infinite;
   }
+
+
 
   .empty-hint {
     color: var(--text-2);

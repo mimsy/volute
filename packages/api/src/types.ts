@@ -249,6 +249,7 @@ export type TurnTrigger = {
 
 export type TurnRow = {
   id: string;
+  mind: string;
   summary: string | null;
   summary_meta: Record<string, unknown> | null;
   status: "active" | "complete";

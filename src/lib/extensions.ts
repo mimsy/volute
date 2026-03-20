@@ -13,7 +13,6 @@ import extPages from "@volute/pages";
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import type { AuthEnv } from "../web/middleware/auth.js";
 import { getUser, getUserByUsername } from "./auth.js";
-import { getActiveTurnId, getLastToolUseEventId } from "./daemon/turn-tracker.js";
 import { publish } from "./events/activity-events.js";
 import log from "./logger.js";
 import { mindDir, voluteHome, voluteSystemDir } from "./registry.js";
@@ -117,19 +116,11 @@ async function buildContext(
     },
     getUser: async (id: number) => getUser(id),
     getUserByUsername: async (username: string) => getUserByUsername(username),
-    publishActivity: (event, sessionOrContext) => {
-      // Accept session as a string (from command handlers) or Hono context (from route handlers).
-      const session =
-        typeof sessionOrContext === "string"
-          ? sessionOrContext
-          : (sessionOrContext?.get("mindSession") as string | undefined);
-      const turnId = getActiveTurnId(event.mind, session);
-      const sourceEventId = getLastToolUseEventId(event.mind, session);
-      publish({
-        ...(event as Parameters<typeof publish>[0]),
-        turn_id: turnId,
-        source_event_id: sourceEventId,
-      }).catch((err) =>
+    publishActivity: (event) => {
+      // Insert without turn linkage — when called from skill command handlers, the
+      // activity is linked to the correct turn via correlation markers in tool_result.
+      // When called from route handlers or lifecycle hooks, the record stays unlinked.
+      publish(event as Parameters<typeof publish>[0]).catch((err) =>
         log.error(`extension ${manifest.id}: failed to publish activity`, log.errorData(err)),
       );
     },
@@ -191,15 +182,37 @@ async function loadExtension(
         const mindName = body.mind || user?.username;
         const session = c.get("mindSession") as string | undefined;
         try {
+          // Collect activity publish promises so we can append correlation markers
+          // to the output (linked to the correct turn when the tool_result event
+          // arrives at the events endpoint).
+          const activityPromises: Promise<number>[] = [];
           const result = await cmd.handler(body.args ?? [], {
             ...context,
-            // Bind publishActivity to the session so command handlers
-            // don't need to pass it explicitly
-            publishActivity: (event, sc) => context.publishActivity(event, sc ?? session),
+            publishActivity: (event) => {
+              activityPromises.push(
+                publish(event as Parameters<typeof publish>[0]).catch((err) => {
+                  log.error(
+                    `extension ${manifest.id}: failed to publish activity`,
+                    log.errorData(err),
+                  );
+                  return 0;
+                }),
+              );
+            },
             mindName,
             session,
           });
-          return c.json(result);
+          // Wait for all activity publishes and collect their IDs
+          const activityIds = (await Promise.all(activityPromises)).filter((id) => id > 0);
+          // Append activity correlation markers to the output
+          const markers = activityIds.map((id) => `[volute:activity:${id}]`).join("");
+          const output =
+            result && typeof result === "object" && "output" in result
+              ? { ...result, output: `${(result as { output: string }).output}${markers}` }
+              : markers
+                ? { ...result, output: markers }
+                : result;
+          return c.json(output);
         } catch (err) {
           log.error(`extension command ${manifest.id}/${cmdName} failed`, log.errorData(err));
           return c.json({ error: (err as Error).message }, 500);

@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import {
@@ -37,11 +37,17 @@ import {
   completeTurn,
   createTurn,
   getActiveTurnId,
+  getLastToolUseEventId,
   trackToolUse,
 } from "../../lib/daemon/turn-tracker.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
-import { recordInbound, tagUntaggedInbound } from "../../lib/delivery/message-delivery.js";
+import {
+  linkToolResultToTurn,
+  recordInbound,
+  tagUntaggedInbound,
+  tagUntaggedOutbound,
+} from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import {
   addMessage,
@@ -90,7 +96,7 @@ import {
   stateDir,
   validateMindName,
 } from "../../lib/registry.js";
-import { activity, conversations, mindHistory, turns } from "../../lib/schema.js";
+import { conversations, mindHistory } from "../../lib/schema.js";
 import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
 import { getStandardSkillsWithExtensions, installSkill, SEED_SKILLS } from "../../lib/skills.js";
 import { announceToSystem } from "../../lib/system-channel.js";
@@ -2239,6 +2245,13 @@ const app = new Hono<AuthEnv>()
       } // end if (turnId) after createTurn
     }
 
+    // Strip correlation markers from tool_result content before persisting/publishing
+    const MARKER_RE = /\[volute:(?:outbound|activity):\d+\]/g;
+    const cleanContent =
+      body.type === "tool_result" && body.content
+        ? body.content.replace(MARKER_RE, "").trimEnd()
+        : body.content;
+
     // Persist to mind_history
     const db = await getDb();
     let insertedId: number | undefined;
@@ -2251,7 +2264,7 @@ const app = new Hono<AuthEnv>()
           session: body.session ?? null,
           channel: body.channel ?? null,
           message_id: body.messageId ?? null,
-          content: body.content ?? null,
+          content: cleanContent ?? null,
           metadata: body.metadata ? JSON.stringify(body.metadata) : null,
           turn_id: turnId ?? null,
         })
@@ -2267,6 +2280,18 @@ const app = new Hono<AuthEnv>()
       trackToolUse(baseName, body.session, insertedId);
     }
 
+    // Link outbound records and extension activities to this turn via correlation markers.
+    // This runs BEFORE publishing to SSE so the outbound events are correctly tagged
+    // by the time they enter the stream.
+    if (body.type === "tool_result" && turnId && body.content) {
+      const toolUseEventId = getLastToolUseEventId(baseName, body.session);
+      try {
+        await linkToolResultToTurn(baseName, turnId, body.content, toolUseEventId);
+      } catch (err) {
+        log.error("failed to link outbound to turn", log.errorData(err));
+      }
+    }
+
     // Publish to in-process pub-sub
     publishMindEvent(baseName, {
       mind: baseName,
@@ -2274,7 +2299,7 @@ const app = new Hono<AuthEnv>()
       session: body.session,
       channel: body.channel,
       messageId: body.messageId,
-      content: body.content,
+      content: cleanContent,
       metadata: body.metadata,
       turnId: turnId ?? undefined,
     });
@@ -2318,6 +2343,11 @@ const app = new Hono<AuthEnv>()
         const busy = body.session ? dm.isSessionBusy(baseName, body.session) : false;
         if (!busy) {
           const completedTurnId = await completeTurn(baseName, body.session);
+          if (completedTurnId) {
+            tagUntaggedOutbound(baseName, completedTurnId).catch((err) =>
+              log.warn("failed to tag orphaned outbound records", log.errorData(err)),
+            );
+          }
           if (insertedId != null) {
             summarizeTurn(baseName, body.session, body.channel, insertedId, completedTurnId).catch(
               (err) => log.error("turn summarization failed", log.errorData(err)),
@@ -2330,6 +2360,11 @@ const app = new Hono<AuthEnv>()
         }
         // DM unavailable — complete immediately as fallback
         const completedTurnId = await completeTurn(baseName, body.session);
+        if (completedTurnId) {
+          tagUntaggedOutbound(baseName, completedTurnId).catch((err) =>
+            log.warn("failed to tag orphaned outbound records", log.errorData(err)),
+          );
+        }
         if (insertedId != null) {
           summarizeTurn(baseName, body.session, body.channel, insertedId, completedTurnId).catch(
             (err) => log.error("turn summarization failed", log.errorData(err)),
@@ -2429,7 +2464,8 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "channel and content required" }, 400);
     }
 
-    // Look up active turn for this mind (outbound happens during a turn)
+    // Best-effort turn lookup for external bridge sends (these don't go through
+    // volute chat send, so they won't have tool_result correlation markers).
     const mindSession = c.get("mindSession");
     const outboundTurnId = getActiveTurnId(baseName, mindSession);
 
@@ -2485,221 +2521,6 @@ const app = new Hono<AuthEnv>()
     const db = await getDb();
     const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, name));
     return c.json(rows);
-  })
-  .get("/:name/history/turns", async (c) => {
-    const name = c.req.param("name");
-    const turnIdFilter = c.req.query("turnId");
-    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
-    const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
-
-    const db = await getDb();
-
-    // 1. Get turns for this mind
-    const conditions = [eq(turns.mind, name)];
-    if (turnIdFilter) conditions.push(eq(turns.id, turnIdFilter));
-    const turnRows = await db
-      .select()
-      .from(turns)
-      .where(and(...conditions))
-      .orderBy(desc(turns.created_at))
-      .limit(limit)
-      .offset(offset);
-
-    if (turnRows.length === 0) return c.json([]);
-
-    const turnIds = turnRows.map((t) => t.id);
-
-    // 2. Get summaries
-    const summaryRows = await db
-      .select()
-      .from(mindHistory)
-      .where(
-        and(
-          eq(mindHistory.mind, name),
-          eq(mindHistory.type, "summary"),
-          inArray(mindHistory.turn_id, turnIds),
-        ),
-      );
-    const summaryByTurn = new Map<string, { content: string; metadata: string | null }>();
-    for (const s of summaryRows) {
-      if (s.turn_id)
-        summaryByTurn.set(s.turn_id, { content: s.content ?? "", metadata: s.metadata });
-    }
-
-    // 3. Get inbound/outbound events from mind_history for these turns.
-    // We use mind_history instead of the messages table because mind_history has
-    // correct per-mind turn_id tagging. The messages table can only hold one turn_id,
-    // so mind-to-mind messages get tagged with the sender's turn, not the receiver's.
-    const historyMsgRows = await db
-      .select({
-        id: mindHistory.id,
-        type: mindHistory.type,
-        channel: mindHistory.channel,
-        sender: mindHistory.sender,
-        content: mindHistory.content,
-        turn_id: mindHistory.turn_id,
-        created_at: mindHistory.created_at,
-      })
-      .from(mindHistory)
-      .where(
-        and(
-          eq(mindHistory.mind, name),
-          inArray(mindHistory.turn_id, turnIds),
-          sql`${mindHistory.type} IN ('inbound', 'outbound')`,
-        ),
-      )
-      .orderBy(mindHistory.created_at);
-
-    // Group all events by turn and channel
-    type ConvEvent = {
-      id: number;
-      role: "user" | "assistant";
-      sender: string | null;
-      content: string | null;
-      created_at: string | null;
-    };
-    const msgsByTurnChannel = new Map<string, Map<string, ConvEvent[]>>();
-
-    function addToTurnChannel(turnId: string, channel: string, event: ConvEvent) {
-      let byChannel = msgsByTurnChannel.get(turnId);
-      if (!byChannel) {
-        byChannel = new Map();
-        msgsByTurnChannel.set(turnId, byChannel);
-      }
-      let arr = byChannel.get(channel);
-      if (!arr) {
-        arr = [];
-        byChannel.set(channel, arr);
-      }
-      arr.push(event);
-    }
-
-    // Add inbound and outbound events from mind_history
-    for (const m of historyMsgRows) {
-      if (!m.turn_id || !m.channel) continue;
-      addToTurnChannel(m.turn_id, m.channel, {
-        id: m.id,
-        role: m.type === "inbound" ? "user" : "assistant",
-        sender: m.type === "inbound" ? (m.sender ?? null) : name,
-        content: m.content,
-        created_at: m.created_at,
-      });
-    }
-
-    // Build conversation label from channel slug
-    function getChannelLabel(channel: string): { label: string; type: "dm" | "channel" } {
-      const isDM = channel.startsWith("@");
-      const colonIdx = channel.indexOf(":");
-      const raw = colonIdx >= 0 ? channel.substring(colonIdx + 1) : channel;
-      const label = isDM ? raw : raw.startsWith("#") ? raw : `#${raw}`;
-      return { label, type: isDM ? "dm" : "channel" };
-    }
-
-    // 4. Get activities linked to these turns
-    const activityRows = await db
-      .select()
-      .from(activity)
-      .where(inArray(activity.turn_id, turnIds))
-      .orderBy(activity.created_at);
-
-    const activitiesByTurn = new Map<string, typeof activityRows>();
-    for (const a of activityRows) {
-      if (!a.turn_id) continue;
-      let arr = activitiesByTurn.get(a.turn_id);
-      if (!arr) {
-        arr = [];
-        activitiesByTurn.set(a.turn_id, arr);
-      }
-      arr.push(a);
-    }
-
-    // 5. Fetch trigger events for turns that have trigger_event_id
-    const triggerIds = turnRows
-      .filter((t) => t.trigger_event_id != null)
-      .map((t) => t.trigger_event_id!);
-    const triggerMap = new Map<
-      number,
-      { channel: string | null; sender: string | null; content: string | null }
-    >();
-    if (triggerIds.length > 0) {
-      const triggerRows = await db
-        .select({
-          id: mindHistory.id,
-          channel: mindHistory.channel,
-          sender: mindHistory.sender,
-          content: mindHistory.content,
-        })
-        .from(mindHistory)
-        .where(inArray(mindHistory.id, triggerIds));
-      for (const r of triggerRows) triggerMap.set(r.id, r);
-    }
-
-    // 6. Assemble response
-    const result = turnRows.map((t) => {
-      const summary = summaryByTurn.get(t.id);
-      const turnChannels = msgsByTurnChannel.get(t.id) ?? new Map<string, ConvEvent[]>();
-      const convEntries = [...turnChannels.entries()].map(([channel, evts]) => {
-        const { label, type } = getChannelLabel(channel);
-        return {
-          id: channel,
-          label,
-          type,
-          messages: evts.map((m) => ({
-            id: m.id,
-            role: m.role as string,
-            sender_name: m.sender,
-            content: [{ type: "text", text: m.content ?? "" }],
-            source_event_id: m.id,
-            created_at: m.created_at,
-          })),
-        };
-      });
-
-      const turnActivities = (activitiesByTurn.get(t.id) ?? []).map((a) => {
-        let metadata: Record<string, unknown> | null = null;
-        if (a.metadata) {
-          try {
-            metadata = JSON.parse(a.metadata);
-          } catch (err) {
-            log.debug(`malformed activity metadata for activity ${a.id}`, log.errorData(err));
-          }
-        }
-        return {
-          id: a.id,
-          type: a.type,
-          summary: a.summary,
-          metadata,
-          source_event_id: a.source_event_id,
-          created_at: a.created_at,
-        };
-      });
-
-      let summaryMeta: Record<string, unknown> | null = null;
-      if (summary?.metadata) {
-        try {
-          summaryMeta = JSON.parse(summary.metadata);
-        } catch (err) {
-          log.debug(`malformed summary metadata for turn ${t.id}`, log.errorData(err));
-        }
-      }
-
-      const trigger = t.trigger_event_id ? triggerMap.get(t.trigger_event_id) : null;
-
-      return {
-        id: t.id,
-        summary: summary?.content ?? null,
-        summary_meta: summaryMeta,
-        status: t.status,
-        created_at: t.created_at,
-        trigger: trigger
-          ? { channel: trigger.channel, sender: trigger.sender, content: trigger.content }
-          : null,
-        conversations: convEntries,
-        activities: turnActivities,
-      };
-    });
-
-    return c.json(result);
   })
   .get("/:name/history/turn", async (c) => {
     const name = c.req.param("name");

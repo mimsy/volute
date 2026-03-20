@@ -34,7 +34,7 @@ export function subscribe(callback: Callback): () => void {
   };
 }
 
-export async function publish(event: ActivityEvent): Promise<void> {
+export async function publish(event: ActivityEvent): Promise<number> {
   const created_at = event.created_at ?? new Date().toISOString().replace("T", " ").slice(0, 19);
 
   let id = 0;
@@ -56,6 +56,7 @@ export async function publish(event: ActivityEvent): Promise<void> {
 
   const full = { ...event, id, created_at };
   notify(full);
+  return id;
 }
 
 /** Broadcast to subscribers without persisting to DB. */

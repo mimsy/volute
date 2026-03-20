@@ -6,6 +6,7 @@ import MindPage from "../pages/MindPage.svelte";
 import SystemSettingsPage from "../pages/SystemSettingsPage.svelte";
 import Chat from "./Chat.svelte";
 import PublicFiles from "./PublicFiles.svelte";
+import TurnTimeline from "./TurnTimeline.svelte";
 
 let {
   selection,
@@ -137,6 +138,10 @@ let contextLabel = $derived.by(() => {
         {onOpenMind}
         {onTypingNames}
       />
+    </div>
+  {:else if selection.kind === "system-history"}
+    <div class="frame-content mind-frame">
+      <TurnTimeline />
     </div>
   {:else if selection.kind === "settings"}
     <div class="frame-content">

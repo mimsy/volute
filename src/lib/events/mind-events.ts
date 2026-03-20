@@ -1,3 +1,5 @@
+import log from "../logger.js";
+
 /**
  * In-process pub-sub for mind activity events. SSE endpoint subscribes per-mind;
  * daemon publishes when events arrive.
@@ -21,6 +23,7 @@ export type MindEvent = {
 type Callback = (event: MindEvent) => void;
 
 const subscribers = new Map<string, Set<Callback>>();
+const globalSubscribers = new Set<Callback>();
 
 export function subscribe(mind: string, callback: Callback): () => void {
   let set = subscribers.get(mind);
@@ -35,16 +38,32 @@ export function subscribe(mind: string, callback: Callback): () => void {
   };
 }
 
+export function subscribeAll(callback: Callback): () => void {
+  globalSubscribers.add(callback);
+  return () => {
+    globalSubscribers.delete(callback);
+  };
+}
+
 export function publish(mind: string, event: MindEvent): void {
   const set = subscribers.get(mind);
-  if (!set) return;
-  for (const cb of set) {
+  if (set) {
+    for (const cb of set) {
+      try {
+        cb(event);
+      } catch (err) {
+        log.error(`[mind-events] subscriber threw for ${mind}`, log.errorData(err));
+        set.delete(cb);
+        if (set.size === 0) subscribers.delete(mind);
+      }
+    }
+  }
+  for (const cb of globalSubscribers) {
     try {
       cb(event);
     } catch (err) {
-      console.error("[mind-events] subscriber threw:", err);
-      set.delete(cb);
-      if (set.size === 0) subscribers.delete(mind);
+      log.error("[mind-events] global subscriber threw", log.errorData(err));
+      globalSubscribers.delete(cb);
     }
   }
 }

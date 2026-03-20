@@ -34,8 +34,8 @@ let turnLoading = $state(false);
 let turnError = $state("");
 let turnEvents = $state<HistoryMessage[]>([]);
 const typeColors: Record<string, string> = {
-  inbound: "var(--red)",
-  outbound: "var(--green)",
+  inbound: "var(--blue)",
+  outbound: "var(--blue)",
   text: "var(--blue)",
   tool_use: "var(--yellow)",
   tool_result: "var(--yellow)",
@@ -143,7 +143,13 @@ async function handleClick() {
   style:--type-color={color}
   bind:this={eventEl}
 >
-  <div class="marker" style:background={color}></div>
+  {#if event.type === "inbound" || event.type === "outbound"}
+    <div class="marker marker-icon" style:color="var(--blue)">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+    </div>
+  {:else}
+    <div class="marker" style:background={color}></div>
+  {/if}
   {#if event.type === "summary" && turnExpanded}
     <div class="turn-connector"></div>
   {/if}
@@ -185,7 +191,10 @@ async function handleClick() {
               <div class="event-group" class:has-linked={linkedConvs.length > 0 || linkedActs.length > 0}>
                 <HistoryEvent event={turnEv} {mindName} />
                 {#each linkedConvs as conv (conv.id)}
-                  <div class="linked-card">
+                  <div class="linked-card linked-card-with-marker">
+                    <div class="marker marker-icon" style:color="var(--blue)">
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                    </div>
                     <div class="linked-card-chat">
                       <div class="linked-card-header">
                         <svg class="linked-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
@@ -201,7 +210,10 @@ async function handleClick() {
                   </div>
                 {/each}
                 {#each linkedActs as act (act.id)}
-                  <div class="linked-card">
+                  <div class="linked-card linked-card-with-marker">
+                    <div class="marker marker-icon" style:color="var(--yellow)">
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                    </div>
                     <ExtensionFeedCard
                       title={act.summary}
                       url={act.metadata?.slug ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : mindName}/notes/${act.metadata.slug}` : ''}
@@ -218,7 +230,10 @@ async function handleClick() {
             {/each}
             <!-- Unlinked cards (no source_event_id) appear before the summary -->
             {#each turnConversations.filter((c) => c.messages.every((m) => !m.source_event_id || !turnEvents.some((e) => e.id === m.source_event_id))) as conv (conv.id)}
-              <div class="linked-card">
+              <div class="linked-card linked-card-with-marker">
+                <div class="marker marker-icon" style:color="var(--blue)">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                </div>
                 <div class="linked-card-chat">
                   <div class="linked-card-header">
                     <svg class="linked-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
@@ -234,7 +249,10 @@ async function handleClick() {
               </div>
             {/each}
             {#each turnActivities.filter((a) => !a.source_event_id || !turnEvents.some((e) => e.id === a.source_event_id)) as act (act.id)}
-              <div class="linked-card">
+              <div class="linked-card linked-card-with-marker">
+                <div class="marker marker-icon" style:color="var(--yellow)">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                </div>
                 <ExtensionFeedCard
                   title={act.summary}
                   url={act.metadata?.slug ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : mindName}/notes/${act.metadata.slug}` : ''}
@@ -260,6 +278,18 @@ async function handleClick() {
         <span class="summary-text">{event.content}</span>
       {/if}
     </div>
+  {:else if event.type === "inbound" || event.type === "outbound"}
+    <div class="compact-msg">
+      <div class="compact-msg-header">
+        <svg class="compact-msg-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+        {#if event.channel}<span class="compact-msg-channel">{event.channel}</span>{/if}
+        <span class="compact-msg-time">{formatTime(event.created_at)}</span>
+      </div>
+      <div class="compact-msg-body">
+        <span class="compact-msg-sender" class:compact-msg-sender-user={event.type === "inbound"}>{event.type === "inbound" ? (event.sender ?? "user") : mindName}</span>
+        <span class="compact-msg-text">{event.content}</span>
+      </div>
+    </div>
   {:else}
     <div class="event-header">
       <span class="time">{formatTime(event.created_at)}</span>
@@ -273,15 +303,7 @@ async function handleClick() {
     </div>
 
     <div class="event-body">
-      {#if event.type === "inbound"}
-        <span class="sender inbound">{event.sender ?? "user"}</span>
-        <div class="user-text">{event.content}</div>
-      {:else if event.type === "outbound"}
-        <span class="sender outbound">mind</span>
-        <div class="markdown-body">
-          {@html renderMarkdown(event.content)}
-        </div>
-      {:else if event.type === "text"}
+      {#if event.type === "text"}
         <div class="markdown-body">
           {@html renderMarkdown(event.content)}
         </div>
@@ -396,6 +418,25 @@ async function handleClick() {
     z-index: 1;
   }
 
+  .marker-icon {
+    width: 18px;
+    height: 18px;
+    left: -10px;
+    top: 7px;
+    border-radius: var(--radius);
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 3;
+  }
+
+  .marker-icon svg {
+    width: 11px;
+    height: 11px;
+  }
+
   .event-header {
     display: flex;
     align-items: center;
@@ -435,24 +476,6 @@ async function handleClick() {
     line-height: 1.6;
   }
 
-  .sender {
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    margin-right: 8px;
-  }
-  .sender.inbound {
-    color: var(--blue);
-  }
-  .sender.outbound {
-    color: var(--accent);
-  }
-
-  .user-text {
-    display: inline;
-    white-space: pre-wrap;
-    color: var(--text-0);
-  }
 
   .summary {
     font-size: 13px;
@@ -630,6 +653,13 @@ async function handleClick() {
     margin: 4px 0 4px 20px;
     max-width: 480px;
   }
+  .linked-card-with-marker {
+    position: relative;
+  }
+  .linked-card-with-marker > .marker-icon {
+    left: -29px;
+    top: 8px;
+  }
   .linked-card-chat {
     background: var(--bg-0);
     border: 1px solid color-mix(in srgb, var(--blue) 25%, var(--border));
@@ -669,5 +699,60 @@ async function handleClick() {
   }
   .linked-card-sender-user {
     color: var(--blue);
+  }
+
+  /* Inbound/outbound message card */
+  .compact-msg {
+    background: var(--bg-0);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .compact-msg-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-1);
+    border-bottom: 1px solid var(--border);
+  }
+  .compact-msg-icon {
+    width: 12px;
+    height: 12px;
+    color: var(--blue);
+    flex-shrink: 0;
+  }
+  .compact-msg-channel {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .compact-msg-time {
+    font-size: 11px;
+    color: var(--text-2);
+    font-weight: 400;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+  .compact-msg-body {
+    padding: 6px 10px;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .compact-msg-sender {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    margin-right: 6px;
+  }
+  .compact-msg-sender-user {
+    color: var(--blue);
+  }
+  .compact-msg-text {
+    color: var(--text-0);
   }
 </style>
