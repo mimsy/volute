@@ -2245,6 +2245,13 @@ const app = new Hono<AuthEnv>()
       } // end if (turnId) after createTurn
     }
 
+    // Strip correlation markers from tool_result content before persisting/publishing
+    const MARKER_RE = /\[volute:(?:outbound|activity):\d+\]/g;
+    const cleanContent =
+      body.type === "tool_result" && body.content
+        ? body.content.replace(MARKER_RE, "").trimEnd()
+        : body.content;
+
     // Persist to mind_history
     const db = await getDb();
     let insertedId: number | undefined;
@@ -2257,7 +2264,7 @@ const app = new Hono<AuthEnv>()
           session: body.session ?? null,
           channel: body.channel ?? null,
           message_id: body.messageId ?? null,
-          content: body.content ?? null,
+          content: cleanContent ?? null,
           metadata: body.metadata ? JSON.stringify(body.metadata) : null,
           turn_id: turnId ?? null,
         })
@@ -2292,7 +2299,7 @@ const app = new Hono<AuthEnv>()
       session: body.session,
       channel: body.channel,
       messageId: body.messageId,
-      content: body.content,
+      content: cleanContent,
       metadata: body.metadata,
       turnId: turnId ?? undefined,
     });
