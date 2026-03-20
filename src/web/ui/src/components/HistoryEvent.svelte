@@ -34,8 +34,8 @@ let turnLoading = $state(false);
 let turnError = $state("");
 let turnEvents = $state<HistoryMessage[]>([]);
 const typeColors: Record<string, string> = {
-  inbound: "var(--red)",
-  outbound: "var(--green)",
+  inbound: "var(--blue)",
+  outbound: "var(--blue)",
   text: "var(--blue)",
   tool_use: "var(--yellow)",
   tool_result: "var(--yellow)",
@@ -419,20 +419,22 @@ async function handleClick() {
   }
 
   .marker-icon {
-    width: 14px;
-    height: 14px;
-    left: -8px;
-    top: 9px;
-    border-radius: 0;
+    width: 18px;
+    height: 18px;
+    left: -10px;
+    top: 7px;
+    border-radius: var(--radius);
     background: var(--bg-1);
+    border: 1px solid var(--border);
     display: flex;
     align-items: center;
     justify-content: center;
+    z-index: 3;
   }
 
   .marker-icon svg {
-    width: 12px;
-    height: 12px;
+    width: 11px;
+    height: 11px;
   }
 
   .event-header {
@@ -655,7 +657,7 @@ async function handleClick() {
     position: relative;
   }
   .linked-card-with-marker > .marker-icon {
-    left: -27px;
+    left: -29px;
     top: 8px;
   }
   .linked-card-chat {
