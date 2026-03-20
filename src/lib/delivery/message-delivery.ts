@@ -138,7 +138,10 @@ export async function linkToolResultToTurn(
       .limit(1);
 
     const row = rows[0];
-    if (!row) continue;
+    if (!row) {
+      dlog.warn(`outbound marker references missing record: mind=${mind} id=${outboundId}`);
+      continue;
+    }
 
     await db.update(mindHistory).set({ turn_id: turnId }).where(eq(mindHistory.id, outboundId));
 

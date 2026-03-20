@@ -305,10 +305,12 @@ export async function run(args: string[]) {
       process.exit(1);
     }
     if (!flags.wait) {
-      const resData = (await sendRes.json().catch(() => ({}))) as { outboundId?: number };
-      console.log(
-        `Message sent.${resData.outboundId != null ? `\n[volute:outbound:${resData.outboundId}]` : ""}`,
-      );
+      let outboundId: number | undefined;
+      try {
+        const resData = (await sendRes.json()) as { outboundId?: number };
+        outboundId = resData.outboundId;
+      } catch {}
+      console.log(`Message sent.${outboundId != null ? `\n[volute:outbound:${outboundId}]` : ""}`);
     }
   } else if (!parsed.isDM && parsed.platform === "volute") {
     // Bare names without # are ambiguous — require explicit sigil
@@ -361,10 +363,12 @@ export async function run(args: string[]) {
       console.error((data as { error: string }).error);
       process.exit(1);
     }
-    const sendData = (await sendRes.json().catch(() => ({}))) as { outboundId?: number };
-    console.log(
-      `Message sent.${sendData.outboundId != null ? `\n[volute:outbound:${sendData.outboundId}]` : ""}`,
-    );
+    let outboundId: number | undefined;
+    try {
+      const resData = (await sendRes.json()) as { outboundId?: number };
+      outboundId = resData.outboundId;
+    } catch {}
+    console.log(`Message sent.${outboundId != null ? `\n[volute:outbound:${outboundId}]` : ""}`);
   } else {
     // Non-volute targets (discord:..., slack:..., etc.) are no longer supported directly.
     // With the bridge architecture, minds send to volute channels and bridges handle external routing.

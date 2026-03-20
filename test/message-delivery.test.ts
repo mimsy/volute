@@ -4,12 +4,15 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../src/lib/db.js";
 import { extractTextContent } from "../src/lib/delivery/delivery-router.js";
 import {
+  linkToolResultToTurn,
   recordInbound,
   recordOutbound,
   resolveSleepAction,
+  tagUntaggedOutbound,
 } from "../src/lib/delivery/message-delivery.js";
+import { publish as publishActivity } from "../src/lib/events/activity-events.js";
 import { type MindEvent, subscribe } from "../src/lib/events/mind-events.js";
-import { mindHistory } from "../src/lib/schema.js";
+import { activity, conversations, messages, mindHistory, turns } from "../src/lib/schema.js";
 
 describe("extractTextContent", () => {
   it("returns string content as-is", () => {
@@ -171,5 +174,301 @@ describe("recordInbound", () => {
     } finally {
       unsub();
     }
+  });
+});
+
+const LINK_MIND = "test-link";
+const LINK_TURN_ID = "turn-link-001";
+
+async function cleanupLinkData() {
+  const db = await getDb();
+  await db.delete(mindHistory).where(eq(mindHistory.mind, LINK_MIND));
+  await db.delete(activity).where(eq(activity.mind, LINK_MIND));
+  await db.delete(turns).where(eq(turns.mind, LINK_MIND));
+  // Clean up test conversations/messages
+  const convRows = await db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(eq(conversations.mind_name, LINK_MIND));
+  for (const c of convRows) {
+    await db.delete(messages).where(eq(messages.conversation_id, c.id));
+  }
+  await db.delete(conversations).where(eq(conversations.mind_name, LINK_MIND));
+}
+
+describe("linkToolResultToTurn", () => {
+  afterEach(cleanupLinkData);
+
+  it("links outbound record to turn via marker", async () => {
+    const outId = await recordOutbound(LINK_MIND, "dm:alice", "hello");
+    assert.ok(outId != null);
+
+    await linkToolResultToTurn(
+      LINK_MIND,
+      LINK_TURN_ID,
+      `sent [volute:outbound:${outId}]`,
+      undefined,
+    );
+
+    const db = await getDb();
+    const rows = await db.select().from(mindHistory).where(eq(mindHistory.id, outId));
+    assert.equal(rows[0].turn_id, LINK_TURN_ID);
+  });
+
+  it("links activity record to turn via marker", async () => {
+    const actId = await publishActivity({
+      type: "mind_active",
+      mind: LINK_MIND,
+      summary: "test activity",
+    });
+    assert.ok(actId > 0);
+
+    await linkToolResultToTurn(LINK_MIND, LINK_TURN_ID, `done [volute:activity:${actId}]`, 99);
+
+    const db = await getDb();
+    const rows = await db.select().from(activity).where(eq(activity.id, actId));
+    assert.equal(rows[0].turn_id, LINK_TURN_ID);
+    assert.equal(rows[0].source_event_id, 99);
+  });
+
+  it("links message turn_id and source_event_id", async () => {
+    const db = await getDb();
+
+    // Create a conversation and message
+    const convId = "conv-link-test";
+    await db.insert(conversations).values({
+      id: convId,
+      mind_name: LINK_MIND,
+      channel: "dm:alice",
+      type: "dm",
+    });
+    const msgResult = await db
+      .insert(messages)
+      .values({
+        conversation_id: convId,
+        role: "assistant",
+        sender_name: LINK_MIND,
+        content: "hello",
+      })
+      .returning({ id: messages.id });
+    const msgId = msgResult[0].id;
+
+    const outId = await recordOutbound(LINK_MIND, "dm:alice", "hello", {
+      messageId: String(msgId),
+    });
+    assert.ok(outId != null);
+
+    const toolUseEventId = 42;
+    await linkToolResultToTurn(
+      LINK_MIND,
+      LINK_TURN_ID,
+      `sent [volute:outbound:${outId}]`,
+      toolUseEventId,
+    );
+
+    const msgRows = await db.select().from(messages).where(eq(messages.id, msgId));
+    assert.equal(msgRows[0].turn_id, LINK_TURN_ID);
+    assert.equal(msgRows[0].source_event_id, toolUseEventId);
+  });
+
+  it("handles multiple markers in one result", async () => {
+    const outId = await recordOutbound(LINK_MIND, "dm:alice", "hi");
+    assert.ok(outId != null);
+
+    const actId = await publishActivity({
+      type: "mind_active",
+      mind: LINK_MIND,
+      summary: "test multi",
+    });
+    assert.ok(actId > 0);
+
+    const content = `sent [volute:outbound:${outId}] and logged [volute:activity:${actId}]`;
+    await linkToolResultToTurn(LINK_MIND, LINK_TURN_ID, content, undefined);
+
+    const db = await getDb();
+    const outRows = await db.select().from(mindHistory).where(eq(mindHistory.id, outId));
+    assert.equal(outRows[0].turn_id, LINK_TURN_ID);
+
+    const actRows = await db.select().from(activity).where(eq(activity.id, actId));
+    assert.equal(actRows[0].turn_id, LINK_TURN_ID);
+  });
+
+  it("no-ops on null content", async () => {
+    await assert.doesNotReject(() =>
+      linkToolResultToTurn(LINK_MIND, LINK_TURN_ID, null, undefined),
+    );
+  });
+
+  it("no-ops on content with no markers", async () => {
+    await assert.doesNotReject(() =>
+      linkToolResultToTurn(LINK_MIND, LINK_TURN_ID, "just plain text", undefined),
+    );
+  });
+
+  it("skips markers referencing non-existent records", async () => {
+    await assert.doesNotReject(() =>
+      linkToolResultToTurn(LINK_MIND, LINK_TURN_ID, "[volute:outbound:999999]", undefined),
+    );
+    await assert.doesNotReject(() =>
+      linkToolResultToTurn(LINK_MIND, LINK_TURN_ID, "[volute:activity:999999]", undefined),
+    );
+  });
+
+  it("publishes SSE event for outbound", async () => {
+    const outId = await recordOutbound(LINK_MIND, "dm:alice", "hello from mind");
+    assert.ok(outId != null);
+
+    const events: MindEvent[] = [];
+    const unsub = subscribe(LINK_MIND, (e) => events.push(e));
+    try {
+      await linkToolResultToTurn(LINK_MIND, LINK_TURN_ID, `[volute:outbound:${outId}]`, undefined);
+      assert.equal(events.length, 1);
+      assert.equal(events[0].type, "outbound");
+      assert.equal(events[0].channel, "dm:alice");
+      assert.equal(events[0].content, "hello from mind");
+      assert.equal(events[0].turnId, LINK_TURN_ID);
+    } finally {
+      unsub();
+    }
+  });
+});
+
+const TAG_MIND = "test-tag";
+const TAG_TURN_ID = "turn-tag-001";
+
+async function cleanupTagData() {
+  const db = await getDb();
+  await db.delete(mindHistory).where(eq(mindHistory.mind, TAG_MIND));
+  await db.delete(turns).where(eq(turns.mind, TAG_MIND));
+  const convRows = await db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(eq(conversations.mind_name, TAG_MIND));
+  for (const c of convRows) {
+    await db.delete(messages).where(eq(messages.conversation_id, c.id));
+  }
+  await db.delete(conversations).where(eq(conversations.mind_name, TAG_MIND));
+}
+
+describe("tagUntaggedOutbound", () => {
+  afterEach(cleanupTagData);
+
+  it("tags orphaned outbound records within turn range", async () => {
+    const db = await getDb();
+
+    // Insert a turn
+    await db.insert(turns).values({ id: TAG_TURN_ID, mind: TAG_MIND, session: "main" });
+
+    // Insert events with turn_id to establish the range
+    await db
+      .insert(mindHistory)
+      .values({ mind: TAG_MIND, type: "inbound", channel: "dm:x", turn_id: TAG_TURN_ID });
+
+    // Insert an orphan outbound (no turn_id)
+    const orphanResult = await db
+      .insert(mindHistory)
+      .values({
+        mind: TAG_MIND,
+        type: "outbound",
+        channel: "dm:x",
+        content: "orphan",
+        turn_id: null,
+      })
+      .returning({ id: mindHistory.id });
+    const orphanId = orphanResult[0].id;
+
+    // Insert another tagged event to set the upper bound
+    await db
+      .insert(mindHistory)
+      .values({ mind: TAG_MIND, type: "tool_use", channel: "dm:x", turn_id: TAG_TURN_ID });
+
+    await tagUntaggedOutbound(TAG_MIND, TAG_TURN_ID);
+
+    const rows = await db.select().from(mindHistory).where(eq(mindHistory.id, orphanId));
+    assert.equal(rows[0].turn_id, TAG_TURN_ID);
+  });
+
+  it("fixes linked message turn_id and source_event_id", async () => {
+    const db = await getDb();
+
+    await db.insert(turns).values({ id: TAG_TURN_ID, mind: TAG_MIND, session: "main" });
+
+    // Create conversation and message
+    const convId = "conv-tag-test";
+    await db.insert(conversations).values({
+      id: convId,
+      mind_name: TAG_MIND,
+      channel: "dm:x",
+      type: "dm",
+    });
+    const msgResult = await db
+      .insert(messages)
+      .values({
+        conversation_id: convId,
+        role: "assistant",
+        sender_name: TAG_MIND,
+        content: "orphan msg",
+      })
+      .returning({ id: messages.id });
+    const msgId = msgResult[0].id;
+
+    // Insert a tool_use event with turn_id (establishes range start)
+    await db
+      .insert(mindHistory)
+      .values({ mind: TAG_MIND, type: "tool_use", channel: "dm:x", turn_id: TAG_TURN_ID });
+
+    // Insert an orphan outbound with a message_id
+    await db.insert(mindHistory).values({
+      mind: TAG_MIND,
+      type: "outbound",
+      channel: "dm:x",
+      content: "orphan",
+      turn_id: null,
+      message_id: String(msgId),
+    });
+
+    // Insert another tagged event (upper bound)
+    await db
+      .insert(mindHistory)
+      .values({ mind: TAG_MIND, type: "inbound", channel: "dm:x", turn_id: TAG_TURN_ID });
+
+    await tagUntaggedOutbound(TAG_MIND, TAG_TURN_ID);
+
+    const msgRows = await db.select().from(messages).where(eq(messages.id, msgId));
+    assert.equal(msgRows[0].turn_id, TAG_TURN_ID);
+    // source_event_id should be the tool_use event preceding the orphan
+    assert.ok(msgRows[0].source_event_id != null);
+  });
+
+  it("no-ops when no orphans exist", async () => {
+    const db = await getDb();
+
+    await db.insert(turns).values({ id: TAG_TURN_ID, mind: TAG_MIND, session: "main" });
+
+    // All outbound records already have turn_ids
+    await db.insert(mindHistory).values({
+      mind: TAG_MIND,
+      type: "outbound",
+      channel: "dm:x",
+      content: "tagged",
+      turn_id: TAG_TURN_ID,
+    });
+    await db.insert(mindHistory).values({
+      mind: TAG_MIND,
+      type: "inbound",
+      channel: "dm:x",
+      turn_id: TAG_TURN_ID,
+    });
+
+    // Should not throw or modify anything
+    await assert.doesNotReject(() => tagUntaggedOutbound(TAG_MIND, TAG_TURN_ID));
+  });
+
+  it("no-ops when turn has no events", async () => {
+    const db = await getDb();
+    await db.insert(turns).values({ id: TAG_TURN_ID, mind: TAG_MIND, session: "main" });
+
+    // No events in mind_history for this turn at all
+    await assert.doesNotReject(() => tagUntaggedOutbound(TAG_MIND, TAG_TURN_ID));
   });
 });

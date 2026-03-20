@@ -296,7 +296,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
           messageId: message?.id != null ? String(message.id) : undefined,
         });
       } catch (err) {
-        log.warn("recordOutbound failed", log.errorData(err));
+        log.warn(`recordOutbound failed for ${senderName}`, log.errorData(err));
       }
     }
 

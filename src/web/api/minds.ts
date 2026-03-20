@@ -2281,7 +2281,7 @@ const app = new Hono<AuthEnv>()
       try {
         await linkToolResultToTurn(baseName, turnId, body.content, toolUseEventId);
       } catch (err) {
-        log.warn("failed to link outbound to turn", log.errorData(err));
+        log.error("failed to link outbound to turn", log.errorData(err));
       }
     }
 
