@@ -260,6 +260,11 @@ async function handleClick() {
         <span class="summary-text">{event.content}</span>
       {/if}
     </div>
+  {:else if compact && (event.type === "inbound" || event.type === "outbound")}
+    <div class="compact-msg" class:compact-msg-inbound={event.type === "inbound"}>
+      <span class="compact-msg-sender" class:compact-msg-sender-user={event.type === "inbound"}>{event.type === "inbound" ? (event.sender ?? "user") : mindName}</span>
+      <span class="compact-msg-text">{event.content}</span>
+    </div>
   {:else}
     <div class="event-header">
       <span class="time">{formatTime(event.created_at)}</span>
@@ -669,5 +674,25 @@ async function handleClick() {
   }
   .linked-card-sender-user {
     color: var(--blue);
+  }
+
+  /* Compact inbound/outbound message card */
+  .compact-msg {
+    padding: 4px 8px;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .compact-msg-sender {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    margin-right: 6px;
+  }
+  .compact-msg-sender-user {
+    color: var(--blue);
+  }
+  .compact-msg-text {
+    color: var(--text-0);
   }
 </style>

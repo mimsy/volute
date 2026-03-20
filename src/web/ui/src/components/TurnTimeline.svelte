@@ -477,7 +477,7 @@ function jumpToLatest() {
                   {/if}
                 {/if}
               </div>
-              {#if !expandedTurns.has(turn.id)}
+              {#if !expandedTurns.has(turn.id) && turn.status !== "active"}
               <div class="turn-cards">
                 {#if !turn.summary}
                   {@const sConvs = getStreamingConversations(streamingEvents.get(turn.id) ?? [], turn.mind)}
