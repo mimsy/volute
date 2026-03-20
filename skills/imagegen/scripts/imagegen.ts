@@ -42,6 +42,7 @@ function getDaemonToken(): string | undefined {
   return process.env.VOLUTE_DAEMON_TOKEN;
 }
 
+/** Returns null only when the daemon is unreachable or imagegen is not configured. */
 async function generateViaDaemon(model: string, prompt: string): Promise<Buffer | null> {
   const base = getDaemonUrl();
   const token = getDaemonToken();
@@ -60,17 +61,19 @@ async function generateViaDaemon(model: string, prompt: string): Promise<Buffer 
       const err = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
         error: string;
       };
-      // If daemon doesn't have imagegen configured, fall back to direct
-      if (res.status === 500 && err.error?.includes("No Replicate API key")) return null;
+      // Not configured — fall back to direct Replicate
+      if (err.error?.includes("No Replicate API key")) return null;
       throw new Error(err.error || `Daemon returned ${res.status}`);
     }
     return Buffer.from(await res.arrayBuffer());
   } catch (err) {
-    if (err instanceof TypeError && (err as Error).message.includes("fetch")) return null;
+    // Connection failure — daemon unreachable, fall back to direct
+    if (err instanceof TypeError) return null;
     throw err;
   }
 }
 
+/** Returns null only when the daemon is unreachable or endpoint doesn't exist. */
 async function searchViaDaemon(query: string): Promise<unknown[] | null> {
   const base = getDaemonUrl();
   const token = getDaemonToken();
@@ -81,9 +84,20 @@ async function searchViaDaemon(query: string): Promise<unknown[] | null> {
       `${base}/api/v1/system/imagegen/models/search?q=${encodeURIComponent(query)}`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
-    if (!res.ok) return null;
+    if (!res.ok) {
+      // 404 = older daemon without this endpoint — fall back silently
+      if (res.status === 404) return null;
+      const body = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
+        error: string;
+      };
+      console.error(`daemon model search failed: ${body.error || res.status}`);
+      return null;
+    }
     return (await res.json()) as unknown[];
-  } catch {
+  } catch (err) {
+    // Connection failure — daemon unreachable
+    if (err instanceof TypeError) return null;
+    console.error(`daemon model search error: ${err instanceof Error ? err.message : err}`);
     return null;
   }
 }

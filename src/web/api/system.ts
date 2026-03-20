@@ -37,6 +37,7 @@ import {
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 const DEFAULT_API_URL = "https://volute.systems";
+const igLog = log.child("imagegen");
 
 const app = new Hono<AuthEnv>()
   .post("/restart", requireAdmin, (c) => {
@@ -213,12 +214,20 @@ const app = new Hono<AuthEnv>()
     (c) => {
       const id = c.req.param("id");
       const { apiKey } = c.req.valid("json");
-      saveImagegenProvider(id, apiKey);
+      try {
+        saveImagegenProvider(id, apiKey);
+      } catch (err) {
+        return c.json({ error: err instanceof Error ? err.message : "Failed to save" }, 400);
+      }
       return c.json({ ok: true });
     },
   )
   .delete("/imagegen/providers/:id", requireAdmin, (c) => {
-    removeImagegenProvider(c.req.param("id"));
+    try {
+      removeImagegenProvider(c.req.param("id"));
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : "Failed to remove" }, 400);
+    }
     return c.json({ ok: true });
   })
   .get("/imagegen/models", requireAdmin, (c) => {
@@ -234,18 +243,18 @@ const app = new Hono<AuthEnv>()
       return c.json({ ok: true });
     },
   )
-  .get("/imagegen/models/search", requireAdmin, async (c) => {
+  .get("/imagegen/models/search", async (c) => {
     const q = c.req.query("q");
     try {
       const results = await searchModels(q || undefined);
       return c.json(results);
     } catch (err) {
+      igLog.error("model search failed", log.errorData(err));
       return c.json({ error: err instanceof Error ? err.message : "Search failed" }, 500);
     }
   })
   .post(
     "/imagegen/generate",
-    requireAdmin,
     zValidator("json", z.object({ model: z.string().min(1), prompt: z.string().min(1) })),
     async (c) => {
       const { model, prompt } = c.req.valid("json");
@@ -258,6 +267,7 @@ const app = new Hono<AuthEnv>()
           },
         });
       } catch (err) {
+        igLog.error("image generation failed", log.errorData(err));
         return c.json({ error: err instanceof Error ? err.message : "Generation failed" }, 500);
       }
     },

@@ -37,6 +37,7 @@ export function saveProviderConfig(id: string, apiKey: string): void {
 }
 
 export function removeProviderConfig(id: string): void {
+  if (!PROVIDERS[id]) throw new Error(`Unknown imagegen provider: ${id}`);
   updateImagegenConfig((ig) => {
     if (ig.providers) {
       delete ig.providers[id];
@@ -116,6 +117,13 @@ export async function generateImage(model: string, prompt: string): Promise<Buff
 
   const file = Array.isArray(output) ? output[0] : output;
   if (!file) throw new Error(`Model ${model} returned no output`);
+
+  // Some models return a URL string instead of FileOutput
+  if (typeof file === "string") {
+    const res = await fetch(file);
+    if (!res.ok) throw new Error(`Failed to fetch image from URL: ${res.status}`);
+    return Buffer.from(await res.arrayBuffer());
+  }
 
   // FileOutput implements ReadableStream — collect into Buffer
   const chunks: Uint8Array[] = [];
