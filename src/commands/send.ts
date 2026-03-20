@@ -309,7 +309,11 @@ export async function run(args: string[]) {
       try {
         const resData = (await sendRes.json()) as { outboundId?: number };
         outboundId = resData.outboundId;
-      } catch {}
+      } catch (err) {
+        console.error(
+          `Warning: could not read outboundId from response: ${(err as Error).message}`,
+        );
+      }
       console.log(`Message sent.${outboundId != null ? `\n[volute:outbound:${outboundId}]` : ""}`);
     }
   } else if (!parsed.isDM && parsed.platform === "volute") {
@@ -367,7 +371,9 @@ export async function run(args: string[]) {
     try {
       const resData = (await sendRes.json()) as { outboundId?: number };
       outboundId = resData.outboundId;
-    } catch {}
+    } catch (err) {
+      console.error(`Warning: could not read outboundId from response: ${(err as Error).message}`);
+    }
     console.log(`Message sent.${outboundId != null ? `\n[volute:outbound:${outboundId}]` : ""}`);
   } else {
     // Non-volute targets (discord:..., slack:..., etc.) are no longer supported directly.

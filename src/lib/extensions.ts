@@ -117,8 +117,9 @@ async function buildContext(
     getUser: async (id: number) => getUser(id),
     getUserByUsername: async (username: string) => getUserByUsername(username),
     publishActivity: (event) => {
-      // Insert without turn linkage — the activity will be linked to the correct
-      // turn when the tool_result event arrives via correlation markers, same as outbound.
+      // Insert without turn linkage — when called from skill command handlers, the
+      // activity is linked to the correct turn via correlation markers in tool_result.
+      // When called from route handlers or lifecycle hooks, the record stays unlinked.
       publish(event as Parameters<typeof publish>[0]).catch((err) =>
         log.error(`extension ${manifest.id}: failed to publish activity`, log.errorData(err)),
       );

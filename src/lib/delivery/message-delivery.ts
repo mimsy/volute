@@ -60,10 +60,10 @@ export async function recordInbound(
  * The turn association is deferred — concurrent sessions share a single process-level
  * env var (VOLUTE_SESSION) which races, so we don't attempt session-based turn lookup
  * here. Instead, the outbound record is linked to its turn when the corresponding
- * tool_result event arrives at the events endpoint (via `linkOutboundToTurn`).
+ * tool_result event arrives at the events endpoint (via `linkToolResultToTurn`).
  *
  * The outbound event is NOT published to SSE here; it is published by
- * `linkOutboundToTurn` once the correct turn_id is known, ensuring the stream
+ * `linkToolResultToTurn` once the correct turn_id is known, ensuring the stream
  * always contains correctly-tagged events. Any orphans are caught by
  * `tagUntaggedOutbound` on turn completion as a safety net.
  *
@@ -125,44 +125,47 @@ export async function linkToolResultToTurn(
   // --- Outbound markers ---
   for (const match of toolResultContent.matchAll(OUTBOUND_MARKER_RE)) {
     const outboundId = Number(match[1]);
-
-    const rows = await db
-      .select({
-        id: mindHistory.id,
-        channel: mindHistory.channel,
-        content: mindHistory.content,
-        message_id: mindHistory.message_id,
-      })
-      .from(mindHistory)
-      .where(and(eq(mindHistory.id, outboundId), eq(mindHistory.mind, mind)))
-      .limit(1);
-
-    const row = rows[0];
-    if (!row) {
-      dlog.warn(`outbound marker references missing record: mind=${mind} id=${outboundId}`);
-      continue;
-    }
-
-    await db.update(mindHistory).set({ turn_id: turnId }).where(eq(mindHistory.id, outboundId));
-
-    if (row.message_id) {
-      await db
-        .update(messages)
-        .set({
-          turn_id: turnId,
-          ...(toolUseEventId != null ? { source_event_id: toolUseEventId } : {}),
+    try {
+      const rows = await db
+        .select({
+          id: mindHistory.id,
+          channel: mindHistory.channel,
+          content: mindHistory.content,
+          message_id: mindHistory.message_id,
         })
-        .where(eq(messages.id, Number(row.message_id)));
-    }
+        .from(mindHistory)
+        .where(and(eq(mindHistory.id, outboundId), eq(mindHistory.mind, mind)))
+        .limit(1);
 
-    // Publish the outbound event to SSE — correctly tagged
-    publishMindEvent(mind, {
-      mind,
-      type: "outbound",
-      channel: row.channel ?? undefined,
-      content: row.content ?? undefined,
-      turnId,
-    });
+      const row = rows[0];
+      if (!row) {
+        dlog.warn(`outbound marker references missing record: mind=${mind} id=${outboundId}`);
+        continue;
+      }
+
+      await db.update(mindHistory).set({ turn_id: turnId }).where(eq(mindHistory.id, outboundId));
+
+      if (row.message_id) {
+        await db
+          .update(messages)
+          .set({
+            turn_id: turnId,
+            ...(toolUseEventId != null ? { source_event_id: toolUseEventId } : {}),
+          })
+          .where(eq(messages.id, Number(row.message_id)));
+      }
+
+      // Publish the outbound event to SSE — correctly tagged
+      publishMindEvent(mind, {
+        mind,
+        type: "outbound",
+        channel: row.channel ?? undefined,
+        content: row.content ?? undefined,
+        turnId,
+      });
+    } catch (err) {
+      dlog.warn(`failed to link outbound ${outboundId} to turn ${turnId}`, log.errorData(err));
+    }
   }
 
   // --- Activity markers ---
@@ -171,13 +174,17 @@ export async function linkToolResultToTurn(
     activityIds.push(Number(match[1]));
   }
   if (activityIds.length > 0) {
-    await db
-      .update(activity)
-      .set({
-        turn_id: turnId,
-        ...(toolUseEventId != null ? { source_event_id: toolUseEventId } : {}),
-      })
-      .where(inArray(activity.id, activityIds));
+    try {
+      await db
+        .update(activity)
+        .set({
+          turn_id: turnId,
+          ...(toolUseEventId != null ? { source_event_id: toolUseEventId } : {}),
+        })
+        .where(inArray(activity.id, activityIds));
+    } catch (err) {
+      dlog.warn(`failed to link activities to turn ${turnId}`, log.errorData(err));
+    }
   }
 }
 
