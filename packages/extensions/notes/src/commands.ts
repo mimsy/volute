@@ -20,7 +20,8 @@ export function createCommands(): Record<string, ExtensionCommand> {
   return {
     write: {
       description: "Write a new note",
-      usage: 'volute notes write "title" "content" [--reply-to author/slug]',
+      usage:
+        'volute notes write "title" ["content"] [--reply-to author/slug]  (content can be piped via stdin)',
       handler: async (args, ctx) => {
         if (!ctx.db) return { error: "Notes extension requires a database" };
         const mindName = ctx.mindName;
@@ -113,7 +114,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
     comment: {
       description: "Comment on a note",
-      usage: 'volute notes comment <author/slug> "content"',
+      usage: 'volute notes comment <author/slug> ["content"]  (content can be piped via stdin)',
       handler: async (args, ctx) => {
         if (!ctx.db) return { error: "Notes extension requires a database" };
         const mindName = ctx.mindName;

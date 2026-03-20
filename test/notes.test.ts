@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import type { Database as ExtDb, User } from "@volute/extensions";
+import type { Database as ExtDb, ExtensionContext, User } from "@volute/extensions";
 import Database from "libsql";
+import { createCommands } from "../packages/extensions/notes/src/commands.js";
 import { initDb } from "../packages/extensions/notes/src/db.js";
 import {
   addComment,
@@ -408,5 +409,100 @@ describe("note replies", () => {
     const fetched = await getNote(db, getUser, getUserByUsername, username, reply.slug);
     assert.ok(fetched);
     assert.equal(fetched.reply_to, null);
+  });
+});
+
+describe("notes commands stdin", () => {
+  let userId: number;
+  let username: string;
+  const commands = createCommands();
+
+  function makeCtx(
+    overrides: Partial<ExtensionContext & { mindName?: string; stdin?: string }> = {},
+  ) {
+    return {
+      db,
+      authMiddleware: (() => {}) as unknown as ExtensionContext["authMiddleware"],
+      resolveUser: () => null,
+      getUser,
+      getUserByUsername,
+      publishActivity: () => {},
+      getMindDir: () => null,
+      getSystemsConfig: () => null,
+      dataDir: "/tmp",
+      mindName: username,
+      ...overrides,
+    };
+  }
+
+  beforeEach(async () => {
+    db = new Database(":memory:") as unknown as ExtDb;
+    initDb(db);
+    userMap = new Map();
+    usernameMap = new Map();
+    const user = await createUser(uniqueName("cmduser"), "pass123");
+    userId = user.id;
+    username = user.username;
+    registerUser(userId, username);
+  });
+  afterEach(() => db.close());
+
+  it("write uses stdin when content arg is missing", async () => {
+    const result = await commands.write.handler(["Stdin Title"], makeCtx({ stdin: "from stdin" }));
+    assert.ok("output" in result);
+    assert.match(result.output, /Published:/);
+
+    const notes = await listNotes(db, getUser, getUserByUsername);
+    assert.equal(notes[0].title, "Stdin Title");
+    const note = await getNote(db, getUser, getUserByUsername, username, notes[0].slug);
+    assert.equal(note!.content, "from stdin");
+  });
+
+  it("write prefers arg over stdin", async () => {
+    const result = await commands.write.handler(
+      ["Title", "from arg"],
+      makeCtx({ stdin: "from stdin" }),
+    );
+    assert.ok("output" in result);
+
+    const notes = await listNotes(db, getUser, getUserByUsername);
+    const note = await getNote(db, getUser, getUserByUsername, username, notes[0].slug);
+    assert.equal(note!.content, "from arg");
+  });
+
+  it("write errors when no content arg and no stdin", async () => {
+    const result = await commands.write.handler(["Title Only"], makeCtx());
+    assert.ok("error" in result);
+  });
+
+  it("comment uses stdin when content arg is missing", async () => {
+    const note = await createNote(db, getUser, userId, "Commentable", "...");
+    const ref = `${username}/${note.slug}`;
+    const result = await commands.comment.handler([ref], makeCtx({ stdin: "stdin comment" }));
+    assert.ok("output" in result);
+    assert.equal(result.output, "Comment added.");
+
+    const comments = await getComments(db, getUser, note.id);
+    assert.equal(comments[0].content, "stdin comment");
+  });
+
+  it("comment prefers arg over stdin", async () => {
+    const note = await createNote(db, getUser, userId, "Commentable2", "...");
+    const ref = `${username}/${note.slug}`;
+    const result = await commands.comment.handler(
+      [ref, "arg comment"],
+      makeCtx({ stdin: "stdin comment" }),
+    );
+    assert.ok("output" in result);
+
+    const comments = await getComments(db, getUser, note.id);
+    assert.equal(comments[0].content, "arg comment");
+  });
+
+  it("comment errors when no content arg and no stdin", async () => {
+    const note = await createNote(db, getUser, userId, "Commentable3", "...");
+    const ref = `${username}/${note.slug}`;
+    const result = await commands.comment.handler([ref], makeCtx());
+    assert.ok("error" in result);
   });
 });
