@@ -39,7 +39,7 @@ let label = $derived(getToolLabel((meta?.name as string) ?? "tool", group.toolUs
 let categoryColor = $derived.by(() => {
   switch (group.category) {
     case "shell":
-      return "var(--red)";
+      return "var(--green)";
     case "file":
       return "var(--blue)";
     case "search":

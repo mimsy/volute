@@ -61,11 +61,11 @@ let fullDetail = $state(false);
 let detailLoading = $state(false);
 const typeColors: Record<string, string> = {
   inbound: "var(--blue)",
-  outbound: "var(--blue)",
-  text: "var(--blue)",
+  outbound: "var(--red)",
+  text: "var(--text-1)",
   tool_use: "var(--yellow)",
   tool_result: "var(--yellow)",
-  thinking: "var(--purple)",
+  thinking: "var(--text-2)",
   usage: "var(--purple)",
   log: "var(--text-2)",
   session_start: "var(--accent)",
@@ -192,18 +192,20 @@ async function handleClick() {
   style:--type-color={color}
   bind:this={eventEl}
 >
-  {#if event.type === "inbound" || event.type === "outbound"}
+  {#if event.type === "inbound"}
     <div class="marker marker-icon" style:color="var(--blue)"><span class="marker-tooltip">{tooltip}</span><Icon kind="chat" /></div>
+  {:else if event.type === "outbound"}
+    <div class="marker marker-icon" style:color="var(--red)"><span class="marker-tooltip">{tooltip}</span><Icon kind="chat" /></div>
   {:else if event.type === "text"}
-    <div class="marker marker-icon" style:color="var(--blue)"><span class="marker-tooltip">{tooltip}</span><Icon kind="text" /></div>
+    <div class="marker marker-icon" style:color="var(--text-1)"><span class="marker-tooltip">{tooltip}</span><Icon kind="text" /></div>
   {:else if event.type === "thinking"}
-    <div class="marker marker-icon" style:color="var(--purple)"><span class="marker-tooltip">{tooltip}</span><Icon kind="thinking" /></div>
+    <div class="marker marker-icon" style:color="var(--text-2)"><span class="marker-tooltip">{tooltip}</span><Icon kind="thinking" /></div>
   {:else if event.type === "tool_use" || event.type === "tool_result"}
     {@const toolMeta = meta}
     {@const toolName = typeof toolMeta?.name === "string" ? toolMeta.name : "tool"}
     {@const cat = getToolCategory(toolName)}
     {@const catIcon = cat === "shell" ? "terminal" : cat === "file" ? "file" : cat === "search" ? "search" : cat === "web" ? "globe" : "generic-tool"}
-    <div class="marker marker-icon" style:color={cat === "shell" ? "var(--red)" : cat === "file" ? "var(--blue)" : cat === "search" ? "var(--yellow)" : cat === "web" ? "var(--purple)" : "var(--text-1)"}><span class="marker-tooltip">{tooltip}</span><Icon kind={catIcon} /></div>
+    <div class="marker marker-icon" style:color={cat === "shell" ? "var(--green)" : cat === "file" ? "var(--blue)" : cat === "search" ? "var(--yellow)" : cat === "web" ? "var(--purple)" : "var(--text-1)"}><span class="marker-tooltip">{tooltip}</span><Icon kind={catIcon} /></div>
   {:else if event.type === "activity"}
     {@const actMeta = meta}
     {@const actColor = typeof actMeta?.color === "string" ? `var(--${actMeta.color})` : "var(--yellow)"}
@@ -230,7 +232,7 @@ async function handleClick() {
           {:else}
             <span class="time">{formatTime(event.created_at)}</span>
           {/if}
-          <button class="detail-toggle" onclick={async (e) => {
+          <button class="detail-toggle" class:detail-active={fullDetail} onclick={async (e) => {
             e.stopPropagation();
             if (!fullDetail && detailEvents.length === 0) {
               detailLoading = true;
@@ -253,9 +255,13 @@ async function handleClick() {
             }
             fullDetail = !fullDetail;
           }}>
-            {detailLoading ? "loading..." : fullDetail ? "grouped" : "detail"}
+            {#if detailLoading}
+              …
+            {:else}
+              <Icon kind="search" />
+            {/if}
+            <span class="marker-tooltip">{fullDetail ? "show grouped" : "show all events"}</span>
           </button>
-          <span class="chevron">▼</span>
         </div>
       </div>
     {/if}
@@ -276,7 +282,7 @@ async function handleClick() {
             {@const items = groupToolEvents(turnEvents, turnConversations, turnActivities)}
             {#each items as item (item.kind === "tool-group" ? `tg-${item.toolUse.id}` : `ev-${item.event.id}`)}
               {#if item.kind === "tool-group"}
-                {@const catColor = item.category === "shell" ? "var(--red)" : item.category === "file" ? "var(--blue)" : item.category === "search" ? "var(--yellow)" : item.category === "web" ? "var(--purple)" : "var(--text-1)"}
+                {@const catColor = item.category === "shell" ? "var(--green)" : item.category === "file" ? "var(--blue)" : item.category === "search" ? "var(--yellow)" : item.category === "web" ? "var(--purple)" : "var(--text-1)"}
                 {@const toolTooltip = `${formatTime(item.toolUse.created_at)} · ${typeof JSON.parse(item.toolUse.metadata || '{}')?.name === 'string' ? JSON.parse(item.toolUse.metadata || '{}').name : 'tool'}`}
                 {@const catIcon = item.category === "shell" ? "terminal" : item.category === "file" ? "file" : item.category === "search" ? "search" : item.category === "web" ? "globe" : "generic-tool"}
                 <div class="event" style:--type-color={catColor}>
@@ -292,6 +298,7 @@ async function handleClick() {
             {/each}
           {/if}
           <button class="branch-summary" onclick={() => { turnExpanded = false; }}>
+            <div class="marker marker-icon branch-summary-marker" style:color="var(--text-0)"><Icon kind="spiral" /></div>
             <span class="summary-text">{event.content}</span>
           </button>
           <div class="branch-return"></div>
@@ -332,12 +339,12 @@ async function handleClick() {
         </div>
       </div>
     {:else}
-      <span class="inline-text">{#if event.channel}<span class="inline-channel">[{event.channel}]</span>{" "}{/if}<span class="inline-sender" class:inline-sender-user={event.type === "inbound"}>{event.type === "inbound" ? (event.sender ?? "user") : mindName}:</span>{" "}{event.content}</span>
+      <span class="inline-text inline-text-chat">{#if event.channel}<span class="inline-channel">[{event.channel}]</span>{" "}{/if}<span class="inline-sender" class:inline-sender-user={event.type === "inbound"} class:inline-sender-mind={event.type === "outbound"}>{event.type === "inbound" ? (event.sender ?? "user") : mindName}:</span>{" "}{event.content}</span>
     {/if}
   {:else}
     <div class="event-body">
       {#if event.type === "text"}
-        <div class="inline-text" class:inline-text-expanded={expanded}>
+        <div class="inline-text dim" class:inline-text-expanded={expanded}>
           <div class="markdown-body">{@html renderMarkdown(event.content)}</div>
         </div>
       {:else if event.type === "tool_use"}
@@ -420,10 +427,7 @@ async function handleClick() {
     font-size: 11px;
     color: var(--text-2);
   }
-  .chevron {
-    font-size: 9px;
-    color: var(--text-2);
-  }
+
 
   .marker {
     position: absolute;
@@ -456,7 +460,7 @@ async function handleClick() {
 
   .marker-tooltip {
     position: absolute;
-    left: calc(100% + 6px);
+    right: calc(100% + 6px);
     top: 50%;
     transform: translateY(-50%);
     padding: 3px 8px;
@@ -507,6 +511,12 @@ async function handleClick() {
   .inline-sender-user {
     color: var(--blue);
   }
+  .inline-sender-mind {
+    color: var(--red);
+  }
+  .inline-text-chat {
+    color: var(--text-0);
+  }
 
 
 
@@ -514,8 +524,17 @@ async function handleClick() {
 
   .event-body {
     font-family: var(--mono);
-    font-size: 14px;
-    line-height: 1.6;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .event-body :global(.markdown-body p:last-child) {
+    margin-bottom: 0;
+  }
+  .event-body .dim :global(.markdown-body) {
+    color: var(--text-1);
+  }
+  .event-body :global(.markdown-body) {
+    line-height: 1.5;
   }
 
 
@@ -527,19 +546,34 @@ async function handleClick() {
   }
 
   .detail-toggle {
-    font-size: 11px;
+    position: relative;
     color: var(--text-2);
-    background: var(--bg-3);
-    border: 1px solid var(--border);
-    padding: 1px 6px;
-    border-radius: var(--radius);
+    background: none;
+    border: none;
+    padding: 0;
     cursor: pointer;
-    font-family: var(--mono);
-    margin-left: auto;
+    display: flex;
+    align-items: center;
+    width: 14px;
+    height: 14px;
+  }
+  .detail-toggle :global(svg) {
+    width: 14px;
+    height: 14px;
   }
   .detail-toggle:hover {
-    background: var(--bg-2);
     color: var(--text-0);
+  }
+  .detail-toggle.detail-active {
+    color: var(--accent);
+  }
+  .detail-toggle:hover .marker-tooltip {
+    opacity: 1;
+  }
+  .detail-toggle .marker-tooltip {
+    left: 50%;
+    top: calc(100% + 6px);
+    transform: translateX(-50%);
   }
 
   .summary-text {
@@ -622,17 +656,9 @@ async function handleClick() {
     font: inherit;
     color: inherit;
   }
-  /* Dot on the sub-rail for the summary at end of branch */
-  .branch-summary::before {
-    content: "";
-    position: absolute;
-    left: -5px;
-    top: 12px;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--text-0);
-    z-index: 1;
+  .branch-summary-marker {
+    left: -12px;
+    top: 5px;
   }
 
   /* Activity card */

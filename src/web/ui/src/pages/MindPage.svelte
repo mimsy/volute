@@ -52,7 +52,7 @@ let mind = $derived(data.minds.find((m) => m.name === name));
         {onTypingNames}
       />
     {:else if section === "history"}
-      <TurnTimeline {name} />
+      <TurnTimeline {name} mindStatus={mind.status} />
     {:else if section?.startsWith("ext:")}
       {@const extParts = section.split(":")}
       <div class="section-content">
