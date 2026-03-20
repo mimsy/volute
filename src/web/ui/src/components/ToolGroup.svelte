@@ -78,35 +78,14 @@ function formatArgs(args: unknown): string {
 }
 </script>
 
-<div class="tool-card" style:--cat-color={categoryColor}>
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="tool-card-header" onclick={() => { expanded = !expanded; }} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); expanded = !expanded; } }}>
-    <span class="tool-card-icon">
-      {#if group.category === "shell"}
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5l4 3-4 3"/><path d="M9 12h4"/></svg>
-      {:else if group.category === "file"}
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/></svg>
-      {:else if group.category === "search"}
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M10 10l3 3"/></svg>
-      {:else if group.category === "web"}
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M2 8h12"/><path d="M8 2c2 2 3 4 3 6s-1 4-3 6"/><path d="M8 2c-2 2-3 4-3 6s1 4 3 6"/></svg>
-      {:else}
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="10" height="10" rx="1"/><path d="M6 6h4M6 8h4M6 10h2"/></svg>
-      {/if}
-    </span>
-    <span class="tool-card-label">{label}</span>
-    <span class="tool-card-status">
-      {#if isRunning}
-        <span class="status-running">running...</span>
-      {:else if isError}
-        <span class="status-error">error</span>
-      {:else if group.toolResult}
-        <span class="status-done">done</span>
-      {/if}
-    </span>
-    <span class="chevron">{expanded ? "▼" : "▶"}</span>
-  </div>
-
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="tool-group"
+  class:expanded
+  style:--cat-color={categoryColor}
+  onclick={() => { expanded = !expanded; }}
+  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); expanded = !expanded; } }}
+>
   {#if expanded}
     {#if group.category === "shell"}
       <div class="terminal">
@@ -131,86 +110,61 @@ function formatArgs(args: unknown): string {
         {/if}
       </div>
     {/if}
+  {:else}
+    <span class="inline-label">
+      {label}
+      {#if isRunning}
+        <span class="status-running">running...</span>
+      {:else if isError}
+        <span class="status-error">error</span>
+      {/if}
+    </span>
   {/if}
 </div>
 
 <style>
-  .tool-card {
-    border: 1px solid color-mix(in srgb, var(--cat-color) 25%, var(--border));
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-    margin: 2px 0;
-    background: var(--bg-0);
-  }
-
-  .tool-card-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 8px;
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-1);
+  .tool-group {
     cursor: pointer;
   }
 
-  .tool-card-header:hover {
-    background: var(--bg-3);
-  }
-
-  .tool-card-icon {
-    flex-shrink: 0;
-    width: 12px;
-    height: 12px;
-    color: var(--cat-color);
-    display: flex;
-    align-items: center;
-  }
-
-  .tool-card-icon svg {
-    width: 12px;
-    height: 12px;
-  }
-
-  .tool-card-label {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  /* Collapsed: inline text */
+  .inline-label {
     font-family: var(--mono);
-    font-weight: 400;
+    font-size: 13px;
     color: var(--cat-color);
-  }
-
-  .tool-card-status {
-    flex-shrink: 0;
-    font-size: 11px;
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 
   .status-running {
     color: var(--yellow);
+    font-size: 11px;
+    margin-left: 6px;
     animation: pulse 1.5s infinite;
   }
 
   .status-error {
     color: var(--red);
+    font-size: 11px;
+    margin-left: 6px;
   }
 
-  .status-done {
-    color: var(--accent);
-  }
-
-  .chevron {
-    font-size: 9px;
-    color: var(--text-2);
-    flex-shrink: 0;
+  /* Expanded: card with content */
+  .tool-group.expanded {
+    border: 1px solid color-mix(in srgb, var(--cat-color) 25%, var(--border));
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    background: var(--bg-0);
   }
 
   /* Terminal style for shell commands */
   .terminal {
     background: #0d0d0d;
-    border-top: 1px solid color-mix(in srgb, var(--cat-color) 25%, var(--border));
     padding: 8px 10px;
     font-family: var(--mono);
     font-size: 12px;
@@ -251,7 +205,6 @@ function formatArgs(args: unknown): string {
 
   /* Generic tool body */
   .tool-card-body {
-    border-top: 1px solid color-mix(in srgb, var(--cat-color) 25%, var(--border));
     padding: 8px;
     max-height: 200px;
     overflow: auto;

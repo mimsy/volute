@@ -13,6 +13,7 @@ import { renderMarkdown } from "../lib/markdown";
 import { navigate } from "../lib/navigate";
 import { groupToolEvents } from "../lib/tool-groups";
 import HistoryEvent from "./HistoryEvent.svelte";
+import Icon from "./Icon.svelte";
 import ReadOnlyChatModal from "./ReadOnlyChatModal.svelte";
 import ToolGroupComponent from "./ToolGroup.svelte";
 
@@ -392,7 +393,7 @@ function jumpToLatest() {
                   {#each turn.conversations as conv (conv.id)}
                     <div class="peek-anchor">
                       <button class="peek-btn" aria-label="View conversation" onclick={(e) => e.stopPropagation()}>
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                        <Icon kind="chat" />
                       </button>
                       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
                       <div class="peek-popover" role="button" tabindex="0"
@@ -401,7 +402,7 @@ function jumpToLatest() {
                       >
                         <div class="peek-card peek-card-chat">
                           <div class="peek-card-header">
-                            <svg class="peek-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                            <Icon kind="chat" class="peek-card-icon" />
                             <span class="peek-card-label">{conv.label}</span>
                             <span class="peek-card-meta">{conv.messages.length} msg{conv.messages.length === 1 ? '' : 's'}</span>
                           </div>
@@ -430,7 +431,7 @@ function jumpToLatest() {
                         {#if actIcon}
                           {@html actIcon}
                         {:else}
-                          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                          <Icon kind="document-lines" />
                         {/if}
                       </button>
                       <div class="peek-popover">
@@ -439,7 +440,7 @@ function jumpToLatest() {
                             {#if actIcon}
                               <span class="peek-card-icon" style:color="var(--{actColor})">{@html actIcon}</span>
                             {:else}
-                              <svg class="peek-card-icon" style:color="var(--{actColor})" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                              <Icon kind="document-lines" class="peek-card-icon" />
                             {/if}
                             <span class="peek-card-label">{act.summary}</span>
                           </div>

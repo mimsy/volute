@@ -5,9 +5,10 @@ import { fetchTurnEvents } from "../lib/client";
 import { normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
 import { groupToolEvents } from "../lib/tool-groups";
-import { getToolCategory } from "../lib/tool-names";
+import { getToolCategory, getToolLabel } from "../lib/tool-names";
 import ExtensionFeedCard from "./ExtensionFeedCard.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
+import Icon from "./Icon.svelte";
 import ToolGroupComponent from "./ToolGroup.svelte";
 
 const defaultActivityIcon =
@@ -84,11 +85,33 @@ let meta = $derived.by(() => {
 });
 
 let collapsible = $derived(
-  (event.type === "tool_use" && !!event.content) ||
-    (event.type === "tool_result" && !!event.content) ||
-    (event.type === "thinking" && !!event.content) ||
-    (event.type === "summary" && expandable),
+  event.type === "inbound" ||
+    event.type === "outbound" ||
+    event.type === "activity" ||
+    event.type === "text" ||
+    event.type === "thinking" ||
+    event.type === "tool_use" ||
+    event.type === "tool_result" ||
+    (event.type === "summary" && expandable) ||
+    !!event.content,
 );
+
+let tooltip = $derived.by(() => {
+  const time = formatTime(event.created_at);
+  const type = event.type;
+  if (type === "tool_use" || type === "tool_result") {
+    const name = meta?.name ?? "tool";
+    return `${time} · ${name}`;
+  }
+  if (type === "inbound" || type === "outbound") {
+    const ch = event.channel ? ` · ${event.channel}` : "";
+    return `${time} · ${type}${ch}`;
+  }
+  if (type === "activity") {
+    return `${time} · ${meta?.type ?? "activity"}`;
+  }
+  return `${time} · ${type}`;
+});
 
 function formatTime(dateStr: string): string {
   const date = new Date(normalizeTimestamp(dateStr));
@@ -170,99 +193,72 @@ async function handleClick() {
   bind:this={eventEl}
 >
   {#if event.type === "inbound" || event.type === "outbound"}
-    <div class="marker marker-icon" style:color="var(--blue)">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-    </div>
+    <div class="marker marker-icon" style:color="var(--blue)"><span class="marker-tooltip">{tooltip}</span><Icon kind="chat" /></div>
   {:else if event.type === "text"}
-    <div class="marker marker-icon" style:color="var(--blue)">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h10M3 8h7M3 12h9"/></svg>
-    </div>
+    <div class="marker marker-icon" style:color="var(--blue)"><span class="marker-tooltip">{tooltip}</span><Icon kind="text" /></div>
   {:else if event.type === "thinking"}
-    <div class="marker marker-icon" style:color="var(--purple)">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12C1.5 12 0 10.5 0 8.5 0 7 1 5.5 2.5 5 2.5 3 4 1.5 6 1.5c1.5 0 2.8.8 3.3 2 .4-.2.8-.3 1.2-.3 1.7 0 3 1.3 3 3 1.2.4 2.5 1.4 2.5 3 0 1.7-1.3 3.8-3.5 3.8H4z"/></svg>
-    </div>
+    <div class="marker marker-icon" style:color="var(--purple)"><span class="marker-tooltip">{tooltip}</span><Icon kind="thinking" /></div>
   {:else if event.type === "tool_use" || event.type === "tool_result"}
     {@const toolMeta = meta}
     {@const toolName = typeof toolMeta?.name === "string" ? toolMeta.name : "tool"}
     {@const cat = getToolCategory(toolName)}
-    <div class="marker marker-icon" style:color={cat === "shell" ? "var(--red)" : cat === "file" ? "var(--blue)" : cat === "search" ? "var(--yellow)" : cat === "web" ? "var(--purple)" : "var(--text-1)"}>
-      {#if cat === "shell"}
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5l4 3-4 3"/><path d="M9 12h4"/></svg>
-      {:else if cat === "file"}
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/></svg>
-      {:else if cat === "search"}
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M10 10l3 3"/></svg>
-      {:else if cat === "web"}
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M2 8h12"/><path d="M8 2c2 2 3 4 3 6s-1 4-3 6"/><path d="M8 2c-2 2-3 4-3 6s1 4 3 6"/></svg>
-      {:else}
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="10" height="10" rx="1"/><path d="M6 6h4M6 8h4M6 10h2"/></svg>
-      {/if}
-    </div>
+    {@const catIcon = cat === "shell" ? "terminal" : cat === "file" ? "file" : cat === "search" ? "search" : cat === "web" ? "globe" : "generic-tool"}
+    <div class="marker marker-icon" style:color={cat === "shell" ? "var(--red)" : cat === "file" ? "var(--blue)" : cat === "search" ? "var(--yellow)" : cat === "web" ? "var(--purple)" : "var(--text-1)"}><span class="marker-tooltip">{tooltip}</span><Icon kind={catIcon} /></div>
   {:else if event.type === "activity"}
     {@const actMeta = meta}
     {@const actColor = typeof actMeta?.color === "string" ? `var(--${actMeta.color})` : "var(--yellow)"}
-    <div class="marker marker-icon" style:color={actColor}>
+    <div class="marker marker-icon" style:color={actColor}><span class="marker-tooltip">{tooltip}</span>
       {#if typeof actMeta?.icon === "string"}
         {@html actMeta.icon}
       {:else}
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+        <Icon kind="document-lines" />
       {/if}
     </div>
   {:else}
-    <div class="marker" style:background={color}></div>
+    <div class="marker" style:background={color}><span class="marker-tooltip">{tooltip}</span></div>
   {/if}
   {#if event.type === "summary" && turnExpanded}
     <div class="turn-connector"></div>
   {/if}
 
   {#if event.type === "summary"}
-    {#if !compact || turnExpanded}
-      <div class="summary-header" class:expanded={turnExpanded}>
+    {#if turnExpanded}
+      <div class="summary-header">
         <div class="summary-header-line">
           {#if meta?.from_time && meta?.to_time}
             <span class="time">{formatTime(meta.from_time)} – {formatTime(meta.to_time)}</span>
           {:else}
             <span class="time">{formatTime(event.created_at)}</span>
           {/if}
-          {#if turnExpanded}
-            <button class="detail-toggle" onclick={async (e) => {
-              e.stopPropagation();
-              if (!fullDetail && detailEvents.length === 0) {
-                detailLoading = true;
-                try {
-                  const hasTurnId = !!event.turn_id;
-                  const hasLegacy = event.session && meta?.from_id && meta?.to_id;
-                  if (hasTurnId || hasLegacy) {
-                    detailEvents = await fetchTurnEvents(
-                      mindName,
-                      hasTurnId
-                        ? { turnId: event.turn_id!, detail: true }
-                        : { session: event.session!, fromId: meta.from_id, toId: meta.to_id, detail: true },
-                    );
-                  }
-                } catch (err) {
-                  console.warn("Failed to fetch detail events:", err);
-                } finally {
-                  detailLoading = false;
+          <button class="detail-toggle" onclick={async (e) => {
+            e.stopPropagation();
+            if (!fullDetail && detailEvents.length === 0) {
+              detailLoading = true;
+              try {
+                const hasTurnId = !!event.turn_id;
+                const hasLegacy = event.session && meta?.from_id && meta?.to_id;
+                if (hasTurnId || hasLegacy) {
+                  detailEvents = await fetchTurnEvents(
+                    mindName,
+                    hasTurnId
+                      ? { turnId: event.turn_id!, detail: true }
+                      : { session: event.session!, fromId: meta.from_id, toId: meta.to_id, detail: true },
+                  );
                 }
+              } catch (err) {
+                console.warn("Failed to fetch detail events:", err);
+              } finally {
+                detailLoading = false;
               }
-              fullDetail = !fullDetail;
-            }}>
-              {detailLoading ? "loading..." : fullDetail ? "grouped" : "detail"}
-            </button>
-          {/if}
-          {#if expandable}
-            <span class="chevron">{turnExpanded ? "▼" : "▶"}</span>
-          {/if}
-        </div>
-        {#if event.session && !expandable}
-          <button class="session-tag" onclick={(e) => { e.stopPropagation(); onsessionclick?.(event.session!); }}>
-            {event.session}
+            }
+            fullDetail = !fullDetail;
+          }}>
+            {detailLoading ? "loading..." : fullDetail ? "grouped" : "detail"}
           </button>
-        {/if}
+          <span class="chevron">▼</span>
+        </div>
       </div>
     {/if}
-
     <div class="event-body">
       {#if expandable && turnExpanded}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -273,7 +269,7 @@ async function handleClick() {
           {:else if turnError}
             <div class="turn-loading">{turnError}</div>
           {:else if fullDetail}
-            {#each detailEvents as ev (ev.id)}
+            {#each detailEvents.filter((e) => e.type !== "summary") as ev (ev.id)}
               <HistoryEvent event={ev} {mindName} />
             {/each}
           {:else}
@@ -281,19 +277,12 @@ async function handleClick() {
             {#each items as item (item.kind === "tool-group" ? `tg-${item.toolUse.id}` : `ev-${item.event.id}`)}
               {#if item.kind === "tool-group"}
                 {@const catColor = item.category === "shell" ? "var(--red)" : item.category === "file" ? "var(--blue)" : item.category === "search" ? "var(--yellow)" : item.category === "web" ? "var(--purple)" : "var(--text-1)"}
-                <div class="tool-group-wrapper">
+                {@const toolTooltip = `${formatTime(item.toolUse.created_at)} · ${typeof JSON.parse(item.toolUse.metadata || '{}')?.name === 'string' ? JSON.parse(item.toolUse.metadata || '{}').name : 'tool'}`}
+                {@const catIcon = item.category === "shell" ? "terminal" : item.category === "file" ? "file" : item.category === "search" ? "search" : item.category === "web" ? "globe" : "generic-tool"}
+                <div class="event" style:--type-color={catColor}>
                   <div class="marker marker-icon" style:color={catColor}>
-                    {#if item.category === "shell"}
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5l4 3-4 3"/><path d="M9 12h4"/></svg>
-                    {:else if item.category === "file"}
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/></svg>
-                    {:else if item.category === "search"}
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M10 10l3 3"/></svg>
-                    {:else if item.category === "web"}
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M2 8h12"/><path d="M8 2c2 2 3 4 3 6s-1 4-3 6"/><path d="M8 2c-2 2-3 4-3 6s1 4 3 6"/></svg>
-                    {:else}
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="10" height="10" rx="1"/><path d="M6 6h4M6 8h4M6 10h2"/></svg>
-                    {/if}
+                    <span class="marker-tooltip">{toolTooltip}</span>
+                    <Icon kind={catIcon} />
                   </div>
                   <ToolGroupComponent group={item} {mindName} turnStatus="complete" />
                 </div>
@@ -303,10 +292,6 @@ async function handleClick() {
             {/each}
           {/if}
           <button class="branch-summary" onclick={() => { turnExpanded = false; }}>
-            <div class="event-header">
-              <span class="time">{formatTime(event.created_at)}</span>
-              <span class="type-badge" style:background="{color}15" style:color={color}>summary</span>
-            </div>
             <span class="summary-text">{event.content}</span>
           </button>
           <div class="branch-return"></div>
@@ -317,83 +302,58 @@ async function handleClick() {
     </div>
   {:else if event.type === "activity"}
     {@const actMeta = meta}
-    <div class="activity-card">
-      <ExtensionFeedCard
-        title={event.content}
-        url={activityUrl({ type: actMeta?.type ?? "", metadata: actMeta } as TurnActivity, mindName)}
-        date={event.created_at}
-        author={typeof actMeta?.author === 'string' ? actMeta.author : undefined}
-        bodyHtml={typeof actMeta?.bodyHtml === 'string' ? actMeta.bodyHtml : ''}
-        iframeUrl={typeof actMeta?.iframeUrl === 'string' ? actMeta.iframeUrl : undefined}
-        icon={typeof actMeta?.icon === 'string' ? actMeta.icon : defaultActivityIcon}
-        color={typeof actMeta?.color === 'string' ? actMeta.color : 'yellow'}
-      />
-    </div>
+    {@const actColor = typeof actMeta?.color === "string" ? `var(--${actMeta.color})` : "var(--yellow)"}
+    {#if expanded}
+      <div class="activity-card">
+        <ExtensionFeedCard
+          title={event.content}
+          url={activityUrl({ type: actMeta?.type ?? "", metadata: actMeta } as TurnActivity, mindName)}
+          date={event.created_at}
+          author={typeof actMeta?.author === 'string' ? actMeta.author : undefined}
+          bodyHtml={typeof actMeta?.bodyHtml === 'string' ? actMeta.bodyHtml : ''}
+          iframeUrl={typeof actMeta?.iframeUrl === 'string' ? actMeta.iframeUrl : undefined}
+          icon={typeof actMeta?.icon === 'string' ? actMeta.icon : defaultActivityIcon}
+          color={typeof actMeta?.color === 'string' ? actMeta.color : 'yellow'}
+        />
+      </div>
+    {:else}
+      <span class="inline-text" style:color={actColor}>{event.content}</span>
+    {/if}
   {:else if event.type === "inbound" || event.type === "outbound"}
-    <div class="compact-msg">
-      <div class="compact-msg-header">
-        <svg class="compact-msg-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-        {#if event.channel}<span class="compact-msg-channel">{event.channel}</span>{/if}
-        <span class="compact-msg-time">{formatTime(event.created_at)}</span>
+    {#if expanded}
+      <div class="compact-msg">
+        <div class="compact-msg-header">
+          <svg class="compact-msg-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+          {#if event.channel}<span class="compact-msg-channel">{event.channel}</span>{/if}
+        </div>
+        <div class="compact-msg-body">
+          <span class="compact-msg-sender" class:compact-msg-sender-user={event.type === "inbound"}>{event.type === "inbound" ? (event.sender ?? "user") : mindName}</span>
+          <span class="compact-msg-text">{event.content}</span>
+        </div>
       </div>
-      <div class="compact-msg-body">
-        <span class="compact-msg-sender" class:compact-msg-sender-user={event.type === "inbound"}>{event.type === "inbound" ? (event.sender ?? "user") : mindName}</span>
-        <span class="compact-msg-text">{event.content}</span>
-      </div>
-    </div>
+    {:else}
+      <span class="inline-text">{#if event.channel}<span class="inline-channel">[{event.channel}]</span>{" "}{/if}<span class="inline-sender" class:inline-sender-user={event.type === "inbound"}>{event.type === "inbound" ? (event.sender ?? "user") : mindName}:</span>{" "}{event.content}</span>
+    {/if}
   {:else}
-    <div class="event-header">
-      <span class="time">{formatTime(event.created_at)}</span>
-      <span class="type-badge" style:background="{color}15" style:color={color}>{event.type}</span>
-      {#if event.channel && (event.type === "inbound" || event.type === "outbound")}
-        <span class="channel-tag">{event.channel}</span>
-      {/if}
-      {#if collapsible}
-        <span class="chevron">{expanded ? "▼" : "▶"}</span>
-      {/if}
-    </div>
-
     <div class="event-body">
       {#if event.type === "text"}
-        <div class="markdown-body">
-          {@html renderMarkdown(event.content)}
+        <div class="inline-text" class:inline-text-expanded={expanded}>
+          <div class="markdown-body">{@html renderMarkdown(event.content)}</div>
         </div>
       {:else if event.type === "tool_use"}
-        <span class="summary">[{meta?.name ?? "tool"}]</span>
-        {#if expanded && event.content}
-          <pre class="detail">{formatArgs(event.content)}</pre>
-        {/if}
+        <span class="inline-text" class:inline-text-expanded={expanded}>{getToolLabel(meta?.name ?? "tool", event.content)}{#if expanded && event.content}{"\n"}{formatArgs(event.content)}{/if}</span>
       {:else if event.type === "tool_result"}
-        {#if !expanded}
-          <span class="summary" class:error={meta?.is_error}>{truncate(event.content, 80)}</span>
-        {:else}
-          <pre class="detail" class:error={meta?.is_error}>{event.content}</pre>
-        {/if}
+        <span class="inline-text" class:inline-text-expanded={expanded} class:error={meta?.is_error}>{event.content}</span>
       {:else if event.type === "thinking"}
-        {#if !expanded}
-          <span class="summary dim">{truncate(event.content, 80)}</span>
-        {:else}
-          <div class="detail-text dim">{event.content}</div>
-        {/if}
+        <span class="inline-text dim" class:inline-text-expanded={expanded}>{event.content}</span>
       {:else if event.type === "usage"}
-        <span class="usage-line">
-          ↑{meta?.input_tokens ?? 0} ↓{meta?.output_tokens ?? 0}
-          {#if meta?.model}
-            <span class="model">{meta.model}</span>
-          {/if}
-        </span>
+        <span class="inline-text dim">↑{meta?.input_tokens ?? 0} ↓{meta?.output_tokens ?? 0}{#if meta?.model} {meta.model}{/if}</span>
       {:else if event.type === "session_start"}
-        <span class="dim">session started</span>
-        {#if event.session}
-          <span class="session-id">{event.session}</span>
-        {/if}
+        <span class="inline-text dim">session started{#if event.session} {event.session}{/if}</span>
       {:else if event.type === "done"}
-        <span class="dim">processing complete</span>
+        <span class="inline-text dim">processing complete</span>
       {:else}
-        <span class="dim">{event.type}</span>
-        {#if event.content}
-          <span>{event.content}</span>
-        {/if}
+        <span class="inline-text dim">{event.type}{#if event.content} {event.content}{/if}</span>
       {/if}
     </div>
   {/if}
@@ -449,14 +409,20 @@ async function handleClick() {
 
   .summary-header {
     margin-bottom: 4px;
-  }
-  .summary-header.expanded {
     margin-left: 14px;
   }
   .summary-header-line {
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+  .time {
+    font-size: 11px;
+    color: var(--text-2);
+  }
+  .chevron {
+    font-size: 9px;
+    color: var(--text-2);
   }
 
   .marker {
@@ -470,10 +436,10 @@ async function handleClick() {
   }
 
   .marker-icon {
-    width: 18px;
-    height: 18px;
-    left: -10px;
-    top: 7px;
+    width: 22px;
+    height: 22px;
+    left: -12px;
+    top: 5px;
     border-radius: var(--radius);
     background: var(--bg-1);
     border: 1px solid var(--border);
@@ -483,43 +449,68 @@ async function handleClick() {
     z-index: 3;
   }
 
-  .marker-icon svg {
-    width: 11px;
-    height: 11px;
+  .marker-icon :global(svg) {
+    width: 13px;
+    height: 13px;
   }
 
-  .event-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 4px;
-  }
-
-  .time {
-    font-size: 11px;
-    color: var(--text-2);
-    flex-shrink: 0;
-  }
-
-  .type-badge {
-    font-size: 11px;
-    padding: 1px 6px;
-    border-radius: 12px;
-    font-weight: 500;
-  }
-
-  .channel-tag {
-    font-size: 11px;
-    color: var(--text-2);
+  .marker-tooltip {
+    position: absolute;
+    left: calc(100% + 6px);
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 3px 8px;
     background: var(--bg-3);
-    padding: 1px 6px;
+    color: var(--text-0);
+    font-family: var(--sans);
+    font-size: 11px;
     border-radius: var(--radius);
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    border: 1px solid var(--border);
+    z-index: 20;
   }
 
-  .chevron {
-    font-size: 9px;
+  .marker-icon:hover .marker-tooltip {
+    opacity: 1;
+  }
+
+  /* Inline compact text for collapsed events */
+  .inline-text {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-1);
+    line-height: 1.5;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+  }
+  .inline-text-expanded {
+    -webkit-line-clamp: unset;
+    display: block;
+    max-height: 400px;
+    overflow: auto;
+  }
+  .inline-channel {
     color: var(--text-2);
   }
+  .inline-sender {
+    font-weight: 600;
+    color: var(--accent);
+  }
+  .inline-sender-user {
+    color: var(--blue);
+  }
+
+
+
+
 
   .event-body {
     font-family: var(--mono);
@@ -528,51 +519,11 @@ async function handleClick() {
   }
 
 
-  .summary {
-    font-size: 13px;
-    color: var(--text-1);
-  }
-  .summary.error {
-    color: var(--red);
-  }
-
   .dim {
     color: var(--text-2);
   }
-
-  .detail,
-  .detail-text {
-    margin-top: 6px;
-    font-size: 12px;
-    background: var(--bg-3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 8px 10px;
-    overflow-x: auto;
-    max-height: 400px;
-    overflow-y: auto;
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
-  .detail {
-    font-family: var(--mono);
-  }
-  .detail.error {
+  .error {
     color: var(--red);
-    border-color: var(--red-dim);
-  }
-  .detail-text {
-    color: var(--text-2);
-  }
-
-  .usage-line {
-    font-size: 13px;
-    color: var(--purple);
-  }
-  .model {
-    color: var(--text-2);
-    margin-left: 6px;
-    font-size: 12px;
   }
 
   .detail-toggle {
@@ -591,12 +542,6 @@ async function handleClick() {
     color: var(--text-0);
   }
 
-  .session-id {
-    font-size: 12px;
-    color: var(--text-1);
-    font-weight: 600;
-    margin-left: 4px;
-  }
   .summary-text {
     font-size: 13px;
     color: var(--text-0);
@@ -690,16 +635,6 @@ async function handleClick() {
     z-index: 1;
   }
 
-  /* Tool group wrapper: positions marker like a regular event */
-  .tool-group-wrapper {
-    position: relative;
-    padding: 4px 8px 4px 20px;
-  }
-  .tool-group-wrapper > .marker-icon {
-    left: -10px;
-    top: 9px;
-  }
-
   /* Activity card */
   .activity-card {
     max-width: 480px;
@@ -733,13 +668,6 @@ async function handleClick() {
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
-  }
-  .compact-msg-time {
-    font-size: 11px;
-    color: var(--text-2);
-    font-weight: 400;
-    margin-left: auto;
-    flex-shrink: 0;
   }
   .compact-msg-body {
     padding: 6px 10px;
