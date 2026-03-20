@@ -371,8 +371,8 @@ function jumpToLatest() {
               {/if}
               {formatRelativeTime(turn.created_at)}
             </div>
-            <button
-              aria-label="Toggle turn details"
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
               class="turn-rail"
               class:turn-rail-expanded={expandedTurns.has(turn.id)}
               onclick={(e) => {
@@ -382,6 +382,7 @@ function jumpToLatest() {
                 const summaryEl = rowEl?.querySelector(':scope > .turn-body > .turn-summary > .event');
                 if (summaryEl) (summaryEl as HTMLElement).click();
               }}
+              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (e.currentTarget as HTMLElement).click(); } }}
             >
               <div class="turn-dot"></div>
               {#if !expandedTurns.has(turn.id) && turn.status !== "active" && (turn.conversations.length > 0 || turn.activities.length > 0)}
@@ -449,7 +450,7 @@ function jumpToLatest() {
                   {/each}
                 </div>
               {/if}
-            </button>
+            </div>
             <div class="turn-body">
               <div class="turn-summary">
                 {#if turn.summary}

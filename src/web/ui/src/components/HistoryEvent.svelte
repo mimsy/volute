@@ -439,24 +439,6 @@ async function handleClick() {
     line-height: 1.6;
   }
 
-  .sender {
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    margin-right: 8px;
-  }
-  .sender.inbound {
-    color: var(--blue);
-  }
-  .sender.outbound {
-    color: var(--accent);
-  }
-
-  .user-text {
-    display: inline;
-    white-space: pre-wrap;
-    color: var(--text-0);
-  }
 
   .summary {
     font-size: 13px;
