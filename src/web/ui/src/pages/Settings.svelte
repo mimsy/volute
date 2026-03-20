@@ -1,16 +1,15 @@
 <script lang="ts">
 import { onMount } from "svelte";
+import ImagegenProviders from "../components/ImagegenProviders.svelte";
 import Modal from "../components/Modal.svelte";
 import {
   type AiModel,
   type AiProvider,
   fetchAiModels,
   fetchAiProviders,
-  fetchImagegenConfig,
   pollAiOAuthStatus,
   removeProviderConfig,
   saveEnabledModels,
-  saveImagegenConfig,
   saveProviderConfig,
   startAiOAuth,
   submitAiOAuthCode,
@@ -31,10 +30,6 @@ let aiProviders = $state<AiProvider[]>([]);
 let aiModels = $state<AiModel[]>([]);
 let aiError = $state("");
 let aiSaving = $state(false);
-
-// Imagegen state
-let imagegenEnabled = $state(false);
-let imagegenSaving = $state(false);
 
 // Modal state
 let showApiKeyModal = $state(false);
@@ -66,30 +61,8 @@ async function loadAi() {
   }
 }
 
-async function loadImagegen() {
-  try {
-    const config = await fetchImagegenConfig();
-    imagegenEnabled = config.enabled;
-  } catch (err) {
-    console.warn("Failed to load imagegen config:", err);
-  }
-}
-
-async function toggleImagegen() {
-  imagegenSaving = true;
-  try {
-    await saveImagegenConfig(!imagegenEnabled);
-    imagegenEnabled = !imagegenEnabled;
-  } catch (err) {
-    aiError = `Failed to update image generation: ${err instanceof Error ? err.message : "unknown error"}`;
-  } finally {
-    imagegenSaving = false;
-  }
-}
-
 onMount(() => {
   loadAi();
-  loadImagegen();
 });
 
 function resetModalState() {
@@ -418,25 +391,9 @@ function authMethodLabel(method: string | null): string {
   <div class="section">
     <div class="section-header">
       <span class="section-title">Image Generation</span>
-      <span class="section-subtitle">Enable avatar generation for new minds</span>
+      <span class="section-subtitle">Provider configuration for mind image generation</span>
     </div>
-    <div class="toggle-card">
-      <div class="toggle-info">
-        <span class="toggle-label">Enable image generation</span>
-        <span class="toggle-description">Seeds will be able to generate avatars during orientation. Requires an imagegen skill in the shared pool.</span>
-      </div>
-      <label class="setting-toggle">
-        <input
-          type="checkbox"
-          checked={imagegenEnabled}
-          disabled={imagegenSaving}
-          onchange={toggleImagegen}
-        />
-        <span class="toggle-track">
-          <span class="toggle-thumb"></span>
-        </span>
-      </label>
-    </div>
+    <ImagegenProviders />
   </div>
 
 </div>
@@ -943,81 +900,4 @@ function authMethodLabel(method: string | null): string {
     font-size: 12px;
   }
 
-  /* --- Toggle card --- */
-
-  .toggle-card {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 14px 16px;
-  }
-
-  .toggle-info {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .toggle-label {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-0);
-  }
-
-  .toggle-description {
-    font-size: 12px;
-    color: var(--text-2);
-  }
-
-  .setting-toggle {
-    flex-shrink: 0;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-  }
-
-  .setting-toggle input {
-    position: absolute;
-    opacity: 0;
-    width: 0;
-    height: 0;
-  }
-
-  .toggle-track {
-    display: inline-block;
-    width: 32px;
-    height: 18px;
-    background: var(--bg-3);
-    border-radius: 9px;
-    position: relative;
-    transition: background 0.15s;
-  }
-
-  .setting-toggle input:checked + .toggle-track {
-    background: var(--accent);
-  }
-
-  .toggle-thumb {
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 14px;
-    height: 14px;
-    background: var(--text-2);
-    border-radius: 50%;
-    transition: transform 0.15s, background 0.15s;
-  }
-
-  .setting-toggle input:checked + .toggle-track .toggle-thumb {
-    transform: translateX(14px);
-    background: var(--bg-0);
-  }
-
-  .setting-toggle input:disabled + .toggle-track {
-    opacity: 0.5;
-  }
 </style>

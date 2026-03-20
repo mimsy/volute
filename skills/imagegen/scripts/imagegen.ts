@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 
 /**
- * imagegen.ts — image generation via Replicate API
+ * imagegen.ts — image generation via daemon service or direct Replicate API
  *
  * Usage:
  *   imagegen generate "prompt" [--model M] [--filename F]   # generate an image
@@ -10,10 +10,7 @@
 
 import { mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
-
-const replicateRequire = createRequire(import.meta.url);
 
 function getHomePath(): string {
   const mindDir = process.env.VOLUTE_MIND_DIR;
@@ -35,6 +32,82 @@ function getFlag(args: string[], flag: string): string | undefined {
   return undefined;
 }
 
+function getDaemonUrl(): string | undefined {
+  const port = process.env.VOLUTE_DAEMON_PORT;
+  if (!port) return undefined;
+  return `http://127.0.0.1:${port}`;
+}
+
+function getDaemonToken(): string | undefined {
+  return process.env.VOLUTE_DAEMON_TOKEN;
+}
+
+async function generateViaDaemon(model: string, prompt: string): Promise<Buffer | null> {
+  const base = getDaemonUrl();
+  const token = getDaemonToken();
+  if (!base || !token) return null;
+
+  try {
+    const res = await fetch(`${base}/api/v1/system/imagegen/generate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ model, prompt }),
+    });
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
+        error: string;
+      };
+      // If daemon doesn't have imagegen configured, fall back to direct
+      if (res.status === 500 && err.error?.includes("No Replicate API key")) return null;
+      throw new Error(err.error || `Daemon returned ${res.status}`);
+    }
+    return Buffer.from(await res.arrayBuffer());
+  } catch (err) {
+    if (err instanceof TypeError && (err as Error).message.includes("fetch")) return null;
+    throw err;
+  }
+}
+
+async function searchViaDaemon(query: string): Promise<unknown[] | null> {
+  const base = getDaemonUrl();
+  const token = getDaemonToken();
+  if (!base || !token) return null;
+
+  try {
+    const res = await fetch(
+      `${base}/api/v1/system/imagegen/models/search?q=${encodeURIComponent(query)}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as unknown[];
+  } catch {
+    return null;
+  }
+}
+
+async function generateDirect(model: string, prompt: string): Promise<Buffer> {
+  if (!process.env.REPLICATE_API_TOKEN) {
+    throw new Error(
+      "No image generation configured. Ask an admin to set up a provider in Settings, or set REPLICATE_API_TOKEN.",
+    );
+  }
+  const { default: Replicate } = await import("replicate");
+  const replicate = new Replicate();
+
+  const output = await replicate.run(model as `${string}/${string}`, { input: { prompt } });
+  const file = Array.isArray(output) ? output[0] : output;
+  if (!file) throw new Error(`Model ${model} returned no output`);
+
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of file as AsyncIterable<Uint8Array>) {
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
 async function generate(args: string[]): Promise<void> {
   const prompt = args[0];
   if (!prompt) {
@@ -42,34 +115,22 @@ async function generate(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  if (!process.env.REPLICATE_API_TOKEN) {
-    console.error(
-      "REPLICATE_API_TOKEN not set. Run: volute env set REPLICATE_API_TOKEN <your-token>",
-    );
-    process.exit(1);
-  }
-
   const model = getFlag(args, "--model") || "prunaai/z-image-turbo";
   const filename = getFlag(args, "--filename") || slugify(prompt) || `image-${Date.now()}`;
 
-  const Replicate = replicateRequire("replicate");
-  const replicate = new Replicate();
-
   console.log(`generating image with ${model}...`);
-  const output = await replicate.run(model, { input: { prompt } });
 
-  // Output can be a single FileOutput or an array of them
-  const file = Array.isArray(output) ? output[0] : output;
-  if (!file) {
-    console.error(`error: model ${model} returned no output`);
-    process.exit(1);
+  // Try daemon first, fall back to direct Replicate
+  let buf = await generateViaDaemon(model, prompt);
+  if (!buf) {
+    buf = await generateDirect(model, prompt);
   }
 
   const imagesDir = join(getHomePath(), "images");
   mkdirSync(imagesDir, { recursive: true });
 
   const filePath = join(imagesDir, `${filename}.png`);
-  await writeFile(filePath, file);
+  await writeFile(filePath, buf);
   console.log(`saved: ${filePath}`);
 }
 
@@ -80,14 +141,25 @@ async function models(args: string[]): Promise<void> {
     process.exit(1);
   }
 
+  // Try daemon first
+  const daemonResults = await searchViaDaemon(query);
+  if (daemonResults && daemonResults.length > 0) {
+    for (const m of daemonResults as Array<{ id: string; description?: string }>) {
+      const desc = m.description ? ` — ${m.description.slice(0, 100)}` : "";
+      console.log(`${m.id}${desc}`);
+    }
+    return;
+  }
+
+  // Fall back to direct Replicate
   if (!process.env.REPLICATE_API_TOKEN) {
     console.error(
-      "REPLICATE_API_TOKEN not set. Run: volute env set REPLICATE_API_TOKEN <your-token>",
+      "No image generation configured. Ask an admin to set up a provider in Settings, or set REPLICATE_API_TOKEN.",
     );
     process.exit(1);
   }
 
-  const Replicate = replicateRequire("replicate");
+  const { default: Replicate } = await import("replicate");
   const replicate = new Replicate();
 
   const response = await replicate.models.search(query);
