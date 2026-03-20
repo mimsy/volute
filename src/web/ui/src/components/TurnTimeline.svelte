@@ -362,7 +362,8 @@ function jumpToLatest() {
     {:else}
       <div class="turn-track">
         {#each turnsData as turn (turn.id)}
-          <div class="turn-row" data-turn-id={turn.id}>
+          {@const peekCount = (!expandedTurns.has(turn.id) && turn.status !== "active") ? turn.conversations.length + turn.activities.length : 0}
+          <div class="turn-row" data-turn-id={turn.id} style:min-height={peekCount > 0 ? `${28 + peekCount * 24}px` : undefined}>
             <div class="turn-time">
               {#if !name}
                 <button class="mind-badge" onclick={() => navigate(`/minds/${turn.mind}/history`)}>{turn.mind}</button>
@@ -744,12 +745,14 @@ function jumpToLatest() {
 
   /* Peek icon buttons on the timeline rail */
   .turn-peek-icons {
+    position: absolute;
+    top: 24px; /* below the dot (dot is at top:12px, 6px radius + 6px gap) */
+    left: 50%;
+    transform: translateX(-50%);
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 4px;
-    margin-top: 4px;
-    position: relative;
+    gap: 6px;
     z-index: 4;
   }
 
