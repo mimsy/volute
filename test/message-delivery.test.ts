@@ -110,26 +110,27 @@ describe("recordOutbound", () => {
     assert.equal(rows[0].message_id, null);
   });
 
-  it("stores turn_id and message_id when provided", async () => {
+  it("stores message_id when provided", async () => {
     await recordOutbound("test-out", "dm:alice", "hi", {
-      turnId: "turn-123",
       messageId: "msg-456",
     });
     const db = await getDb();
     const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, "test-out"));
-    assert.equal(rows[0].turn_id, "turn-123");
+    assert.equal(rows[0].turn_id, null); // turn_id is always null — linked later via tool_result
     assert.equal(rows[0].message_id, "msg-456");
   });
 
-  it("publishes a mind event", async () => {
+  it("returns the inserted record id", async () => {
+    const id = await recordOutbound("test-out", "dm:alice", "hello");
+    assert.ok(id != null && id > 0);
+  });
+
+  it("does not publish a mind event (deferred to linkToolResultToTurn)", async () => {
     const events: MindEvent[] = [];
     const unsub = subscribe("test-out", (e) => events.push(e));
     try {
       await recordOutbound("test-out", "dm:alice", "hello");
-      assert.equal(events.length, 1);
-      assert.equal(events[0].type, "outbound");
-      assert.equal(events[0].channel, "dm:alice");
-      assert.equal(events[0].content, "hello");
+      assert.equal(events.length, 0);
     } finally {
       unsub();
     }

@@ -4,7 +4,6 @@ import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js";
 import { routeOutboundBridge } from "../../../lib/bridge-outbound.js";
-import { getActiveTurnId, getLastToolUseEventId } from "../../../lib/daemon/turn-tracker.js";
 import { extractTextContent } from "../../../lib/delivery/delivery-router.js";
 import { deliverMessage, recordOutbound } from "../../../lib/delivery/message-delivery.js";
 import { subscribe } from "../../../lib/events/conversation-events.js";
@@ -274,27 +273,16 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       }
     }
 
-    // Turn tracking
-    const mindSession = c.get("mindSession");
-    let sourceEventId: number | undefined;
-    let turnId: string | undefined;
-    if (senderIsMind) {
-      const senderForTurn = body.sender ?? senderName;
-      sourceEventId = getLastToolUseEventId(senderForTurn, mindSession);
-      turnId = getActiveTurnId(senderForTurn, mindSession);
-    }
+    // Save message (turn_id and source_event_id are set to null for mind senders —
+    // they'll be linked when the tool_result event arrives with the outbound correlation ID)
+    const message = await addMessage(conversationId!, "user", senderName, contentBlocks);
 
-    // Save message
-    const message = await addMessage(conversationId!, "user", senderName, contentBlocks, {
-      sourceEventId,
-      turnId,
-    });
-
+    let outboundId: number | undefined;
     if (senderIsMind) {
       routeOutboundBridge(conversationId!, senderName, contentBlocks).catch((err) => {
         log.warn("outbound bridge routing failed", log.errorData(err));
       });
-      // Record outbound event in mind_history for turn timeline
+      // Record outbound event in mind_history (without turn_id — linked later via tool_result)
       const channel = buildVoluteSlug({
         participants: await getParticipants(conversationId!),
         mindUsername: senderName,
@@ -303,12 +291,13 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
         convType: conv.type as "dm" | "channel",
         convName: conv.name,
       });
-      recordOutbound(senderName, channel, extractTextContent(contentBlocks), {
-        turnId,
-        messageId: message?.id != null ? String(message.id) : undefined,
-      }).catch((err) => {
+      try {
+        outboundId = await recordOutbound(senderName, channel, extractTextContent(contentBlocks), {
+          messageId: message?.id != null ? String(message.id) : undefined,
+        });
+      } catch (err) {
         log.warn("recordOutbound failed", log.errorData(err));
-      });
+      }
     }
 
     // Fan out to running mind participants
@@ -338,7 +327,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       }
     }
 
-    return c.json({ ok: true, conversationId });
+    return c.json({ ok: true, conversationId, outboundId });
   },
 );
 

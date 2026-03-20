@@ -74,6 +74,44 @@ export async function consumeStream(
         }
       }
     }
+    if (msg.type === "user") {
+      // Tool result messages — the SDK sends these after tool execution.
+      // Extract tool_result content blocks and emit them so the daemon can
+      // link outbound records to the correct turn via correlation markers.
+      const content = (msg as { message?: { content?: unknown[] } }).message?.content;
+      if (Array.isArray(content)) {
+        for (const b of content) {
+          if (
+            b &&
+            typeof b === "object" &&
+            "type" in b &&
+            b.type === "tool_result" &&
+            "content" in b
+          ) {
+            const resultContent = Array.isArray(b.content)
+              ? b.content
+                  .filter(
+                    (c: unknown): c is { type: "text"; text: string } =>
+                      !!c && typeof c === "object" && "type" in c && c.type === "text",
+                  )
+                  .map((c) => c.text)
+                  .join("")
+              : typeof b.content === "string"
+                ? b.content
+                : "";
+            if (resultContent) {
+              const toolName =
+                "tool_use_id" in b && typeof b.tool_use_id === "string" ? b.tool_use_id : "unknown";
+              emit(session, {
+                type: "tool_result",
+                content: resultContent,
+                metadata: { tool_use_id: toolName },
+              });
+            }
+          }
+        }
+      }
+    }
     if (msg.type === "result") {
       if (session.currentMessageId) {
         session.messageChannels.delete(session.currentMessageId);

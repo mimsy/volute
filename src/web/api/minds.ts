@@ -37,11 +37,17 @@ import {
   completeTurn,
   createTurn,
   getActiveTurnId,
+  getLastToolUseEventId,
   trackToolUse,
 } from "../../lib/daemon/turn-tracker.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
-import { recordInbound, tagUntaggedInbound } from "../../lib/delivery/message-delivery.js";
+import {
+  linkToolResultToTurn,
+  recordInbound,
+  tagUntaggedInbound,
+  tagUntaggedOutbound,
+} from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import {
   addMessage,
@@ -2267,6 +2273,18 @@ const app = new Hono<AuthEnv>()
       trackToolUse(baseName, body.session, insertedId);
     }
 
+    // Link outbound records to this turn via correlation markers in tool_result content.
+    // This runs BEFORE publishing to SSE so the outbound events are correctly tagged
+    // by the time they enter the stream.
+    if (body.type === "tool_result" && turnId && body.content) {
+      const toolUseEventId = getLastToolUseEventId(baseName, body.session);
+      try {
+        await linkToolResultToTurn(baseName, turnId, body.content, toolUseEventId);
+      } catch (err) {
+        log.warn("failed to link outbound to turn", log.errorData(err));
+      }
+    }
+
     // Publish to in-process pub-sub
     publishMindEvent(baseName, {
       mind: baseName,
@@ -2318,6 +2336,11 @@ const app = new Hono<AuthEnv>()
         const busy = body.session ? dm.isSessionBusy(baseName, body.session) : false;
         if (!busy) {
           const completedTurnId = await completeTurn(baseName, body.session);
+          if (completedTurnId) {
+            tagUntaggedOutbound(baseName, completedTurnId).catch((err) =>
+              log.warn("failed to tag orphaned outbound records", log.errorData(err)),
+            );
+          }
           if (insertedId != null) {
             summarizeTurn(baseName, body.session, body.channel, insertedId, completedTurnId).catch(
               (err) => log.error("turn summarization failed", log.errorData(err)),
@@ -2330,6 +2353,11 @@ const app = new Hono<AuthEnv>()
         }
         // DM unavailable — complete immediately as fallback
         const completedTurnId = await completeTurn(baseName, body.session);
+        if (completedTurnId) {
+          tagUntaggedOutbound(baseName, completedTurnId).catch((err) =>
+            log.warn("failed to tag orphaned outbound records", log.errorData(err)),
+          );
+        }
         if (insertedId != null) {
           summarizeTurn(baseName, body.session, body.channel, insertedId, completedTurnId).catch(
             (err) => log.error("turn summarization failed", log.errorData(err)),
@@ -2429,7 +2457,8 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "channel and content required" }, 400);
     }
 
-    // Look up active turn for this mind (outbound happens during a turn)
+    // Best-effort turn lookup for external bridge sends (these don't go through
+    // volute chat send, so they won't have tool_result correlation markers).
     const mindSession = c.get("mindSession");
     const outboundTurnId = getActiveTurnId(baseName, mindSession);
 

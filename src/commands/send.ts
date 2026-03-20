@@ -304,7 +304,12 @@ export async function run(args: string[]) {
       console.error((data as { error: string }).error);
       process.exit(1);
     }
-    if (!flags.wait) console.log("Message sent.");
+    if (!flags.wait) {
+      const resData = (await sendRes.json().catch(() => ({}))) as { outboundId?: number };
+      console.log(
+        `Message sent.${resData.outboundId != null ? `\n[volute:outbound:${resData.outboundId}]` : ""}`,
+      );
+    }
   } else if (!parsed.isDM && parsed.platform === "volute") {
     // Bare names without # are ambiguous — require explicit sigil
     if (!parsed.identifier.startsWith("#")) {
@@ -356,7 +361,10 @@ export async function run(args: string[]) {
       console.error((data as { error: string }).error);
       process.exit(1);
     }
-    console.log("Message sent.");
+    const sendData = (await sendRes.json().catch(() => ({}))) as { outboundId?: number };
+    console.log(
+      `Message sent.${sendData.outboundId != null ? `\n[volute:outbound:${sendData.outboundId}]` : ""}`,
+    );
   } else {
     // Non-volute targets (discord:..., slack:..., etc.) are no longer supported directly.
     // With the bridge architecture, minds send to volute channels and bridges handle external routing.

@@ -5,7 +5,7 @@ import { getDb } from "../db.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import log from "../logger.js";
 import { findMind, getBaseName } from "../registry.js";
-import { conversations, messages, mindHistory, turns } from "../schema.js";
+import { activity, conversations, messages, mindHistory, turns } from "../schema.js";
 import { getDeliveryManager } from "./delivery-manager.js";
 import { type DeliveryPayload, extractTextContent } from "./delivery-router.js";
 
@@ -55,36 +55,203 @@ export async function recordInbound(
 }
 
 /**
- * Record an outbound message: persist to mind_history and publish to the live event stream.
- * Called when a mind sends a chat message, so the turn timeline includes outbound events.
- * Fire-and-forget — logs errors but does not throw.
+ * Record an outbound message: persist to mind_history WITHOUT a turn_id.
+ *
+ * The turn association is deferred — concurrent sessions share a single process-level
+ * env var (VOLUTE_SESSION) which races, so we don't attempt session-based turn lookup
+ * here. Instead, the outbound record is linked to its turn when the corresponding
+ * tool_result event arrives at the events endpoint (via `linkOutboundToTurn`).
+ *
+ * The outbound event is NOT published to SSE here; it is published by
+ * `linkOutboundToTurn` once the correct turn_id is known, ensuring the stream
+ * always contains correctly-tagged events. Any orphans are caught by
+ * `tagUntaggedOutbound` on turn completion as a safety net.
+ *
+ * Returns the inserted mind_history record ID (used as a correlation key in tool output).
  */
 export async function recordOutbound(
   mind: string,
   channel: string,
   content: string | null,
-  opts: { turnId?: string; messageId?: string } = {},
-): Promise<void> {
+  opts: { messageId?: string } = {},
+): Promise<number | undefined> {
   try {
     const db = await getDb();
-    await db.insert(mindHistory).values({
-      mind,
-      type: "outbound",
-      channel,
-      content,
-      turn_id: opts.turnId ?? null,
-      message_id: opts.messageId ?? null,
-    });
+    const result = await db
+      .insert(mindHistory)
+      .values({
+        mind,
+        type: "outbound",
+        channel,
+        content,
+        turn_id: null,
+        message_id: opts.messageId ?? null,
+      })
+      .returning({ id: mindHistory.id });
+    return result[0]?.id;
   } catch (err) {
     dlog.warn(`failed to persist outbound for ${mind}`, log.errorData(err));
+    return undefined;
+  }
+}
+
+/** Regexes to extract correlation IDs from tool_result content. */
+const OUTBOUND_MARKER_RE = /\[volute:outbound:(\d+)\]/g;
+const ACTIVITY_MARKER_RE = /\[volute:activity:(\d+)\]/g;
+
+/**
+ * Link outbound records and extension activities to a turn using correlation
+ * markers in tool_result content. Called from the events endpoint when a
+ * tool_result event arrives.
+ *
+ * Scans the content for `[volute:outbound:NNN]` and `[volute:activity:NNN]`
+ * markers. For outbound markers:
+ * - Sets the outbound record's turn_id
+ * - Fixes the linked message's turn_id and source_event_id
+ * - Publishes the outbound event to SSE (correctly tagged)
+ * For activity markers:
+ * - Sets the activity record's turn_id and source_event_id
+ */
+export async function linkToolResultToTurn(
+  mind: string,
+  turnId: string,
+  toolResultContent: string | null,
+  toolUseEventId: number | undefined,
+): Promise<void> {
+  if (!toolResultContent) return;
+
+  const db = await getDb();
+
+  // --- Outbound markers ---
+  for (const match of toolResultContent.matchAll(OUTBOUND_MARKER_RE)) {
+    const outboundId = Number(match[1]);
+
+    const rows = await db
+      .select({
+        id: mindHistory.id,
+        channel: mindHistory.channel,
+        content: mindHistory.content,
+        message_id: mindHistory.message_id,
+      })
+      .from(mindHistory)
+      .where(and(eq(mindHistory.id, outboundId), eq(mindHistory.mind, mind)))
+      .limit(1);
+
+    const row = rows[0];
+    if (!row) continue;
+
+    await db.update(mindHistory).set({ turn_id: turnId }).where(eq(mindHistory.id, outboundId));
+
+    if (row.message_id) {
+      await db
+        .update(messages)
+        .set({
+          turn_id: turnId,
+          ...(toolUseEventId != null ? { source_event_id: toolUseEventId } : {}),
+        })
+        .where(eq(messages.id, Number(row.message_id)));
+    }
+
+    // Publish the outbound event to SSE — correctly tagged
+    publishMindEvent(mind, {
+      mind,
+      type: "outbound",
+      channel: row.channel ?? undefined,
+      content: row.content ?? undefined,
+      turnId,
+    });
   }
 
-  publishMindEvent(mind, {
-    mind,
-    type: "outbound",
-    channel,
-    content: content ?? undefined,
-  });
+  // --- Activity markers ---
+  const activityIds: number[] = [];
+  for (const match of toolResultContent.matchAll(ACTIVITY_MARKER_RE)) {
+    activityIds.push(Number(match[1]));
+  }
+  if (activityIds.length > 0) {
+    await db
+      .update(activity)
+      .set({
+        turn_id: turnId,
+        ...(toolUseEventId != null ? { source_event_id: toolUseEventId } : {}),
+      })
+      .where(inArray(activity.id, activityIds));
+  }
+}
+
+/**
+ * Retroactively tag orphaned outbound records (and their linked messages) with the
+ * correct turn_id. Called on turn completion, analogous to `tagUntaggedInbound`.
+ *
+ * Finds outbound records for this mind that have no turn_id and whose IDs fall within
+ * the range of events already tagged with this turn. Also fixes the corresponding
+ * messages in the conversations table (turn_id and source_event_id).
+ */
+export async function tagUntaggedOutbound(mind: string, turnId: string): Promise<void> {
+  const db = await getDb();
+
+  // Find the event ID range for this turn
+  const range = await db
+    .select({
+      minId: sql<number>`MIN(${mindHistory.id})`,
+      maxId: sql<number>`MAX(${mindHistory.id})`,
+    })
+    .from(mindHistory)
+    .where(and(eq(mindHistory.mind, mind), eq(mindHistory.turn_id, turnId)));
+
+  const minId = range[0]?.minId;
+  const maxId = range[0]?.maxId;
+  if (minId == null || maxId == null) return;
+
+  // Find orphaned outbound records within this turn's event range
+  const orphans = await db
+    .select({ id: mindHistory.id, message_id: mindHistory.message_id })
+    .from(mindHistory)
+    .where(
+      and(
+        eq(mindHistory.mind, mind),
+        eq(mindHistory.type, "outbound"),
+        sql`${mindHistory.turn_id} IS NULL`,
+        sql`${mindHistory.id} >= ${minId}`,
+        sql`${mindHistory.id} <= ${maxId}`,
+      ),
+    );
+
+  if (orphans.length === 0) return;
+
+  // Tag the outbound records
+  const orphanIds = orphans.map((r) => r.id);
+  await db.update(mindHistory).set({ turn_id: turnId }).where(inArray(mindHistory.id, orphanIds));
+
+  // Fix linked messages: set turn_id and source_event_id
+  // For source_event_id, find the nearest preceding tool_use event in this turn
+  for (const orphan of orphans) {
+    if (!orphan.message_id) continue;
+    // Find the closest tool_use event before this outbound in the same turn
+    const toolUse = await db
+      .select({ id: mindHistory.id })
+      .from(mindHistory)
+      .where(
+        and(
+          eq(mindHistory.mind, mind),
+          eq(mindHistory.turn_id, turnId),
+          eq(mindHistory.type, "tool_use"),
+          sql`${mindHistory.id} < ${orphan.id}`,
+        ),
+      )
+      .orderBy(desc(mindHistory.id))
+      .limit(1);
+
+    const sourceEventId = toolUse[0]?.id ?? null;
+    await db
+      .update(messages)
+      .set({
+        turn_id: turnId,
+        ...(sourceEventId != null ? { source_event_id: sourceEventId } : {}),
+      })
+      .where(eq(messages.id, Number(orphan.message_id)));
+  }
+
+  dlog.info(`tagged ${orphans.length} orphaned outbound record(s) for ${mind} with turn ${turnId}`);
 }
 
 /**
