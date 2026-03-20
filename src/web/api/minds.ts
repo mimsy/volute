@@ -2280,7 +2280,7 @@ const app = new Hono<AuthEnv>()
       trackToolUse(baseName, body.session, insertedId);
     }
 
-    // Link outbound records to this turn via correlation markers in tool_result content.
+    // Link outbound records and extension activities to this turn via correlation markers.
     // This runs BEFORE publishing to SSE so the outbound events are correctly tagged
     // by the time they enter the stream.
     if (body.type === "tool_result" && turnId && body.content) {

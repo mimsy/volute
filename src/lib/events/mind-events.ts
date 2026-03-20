@@ -1,3 +1,5 @@
+import log from "../logger.js";
+
 /**
  * In-process pub-sub for mind activity events. SSE endpoint subscribes per-mind;
  * daemon publishes when events arrive.
@@ -50,7 +52,7 @@ export function publish(mind: string, event: MindEvent): void {
       try {
         cb(event);
       } catch (err) {
-        console.error("[mind-events] subscriber threw:", err);
+        log.error(`[mind-events] subscriber threw for ${mind}`, log.errorData(err));
         set.delete(cb);
         if (set.size === 0) subscribers.delete(mind);
       }
@@ -60,7 +62,7 @@ export function publish(mind: string, event: MindEvent): void {
     try {
       cb(event);
     } catch (err) {
-      console.error("[mind-events] global subscriber threw:", err);
+      log.error("[mind-events] global subscriber threw", log.errorData(err));
       globalSubscribers.delete(cb);
     }
   }

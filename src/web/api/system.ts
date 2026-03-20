@@ -19,7 +19,16 @@ import {
 } from "../../lib/ai-service.js";
 import { logBuffer } from "../../lib/log-buffer.js";
 import log from "../../lib/logger.js";
-import { readGlobalConfig, writeGlobalConfig } from "../../lib/setup.js";
+import {
+  generateImage,
+  getEnabledModels as getImagegenModels,
+  getConfiguredProviders as getImagegenProviders,
+  removeProviderConfig as removeImagegenProvider,
+  saveProviderConfig as saveImagegenProvider,
+  searchModels,
+  setEnabledModels as setImagegenModels,
+} from "../../lib/services/imagegen.js";
+import { readGlobalConfig } from "../../lib/setup.js";
 import {
   deleteSystemsConfig,
   readSystemsConfig,
@@ -28,6 +37,7 @@ import {
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 const DEFAULT_API_URL = "https://volute.systems";
+const igLog = log.child("imagegen");
 
 const app = new Hono<AuthEnv>()
   .post("/restart", requireAdmin, (c) => {
@@ -193,17 +203,75 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
     }
   })
-  // --- Imagegen config ---
-  .get("/imagegen", requireAdmin, (c) => {
-    const config = readGlobalConfig();
-    return c.json({ enabled: config.imagegen?.enabled === true });
+  // --- Imagegen service ---
+  .get("/imagegen/providers", requireAdmin, (c) => {
+    return c.json(getImagegenProviders());
   })
-  .put("/imagegen", requireAdmin, zValidator("json", z.object({ enabled: z.boolean() })), (c) => {
-    const config = readGlobalConfig();
-    config.imagegen = { enabled: c.req.valid("json").enabled };
-    writeGlobalConfig(config);
+  .put(
+    "/imagegen/providers/:id",
+    requireAdmin,
+    zValidator("json", z.object({ apiKey: z.string().min(1) })),
+    (c) => {
+      const id = c.req.param("id");
+      const { apiKey } = c.req.valid("json");
+      try {
+        saveImagegenProvider(id, apiKey);
+      } catch (err) {
+        return c.json({ error: err instanceof Error ? err.message : "Failed to save" }, 400);
+      }
+      return c.json({ ok: true });
+    },
+  )
+  .delete("/imagegen/providers/:id", requireAdmin, (c) => {
+    try {
+      removeImagegenProvider(c.req.param("id"));
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : "Failed to remove" }, 400);
+    }
     return c.json({ ok: true });
   })
+  .get("/imagegen/models", requireAdmin, (c) => {
+    const models = getImagegenModels();
+    return c.json({ models });
+  })
+  .put(
+    "/imagegen/models",
+    requireAdmin,
+    zValidator("json", z.object({ models: z.array(z.string()) })),
+    (c) => {
+      setImagegenModels(c.req.valid("json").models);
+      return c.json({ ok: true });
+    },
+  )
+  .get("/imagegen/models/search", async (c) => {
+    const q = c.req.query("q");
+    try {
+      const results = await searchModels(q || undefined);
+      return c.json(results);
+    } catch (err) {
+      igLog.error("model search failed", log.errorData(err));
+      return c.json({ error: err instanceof Error ? err.message : "Search failed" }, 500);
+    }
+  })
+  .post(
+    "/imagegen/generate",
+    zValidator("json", z.object({ model: z.string().min(1), prompt: z.string().min(1) })),
+    async (c) => {
+      const { model, prompt } = c.req.valid("json");
+      try {
+        const buf = await generateImage(model, prompt);
+        return new Response(buf, {
+          headers: {
+            "Content-Type": "image/png",
+            "Content-Length": String(buf.length),
+          },
+        });
+      } catch (err) {
+        igLog.error("image generation failed", log.errorData(err));
+        return c.json({ error: err instanceof Error ? err.message : "Generation failed" }, 500);
+      }
+    },
+  )
   // --- AI Service config ---
   // Cached provider keys — refreshed by a daemon-level timer so individual mind
   // polls don't each trigger OAuth token refresh.

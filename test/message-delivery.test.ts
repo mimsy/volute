@@ -8,6 +8,7 @@ import {
   recordInbound,
   recordOutbound,
   resolveSleepAction,
+  tagUntaggedInbound,
   tagUntaggedOutbound,
 } from "../src/lib/delivery/message-delivery.js";
 import { publish as publishActivity } from "../src/lib/events/activity-events.js";
@@ -470,5 +471,134 @@ describe("tagUntaggedOutbound", () => {
 
     // No events in mind_history for this turn at all
     await assert.doesNotReject(() => tagUntaggedOutbound(TAG_MIND, TAG_TURN_ID));
+  });
+});
+
+const INBOUND_MIND = "test-inbound-tag";
+const INBOUND_TURN_ID = "turn-inbound-001";
+
+async function cleanupInboundData() {
+  const db = await getDb();
+  await db.delete(mindHistory).where(eq(mindHistory.mind, INBOUND_MIND));
+  await db.delete(turns).where(eq(turns.mind, INBOUND_MIND));
+  const convRows = await db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(eq(conversations.mind_name, INBOUND_MIND));
+  for (const c of convRows) {
+    await db.delete(messages).where(eq(messages.conversation_id, c.id));
+  }
+  await db.delete(conversations).where(eq(conversations.mind_name, INBOUND_MIND));
+}
+
+describe("tagUntaggedInbound", () => {
+  afterEach(cleanupInboundData);
+
+  it("tags recent untagged inbound records with a turn id", async () => {
+    const db = await getDb();
+    await db.insert(turns).values({ id: INBOUND_TURN_ID, mind: INBOUND_MIND, session: "main" });
+
+    // Insert an untagged inbound
+    const result = await db
+      .insert(mindHistory)
+      .values({ mind: INBOUND_MIND, type: "inbound", channel: "dm:bob", sender: "bob" })
+      .returning({ id: mindHistory.id });
+    const inboundId = result[0].id;
+
+    await tagUntaggedInbound(INBOUND_MIND, INBOUND_TURN_ID);
+
+    const rows = await db.select().from(mindHistory).where(eq(mindHistory.id, inboundId));
+    assert.equal(rows[0].turn_id, INBOUND_TURN_ID);
+  });
+
+  it("scopes tagging to a specific channel when provided", async () => {
+    const db = await getDb();
+    await db.insert(turns).values({ id: INBOUND_TURN_ID, mind: INBOUND_MIND, session: "main" });
+
+    // Insert inbounds on two different channels
+    const r1 = await db
+      .insert(mindHistory)
+      .values({ mind: INBOUND_MIND, type: "inbound", channel: "dm:alice", sender: "alice" })
+      .returning({ id: mindHistory.id });
+    const r2 = await db
+      .insert(mindHistory)
+      .values({ mind: INBOUND_MIND, type: "inbound", channel: "dm:bob", sender: "bob" })
+      .returning({ id: mindHistory.id });
+
+    // Only tag dm:bob
+    await tagUntaggedInbound(INBOUND_MIND, INBOUND_TURN_ID, { channel: "dm:bob" });
+
+    const aliceRow = await db.select().from(mindHistory).where(eq(mindHistory.id, r1[0].id));
+    const bobRow = await db.select().from(mindHistory).where(eq(mindHistory.id, r2[0].id));
+    assert.equal(aliceRow[0].turn_id, null);
+    assert.equal(bobRow[0].turn_id, INBOUND_TURN_ID);
+  });
+
+  it("sets trigger_event_id when setTrigger is true", async () => {
+    const db = await getDb();
+    await db.insert(turns).values({ id: INBOUND_TURN_ID, mind: INBOUND_MIND, session: "main" });
+
+    const r = await db
+      .insert(mindHistory)
+      .values({ mind: INBOUND_MIND, type: "inbound", channel: "dm:bob", sender: "bob" })
+      .returning({ id: mindHistory.id });
+
+    await tagUntaggedInbound(INBOUND_MIND, INBOUND_TURN_ID, { setTrigger: true });
+
+    const turnRows = await db.select().from(turns).where(eq(turns.id, INBOUND_TURN_ID));
+    assert.equal(turnRows[0].trigger_event_id, r[0].id);
+  });
+
+  it("respects the limit parameter", async () => {
+    const db = await getDb();
+    await db.insert(turns).values({ id: INBOUND_TURN_ID, mind: INBOUND_MIND, session: "main" });
+
+    // Insert 3 inbounds
+    for (let i = 0; i < 3; i++) {
+      await db
+        .insert(mindHistory)
+        .values({ mind: INBOUND_MIND, type: "inbound", channel: "dm:bob", sender: "bob" });
+    }
+
+    await tagUntaggedInbound(INBOUND_MIND, INBOUND_TURN_ID, { limit: 2 });
+
+    const tagged = await db.select().from(mindHistory).where(eq(mindHistory.mind, INBOUND_MIND));
+    const withTurn = tagged.filter((r) => r.turn_id === INBOUND_TURN_ID);
+    assert.equal(withTurn.length, 2);
+  });
+
+  it("also tags untagged conversation messages", async () => {
+    const db = await getDb();
+    await db.insert(turns).values({ id: INBOUND_TURN_ID, mind: INBOUND_MIND, session: "main" });
+
+    // Create a conversation and an inbound message (not from the mind)
+    const convId = "conv-inbound-test";
+    await db.insert(conversations).values({
+      id: convId,
+      mind_name: INBOUND_MIND,
+      channel: "dm:bob",
+      type: "dm",
+    });
+    const msgResult = await db
+      .insert(messages)
+      .values({
+        conversation_id: convId,
+        role: "user",
+        sender_name: "bob",
+        content: "hello",
+      })
+      .returning({ id: messages.id });
+
+    await tagUntaggedInbound(INBOUND_MIND, INBOUND_TURN_ID);
+
+    const msgRows = await db.select().from(messages).where(eq(messages.id, msgResult[0].id));
+    assert.equal(msgRows[0].turn_id, INBOUND_TURN_ID);
+  });
+
+  it("no-ops when no untagged inbounds exist", async () => {
+    const db = await getDb();
+    await db.insert(turns).values({ id: INBOUND_TURN_ID, mind: INBOUND_MIND, session: "main" });
+
+    await assert.doesNotReject(() => tagUntaggedInbound(INBOUND_MIND, INBOUND_TURN_ID));
   });
 });

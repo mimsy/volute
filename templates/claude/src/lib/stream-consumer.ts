@@ -100,12 +100,12 @@ export async function consumeStream(
                 ? b.content
                 : "";
             if (resultContent) {
-              const toolName =
+              const toolUseId =
                 "tool_use_id" in b && typeof b.tool_use_id === "string" ? b.tool_use_id : "unknown";
               emit(session, {
                 type: "tool_result",
                 content: resultContent,
-                metadata: { tool_use_id: toolName },
+                metadata: { tool_use_id: toolUseId },
               });
             }
           }
