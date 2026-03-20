@@ -364,6 +364,7 @@ function jumpToLatest() {
       <div class="turn-track">
         {#each turnsData as turn (turn.id)}
           {@const peekCount = (!expandedTurns.has(turn.id) && turn.status !== "active") ? turn.conversations.length + turn.activities.length : 0}
+          {@const hasPeek = peekCount > 0}
           <div class="turn-row" data-turn-id={turn.id} style:min-height={peekCount > 0 ? `${36 + peekCount * 48}px` : undefined}>
             <div class="turn-time">
               {#if !name}
@@ -384,71 +385,70 @@ function jumpToLatest() {
               }}
               onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (e.currentTarget as HTMLElement).click(); } }}
             >
-              <div class="turn-dot"></div>
-              {#if !expandedTurns.has(turn.id) && turn.status !== "active" && (turn.conversations.length > 0 || turn.activities.length > 0)}
-                <div class="turn-peek-icons">
-                  {#each turn.conversations as conv (conv.id)}
-                    <div class="peek-anchor">
-                      <button class="peek-btn" aria-label="View conversation" onclick={(e) => e.stopPropagation()}>
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                      </button>
-                      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-                      <div class="peek-popover" role="button" tabindex="0"
-                        onclick={(e) => { e.stopPropagation(); openConversation(conv, turn); }}
-                        onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); openConversation(conv, turn); } }}
-                      >
-                        <div class="peek-card peek-card-chat">
-                          <div class="peek-card-header">
-                            <svg class="peek-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                            <span class="peek-card-label">{conv.label}</span>
-                            <span class="peek-card-meta">{conv.messages.length} msg{conv.messages.length === 1 ? '' : 's'}</span>
-                          </div>
-                          <div class="peek-card-body">
-                            {#each conv.messages.slice(-5) as msg (msg.id)}
-                              <div class="peek-msg">
-                                <span class="peek-msg-sender" class:peek-msg-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : turn.mind)}</span>
-                                {#if msg.role === "assistant"}
-                                  <span class="peek-msg-md markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</span>
-                                {:else}
-                                  <span>{extractTextContent(msg.content)}</span>
-                                {/if}
-                              </div>
-                            {/each}
-                          </div>
+              {#if hasPeek}
+                {#each turn.conversations as conv, ci (conv.id)}
+                  <div class="peek-anchor" style:top="{12 + ci * 48}px">
+                    <button class="peek-marker peek-marker-chat" aria-label="View conversation" onclick={(e) => e.stopPropagation()}>
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                    </button>
+                    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                    <div class="peek-popover" role="button" tabindex="0"
+                      onclick={(e) => { e.stopPropagation(); openConversation(conv, turn); }}
+                      onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); openConversation(conv, turn); } }}
+                    >
+                      <div class="peek-card peek-card-chat">
+                        <div class="peek-card-header">
+                          <svg class="peek-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                          <span class="peek-card-label">{conv.label}</span>
+                          <span class="peek-card-meta">{conv.messages.length} msg{conv.messages.length === 1 ? '' : 's'}</span>
                         </div>
-                      </div>
-                    </div>
-                  {/each}
-                  {#each turn.activities as act (act.id)}
-                    {@const actAuthor = typeof act.metadata?.author === 'string' ? act.metadata.author : turn.mind}
-                    {@const actUrl = act.metadata?.slug ? `/minds/${actAuthor}/notes/${act.metadata.slug}` : ''}
-                    <div class="peek-anchor">
-                      <button class="peek-btn peek-btn-activity" aria-label="View activity" onclick={(e) => { e.stopPropagation(); if (actUrl) navigate(actUrl); }}>
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
-                      </button>
-                      <div class="peek-popover">
-                        <div class="peek-card peek-card-activity">
-                          <div class="peek-card-header">
-                            <svg class="peek-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
-                            <span class="peek-card-label">{act.summary}</span>
-                          </div>
-                          {#if typeof act.metadata?.iframeUrl === 'string' && act.metadata.iframeUrl}
-                            <div class="peek-card-body peek-card-iframe">
-                              <iframe
-                                src={act.metadata.iframeUrl}
-                                title={act.summary}
-                                sandbox="allow-same-origin"
-                                role="presentation"
-                              ></iframe>
+                        <div class="peek-card-body">
+                          {#each conv.messages.slice(-5) as msg (msg.id)}
+                            <div class="peek-msg">
+                              <span class="peek-msg-sender" class:peek-msg-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : turn.mind)}</span>
+                              {#if msg.role === "assistant"}
+                                <span class="peek-msg-md markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</span>
+                              {:else}
+                                <span>{extractTextContent(msg.content)}</span>
+                              {/if}
                             </div>
-                          {:else if typeof act.metadata?.bodyHtml === 'string' && act.metadata.bodyHtml}
-                            <div class="peek-card-body markdown-body">{@html renderMarkdown(act.metadata.bodyHtml)}</div>
-                          {/if}
+                          {/each}
                         </div>
                       </div>
                     </div>
-                  {/each}
-                </div>
+                  </div>
+                {/each}
+                {#each turn.activities as act, ai (act.id)}
+                  {@const actAuthor = typeof act.metadata?.author === 'string' ? act.metadata.author : turn.mind}
+                  {@const actUrl = act.metadata?.slug ? `/minds/${actAuthor}/notes/${act.metadata.slug}` : ''}
+                  <div class="peek-anchor" style:top="{12 + (turn.conversations.length + ai) * 48}px">
+                    <button class="peek-marker peek-marker-activity" aria-label="View activity" onclick={(e) => { e.stopPropagation(); if (actUrl) navigate(actUrl); }}>
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                    </button>
+                    <div class="peek-popover">
+                      <div class="peek-card peek-card-activity">
+                        <div class="peek-card-header">
+                          <svg class="peek-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                          <span class="peek-card-label">{act.summary}</span>
+                        </div>
+                        {#if typeof act.metadata?.iframeUrl === 'string' && act.metadata.iframeUrl}
+                          <div class="peek-card-body peek-card-iframe">
+                            <iframe
+                              src={act.metadata.iframeUrl}
+                              title={act.summary}
+                              sandbox="allow-same-origin"
+                              role="presentation"
+                            ></iframe>
+                          </div>
+                        {:else if typeof act.metadata?.bodyHtml === 'string' && act.metadata.bodyHtml}
+                          <div class="peek-card-body markdown-body">{@html renderMarkdown(act.metadata.bodyHtml)}</div>
+                        {/if}
+                      </div>
+                    </div>
+                  </div>
+                {/each}
+              {:else}
+                <div class="turn-dot"></div>
               {/if}
             </div>
             <div class="turn-body">
@@ -759,24 +759,15 @@ function jumpToLatest() {
     }
   }
 
-  /* Peek icon buttons on the timeline rail */
-  .turn-peek-icons {
+  /* Peek icon markers on the timeline rail */
+  .peek-anchor {
     position: absolute;
-    top: 40px; /* below the dot (dot is at top:12px, generous gap) */
     left: 50%;
     transform: translateX(-50%);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 30px;
     z-index: 4;
   }
 
-  .peek-anchor {
-    position: relative;
-  }
-
-  .peek-btn {
+  .peek-marker {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -784,24 +775,27 @@ function jumpToLatest() {
     height: 18px;
     background: var(--bg-1);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
-    color: var(--blue);
+    border-radius: 50%;
     cursor: pointer;
     padding: 0;
-    transition: background 0.1s, border-color 0.1s;
+    transition: background 0.1s, border-color 0.1s, color 0.1s;
   }
 
-  .peek-btn svg {
+  .peek-marker svg {
     width: 10px;
     height: 10px;
   }
 
-  .peek-btn:hover {
+  .peek-marker:hover {
     background: var(--bg-2);
     border-color: var(--border-bright);
   }
 
-  .peek-btn-activity {
+  .peek-marker-chat {
+    color: var(--blue);
+  }
+
+  .peek-marker-activity {
     color: var(--yellow);
   }
 
