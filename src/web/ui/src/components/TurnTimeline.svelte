@@ -9,6 +9,7 @@ import { SvelteMap } from "svelte/reactivity";
 import { fetchHistory, fetchTurnEvents, fetchTurns } from "../lib/client";
 import { extractTextContent } from "../lib/feed-utils";
 import { formatRelativeTime } from "../lib/format";
+import { renderMarkdown } from "../lib/markdown";
 import { navigate } from "../lib/navigate";
 import HistoryEvent from "./HistoryEvent.svelte";
 import ReadOnlyChatModal from "./ReadOnlyChatModal.svelte";
@@ -390,11 +391,12 @@ function jumpToLatest() {
                       <button class="peek-btn" aria-label="View conversation" onclick={(e) => e.stopPropagation()}>
                         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
                       </button>
-                      <div class="peek-popover">
-                        <div class="peek-card" role="button" tabindex="0"
-                          onclick={(e) => { e.stopPropagation(); openConversation(conv, turn); }}
-                          onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); openConversation(conv, turn); } }}
-                        >
+                      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                      <div class="peek-popover" role="button" tabindex="0"
+                        onclick={(e) => { e.stopPropagation(); openConversation(conv, turn); }}
+                        onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); openConversation(conv, turn); } }}
+                      >
+                        <div class="peek-card peek-card-chat">
                           <div class="peek-card-header">
                             <svg class="peek-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
                             <span class="peek-card-label">{conv.label}</span>
@@ -404,7 +406,11 @@ function jumpToLatest() {
                             {#each conv.messages.slice(-5) as msg (msg.id)}
                               <div class="peek-msg">
                                 <span class="peek-msg-sender" class:peek-msg-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : turn.mind)}</span>
-                                <span>{extractTextContent(msg.content)}</span>
+                                {#if msg.role === "assistant"}
+                                  <span class="peek-msg-md markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</span>
+                                {:else}
+                                  <span>{extractTextContent(msg.content)}</span>
+                                {/if}
                               </div>
                             {/each}
                           </div>
@@ -420,13 +426,22 @@ function jumpToLatest() {
                         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
                       </button>
                       <div class="peek-popover">
-                        <div class="peek-card">
+                        <div class="peek-card peek-card-activity">
                           <div class="peek-card-header">
                             <svg class="peek-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
                             <span class="peek-card-label">{act.summary}</span>
                           </div>
-                          {#if typeof act.metadata?.bodyHtml === 'string' && act.metadata.bodyHtml}
-                            <div class="peek-card-body peek-card-html">{@html act.metadata.bodyHtml}</div>
+                          {#if typeof act.metadata?.iframeUrl === 'string' && act.metadata.iframeUrl}
+                            <div class="peek-card-body peek-card-iframe">
+                              <iframe
+                                src={act.metadata.iframeUrl}
+                                title={act.summary}
+                                sandbox="allow-same-origin"
+                                role="presentation"
+                              ></iframe>
+                            </div>
+                          {:else if typeof act.metadata?.bodyHtml === 'string' && act.metadata.bodyHtml}
+                            <div class="peek-card-body markdown-body">{@html renderMarkdown(act.metadata.bodyHtml)}</div>
                           {/if}
                         </div>
                       </div>
@@ -795,8 +810,12 @@ function jumpToLatest() {
     top: -4px;
     left: calc(100% + 8px);
     z-index: 20;
-    min-width: 260px;
-    max-width: 380px;
+    min-width: 280px;
+    max-width: 400px;
+    cursor: pointer;
+    /* Invisible bridge from button to popover so hover persists */
+    padding-left: 12px;
+    margin-left: -12px;
   }
 
   .peek-anchor:hover .peek-popover {
@@ -805,10 +824,10 @@ function jumpToLatest() {
 
   .peek-card {
     background: var(--bg-0);
-    border: 1px solid color-mix(in srgb, var(--blue) 25%, var(--border));
+    border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     overflow: hidden;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
     cursor: pointer;
     transition: border-color 0.15s;
     color: var(--text-0);
@@ -816,25 +835,46 @@ function jumpToLatest() {
     font: inherit;
   }
 
-  .peek-card:hover {
+  .peek-card-chat {
+    border-color: color-mix(in srgb, var(--blue) 25%, var(--border));
+  }
+  .peek-card-chat:hover {
     border-color: color-mix(in srgb, var(--blue) 50%, var(--border));
+  }
+  .peek-card-chat .peek-card-header {
+    border-bottom-color: color-mix(in srgb, var(--blue) 25%, var(--border));
+  }
+  .peek-card-chat .peek-card-icon {
+    color: var(--blue);
+  }
+
+  .peek-card-activity {
+    border-color: color-mix(in srgb, var(--yellow) 25%, var(--border));
+  }
+  .peek-card-activity:hover {
+    border-color: color-mix(in srgb, var(--yellow) 50%, var(--border));
+  }
+  .peek-card-activity .peek-card-header {
+    border-bottom-color: color-mix(in srgb, var(--yellow) 25%, var(--border));
+  }
+  .peek-card-activity .peek-card-icon {
+    color: var(--yellow);
   }
 
   .peek-card-header {
-    padding: 5px 8px;
+    padding: 5px 10px;
     font-size: 13px;
     font-weight: 500;
     color: var(--text-1);
-    border-bottom: 1px solid color-mix(in srgb, var(--blue) 25%, var(--border));
+    border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
     gap: 6px;
   }
 
   .peek-card-icon {
-    width: 12px;
-    height: 12px;
-    color: var(--blue);
+    width: 13px;
+    height: 13px;
     flex-shrink: 0;
   }
 
@@ -854,31 +894,41 @@ function jumpToLatest() {
   }
 
   .peek-card-body {
-    padding: 6px 10px;
-    max-height: 200px;
+    padding: 8px 10px;
+    max-height: 300px;
     overflow-y: auto;
     color: var(--text-0);
   }
 
-  .peek-card-html :global(*) {
-    color: var(--text-0);
-  }
-
   .peek-msg {
-    padding: 1px 0;
+    padding: 2px 0;
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-0);
+    line-height: 1.5;
   }
 
   .peek-msg-sender {
     font-weight: 600;
     color: var(--accent);
     margin-right: 6px;
+    font-size: 12px;
   }
 
   .peek-msg-sender-user {
     color: var(--blue);
+  }
+
+  .peek-msg-md :global(p) {
+    margin: 0;
+    display: inline;
+  }
+
+  .peek-card-iframe iframe {
+    width: 100%;
+    height: 200px;
+    border: none;
+    pointer-events: none;
   }
 
   /* Controls */
