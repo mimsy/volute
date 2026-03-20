@@ -746,7 +746,7 @@ function jumpToLatest() {
   /* Peek icon buttons on the timeline rail */
   .turn-peek-icons {
     position: absolute;
-    top: 24px; /* below the dot (dot is at top:12px, 6px radius + 6px gap) */
+    top: 40px; /* below the dot (dot is at top:12px, generous gap) */
     left: 50%;
     transform: translateX(-50%);
     display: flex;
