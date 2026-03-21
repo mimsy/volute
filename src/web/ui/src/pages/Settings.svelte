@@ -2,7 +2,13 @@
 import { onMount } from "svelte";
 import AiProviders from "../components/AiProviders.svelte";
 import ImagegenProviders from "../components/ImagegenProviders.svelte";
-import { systemLogin, systemLogout, systemRegister } from "../lib/client";
+import {
+  fetchAiDefaults,
+  saveAiDefaults,
+  systemLogin,
+  systemLogout,
+  systemRegister,
+} from "../lib/client";
 import { auth } from "../lib/stores.svelte";
 
 // System registration state
@@ -11,10 +17,31 @@ let systemAction = $state<"none" | "register" | "login">("none");
 let systemInput = $state("");
 let systemSaving = $state(false);
 
+// AI defaults
+let spiritModel = $state("");
+let utilityModel = $state("");
+let defaultsLoaded = $state(false);
+
 let aiProvidersRef: AiProviders;
 
-onMount(() => {
+onMount(async () => {
   aiProvidersRef.load();
+  try {
+    const defaults = await fetchAiDefaults();
+    spiritModel = defaults.spiritModel ?? "";
+    utilityModel = defaults.utilityModel ?? "";
+  } catch {
+    // will show via AiProviders load error
+  }
+  defaultsLoaded = true;
+});
+
+// Auto-save when defaults change (after initial load)
+$effect(() => {
+  const s = spiritModel;
+  const u = utilityModel;
+  if (!defaultsLoaded) return;
+  saveAiDefaults({ spiritModel: s || null, utilityModel: u || null }).catch(() => {});
 });
 
 async function handleSystemAction() {
@@ -114,7 +141,12 @@ async function handleSystemLogout() {
       <span class="section-subtitle">Authentication for minds and system AI features</span>
     </div>
 
-    <AiProviders bind:this={aiProvidersRef} />
+    <AiProviders
+      bind:this={aiProvidersRef}
+      showModelDefaults
+      bind:spiritModel
+      bind:utilityModel
+    />
   </div>
 
   <!-- Image Generation -->

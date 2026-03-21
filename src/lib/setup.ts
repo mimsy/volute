@@ -35,6 +35,7 @@ export type ImagegenConfig = {
   enabled?: boolean;
   providers?: Record<string, ServiceProviderConfig>;
   models?: string[];
+  defaultModel?: string;
 };
 
 export type GlobalConfig = {
