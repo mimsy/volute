@@ -76,7 +76,7 @@ export type ExtensionFeedItem = {
 
 export type CommandHandler = (
   args: string[],
-  ctx: ExtensionContext & { mindName?: string; session?: string },
+  ctx: ExtensionContext & { mindName?: string; session?: string; stdin?: string },
 ) => Promise<{ output: string } | { error: string }>;
 
 export type ExtensionCommand = {
@@ -90,8 +90,10 @@ export type ExtensionManifest = {
   name: string;
   version: string;
   description?: string;
-  /** SVG icon for this extension (used in system tabs, mind tabs, etc.) */
+  /** SVG icon for this extension (used in system tabs, mind tabs, activity cards, etc.) */
   icon?: string;
+  /** CSS color variable name (e.g. "purple", "yellow") used for activity cards and timeline markers */
+  color?: string;
   routes: (ctx: ExtensionContext) => Hono;
   publicRoutes?: (ctx: ExtensionContext) => Hono;
   ui?: {

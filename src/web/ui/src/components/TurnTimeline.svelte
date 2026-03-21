@@ -11,10 +11,14 @@ import { extractTextContent } from "../lib/feed-utils";
 import { formatRelativeTime } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
 import { navigate } from "../lib/navigate";
+import { activeMinds } from "../lib/stores.svelte";
+import { groupToolEvents } from "../lib/tool-groups";
 import HistoryEvent from "./HistoryEvent.svelte";
+import Icon from "./Icon.svelte";
 import ReadOnlyChatModal from "./ReadOnlyChatModal.svelte";
+import ToolGroupComponent from "./ToolGroup.svelte";
 
-let { name }: { name?: string } = $props();
+let { name, mindStatus }: { name?: string; mindStatus?: string } = $props();
 
 // --- Turns data ---
 const PAGE_SIZE = 100;
@@ -374,7 +378,7 @@ function jumpToLatest() {
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
               class="turn-rail"
-              class:turn-rail-expanded={expandedTurns.has(turn.id)}
+              class:turn-rail-expanded={expandedTurns.has(turn.id) || turn.status === "active"}
               onclick={(e) => {
                 if (!turn.summary) return;
                 e.stopPropagation();
@@ -390,7 +394,7 @@ function jumpToLatest() {
                   {#each turn.conversations as conv (conv.id)}
                     <div class="peek-anchor">
                       <button class="peek-btn" aria-label="View conversation" onclick={(e) => e.stopPropagation()}>
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                        <Icon kind="chat" />
                       </button>
                       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
                       <div class="peek-popover" role="button" tabindex="0"
@@ -399,7 +403,7 @@ function jumpToLatest() {
                       >
                         <div class="peek-card peek-card-chat">
                           <div class="peek-card-header">
-                            <svg class="peek-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
+                            <Icon kind="chat" class="peek-card-icon" />
                             <span class="peek-card-label">{conv.label}</span>
                             <span class="peek-card-meta">{conv.messages.length} msg{conv.messages.length === 1 ? '' : 's'}</span>
                           </div>
@@ -420,16 +424,25 @@ function jumpToLatest() {
                     </div>
                   {/each}
                   {#each turn.activities as act (act.id)}
-                    {@const actAuthor = typeof act.metadata?.author === 'string' ? act.metadata.author : turn.mind}
-                    {@const actUrl = act.metadata?.slug ? `/minds/${actAuthor}/notes/${act.metadata.slug}` : ''}
+                    {@const actColor = typeof act.metadata?.color === 'string' ? act.metadata.color : 'yellow'}
+                    {@const actIcon = typeof act.metadata?.icon === 'string' ? act.metadata.icon : ''}
+                    {@const actUrl = typeof act.metadata?.iframeUrl === 'string' ? act.metadata.iframeUrl : typeof act.metadata?.slug === 'string' ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : turn.mind}/notes/${act.metadata.slug}` : ''}
                     <div class="peek-anchor">
-                      <button class="peek-btn peek-btn-activity" aria-label="View activity" onclick={(e) => { e.stopPropagation(); if (actUrl) navigate(actUrl); }}>
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                      <button class="peek-btn" style:color="var(--{actColor})" aria-label="View activity" onclick={(e) => { e.stopPropagation(); if (actUrl) navigate(actUrl); }}>
+                        {#if actIcon}
+                          {@html actIcon}
+                        {:else}
+                          <Icon kind="document-lines" />
+                        {/if}
                       </button>
                       <div class="peek-popover">
-                        <div class="peek-card peek-card-activity">
-                          <div class="peek-card-header">
-                            <svg class="peek-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>
+                        <div class="peek-card" style:border-color="color-mix(in srgb, var(--{actColor}) 25%, var(--border))">
+                          <div class="peek-card-header" style:border-bottom-color="color-mix(in srgb, var(--{actColor}) 25%, var(--border))">
+                            {#if actIcon}
+                              <span class="peek-card-icon" style:color="var(--{actColor})">{@html actIcon}</span>
+                            {:else}
+                              <Icon kind="document-lines" class="peek-card-icon" />
+                            {/if}
                             <span class="peek-card-label">{act.summary}</span>
                           </div>
                           {#if typeof act.metadata?.iframeUrl === 'string' && act.metadata.iframeUrl}
@@ -500,13 +513,28 @@ function jumpToLatest() {
                   />
                 {:else}
                   {@const events = streamingEvents.get(turn.id) ?? []}
-                  {#if events.length === 0}
-                    <div class="turn-pending">processing...</div>
-                  {:else}
-                    {#each events as ev (ev.id)}
-                      <HistoryEvent event={ev} mindName={turn.mind} compact />
-                    {/each}
-                  {/if}
+                  {@const startTime = new Date(turn.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  <div class="active-turn-wrapper">
+                    <div class="active-turn-connector"></div>
+                    <div class="active-turn-branch">
+                      <div class="active-turn-header">
+                        <span class="active-turn-time">{startTime} – now</span>
+                      </div>
+                      {#if events.length > 0}
+                        {@const groups = groupToolEvents(events)}
+                        {#each groups as item (item.kind === "tool-group" ? `tg-${item.toolUse.id}` : `ev-${item.event.id}`)}
+                          {#if item.kind === "tool-group"}
+                            <ToolGroupComponent group={item} mindName={turn.mind} turnStatus="active" />
+                          {:else}
+                            <HistoryEvent event={item.event} mindName={turn.mind} />
+                          {/if}
+                        {/each}
+                      {/if}
+                      <div class="active-indicator">
+                        <div class="active-dot"></div>
+                      </div>
+                    </div>
+                  </div>
                 {/if}
               </div>
             </div>
@@ -517,15 +545,39 @@ function jumpToLatest() {
             <div class="turn-time">
               just now
             </div>
-            <div class="turn-rail">
+            <div class="turn-rail turn-rail-expanded">
               <div class="turn-dot"></div>
             </div>
             <div class="turn-body">
               <div class="turn-summary">
-                {#each pendingInbounds as ev (ev.id)}
-                  <HistoryEvent event={ev} mindName={ev.mind || name || ""} compact />
-                {/each}
+                <div class="active-turn-wrapper">
+                  <div class="active-turn-connector"></div>
+                  <div class="active-turn-branch">
+                    <div class="active-turn-header">
+                      <span class="active-turn-time">{new Date(pendingInbounds[0].created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} – now</span>
+                    </div>
+                    {#each pendingInbounds as ev (ev.id)}
+                      <HistoryEvent event={ev} mindName={ev.mind || name || ""} />
+                    {/each}
+                    <div class="active-indicator">
+                      <div class="active-dot"></div>
+                    </div>
+                  </div>
+                </div>
               </div>
+            </div>
+          </div>
+        {/if}
+        {#if name}
+          {@const statusLabel = activeMinds.has(name) ? "active" : mindStatus === "sleeping" ? "asleep" : mindStatus === "running" ? "awake" : "offline"}
+          {@const statusColor = activeMinds.has(name) ? undefined : mindStatus === "sleeping" ? "var(--purple)" : mindStatus === "running" ? "var(--text-0)" : "var(--text-2)"}
+          <div class="turn-row turn-row-status">
+            <div class="turn-time"></div>
+            <div class="turn-rail turn-rail-terminus">
+              <div class="mind-status-dot" class:iridescent={activeMinds.has(name)} style:background={statusColor}></div>
+            </div>
+            <div class="turn-body">
+              <span class="mind-status-text" style:color={activeMinds.has(name) ? 'var(--accent)' : statusColor}>{name} is {statusLabel}</span>
             </div>
           </div>
         {/if}
@@ -710,11 +762,11 @@ function jumpToLatest() {
   .turn-dot {
     position: absolute;
     top: 12px;
-    right: -2px;
-    width: 6px;
-    height: 6px;
+    right: -3px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
-    background: var(--text-2);
+    background: var(--text-0);
     z-index: 3;
   }
 
@@ -791,7 +843,7 @@ function jumpToLatest() {
     transition: background 0.1s, border-color 0.1s;
   }
 
-  .peek-btn svg {
+  .peek-btn :global(svg) {
     width: 10px;
     height: 10px;
   }
@@ -799,10 +851,6 @@ function jumpToLatest() {
   .peek-btn:hover {
     background: var(--bg-2);
     border-color: var(--border-bright);
-  }
-
-  .peek-btn-activity {
-    color: var(--yellow);
   }
 
   .peek-popover {
@@ -845,21 +893,8 @@ function jumpToLatest() {
   .peek-card-chat .peek-card-header {
     border-bottom-color: color-mix(in srgb, var(--blue) 25%, var(--border));
   }
-  .peek-card-chat .peek-card-icon {
+  .peek-card-chat :global(.peek-card-icon) {
     color: var(--blue);
-  }
-
-  .peek-card-activity {
-    border-color: color-mix(in srgb, var(--yellow) 25%, var(--border));
-  }
-  .peek-card-activity:hover {
-    border-color: color-mix(in srgb, var(--yellow) 50%, var(--border));
-  }
-  .peek-card-activity .peek-card-header {
-    border-bottom-color: color-mix(in srgb, var(--yellow) 25%, var(--border));
-  }
-  .peek-card-activity .peek-card-icon {
-    color: var(--yellow);
   }
 
   .peek-card-header {
@@ -873,7 +908,7 @@ function jumpToLatest() {
     gap: 6px;
   }
 
-  .peek-card-icon {
+  :global(.peek-card-icon) {
     width: 13px;
     height: 13px;
     flex-shrink: 0;
@@ -968,14 +1003,116 @@ function jumpToLatest() {
     z-index: 10;
   }
 
-  .turn-pending {
-    font-size: 12px;
-    color: var(--text-2);
-    padding: 8px 0;
-    animation: pulse 1.5s infinite;
+
+
+  /* Active turn: branching inner rail matching expanded turns.
+     Connector at left:22px matches HistoryEvent's .turn-connector position.
+     Horizontal line at top:16px aligns with the turn-dot center (8px dot at top:12px). */
+  .active-turn-wrapper {
+    position: relative;
+  }
+  .active-turn-connector {
+    position: absolute;
+    top: 16px;
+    left: 22px;
+    width: 2px;
+    bottom: 0;
+    background: var(--border);
+  }
+  /* Horizontal connector from main rail to inner rail */
+  .active-turn-connector::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -35px;
+    width: 35px;
+    height: 2px;
+    background: var(--border);
+  }
+  /* Branch container: padding-left positions events so their markers land on the rail.
+     Rail center = 22 + 1 = 23px from wrapper.
+     Marker icons are 22px wide at left:-12px, center at (padLeft - 12 + 11).
+     Solve: padLeft - 1 = 23 → padLeft = 24. */
+  .active-turn-branch {
+    position: relative;
+    padding-left: 24px;
+    padding-top: 8px;
+    padding-bottom: 0;
   }
 
+  .active-turn-header {
+    margin-bottom: 4px;
+    margin-left: 14px;
+  }
+  .active-turn-time {
+    font-size: 11px;
+    color: var(--text-2);
+  }
 
+  .active-indicator {
+    position: relative;
+    height: 16px;
+  }
+
+  .active-dot {
+    position: absolute;
+    left: -5px;
+    bottom: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    z-index: 3;
+    animation: iridescent 3s ease-in-out infinite;
+  }
+
+  .turn-rail-terminus {
+    min-height: 8px;
+  }
+  .turn-rail-terminus::before {
+    display: none;
+  }
+
+  .mind-status-dot {
+    position: absolute;
+    top: 0;
+    right: -3px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    z-index: 3;
+  }
+
+  .mind-status-dot.iridescent {
+    animation: iridescent 3s ease-in-out infinite;
+  }
+
+  .turn-row-status {
+    min-height: 0 !important;
+  }
+  .turn-row:has(+ .turn-row-status) {
+    min-height: 108px !important;
+  }
+  .turn-row:has(+ .turn-row-status) > .turn-rail::before {
+    bottom: 0;
+  }
+
+  .mind-status-text {
+    font-size: 15px;
+    font-family: Georgia, "Times New Roman", serif;
+    font-style: italic;
+    line-height: 8px;
+    padding-left: 20px;
+  }
+
+  @keyframes iridescent {
+    0%   { background: #4ade80; }
+    16%  { background: #60a5fa; }
+    33%  { background: #c084fc; }
+    50%  { background: #f472b6; }
+    66%  { background: #fbbf24; }
+    83%  { background: #34d399; }
+    100% { background: #4ade80; }
+  }
 
   .empty-hint {
     color: var(--text-2);

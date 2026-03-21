@@ -117,10 +117,20 @@ async function buildContext(
     getUser: async (id: number) => getUser(id),
     getUserByUsername: async (username: string) => getUserByUsername(username),
     publishActivity: (event) => {
+      // Inject extension icon/color into metadata so the UI can render
+      // activity cards with the correct branding without hardcoding extension IDs.
+      const enriched = {
+        ...event,
+        metadata: {
+          ...event.metadata,
+          ...(manifest.icon && !event.metadata?.icon ? { icon: manifest.icon } : {}),
+          ...(manifest.color && !event.metadata?.color ? { color: manifest.color } : {}),
+        },
+      };
       // Insert without turn linkage — when called from skill command handlers, the
       // activity is linked to the correct turn via correlation markers in tool_result.
       // When called from route handlers or lifecycle hooks, the record stays unlinked.
-      publish(event as Parameters<typeof publish>[0]).catch((err) =>
+      publish(enriched as Parameters<typeof publish>[0]).catch((err) =>
         log.error(`extension ${manifest.id}: failed to publish activity`, log.errorData(err)),
       );
     },
@@ -172,7 +182,7 @@ async function loadExtension(
   if (manifest.commands) {
     for (const [cmdName, cmd] of Object.entries(manifest.commands)) {
       app.post(`${extApiPath}/commands/${cmdName}`, async (c: Context<AuthEnv>) => {
-        let body: { args?: string[]; mind?: string };
+        let body: { args?: string[]; mind?: string; stdin?: string };
         try {
           body = await c.req.json();
         } catch {
@@ -188,7 +198,15 @@ async function loadExtension(
           const activityPromises: Promise<number>[] = [];
           const result = await cmd.handler(body.args ?? [], {
             ...context,
-            publishActivity: (event) => {
+            publishActivity: (rawEvent) => {
+              const event = {
+                ...rawEvent,
+                metadata: {
+                  ...rawEvent.metadata,
+                  ...(manifest.icon && !rawEvent.metadata?.icon ? { icon: manifest.icon } : {}),
+                  ...(manifest.color && !rawEvent.metadata?.color ? { color: manifest.color } : {}),
+                },
+              };
               activityPromises.push(
                 publish(event as Parameters<typeof publish>[0]).catch((err) => {
                   log.error(
@@ -201,6 +219,7 @@ async function loadExtension(
             },
             mindName,
             session,
+            stdin: body.stdin,
           });
           // Wait for all activity publishes and collect their IDs
           const activityIds = (await Promise.all(activityPromises)).filter((id) => id > 0);
