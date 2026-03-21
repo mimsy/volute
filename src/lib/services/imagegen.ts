@@ -186,13 +186,14 @@ export type ConfiguredProvider = {
 };
 
 export function getConfiguredProviders(): ConfiguredProvider[] {
-  const ig = getImagegenConfig();
+  const config = readGlobalConfig();
+  const ig = config.imagegen ?? null;
+  const aiProviders = config.ai?.providers;
   return Object.entries(PROVIDERS).map(([id, { envVar }]) => {
     const providerConfig = ig?.providers?.[id];
     if (providerConfig?.apiKey) return { id, configured: true, authMethod: "api_key" as const };
     // Check AI provider config fallback
-    const aiKey = readGlobalConfig().ai?.providers?.[id]?.apiKey;
-    if (aiKey) return { id, configured: true, authMethod: "api_key" as const };
+    if (aiProviders?.[id]?.apiKey) return { id, configured: true, authMethod: "api_key" as const };
     if (process.env[envVar]) return { id, configured: true, authMethod: "env_var" as const };
     return { id, configured: false, authMethod: null };
   });
@@ -201,12 +202,12 @@ export function getConfiguredProviders(): ConfiguredProvider[] {
 export function resolveApiKey(providerId: string): string | undefined {
   const provider = PROVIDERS[providerId];
   if (!provider) return undefined;
+  const config = readGlobalConfig();
   // 1. Imagegen-specific config key
-  const ig = getImagegenConfig();
-  const configKey = ig?.providers?.[providerId]?.apiKey;
+  const configKey = config.imagegen?.providers?.[providerId]?.apiKey;
   if (configKey) return configKey;
   // 2. AI provider config key (e.g., OpenRouter configured for chat)
-  const aiKey = readGlobalConfig().ai?.providers?.[providerId]?.apiKey;
+  const aiKey = config.ai?.providers?.[providerId]?.apiKey;
   if (aiKey) return aiKey;
   // 3. Env var fallback
   return process.env[provider.envVar] || undefined;
@@ -243,22 +244,17 @@ export async function searchModels(
     return providerDef.search(query || "text to image", apiKey);
   }
 
-  // Search all configured providers
-  const results: ModelSearchResult[] = [];
+  // Search all configured providers in parallel
+  const searches: Promise<ModelSearchResult[]>[] = [];
   for (const [id, def] of Object.entries(PROVIDERS)) {
     const apiKey = resolveApiKey(id);
     if (!apiKey) continue;
-    try {
-      const providerResults = await def.search(query || "text to image", apiKey);
-      results.push(...providerResults);
-    } catch {
-      // Skip providers that fail
-    }
+    searches.push(def.search(query || "text to image", apiKey).catch(() => []));
   }
-  if (results.length === 0) {
+  if (searches.length === 0) {
     throw new Error("No imagegen providers configured");
   }
-  return results;
+  return (await Promise.all(searches)).flat();
 }
 
 // --- Generation ---
