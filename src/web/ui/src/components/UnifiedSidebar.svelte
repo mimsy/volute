@@ -89,10 +89,18 @@ let sortedMinds = $derived(
 );
 
 let openMenu = $state<string | null>(null);
+let menuPos = $state({ top: 0, left: 0 });
 
 function handleDotsClick(e: MouseEvent, mindName: string) {
   e.stopPropagation();
-  openMenu = openMenu === mindName ? null : mindName;
+  if (openMenu === mindName) {
+    openMenu = null;
+  } else {
+    const btn = e.currentTarget as HTMLElement;
+    const rect = btn.getBoundingClientRect();
+    menuPos = { top: rect.bottom + 2, left: rect.left };
+    openMenu = mindName;
+  }
 }
 
 function handleMenuAction(name: string, section: string) {
@@ -197,22 +205,6 @@ let isSystemActive = $derived(
                 >
                   <svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/></svg>
                 </button>
-                {#if openMenu === mind.name}
-                  <div class="mind-menu">
-                    <button class="mind-menu-item" onclick={() => handleMenuAction(mind.name, "history")}>
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></svg>
-                      History
-                    </button>
-                    <button class="mind-menu-item" onclick={() => handleMenuAction(mind.name, "files")}>
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h5l2-2h5v11H2V4z"/></svg>
-                      Files
-                    </button>
-                    <button class="mind-menu-item" onclick={() => handleMenuAction(mind.name, "settings")}>
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M8 2v2M8 12v2M2 8h2M12 8h2M3.76 3.76l1.41 1.41M10.83 10.83l1.41 1.41M3.76 12.24l1.41-1.41M10.83 5.17l1.41-1.41"/></svg>
-                      Settings
-                    </button>
-                  </div>
-                {/if}
               </div>
             </div>
           {/each}
@@ -246,6 +238,29 @@ let isSystemActive = $derived(
     </div>
   </div>
 </div>
+
+{#if openMenu}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="mind-menu"
+    style:top="{menuPos.top}px"
+    style:left="{menuPos.left}px"
+    onclick={(e) => e.stopPropagation()}
+  >
+    <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "history")}>
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></svg>
+      History
+    </button>
+    <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "files")}>
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h5l2-2h5v11H2V4z"/></svg>
+      Files
+    </button>
+    <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "settings")}>
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M8 2v2M8 12v2M2 8h2M12 8h2M3.76 3.76l1.41 1.41M10.83 10.83l1.41 1.41M3.76 12.24l1.41-1.41M10.83 5.17l1.41-1.41"/></svg>
+      Settings
+    </button>
+  </div>
+{/if}
 
 <style>
   .sidebar-inner {
@@ -434,10 +449,8 @@ let isSystemActive = $derived(
   }
 
   .mind-menu {
-    position: absolute;
-    left: 0;
-    top: 100%;
-    z-index: 100;
+    position: fixed;
+    z-index: 300;
     background: var(--bg-1);
     border: 1px solid var(--border);
     border-radius: 6px;
