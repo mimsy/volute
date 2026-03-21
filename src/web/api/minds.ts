@@ -2091,8 +2091,8 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    // Read config.json for compaction settings
-    let templateConfig: { compaction?: { maxContextTokens?: number } } = {};
+    // Read config.json for template-level settings (model fallback, compaction)
+    let templateConfig: { model?: string; compaction?: { maxContextTokens?: number } } = {};
     const configJsonPath = resolve(dir, "home/.config/config.json");
     if (existsSync(configJsonPath)) {
       try {
@@ -2111,7 +2111,7 @@ const app = new Hono<AuthEnv>()
         template: entry.template,
       },
       config: {
-        model: config?.model ?? null,
+        model: config?.model ?? templateConfig.model ?? null,
         thinkingLevel: config?.thinkingLevel ?? null,
         maxThinkingTokens: config?.maxThinkingTokens ?? null,
         tokenBudget: config?.tokenBudget ?? null,

@@ -21,7 +21,7 @@ const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
 // Map template → compatible providers
 const TEMPLATE_PROVIDERS: Record<string, string[]> = {
   claude: ["anthropic"],
-  codex: ["openai"],
+  codex: ["openai-codex"],
   pi: [], // pi supports all providers — empty means no filter
 };
 
@@ -32,7 +32,21 @@ let enabledModels = $derived(
     .filter((m) => m.enabled)
     .filter((m) => compatibleProviders.length === 0 || compatibleProviders.includes(m.provider)),
 );
-let isOtherModel = $derived(editModel !== "" && !enabledModels.some((m) => m.id === editModel));
+
+/** Find the matching model ID from the enabled list, handling partial matches */
+function resolveModelId(raw: string): string {
+  if (!raw) return "";
+  // Exact match
+  if (enabledModels.some((m) => m.id === raw)) return raw;
+  // Model ID might be stored without version suffix — find a match
+  const match = enabledModels.find((m) => m.id.startsWith(raw) || raw.startsWith(m.id));
+  return match?.id ?? raw;
+}
+
+let resolvedModel = $derived(resolveModelId(editModel));
+let isOtherModel = $derived(
+  resolvedModel !== "" && !enabledModels.some((m) => m.id === resolvedModel),
+);
 let showMaxThinking = $derived(editThinking !== "off");
 
 function loadEditFields(c: MindConfig) {
@@ -156,7 +170,7 @@ onMount(async () => {
           }}>back</button
         >
       {:else}
-        <select class="setting-select" value={editModel} onchange={handleModelSelect}>
+        <select class="setting-select" value={resolvedModel} onchange={handleModelSelect}>
           <option value="">--</option>
           {#each enabledModels as model (model.id)}
             <option value={model.id}>{model.name}</option>
