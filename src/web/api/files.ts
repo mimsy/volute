@@ -1,8 +1,12 @@
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { Hono } from "hono";
+import { syncMindProfile } from "../../lib/auth.js";
+import { broadcast } from "../../lib/events/activity-events.js";
 import { findMind, mindDir } from "../../lib/registry.js";
-import { readVoluteConfig } from "../../lib/volute-config.js";
+import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
+import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
 const AVATAR_MIME: Record<string, string> = {
   ".png": "image/png",
@@ -14,7 +18,54 @@ const AVATAR_MIME: Record<string, string> = {
 
 const MAX_AVATAR_SIZE = 2 * 1024 * 1024; // 2MB
 
-const app = new Hono()
+const app = new Hono<AuthEnv>()
+  // Upload avatar image
+  .post("/:name/avatar", requireSelf(), async (c) => {
+    const name = c.req.param("name");
+    const entry = await findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+
+    const body = await c.req.parseBody();
+    const file = body.file;
+    if (!(file instanceof File)) {
+      return c.json({ error: "No file uploaded" }, 400);
+    }
+    if (file.size > MAX_AVATAR_SIZE) {
+      return c.json({ error: "File too large (max 2MB)" }, 400);
+    }
+    const ext = extname(file.name).toLowerCase();
+    if (!AVATAR_MIME[ext]) {
+      return c.json({ error: "Invalid file type (png, jpg, gif, webp only)" }, 400);
+    }
+
+    const dir = mindDir(name);
+    const homeDir = resolve(dir, "home");
+    const filename = `avatar${ext}`;
+    const avatarPath = resolve(homeDir, filename);
+
+    // Delete old avatar if different extension
+    const config = readVoluteConfig(dir) ?? {};
+    const oldAvatar = config.profile?.avatar;
+    if (oldAvatar && oldAvatar !== filename) {
+      rmSync(resolve(homeDir, oldAvatar), { force: true });
+    }
+
+    const buffer = Buffer.from(await file.arrayBuffer());
+    mkdirSync(homeDir, { recursive: true });
+    writeFileSync(avatarPath, buffer);
+
+    // Update volute.json
+    const profile = config.profile ?? {};
+    profile.avatar = filename;
+    config.profile = profile;
+    writeVoluteConfig(dir, config);
+
+    // Sync to users table and broadcast
+    await syncMindProfile(name, profile);
+    broadcast({ type: "profile_updated", mind: name, summary: `${name} avatar updated` });
+
+    return c.json({ ok: true, avatar: filename });
+  })
   // Serve avatar image
   .get("/:name/avatar", async (c) => {
     const name = c.req.param("name");

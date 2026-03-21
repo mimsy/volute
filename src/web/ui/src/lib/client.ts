@@ -572,6 +572,33 @@ export function fetchClockStatus(name: string): Promise<ClockStatus> {
   return get(`${V1}/minds/${enc(name)}/clock/status`);
 }
 
+// --- Profile ---
+
+export async function updateMindProfile(
+  name: string,
+  updates: { displayName?: string; description?: string },
+): Promise<void> {
+  const res = await fetch(`${V1}/minds/${enc(name)}/profile`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || "Failed to update profile");
+  }
+}
+
+export async function uploadMindAvatar(name: string, file: File): Promise<void> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${V1}/minds/${enc(name)}/avatar`, { method: "POST", body: form });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || "Failed to upload avatar");
+  }
+}
+
 // --- Helpers ---
 
 function enc(s: string): string {

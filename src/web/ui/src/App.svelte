@@ -6,9 +6,8 @@ import ChannelMembersPanel from "./components/ChannelMembersPanel.svelte";
 import Icon from "./components/Icon.svelte";
 import LoginPage from "./components/LoginPage.svelte";
 import MainFrame from "./components/MainFrame.svelte";
-import MindInfo from "./components/MindInfo.svelte";
 import MindRightPanel from "./components/MindRightPanel.svelte";
-import MindSkills from "./components/MindSkills.svelte";
+import MindSettings from "./components/MindSettings.svelte";
 import Modal from "./components/Modal.svelte";
 import PublicFiles from "./components/PublicFiles.svelte";
 import SeedModal from "./components/SeedModal.svelte";
@@ -879,12 +878,7 @@ function handleGlobalClick(e: MouseEvent) {
     {@const modalMind = data.minds.find(m => m.name === mindModalName)}
     {#if modalMind}
       <Modal title="Settings — {mindModalName}" onClose={() => { activeModal = null; mindModalName = null; }}>
-        <div class="modal-scroll-body">
-          <MindInfo mind={modalMind} />
-          <div style="margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border);">
-            <MindSkills name={mindModalName} />
-          </div>
-        </div>
+        <MindSettings mind={modalMind} />
       </Modal>
     {/if}
   {/if}
