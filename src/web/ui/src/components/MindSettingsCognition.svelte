@@ -3,7 +3,7 @@ import type { MindConfig } from "@volute/api";
 import { onMount } from "svelte";
 import { type AiModel, fetchAiModels, fetchMindConfig, updateMindConfig } from "../lib/client";
 
-let { name }: { name: string } = $props();
+let { name, template }: { name: string; template?: string } = $props();
 
 let config: MindConfig | null = $state(null);
 let models: AiModel[] = $state([]);
@@ -18,7 +18,20 @@ let saving: string | null = $state(null);
 
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
 
-let enabledModels = $derived(models.filter((m) => m.enabled));
+// Map template → compatible providers
+const TEMPLATE_PROVIDERS: Record<string, string[]> = {
+  claude: ["anthropic"],
+  codex: ["openai"],
+  pi: [], // pi supports all providers — empty means no filter
+};
+
+let compatibleProviders = $derived(template ? (TEMPLATE_PROVIDERS[template] ?? []) : []);
+
+let enabledModels = $derived(
+  models
+    .filter((m) => m.enabled)
+    .filter((m) => compatibleProviders.length === 0 || compatibleProviders.includes(m.provider)),
+);
 let isOtherModel = $derived(editModel !== "" && !enabledModels.some((m) => m.id === editModel));
 let showMaxThinking = $derived(editThinking !== "off");
 
@@ -115,6 +128,15 @@ onMount(async () => {
 </script>
 
 {#if config}
+  {#if template}
+    <div class="setting-row">
+      <span class="setting-label">Template</span>
+      <div class="setting-control">
+        <span class="template-badge">{template}</span>
+      </div>
+    </div>
+  {/if}
+
   <div class="setting-row">
     <span class="setting-label">Model</span>
     <div class="setting-control">
@@ -275,6 +297,14 @@ onMount(async () => {
     cursor: pointer;
     padding: 4px 8px;
     text-decoration: underline;
+  }
+
+  .template-badge {
+    font-size: 13px;
+    color: var(--text-1);
+    background: var(--bg-3);
+    padding: 2px 8px;
+    border-radius: var(--radius);
   }
 
   .error {

@@ -27,6 +27,7 @@ const SECTIONS = [
 let activeSection = $state("profile");
 let scrollContainer: HTMLDivElement;
 let sectionEls: Record<string, HTMLElement> = {};
+let manualClick = false;
 
 onMount(() => {
   setupObserver();
@@ -36,6 +37,7 @@ function setupObserver() {
   if (!scrollContainer) return;
   const observer = new IntersectionObserver(
     (entries) => {
+      if (manualClick) return;
       for (const entry of entries) {
         if (entry.isIntersecting) {
           activeSection = entry.target.id;
@@ -51,7 +53,13 @@ function setupObserver() {
 }
 
 function scrollTo(id: string) {
+  activeSection = id;
+  manualClick = true;
   sectionEls[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  // Re-enable observer after scroll settles
+  setTimeout(() => {
+    manualClick = false;
+  }, 600);
 }
 
 async function handleUpdated() {
@@ -82,7 +90,7 @@ async function handleUpdated() {
         <span class="section-title">Model</span>
         <span class="section-subtitle">Cognition and resource limits</span>
       </div>
-      <MindSettingsCognition {name} />
+      <MindSettingsCognition {name} template={mind.template} />
     </section>
 
     <!-- Rhythms -->
