@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.33.0](https://github.com/mimsy/volute/compare/volute-v0.32.0...volute-v0.33.0) (2026-03-21)
+
+
+### Features
+
+* accept stdin for notes write and comment commands ([#244](https://github.com/mimsy/volute/issues/244)) ([e161e57](https://github.com/mimsy/volute/commit/e161e57fe4c746f0cd86e6ad6d56363eeaf526ba))
+* enhanced sprouting with spirit nurturing, profiles, and seed CLI ([#239](https://github.com/mimsy/volute/issues/239)) ([154811e](https://github.com/mimsy/volute/commit/154811e610ea22074cbfeab75e5fa55abbbb851e))
+* image generation as a daemon-managed service ([#242](https://github.com/mimsy/volute/issues/242)) ([d8f7b3e](https://github.com/mimsy/volute/commit/d8f7b3e01a453ba2e98ffdf5cb0589af0561bf77))
+* multi-provider imagegen with OpenRouter support ([#246](https://github.com/mimsy/volute/issues/246)) ([6416568](https://github.com/mimsy/volute/commit/6416568eb16ca982c65f0f7c80a87b291fe40107))
+* redesign history timeline with typed icons, inline events, and activity persistence ([#245](https://github.com/mimsy/volute/issues/245)) ([44804df](https://github.com/mimsy/volute/commit/44804dff5909a24726552b16bca42ca42ff1c925))
+* system-wide history timeline with conversation cards and turn correlation ([#243](https://github.com/mimsy/volute/issues/243)) ([4f6e8f3](https://github.com/mimsy/volute/commit/4f6e8f32e2dcb0b14d5e16c9f5d73267be046571))
+* unify chat endpoints and record outbound mind_history ([#241](https://github.com/mimsy/volute/issues/241)) ([6ef837a](https://github.com/mimsy/volute/commit/6ef837af369d9a08bbd3855567a59ad1c2777c30))
+
 ## [0.32.0](https://github.com/mimsy/volute/compare/volute-v0.31.0...volute-v0.32.0) (2026-03-19)
 
 
