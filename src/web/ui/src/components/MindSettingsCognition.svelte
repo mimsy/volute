@@ -43,10 +43,17 @@ function resolveModelId(raw: string): string {
   return match?.id ?? raw;
 }
 
-let resolvedModel = $derived(resolveModelId(editModel));
-let isOtherModel = $derived(
-  resolvedModel !== "" && !enabledModels.some((m) => m.id === resolvedModel),
-);
+// Once models load, resolve editModel to match an enabled model's exact ID
+$effect(() => {
+  if (enabledModels.length > 0 && editModel) {
+    const resolved = resolveModelId(editModel);
+    if (resolved !== editModel) {
+      editModel = resolved;
+    }
+  }
+});
+
+let isOtherModel = $derived(editModel !== "" && !enabledModels.some((m) => m.id === editModel));
 let showMaxThinking = $derived(editThinking !== "off");
 
 function loadEditFields(c: MindConfig) {
@@ -170,7 +177,7 @@ onMount(async () => {
           }}>back</button
         >
       {:else}
-        <select class="setting-select" value={resolvedModel} onchange={handleModelSelect}>
+        <select class="setting-select" value={editModel} onchange={handleModelSelect}>
           <option value="">--</option>
           {#each enabledModels as model (model.id)}
             <option value={model.id}>{model.name}</option>
