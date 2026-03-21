@@ -2240,16 +2240,22 @@ const app = new Hono<AuthEnv>()
               templateConfig.maxThinkingTokens = tokens;
             }
           } else if (tmpl === "codex") {
-            // Codex uses reasoningEffort (low/medium/high)
-            const codexMap: Record<string, string> = {
-              off: "low",
-              minimal: "low",
+            // Codex SDK accepts: minimal, low, medium, high, xhigh
+            // "off" removes the setting (codex always reasons, defaults to medium)
+            const codexMap: Record<string, string | null> = {
+              off: null,
+              minimal: "minimal",
               low: "low",
               medium: "medium",
               high: "high",
-              xhigh: "high",
+              xhigh: "xhigh",
             };
-            templateConfig.reasoningEffort = codexMap[body.thinkingLevel] ?? "medium";
+            const effort = codexMap[body.thinkingLevel] ?? null;
+            if (effort === null) {
+              delete templateConfig.reasoningEffort;
+            } else {
+              templateConfig.reasoningEffort = effort;
+            }
           } else {
             // Pi uses thinkingLevel directly
             templateConfig.thinkingLevel = body.thinkingLevel;

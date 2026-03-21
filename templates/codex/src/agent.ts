@@ -144,6 +144,7 @@ export function createMind(options: {
           session.thread = codex.resumeThread(savedThreadId, {
             workingDirectory: options.cwd,
             model: options.model,
+            modelReasoningEffort: options.reasoningEffort as any,
             skipGitRepoCheck: true,
             sandboxMode: "danger-full-access",
           });
@@ -158,6 +159,7 @@ export function createMind(options: {
       session.thread = codex.startThread({
         workingDirectory: options.cwd,
         model: options.model,
+        modelReasoningEffort: options.reasoningEffort as any,
         skipGitRepoCheck: true,
         sandboxMode: "danger-full-access",
       });
