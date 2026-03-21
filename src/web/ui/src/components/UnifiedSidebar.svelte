@@ -248,15 +248,15 @@ let isSystemActive = $derived(
     onclick={(e) => e.stopPropagation()}
   >
     <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "history")}>
-      <svg viewBox="0 0 16 16"><line x1="4" y1="2" x2="4" y2="14" stroke="currentColor" stroke-width="1.5"/><path d="M4 2H12V8" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="4" cy="2" r="2" fill="currentColor"/><circle cx="4" cy="14" r="2" fill="currentColor"/><circle cx="12" cy="8" r="2" fill="currentColor"/></svg>
+      <Icon kind="history" class="menu-icon" />
       History
     </button>
     <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "files")}>
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h5l2-2h5v11H2V4z"/></svg>
+      <Icon kind="folder" class="menu-icon" />
       Files
     </button>
     <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "settings")}>
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.86 2h2.28l.35 1.76a5 5 0 0 1 1.22.7l1.7-.57.94 1.62-1.35 1.2a5 5 0 0 1 0 1.4l1.35 1.2-.94 1.62-1.7-.57a5 5 0 0 1-1.22.7L9.14 14H6.86l-.35-1.76a5 5 0 0 1-1.22-.7l-1.7.57-.94-1.62 1.35-1.2a5 5 0 0 1 0-1.4l-1.35-1.2.94-1.62 1.7.57a5 5 0 0 1 1.22-.7L6.86 2z"/><circle cx="8" cy="8" r="2"/></svg>
+      <Icon kind="gear" class="menu-icon" />
       Settings
     </button>
   </div>
@@ -479,7 +479,7 @@ let isSystemActive = $derived(
     color: var(--text-0);
   }
 
-  .mind-menu-item svg {
+  .mind-menu-item :global(.menu-icon) {
     width: 14px;
     height: 14px;
     flex-shrink: 0;
