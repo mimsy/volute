@@ -101,6 +101,7 @@ export function createMind(options: {
       model_auto_compact_token_limit: maxContextTokens ?? 999999999,
       // Enable reasoning summaries so they appear as events
       model_reasoning_summary: "auto",
+      model_supports_reasoning_summaries: true,
       // The codex sandbox runs commands in /bin/zsh -lc which resets the environment.
       // Set ZDOTDIR so the login shell sources our .zshenv with VOLUTE env vars and PATH.
       shell_environment_policy: {
