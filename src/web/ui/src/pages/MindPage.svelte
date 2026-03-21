@@ -1,10 +1,6 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
 import Chat from "../components/Chat.svelte";
-import MindInfo from "../components/MindInfo.svelte";
-import MindSkills from "../components/MindSkills.svelte";
-import PublicFiles from "../components/PublicFiles.svelte";
-import TurnTimeline from "../components/TurnTimeline.svelte";
 import { data } from "../lib/stores.svelte";
 
 let {
@@ -40,7 +36,16 @@ let mind = $derived(data.minds.find((m) => m.name === name));
   <div class="not-found">Mind "{name}" not found.</div>
 {:else}
   <div class="mind-page">
-    {#if section === "chat" || !section}
+    {#if section?.startsWith("ext:")}
+      {@const extParts = section.split(":")}
+      <div class="section-content">
+        {#if subpath && extParts[1] === "pages"}
+          <iframe src="/ext/{extParts[1]}/public/{name}/{subpath}" class="ext-iframe page-content-iframe" title="Page content"></iframe>
+        {:else}
+          <iframe src="/ext/{extParts[1]}/#/mind/{name}{subpath ? '/' + subpath : ''}" class="ext-iframe" title="Extension"></iframe>
+        {/if}
+      </div>
+    {:else}
       <Chat
         {name}
         {username}
@@ -51,28 +56,6 @@ let mind = $derived(data.minds.find((m) => m.name === name));
         {onOpenMind}
         {onTypingNames}
       />
-    {:else if section === "history"}
-      <TurnTimeline {name} mindStatus={mind.status} />
-    {:else if section?.startsWith("ext:")}
-      {@const extParts = section.split(":")}
-      <div class="section-content">
-        {#if subpath && extParts[1] === "pages"}
-          <iframe src="/ext/{extParts[1]}/public/{name}/{subpath}" class="ext-iframe page-content-iframe" title="Page content"></iframe>
-        {:else}
-          <iframe src="/ext/{extParts[1]}/#/mind/{name}{subpath ? '/' + subpath : ''}" class="ext-iframe" title="Extension"></iframe>
-        {/if}
-      </div>
-    {:else if section === "files"}
-      <div class="section-content files-section">
-        <PublicFiles {name} />
-      </div>
-    {:else if section === "settings"}
-      <div class="section-content">
-        <MindInfo {mind} />
-        <div class="detail-section">
-          <MindSkills {name} />
-        </div>
-      </div>
     {/if}
   </div>
 {/if}
@@ -94,21 +77,10 @@ let mind = $derived(data.minds.find((m) => m.name === name));
     text-align: center;
   }
 
-  /* Other sections */
   .section-content {
     flex: 1;
     min-height: 0;
     overflow: auto;
-  }
-
-  .files-section {
-    min-height: 300px;
-  }
-
-  .detail-section {
-    margin-top: 24px;
-    padding-top: 24px;
-    border-top: 1px solid var(--border);
   }
 
   .ext-iframe {

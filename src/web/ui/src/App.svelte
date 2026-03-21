@@ -6,8 +6,13 @@ import ChannelMembersPanel from "./components/ChannelMembersPanel.svelte";
 import Icon from "./components/Icon.svelte";
 import LoginPage from "./components/LoginPage.svelte";
 import MainFrame from "./components/MainFrame.svelte";
+import MindInfo from "./components/MindInfo.svelte";
 import MindRightPanel from "./components/MindRightPanel.svelte";
+import MindSkills from "./components/MindSkills.svelte";
+import Modal from "./components/Modal.svelte";
+import PublicFiles from "./components/PublicFiles.svelte";
 import SeedModal from "./components/SeedModal.svelte";
+import TurnTimeline from "./components/TurnTimeline.svelte";
 import UnifiedSidebar from "./components/UnifiedSidebar.svelte";
 import UpdateBanner from "./components/UpdateBanner.svelte";
 import UserSettingsModal from "./components/UserSettingsModal.svelte";
@@ -50,21 +55,6 @@ const CORE_MIND_SECTIONS: { key: string; label: string; icon: string; defaultPat
     label: "Chat",
     icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>',
   },
-  {
-    key: "history",
-    label: "History",
-    icon: icons.history,
-  },
-  {
-    key: "files",
-    label: "Files",
-    icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h5l2-2h5v11H2V4z"/></svg>',
-  },
-  {
-    key: "settings",
-    label: "Settings",
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M14 3.27A1.27 1.27 0 0 0 12.73 2h-1.46A1.27 1.27 0 0 0 10 3.27c0 .58-.4 1.07-.93 1.29a8 8 0 0 0-.26.1c-.53.23-1.16.16-1.57-.25a1.27 1.27 0 0 0-1.8 0l-1.03 1.03a1.27 1.27 0 0 0 0 1.8c.41.41.48 1.04.25 1.57a8 8 0 0 0-.1.25c-.22.54-.71.94-1.29.94A1.27 1.27 0 0 0 2 11.27v1.46A1.27 1.27 0 0 0 3.27 14c.58 0 1.07.4 1.29.93.03.09.07.17.1.26.23.53.16 1.16-.25 1.57a1.27 1.27 0 0 0 0 1.8l1.03 1.03a1.27 1.27 0 0 0 1.8 0c.41-.41 1.04-.48 1.57-.25.09.04.17.07.26.1.54.22.93.71.93 1.29A1.27 1.27 0 0 0 11.27 22h1.46A1.27 1.27 0 0 0 14 20.73c0-.58.4-1.07.93-1.29.09-.03.17-.07.26-.1.53-.23 1.16-.16 1.57.25a1.27 1.27 0 0 0 1.8 0l1.03-1.03a1.27 1.27 0 0 0 0-1.8c-.41-.41-.48-1.04-.25-1.57.04-.09.07-.17.1-.26.22-.54.71-.93 1.29-.93A1.27 1.27 0 0 0 22 12.73v-1.46A1.27 1.27 0 0 0 20.73 10c-.58 0-1.07-.4-1.29-.93a8 8 0 0 0-.1-.26c-.23-.53-.16-1.16.25-1.57a1.27 1.27 0 0 0 0-1.8l-1.03-1.03a1.27 1.27 0 0 0-1.8 0c-.41.41-1.04.48-1.57.25a8 8 0 0 0-.26-.1C14.4 4.34 14 3.85 14 3.27z"/></svg>',
-  },
 ];
 
 let allMindSections = $derived([
@@ -106,9 +96,18 @@ let activeSystemSection = $derived.by((): string | null => {
 let initialSpiritConversationId = $state<string | null>(null);
 
 // Modals
-type ModalType = "channelBrowser" | "seed" | "userSettings" | "mind" | null;
+type ModalType =
+  | "channelBrowser"
+  | "seed"
+  | "userSettings"
+  | "mind"
+  | "mindHistory"
+  | "mindFiles"
+  | "mindSettings"
+  | null;
 let activeModal = $state<ModalType>(null);
 let selectedModalMind = $state<Mind | null>(null);
+let mindModalName = $state<string | null>(null);
 
 // Resize state
 let resizing = $state(false);
@@ -663,6 +662,12 @@ function handleGlobalClick(e: MouseEvent) {
           username={auth.user.username}
           onHome={handleSystemHome}
           onSelectMind={handleSelectMind}
+          onSelectMindSection={(name, section) => {
+            mindModalName = name;
+            if (section === "history") activeModal = "mindHistory";
+            else if (section === "files") activeModal = "mindFiles";
+            else if (section === "settings") activeModal = "mindSettings";
+          }}
           onSelectConversation={handleSelectConversation}
           onDeleteConversation={handleDeleteConversation}
           onBrowseChannels={() => (activeModal = "channelBrowser")}
@@ -856,9 +861,42 @@ function handleGlobalClick(e: MouseEvent) {
   {#if activeModal === "userSettings"}
     <UserSettingsModal onClose={() => (activeModal = null)} />
   {/if}
+  {#if activeModal === "mindHistory" && mindModalName}
+    <Modal title="History — {mindModalName}" onClose={() => { activeModal = null; mindModalName = null; }}>
+      <div class="modal-scroll-body">
+        <TurnTimeline name={mindModalName} mindStatus={data.minds.find(m => m.name === mindModalName)?.status} />
+      </div>
+    </Modal>
+  {/if}
+  {#if activeModal === "mindFiles" && mindModalName}
+    <Modal title="Files — {mindModalName}" onClose={() => { activeModal = null; mindModalName = null; }}>
+      <div class="modal-scroll-body">
+        <PublicFiles name={mindModalName} />
+      </div>
+    </Modal>
+  {/if}
+  {#if activeModal === "mindSettings" && mindModalName}
+    {@const modalMind = data.minds.find(m => m.name === mindModalName)}
+    {#if modalMind}
+      <Modal title="Settings — {mindModalName}" onClose={() => { activeModal = null; mindModalName = null; }}>
+        <div class="modal-scroll-body">
+          <MindInfo mind={modalMind} />
+          <div style="margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border);">
+            <MindSkills name={mindModalName} />
+          </div>
+        </div>
+      </Modal>
+    {/if}
+  {/if}
 {/if}
 
 <style>
+  .modal-scroll-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+
   .loading {
     color: var(--text-2);
     padding: 24px;
