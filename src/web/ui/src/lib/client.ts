@@ -462,6 +462,16 @@ export function saveEnabledModels(models: string[]): Promise<void> {
   return put(`${V1}/system/ai/models`, { models });
 }
 
+export type AiDefaults = { spiritModel: string | null; utilityModel: string | null };
+
+export function fetchAiDefaults(): Promise<AiDefaults> {
+  return get(`${V1}/system/ai/defaults`);
+}
+
+export function saveAiDefaults(defaults: AiDefaults): Promise<void> {
+  return put(`${V1}/system/ai/defaults`, defaults);
+}
+
 // --- Imagegen ---
 
 export type ImagegenProvider = {
@@ -489,12 +499,15 @@ export function removeImagegenProviderConfig(id: string): Promise<void> {
   return del(`${V1}/system/imagegen/providers/${enc(id)}`);
 }
 
-export function fetchImagegenModels(): Promise<{ models: string[] }> {
+export function fetchImagegenModels(): Promise<{ models: string[]; defaultModel: string | null }> {
   return get(`${V1}/system/imagegen/models`);
 }
 
-export function saveEnabledImagegenModels(models: string[]): Promise<void> {
-  return put(`${V1}/system/imagegen/models`, { models });
+export function saveEnabledImagegenModels(
+  models: string[],
+  defaultModel?: string | null,
+): Promise<void> {
+  return put(`${V1}/system/imagegen/models`, { models, defaultModel });
 }
 
 export function searchImagegenModels(

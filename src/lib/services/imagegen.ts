@@ -222,6 +222,24 @@ export function getEnabledModels(): string[] {
 export function setEnabledModels(ids: string[]): void {
   updateImagegenConfig((ig) => {
     ig.models = ids;
+    // Clear default if it was removed from enabled list
+    if (ig.defaultModel && !ids.includes(ig.defaultModel)) {
+      delete ig.defaultModel;
+    }
+  });
+}
+
+export function getDefaultModel(): string | undefined {
+  return getImagegenConfig()?.defaultModel;
+}
+
+export function setDefaultModel(modelId: string | undefined): void {
+  updateImagegenConfig((ig) => {
+    if (modelId) {
+      ig.defaultModel = modelId;
+    } else {
+      delete ig.defaultModel;
+    }
   });
 }
 

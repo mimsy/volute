@@ -11,24 +11,28 @@ import {
   getAvailableModels,
   getConfiguredProviders,
   getEnabledModels,
+  getUtilityModel,
   removeAiConfig,
   removeProviderConfig,
   resolveApiKey,
   saveProviderConfig,
   setEnabledModels,
+  setUtilityModel,
 } from "../../lib/ai-service.js";
 import { logBuffer } from "../../lib/log-buffer.js";
 import log from "../../lib/logger.js";
 import {
   generateImage,
+  getDefaultModel as getImagegenDefaultModel,
   getEnabledModels as getImagegenModels,
   getConfiguredProviders as getImagegenProviders,
   removeProviderConfig as removeImagegenProvider,
   saveProviderConfig as saveImagegenProvider,
   searchModels,
+  setDefaultModel as setImagegenDefaultModel,
   setEnabledModels as setImagegenModels,
 } from "../../lib/services/imagegen.js";
-import { readGlobalConfig } from "../../lib/setup.js";
+import { readGlobalConfig, writeGlobalConfig } from "../../lib/setup.js";
 import {
   deleteSystemsConfig,
   readSystemsConfig,
@@ -232,14 +236,22 @@ const app = new Hono<AuthEnv>()
   })
   .get("/imagegen/models", requireAdmin, (c) => {
     const models = getImagegenModels();
-    return c.json({ models });
+    const defaultModel = getImagegenDefaultModel();
+    return c.json({ models, defaultModel: defaultModel ?? null });
   })
   .put(
     "/imagegen/models",
     requireAdmin,
-    zValidator("json", z.object({ models: z.array(z.string()) })),
+    zValidator(
+      "json",
+      z.object({ models: z.array(z.string()), defaultModel: z.string().nullable().optional() }),
+    ),
     (c) => {
-      setImagegenModels(c.req.valid("json").models);
+      const { models, defaultModel } = c.req.valid("json");
+      setImagegenModels(models);
+      if (defaultModel !== undefined) {
+        setImagegenDefaultModel(defaultModel ?? undefined);
+      }
       return c.json({ ok: true });
     },
   )
@@ -327,6 +339,32 @@ const app = new Hono<AuthEnv>()
     (c) => {
       const { models } = c.req.valid("json");
       setEnabledModels(models);
+      return c.json({ ok: true });
+    },
+  )
+  .get("/ai/defaults", requireAdmin, (c) => {
+    const config = readGlobalConfig();
+    return c.json({
+      spiritModel: config.spiritModel ?? null,
+      utilityModel: getUtilityModel() ?? null,
+    });
+  })
+  .put(
+    "/ai/defaults",
+    requireAdmin,
+    zValidator(
+      "json",
+      z.object({
+        spiritModel: z.string().nullable(),
+        utilityModel: z.string().nullable(),
+      }),
+    ),
+    (c) => {
+      const { spiritModel, utilityModel } = c.req.valid("json");
+      const config = readGlobalConfig();
+      config.spiritModel = spiritModel ?? undefined;
+      writeGlobalConfig(config);
+      setUtilityModel(utilityModel ?? undefined);
       return c.json({ ok: true });
     },
   )

@@ -10,11 +10,14 @@ import {
   searchImagegenModels,
 } from "../lib/client";
 import Modal from "./Modal.svelte";
+import ModelSelect from "./ModelSelect.svelte";
 
 let providers = $state<ImagegenProvider[]>([]);
 let enabledModels = $state<string[]>([]);
+let defaultModel = $state<string | null>(null);
 let error = $state("");
 let saving = $state(false);
+let loadError = $state("");
 
 // API key modal
 let showApiKeyModal = $state(false);
@@ -31,23 +34,29 @@ let searchProvider = $state("");
 let configuredProviders = $derived(providers.filter((p) => p.configured));
 let unconfiguredProviders = $derived(providers.filter((p) => !p.configured));
 
-export async function load() {
-  try {
-    providers = await fetchImagegenProviders();
-    const res = await fetchImagegenModels();
-    enabledModels = res.models;
-  } catch (err) {
-    error = err instanceof Error ? err.message : "Failed to load imagegen config";
-  }
+function modelsForProvider(providerId: string) {
+  return enabledModels.filter((m) => m.startsWith(`${providerId}:`));
 }
-
-load();
 
 function authMethodLabel(method: string | null): string {
   if (method === "api_key") return "API key";
   if (method === "env_var") return "env var";
   return "";
 }
+
+export async function load() {
+  loadError = "";
+  try {
+    providers = await fetchImagegenProviders();
+    const res = await fetchImagegenModels();
+    enabledModels = res.models;
+    defaultModel = res.defaultModel;
+  } catch {
+    loadError = "Failed to load imagegen config. Check your connection and try again.";
+  }
+}
+
+load();
 
 function resetModalState() {
   showApiKeyModal = false;
@@ -63,7 +72,6 @@ function resetModalState() {
 function openApiKeyModal() {
   resetModalState();
   showApiKeyModal = true;
-  // Auto-select if only one unconfigured provider
   if (unconfiguredProviders.length === 1) {
     selectedProvider = unconfiguredProviders[0].id;
   }
@@ -73,10 +81,16 @@ async function handleApiKeySave() {
   if (!selectedProvider || !apiKeyInput.trim() || saving) return;
   saving = true;
   error = "";
+  const addedProvider = selectedProvider;
   try {
     await saveImagegenProviderConfig(selectedProvider, apiKeyInput.trim());
     resetModalState();
     await load();
+    // Open model search for the newly added provider
+    searchProvider = addedProvider;
+    modelSearch = "";
+    modelSearchResults = [];
+    showModelModal = true;
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to save";
   } finally {
@@ -89,6 +103,10 @@ async function handleProviderRemove(id: string) {
   error = "";
   try {
     await removeImagegenProviderConfig(id);
+    // Clear default if it belonged to this provider
+    if (defaultModel?.startsWith(`${id}:`)) {
+      defaultModel = null;
+    }
     await load();
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to remove";
@@ -115,8 +133,10 @@ async function handleModelSearch() {
 async function addModel(modelId: string) {
   try {
     const updated = [...enabledModels, modelId];
-    await saveEnabledImagegenModels(updated);
+    const newDefault = enabledModels.length === 0 ? modelId : undefined;
+    await saveEnabledImagegenModels(updated, newDefault);
     enabledModels = updated;
+    if (newDefault) defaultModel = newDefault;
     showModelModal = false;
     modelSearch = "";
     modelSearchResults = [];
@@ -128,59 +148,91 @@ async function addModel(modelId: string) {
 async function removeModel(modelId: string) {
   try {
     const updated = enabledModels.filter((id) => id !== modelId);
-    await saveEnabledImagegenModels(updated);
+    const newDefault = defaultModel === modelId ? null : undefined;
+    await saveEnabledImagegenModels(updated, newDefault);
     enabledModels = updated;
+    if (defaultModel === modelId) defaultModel = null;
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to remove model";
   }
 }
+
+// Bridge defaultModel (string|null) to string for ModelSelect
+let defaultModelStr = $state("");
+$effect(() => {
+  defaultModelStr = defaultModel ?? "";
+});
+
+// Auto-save default model when it changes
+let defaultsLoaded = false;
+$effect(() => {
+  const dm = defaultModelStr;
+  if (!defaultsLoaded) return;
+  defaultModel = dm || null;
+  saveEnabledImagegenModels(enabledModels, dm || null).catch(() => {});
+});
+$effect(() => {
+  if (enabledModels.length > 0) defaultsLoaded = true;
+});
 </script>
 
-{#each configuredProviders as provider (provider.id)}
-  <div class="provider-card">
-    <div class="provider-row">
-      <span class="provider-name">{provider.id}</span>
-      <span class="auth-badge">{authMethodLabel(provider.authMethod)}</span>
-      <div class="provider-actions">
-        <button class="btn btn-reset" onclick={() => handleProviderRemove(provider.id)} disabled={saving}>
-          Remove
-        </button>
+{#if loadError}
+  <div class="error">{loadError}</div>
+  <button class="retry-btn" onclick={() => load()}>Retry</button>
+{:else if providers.length === 0}
+  <div class="loading-text">Loading providers...</div>
+{:else}
+  <!-- Configured providers with their models -->
+  {#each configuredProviders as provider (provider.id)}
+    {@const providerModels = modelsForProvider(provider.id)}
+    <div class="provider-card">
+      <div class="provider-header">
+        <span class="provider-name">{provider.id}</span>
+        <span class="auth-badge">{authMethodLabel(provider.authMethod)}</span>
+        <button class="remove-btn" onclick={() => handleProviderRemove(provider.id)} disabled={saving}>Remove</button>
+      </div>
+      <div class="provider-models">
+        {#if providerModels.length > 0}
+          <div class="model-tags">
+            {#each providerModels as modelId (modelId)}
+              <span class="model-tag">
+                {modelId}
+                <button class="model-tag-remove" onclick={() => removeModel(modelId)}>×</button>
+              </span>
+            {/each}
+          </div>
+        {:else}
+          <span class="dim">No models enabled</span>
+        {/if}
+        <button class="add-model-btn" onclick={() => { searchProvider = provider.id; modelSearch = ""; modelSearchResults = []; showModelModal = true; }}>Add model</button>
       </div>
     </div>
-    <div class="provider-models">
-      {#if enabledModels.length > 0}
-        <div class="model-tags">
-          {#each enabledModels as modelId (modelId)}
-            <span class="model-tag">
-              {modelId}
-              <button class="model-tag-remove" onclick={() => removeModel(modelId)}>x</button>
-            </span>
-          {/each}
-        </div>
-      {:else}
-        <span class="dim">No models enabled</span>
-      {/if}
-      <button class="btn btn-edit btn-add-model" onclick={() => { showModelModal = true; }}>
-        Add model
-      </button>
-    </div>
-  </div>
-{/each}
+  {/each}
 
-{#if unconfiguredProviders.length > 0}
-  <div class="add-provider-area">
-    <button class="link-btn" onclick={openApiKeyModal}>
-      Add a provider
+  <!-- Add provider button -->
+  {#if unconfiguredProviders.length > 0}
+    <button class="add-provider-btn" onclick={openApiKeyModal} type="button">
+      + Add a provider
     </button>
-  </div>
-{/if}
+  {/if}
 
-{#if !configuredProviders.length && !unconfiguredProviders.length}
-  <span class="dim">Loading...</span>
-{/if}
+  <!-- Default model selection -->
+  {#if enabledModels.length > 0}
+    <div class="model-defaults">
+      <span class="label">Default model</span>
+      <ModelSelect
+        items={enabledModels.map((id) => ({ id, label: id }))}
+        bind:value={defaultModelStr}
+        placeholder="Search models..."
+        emptyLabel="Select a model"
+      />
+      <div class="hint">Used when minds generate images without specifying a model.</div>
+    </div>
+  {/if}
 
-{#if error && !showApiKeyModal && !showModelModal}
-  <div class="error">{error}</div>
+  {#if error && !showApiKeyModal && !showModelModal}
+    <div class="error">{error}</div>
+  {/if}
 {/if}
 
 <!-- API Key Modal -->
@@ -188,23 +240,25 @@ async function removeModel(modelId: string) {
   <Modal onClose={resetModalState} size="420px" title="Add imagegen provider">
     <div class="modal-body">
       {#if unconfiguredProviders.length > 1}
-        <select bind:value={selectedProvider} class="system-input modal-select">
-          <option value="">Select provider...</option>
-          {#each unconfiguredProviders as p (p.id)}
-            <option value={p.id}>{p.id}</option>
-          {/each}
-        </select>
+        <div class="autocomplete">
+          <select class="select-input" bind:value={selectedProvider}>
+            <option value="">Select provider...</option>
+            {#each unconfiguredProviders as p (p.id)}
+              <option value={p.id}>{p.id}</option>
+            {/each}
+          </select>
+        </div>
       {/if}
 
       {#if selectedProvider}
-        <form class="modal-form" onsubmit={(e) => { e.preventDefault(); handleApiKeySave(); }}>
+        <form class="api-key-form" onsubmit={(e) => { e.preventDefault(); handleApiKeySave(); }}>
           <input
             type="password"
             bind:value={apiKeyInput}
             placeholder="API key"
-            class="system-input"
+            class="text-input"
           />
-          <button type="submit" class="btn btn-save" disabled={saving || !apiKeyInput.trim()}>
+          <button type="submit" class="save-btn" disabled={saving || !apiKeyInput.trim()}>
             {saving ? "..." : "Save"}
           </button>
         </form>
@@ -218,24 +272,16 @@ async function removeModel(modelId: string) {
 
 <!-- Model Search Modal -->
 {#if showModelModal}
-  <Modal onClose={() => { showModelModal = false; modelSearch = ""; modelSearchResults = []; searchProvider = ""; }} size="480px" title="Add model">
+  <Modal onClose={() => { showModelModal = false; modelSearch = ""; modelSearchResults = []; }} size="480px" title="Add model — {searchProvider}">
     <div class="modal-body">
-      {#if configuredProviders.length > 1}
-        <select bind:value={searchProvider} class="system-input modal-select">
-          <option value="">All providers</option>
-          {#each configuredProviders as p (p.id)}
-            <option value={p.id}>{p.id}</option>
-          {/each}
-        </select>
-      {/if}
-      <form class="modal-form" onsubmit={(e) => { e.preventDefault(); handleModelSearch(); }}>
+      <form class="api-key-form" onsubmit={(e) => { e.preventDefault(); handleModelSearch(); }}>
         <input
           type="text"
           bind:value={modelSearch}
-          placeholder={searchProvider ? `Search ${searchProvider} models...` : "Search models..."}
-          class="system-input"
+          placeholder="Search models..."
+          class="text-input"
         />
-        <button type="submit" class="btn btn-edit" disabled={searching || !modelSearch.trim()}>
+        <button type="submit" class="save-btn" disabled={searching || !modelSearch.trim()}>
           {searching ? "..." : "Search"}
         </button>
       </form>
@@ -263,6 +309,26 @@ async function removeModel(modelId: string) {
 {/if}
 
 <style>
+  .error {
+    color: var(--red);
+    font-size: 13px;
+    margin-top: 8px;
+  }
+
+  .dim {
+    color: var(--text-2);
+    font-size: 12px;
+  }
+
+  .loading-text {
+    color: var(--text-2);
+    font-size: 13px;
+    text-align: center;
+    padding: 20px 0;
+  }
+
+  /* --- Provider cards --- */
+
   .provider-card {
     background: var(--bg-2);
     border: 1px solid var(--border);
@@ -271,7 +337,7 @@ async function removeModel(modelId: string) {
     margin-bottom: 6px;
   }
 
-  .provider-row {
+  .provider-header {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -292,10 +358,19 @@ async function removeModel(modelId: string) {
     color: var(--text-2);
   }
 
-  .provider-actions {
-    display: flex;
-    gap: 6px;
+  .remove-btn {
+    font-family: inherit;
+    font-size: 11px;
+    padding: 2px 8px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-2);
+    cursor: pointer;
   }
+
+  .remove-btn:hover { color: var(--red); border-color: var(--red); }
+  .remove-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .provider-models {
     margin-top: 8px;
@@ -330,59 +405,62 @@ async function removeModel(modelId: string) {
     border: none;
     color: var(--text-2);
     cursor: pointer;
-    font-size: 11px;
+    font-size: 13px;
     padding: 0 2px;
     line-height: 1;
   }
 
-  .model-tag-remove:hover {
-    color: var(--red);
-  }
+  .model-tag-remove:hover { color: var(--red); }
 
-  .btn-add-model {
+  .add-model-btn {
+    font-family: inherit;
     font-size: 11px;
     padding: 2px 8px;
-  }
-
-  .add-provider-area {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-    margin-top: 12px;
-    padding: 20px 16px;
-    background: var(--bg-2);
+    background: var(--bg-3);
+    color: var(--text-1);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
+    cursor: pointer;
   }
 
-  .link-btn {
-    font-family: inherit;
-    font-size: 12px;
+  .add-model-btn:hover { color: var(--text-0); border-color: var(--border-bright); }
+
+  /* --- Add provider button --- */
+
+  .add-provider-btn {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+    padding: 10px 16px;
+    background: var(--bg-2);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-lg);
     color: var(--text-2);
-    background: none;
-    border: none;
+    font-family: inherit;
+    font-size: 13px;
     cursor: pointer;
-    padding: 2px 0;
-    border-bottom: 1px solid transparent;
     transition: color 0.15s, border-color 0.15s;
   }
 
-  .link-btn:hover {
+  .add-provider-btn:hover {
     color: var(--text-1);
-    border-bottom-color: var(--text-2);
+    border-color: var(--border-bright);
   }
 
-  .error {
-    color: var(--red);
-    font-size: 13px;
+  .retry-btn {
+    display: block;
     margin-top: 8px;
+    padding: 8px 16px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid var(--accent-border);
+    border-radius: var(--radius);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
   }
 
-  .dim {
-    color: var(--text-2);
-    font-size: 12px;
-  }
+  /* --- Modal content --- */
 
   .modal-body {
     padding: 16px 20px 20px;
@@ -391,30 +469,59 @@ async function removeModel(modelId: string) {
     gap: 10px;
   }
 
-  .modal-form {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .modal-select {
+  .text-input {
     width: 100%;
-  }
-
-  .system-input {
-    flex: 1;
-    padding: 6px 10px;
+    padding: 8px 10px;
     background: var(--bg-3);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     color: var(--text-0);
     font-size: 13px;
+    font-family: inherit;
     outline: none;
+    box-sizing: border-box;
   }
 
-  .system-input:focus {
-    border-color: var(--border-bright);
+  .text-input:focus { border-color: var(--border-bright); }
+
+  .select-input {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-0);
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    box-sizing: border-box;
+    cursor: pointer;
   }
+
+  .select-input:focus { border-color: var(--border-bright); }
+
+  .api-key-form {
+    display: flex;
+    gap: 6px;
+  }
+
+  .api-key-form .text-input { flex: 1; }
+
+  .save-btn {
+    padding: 8px 16px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid var(--accent-border);
+    border-radius: var(--radius);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .save-btn:disabled { opacity: 0.4; cursor: default; }
+
+  /* --- Model search modal --- */
 
   .model-list {
     max-height: 300px;
@@ -435,20 +542,13 @@ async function removeModel(modelId: string) {
     color: var(--text-0);
     cursor: pointer;
     text-align: left;
+    font-family: inherit;
+    font-size: 13px;
   }
 
-  .model-option:last-child {
-    border-bottom: none;
-  }
-
-  .model-option:hover:not(:disabled) {
-    background: var(--bg-3);
-  }
-
-  .model-option:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
+  .model-option:last-child { border-bottom: none; }
+  .model-option:hover:not(:disabled) { background: var(--bg-3); }
+  .model-option:disabled { opacity: 0.5; cursor: default; }
 
   .model-id {
     font-size: 13px;
@@ -463,49 +563,24 @@ async function removeModel(modelId: string) {
     text-overflow: ellipsis;
   }
 
-  .btn {
-    font-family: inherit;
-    font-size: 12px;
-    padding: 4px 10px;
-    border-radius: var(--radius);
-    cursor: pointer;
-    border: 1px solid transparent;
-    transition: opacity 0.15s;
+  /* --- Model defaults --- */
+
+  .model-defaults {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
   }
 
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-edit {
-    background: var(--bg-3);
+  .label {
+    display: block;
     color: var(--text-1);
-    border-color: var(--border);
+    font-size: 13px;
+    margin-bottom: 6px;
   }
 
-  .btn-edit:hover {
-    color: var(--text-0);
-    border-color: var(--border-bright);
-  }
-
-  .btn-save {
-    background: var(--accent-dim);
-    color: var(--accent);
-    border-color: var(--accent-border);
-  }
-
-  .btn-save:hover:not(:disabled) {
-    border-color: var(--accent);
-  }
-
-  .btn-reset {
-    background: var(--red-bg);
-    color: var(--red);
-    border-color: var(--red-border);
-  }
-
-  .btn-reset:hover:not(:disabled) {
-    border-color: var(--red);
+  .hint {
+    color: var(--text-2);
+    font-size: 12px;
+    margin-top: 6px;
   }
 </style>

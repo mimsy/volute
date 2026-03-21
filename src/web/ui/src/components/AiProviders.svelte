@@ -12,6 +12,7 @@ import {
   submitAiOAuthCode,
 } from "../lib/client";
 import Modal from "./Modal.svelte";
+import ModelSelect from "./ModelSelect.svelte";
 
 let {
   showModelDefaults = false,
@@ -333,22 +334,22 @@ async function removeModel(modelId: string) {
   <!-- System / utility model selection -->
   {#if showModelDefaults && enabledModels.length > 0}
     <div class="model-defaults">
-      <label class="label" for="spiritModel">System model</label>
-      <select id="spiritModel" class="select-input" bind:value={spiritModel}>
-        <option value="">Select a model</option>
-        {#each enabledModels as model (model.id)}
-          <option value={model.id}>{model.name}</option>
-        {/each}
-      </select>
+      <span class="label">System model</span>
+      <ModelSelect
+        items={enabledModels.map((m) => ({ id: m.id, label: m.name }))}
+        bind:value={spiritModel}
+        placeholder="Search models..."
+        emptyLabel="Select a model"
+      />
       <div class="hint">Used by the system spirit and as the default for new minds.</div>
 
-      <label class="label mt" for="utilityModel">Utility model <span class="optional">(optional)</span></label>
-      <select id="utilityModel" class="select-input" bind:value={utilityModel}>
-        <option value="">None</option>
-        {#each enabledModels as model (model.id)}
-          <option value={model.id}>{model.name}</option>
-        {/each}
-      </select>
+      <span class="label mt">Utility model <span class="optional">(optional)</span></span>
+      <ModelSelect
+        items={enabledModels.map((m) => ({ id: m.id, label: m.name }))}
+        bind:value={utilityModel}
+        placeholder="Search models..."
+        emptyLabel="None"
+      />
       <div class="hint">A smaller model for summaries and background tasks.</div>
     </div>
   {/if}
@@ -711,22 +712,6 @@ async function removeModel(modelId: string) {
   }
 
   .text-input:focus { border-color: var(--border-bright); }
-
-  .select-input {
-    width: 100%;
-    padding: 8px 10px;
-    background: var(--bg-3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    color: var(--text-0);
-    font-size: 13px;
-    font-family: inherit;
-    outline: none;
-    box-sizing: border-box;
-    cursor: pointer;
-  }
-
-  .select-input:focus { border-color: var(--border-bright); }
 
   /* --- API key section --- */
 

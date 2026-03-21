@@ -139,6 +139,23 @@ async function generateDirect(model: string, prompt: string): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
+async function fetchDefaultModel(): Promise<string | null> {
+  const base = getDaemonUrl();
+  const token = getDaemonToken();
+  if (!base || !token) return null;
+
+  try {
+    const res = await fetch(`${base}/api/v1/system/imagegen/models`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { defaultModel?: string | null };
+    return data.defaultModel ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function generate(args: string[]): Promise<void> {
   const prompt = args[0];
   if (!prompt) {
@@ -146,7 +163,8 @@ async function generate(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const model = getFlag(args, "--model") || "replicate:prunaai/z-image-turbo";
+  const flagModel = getFlag(args, "--model");
+  const model = flagModel || (await fetchDefaultModel()) || "replicate:prunaai/z-image-turbo";
   const filename = getFlag(args, "--filename") || slugify(prompt) || `image-${Date.now()}`;
 
   console.log(`generating image with ${model}...`);
