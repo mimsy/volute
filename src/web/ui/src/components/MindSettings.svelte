@@ -7,6 +7,7 @@ import MindSettingsAdvanced from "./MindSettingsAdvanced.svelte";
 import MindSettingsCognition from "./MindSettingsCognition.svelte";
 import MindSettingsEnv from "./MindSettingsEnv.svelte";
 import MindSettingsProfile from "./MindSettingsProfile.svelte";
+import MindSettingsRhythms from "./MindSettingsRhythms.svelte";
 import MindSkills from "./MindSkills.svelte";
 
 let { mind: initialMind }: { mind: Mind } = $props();
@@ -17,6 +18,7 @@ let name = $derived(mind.name);
 const SECTIONS = [
   { id: "profile", label: "Profile" },
   { id: "cognition", label: "Model" },
+  { id: "rhythms", label: "Rhythms" },
   { id: "skills", label: "Skills" },
   { id: "environment", label: "Environment" },
   { id: "advanced", label: "Advanced" },
@@ -81,6 +83,15 @@ async function handleUpdated() {
         <span class="section-subtitle">Cognition and resource limits</span>
       </div>
       <MindSettingsCognition {name} />
+    </section>
+
+    <!-- Rhythms -->
+    <section id="rhythms" bind:this={sectionEls.rhythms}>
+      <div class="section-header">
+        <span class="section-title">Rhythms</span>
+        <span class="section-subtitle">Sleep, schedules, and wake triggers</span>
+      </div>
+      <MindSettingsRhythms {name} />
     </section>
 
     <!-- Skills -->

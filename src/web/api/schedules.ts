@@ -71,10 +71,89 @@ const app = new Hono<AuthEnv>()
         }
       }
     }
+    // Include sleep in upcoming and previous
+    if (sleepState?.sleeping) {
+      if (sleepState.scheduledWakeAt) {
+        upcoming.push({ id: "sleep", at: sleepState.scheduledWakeAt, type: "cron" as const });
+      }
+      if (sleepState.sleepingSince) {
+        previous.push({ id: "sleep", at: sleepState.sleepingSince });
+      }
+    } else if (sleepConfig?.enabled && sleepConfig.schedule) {
+      try {
+        const sleepInterval = CronExpressionParser.parse(sleepConfig.schedule.sleep);
+        const nextSleep = sleepInterval.next().toDate();
+        if (nextSleep <= in24h) {
+          upcoming.push({ id: "sleep", at: nextSleep.toISOString(), type: "cron" as const });
+        }
+      } catch {
+        /* ignore */
+      }
+      try {
+        const prevSleepInterval = CronExpressionParser.parse(sleepConfig.schedule.sleep);
+        const prevSleep = prevSleepInterval.prev().toDate();
+        previous.push({ id: "sleep", at: prevSleep.toISOString() });
+      } catch {
+        /* ignore */
+      }
+    }
+
     upcoming.sort((a, b) => a.at.localeCompare(b.at));
     previous.sort((a, b) => b.at.localeCompare(a.at)); // most recent first
 
     return c.json({ sleep: sleepState, sleepConfig, schedules, upcoming, previous });
+  })
+  // Get sleep config
+  .get("/:name/sleep", async (c) => {
+    const name = c.req.param("name");
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
+    const config = readVoluteConfig(mindDir(name));
+    return c.json(config?.sleep ?? { enabled: false });
+  })
+  // Update sleep config
+  .put("/:name/sleep", requireSelf(), async (c) => {
+    const name = c.req.param("name");
+    const entry = await findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+
+    const body = (await c.req.json()) as {
+      enabled?: boolean;
+      schedule?: { sleep: string; wake: string };
+      wakeTriggers?: {
+        mentions?: boolean;
+        dms?: boolean;
+        channels?: string[];
+        senders?: string[];
+      };
+    };
+
+    // Validate cron expressions if provided
+    if (body.schedule) {
+      for (const field of ["sleep", "wake"] as const) {
+        if (body.schedule[field]) {
+          try {
+            CronExpressionParser.parse(body.schedule[field]);
+          } catch {
+            return c.json({ error: `Invalid ${field} cron: ${body.schedule[field]}` }, 400);
+          }
+        }
+      }
+    }
+
+    const dir = mindDir(name);
+    const config = readVoluteConfig(dir) ?? {};
+    const sleep = config.sleep ?? {};
+
+    if (body.enabled !== undefined) sleep.enabled = body.enabled;
+    if (body.schedule !== undefined) sleep.schedule = body.schedule;
+    if (body.wakeTriggers !== undefined) sleep.wakeTriggers = body.wakeTriggers;
+
+    config.sleep = sleep;
+    writeVoluteConfig(dir, config);
+
+    getSleepManagerIfReady()?.invalidateSleepConfig(name);
+
+    return c.json({ ok: true });
   })
   // List schedules
   .get("/:name/schedules", async (c) => {
