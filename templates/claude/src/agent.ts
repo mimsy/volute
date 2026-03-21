@@ -31,7 +31,7 @@ type Session = {
   messageIds: (string | undefined)[];
   currentMessageId?: string;
   currentQuery?: ReturnType<typeof query>;
-  messageChannels: Map<string, string>;
+  messageChannels: Map<string, { channel: string; sender?: string }>;
 };
 
 export function createMind(options: {
@@ -139,7 +139,7 @@ export function createMind(options: {
       const decision = (result as any)?.decision;
       if (additionalContext || decision) {
         const channel = session.currentMessageId
-          ? session.messageChannels.get(session.currentMessageId)
+          ? session.messageChannels.get(session.currentMessageId)?.channel
           : undefined;
         try {
           daemonEmit({
@@ -455,9 +455,12 @@ export function createMind(options: {
         };
         session.listeners.add(filteredListener);
 
-        // Track channel for reply instructions
+        // Track channel/sender for reply instructions
         if (meta.channel) {
-          session.messageChannels.set(meta.messageId, meta.channel);
+          session.messageChannels.set(meta.messageId, {
+            channel: meta.channel,
+            sender: meta.sender,
+          });
         }
 
         // Interrupt if requested and session is mid-turn

@@ -1,6 +1,6 @@
 import { aiCompleteUtility } from "./ai-service.js";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "./auth.js";
-import { deliverMessage } from "./delivery/message-delivery.js";
+import { deliverMessage, recordInbound } from "./delivery/message-delivery.js";
 import { addMessage, createConversation, findDMConversation } from "./events/conversations.js";
 import log from "./logger.js";
 import { findMind, mindDir } from "./registry.js";
@@ -83,10 +83,9 @@ export async function sendSystemMessage(
 }
 
 /**
- * Persist a system message to the conversation but do NOT call deliverMessage.
- * For cases where the caller POSTs directly to the mind's /message endpoint
- * (sleep manager, mind manager) and wants the message in the conversation.
- * The mind's /message handler calls recordInbound for mind_history.
+ * Persist a system message to the conversation and mind_history, but do NOT
+ * call deliverMessage. For cases where the caller POSTs directly to the mind's
+ * /message endpoint (sleep manager, mind manager).
  */
 export async function sendSystemMessageDirect(
   mindName: string,
@@ -95,6 +94,7 @@ export async function sendSystemMessageDirect(
   const { conversationId } = await ensureSystemDM(mindName);
 
   await addMessage(conversationId, "user", "volute", [{ type: "text", text }]);
+  await recordInbound(mindName, "@volute", "volute", text);
 
   return { conversationId };
 }

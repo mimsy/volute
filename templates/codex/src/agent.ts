@@ -211,11 +211,14 @@ export function createMind(options: {
       warn("mind", "pre-prompt hook failed:", err);
     }
 
-    // Reply instructions on first message per channel
+    // Reply instructions on first message per channel (skip system messages)
     const channel = meta.channel;
     if (channel && !session.firstMessagePerChannel.has(channel)) {
       session.firstMessagePerChannel.add(channel);
-      const replyInstructions = prompts.reply_instructions.replace(/\$\{channel\}/g, channel);
+      const isSystem = meta.sender === "volute";
+      const replyInstructions = isSystem
+        ? "This is a system message — no reply is needed."
+        : prompts.reply_instructions.replace(/\$\{channel\}/g, channel);
       emit(session, {
         type: "context",
         content: replyInstructions,
