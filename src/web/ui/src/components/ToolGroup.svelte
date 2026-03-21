@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { ToolGroup } from "../lib/tool-groups";
-import { getToolLabel } from "../lib/tool-names";
+import { getCategoryColor, getToolLabel } from "../lib/tool-names";
 
 let {
   group,
@@ -36,20 +36,7 @@ let isError = $derived(!!resultMeta?.is_error);
 let isRunning = $derived(!group.toolResult && turnStatus === "active");
 let label = $derived(getToolLabel((meta?.name as string) ?? "tool", group.toolUse.content));
 
-let categoryColor = $derived.by(() => {
-  switch (group.category) {
-    case "shell":
-      return "var(--green)";
-    case "file":
-      return "var(--blue)";
-    case "search":
-      return "var(--yellow)";
-    case "web":
-      return "var(--purple)";
-    default:
-      return "var(--text-1)";
-  }
-});
+let categoryColor = $derived(getCategoryColor(group.category));
 
 let shellCommand = $derived.by(() => {
   if (group.category !== "shell") return "";

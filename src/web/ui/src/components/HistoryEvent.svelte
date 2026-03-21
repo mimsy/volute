@@ -5,7 +5,12 @@ import { fetchTurnEvents } from "../lib/client";
 import { normalizeTimestamp } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
 import { groupToolEvents } from "../lib/tool-groups";
-import { getToolCategory, getToolLabel } from "../lib/tool-names";
+import {
+  getCategoryColor,
+  getCategoryIcon,
+  getToolCategory,
+  getToolLabel,
+} from "../lib/tool-names";
 import ExtensionFeedCard from "./ExtensionFeedCard.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
 import Icon from "./Icon.svelte";
@@ -204,8 +209,7 @@ async function handleClick() {
     {@const toolMeta = meta}
     {@const toolName = typeof toolMeta?.name === "string" ? toolMeta.name : "tool"}
     {@const cat = getToolCategory(toolName)}
-    {@const catIcon = cat === "shell" ? "terminal" : cat === "file" ? "file" : cat === "search" ? "search" : cat === "web" ? "globe" : "generic-tool"}
-    <div class="marker marker-icon" style:color={cat === "shell" ? "var(--green)" : cat === "file" ? "var(--blue)" : cat === "search" ? "var(--yellow)" : cat === "web" ? "var(--purple)" : "var(--text-1)"}><span class="marker-tooltip">{tooltip}</span><Icon kind={catIcon} /></div>
+    <div class="marker marker-icon" style:color={getCategoryColor(cat)}><span class="marker-tooltip">{tooltip}</span><Icon kind={getCategoryIcon(cat)} /></div>
   {:else if event.type === "activity"}
     {@const actMeta = meta}
     {@const actColor = typeof actMeta?.color === "string" ? `var(--${actMeta.color})` : "var(--yellow)"}
@@ -279,12 +283,12 @@ async function handleClick() {
               <HistoryEvent event={ev} {mindName} />
             {/each}
           {:else}
-            {@const items = groupToolEvents(turnEvents, turnConversations, turnActivities)}
+            {@const items = groupToolEvents(turnEvents)}
             {#each items as item (item.kind === "tool-group" ? `tg-${item.toolUse.id}` : `ev-${item.event.id}`)}
               {#if item.kind === "tool-group"}
-                {@const catColor = item.category === "shell" ? "var(--green)" : item.category === "file" ? "var(--blue)" : item.category === "search" ? "var(--yellow)" : item.category === "web" ? "var(--purple)" : "var(--text-1)"}
-                {@const toolTooltip = `${formatTime(item.toolUse.created_at)} · ${typeof JSON.parse(item.toolUse.metadata || '{}')?.name === 'string' ? JSON.parse(item.toolUse.metadata || '{}').name : 'tool'}`}
-                {@const catIcon = item.category === "shell" ? "terminal" : item.category === "file" ? "file" : item.category === "search" ? "search" : item.category === "web" ? "globe" : "generic-tool"}
+                {@const catColor = getCategoryColor(item.category)}
+                {@const catIcon = getCategoryIcon(item.category)}
+                {@const toolTooltip = `${formatTime(item.toolUse.created_at)} · ${item.toolName}`}
                 <div class="event" style:--type-color={catColor}>
                   <div class="marker marker-icon" style:color={catColor}>
                     <span class="marker-tooltip">{toolTooltip}</span>
@@ -580,22 +584,6 @@ async function handleClick() {
     font-size: 13px;
     color: var(--text-0);
   }
-  .session-tag {
-    font-size: 11px;
-    color: var(--text-1);
-    background: var(--bg-3);
-    border: 1px solid var(--border);
-    padding: 1px 6px;
-    border-radius: var(--radius);
-    cursor: pointer;
-    margin-left: 8px;
-    font-family: var(--mono);
-  }
-  .session-tag:hover {
-    background: var(--bg-2);
-    color: var(--text-0);
-  }
-
   .turn-loading {
     font-size: 12px;
     color: var(--text-2);

@@ -521,7 +521,7 @@ function jumpToLatest() {
                         <span class="active-turn-time">{startTime} – now</span>
                       </div>
                       {#if events.length > 0}
-                        {@const groups = groupToolEvents(events, [], [])}
+                        {@const groups = groupToolEvents(events)}
                         {#each groups as item (item.kind === "tool-group" ? `tg-${item.toolUse.id}` : `ev-${item.event.id}`)}
                           {#if item.kind === "tool-group"}
                             <ToolGroupComponent group={item} mindName={turn.mind} turnStatus="active" />
@@ -1003,12 +1003,6 @@ function jumpToLatest() {
     z-index: 10;
   }
 
-  .turn-pending {
-    font-size: 12px;
-    color: var(--text-2);
-    padding: 8px 0;
-    animation: pulse 1.5s infinite;
-  }
 
 
   /* Active turn: branching inner rail matching expanded turns.

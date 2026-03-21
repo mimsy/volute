@@ -106,7 +106,7 @@ describe("groupToolEvents", () => {
       makeEvent({ id: 1, type: "tool_use", content: "{}", metadata: '{"name":"Bash"}' }),
       makeEvent({ id: 2, type: "tool_result", content: "output" }),
     ];
-    const items = groupToolEvents(events, [], []);
+    const items = groupToolEvents(events);
     assert.equal(items.length, 1);
     assert.equal(items[0].kind, "tool-group");
     const group = items[0] as Extract<TimelineItem, { kind: "tool-group" }>;
@@ -120,7 +120,7 @@ describe("groupToolEvents", () => {
     const events = [
       makeEvent({ id: 1, type: "tool_use", content: "{}", metadata: '{"name":"Read"}' }),
     ];
-    const items = groupToolEvents(events, [], []);
+    const items = groupToolEvents(events);
     assert.equal(items.length, 1);
     assert.equal(items[0].kind, "tool-group");
     const group = items[0] as Extract<TimelineItem, { kind: "tool-group" }>;
@@ -132,7 +132,7 @@ describe("groupToolEvents", () => {
       makeEvent({ id: 1, type: "text", content: "hello" }),
       makeEvent({ id: 2, type: "thinking", content: "hmm" }),
     ];
-    const items = groupToolEvents(events, [], []);
+    const items = groupToolEvents(events);
     assert.equal(items.length, 2);
     assert.equal(items[0].kind, "event");
     assert.equal(items[1].kind, "event");
@@ -144,7 +144,7 @@ describe("groupToolEvents", () => {
       makeEvent({ id: 2, type: "outbound", content: "message sent" }),
       makeEvent({ id: 3, type: "tool_result", content: "done" }),
     ];
-    const items = groupToolEvents(events, [], []);
+    const items = groupToolEvents(events);
     assert.equal(items.length, 2);
     assert.equal(items[0].kind, "tool-group");
     assert.equal(items[1].kind, "event");
@@ -159,7 +159,7 @@ describe("groupToolEvents", () => {
       makeEvent({ id: 3, type: "tool_use", content: "{}", metadata: '{"name":"Edit"}' }),
       makeEvent({ id: 4, type: "tool_result", content: "edited" }),
     ];
-    const items = groupToolEvents(events, [], []);
+    const items = groupToolEvents(events);
     assert.equal(items.length, 2);
     assert.equal(items[0].kind, "tool-group");
     assert.equal(items[1].kind, "tool-group");
@@ -175,7 +175,7 @@ describe("groupToolEvents", () => {
       makeEvent({ id: 2, type: "tool_use", content: "{}", metadata: '{"name":"Edit"}' }),
       makeEvent({ id: 3, type: "tool_result", content: "edited" }),
     ];
-    const items = groupToolEvents(events, [], []);
+    const items = groupToolEvents(events);
     assert.equal(items.length, 2);
     const g1 = items[0] as Extract<TimelineItem, { kind: "tool-group" }>;
     const g2 = items[1] as Extract<TimelineItem, { kind: "tool-group" }>;
@@ -190,7 +190,7 @@ describe("groupToolEvents", () => {
       makeEvent({ id: 3, type: "tool_result", content: "output" }),
       makeEvent({ id: 4, type: "text", content: "done" }),
     ];
-    const items = groupToolEvents(events, [], []);
+    const items = groupToolEvents(events);
     assert.equal(items.length, 3);
     assert.equal(items[0].kind, "event");
     assert.equal(items[1].kind, "tool-group");

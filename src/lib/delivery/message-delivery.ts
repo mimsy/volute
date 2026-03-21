@@ -185,15 +185,17 @@ export async function linkToolResultToTurn(
 
       // Insert mind_history rows so activities appear in the turn event stream
       const actRows = await db.select().from(activity).where(inArray(activity.id, activityIds));
-      for (const a of actRows) {
-        await db.insert(mindHistory).values({
-          mind,
-          type: "activity",
-          content: a.summary,
-          metadata: a.metadata,
-          turn_id: turnId,
-          created_at: a.created_at,
-        });
+      if (actRows.length > 0) {
+        await db.insert(mindHistory).values(
+          actRows.map((a) => ({
+            mind,
+            type: "activity",
+            content: a.summary,
+            metadata: a.metadata,
+            turn_id: turnId,
+            created_at: a.created_at,
+          })),
+        );
       }
     } catch (err) {
       dlog.warn(`failed to link activities to turn ${turnId}`, log.errorData(err));

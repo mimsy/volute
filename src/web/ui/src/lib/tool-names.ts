@@ -38,6 +38,38 @@ export function getToolCategory(name: string): ToolCategory {
   }
 }
 
+export function getCategoryColor(category: ToolCategory): string {
+  switch (category) {
+    case "shell":
+      return "var(--green)";
+    case "file":
+      return "var(--blue)";
+    case "search":
+      return "var(--yellow)";
+    case "web":
+      return "var(--purple)";
+    default:
+      return "var(--text-1)";
+  }
+}
+
+export type IconKind = "terminal" | "file" | "search" | "globe" | "generic-tool";
+
+export function getCategoryIcon(category: ToolCategory): IconKind {
+  switch (category) {
+    case "shell":
+      return "terminal";
+    case "file":
+      return "file";
+    case "search":
+      return "search";
+    case "web":
+      return "globe";
+    default:
+      return "generic-tool";
+  }
+}
+
 export function getToolLabel(name: string, content: string): string {
   const n = normalizeToolName(name);
   let args: Record<string, unknown> = {};

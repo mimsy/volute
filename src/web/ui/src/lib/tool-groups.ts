@@ -1,4 +1,4 @@
-import type { HistoryMessage, TurnActivity, TurnConversation } from "@volute/api";
+import type { HistoryMessage } from "@volute/api";
 import { getToolCategory, normalizeToolName, type ToolCategory } from "./tool-names";
 
 export type ToolGroup = {
@@ -14,14 +14,8 @@ export type TimelineItem = { kind: "event"; event: HistoryMessage } | ToolGroup;
 /**
  * Groups sequential tool_use + tool_result pairs into ToolGroup items.
  * Non-tool events between a pair become standalone items after the group.
- * Linked conversations/activities stay attached to the tool_use event id
- * and render separately via the existing source_event_id mechanism.
  */
-export function groupToolEvents(
-  events: HistoryMessage[],
-  _conversations: TurnConversation[],
-  _activities: TurnActivity[],
-): TimelineItem[] {
+export function groupToolEvents(events: HistoryMessage[]): TimelineItem[] {
   const items: TimelineItem[] = [];
   let i = 0;
 
