@@ -8,7 +8,7 @@ let { name, template }: { name: string; template?: string } = $props();
 let config: MindConfig | null = $state(null);
 let models: AiModel[] = $state([]);
 let editModel = $state("");
-let editThinking = $state("");
+let thinkingIndex = $state(0);
 let editMaxThinking = $state("");
 let editBudget = $state("");
 let editPeriod = $state("");
@@ -16,7 +16,7 @@ let editCompaction = $state("");
 let error = $state("");
 let saving: string | null = $state(null);
 
-const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
 // Map template → compatible providers
 const TEMPLATE_PROVIDERS: Record<string, string[]> = {
@@ -36,9 +36,7 @@ let enabledModels = $derived(
 /** Find the matching model ID from the enabled list, handling partial matches */
 function resolveModelId(raw: string): string {
   if (!raw) return "";
-  // Exact match
   if (enabledModels.some((m) => m.id === raw)) return raw;
-  // Model ID might be stored without version suffix — find a match
   const match = enabledModels.find((m) => m.id.startsWith(raw) || raw.startsWith(m.id));
   return match?.id ?? raw;
 }
@@ -54,11 +52,13 @@ $effect(() => {
 });
 
 let isOtherModel = $derived(editModel !== "" && !enabledModels.some((m) => m.id === editModel));
-let showMaxThinking = $derived(editThinking !== "off");
+let thinkingLabel = $derived(THINKING_LEVELS[thinkingIndex]);
+let showMaxThinking = $derived(template === "claude" && thinkingIndex > 0);
 
 function loadEditFields(c: MindConfig) {
   editModel = c.config.model ?? "";
-  editThinking = c.config.thinkingLevel ?? "off";
+  const level = c.config.thinkingLevel ?? "off";
+  thinkingIndex = Math.max(0, THINKING_LEVELS.indexOf(level as (typeof THINKING_LEVELS)[number]));
   editMaxThinking = c.config.maxThinkingTokens != null ? String(c.config.maxThinkingTokens) : "";
   editBudget = c.config.tokenBudget != null ? String(c.config.tokenBudget) : "";
   editPeriod =
@@ -96,7 +96,9 @@ function saveModel(value: string) {
 }
 
 function saveThinking() {
-  saveField("thinking", () => updateMindConfig(name, { thinkingLevel: editThinking }));
+  saveField("thinking", () =>
+    updateMindConfig(name, { thinkingLevel: THINKING_LEVELS[thinkingIndex] }),
+  );
 }
 
 function saveMaxThinking() {
@@ -134,6 +136,11 @@ function handleModelSelect(e: Event) {
   } else {
     saveModel(value);
   }
+}
+
+function handleSliderChange(e: Event) {
+  thinkingIndex = parseInt((e.target as HTMLInputElement).value, 10);
+  saveThinking();
 }
 
 onMount(async () => {
@@ -190,16 +197,17 @@ onMount(async () => {
 
   <div class="setting-row">
     <span class="setting-label">Thinking</span>
-    <div class="setting-control">
-      <select
-        class="setting-select"
-        bind:value={editThinking}
-        onchange={saveThinking}
-      >
-        {#each thinkingLevels as level (level)}
-          <option value={level}>{level}</option>
-        {/each}
-      </select>
+    <div class="setting-control slider-control">
+      <input
+        type="range"
+        class="thinking-slider"
+        min="0"
+        max="5"
+        step="1"
+        value={thinkingIndex}
+        onchange={handleSliderChange}
+      />
+      <span class="slider-label" class:off={thinkingIndex === 0}>{thinkingLabel}</span>
     </div>
   </div>
 
@@ -326,6 +334,52 @@ onMount(async () => {
     background: var(--bg-3);
     padding: 2px 8px;
     border-radius: var(--radius);
+  }
+
+  /* Thinking slider */
+  .slider-control {
+    gap: 10px;
+  }
+
+  .thinking-slider {
+    flex: 1;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--border);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+
+  .thinking-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: none;
+    cursor: pointer;
+  }
+
+  .thinking-slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: none;
+    cursor: pointer;
+  }
+
+  .slider-label {
+    font-size: 13px;
+    color: var(--text-1);
+    min-width: 50px;
+    text-align: right;
+  }
+
+  .slider-label.off {
+    color: var(--text-2);
   }
 
   .error {

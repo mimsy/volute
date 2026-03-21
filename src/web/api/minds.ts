@@ -2112,13 +2112,22 @@ const app = new Hono<AuthEnv>()
       },
       config: {
         model: config?.model ?? templateConfig.model ?? null,
-        thinkingLevel:
-          config?.thinkingLevel ??
-          (templateConfig as Record<string, unknown>).thinkingLevel ??
-          (templateConfig as Record<string, unknown>).reasoningEffort ??
-          // For claude: infer from maxThinkingTokens presence
-          ((templateConfig as Record<string, unknown>).maxThinkingTokens ? "medium" : null) ??
-          null,
+        thinkingLevel: (() => {
+          if (config?.thinkingLevel) return config.thinkingLevel;
+          const tc = templateConfig as Record<string, unknown>;
+          if (tc.thinkingLevel) return tc.thinkingLevel;
+          if (tc.reasoningEffort) return tc.reasoningEffort;
+          // Claude: reverse-map maxThinkingTokens → level
+          const mtt = tc.maxThinkingTokens as number | undefined;
+          if (mtt) {
+            if (mtt <= 1024) return "minimal";
+            if (mtt <= 4096) return "low";
+            if (mtt <= 10000) return "medium";
+            if (mtt <= 32000) return "high";
+            return "xhigh";
+          }
+          return null;
+        })(),
         maxThinkingTokens:
           config?.maxThinkingTokens ??
           ((templateConfig as Record<string, unknown>).maxThinkingTokens as number | undefined) ??
@@ -2215,17 +2224,34 @@ const app = new Hono<AuthEnv>()
         const tmpl = entry.template ?? "claude";
         if (body.thinkingLevel !== undefined) {
           if (tmpl === "claude") {
-            // Claude uses maxThinkingTokens (number or absent)
-            // Map level to a token budget: off = remove, otherwise set a default
-            if (body.thinkingLevel === "off") {
+            // Claude uses maxThinkingTokens — map unified levels to token budgets
+            const claudeThinkingTokens: Record<string, number | null> = {
+              off: null,
+              minimal: 1024,
+              low: 4096,
+              medium: 10000,
+              high: 32000,
+              xhigh: 128000,
+            };
+            const tokens = claudeThinkingTokens[body.thinkingLevel] ?? null;
+            if (tokens === null) {
               delete templateConfig.maxThinkingTokens;
-            } else if (!templateConfig.maxThinkingTokens) {
-              // Set a reasonable default if not already configured
-              templateConfig.maxThinkingTokens = 10000;
+            } else {
+              templateConfig.maxThinkingTokens = tokens;
             }
           } else if (tmpl === "codex") {
-            templateConfig.reasoningEffort = body.thinkingLevel;
+            // Codex uses reasoningEffort (low/medium/high)
+            const codexMap: Record<string, string> = {
+              off: "low",
+              minimal: "low",
+              low: "low",
+              medium: "medium",
+              high: "high",
+              xhigh: "high",
+            };
+            templateConfig.reasoningEffort = codexMap[body.thinkingLevel] ?? "medium";
           } else {
+            // Pi uses thinkingLevel directly
             templateConfig.thinkingLevel = body.thinkingLevel;
           }
         }
