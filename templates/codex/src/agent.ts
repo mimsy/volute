@@ -286,7 +286,9 @@ export function createMind(options: {
               if (item.type === "agent_message" || item.type === "agentMessage") {
                 itemText.set(event.itemId ?? item.id, "");
               } else if (item.type === "reasoning") {
-                emit(session, { type: "thinking", content: item.content ?? "" });
+                // Reasoning text may arrive on started or completed
+                const text = item.text ?? item.content ?? "";
+                if (text) emit(session, { type: "thinking", content: text });
               } else if (item.type === "command_execution" || item.type === "commandExecution") {
                 const cmd = item.command ?? item.args?.join(" ") ?? "";
                 emit(session, {
@@ -361,7 +363,10 @@ export function createMind(options: {
               if (!item) break;
               const itemType = item.type;
 
-              if (itemType === "agent_message" || itemType === "agentMessage") {
+              if (itemType === "reasoning") {
+                const text = item.text ?? item.content ?? "";
+                if (text) emit(session, { type: "thinking", content: text });
+              } else if (itemType === "agent_message" || itemType === "agentMessage") {
                 // Emit any remaining delta
                 const id = event.itemId ?? item.id;
                 const prev = itemText.get(id) ?? "";
