@@ -106,6 +106,10 @@ function handleClickOutside(e: MouseEvent) {
   }
 }
 
+function handleWindowBlur() {
+  if (openMenu) openMenu = null;
+}
+
 let channelConversations = $derived(conversations.filter((c) => c.type === "channel"));
 
 let activeChannelId = $derived.by(() => {
@@ -122,8 +126,10 @@ let isSystemActive = $derived(
 );
 </script>
 
+<svelte:window onclick={handleClickOutside} onblur={handleWindowBlur} />
+
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="sidebar-inner" onclick={handleClickOutside}>
+<div class="sidebar-inner">
   <div class="sections">
     <!-- System -->
     <div class="section">
@@ -429,7 +435,7 @@ let isSystemActive = $derived(
 
   .mind-menu {
     position: absolute;
-    right: 0;
+    left: 0;
     top: 100%;
     z-index: 100;
     background: var(--bg-1);

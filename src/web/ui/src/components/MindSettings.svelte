@@ -169,15 +169,12 @@ async function handleUpdated() {
   .settings-body {
     flex: 1;
     overflow: auto;
-    padding: 0 16px 32px;
-    max-width: 720px;
-    margin: 0 auto;
-    width: 100%;
   }
 
   section {
-    padding-top: 24px;
-    margin-bottom: 8px;
+    padding: 24px 16px 8px;
+    max-width: 720px;
+    margin: 0 auto;
   }
 
   .section-header {
