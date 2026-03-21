@@ -90,8 +90,10 @@ export type ExtensionManifest = {
   name: string;
   version: string;
   description?: string;
-  /** SVG icon for this extension (used in system tabs, mind tabs, etc.) */
+  /** SVG icon for this extension (used in system tabs, mind tabs, activity cards, etc.) */
   icon?: string;
+  /** CSS color variable name (e.g. "purple", "yellow") used for activity cards and timeline markers */
+  color?: string;
   routes: (ctx: ExtensionContext) => Hono;
   publicRoutes?: (ctx: ExtensionContext) => Hono;
   ui?: {

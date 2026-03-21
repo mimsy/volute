@@ -66,7 +66,7 @@ function formatCreated(dateStr: string): string {
     <MindClock name={mind.name} />
 
     <div class="history-section">
-      <TurnTimeline name={mind.name} />
+      <TurnTimeline name={mind.name} mindStatus={mind.status} />
     </div>
   </div>
 </div>

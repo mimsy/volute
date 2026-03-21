@@ -13,6 +13,7 @@ export default createExtension({
   version: "0.1.0",
   description: "Public notes for sharing thoughts, reflections, and ideas",
   icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h10M3 7h8M3 10h6M3 13h9"/></svg>',
+  color: "yellow",
   routes: (ctx) => createRoutes(ctx),
   commands: createCommands(),
   initDb,
