@@ -2112,8 +2112,17 @@ const app = new Hono<AuthEnv>()
       },
       config: {
         model: config?.model ?? templateConfig.model ?? null,
-        thinkingLevel: config?.thinkingLevel ?? null,
-        maxThinkingTokens: config?.maxThinkingTokens ?? null,
+        thinkingLevel:
+          config?.thinkingLevel ??
+          (templateConfig as Record<string, unknown>).thinkingLevel ??
+          (templateConfig as Record<string, unknown>).reasoningEffort ??
+          // For claude: infer from maxThinkingTokens presence
+          ((templateConfig as Record<string, unknown>).maxThinkingTokens ? "medium" : null) ??
+          null,
+        maxThinkingTokens:
+          config?.maxThinkingTokens ??
+          ((templateConfig as Record<string, unknown>).maxThinkingTokens as number | undefined) ??
+          null,
         tokenBudget: config?.tokenBudget ?? null,
         tokenBudgetPeriodMinutes: config?.tokenBudgetPeriodMinutes ?? null,
         compaction: templateConfig.compaction ?? null,
@@ -2178,8 +2187,15 @@ const app = new Hono<AuthEnv>()
 
       writeVoluteConfig(dir, existing);
 
-      // Write compaction to config.json (template-level config)
-      if (body.compaction !== undefined) {
+      // Write template-level settings to config.json
+      // Templates read thinking/model/compaction from config.json, not volute.json
+      const needsConfigJson =
+        body.model !== undefined ||
+        body.thinkingLevel !== undefined ||
+        body.maxThinkingTokens !== undefined ||
+        body.compaction !== undefined;
+
+      if (needsConfigJson) {
         const configJsonPath = resolve(dir, "home/.config/config.json");
         let templateConfig: Record<string, unknown> = {};
         if (existsSync(configJsonPath)) {
@@ -2189,17 +2205,53 @@ const app = new Hono<AuthEnv>()
             // start fresh
           }
         }
-        if (body.compaction === null) {
-          delete templateConfig.compaction;
-        } else {
-          const comp = (templateConfig.compaction ?? {}) as Record<string, unknown>;
-          if (body.compaction.maxContextTokens === null) {
-            delete comp.maxContextTokens;
-          } else if (body.compaction.maxContextTokens !== undefined) {
-            comp.maxContextTokens = body.compaction.maxContextTokens;
-          }
-          templateConfig.compaction = comp;
+
+        if (body.model !== undefined) {
+          templateConfig.model = body.model;
         }
+
+        // Thinking settings: write the correct field per template
+        // claude → maxThinkingTokens; pi → thinkingLevel; codex → reasoningEffort
+        const tmpl = entry.template ?? "claude";
+        if (body.thinkingLevel !== undefined) {
+          if (tmpl === "claude") {
+            // Claude uses maxThinkingTokens (number or absent)
+            // Map level to a token budget: off = remove, otherwise set a default
+            if (body.thinkingLevel === "off") {
+              delete templateConfig.maxThinkingTokens;
+            } else if (!templateConfig.maxThinkingTokens) {
+              // Set a reasonable default if not already configured
+              templateConfig.maxThinkingTokens = 10000;
+            }
+          } else if (tmpl === "codex") {
+            templateConfig.reasoningEffort = body.thinkingLevel;
+          } else {
+            templateConfig.thinkingLevel = body.thinkingLevel;
+          }
+        }
+
+        if (body.maxThinkingTokens !== undefined) {
+          if (body.maxThinkingTokens === null) {
+            delete templateConfig.maxThinkingTokens;
+          } else {
+            templateConfig.maxThinkingTokens = body.maxThinkingTokens;
+          }
+        }
+
+        if (body.compaction !== undefined) {
+          if (body.compaction === null) {
+            delete templateConfig.compaction;
+          } else {
+            const comp = (templateConfig.compaction ?? {}) as Record<string, unknown>;
+            if (body.compaction.maxContextTokens === null) {
+              delete comp.maxContextTokens;
+            } else if (body.compaction.maxContextTokens !== undefined) {
+              comp.maxContextTokens = body.compaction.maxContextTokens;
+            }
+            templateConfig.compaction = comp;
+          }
+        }
+
         writeFileSync(configJsonPath, `${JSON.stringify(templateConfig, null, 2)}\n`);
       }
 
