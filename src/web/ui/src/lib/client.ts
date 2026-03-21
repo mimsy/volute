@@ -267,8 +267,10 @@ export function updateMindConfig(
   updates: {
     model?: string;
     thinkingLevel?: string;
+    maxThinkingTokens?: number | null;
     tokenBudget?: number | null;
     tokenBudgetPeriodMinutes?: number | null;
+    compaction?: { maxContextTokens?: number | null } | null;
   },
 ): Promise<void> {
   return put(`${V1}/minds/${enc(name)}/config`, updates);

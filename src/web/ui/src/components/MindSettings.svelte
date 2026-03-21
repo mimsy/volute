@@ -1,9 +1,10 @@
 <script lang="ts">
-import type { Mind, MindConfig } from "@volute/api";
+import type { Mind } from "@volute/api";
 import { onMount } from "svelte";
-import { fetchMindConfig, fetchMinds, updateMindConfig } from "../lib/client";
+import { fetchMinds } from "../lib/client";
 import { data } from "../lib/stores.svelte";
 import MindSettingsAdvanced from "./MindSettingsAdvanced.svelte";
+import MindSettingsCognition from "./MindSettingsCognition.svelte";
 import MindSettingsEnv from "./MindSettingsEnv.svelte";
 import MindSettingsProfile from "./MindSettingsProfile.svelte";
 import MindSkills from "./MindSkills.svelte";
@@ -25,38 +26,7 @@ let activeSection = $state("profile");
 let scrollContainer: HTMLDivElement;
 let sectionEls: Record<string, HTMLElement> = {};
 
-const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
-
-// Cognition state (inline for Phase 1)
-let config = $state<MindConfig | null>(null);
-let editModel = $state("");
-let editThinking = $state("off");
-let editBudget = $state("");
-let editPeriod = $state("");
-let saving = $state<string | null>(null);
-let configError = $state("");
-
-function loadEditFields(c: MindConfig) {
-  editModel = c.config.model ?? "";
-  editThinking = c.config.thinkingLevel ?? "off";
-  editBudget = c.config.tokenBudget != null ? String(c.config.tokenBudget) : "";
-  editPeriod =
-    c.config.tokenBudgetPeriodMinutes != null ? String(c.config.tokenBudgetPeriodMinutes) : "";
-}
-
-async function refreshConfig() {
-  try {
-    const c = await fetchMindConfig(name);
-    config = c;
-    loadEditFields(c);
-    configError = "";
-  } catch {
-    configError = "Failed to load config";
-  }
-}
-
 onMount(() => {
-  refreshConfig();
   setupObserver();
 });
 
@@ -80,58 +50,6 @@ function setupObserver() {
 
 function scrollTo(id: string) {
   sectionEls[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
-}
-
-async function saveField(field: string, value: unknown) {
-  saving = field;
-  configError = "";
-  try {
-    await updateMindConfig(name, { [field]: value });
-    const c = await fetchMindConfig(name);
-    config = c;
-    loadEditFields(c);
-  } catch (e) {
-    configError = e instanceof Error ? e.message : "Failed to save";
-  }
-  saving = null;
-}
-
-function handleModelSave() {
-  saveField("model", editModel);
-}
-
-function handleThinkingChange(e: Event) {
-  const val = (e.target as HTMLSelectElement).value;
-  editThinking = val;
-  saveField("thinkingLevel", val);
-}
-
-function parseBudgetInt(val: string): number | null {
-  const trimmed = val.trim();
-  if (!trimmed) return null;
-  const parsed = parseInt(trimmed, 10);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
-async function handleBudgetSave() {
-  saving = "budget";
-  configError = "";
-  try {
-    await updateMindConfig(name, {
-      tokenBudget: parseBudgetInt(editBudget),
-      tokenBudgetPeriodMinutes: parseBudgetInt(editPeriod),
-    });
-    const c = await fetchMindConfig(name);
-    config = c;
-    loadEditFields(c);
-  } catch (e) {
-    configError = e instanceof Error ? e.message : "Failed to save";
-  }
-  saving = null;
-}
-
-function handleKeydown(e: KeyboardEvent, action: () => void) {
-  if (e.key === "Enter") action();
 }
 
 async function handleUpdated() {
@@ -162,72 +80,7 @@ async function handleUpdated() {
         <span class="section-title">Model</span>
         <span class="section-subtitle">Cognition and resource limits</span>
       </div>
-
-      {#if configError}
-        <div class="error">{configError}</div>
-      {/if}
-
-      {#if config}
-        <div class="setting-row">
-          <label class="setting-label" for="model-input">Model</label>
-          <div class="setting-control">
-            <input
-              id="model-input"
-              type="text"
-              class="setting-input"
-              bind:value={editModel}
-              onkeydown={(e) => handleKeydown(e, handleModelSave)}
-              onblur={handleModelSave}
-              placeholder="e.g. claude-sonnet-4-6"
-            />
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <label class="setting-label" for="thinking-select">Thinking</label>
-          <div class="setting-control">
-            <select
-              id="thinking-select"
-              class="setting-select"
-              value={editThinking}
-              onchange={handleThinkingChange}
-              disabled={saving !== null}
-            >
-              {#each THINKING_LEVELS as level}
-                <option value={level}>{level}</option>
-              {/each}
-            </select>
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <label class="setting-label" for="budget-input">Token budget</label>
-          <div class="setting-control">
-            <input
-              id="budget-input"
-              type="number"
-              class="setting-input narrow"
-              bind:value={editBudget}
-              onkeydown={(e) => handleKeydown(e, handleBudgetSave)}
-              onblur={handleBudgetSave}
-              placeholder="tokens"
-            />
-            <span class="setting-hint">per</span>
-            <input
-              id="period-input"
-              type="number"
-              class="setting-input narrow"
-              bind:value={editPeriod}
-              onkeydown={(e) => handleKeydown(e, handleBudgetSave)}
-              onblur={handleBudgetSave}
-              placeholder="60"
-            />
-            <span class="setting-hint">min</span>
-          </div>
-        </div>
-      {:else}
-        <div class="empty">Loading...</div>
-      {/if}
+      <MindSettingsCognition {name} />
     </section>
 
     <!-- Skills -->
@@ -324,76 +177,5 @@ async function handleUpdated() {
   .section-subtitle {
     font-size: 12px;
     color: var(--text-2);
-  }
-
-  .error {
-    color: var(--red);
-    padding: 8px 0;
-    font-size: 13px;
-  }
-
-  .empty {
-    color: var(--text-2);
-    padding: 12px 0;
-    font-size: 14px;
-  }
-
-  /* Cognition fields */
-  .setting-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 6px 0;
-  }
-
-  .setting-label {
-    width: 100px;
-    flex-shrink: 0;
-    font-size: 14px;
-    color: var(--text-1);
-  }
-
-  .setting-control {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex: 1;
-  }
-
-  .setting-input {
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 4px 8px;
-    font-size: 14px;
-    color: var(--text-0);
-    flex: 1;
-    font-family: inherit;
-  }
-
-  .setting-input.narrow {
-    width: 80px;
-    flex: 0 0 80px;
-  }
-
-  .setting-input:focus {
-    border-color: var(--accent);
-    outline: none;
-  }
-
-  .setting-select {
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 4px 8px;
-    font-size: 14px;
-    color: var(--text-0);
-    font-family: inherit;
-  }
-
-  .setting-hint {
-    font-size: 13px;
-    color: var(--text-2);
-    flex-shrink: 0;
   }
 </style>

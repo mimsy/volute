@@ -2091,6 +2091,17 @@ const app = new Hono<AuthEnv>()
       }
     }
 
+    // Read config.json for compaction settings
+    let templateConfig: { compaction?: { maxContextTokens?: number } } = {};
+    const configJsonPath = resolve(dir, "home/.config/config.json");
+    if (existsSync(configJsonPath)) {
+      try {
+        templateConfig = JSON.parse(readFileSync(configJsonPath, "utf-8"));
+      } catch {
+        // ignore parse errors
+      }
+    }
+
     return c.json({
       registry: {
         name: entry.name,
@@ -2102,8 +2113,10 @@ const app = new Hono<AuthEnv>()
       config: {
         model: config?.model ?? null,
         thinkingLevel: config?.thinkingLevel ?? null,
+        maxThinkingTokens: config?.maxThinkingTokens ?? null,
         tokenBudget: config?.tokenBudget ?? null,
         tokenBudgetPeriodMinutes: config?.tokenBudgetPeriodMinutes ?? null,
+        compaction: templateConfig.compaction ?? null,
       },
     });
   })
@@ -2116,8 +2129,13 @@ const app = new Hono<AuthEnv>()
       z.object({
         model: z.string().optional(),
         thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
+        maxThinkingTokens: z.number().int().positive().nullable().optional(),
         tokenBudget: z.number().int().positive().nullable().optional(),
         tokenBudgetPeriodMinutes: z.number().int().positive().nullable().optional(),
+        compaction: z
+          .object({ maxContextTokens: z.number().int().positive().nullable().optional() })
+          .nullable()
+          .optional(),
       }),
     ),
     async (c) => {
@@ -2150,8 +2168,41 @@ const app = new Hono<AuthEnv>()
           existing.tokenBudgetPeriodMinutes = body.tokenBudgetPeriodMinutes;
         }
       }
+      if (body.maxThinkingTokens !== undefined) {
+        if (body.maxThinkingTokens === null) {
+          delete existing.maxThinkingTokens;
+        } else {
+          existing.maxThinkingTokens = body.maxThinkingTokens;
+        }
+      }
 
       writeVoluteConfig(dir, existing);
+
+      // Write compaction to config.json (template-level config)
+      if (body.compaction !== undefined) {
+        const configJsonPath = resolve(dir, "home/.config/config.json");
+        let templateConfig: Record<string, unknown> = {};
+        if (existsSync(configJsonPath)) {
+          try {
+            templateConfig = JSON.parse(readFileSync(configJsonPath, "utf-8"));
+          } catch {
+            // start fresh
+          }
+        }
+        if (body.compaction === null) {
+          delete templateConfig.compaction;
+        } else {
+          const comp = (templateConfig.compaction ?? {}) as Record<string, unknown>;
+          if (body.compaction.maxContextTokens === null) {
+            delete comp.maxContextTokens;
+          } else if (body.compaction.maxContextTokens !== undefined) {
+            comp.maxContextTokens = body.compaction.maxContextTokens;
+          }
+          templateConfig.compaction = comp;
+        }
+        writeFileSync(configJsonPath, `${JSON.stringify(templateConfig, null, 2)}\n`);
+      }
+
       return c.json({ ok: true });
     },
   )
