@@ -248,7 +248,7 @@ let isSystemActive = $derived(
     onclick={(e) => e.stopPropagation()}
   >
     <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "history")}>
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></svg>
+      <svg viewBox="0 0 16 16"><line x1="4" y1="2" x2="4" y2="14" stroke="currentColor" stroke-width="1.5"/><path d="M4 2H12V8" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="4" cy="2" r="2" fill="currentColor"/><circle cx="4" cy="14" r="2" fill="currentColor"/><circle cx="12" cy="8" r="2" fill="currentColor"/></svg>
       History
     </button>
     <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "files")}>
@@ -256,7 +256,7 @@ let isSystemActive = $derived(
       Files
     </button>
     <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "settings")}>
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M8 2v2M8 12v2M2 8h2M12 8h2M3.76 3.76l1.41 1.41M10.83 10.83l1.41 1.41M3.76 12.24l1.41-1.41M10.83 5.17l1.41-1.41"/></svg>
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.86 2h2.28l.35 1.76a5 5 0 0 1 1.22.7l1.7-.57.94 1.62-1.35 1.2a5 5 0 0 1 0 1.4l1.35 1.2-.94 1.62-1.7-.57a5 5 0 0 1-1.22.7L9.14 14H6.86l-.35-1.76a5 5 0 0 1-1.22-.7l-1.7.57-.94-1.62 1.35-1.2a5 5 0 0 1 0-1.4l-1.35-1.2.94-1.62 1.7.57a5 5 0 0 1 1.22-.7L6.86 2z"/><circle cx="8" cy="8" r="2"/></svg>
       Settings
     </button>
   </div>
