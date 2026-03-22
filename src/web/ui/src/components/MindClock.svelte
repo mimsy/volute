@@ -5,6 +5,16 @@ import Icon from "./Icon.svelte";
 
 type IconKind = "heartbeat" | "dream" | "sleep" | "clock";
 
+const PALETTE = ["var(--blue)", "var(--yellow)", "var(--red)", "var(--green)", "var(--purple)"];
+
+const BUILTIN_COLORS: Record<string, string> = {
+  heartbeat: "var(--red)",
+  pulse: "var(--red)",
+  dream: "var(--purple)",
+  dreaming: "var(--purple)",
+  sleep: "var(--blue)",
+};
+
 let { name }: { name: string } = $props();
 
 let clock = $state<ClockStatus | null>(null);
@@ -26,7 +36,26 @@ function scheduleIcon(id: string): IconKind {
   const lower = id.toLowerCase();
   if (lower === "heartbeat" || lower === "pulse") return "heartbeat";
   if (lower === "dream" || lower === "dreaming") return "dream";
+  if (lower === "sleep") return "sleep";
   return "clock";
+}
+
+function isBuiltin(id: string): boolean {
+  return id.toLowerCase() in BUILTIN_COLORS;
+}
+
+// Stable color assignment for custom schedule IDs
+let colorMap = new Map<string, string>();
+function scheduleColor(id: string): string {
+  const lower = id.toLowerCase();
+  if (BUILTIN_COLORS[lower]) return BUILTIN_COLORS[lower];
+  if (!colorMap.has(lower)) {
+    // Hash-based assignment for stability
+    let hash = 0;
+    for (let i = 0; i < lower.length; i++) hash = ((hash << 5) - hash + lower.charCodeAt(i)) | 0;
+    colorMap.set(lower, PALETTE[Math.abs(hash) % PALETTE.length]);
+  }
+  return colorMap.get(lower)!;
 }
 
 function formatRelative(iso: string): string {
@@ -123,40 +152,121 @@ function formatSleepTime(iso: string): string {
   }
 }
 
+// Build unified schedule rows: [name] | [times] | [next]
+type ScheduleRow = {
+  id: string;
+  icon: IconKind;
+  color: string;
+  times: string;
+  next: string;
+  disabled: boolean;
+  tooltip: string;
+};
+
+let rows = $derived.by(() => {
+  if (!clock) return [];
+  const result: ScheduleRow[] = [];
+  const upcomingMap = new Map<string, string>();
+  for (const u of clock.upcoming) {
+    if (!upcomingMap.has(u.id)) upcomingMap.set(u.id, u.at);
+  }
+
+  // Sleep row
+  if (clock.sleep?.sleeping) {
+    result.push({
+      id: "sleep",
+      icon: "sleep",
+      color: scheduleColor("sleep"),
+      times: "sleeping now",
+      next: clock.sleep.scheduledWakeAt
+        ? `wake ${formatRelative(clock.sleep.scheduledWakeAt)}`
+        : "",
+      disabled: false,
+      tooltip: "",
+    });
+  } else if (clock.sleepConfig?.enabled && clock.sleepConfig.schedule) {
+    const sc = clock.sleepConfig.schedule;
+    const nextSleep = upcomingMap.get("sleep");
+    result.push({
+      id: "sleep",
+      icon: "sleep",
+      color: scheduleColor("sleep"),
+      times: `${formatCron(sc.sleep)} \u2192 ${formatCron(sc.wake)}`,
+      next: nextSleep ? formatRelative(nextSleep) : "",
+      disabled: false,
+      tooltip: "",
+    });
+  }
+
+  // Regular schedules
+  for (const s of clock.schedules) {
+    let times = "";
+    if (s.cron) times = formatCron(s.cron);
+    else if (s.fireAt) times = formatSleepTime(s.fireAt);
+    const nextAt = upcomingMap.get(s.id);
+    result.push({
+      id: s.id,
+      icon: scheduleIcon(s.id),
+      color: scheduleColor(s.id),
+      times,
+      next: nextAt ? formatRelative(nextAt) : "",
+      disabled: !s.enabled,
+      tooltip: formatAction(s),
+    });
+  }
+
+  return result;
+});
+
 // Compact summary: current/previous state + next event
-let currentItem = $derived.by(() => {
+type SummaryItem = { icon: IconKind; label: string; detail: string; color: string };
+
+let currentItem = $derived.by((): SummaryItem | null => {
   if (!clock) return null;
   if (clock.sleep?.sleeping) {
     return {
-      icon: "sleep" as IconKind,
+      icon: "sleep",
       label: "Sleeping",
+      color: scheduleColor("sleep"),
       detail: clock.sleep.scheduledWakeAt
         ? `wake ${formatRelative(clock.sleep.scheduledWakeAt)}`
         : "now",
     };
   }
-  // If mind is active and we have a recent previous fire, show that
   if (activeMinds.has(name) && clock.previous?.length > 0) {
     const prev = clock.previous[0];
     const elapsed = Date.now() - new Date(prev.at).getTime();
-    // Only show if the previous fire was within the last 30 minutes
     if (elapsed < 30 * 60_000) {
-      return { icon: scheduleIcon(prev.id), label: prev.id, detail: "active now" };
+      return {
+        icon: scheduleIcon(prev.id),
+        label: prev.id,
+        color: scheduleColor(prev.id),
+        detail: "active now",
+      };
     }
   }
-  // Show most recent previous fire
   if (clock.previous?.length > 0) {
     const prev = clock.previous[0];
-    return { icon: scheduleIcon(prev.id), label: prev.id, detail: formatRelative(prev.at) };
+    return {
+      icon: scheduleIcon(prev.id),
+      label: prev.id,
+      color: scheduleColor(prev.id),
+      detail: formatRelative(prev.at),
+    };
   }
   return null;
 });
 
-let nextItem = $derived.by(() => {
+let nextItem = $derived.by((): SummaryItem | null => {
   if (!clock) return null;
   const next = clock.upcoming[0];
   if (!next) return null;
-  return { icon: scheduleIcon(next.id), label: next.id, detail: formatRelative(next.at) };
+  return {
+    icon: scheduleIcon(next.id),
+    label: next.id,
+    color: scheduleColor(next.id),
+    detail: formatRelative(next.at),
+  };
 });
 
 let hasContent = $derived(
@@ -171,8 +281,8 @@ let hasContent = $derived(
       <div class="summary-items">
         {#if currentItem}
           <span class="summary-item">
-            <Icon kind={currentItem.icon} class="summary-icon" />
-            <span class="summary-label">{currentItem.label}</span>
+            <span style:color={currentItem.color}><Icon kind={currentItem.icon} class="summary-icon" /></span>
+            <span class="summary-label" style:color={currentItem.color}>{currentItem.label}</span>
             <span class="summary-detail">{currentItem.detail}</span>
           </span>
         {/if}
@@ -181,8 +291,8 @@ let hasContent = $derived(
             <span class="summary-sep">&middot;</span>
           {/if}
           <span class="summary-item">
-            <Icon kind={nextItem.icon} class="summary-icon" />
-            <span class="summary-label">{nextItem.label}</span>
+            <span style:color={nextItem.color}><Icon kind={nextItem.icon} class="summary-icon" /></span>
+            <span class="summary-label" style:color={nextItem.color}>{nextItem.label}</span>
             <span class="summary-detail">{nextItem.detail}</span>
           </span>
         {/if}
@@ -196,51 +306,23 @@ let hasContent = $derived(
       <svg class="expand-chevron" class:expanded viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 6l3 3 3-3"/></svg>
     </button>
 
-    <!-- Expanded details -->
+    <!-- Expanded three-column schedule table -->
     {#if expanded}
       <div class="clock-details">
-        {#if clock.sleep?.sleeping}
-          <div class="clock-row sleep-row">
-            <Icon kind="sleep" class="clock-icon" />
-            <span class="clock-label">Sleeping</span>
-            {#if clock.sleep.scheduledWakeAt}
-              <span class="clock-detail">wake {formatRelative(clock.sleep.scheduledWakeAt)}</span>
-            {/if}
+        {#each rows as row (row.id)}
+          <div class="clock-row" class:disabled={row.disabled} title={row.tooltip}>
+            <span class="row-name">
+              {#if isBuiltin(row.id)}
+                <span style:color={row.color}><Icon kind={row.icon} class="clock-icon" /></span>
+              {:else}
+                <span class="color-dot" style:background={row.color}></span>
+              {/if}
+              <span class="clock-label" style:color={row.color}>{row.id}</span>
+            </span>
+            <span class="row-times">{row.times}</span>
+            <span class="row-next">{row.next}</span>
           </div>
-        {:else if clock.sleepConfig?.enabled && clock.sleepConfig.schedule}
-          <div class="clock-row sleep-row">
-            <Icon kind="sleep" class="clock-icon" />
-            <span class="clock-label">Sleep</span>
-            <span class="clock-detail">{formatCron(clock.sleepConfig.schedule.sleep)} &rarr; {formatCron(clock.sleepConfig.schedule.wake)}</span>
-          </div>
-        {/if}
-
-        {#if clock.schedules.length > 0}
-          {#each clock.schedules as s (s.id)}
-            <div class="clock-row" class:disabled={!s.enabled} title={formatAction(s)}>
-              <Icon kind={scheduleIcon(s.id)} class="clock-icon" />
-              <span class="clock-label">{s.id}</span>
-              <span class="clock-detail">
-                {#if s.cron}
-                  {formatCron(s.cron)}
-                {:else if s.fireAt}
-                  {formatSleepTime(s.fireAt)}
-                {/if}
-              </span>
-            </div>
-          {/each}
-        {/if}
-
-        {#if clock.upcoming.length > 0}
-          <div class="upcoming-section">
-            <span class="upcoming-label">Next</span>
-            {#each clock.upcoming.slice(0, 3) as u (u.id + u.at)}
-              <span class="upcoming-item">
-                {u.id} {formatRelative(u.at)}
-              </span>
-            {/each}
-          </div>
-        {/if}
+        {/each}
       </div>
     {/if}
   </div>
@@ -257,26 +339,30 @@ let hasContent = $derived(
   .clock-summary {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
     background: none;
     border: none;
-    padding: 0;
+    border-radius: var(--radius);
+    padding: 4px 8px;
+    margin: 0 -8px;
     cursor: pointer;
     color: var(--text-1);
     font-size: 12px;
     text-align: left;
-    width: 100%;
+    width: calc(100% + 16px);
+    transition: background 0.15s;
   }
 
   .clock-summary:hover {
-    color: var(--text-0);
+    background: var(--bg-2);
   }
 
   .summary-items {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
-    flex: 1;
     min-width: 0;
     overflow: hidden;
   }
@@ -292,7 +378,6 @@ let hasContent = $derived(
     width: 12px;
     height: 12px;
     flex-shrink: 0;
-    color: var(--text-2);
   }
 
   .summary-label {
@@ -313,10 +398,16 @@ let hasContent = $derived(
     height: 12px;
     flex-shrink: 0;
     color: var(--text-2);
-    transition: transform 0.15s;
+    transition: transform 0.15s, opacity 0.15s;
+    opacity: 0;
+  }
+
+  .clock-summary:hover .expand-chevron {
+    opacity: 1;
   }
 
   .expand-chevron.expanded {
+    opacity: 1;
     transform: rotate(180deg);
   }
 
@@ -341,48 +432,42 @@ let hasContent = $derived(
     opacity: 0.4;
   }
 
+  .row-name {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+  }
+
   .clock-row :global(.clock-icon) {
     width: 13px;
     height: 13px;
     flex-shrink: 0;
-    color: var(--text-2);
   }
 
-  .sleep-row :global(.clock-icon) {
-    color: var(--purple);
+  .color-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
   }
 
   .clock-label {
     font-weight: 500;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  .clock-detail {
+  .row-times,
+  .row-next {
     color: var(--text-2);
-    margin-left: auto;
+    font-size: 11px;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
     text-align: right;
-    white-space: nowrap;
-    font-size: 11px;
-  }
-
-  .upcoming-section {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4px 8px;
-    font-size: 11px;
-    color: var(--text-2);
-    margin-top: 4px;
-    padding-top: 6px;
-    border-top: 1px solid var(--border);
-  }
-
-  .upcoming-label {
-    font-weight: 500;
-    color: var(--text-1);
-  }
-
-  .upcoming-item {
-    white-space: nowrap;
   }
 </style>

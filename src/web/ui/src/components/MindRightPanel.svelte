@@ -1,10 +1,9 @@
 <script lang="ts">
 import type { Mind } from "@volute/api";
-import { getDisplayStatus } from "../lib/format";
-import { data } from "../lib/stores.svelte";
+import { mindDotColor } from "../lib/format";
+import { activeMinds, data } from "../lib/stores.svelte";
 import Icon from "./Icon.svelte";
 import MindClock from "./MindClock.svelte";
-import StatusBadge from "./StatusBadge.svelte";
 import TurnTimeline from "./TurnTimeline.svelte";
 
 let {
@@ -18,15 +17,7 @@ let {
 } = $props();
 
 let mind = $derived(data.minds.find((m) => m.name === initialMind.name) ?? initialMind);
-
-function formatCreated(dateStr: string): string {
-  try {
-    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
-    return d.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
-  } catch {
-    return dateStr;
-  }
-}
+let isActive = $derived(activeMinds.has(mind.name));
 </script>
 
 <div class="mind-panel">
@@ -55,12 +46,17 @@ function formatCreated(dateStr: string): string {
           class="profile-avatar"
         />
       {/if}
-      <span class="profile-name">{mind.displayName ?? mind.name}</span>
-      <StatusBadge status={getDisplayStatus(mind)} />
+      <span class="profile-name">
+        <span
+          class="status-dot"
+          class:iridescent={isActive}
+          style:background={isActive ? undefined : mindDotColor(mind)}
+        ></span>
+        {mind.displayName ?? mind.name}
+      </span>
       {#if mind.description}
         <p class="profile-description">{mind.description}</p>
       {/if}
-      <span class="profile-meta">@{mind.name} &middot; since {formatCreated(mind.created)}</span>
     </div>
 
     <MindClock name={mind.name} />
@@ -159,7 +155,7 @@ function formatCreated(dateStr: string): string {
     flex-direction: column;
     align-items: center;
     gap: 4px;
-    padding: 12px 16px 16px;
+    padding: 24px 16px 16px;
   }
 
   .profile-avatar {
@@ -170,6 +166,9 @@ function formatCreated(dateStr: string): string {
   }
 
   .profile-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     font-family: var(--display);
     font-size: 20px;
     font-weight: 300;
@@ -178,19 +177,34 @@ function formatCreated(dateStr: string): string {
     margin-top: 4px;
   }
 
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .status-dot.iridescent {
+    animation: iridescent 3s ease-in-out infinite;
+  }
+
+  @keyframes iridescent {
+    0%   { background: #4ade80; }
+    16%  { background: #60a5fa; }
+    33%  { background: #c084fc; }
+    50%  { background: #f472b6; }
+    66%  { background: #fbbf24; }
+    83%  { background: #34d399; }
+    100% { background: #4ade80; }
+  }
+
   .profile-description {
     font-size: 14px;
     color: var(--text-1);
     text-align: center;
     max-width: 320px;
-    margin: 4px 0 0;
+    margin: 0;
     line-height: 1.4;
-  }
-
-  .profile-meta {
-    font-size: 12px;
-    color: var(--text-2);
-    margin-top: 4px;
   }
 
   .history-section {
