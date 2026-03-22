@@ -1,12 +1,12 @@
 <script lang="ts">
 import type { Mind } from "@volute/api";
 import Settings from "../pages/Settings.svelte";
-import Modal from "./Modal.svelte";
 import PublicFiles from "./PublicFiles.svelte";
 import SharedSkills from "./SharedSkills.svelte";
 import SystemLogs from "./SystemLogs.svelte";
-import TabBar from "./TabBar.svelte";
 import UserManagement from "./UserManagement.svelte";
+import Modal from "./ui/Modal.svelte";
+import TabBar from "./ui/TabBar.svelte";
 
 let { onClose, minds }: { onClose: () => void; minds: Mind[] } = $props();
 

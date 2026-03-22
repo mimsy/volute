@@ -11,8 +11,8 @@ import {
   startAiOAuth,
   submitAiOAuthCode,
 } from "../lib/client";
-import Modal from "./Modal.svelte";
 import ModelSelect from "./ModelSelect.svelte";
+import Modal from "./ui/Modal.svelte";
 
 let {
   showModelDefaults = false,

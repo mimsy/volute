@@ -5,8 +5,8 @@ import { mindDotColor } from "../lib/format";
 import type { Selection } from "../lib/navigate";
 import { activeMinds, data, unreadCounts } from "../lib/stores.svelte";
 import ConversationList from "./ConversationList.svelte";
-import Icon from "./Icon.svelte";
 import ProfileHoverCard from "./ProfileHoverCard.svelte";
+import Icon from "./ui/Icon.svelte";
 
 let {
   minds,

@@ -2,9 +2,9 @@
 import type { Mind } from "@volute/api";
 import { mindDotColor } from "../lib/format";
 import { activeMinds, data } from "../lib/stores.svelte";
-import Icon from "./Icon.svelte";
 import MindClock from "./MindClock.svelte";
 import TurnTimeline from "./TurnTimeline.svelte";
+import Icon from "./ui/Icon.svelte";
 
 let {
   mind: initialMind,

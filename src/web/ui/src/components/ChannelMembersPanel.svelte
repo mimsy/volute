@@ -2,9 +2,9 @@
 import type { ConversationWithParticipants, Mind } from "@volute/api";
 import { mindDotColor } from "../lib/format";
 import { activeMinds, onlineBrains } from "../lib/stores.svelte";
-import Icon from "./Icon.svelte";
 import InviteModal from "./InviteModal.svelte";
 import ProfileHoverCard from "./ProfileHoverCard.svelte";
+import Icon from "./ui/Icon.svelte";
 
 let {
   conversation,

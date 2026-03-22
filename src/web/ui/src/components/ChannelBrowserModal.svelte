@@ -7,8 +7,8 @@ import {
   joinVoluteChannel,
   leaveVoluteChannel,
 } from "../lib/client";
-import Modal from "./Modal.svelte";
 import Input from "./ui/Input.svelte";
+import Modal from "./ui/Modal.svelte";
 
 let {
   onClose,
