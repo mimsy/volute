@@ -1,0 +1,55 @@
+/* Design tokens — override these to create a custom theme */
+:root {
+  /* Background layers (darkest → lightest) */
+  --bg-0: #0a0c0f;
+  --bg-1: #11141a;
+  --bg-2: #181c24;
+  --bg-3: #1f2430;
+
+  /* Borders */
+  --border: #2a3040;
+  --border-bright: #3a4560;
+
+  /* Text hierarchy */
+  --text-0: #e8ecf4;
+  --text-1: #a0aabb;
+  --text-2: #6a7588;
+
+  /* Brand */
+  --accent: #e0a860;
+  --accent-dim: #5c4428;
+  --accent-bg: rgba(224, 168, 96, 0.08);
+  --accent-border: rgba(224, 168, 96, 0.2);
+
+  /* Status colors */
+  --red: #f87171;
+  --red-dim: #7f1d1d;
+  --red-bg: rgba(248, 113, 113, 0.08);
+  --red-border: rgba(248, 113, 113, 0.2);
+  --yellow: #fbbf24;
+  --yellow-dim: #78350f;
+  --yellow-bg: rgba(251, 191, 36, 0.08);
+  --blue: #60a5fa;
+  --blue-bg: rgba(96, 165, 250, 0.08);
+  --purple: #c084fc;
+  --green: #4ade80;
+
+  /* Surfaces */
+  --overlay: rgba(0, 0, 0, 0.6);
+  --muted-bg: rgba(106, 117, 136, 0.08);
+  --timeline-rail: #333;
+
+  /* Typography */
+  --mono: "Fira Code", "SF Mono", monospace;
+  --sans: "Averia Sans Libre", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --display: "Averia Serif Libre", Georgia, serif;
+
+  /* Radii */
+  --radius: 6px;
+  --radius-lg: 10px;
+
+  /* Z-index layers */
+  --z-dropdown: 100;
+  --z-modal: 200;
+  --z-toast: 300;
+}

@@ -5,18 +5,18 @@ import type {
   TurnConversation,
   TurnRow,
 } from "@volute/api";
+import { Icon } from "@volute/ui";
+import { renderMarkdown } from "@volute/ui/markdown";
 import { SvelteMap } from "svelte/reactivity";
 import { fetchHistory, fetchTurnEvents, fetchTurns } from "../lib/client";
 import { extractTextContent } from "../lib/feed-utils";
 import { formatRelativeTime } from "../lib/format";
-import { renderMarkdown } from "../lib/markdown";
 import { navigate } from "../lib/navigate";
 import { activeMinds } from "../lib/stores.svelte";
 import { groupToolEvents } from "../lib/tool-groups";
+import ToolGroupComponent from "./chat/ToolGroup.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
-import Icon from "./Icon.svelte";
-import ReadOnlyChatModal from "./ReadOnlyChatModal.svelte";
-import ToolGroupComponent from "./ToolGroup.svelte";
+import ReadOnlyChatModal from "./modals/ReadOnlyChatModal.svelte";
 
 let { name, mindStatus }: { name?: string; mindStatus?: string } = $props();
 

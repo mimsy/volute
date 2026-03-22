@@ -1,5 +1,6 @@
 <script lang="ts">
-import AiProviders from "../components/AiProviders.svelte";
+import { Input } from "@volute/ui";
+import AiProviders from "../components/system/AiProviders.svelte";
 import { fetchMe } from "../lib/auth";
 import type { AiModel } from "../lib/client";
 import { auth, handleAuth } from "../lib/stores.svelte";
@@ -371,13 +372,13 @@ $effect(() => {
       <div class="step-title">Your system</div>
       <form onsubmit={handleSystemSubmit}>
         <label class="label" for="systemName">System name</label>
-        <input
+        <Input
+          inputSize="md"
           id="systemName"
           type="text"
           placeholder="e.g. My Garden"
           bind:value={systemName}
           oninput={handleSystemNameInput}
-          class="input"
         />
         <div class="hint">A display name for this Volute installation.</div>
 
@@ -386,7 +387,7 @@ $effect(() => {
           id="systemDescription"
           placeholder="What is this system for?"
           bind:value={systemDescription}
-          class="input textarea"
+          class="textarea"
           rows="2"
         ></textarea>
 
@@ -400,13 +401,12 @@ $effect(() => {
             <div class="systems-register">
               <label class="label" for="systemsSlug">System username</label>
               <div class="slug-row">
-                <input
+                <Input
                   id="systemsSlug"
                   type="text"
                   placeholder="my-garden"
                   bind:value={systemsSlug}
                   oninput={() => { systemsSlugManuallyEdited = true; }}
-                  class="input"
                 />
                 <button type="button" class="save-btn" onclick={handleSystemsRegister} disabled={systemsLoading || !slugValid}>
                   {systemsLoading ? "..." : "Register"}
@@ -425,12 +425,11 @@ $effect(() => {
             <div class="systems-login">
               <label class="label" for="systemsApiKey">API key</label>
               <div class="slug-row">
-                <input
+                <Input
                   id="systemsApiKey"
                   type="password"
                   placeholder="Paste your API key"
                   bind:value={systemsApiKey}
-                  class="input"
                 />
                 <button type="button" class="save-btn" onclick={handleSystemsLogin} disabled={systemsLoading || !systemsApiKey.trim()}>
                   {systemsLoading ? "..." : "Login"}
@@ -473,24 +472,23 @@ $effect(() => {
       <div class="step-title">Your account</div>
       <form onsubmit={handleAccountSubmit}>
         <label class="label" for="displayName">Display name</label>
-        <input
+        <Input
+          inputSize="md"
           id="displayName"
           type="text"
           placeholder="Your name"
           bind:value={displayName}
           oninput={handleDisplayNameInput}
-          class="input"
           autocomplete="name"
         />
 
         {#if usernameManuallyEdited}
           <label class="label mt" for="username">Username</label>
-          <input
+          <Input
             id="username"
             type="text"
             placeholder="username"
             bind:value={username}
-            class="input"
             autocomplete="username"
           />
         {:else if username}
@@ -500,12 +498,12 @@ $effect(() => {
         {/if}
 
         <label class="label mt" for="password">Password</label>
-        <input
+        <Input
+          inputSize="md"
           id="password"
           type="password"
           placeholder="Choose a password"
           bind:value={password}
-          class="input"
           autocomplete="new-password"
         />
 
@@ -737,21 +735,6 @@ $effect(() => {
     color: var(--text-1);
   }
 
-  .input {
-    width: 100%;
-    padding: 10px 12px;
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    color: var(--text-0);
-    font-family: inherit;
-    font-size: 14px;
-    outline: none;
-    box-sizing: border-box;
-  }
-
-  .input:focus { border-color: var(--border-bright); }
-
   .hint {
     color: var(--text-2);
     font-size: 12px;
@@ -877,8 +860,22 @@ $effect(() => {
   }
 
   .textarea {
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-0);
+    font-family: inherit;
+    font-size: 14px;
+    outline: none;
+    box-sizing: border-box;
     resize: vertical;
     min-height: 44px;
+  }
+
+  .textarea:focus {
+    border-color: var(--border-bright);
   }
 
   .systems-section {
@@ -923,7 +920,7 @@ $effect(() => {
     gap: 6px;
   }
 
-  .slug-row .input { flex: 1; }
+  .slug-row :global(.input) { flex: 1; }
 
   .mt-sm { margin-top: 6px; }
 </style>

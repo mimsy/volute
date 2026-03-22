@@ -1,23 +1,22 @@
 <script lang="ts">
 import type { Conversation, Mind } from "@volute/api";
+import { Icon, Modal } from "@volute/ui";
+import { icons } from "@volute/ui/icons";
 import { onMount } from "svelte";
-import ChannelBrowserModal from "./components/ChannelBrowserModal.svelte";
 import ChannelMembersPanel from "./components/ChannelMembersPanel.svelte";
-import Icon from "./components/Icon.svelte";
 import LoginPage from "./components/LoginPage.svelte";
-import MainFrame from "./components/MainFrame.svelte";
-import MindRightPanel from "./components/MindRightPanel.svelte";
-import MindSettings from "./components/MindSettings.svelte";
-import Modal from "./components/Modal.svelte";
-import PublicFiles from "./components/PublicFiles.svelte";
-import SeedModal from "./components/SeedModal.svelte";
+import MainFrame from "./components/layout/MainFrame.svelte";
+import UnifiedSidebar from "./components/layout/UnifiedSidebar.svelte";
+import MindRightPanel from "./components/mind/MindRightPanel.svelte";
+import MindSettings from "./components/mind/MindSettings.svelte";
+import ChannelBrowserModal from "./components/modals/ChannelBrowserModal.svelte";
+import SeedModal from "./components/modals/SeedModal.svelte";
+import UserSettingsModal from "./components/modals/UserSettingsModal.svelte";
+import PublicFiles from "./components/system/PublicFiles.svelte";
+import UpdateBanner from "./components/system/UpdateBanner.svelte";
 import TurnTimeline from "./components/TurnTimeline.svelte";
-import UnifiedSidebar from "./components/UnifiedSidebar.svelte";
-import UpdateBanner from "./components/UpdateBanner.svelte";
-import UserSettingsModal from "./components/UserSettingsModal.svelte";
 import { type AuthUser, fetchMe } from "./lib/auth";
 import { deleteConversation } from "./lib/client";
-import { icons } from "./lib/icons";
 import { navigate, parseSelection, type Selection, selectionToPath } from "./lib/navigate";
 import { requestNotificationPermission } from "./lib/notifications";
 import {

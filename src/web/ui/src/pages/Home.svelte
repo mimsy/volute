@@ -1,10 +1,10 @@
 <script lang="ts">
 import type { ConversationWithParticipants, LastMessageSummary, Message } from "@volute/api";
+import { renderMarkdown } from "@volute/ui/markdown";
 import ExtensionFeedCard from "../components/ExtensionFeedCard.svelte";
 import { fetchConversationMessages } from "../lib/client";
 import { extractTextContent, formatTime, showSenderHeader } from "../lib/feed-utils";
 import { formatRelativeTime, normalizeTimestamp } from "../lib/format";
-import { renderMarkdown } from "../lib/markdown";
 
 import { navigate } from "../lib/navigate";
 import { data as storeData } from "../lib/stores.svelte";

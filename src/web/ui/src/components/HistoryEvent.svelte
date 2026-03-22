@@ -1,9 +1,10 @@
 <script lang="ts">
 import type { HistoryMessage, TurnActivity, TurnConversation } from "@volute/api";
+import { Icon } from "@volute/ui";
+import { renderMarkdown } from "@volute/ui/markdown";
 import { tick } from "svelte";
 import { fetchTurnEvents } from "../lib/client";
 import { normalizeTimestamp } from "../lib/format";
-import { renderMarkdown } from "../lib/markdown";
 import { groupToolEvents } from "../lib/tool-groups";
 import {
   getCategoryColor,
@@ -11,10 +12,9 @@ import {
   getToolCategory,
   getToolLabel,
 } from "../lib/tool-names";
+import ToolGroupComponent from "./chat/ToolGroup.svelte";
 import ExtensionFeedCard from "./ExtensionFeedCard.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
-import Icon from "./Icon.svelte";
-import ToolGroupComponent from "./ToolGroup.svelte";
 
 const defaultActivityIcon =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>';

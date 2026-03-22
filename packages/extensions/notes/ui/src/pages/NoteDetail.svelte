@@ -1,7 +1,7 @@
 <script lang="ts">
+import { renderMarkdown } from "@volute/ui/markdown";
 import CommentSection from "../components/CommentSection.svelte";
 import { type ApiNote, addComment, deleteComment, fetchNote, toggleReaction } from "../lib/api";
-import { renderMarkdown } from "../lib/markdown";
 
 let {
   author,

@@ -1,9 +1,9 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
+import { Icon } from "@volute/ui";
 import { mindDotColor } from "../lib/format";
 import { activeMinds, onlineBrains } from "../lib/stores.svelte";
-import Icon from "./Icon.svelte";
-import InviteModal from "./InviteModal.svelte";
+import InviteModal from "./modals/InviteModal.svelte";
 import ProfileHoverCard from "./ProfileHoverCard.svelte";
 
 let {
