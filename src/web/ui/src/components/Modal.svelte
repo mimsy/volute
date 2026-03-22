@@ -66,7 +66,7 @@ function handleKeydown(e: KeyboardEvent) {
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 200;
+    z-index: var(--z-modal);
     animation: fadeIn 0.15s ease;
   }
 

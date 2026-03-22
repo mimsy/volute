@@ -99,7 +99,7 @@ let { mind }: { mind: Mind } = $props();
     gap: 5px;
     padding: 2px 8px;
     border-radius: var(--radius);
-    background: rgba(251, 191, 36, 0.08);
+    background: var(--yellow-bg);
     color: var(--yellow);
     font-size: 12px;
     font-weight: 500;

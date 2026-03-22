@@ -428,7 +428,7 @@ $effect(() => {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 4px 0;
-    z-index: 200;
+    z-index: var(--z-modal);
     min-width: 120px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   }

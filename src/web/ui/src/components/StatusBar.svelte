@@ -180,7 +180,7 @@ function handleClickOutside(e: MouseEvent) {
     border-radius: var(--radius);
     min-width: 120px;
     padding: 4px 0;
-    z-index: 100;
+    z-index: var(--z-dropdown);
     box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.3);
   }
 
