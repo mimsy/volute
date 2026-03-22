@@ -6,9 +6,9 @@ import {
   fetchChannels,
   joinVoluteChannel,
   leaveVoluteChannel,
-} from "../lib/client";
-import Input from "./ui/Input.svelte";
-import Modal from "./ui/Modal.svelte";
+} from "../../lib/client";
+import Input from "../ui/Input.svelte";
+import Modal from "../ui/Modal.svelte";
 
 let {
   onClose,

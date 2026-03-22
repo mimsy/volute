@@ -1,10 +1,10 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Message } from "@volute/api";
-import { fetchMindConversationMessages } from "../lib/client";
-import { extractTextContent, formatTime, showSenderHeader } from "../lib/feed-utils";
-import { renderMarkdown } from "../lib/markdown";
-import { navigate } from "../lib/navigate";
-import Modal from "./ui/Modal.svelte";
+import { fetchMindConversationMessages } from "../../lib/client";
+import { extractTextContent, formatTime, showSenderHeader } from "../../lib/feed-utils";
+import { renderMarkdown } from "../../lib/markdown";
+import { navigate } from "../../lib/navigate";
+import Modal from "../ui/Modal.svelte";
 
 let {
   mindName,

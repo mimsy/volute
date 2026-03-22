@@ -1,18 +1,18 @@
 <script lang="ts">
 import type { Conversation, Mind } from "@volute/api";
 import { onMount } from "svelte";
-import ChannelBrowserModal from "./components/ChannelBrowserModal.svelte";
 import ChannelMembersPanel from "./components/ChannelMembersPanel.svelte";
 import LoginPage from "./components/LoginPage.svelte";
 import MainFrame from "./components/MainFrame.svelte";
 import MindRightPanel from "./components/mind/MindRightPanel.svelte";
 import MindSettings from "./components/mind/MindSettings.svelte";
+import ChannelBrowserModal from "./components/modals/ChannelBrowserModal.svelte";
+import SeedModal from "./components/modals/SeedModal.svelte";
+import UserSettingsModal from "./components/modals/UserSettingsModal.svelte";
 import PublicFiles from "./components/PublicFiles.svelte";
-import SeedModal from "./components/SeedModal.svelte";
 import TurnTimeline from "./components/TurnTimeline.svelte";
 import UnifiedSidebar from "./components/UnifiedSidebar.svelte";
 import UpdateBanner from "./components/UpdateBanner.svelte";
-import UserSettingsModal from "./components/UserSettingsModal.svelte";
 import Icon from "./components/ui/Icon.svelte";
 import Modal from "./components/ui/Modal.svelte";
 import { type AuthUser, fetchMe } from "./lib/auth";

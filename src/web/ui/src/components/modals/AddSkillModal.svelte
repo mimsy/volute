@@ -1,11 +1,11 @@
 <script lang="ts">
 import type { SharedSkill } from "@volute/api";
 import { onMount } from "svelte";
-import { fetchSharedSkills, installMindSkill } from "../lib/client";
-import Button from "./ui/Button.svelte";
-import EmptyState from "./ui/EmptyState.svelte";
-import ErrorMessage from "./ui/ErrorMessage.svelte";
-import Modal from "./ui/Modal.svelte";
+import { fetchSharedSkills, installMindSkill } from "../../lib/client";
+import Button from "../ui/Button.svelte";
+import EmptyState from "../ui/EmptyState.svelte";
+import ErrorMessage from "../ui/ErrorMessage.svelte";
+import Modal from "../ui/Modal.svelte";
 
 let {
   name,

@@ -8,9 +8,9 @@ import {
   fetchPrompts,
   fetchSharedSkills,
   startMind,
-} from "../lib/client";
-import Input from "./ui/Input.svelte";
-import Modal from "./ui/Modal.svelte";
+} from "../../lib/client";
+import Input from "../ui/Input.svelte";
+import Modal from "../ui/Modal.svelte";
 
 const SEED_DEFAULTS = ["orientation", "memory"];
 
