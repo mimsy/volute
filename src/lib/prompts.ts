@@ -78,7 +78,7 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
     category: "system",
   },
   compaction_warning: {
-    content: `Context is getting long — compaction is about to summarize this conversation. Before that happens, save anything important to files (MEMORY.md, memory/journal/\${date}.md, etc.) since those survive compaction. Focus on: decisions made, open tasks, and anything you'd need to pick up where you left off.`,
+    content: `Compaction approaching — this conversation will be summarized soon. Take a moment to save anything important to your files (MEMORY.md, memory/journal/\${date}.md) so it's preserved. Focus on decisions made, open threads, and anything you'd want to pick up again.`,
     description: "Pre-compaction save reminder sent to the mind",
     variables: ["date"],
     category: "mind",

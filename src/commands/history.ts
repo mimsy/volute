@@ -1,5 +1,6 @@
 import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
+import { compactTime, isCompact } from "../lib/format-cli.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
 
@@ -86,6 +87,61 @@ function formatRow(row: HistoryRow): string {
   }
 }
 
+function formatRowCompact(row: HistoryRow): string {
+  const time = compactTime(row.created_at);
+  const channel = row.channel ?? "";
+
+  switch (row.type) {
+    case "inbound":
+    case "outbound": {
+      const sender = row.sender ?? (row.type === "outbound" ? "mind" : "unknown");
+      return `[${time}] [${channel}] ${sender}: ${row.content ?? ""}`;
+    }
+    case "text":
+      return `[${time}] [text] ${row.content ?? ""}`;
+    case "thinking":
+      return `[${time}] [thinking] ${(row.content ?? "").slice(0, 200)}${(row.content?.length ?? 0) > 200 ? "..." : ""}`;
+    case "tool_use": {
+      let toolName = "unknown";
+      if (row.metadata) {
+        try {
+          const meta = JSON.parse(row.metadata);
+          toolName = meta.name ?? toolName;
+        } catch {}
+      }
+      return `[${time}] [tool] ${toolName}${row.content ? `: ${row.content.slice(0, 100)}` : ""}`;
+    }
+    case "tool_result":
+      return `[${time}] [result] ${(row.content ?? "").slice(0, 200)}${(row.content?.length ?? 0) > 200 ? "..." : ""}`;
+    case "log": {
+      let category = "";
+      if (row.metadata) {
+        try {
+          const meta = JSON.parse(row.metadata);
+          category = meta.category ? `${meta.category}: ` : "";
+        } catch {}
+      }
+      return `[${time}] [log] ${category}${row.content ?? ""}`;
+    }
+    case "summary": {
+      let range = "";
+      if (row.metadata) {
+        try {
+          const meta = JSON.parse(row.metadata);
+          if (meta.from_time && meta.to_time) {
+            range = ` (${compactTime(meta.from_time)}\u2013${compactTime(meta.to_time)})`;
+          }
+        } catch {}
+      }
+      return `[${time}] [summary${range}] ${row.content ?? ""}`;
+    }
+    case "session_start":
+      return `[${time}] [session_start] ${row.session ?? ""}`;
+    default:
+      return `[${time}] [${row.type}] ${row.content ?? ""}`;
+  }
+}
+
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
     mind: { type: "string" },
@@ -121,7 +177,9 @@ export async function run(args: string[]) {
   const rows = (await res.json()) as HistoryRow[];
 
   // Display in chronological order (API returns newest first, so reverse)
+  const compact = isCompact();
   for (const row of rows.reverse()) {
-    console.log(formatRow(row));
+    if (compact && (row.type === "done" || row.type === "usage")) continue;
+    console.log(compact ? formatRowCompact(row) : formatRow(row));
   }
 }
