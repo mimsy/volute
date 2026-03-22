@@ -122,7 +122,7 @@ Templates have a `.init/` directory containing identity and config files. On `vo
 The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 
 - **Backend** (`src/web/`): Hono API routes for auth, minds, chat, conversations, logs, variants, files, bridges, schedules, channels, env, keys, prompts, skills, file-sharing, extensions, setup, activity
-- **Frontend** (`src/web/ui/`): Svelte SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs)
+- **Frontend** (`src/web/ui/`): Svelte SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs). Shared UI components imported from `@volute/ui`
 - **Auth**: Cookie-based (`volute_session`), in-memory session map, first user auto-admin
 - **Database**: libSQL at `~/.volute/volute.db` for minds, users, conversations, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, conversation_reads
 - **Build**: `vite build` → `dist/web-assets/`
@@ -157,7 +157,7 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 - `getSystemsConfig()` — read volute.systems credentials (apiKey, system, apiUrl) or null
 - `dataDir` — extension-specific data directory
 
-**Extension UI** — standalone Svelte apps built with Vite, served as static assets at `/ext/{id}/`, rendered in iframes by the main app. Uses hash routing internally; communicates navigation to parent via `window.parent.postMessage({ type: "navigate", path })`.
+**Extension UI** — standalone Svelte apps built with Vite, served as static assets at `/ext/{id}/`, rendered in iframes by the main app. Uses hash routing internally; communicates navigation to parent via `window.parent.postMessage({ type: "navigate", path })`. Extensions can import shared UI components from `@volute/ui` (add `"@volute/ui": "*"` to dependencies). Theme is shared via auto-generated `ext-theme.css` (built from `@volute/ui`'s `theme.css` + `base.css`).
 
 **Three ways to install extensions:**
 
@@ -172,6 +172,7 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 
 **Other packages:**
 - `packages/api/` (`@volute/api`) — public API client library
+- `packages/ui/` (`@volute/ui`) — shared Svelte UI components, theme, icons, markdown rendering
 - `packages/electron/` — Electron desktop app
 
 **Key files:**
@@ -396,6 +397,8 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 
 ## Key patterns
 
+- Shared UI components live in `@volute/ui` (`packages/ui/`) — both the main app and extensions import from this package. Theme CSS variables, icons, and markdown rendering are also shared via `@volute/ui`
+- `ext-theme.css` is auto-generated from `@volute/ui`'s `theme.css` + `base.css` during `build:ext`. Extensions load it via `<link>` in their iframe `index.html`
 - Single daemon process manages all minds, bridges, and schedules
 - CLI commands proxy through daemon HTTP API via `daemonFetch()` in `daemon-client.ts`
 - Centralized registry in the `minds` DB table maps mind names to ports, tracks `running` state; variants are rows with a `parent` field
