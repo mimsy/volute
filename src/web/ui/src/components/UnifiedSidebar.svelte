@@ -1,8 +1,9 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
+import { fetchMinds, startMind, stopMind } from "../lib/client";
 import { mindDotColor } from "../lib/format";
 import type { Selection } from "../lib/navigate";
-import { activeMinds, unreadCounts } from "../lib/stores.svelte";
+import { activeMinds, data, unreadCounts } from "../lib/stores.svelte";
 import ConversationList from "./ConversationList.svelte";
 import Icon from "./Icon.svelte";
 import ProfileHoverCard from "./ProfileHoverCard.svelte";
@@ -116,6 +117,33 @@ function handleClickOutside(e: MouseEvent) {
 
 function handleWindowBlur() {
   if (openMenu) openMenu = null;
+}
+
+let menuMind = $derived(openMenu ? minds.find((m) => m.name === openMenu) : null);
+
+async function handleMindStart() {
+  if (!openMenu) return;
+  const name = openMenu;
+  openMenu = null;
+  await startMind(name);
+  data.minds = await fetchMinds();
+}
+
+async function handleMindStop() {
+  if (!openMenu) return;
+  const name = openMenu;
+  openMenu = null;
+  await stopMind(name);
+  data.minds = await fetchMinds();
+}
+
+async function handleMindRestart() {
+  if (!openMenu) return;
+  const name = openMenu;
+  openMenu = null;
+  await stopMind(name);
+  await startMind(name);
+  data.minds = await fetchMinds();
 }
 
 let channelConversations = $derived(conversations.filter((c) => c.type === "channel"));
@@ -259,6 +287,22 @@ let isSystemActive = $derived(
       <Icon kind="gear" class="menu-icon" />
       Settings
     </button>
+    <div class="mind-menu-divider"></div>
+    {#if menuMind?.status === "stopped"}
+      <button class="mind-menu-item" onclick={handleMindStart}>
+        <Icon kind="play" class="menu-icon" />
+        Start
+      </button>
+    {:else}
+      <button class="mind-menu-item" onclick={handleMindRestart}>
+        <Icon kind="restart" class="menu-icon" />
+        Restart
+      </button>
+      <button class="mind-menu-item danger" onclick={handleMindStop}>
+        <Icon kind="stop" class="menu-icon" />
+        Stop
+      </button>
+    {/if}
   </div>
 {/if}
 
@@ -477,6 +521,16 @@ let isSystemActive = $derived(
   .mind-menu-item:hover {
     background: var(--bg-2);
     color: var(--text-0);
+  }
+
+  .mind-menu-item.danger:hover {
+    color: var(--red);
+  }
+
+  .mind-menu-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 0;
   }
 
   .mind-menu-item :global(.menu-icon) {

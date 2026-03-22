@@ -3,7 +3,6 @@ import type { Mind } from "@volute/api";
 import { onMount } from "svelte";
 import { fetchMinds } from "../lib/client";
 import { data } from "../lib/stores.svelte";
-import MindSettingsAdvanced from "./MindSettingsAdvanced.svelte";
 import MindSettingsCognition from "./MindSettingsCognition.svelte";
 import MindSettingsEnv from "./MindSettingsEnv.svelte";
 import MindSettingsProfile from "./MindSettingsProfile.svelte";
@@ -21,7 +20,6 @@ const SECTIONS = [
   { id: "rhythms", label: "Rhythms" },
   { id: "skills", label: "Skills" },
   { id: "environment", label: "Environment" },
-  { id: "advanced", label: "Advanced" },
 ] as const;
 
 let activeSection = $state("profile");
@@ -56,7 +54,6 @@ function scrollTo(id: string) {
   activeSection = id;
   manualClick = true;
   sectionEls[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
-  // Re-enable observer after scroll settles
   setTimeout(() => {
     manualClick = false;
   }, 600);
@@ -79,12 +76,10 @@ async function handleUpdated() {
   </nav>
 
   <div class="settings-body" bind:this={scrollContainer}>
-    <!-- Profile -->
     <section id="profile" bind:this={sectionEls.profile}>
       <MindSettingsProfile {mind} onUpdated={handleUpdated} />
     </section>
 
-    <!-- Model & Cognition -->
     <section id="cognition" bind:this={sectionEls.cognition}>
       <div class="section-header">
         <span class="section-title">Model</span>
@@ -93,7 +88,6 @@ async function handleUpdated() {
       <MindSettingsCognition {name} template={mind.template} />
     </section>
 
-    <!-- Rhythms -->
     <section id="rhythms" bind:this={sectionEls.rhythms}>
       <div class="section-header">
         <span class="section-title">Rhythms</span>
@@ -102,23 +96,12 @@ async function handleUpdated() {
       <MindSettingsRhythms {name} />
     </section>
 
-    <!-- Skills -->
     <section id="skills" bind:this={sectionEls.skills}>
       <MindSkills {name} />
     </section>
 
-    <!-- Environment -->
     <section id="environment" bind:this={sectionEls.environment}>
       <MindSettingsEnv {name} />
-    </section>
-
-    <!-- Advanced -->
-    <section id="advanced" bind:this={sectionEls.advanced}>
-      <div class="section-header">
-        <span class="section-title">Advanced</span>
-        <span class="section-subtitle">Status and system info</span>
-      </div>
-      <MindSettingsAdvanced {mind} />
     </section>
   </div>
 </div>
@@ -128,6 +111,8 @@ async function handleUpdated() {
     display: flex;
     flex-direction: column;
     height: 100%;
+    min-height: 0;
+    overflow: hidden;
     animation: fadeIn 0.2s ease both;
   }
 
@@ -139,9 +124,6 @@ async function handleUpdated() {
     flex-shrink: 0;
     overflow-x: auto;
     background: var(--bg-0);
-    position: sticky;
-    top: 0;
-    z-index: 1;
   }
 
   .nav-pill {
@@ -168,6 +150,7 @@ async function handleUpdated() {
 
   .settings-body {
     flex: 1;
+    min-height: 0;
     overflow: auto;
   }
 
