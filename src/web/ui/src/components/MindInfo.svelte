@@ -1,6 +1,7 @@
 <script lang="ts">
 import type { Mind, MindConfig, MindEnv } from "@volute/api";
 import { onMount } from "svelte";
+import { SvelteSet } from "svelte/reactivity";
 import {
   deleteMindEnvVar,
   deleteSharedEnvVar,
@@ -15,6 +16,11 @@ import {
 import { getDisplayStatus } from "../lib/format";
 import { data } from "../lib/stores.svelte";
 import StatusBadge from "./StatusBadge.svelte";
+import Button from "./ui/Button.svelte";
+import EmptyState from "./ui/EmptyState.svelte";
+import ErrorMessage from "./ui/ErrorMessage.svelte";
+import SectionHeader from "./ui/SectionHeader.svelte";
+import SettingRow from "./ui/SettingRow.svelte";
 
 let { mind }: { mind: Mind } = $props();
 let name = $derived(mind.name);
@@ -32,7 +38,7 @@ let editPeriod = $state("");
 let saving = $state<string | null>(null);
 
 // Env vars
-let revealedKeys = $state(new Set<string>());
+let revealedKeys = new SvelteSet<string>();
 let addingEnv = $state(false);
 let newEnvKey = $state("");
 let newEnvValue = $state("");
@@ -114,15 +120,6 @@ async function handleBudgetSave() {
   saving = null;
 }
 
-function formatDate(dateStr: string): string {
-  try {
-    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
-    return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
-  } catch {
-    return dateStr;
-  }
-}
-
 // Env vars
 let mergedEnv = $derived.by(() => {
   if (!env) return [];
@@ -142,10 +139,8 @@ let mergedEnv = $derived.by(() => {
 });
 
 function toggleReveal(key: string) {
-  const next = new Set(revealedKeys);
-  if (next.has(key)) next.delete(key);
-  else next.add(key);
-  revealedKeys = next;
+  if (revealedKeys.has(key)) revealedKeys.delete(key);
+  else revealedKeys.add(key);
 }
 
 function startEditEnv(key: string, value: string) {
@@ -245,121 +240,99 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
 </script>
 
 {#if loading}
-  <div class="empty">Loading...</div>
+  <EmptyState message="Loading..." />
 {:else if !config}
-  <div class="error">Failed to load configuration.</div>
+  <ErrorMessage message="Failed to load configuration." />
 {:else}
-  {#if error}
-    <div class="error">{error}</div>
-  {/if}
+  <ErrorMessage message={error} />
 
   <div class="section">
-    <div class="section-title">Status</div>
+    <SectionHeader title="Status" />
     <div class="status-row">
       <StatusBadge status={getDisplayStatus(mind)} />
       {#if mind.status === "stopped"}
-        <button
+        <Button
+          variant="primary"
           onclick={handleStart}
           disabled={actionLoading}
-          class="action-btn start-btn"
-          style:opacity={actionLoading ? 0.5 : 1}
         >
           {actionLoading ? "Starting..." : "Start"}
-        </button>
+        </Button>
       {:else}
         <button
           onclick={handleStop}
           disabled={actionLoading}
           class="action-btn stop-btn"
-          style:opacity={actionLoading ? 0.5 : 1}
         >
           {actionLoading ? "Stopping..." : "Stop"}
         </button>
       {/if}
     </div>
-    {#if actionError}
-      <div class="error">{actionError}</div>
-    {/if}
+    <ErrorMessage message={actionError} />
   </div>
 
   <div class="section">
-    <div class="section-title">Settings</div>
+    <SectionHeader title="Settings" />
 
-    <div class="setting-row">
-      <label class="setting-label" for="model-input">Model</label>
-      <div class="setting-control">
-        <input
-          id="model-input"
-          type="text"
-          class="setting-input"
-          bind:value={editModel}
-          onkeydown={(e) => handleKeydown(e, handleModelSave)}
-          placeholder="e.g. claude-sonnet-4-6"
-        />
-        <button
-          class="save-btn"
-          onclick={handleModelSave}
-          disabled={saving !== null}
-        >
-          {saving === "model" ? "..." : "Save"}
-        </button>
-      </div>
-    </div>
+    <SettingRow label="Model">
+      <input
+        id="model-input"
+        type="text"
+        class="setting-input"
+        bind:value={editModel}
+        onkeydown={(e) => handleKeydown(e, handleModelSave)}
+        placeholder="e.g. claude-sonnet-4-6"
+      />
+      <Button variant="primary" onclick={handleModelSave} disabled={saving !== null}>
+        {saving === "model" ? "..." : "Save"}
+      </Button>
+    </SettingRow>
 
-    <div class="setting-row">
-      <label class="setting-label" for="thinking-select">Thinking</label>
-      <div class="setting-control">
-        <select
-          id="thinking-select"
-          class="setting-select"
-          value={editThinking}
-          onchange={handleThinkingChange}
-          disabled={saving !== null}
-        >
-          {#each THINKING_LEVELS as level}
-            <option value={level}>{level}</option>
-          {/each}
-        </select>
-      </div>
-    </div>
+    <SettingRow label="Thinking">
+      <select
+        id="thinking-select"
+        class="setting-select"
+        value={editThinking}
+        onchange={handleThinkingChange}
+        disabled={saving !== null}
+      >
+        {#each THINKING_LEVELS as level (level)}
+          <option value={level}>{level}</option>
+        {/each}
+      </select>
+    </SettingRow>
 
-    <div class="setting-row">
-      <label class="setting-label" for="budget-input">Token budget</label>
-      <div class="setting-control">
-        <input
-          id="budget-input"
-          type="number"
-          class="setting-input narrow"
-          bind:value={editBudget}
-          onkeydown={(e) => handleKeydown(e, handleBudgetSave)}
-          placeholder="tokens"
-        />
-        <span class="setting-hint">per</span>
-        <input
-          id="period-input"
-          type="number"
-          class="setting-input narrow"
-          bind:value={editPeriod}
-          onkeydown={(e) => handleKeydown(e, handleBudgetSave)}
-          placeholder="60"
-        />
-        <span class="setting-hint">min</span>
-        <button
-          class="save-btn"
-          onclick={handleBudgetSave}
-          disabled={saving !== null}
-        >
-          {saving === "budget" ? "..." : "Save"}
-        </button>
-      </div>
-    </div>
+    <SettingRow label="Token budget">
+      <input
+        id="budget-input"
+        type="number"
+        class="setting-input narrow"
+        bind:value={editBudget}
+        onkeydown={(e) => handleKeydown(e, handleBudgetSave)}
+        placeholder="tokens"
+      />
+      <span class="setting-hint">per</span>
+      <input
+        id="period-input"
+        type="number"
+        class="setting-input narrow"
+        bind:value={editPeriod}
+        onkeydown={(e) => handleKeydown(e, handleBudgetSave)}
+        placeholder="60"
+      />
+      <span class="setting-hint">min</span>
+      <Button variant="primary" onclick={handleBudgetSave} disabled={saving !== null}>
+        {saving === "budget" ? "..." : "Save"}
+      </Button>
+    </SettingRow>
   </div>
 
   <div class="section">
-    <div class="section-header">
-      <span class="section-title">Environment Variables</span>
-      <button class="add-btn" onclick={() => (addingEnv = true)}>Add</button>
-    </div>
+    <SectionHeader title="Environment Variables">
+      {#snippet action()}
+        <Button variant="primary" onclick={() => (addingEnv = true)}>Add</Button>
+      {/snippet}
+    </SectionHeader>
 
     {#if addingEnv}
       <div class="env-add-row">
@@ -377,15 +350,15 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
           placeholder="value"
           onkeydown={(e) => handleKeydown(e, addEnvVar)}
         />
-        <button class="save-btn" onclick={addEnvVar} disabled={saving !== null}>
+        <Button variant="primary" onclick={addEnvVar} disabled={saving !== null}>
           {saving === "env:add" ? "..." : "Add"}
-        </button>
-        <button class="cancel-btn" onclick={() => (addingEnv = false)}>Cancel</button>
+        </Button>
+        <Button variant="secondary" onclick={() => (addingEnv = false)}>Cancel</Button>
       </div>
     {/if}
 
     {#if mergedEnv.length === 0}
-      <div class="empty small">No environment variables set.</div>
+      <EmptyState message="No environment variables set." />
     {:else}
       <div class="env-list">
         {#each mergedEnv as entry (entry.key)}
@@ -398,10 +371,10 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
                 bind:value={editingEnvValue}
                 onkeydown={(e) => handleKeydown(e, saveEnvEdit)}
               />
-              <button class="save-btn" onclick={saveEnvEdit} disabled={saving !== null}>
+              <Button variant="primary" onclick={saveEnvEdit} disabled={saving !== null}>
                 {saving === `env:${entry.key}` ? "..." : "Save"}
-              </button>
-              <button class="cancel-btn" onclick={() => (editingEnvKey = null)}>Cancel</button>
+              </Button>
+              <Button variant="secondary" onclick={() => (editingEnvKey = null)}>Cancel</Button>
             {:else}
               <span class="env-key">
                 {entry.key}
@@ -413,25 +386,25 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
                 {#if revealedKeys.has(entry.key)}
                   {entry.value}
                 {:else}
-                  ••••••••
+                  --------
                 {/if}
               </span>
-              <button class="icon-btn" onclick={() => toggleReveal(entry.key)} title="Toggle visibility">
+              <Button variant="icon" onclick={() => toggleReveal(entry.key)} title="Toggle visibility">
                 {revealedKeys.has(entry.key) ? "Hide" : "Show"}
-              </button>
+              </Button>
               {#if entry.source === "mind"}
-                <button class="icon-btn" onclick={() => startEditEnv(entry.key, entry.value)} title="Edit">
+                <Button variant="icon" onclick={() => startEditEnv(entry.key, entry.value)} title="Edit">
                   Edit
-                </button>
+                </Button>
               {/if}
-              <button
-                class="icon-btn danger"
+              <Button
+                variant="icon"
                 onclick={() => deleteEnv(entry.key, entry.source)}
                 disabled={saving !== null}
                 title="Delete"
               >
                 {saving === `env:${entry.key}` ? "..." : "Del"}
-              </button>
+              </Button>
             {/if}
           </div>
         {/each}
@@ -441,41 +414,8 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
 {/if}
 
 <style>
-  .empty {
-    color: var(--text-2);
-    padding: 24px;
-    text-align: center;
-    font-size: 14px;
-  }
-
-  .empty.small {
-    padding: 12px;
-  }
-
-  .error {
-    color: var(--red);
-    padding: 8px 0;
-    font-size: 13px;
-  }
-
   .section {
     margin-bottom: 24px;
-  }
-
-  .section-title {
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-2);
-    margin-bottom: 8px;
-  }
-
-  .section-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 8px;
   }
 
   .status-row {
@@ -492,35 +432,13 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
     transition: opacity 0.15s;
   }
 
-  .start-btn {
-    background: var(--accent-dim);
-    color: var(--accent);
-  }
-
   .stop-btn {
     background: var(--red-dim);
     color: var(--red);
   }
 
-  .setting-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 6px 0;
-  }
-
-  .setting-label {
-    width: 100px;
-    flex-shrink: 0;
-    font-size: 14px;
-    color: var(--text-1);
-  }
-
-  .setting-control {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex: 1;
+  .action-btn:disabled {
+    opacity: 0.5;
   }
 
   .setting-input {
@@ -558,39 +476,6 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
     font-size: 13px;
     color: var(--text-2);
     flex-shrink: 0;
-  }
-
-  .save-btn {
-    padding: 4px 10px;
-    font-size: 12px;
-    border-radius: var(--radius);
-    background: var(--accent-dim);
-    color: var(--accent);
-    font-weight: 500;
-    flex-shrink: 0;
-  }
-
-  .save-btn:disabled {
-    opacity: 0.5;
-  }
-
-  .cancel-btn {
-    padding: 4px 10px;
-    font-size: 12px;
-    border-radius: var(--radius);
-    background: var(--bg-3);
-    color: var(--text-2);
-    font-weight: 500;
-    flex-shrink: 0;
-  }
-
-  .add-btn {
-    padding: 4px 12px;
-    font-size: 12px;
-    border-radius: var(--radius);
-    background: var(--accent-dim);
-    color: var(--accent);
-    font-weight: 500;
   }
 
   .env-list {
@@ -671,22 +556,5 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
 
   .env-input.value {
     flex: 1;
-  }
-
-  .icon-btn {
-    padding: 2px 6px;
-    font-size: 11px;
-    border-radius: var(--radius);
-    background: var(--bg-3);
-    color: var(--text-2);
-    flex-shrink: 0;
-  }
-
-  .icon-btn:hover {
-    color: var(--text-0);
-  }
-
-  .icon-btn.danger:hover {
-    color: var(--red);
   }
 </style>
