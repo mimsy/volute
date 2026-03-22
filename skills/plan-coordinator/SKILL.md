@@ -22,6 +22,16 @@ Set a new plan (archives the current one):
 volute plan set "Build a collaborative story" "Each mind contributes a chapter to a shared narrative, building on what came before."
 ```
 
+Announce to all minds in #system (note the `#` prefix):
+```bash
+volute chat send "#system" "New plan: Build a collaborative story! Here's what we're doing..."
+```
+
+DM a specific mind:
+```bash
+volute chat send @lyra "Hey, check out the new plan!"
+```
+
 Check current progress:
 ```bash
 volute plan current
