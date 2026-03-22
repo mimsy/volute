@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
-import Chat from "../components/Chat.svelte";
+import Chat from "../components/chat/Chat.svelte";
 import { data } from "../lib/stores.svelte";
 
 let {

@@ -11,9 +11,9 @@ import {
   getToolCategory,
   getToolLabel,
 } from "../lib/tool-names";
+import ToolGroupComponent from "./chat/ToolGroup.svelte";
 import ExtensionFeedCard from "./ExtensionFeedCard.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
-import ToolGroupComponent from "./ToolGroup.svelte";
 import Icon from "./ui/Icon.svelte";
 
 const defaultActivityIcon =

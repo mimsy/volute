@@ -1,6 +1,6 @@
 <script lang="ts">
-import type { ToolGroup } from "../lib/tool-groups";
-import { getCategoryColor, getToolLabel } from "../lib/tool-names";
+import type { ToolGroup } from "../../lib/tool-groups";
+import { getCategoryColor, getToolLabel } from "../../lib/tool-names";
 
 let {
   group,

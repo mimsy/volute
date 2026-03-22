@@ -1,6 +1,6 @@
 <script lang="ts">
-import { reportTyping } from "../lib/client";
-import Dropdown from "./ui/Dropdown.svelte";
+import { reportTyping } from "../../lib/client";
+import Dropdown from "../ui/Dropdown.svelte";
 
 let {
   sending,

@@ -1,7 +1,7 @@
 <script lang="ts">
 import type { ContentBlock, Mind, Participant } from "@volute/api";
-import { renderMarkdown } from "../lib/markdown";
-import ProfileHoverCard, { type HoverProfile } from "./ProfileHoverCard.svelte";
+import { renderMarkdown } from "../../lib/markdown";
+import ProfileHoverCard, { type HoverProfile } from "../ProfileHoverCard.svelte";
 import ToolBlock from "./ToolBlock.svelte";
 
 type ToolInfo = {

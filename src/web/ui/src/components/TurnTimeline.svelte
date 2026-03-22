@@ -13,9 +13,9 @@ import { renderMarkdown } from "../lib/markdown";
 import { navigate } from "../lib/navigate";
 import { activeMinds } from "../lib/stores.svelte";
 import { groupToolEvents } from "../lib/tool-groups";
+import ToolGroupComponent from "./chat/ToolGroup.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
 import ReadOnlyChatModal from "./ReadOnlyChatModal.svelte";
-import ToolGroupComponent from "./ToolGroup.svelte";
 import Icon from "./ui/Icon.svelte";
 
 let { name, mindStatus }: { name?: string; mindStatus?: string } = $props();
