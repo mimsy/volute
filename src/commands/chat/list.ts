@@ -1,4 +1,5 @@
 import { daemonFetch } from "../../lib/daemon-client.js";
+import { isCompact } from "../../lib/format-cli.js";
 import { parseArgs } from "../../lib/parse-args.js";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";
 
@@ -28,11 +29,16 @@ export async function run(args: string[]) {
     return;
   }
 
+  const compact = isCompact();
   for (const conv of convs) {
     const label = conv.type === "channel" ? `#${conv.name}` : (conv.title ?? conv.id.slice(0, 8));
-    const time = new Date(
-      conv.updated_at.endsWith("Z") ? conv.updated_at : `${conv.updated_at}Z`,
-    ).toLocaleString();
-    console.log(`  ${label}  (${conv.type})  ${time}`);
+    if (compact) {
+      console.log(`${label} (${conv.type})`);
+    } else {
+      const time = new Date(
+        conv.updated_at.endsWith("Z") ? conv.updated_at : `${conv.updated_at}Z`,
+      ).toLocaleString();
+      console.log(`  ${label}  (${conv.type})  ${time}`);
+    }
   }
 }

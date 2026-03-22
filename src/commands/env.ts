@@ -1,5 +1,6 @@
 import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
+import { isCompact } from "../lib/format-cli.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { promptLine } from "../lib/prompt.js";
 
@@ -96,6 +97,7 @@ export async function run(args: string[]) {
     }
 
     case "list": {
+      const compact = isCompact();
       if (flags.mind) {
         const res = await daemonFetch(
           urlOf(client.api.minds[":name"].env.$url({ param: { name: flags.mind } })),
@@ -118,7 +120,7 @@ export async function run(args: string[]) {
           const scope = key in data.mind ? "mind" : "shared";
           const raw = key in data.mind ? data.mind[key] : data.shared[key];
           const value = flags.reveal ? raw : maskValue(raw);
-          console.log(`${key}=${value} [${scope}]`);
+          console.log(compact ? `${key}=${value}` : `${key}=${value} [${scope}]`);
         }
       } else {
         const res = await daemonFetch(urlOf(client.api.env.$url()));
@@ -134,7 +136,7 @@ export async function run(args: string[]) {
         }
         for (const key of keys.sort()) {
           const value = flags.reveal ? env[key] : maskValue(env[key]);
-          console.log(`${key}=${value} [shared]`);
+          console.log(compact ? `${key}=${value}` : `${key}=${value} [shared]`);
         }
       }
       break;
