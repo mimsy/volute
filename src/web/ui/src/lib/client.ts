@@ -267,8 +267,10 @@ export function updateMindConfig(
   updates: {
     model?: string;
     thinkingLevel?: string;
+    maxThinkingTokens?: number | null;
     tokenBudget?: number | null;
     tokenBudgetPeriodMinutes?: number | null;
+    compaction?: { maxContextTokens?: number | null } | null;
   },
 ): Promise<void> {
   return put(`${V1}/minds/${enc(name)}/config`, updates);
@@ -570,6 +572,85 @@ export interface ClockStatus {
 
 export function fetchClockStatus(name: string): Promise<ClockStatus> {
   return get(`${V1}/minds/${enc(name)}/clock/status`);
+}
+
+// --- Sleep & Schedules ---
+
+export type SleepConfig = {
+  enabled?: boolean;
+  schedule?: { sleep: string; wake: string };
+  wakeTriggers?: {
+    mentions?: boolean;
+    dms?: boolean;
+    channels?: string[];
+    senders?: string[];
+  };
+};
+
+export type ScheduleEntry = {
+  id: string;
+  cron?: string;
+  fireAt?: string;
+  message?: string;
+  script?: string;
+  enabled: boolean;
+  whileSleeping?: string;
+  session?: string;
+};
+
+export function fetchSleepConfig(name: string): Promise<SleepConfig> {
+  return get(`${V1}/minds/${enc(name)}/sleep`);
+}
+
+export function updateSleepConfig(name: string, config: Partial<SleepConfig>): Promise<void> {
+  return put(`${V1}/minds/${enc(name)}/sleep`, config);
+}
+
+export function fetchSchedules(name: string): Promise<ScheduleEntry[]> {
+  return get(`${V1}/minds/${enc(name)}/schedules`);
+}
+
+export function addSchedule(name: string, schedule: Partial<ScheduleEntry>): Promise<void> {
+  return post(`${V1}/minds/${enc(name)}/schedules`, schedule);
+}
+
+export function updateSchedule(
+  name: string,
+  id: string,
+  updates: Partial<ScheduleEntry>,
+): Promise<void> {
+  return put(`${V1}/minds/${enc(name)}/schedules/${enc(id)}`, updates);
+}
+
+export function deleteSchedule(name: string, id: string): Promise<void> {
+  return del(`${V1}/minds/${enc(name)}/schedules/${enc(id)}`);
+}
+
+// --- Profile ---
+
+export async function updateMindProfile(
+  name: string,
+  updates: { displayName?: string; description?: string },
+): Promise<void> {
+  const res = await fetch(`${V1}/minds/${enc(name)}/profile`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || "Failed to update profile");
+  }
+}
+
+export async function uploadMindAvatar(name: string, file: File): Promise<void> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${V1}/minds/${enc(name)}/avatar`, { method: "POST", body: form });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || "Failed to upload avatar");
+  }
 }
 
 // --- Helpers ---

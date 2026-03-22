@@ -8,7 +8,7 @@ export type StreamSession = {
   name: string;
   messageIds: (string | undefined)[];
   currentMessageId?: string;
-  messageChannels: Map<string, string>;
+  messageChannels: Map<string, { channel: string; sender?: string }>;
 };
 
 export type StreamCallbacks = {
@@ -26,7 +26,7 @@ function emit(
   event: { type: EventType; content?: string; metadata?: Record<string, unknown> },
 ) {
   const channel = session.currentMessageId
-    ? session.messageChannels.get(session.currentMessageId)
+    ? session.messageChannels.get(session.currentMessageId)?.channel
     : undefined;
   const filtered = filterEvent(preset, {
     ...event,

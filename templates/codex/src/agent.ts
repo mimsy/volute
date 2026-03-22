@@ -99,6 +99,9 @@ export function createMind(options: {
       model_instructions_file: promptPath,
       // Let the SDK handle compaction natively when a threshold is configured
       model_auto_compact_token_limit: maxContextTokens ?? 999999999,
+      // Enable reasoning summaries so they appear as events
+      model_reasoning_summary: "auto",
+      model_supports_reasoning_summaries: true,
       // The codex sandbox runs commands in /bin/zsh -lc which resets the environment.
       // Set ZDOTDIR so the login shell sources our .zshenv with VOLUTE env vars and PATH.
       shell_environment_policy: {
@@ -144,6 +147,7 @@ export function createMind(options: {
           session.thread = codex.resumeThread(savedThreadId, {
             workingDirectory: options.cwd,
             model: options.model,
+            modelReasoningEffort: options.reasoningEffort as any,
             skipGitRepoCheck: true,
             sandboxMode: "danger-full-access",
           });
@@ -158,6 +162,7 @@ export function createMind(options: {
       session.thread = codex.startThread({
         workingDirectory: options.cwd,
         model: options.model,
+        modelReasoningEffort: options.reasoningEffort as any,
         skipGitRepoCheck: true,
         sandboxMode: "danger-full-access",
       });
@@ -211,11 +216,14 @@ export function createMind(options: {
       warn("mind", "pre-prompt hook failed:", err);
     }
 
-    // Reply instructions on first message per channel
+    // Reply instructions on first message per channel (skip system messages)
     const channel = meta.channel;
     if (channel && !session.firstMessagePerChannel.has(channel)) {
       session.firstMessagePerChannel.add(channel);
-      const replyInstructions = prompts.reply_instructions.replace(/\$\{channel\}/g, channel);
+      const isSystem = meta.sender === "volute";
+      const replyInstructions = isSystem
+        ? "This is a system message — no reply is needed."
+        : prompts.reply_instructions.replace(/\$\{channel\}/g, channel);
       emit(session, {
         type: "context",
         content: replyInstructions,
@@ -281,7 +289,9 @@ export function createMind(options: {
               if (item.type === "agent_message" || item.type === "agentMessage") {
                 itemText.set(event.itemId ?? item.id, "");
               } else if (item.type === "reasoning") {
-                emit(session, { type: "thinking", content: item.content ?? "" });
+                // Reasoning text may arrive on started or completed
+                const text = item.text ?? item.content ?? "";
+                if (text) emit(session, { type: "thinking", content: text });
               } else if (item.type === "command_execution" || item.type === "commandExecution") {
                 const cmd = item.command ?? item.args?.join(" ") ?? "";
                 emit(session, {
@@ -356,7 +366,10 @@ export function createMind(options: {
               if (!item) break;
               const itemType = item.type;
 
-              if (itemType === "agent_message" || itemType === "agentMessage") {
+              if (itemType === "reasoning") {
+                const text = item.text ?? item.content ?? "";
+                if (text) emit(session, { type: "thinking", content: text });
+              } else if (itemType === "agent_message" || itemType === "agentMessage") {
                 // Emit any remaining delta
                 const id = event.itemId ?? item.id;
                 const prev = itemText.get(id) ?? "";

@@ -1,8 +1,9 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
+import { fetchMinds, startMind, stopMind } from "../lib/client";
 import { mindDotColor } from "../lib/format";
 import type { Selection } from "../lib/navigate";
-import { activeMinds, unreadCounts } from "../lib/stores.svelte";
+import { activeMinds, data, unreadCounts } from "../lib/stores.svelte";
 import ConversationList from "./ConversationList.svelte";
 import Icon from "./Icon.svelte";
 import ProfileHoverCard from "./ProfileHoverCard.svelte";
@@ -20,6 +21,7 @@ let {
   onOpenMind,
   onSeed,
   onHideConversation,
+  onSelectMindSection,
 }: {
   minds: Mind[];
   conversations: ConversationWithParticipants[];
@@ -27,6 +29,7 @@ let {
   username: string;
   onHome: () => void;
   onSelectMind: (name: string) => void;
+  onSelectMindSection: (name: string, section: string) => void;
   onSelectConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
   onBrowseChannels: () => void;
@@ -86,6 +89,63 @@ let sortedMinds = $derived(
   }),
 );
 
+let openMenu = $state<string | null>(null);
+let menuPos = $state({ top: 0, left: 0 });
+
+function handleDotsClick(e: MouseEvent, mindName: string) {
+  e.stopPropagation();
+  if (openMenu === mindName) {
+    openMenu = null;
+  } else {
+    const btn = e.currentTarget as HTMLElement;
+    const rect = btn.getBoundingClientRect();
+    menuPos = { top: rect.bottom + 2, left: rect.left };
+    openMenu = mindName;
+  }
+}
+
+function handleMenuAction(name: string, section: string) {
+  openMenu = null;
+  onSelectMindSection(name, section);
+}
+
+function handleClickOutside(e: MouseEvent) {
+  if (openMenu && !(e.target as HTMLElement).closest(".mind-menu-container")) {
+    openMenu = null;
+  }
+}
+
+function handleWindowBlur() {
+  if (openMenu) openMenu = null;
+}
+
+let menuMind = $derived(openMenu ? minds.find((m) => m.name === openMenu) : null);
+
+async function handleMindStart() {
+  if (!openMenu) return;
+  const name = openMenu;
+  openMenu = null;
+  await startMind(name);
+  data.minds = await fetchMinds();
+}
+
+async function handleMindStop() {
+  if (!openMenu) return;
+  const name = openMenu;
+  openMenu = null;
+  await stopMind(name);
+  data.minds = await fetchMinds();
+}
+
+async function handleMindRestart() {
+  if (!openMenu) return;
+  const name = openMenu;
+  openMenu = null;
+  await stopMind(name);
+  await startMind(name);
+  data.minds = await fetchMinds();
+}
+
 let channelConversations = $derived(conversations.filter((c) => c.type === "channel"));
 
 let activeChannelId = $derived.by(() => {
@@ -102,6 +162,9 @@ let isSystemActive = $derived(
 );
 </script>
 
+<svelte:window onclick={handleClickOutside} onblur={handleWindowBlur} />
+
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="sidebar-inner">
   <div class="sections">
     <!-- System -->
@@ -134,32 +197,44 @@ let isSystemActive = $derived(
           {#each sortedMinds as mind}
             {@const dmId = mindDmMap.get(mind.name)}
             {@const mindUnread = dmId ? (unreadCounts.get(dmId) ?? 0) : 0}
-            <button
-              class="nav-item"
-              class:active={selection.kind === "mind" && selection.name === mind.name}
-              onclick={() => onSelectMind(mind.name)}
-            >
-              <ProfileHoverCard profile={{
-                name: mind.name,
-                displayName: mind.displayName,
-                description: mind.description,
-                avatarUrl: mind.avatar ? `/api/minds/${encodeURIComponent(mind.name)}/avatar` : null,
-                userType: "mind",
-                created: mind.created,
-              }}>
-                {#snippet children()}
-                  <span
-                    class="status-dot"
-                    class:iridescent={activeMinds.has(mind.name)}
-                    style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
-                  ></span>
-                  <span class="nav-label">{mind.displayName ?? mind.name}</span>
-                  {#if mindUnread > 0}
-                    <span class="unread-dot"></span>
-                  {/if}
-                {/snippet}
-              </ProfileHoverCard>
-            </button>
+            <div class="mind-item-row">
+              <button
+                class="nav-item"
+                class:active={selection.kind === "mind" && selection.name === mind.name}
+                onclick={() => onSelectMind(mind.name)}
+              >
+                <ProfileHoverCard profile={{
+                  name: mind.name,
+                  displayName: mind.displayName,
+                  description: mind.description,
+                  avatarUrl: mind.avatar ? `/api/minds/${encodeURIComponent(mind.name)}/avatar` : null,
+                  userType: "mind",
+                  created: mind.created,
+                }}>
+                  {#snippet children()}
+                    <span
+                      class="status-dot"
+                      class:iridescent={activeMinds.has(mind.name)}
+                      style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
+                    ></span>
+                    <span class="nav-label">{mind.displayName ?? mind.name}</span>
+                    {#if mindUnread > 0}
+                      <span class="unread-dot"></span>
+                    {/if}
+                  {/snippet}
+                </ProfileHoverCard>
+              </button>
+              <div class="mind-menu-container">
+                <button
+                  class="mind-dots-btn"
+                  class:visible={openMenu === mind.name}
+                  onclick={(e) => handleDotsClick(e, mind.name)}
+                  title="More options"
+                >
+                  <svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/></svg>
+                </button>
+              </div>
+            </div>
           {/each}
         </div>
       {/if}
@@ -191,6 +266,45 @@ let isSystemActive = $derived(
     </div>
   </div>
 </div>
+
+{#if openMenu}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="mind-menu"
+    style:top="{menuPos.top}px"
+    style:left="{menuPos.left}px"
+    onclick={(e) => e.stopPropagation()}
+  >
+    <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "history")}>
+      <Icon kind="history" class="menu-icon" />
+      History
+    </button>
+    <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "files")}>
+      <Icon kind="folder" class="menu-icon" />
+      Files
+    </button>
+    <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "settings")}>
+      <Icon kind="gear" class="menu-icon" />
+      Settings
+    </button>
+    <div class="mind-menu-divider"></div>
+    {#if menuMind?.status === "stopped"}
+      <button class="mind-menu-item" onclick={handleMindStart}>
+        <Icon kind="play" class="menu-icon" />
+        Start
+      </button>
+    {:else}
+      <button class="mind-menu-item" onclick={handleMindRestart}>
+        <Icon kind="restart" class="menu-icon" />
+        Restart
+      </button>
+      <button class="mind-menu-item danger" onclick={handleMindStop}>
+        <Icon kind="stop" class="menu-icon" />
+        Stop
+      </button>
+    {/if}
+  </div>
+{/if}
 
 <style>
   .sidebar-inner {
@@ -298,16 +412,17 @@ let isSystemActive = $derived(
     font-size: 14px;
     font-weight: 500;
     color: var(--text-1);
-    transition: background 0.1s;
     cursor: pointer;
     background: none;
     text-align: left;
   }
 
+  .mind-item-row:hover,
   .nav-item:hover {
     background: var(--bg-2);
   }
 
+  .mind-item-row:has(.nav-item.active),
   .nav-item.active {
     background: var(--bg-2);
     color: var(--text-0);
@@ -330,6 +445,97 @@ let isSystemActive = $derived(
     height: 6px;
     border-radius: 50%;
     background: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .mind-item-row {
+    display: flex;
+    align-items: center;
+    position: relative;
+  }
+
+  .mind-item-row .nav-item {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .mind-menu-container {
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .mind-dots-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    background: none;
+    color: var(--text-2);
+    opacity: 0;
+    transition: opacity 0.1s, color 0.1s;
+    cursor: pointer;
+    margin-right: 6px;
+  }
+
+  .mind-dots-btn svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  .mind-item-row:hover .mind-dots-btn,
+  .mind-dots-btn.visible {
+    opacity: 1;
+  }
+
+  .mind-dots-btn:hover {
+    color: var(--text-0);
+  }
+
+  .mind-menu {
+    position: fixed;
+    z-index: 300;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px;
+    min-width: 120px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+
+  .mind-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 10px;
+    background: none;
+    color: var(--text-1);
+    font-size: 13px;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    text-align: left;
+  }
+
+  .mind-menu-item:hover {
+    background: var(--bg-2);
+    color: var(--text-0);
+  }
+
+  .mind-menu-item.danger:hover {
+    color: var(--red);
+  }
+
+  .mind-menu-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 0;
+  }
+
+  .mind-menu-item :global(.menu-icon) {
+    width: 14px;
+    height: 14px;
     flex-shrink: 0;
   }
 
@@ -364,6 +570,10 @@ let isSystemActive = $derived(
     }
 
     .section-action {
+      opacity: 1;
+    }
+
+    .mind-dots-btn {
       opacity: 1;
     }
 

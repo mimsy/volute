@@ -8,6 +8,10 @@ import {
   updateMindSkill,
 } from "../lib/client";
 import AddSkillModal from "./AddSkillModal.svelte";
+import Button from "./ui/Button.svelte";
+import EmptyState from "./ui/EmptyState.svelte";
+import ErrorMessage from "./ui/ErrorMessage.svelte";
+import SectionHeader from "./ui/SectionHeader.svelte";
 
 let { name }: { name: string } = $props();
 
@@ -77,21 +81,20 @@ async function handleUninstall(skillId: string) {
 </script>
 
 {#if loading}
-  <div class="empty">Loading...</div>
+  <EmptyState message="Loading..." />
 {:else}
-  {#if error}
-    <div class="error">{error}</div>
-  {/if}
+  <ErrorMessage message={error} />
 
-  <div class="section-header">
-    <span class="section-title">Skills</span>
-    <button class="add-btn" onclick={() => (showAddModal = true)}>
-      Add skill
-    </button>
-  </div>
+  <SectionHeader title="Skills">
+    {#snippet action()}
+      <Button variant="primary" onclick={() => (showAddModal = true)}>
+        Add skill
+      </Button>
+    {/snippet}
+  </SectionHeader>
 
   {#if mindSkills.length === 0}
-    <div class="empty">No skills installed.</div>
+    <EmptyState message="No skills installed." />
   {:else}
     <div class="skill-list">
       {#each mindSkills as skill (skill.id)}
@@ -117,28 +120,28 @@ async function handleUninstall(skillId: string) {
           </div>
           <div class="skill-actions">
             {#if skill.updateAvailable}
-              <button
-                class="action-btn update-btn"
+              <Button
+                variant="primary"
                 onclick={() => handleUpdate(skill.id)}
                 disabled={actionLoading !== null}
               >
                 {actionLoading === skill.id ? "..." : "Update"}
-              </button>
+              </Button>
             {/if}
-            <button
-              class="action-btn publish-btn"
+            <Button
+              variant="secondary"
               onclick={() => handlePublish(skill.id)}
               disabled={actionLoading !== null}
             >
               {actionLoading === skill.id ? "..." : "Publish"}
-            </button>
-            <button
-              class="action-btn remove-btn"
+            </Button>
+            <Button
+              variant="danger"
               onclick={() => handleUninstall(skill.id)}
               disabled={actionLoading !== null}
             >
               {actionLoading === skill.id ? "..." : "Uninstall"}
-            </button>
+            </Button>
           </div>
         </div>
       {/each}
@@ -156,42 +159,6 @@ async function handleUninstall(skillId: string) {
 {/if}
 
 <style>
-  .error {
-    color: var(--red);
-    padding: 8px 0;
-    font-size: 13px;
-  }
-
-  .empty {
-    color: var(--text-2);
-    padding: 12px 0;
-    font-size: 14px;
-  }
-
-  .section-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 8px;
-  }
-
-  .section-title {
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-2);
-  }
-
-  .add-btn {
-    padding: 4px 12px;
-    font-size: 12px;
-    border-radius: var(--radius);
-    background: var(--accent-dim);
-    color: var(--accent);
-    font-weight: 500;
-  }
-
   .skill-list {
     display: flex;
     flex-direction: column;
@@ -265,35 +232,5 @@ async function handleUninstall(skillId: string) {
     display: flex;
     gap: 4px;
     flex-shrink: 0;
-  }
-
-  .action-btn {
-    padding: 4px 10px;
-    font-size: 12px;
-    border-radius: var(--radius);
-    font-weight: 500;
-  }
-
-  .action-btn:disabled {
-    opacity: 0.5;
-  }
-
-  .update-btn {
-    background: var(--accent-dim);
-    color: var(--accent);
-  }
-
-  .publish-btn {
-    background: var(--bg-3);
-    color: var(--text-1);
-  }
-
-  .remove-btn {
-    background: var(--bg-3);
-    color: var(--text-2);
-  }
-
-  .remove-btn:hover {
-    color: var(--red);
   }
 </style>

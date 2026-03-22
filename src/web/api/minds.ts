@@ -2091,6 +2091,17 @@ const app = new Hono<AuthEnv>()
       }
     }
 
+    // Read config.json for template-level settings (model fallback, compaction)
+    let templateConfig: { model?: string; compaction?: { maxContextTokens?: number } } = {};
+    const configJsonPath = resolve(dir, "home/.config/config.json");
+    if (existsSync(configJsonPath)) {
+      try {
+        templateConfig = JSON.parse(readFileSync(configJsonPath, "utf-8"));
+      } catch {
+        // ignore parse errors
+      }
+    }
+
     return c.json({
       registry: {
         name: entry.name,
@@ -2100,10 +2111,30 @@ const app = new Hono<AuthEnv>()
         template: entry.template,
       },
       config: {
-        model: config?.model ?? null,
-        thinkingLevel: config?.thinkingLevel ?? null,
+        model: config?.model ?? templateConfig.model ?? null,
+        thinkingLevel: (() => {
+          if (config?.thinkingLevel) return config.thinkingLevel;
+          const tc = templateConfig as Record<string, unknown>;
+          if (tc.thinkingLevel) return tc.thinkingLevel;
+          if (tc.reasoningEffort) return tc.reasoningEffort;
+          // Claude: reverse-map maxThinkingTokens → level
+          const mtt = tc.maxThinkingTokens as number | undefined;
+          if (mtt) {
+            if (mtt <= 1024) return "minimal";
+            if (mtt <= 4096) return "low";
+            if (mtt <= 10000) return "medium";
+            if (mtt <= 32000) return "high";
+            return "xhigh";
+          }
+          return null;
+        })(),
+        maxThinkingTokens:
+          config?.maxThinkingTokens ??
+          ((templateConfig as Record<string, unknown>).maxThinkingTokens as number | undefined) ??
+          null,
         tokenBudget: config?.tokenBudget ?? null,
         tokenBudgetPeriodMinutes: config?.tokenBudgetPeriodMinutes ?? null,
+        compaction: templateConfig.compaction ?? null,
       },
     });
   })
@@ -2116,8 +2147,13 @@ const app = new Hono<AuthEnv>()
       z.object({
         model: z.string().optional(),
         thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
+        maxThinkingTokens: z.number().int().positive().nullable().optional(),
         tokenBudget: z.number().int().positive().nullable().optional(),
         tokenBudgetPeriodMinutes: z.number().int().positive().nullable().optional(),
+        compaction: z
+          .object({ maxContextTokens: z.number().int().positive().nullable().optional() })
+          .nullable()
+          .optional(),
       }),
     ),
     async (c) => {
@@ -2150,8 +2186,107 @@ const app = new Hono<AuthEnv>()
           existing.tokenBudgetPeriodMinutes = body.tokenBudgetPeriodMinutes;
         }
       }
+      if (body.maxThinkingTokens !== undefined) {
+        if (body.maxThinkingTokens === null) {
+          delete existing.maxThinkingTokens;
+        } else {
+          existing.maxThinkingTokens = body.maxThinkingTokens;
+        }
+      }
 
       writeVoluteConfig(dir, existing);
+
+      // Write template-level settings to config.json
+      // Templates read thinking/model/compaction from config.json, not volute.json
+      const needsConfigJson =
+        body.model !== undefined ||
+        body.thinkingLevel !== undefined ||
+        body.maxThinkingTokens !== undefined ||
+        body.compaction !== undefined;
+
+      if (needsConfigJson) {
+        const configJsonPath = resolve(dir, "home/.config/config.json");
+        let templateConfig: Record<string, unknown> = {};
+        if (existsSync(configJsonPath)) {
+          try {
+            templateConfig = JSON.parse(readFileSync(configJsonPath, "utf-8"));
+          } catch {
+            // start fresh
+          }
+        }
+
+        if (body.model !== undefined) {
+          templateConfig.model = body.model;
+        }
+
+        // Thinking settings: write the correct field per template
+        // claude → maxThinkingTokens; pi → thinkingLevel; codex → reasoningEffort
+        const tmpl = entry.template ?? "claude";
+        if (body.thinkingLevel !== undefined) {
+          if (tmpl === "claude") {
+            // Claude uses maxThinkingTokens — map unified levels to token budgets
+            const claudeThinkingTokens: Record<string, number | null> = {
+              off: null,
+              minimal: 1024,
+              low: 4096,
+              medium: 10000,
+              high: 32000,
+              xhigh: 128000,
+            };
+            const tokens = claudeThinkingTokens[body.thinkingLevel] ?? null;
+            if (tokens === null) {
+              delete templateConfig.maxThinkingTokens;
+            } else {
+              templateConfig.maxThinkingTokens = tokens;
+            }
+          } else if (tmpl === "codex") {
+            // Codex SDK accepts: minimal, low, medium, high, xhigh
+            // "off" removes the setting (codex always reasons, defaults to medium)
+            const codexMap: Record<string, string | null> = {
+              off: null,
+              minimal: "minimal",
+              low: "low",
+              medium: "medium",
+              high: "high",
+              xhigh: "xhigh",
+            };
+            const effort = codexMap[body.thinkingLevel] ?? null;
+            if (effort === null) {
+              delete templateConfig.reasoningEffort;
+            } else {
+              templateConfig.reasoningEffort = effort;
+            }
+          } else {
+            // Pi uses thinkingLevel directly
+            templateConfig.thinkingLevel = body.thinkingLevel;
+          }
+        }
+
+        if (body.maxThinkingTokens !== undefined) {
+          if (body.maxThinkingTokens === null) {
+            delete templateConfig.maxThinkingTokens;
+          } else {
+            templateConfig.maxThinkingTokens = body.maxThinkingTokens;
+          }
+        }
+
+        if (body.compaction !== undefined) {
+          if (body.compaction === null) {
+            delete templateConfig.compaction;
+          } else {
+            const comp = (templateConfig.compaction ?? {}) as Record<string, unknown>;
+            if (body.compaction.maxContextTokens === null) {
+              delete comp.maxContextTokens;
+            } else if (body.compaction.maxContextTokens !== undefined) {
+              comp.maxContextTokens = body.compaction.maxContextTokens;
+            }
+            templateConfig.compaction = comp;
+          }
+        }
+
+        writeFileSync(configJsonPath, `${JSON.stringify(templateConfig, null, 2)}\n`);
+      }
+
       return c.json({ ok: true });
     },
   )

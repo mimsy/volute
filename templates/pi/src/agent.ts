@@ -36,7 +36,7 @@ type PiSession = {
   unsubscribe?: () => void;
   messageIds: (string | undefined)[];
   currentMessageId?: string;
-  messageChannels: Map<string, string>;
+  messageChannels: Map<string, { channel: string; sender?: string }>;
 };
 
 export function createMind(options: {
@@ -378,7 +378,10 @@ export function createMind(options: {
 
         // Track channel for reply instructions
         if (meta.channel) {
-          session.messageChannels.set(meta.messageId, meta.channel);
+          session.messageChannels.set(meta.messageId, {
+            channel: meta.channel,
+            sender: meta.sender,
+          });
         }
 
         // Track messageId (must be pushed before prompt)
