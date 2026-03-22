@@ -21,6 +21,7 @@ export type ChannelMeta = {
   participantCount?: number;
   participantProfiles?: ParticipantProfile[];
   typing?: string[];
+  replyInstructions?: "once" | "always" | "never";
   signature?: string;
   signatureTimestamp?: string;
   signerFingerprint?: string;

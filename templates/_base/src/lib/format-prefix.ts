@@ -1,5 +1,22 @@
 import type { ChannelMeta, ParticipantProfile } from "./types.js";
 
+/** Compact timestamp: YYYY-MM-DD HH:MM */
+export function compactTimestamp(date: Date = new Date()): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  const h = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${y}-${m}-${d} ${h}:${min}`;
+}
+
+/** Compact time-only: HH:MM */
+export function compactTime(date: Date = new Date()): string {
+  const h = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${h}:${min}`;
+}
+
 function derivePlatform(channel: string): string {
   if (!channel.includes(":")) return "Volute";
   const name = channel.split(":")[0];

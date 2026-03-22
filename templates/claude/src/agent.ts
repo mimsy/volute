@@ -32,6 +32,8 @@ type Session = {
   currentMessageId?: string;
   currentQuery?: ReturnType<typeof query>;
   messageChannels: Map<string, { channel: string; sender?: string }>;
+  replyInstructionsFired: boolean;
+  replyInstructionsMode: "once" | "always" | "never";
 };
 
 export function createMind(options: {
@@ -202,7 +204,7 @@ export function createMind(options: {
     preCompactHook: HookCallback,
     resume?: string,
   ) {
-    const replyInstructions = createReplyInstructionsHook(session.messageChannels);
+    const replyInstructions = createReplyInstructionsHook(session.messageChannels, session);
 
     return query({
       prompt: session.channel.iterable,
@@ -427,6 +429,8 @@ export function createMind(options: {
       listeners: new Set(),
       messageIds: [],
       messageChannels: new Map(),
+      replyInstructionsFired: false,
+      replyInstructionsMode: "once",
     };
     sessions.set(name, session);
 
@@ -461,6 +465,11 @@ export function createMind(options: {
             channel: meta.channel,
             sender: meta.sender,
           });
+        }
+
+        // Update reply instructions mode from routing config
+        if (meta.replyInstructions) {
+          session.replyInstructionsMode = meta.replyInstructions;
         }
 
         // Interrupt if requested and session is mid-turn

@@ -836,9 +836,16 @@ export class DeliveryManager {
         if (!mediaType) continue;
 
         const data = await readFile(filePath);
+        let imageData: Buffer = data;
+        try {
+          const sharpMod = await import("sharp");
+          imageData = await sharpMod.default(data).resize(128, 128, { fit: "cover" }).toBuffer();
+        } catch {
+          // Fall back to original image if sharp unavailable or resize fails
+        }
         blocks.push(
           { type: "text", text: `[Avatar for ${p.username}]` },
-          { type: "image", media_type: mediaType, data: data.toString("base64") },
+          { type: "image", media_type: mediaType, data: imageData.toString("base64") },
         );
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;

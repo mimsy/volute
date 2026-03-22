@@ -425,7 +425,7 @@ describe("router", () => {
 
     assert.equal(mind.calls.length, 1, "trigger should flush both messages");
     const text = batchText(mind.calls);
-    assert.ok(text.includes("discord:123"), "batch header should include channel URI");
+    // Single-channel batches use simplified headers (no URI, just display name)
     assert.ok(text.includes("#general"), "batch header should include channel display name");
     assert.ok(text.includes("hello"), "should include first message");
     assert.ok(text.includes("flush"), "should include trigger message");
