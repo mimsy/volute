@@ -3,6 +3,9 @@ import type { SharedSkill } from "@volute/api";
 import { onMount } from "svelte";
 import { fetchSharedSkills, installMindSkill } from "../lib/client";
 import Modal from "./Modal.svelte";
+import Button from "./ui/Button.svelte";
+import EmptyState from "./ui/EmptyState.svelte";
+import ErrorMessage from "./ui/ErrorMessage.svelte";
 
 let {
   name,
@@ -52,14 +55,12 @@ async function handleInstall(skillId: string) {
 
 <Modal size="480px" title="Add Skill" {onClose}>
   <div class="modal-body">
-    {#if error}
-      <div class="error">{error}</div>
-    {/if}
+    <ErrorMessage message={error} />
 
     {#if loading}
-      <div class="empty">Loading...</div>
+      <EmptyState message="Loading..." />
     {:else if skills.length === 0}
-      <div class="empty">No shared skills available.</div>
+      <EmptyState message="No shared skills available." />
     {:else}
       <div class="skill-list">
         {#each skills as skill (skill.id)}
@@ -77,13 +78,13 @@ async function handleInstall(skillId: string) {
               {#if installedIds.has(skill.id)}
                 <span class="installed-tag">installed</span>
               {:else}
-                <button
-                  class="action-btn install-btn"
+                <Button
+                  variant="primary"
                   onclick={() => handleInstall(skill.id)}
                   disabled={actionLoading !== null}
                 >
                   {actionLoading === skill.id ? "..." : "Install"}
-                </button>
+                </Button>
               {/if}
             </div>
           </div>
@@ -98,19 +99,6 @@ async function handleInstall(skillId: string) {
     flex: 1;
     overflow: auto;
     padding: 8px 16px 16px;
-  }
-
-  .error {
-    color: var(--red);
-    padding: 8px 0;
-    font-size: 13px;
-  }
-
-  .empty {
-    color: var(--text-2);
-    padding: 24px;
-    text-align: center;
-    font-size: 14px;
   }
 
   .skill-list {
@@ -165,21 +153,5 @@ async function handleInstall(skillId: string) {
     font-size: 12px;
     color: var(--text-2);
     font-style: italic;
-  }
-
-  .action-btn {
-    padding: 4px 10px;
-    font-size: 12px;
-    border-radius: var(--radius);
-    font-weight: 500;
-  }
-
-  .action-btn:disabled {
-    opacity: 0.5;
-  }
-
-  .install-btn {
-    background: var(--accent-dim);
-    color: var(--accent);
   }
 </style>

@@ -11,6 +11,11 @@ import {
   updateSleepConfig,
 } from "../lib/client";
 import { formatCron } from "../lib/clock-format";
+import Button from "./ui/Button.svelte";
+import EmptyState from "./ui/EmptyState.svelte";
+import ErrorMessage from "./ui/ErrorMessage.svelte";
+import TimePicker from "./ui/TimePicker.svelte";
+import Toggle from "./ui/Toggle.svelte";
 
 let { name }: { name: string } = $props();
 
@@ -55,9 +60,6 @@ let editIfSleeping = $state("skip");
 let editEnabled = $state(true);
 
 let saving = $state<string | null>(null);
-
-const HOURS = Array.from({ length: 24 }, (_, i) => i);
-const MINUTES = [0, 15, 30, 45];
 
 function fmtTime(h: number, m: number): string {
   const suffix = h >= 12 ? "pm" : "am";
@@ -333,35 +335,30 @@ async function handleDeleteSchedule(id: string) {
 }
 </script>
 
-{#if error}
-  <div class="error">{error}</div>
-{/if}
+<ErrorMessage message={error} />
 
 <!-- Sleep -->
 <div class="subsection">
   <div class="subsection-header">
     <span>Sleep</span>
-    <label class="toggle">
-      <input type="checkbox" checked={sleep?.enabled ?? false} onchange={toggleSleepEnabled} />
-      <span>{sleep?.enabled ? "On" : "Off"}</span>
-    </label>
+    <Toggle checked={sleep?.enabled ?? false} onchange={toggleSleepEnabled} label={sleep?.enabled ? "On" : "Off"} />
   </div>
 
   {#if sleep?.enabled}
     {#if useCustomCron}
       <div class="sleep-summary">
         <span class="sleep-desc">Custom schedule</span>
-        <button class="link-btn" onclick={() => { useCustomCron = false; saveSleepTime(); }}>Use time picker</button>
+        <Button variant="text" size="sm" onclick={() => { useCustomCron = false; saveSleepTime(); }}>Use time picker</Button>
       </div>
-      <div class="time-row">
-        <span class="time-label">Sleep at</span>
+      <div class="cron-row">
+        <span class="cron-label">Sleep at</span>
         <input type="text" class="input cron-input" bind:value={editSleepCron} onblur={saveSleepTime} placeholder="0 0 * * *" />
       </div>
       {#if editSleepCron}
         <div class="cron-preview">{formatCron(editSleepCron)}</div>
       {/if}
-      <div class="time-row">
-        <span class="time-label">Wake at</span>
+      <div class="cron-row">
+        <span class="cron-label">Wake at</span>
         <input type="text" class="input cron-input" bind:value={editWakeCron} onblur={saveSleepTime} placeholder="0 8 * * *" />
       </div>
       {#if editWakeCron}
@@ -370,43 +367,19 @@ async function handleDeleteSchedule(id: string) {
     {:else}
       <div class="sleep-summary">
         <span class="sleep-desc">Sleeps at {fmtTime(sleepHour, sleepMinute)}, wakes at {fmtTime(wakeHour, wakeMinute)}</span>
-        <button class="link-btn" onclick={() => { useCustomCron = true; editSleepCron = timeToCron(sleepHour, sleepMinute); editWakeCron = timeToCron(wakeHour, wakeMinute); }}>Custom</button>
+        <Button variant="text" size="sm" onclick={() => { useCustomCron = true; editSleepCron = timeToCron(sleepHour, sleepMinute); editWakeCron = timeToCron(wakeHour, wakeMinute); }}>Custom</Button>
       </div>
-      <div class="time-row">
-        <span class="time-label">Sleep at</span>
-        <select class="input time-select" bind:value={sleepHour} onchange={saveSleepTime}>
-          {#each HOURS as h}<option value={h}>{fmtTime(h, 0).replace(/:\d+/, "")}</option>{/each}
-        </select>
-        <span class="time-sep">:</span>
-        <select class="input time-select narrow" bind:value={sleepMinute} onchange={saveSleepTime}>
-          {#each MINUTES as m}<option value={m}>{String(m).padStart(2, "0")}</option>{/each}
-        </select>
-      </div>
-      <div class="time-row">
-        <span class="time-label">Wake at</span>
-        <select class="input time-select" bind:value={wakeHour} onchange={saveSleepTime}>
-          {#each HOURS as h}<option value={h}>{fmtTime(h, 0).replace(/:\d+/, "")}</option>{/each}
-        </select>
-        <span class="time-sep">:</span>
-        <select class="input time-select narrow" bind:value={wakeMinute} onchange={saveSleepTime}>
-          {#each MINUTES as m}<option value={m}>{String(m).padStart(2, "0")}</option>{/each}
-        </select>
-      </div>
+      <TimePicker label="Sleep at" bind:hour={sleepHour} bind:minute={sleepMinute} onchange={saveSleepTime} />
+      <TimePicker label="Wake at" bind:hour={wakeHour} bind:minute={wakeMinute} onchange={saveSleepTime} />
     {/if}
 
     <div class="wake-triggers">
       <div class="subsection-header small">What wakes the mind early</div>
       <div class="trigger-row">
-        <label class="trigger-label">
-          <input type="checkbox" checked={wakeOnMentions} onchange={() => { wakeOnMentions = !wakeOnMentions; saveWakeTriggers(); }} />
-          When mentioned
-        </label>
+        <Toggle checked={wakeOnMentions} onchange={() => { wakeOnMentions = !wakeOnMentions; saveWakeTriggers(); }} label="When mentioned" />
       </div>
       <div class="trigger-row">
-        <label class="trigger-label">
-          <input type="checkbox" checked={wakeOnDms} onchange={() => { wakeOnDms = !wakeOnDms; saveWakeTriggers(); }} />
-          Direct messages
-        </label>
+        <Toggle checked={wakeOnDms} onchange={() => { wakeOnDms = !wakeOnDms; saveWakeTriggers(); }} label="Direct messages" />
       </div>
       <div class="trigger-row">
         <span class="trigger-text">Channels</span>
@@ -436,7 +409,7 @@ async function handleDeleteSchedule(id: string) {
 <div class="subsection">
   <div class="subsection-header">
     <span>Schedules</span>
-    <button class="add-btn" onclick={() => (addingSchedule = true)}>Add</button>
+    <Button variant="primary" onclick={() => (addingSchedule = true)}>Add</Button>
   </div>
 
   {#if addingSchedule}
@@ -464,13 +437,7 @@ async function handleDeleteSchedule(id: string) {
         <div class="form-row">
           <span class="form-label"></span>
           <span class="form-hint">At</span>
-          <select class="input time-select" bind:value={newDailyHour}>
-            {#each HOURS as h}<option value={h}>{fmtTime(h, 0).replace(/:\d+/, "")}</option>{/each}
-          </select>
-          <span class="time-sep">:</span>
-          <select class="input time-select narrow" bind:value={newDailyMinute}>
-            {#each MINUTES as m}<option value={m}>{String(m).padStart(2, "0")}</option>{/each}
-          </select>
+          <TimePicker bind:hour={newDailyHour} bind:minute={newDailyMinute} />
         </div>
       {:else}
         <div class="form-row">
@@ -491,16 +458,16 @@ async function handleDeleteSchedule(id: string) {
         </select>
       </div>
       <div class="form-actions">
-        <button class="save-btn" onclick={handleAddSchedule} disabled={saving !== null || !newName.trim()}>
+        <Button variant="primary" onclick={handleAddSchedule} disabled={saving !== null || !newName.trim()}>
           {saving === "sched:add" ? "..." : "Add schedule"}
-        </button>
-        <button class="cancel-btn" onclick={() => (addingSchedule = false)}>Cancel</button>
+        </Button>
+        <Button variant="secondary" onclick={() => (addingSchedule = false)}>Cancel</Button>
       </div>
     </div>
   {/if}
 
   {#if schedules.length === 0 && !addingSchedule}
-    <div class="empty">No schedules configured.</div>
+    <EmptyState message="No schedules configured." />
   {:else}
     <div class="schedule-list">
       {#each schedules as sched (sched.id)}
@@ -525,13 +492,7 @@ async function handleDeleteSchedule(id: string) {
               <div class="form-row">
                 <span class="form-label"></span>
                 <span class="form-hint">At</span>
-                <select class="input time-select" bind:value={editDailyHour}>
-                  {#each HOURS as h}<option value={h}>{fmtTime(h, 0).replace(/:\d+/, "")}</option>{/each}
-                </select>
-                <span class="time-sep">:</span>
-                <select class="input time-select narrow" bind:value={editDailyMinute}>
-                  {#each MINUTES as m}<option value={m}>{String(m).padStart(2, "0")}</option>{/each}
-                </select>
+                <TimePicker bind:hour={editDailyHour} bind:minute={editDailyMinute} />
               </div>
             {:else}
               <div class="form-row">
@@ -552,10 +513,10 @@ async function handleDeleteSchedule(id: string) {
               </select>
             </div>
             <div class="form-actions">
-              <button class="save-btn" onclick={saveScheduleEdit} disabled={saving !== null}>
+              <Button variant="primary" onclick={saveScheduleEdit} disabled={saving !== null}>
                 {saving === `sched:${sched.id}` ? "..." : "Save"}
-              </button>
-              <button class="cancel-btn" onclick={() => (editingScheduleId = null)}>Cancel</button>
+              </Button>
+              <Button variant="secondary" onclick={() => (editingScheduleId = null)}>Cancel</Button>
             </div>
           </div>
         {:else}
@@ -572,13 +533,11 @@ async function handleDeleteSchedule(id: string) {
                 {/if}
               </span>
               <div class="schedule-actions">
-                <label class="toggle compact">
-                  <input type="checkbox" checked={sched.enabled} onchange={() => toggleScheduleEnabled(sched)} />
-                </label>
-                <button class="icon-btn" onclick={() => startEditSchedule(sched)}>Edit</button>
-                <button class="icon-btn danger" onclick={() => handleDeleteSchedule(sched.id)} disabled={saving !== null}>
+                <Toggle checked={sched.enabled} onchange={() => toggleScheduleEnabled(sched)} />
+                <Button variant="icon" onclick={() => startEditSchedule(sched)}>Edit</Button>
+                <Button variant="danger" size="sm" class="icon-size" onclick={() => handleDeleteSchedule(sched.id)} disabled={saving !== null}>
                   {saving === `sched:${sched.id}` ? "..." : "Del"}
-                </button>
+                </Button>
               </div>
             </div>
             {#if sched.message}
@@ -613,35 +572,6 @@ async function handleDeleteSchedule(id: string) {
     margin-top: 12px;
   }
 
-  .toggle {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-weight: 400;
-    cursor: pointer;
-  }
-
-  .toggle input[type="checkbox"] {
-    accent-color: var(--accent);
-  }
-
-  .toggle.compact {
-    gap: 0;
-  }
-
-  .error {
-    color: var(--red);
-    font-size: 13px;
-    margin-bottom: 8px;
-  }
-
-  .empty {
-    color: var(--text-2);
-    padding: 12px;
-    text-align: center;
-    font-size: 14px;
-  }
-
   /* Sleep */
   .sleep-summary {
     display: flex;
@@ -655,37 +585,18 @@ async function handleDeleteSchedule(id: string) {
     color: var(--text-1);
   }
 
-  .link-btn {
-    font-size: 11px;
-    color: var(--text-2);
-    background: none;
-    border: none;
-    cursor: pointer;
-    text-decoration: underline;
-    padding: 0;
-  }
-
-  .link-btn:hover {
-    color: var(--text-1);
-  }
-
-  .time-row {
+  .cron-row {
     display: flex;
     align-items: center;
     gap: 6px;
     padding: 4px 0;
   }
 
-  .time-label {
+  .cron-label {
     font-size: 13px;
     color: var(--text-2);
     width: 60px;
     flex-shrink: 0;
-  }
-
-  .time-sep {
-    font-size: 13px;
-    color: var(--text-2);
   }
 
   .cron-preview {
@@ -705,19 +616,6 @@ async function handleDeleteSchedule(id: string) {
     align-items: center;
     gap: 8px;
     padding: 3px 0;
-  }
-
-  .trigger-label {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 13px;
-    color: var(--text-1);
-    cursor: pointer;
-  }
-
-  .trigger-label input[type="checkbox"] {
-    accent-color: var(--accent);
   }
 
   .trigger-text {
@@ -757,14 +655,6 @@ async function handleDeleteSchedule(id: string) {
     flex: 1;
     font-family: var(--mono);
     font-size: 12px;
-  }
-
-  .time-select {
-    width: auto;
-  }
-
-  .time-select.narrow {
-    width: 55px;
   }
 
   /* Schedule form */
@@ -862,54 +752,8 @@ async function handleDeleteSchedule(id: string) {
     overflow: hidden;
   }
 
-  /* Buttons */
-  .save-btn {
-    padding: 4px 12px;
-    font-size: 12px;
-    border-radius: var(--radius);
-    background: var(--accent-dim);
-    color: var(--accent);
-    font-weight: 500;
-    flex-shrink: 0;
-  }
-
-  .save-btn:disabled {
-    opacity: 0.5;
-  }
-
-  .cancel-btn {
-    padding: 4px 12px;
-    font-size: 12px;
-    border-radius: var(--radius);
-    background: var(--bg-3);
-    color: var(--text-2);
-    font-weight: 500;
-    flex-shrink: 0;
-  }
-
-  .add-btn {
-    padding: 4px 12px;
-    font-size: 12px;
-    border-radius: var(--radius);
-    background: var(--accent-dim);
-    color: var(--accent);
-    font-weight: 500;
-  }
-
-  .icon-btn {
-    padding: 2px 6px;
-    font-size: 11px;
-    border-radius: var(--radius);
-    background: var(--bg-3);
-    color: var(--text-2);
-    flex-shrink: 0;
-  }
-
-  .icon-btn:hover {
-    color: var(--text-0);
-  }
-
-  .icon-btn.danger:hover {
-    color: var(--red);
+  :global(.icon-size) {
+    padding: 2px 6px !important;
+    font-size: 11px !important;
   }
 </style>

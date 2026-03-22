@@ -2,6 +2,8 @@
 import type { MindConfig } from "@volute/api";
 import { onMount } from "svelte";
 import { type AiModel, fetchAiModels, fetchMindConfig, updateMindConfig } from "../lib/client";
+import ErrorMessage from "./ui/ErrorMessage.svelte";
+import SettingRow from "./ui/SettingRow.svelte";
 
 let { name, template }: { name: string; template?: string } = $props();
 
@@ -157,47 +159,40 @@ onMount(async () => {
 
 {#if config}
   {#if template}
-    <div class="setting-row">
-      <span class="setting-label">Template</span>
-      <div class="setting-control">
-        <span class="template-badge">{template}</span>
-      </div>
-    </div>
+    <SettingRow label="Template">
+      <span class="template-badge">{template}</span>
+    </SettingRow>
   {/if}
 
-  <div class="setting-row">
-    <span class="setting-label">Model</span>
-    <div class="setting-control">
-      {#if isOtherModel}
-        <input
-          class="setting-input"
-          type="text"
-          bind:value={editModel}
-          onblur={() => saveModel(editModel)}
-          placeholder="Model ID"
-        />
-        <button
-          class="setting-hint-btn"
-          onclick={() => {
-            editModel = enabledModels[0]?.id ?? "";
-            if (editModel) saveModel(editModel);
-          }}>back</button
-        >
-      {:else}
-        <select class="setting-select" value={editModel} onchange={handleModelSelect}>
-          <option value="">--</option>
-          {#each enabledModels as model (model.id)}
-            <option value={model.id}>{model.name}</option>
-          {/each}
-          <option value="__other__">other...</option>
-        </select>
-      {/if}
-    </div>
-  </div>
+  <SettingRow label="Model">
+    {#if isOtherModel}
+      <input
+        class="setting-input"
+        type="text"
+        bind:value={editModel}
+        onblur={() => saveModel(editModel)}
+        placeholder="Model ID"
+      />
+      <button
+        class="setting-hint-btn"
+        onclick={() => {
+          editModel = enabledModels[0]?.id ?? "";
+          if (editModel) saveModel(editModel);
+        }}>back</button
+      >
+    {:else}
+      <select class="setting-select" value={editModel} onchange={handleModelSelect}>
+        <option value="">--</option>
+        {#each enabledModels as model (model.id)}
+          <option value={model.id}>{model.name}</option>
+        {/each}
+        <option value="__other__">other...</option>
+      </select>
+    {/if}
+  </SettingRow>
 
-  <div class="setting-row">
-    <span class="setting-label">Thinking</span>
-    <div class="setting-control slider-control">
+  <SettingRow label="Thinking">
+    <div class="slider-control">
       <input
         type="range"
         class="thinking-slider"
@@ -209,85 +204,54 @@ onMount(async () => {
       />
       <span class="slider-label" class:off={thinkingIndex === 0}>{thinkingLabel}</span>
     </div>
-  </div>
+  </SettingRow>
 
   {#if showMaxThinking}
-    <div class="setting-row">
-      <span class="setting-label">Max tokens</span>
-      <div class="setting-control">
-        <input
-          class="setting-input narrow"
-          type="number"
-          bind:value={editMaxThinking}
-          onblur={saveMaxThinking}
-          placeholder="default"
-        />
-      </div>
-    </div>
+    <SettingRow label="Max tokens">
+      <input
+        class="setting-input narrow"
+        type="number"
+        bind:value={editMaxThinking}
+        onblur={saveMaxThinking}
+        placeholder="default"
+      />
+    </SettingRow>
   {/if}
 
-  <div class="setting-row">
-    <span class="setting-label">Budget</span>
-    <div class="setting-control">
-      <input
-        class="setting-input narrow"
-        type="number"
-        bind:value={editBudget}
-        onblur={saveBudget}
-        placeholder="tokens"
-      />
-      <span class="setting-hint">per</span>
-      <input
-        class="setting-input narrow"
-        type="number"
-        bind:value={editPeriod}
-        onblur={savePeriod}
-        placeholder="min"
-      />
-      <span class="setting-hint">min</span>
-    </div>
-  </div>
+  <SettingRow label="Budget">
+    <input
+      class="setting-input narrow"
+      type="number"
+      bind:value={editBudget}
+      onblur={saveBudget}
+      placeholder="tokens"
+    />
+    <span class="setting-hint">per</span>
+    <input
+      class="setting-input narrow"
+      type="number"
+      bind:value={editPeriod}
+      onblur={savePeriod}
+      placeholder="min"
+    />
+    <span class="setting-hint">min</span>
+  </SettingRow>
 
-  <div class="setting-row">
-    <span class="setting-label">Context</span>
-    <div class="setting-control">
-      <input
-        class="setting-input narrow"
-        type="number"
-        bind:value={editCompaction}
-        onblur={saveCompaction}
-        placeholder="150000"
-      />
-      <span class="setting-hint">tokens</span>
-    </div>
-  </div>
+  <SettingRow label="Context">
+    <input
+      class="setting-input narrow"
+      type="number"
+      bind:value={editCompaction}
+      onblur={saveCompaction}
+      placeholder="150000"
+    />
+    <span class="setting-hint">tokens</span>
+  </SettingRow>
 
-  {#if error}
-    <div class="error">{error}</div>
-  {/if}
+  <ErrorMessage message={error} />
 {/if}
 
 <style>
-  .setting-row {
-    display: flex;
-    align-items: center;
-    padding: 4px 0;
-  }
-
-  .setting-label {
-    width: 100px;
-    flex-shrink: 0;
-    font-size: 14px;
-    color: var(--text-1);
-  }
-
-  .setting-control {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
   .setting-input,
   .setting-select {
     background: var(--bg-2);
@@ -338,6 +302,9 @@ onMount(async () => {
 
   /* Thinking slider */
   .slider-control {
+    flex: 1;
+    display: flex;
+    align-items: center;
     gap: 10px;
   }
 
@@ -380,11 +347,5 @@ onMount(async () => {
 
   .slider-label.off {
     color: var(--text-2);
-  }
-
-  .error {
-    color: var(--red);
-    font-size: 13px;
-    padding: 4px 0;
   }
 </style>

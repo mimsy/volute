@@ -3,6 +3,10 @@ import type { MindEnv } from "@volute/api";
 import { onMount } from "svelte";
 import { SvelteSet } from "svelte/reactivity";
 import { deleteMindEnvVar, deleteSharedEnvVar, fetchMindEnv, setMindEnvVar } from "../lib/client";
+import Button from "./ui/Button.svelte";
+import EmptyState from "./ui/EmptyState.svelte";
+import ErrorMessage from "./ui/ErrorMessage.svelte";
+import SectionHeader from "./ui/SectionHeader.svelte";
 
 let { name }: { name: string } = $props();
 
@@ -110,14 +114,13 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
 </script>
 
 <div class="section">
-  <div class="section-header">
-    <span class="section-title">Environment Variables</span>
-    <button class="add-btn" onclick={() => (addingEnv = true)}>Add</button>
-  </div>
+  <SectionHeader title="Environment Variables">
+    {#snippet action()}
+      <Button variant="primary" onclick={() => (addingEnv = true)}>Add</Button>
+    {/snippet}
+  </SectionHeader>
 
-  {#if error}
-    <div class="error">{error}</div>
-  {/if}
+  <ErrorMessage message={error} />
 
   {#if addingEnv}
     <div class="env-add-row">
@@ -135,15 +138,15 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
         placeholder="value"
         onkeydown={(e) => handleKeydown(e, addEnvVar)}
       />
-      <button class="save-btn" onclick={addEnvVar} disabled={saving !== null}>
+      <Button variant="primary" onclick={addEnvVar} disabled={saving !== null}>
         {saving === "env:add" ? "..." : "Add"}
-      </button>
-      <button class="cancel-btn" onclick={() => (addingEnv = false)}>Cancel</button>
+      </Button>
+      <Button variant="secondary" onclick={() => (addingEnv = false)}>Cancel</Button>
     </div>
   {/if}
 
   {#if mergedEnv.length === 0}
-    <div class="empty small">No environment variables set.</div>
+    <EmptyState message="No environment variables set." />
   {:else}
     <div class="env-list">
       {#each mergedEnv as entry (entry.key)}
@@ -156,10 +159,10 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
               bind:value={editingEnvValue}
               onkeydown={(e) => handleKeydown(e, saveEnvEdit)}
             />
-            <button class="save-btn" onclick={saveEnvEdit} disabled={saving !== null}>
+            <Button variant="primary" onclick={saveEnvEdit} disabled={saving !== null}>
               {saving === `env:${entry.key}` ? "..." : "Save"}
-            </button>
-            <button class="cancel-btn" onclick={() => (editingEnvKey = null)}>Cancel</button>
+            </Button>
+            <Button variant="secondary" onclick={() => (editingEnvKey = null)}>Cancel</Button>
           {:else}
             <span class="env-key">
               {entry.key}
@@ -174,22 +177,22 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
                 ••••••••
               {/if}
             </span>
-            <button class="icon-btn" onclick={() => toggleReveal(entry.key)} title="Toggle visibility">
+            <Button variant="icon" onclick={() => toggleReveal(entry.key)} title="Toggle visibility">
               {revealedKeys.has(entry.key) ? "Hide" : "Show"}
-            </button>
+            </Button>
             {#if entry.source === "mind"}
-              <button class="icon-btn" onclick={() => startEditEnv(entry.key, entry.value)} title="Edit">
+              <Button variant="icon" onclick={() => startEditEnv(entry.key, entry.value)} title="Edit">
                 Edit
-              </button>
+              </Button>
             {/if}
-            <button
-              class="icon-btn danger"
+            <Button
+              variant="icon"
               onclick={() => deleteEnv(entry.key, entry.source)}
               disabled={saving !== null}
               title="Delete"
             >
               {saving === `env:${entry.key}` ? "..." : "Del"}
-            </button>
+            </Button>
           {/if}
         </div>
       {/each}
@@ -200,68 +203,6 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
 <style>
   .section {
     margin-bottom: 24px;
-  }
-
-  .section-title {
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-2);
-    margin-bottom: 8px;
-  }
-
-  .section-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 8px;
-  }
-
-  .error {
-    color: var(--red);
-    padding: 8px 0;
-    font-size: 13px;
-  }
-
-  .empty.small {
-    color: var(--text-2);
-    padding: 12px;
-    text-align: center;
-    font-size: 14px;
-  }
-
-  .save-btn {
-    padding: 4px 10px;
-    font-size: 12px;
-    border-radius: var(--radius);
-    background: var(--accent-dim);
-    color: var(--accent);
-    font-weight: 500;
-    flex-shrink: 0;
-  }
-
-  .save-btn:disabled {
-    opacity: 0.5;
-  }
-
-  .cancel-btn {
-    padding: 4px 10px;
-    font-size: 12px;
-    border-radius: var(--radius);
-    background: var(--bg-3);
-    color: var(--text-2);
-    font-weight: 500;
-    flex-shrink: 0;
-  }
-
-  .add-btn {
-    padding: 4px 12px;
-    font-size: 12px;
-    border-radius: var(--radius);
-    background: var(--accent-dim);
-    color: var(--accent);
-    font-weight: 500;
   }
 
   .env-list {
@@ -342,22 +283,5 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
 
   .env-input.value {
     flex: 1;
-  }
-
-  .icon-btn {
-    padding: 2px 6px;
-    font-size: 11px;
-    border-radius: var(--radius);
-    background: var(--bg-3);
-    color: var(--text-2);
-    flex-shrink: 0;
-  }
-
-  .icon-btn:hover {
-    color: var(--text-0);
-  }
-
-  .icon-btn.danger:hover {
-    color: var(--red);
   }
 </style>

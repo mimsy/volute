@@ -8,6 +8,7 @@ import MindSettingsEnv from "./MindSettingsEnv.svelte";
 import MindSettingsProfile from "./MindSettingsProfile.svelte";
 import MindSettingsRhythms from "./MindSettingsRhythms.svelte";
 import MindSkills from "./MindSkills.svelte";
+import SectionHeader from "./ui/SectionHeader.svelte";
 
 let { mind: initialMind }: { mind: Mind } = $props();
 
@@ -81,18 +82,12 @@ async function handleUpdated() {
     </section>
 
     <section id="cognition" bind:this={sectionEls.cognition}>
-      <div class="section-header">
-        <span class="section-title">Model</span>
-        <span class="section-subtitle">Cognition and resource limits</span>
-      </div>
+      <SectionHeader title="Model" subtitle="Cognition and resource limits" />
       <MindSettingsCognition {name} template={mind.template} />
     </section>
 
     <section id="rhythms" bind:this={sectionEls.rhythms}>
-      <div class="section-header">
-        <span class="section-title">Rhythms</span>
-        <span class="section-subtitle">Sleep, schedules, and wake triggers</span>
-      </div>
+      <SectionHeader title="Rhythms" subtitle="Sleep, schedules, and wake triggers" />
       <MindSettingsRhythms {name} />
     </section>
 
@@ -160,21 +155,4 @@ async function handleUpdated() {
     margin: 0 auto;
   }
 
-  .section-header {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    margin-bottom: 12px;
-  }
-
-  .section-title {
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text-0);
-  }
-
-  .section-subtitle {
-    font-size: 12px;
-    color: var(--text-2);
-  }
 </style>

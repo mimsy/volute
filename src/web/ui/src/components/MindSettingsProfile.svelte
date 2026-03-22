@@ -2,6 +2,8 @@
 import type { Mind } from "@volute/api";
 import { fetchMinds, updateMindProfile, uploadMindAvatar } from "../lib/client";
 import { data } from "../lib/stores.svelte";
+import { useSavedFeedback } from "../lib/useSavedFeedback.svelte";
+import SectionHeader from "./ui/SectionHeader.svelte";
 
 let {
   mind,
@@ -13,24 +15,15 @@ let {
 
 let displayName = $state("");
 let description = $state("");
-let savedField = $state<string | null>(null);
-let savedTimeout = $state<ReturnType<typeof setTimeout> | null>(null);
 let fileInput = $state<HTMLInputElement | null>(null);
+
+const { savedField, showSaved } = useSavedFeedback();
 
 // Sync local state from mind prop on changes
 $effect(() => {
   displayName = mind.displayName ?? "";
   description = mind.description ?? "";
 });
-
-function showSaved(field: string) {
-  if (savedTimeout) clearTimeout(savedTimeout);
-  savedField = field;
-  savedTimeout = setTimeout(() => {
-    savedField = null;
-    savedTimeout = null;
-  }, 1500);
-}
 
 async function handleAvatarChange(e: Event) {
   const input = e.target as HTMLInputElement;
@@ -60,10 +53,7 @@ async function saveDescription() {
 </script>
 
 <div class="section">
-  <div class="section-header">
-    <span class="section-title">Profile</span>
-    <span class="section-subtitle">Avatar, display name, and description</span>
-  </div>
+  <SectionHeader title="Profile" subtitle="Avatar, display name, and description" />
 
   <div class="profile-fields">
     <div class="field-row">
@@ -126,24 +116,6 @@ async function saveDescription() {
 <style>
   .section {
     margin-bottom: 32px;
-  }
-
-  .section-header {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    margin-bottom: 12px;
-  }
-
-  .section-title {
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text-0);
-  }
-
-  .section-subtitle {
-    font-size: 12px;
-    color: var(--text-2);
   }
 
   .profile-fields {
