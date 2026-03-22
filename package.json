@@ -38,12 +38,14 @@
     "packages/extensions/notes/dist/ui/",
     "packages/extensions/notes/skills/",
     "packages/extensions/pages/dist/ui/",
-    "packages/extensions/pages/skills/"
+    "packages/extensions/pages/skills/",
+    "packages/extensions/plan/dist/ui/",
+    "packages/extensions/plan/skills/"
   ],
   "scripts": {
     "dev": "tsx src/cli.ts",
     "build": "npm run build:ext && tsup && cp -r skills dist/skills && npm run build:web",
-    "build:ext": "npm run build:ui --workspace=packages/extensions/notes && npm run build:ui --workspace=packages/extensions/pages",
+    "build:ext": "npm run build:ui --workspace=packages/extensions/notes && npm run build:ui --workspace=packages/extensions/pages && npm run build:ui --workspace=packages/extensions/plan",
     "build:web": "vite build --config src/web/ui/vite.config.ts",
     "dev:web": "vite --config src/web/ui/vite.config.ts",
     "test": "node --import tsx --import ./test/setup.ts --test --test-force-exit --test-concurrency=4 $(find test -name '*.test.ts' ! -name 'daemon-e2e.test.ts' | sort)",
