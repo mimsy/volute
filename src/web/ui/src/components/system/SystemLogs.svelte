@@ -1,6 +1,6 @@
 <script lang="ts">
 import { SvelteSet } from "svelte/reactivity";
-import { createSystemLogStream } from "../lib/streams";
+import { createSystemLogStream } from "../../lib/streams";
 
 type LogEntry = {
   level: string;

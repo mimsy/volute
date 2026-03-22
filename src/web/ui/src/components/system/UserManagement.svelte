@@ -9,10 +9,10 @@ import {
   fetchUsers,
   setUserRole,
   updateUserProfile,
-} from "../lib/auth";
-import { deleteMind } from "../lib/client";
-import { mindDotColor } from "../lib/format";
-import { activeMinds, data, onlineBrains } from "../lib/stores.svelte";
+} from "../../lib/auth";
+import { deleteMind } from "../../lib/client";
+import { mindDotColor } from "../../lib/format";
+import { activeMinds, data, onlineBrains } from "../../lib/stores.svelte";
 
 let { minds }: { minds: Mind[] } = $props();
 

@@ -10,9 +10,9 @@ import {
   saveProviderConfig,
   startAiOAuth,
   submitAiOAuthCode,
-} from "../lib/client";
+} from "../../lib/client";
+import Modal from "../ui/Modal.svelte";
 import ModelSelect from "./ModelSelect.svelte";
-import Modal from "./ui/Modal.svelte";
 
 let {
   showModelDefaults = false,

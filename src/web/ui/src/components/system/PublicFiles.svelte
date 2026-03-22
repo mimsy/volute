@@ -1,5 +1,5 @@
 <script lang="ts">
-import { renderMarkdown } from "../lib/markdown";
+import { renderMarkdown } from "../../lib/markdown";
 
 let { name, rootLabel }: { name: string; rootLabel?: string } = $props();
 

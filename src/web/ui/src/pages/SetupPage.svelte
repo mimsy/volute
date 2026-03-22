@@ -1,5 +1,5 @@
 <script lang="ts">
-import AiProviders from "../components/AiProviders.svelte";
+import AiProviders from "../components/system/AiProviders.svelte";
 import Input from "../components/ui/Input.svelte";
 import { fetchMe } from "../lib/auth";
 import type { AiModel } from "../lib/client";

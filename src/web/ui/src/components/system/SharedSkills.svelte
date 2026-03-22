@@ -8,11 +8,11 @@ import {
   removeDefaultSkill,
   removeSharedSkill,
   uploadSkillZip,
-} from "../lib/client";
-import Button from "./ui/Button.svelte";
-import EmptyState from "./ui/EmptyState.svelte";
-import ErrorMessage from "./ui/ErrorMessage.svelte";
-import SectionHeader from "./ui/SectionHeader.svelte";
+} from "../../lib/client";
+import Button from "../ui/Button.svelte";
+import EmptyState from "../ui/EmptyState.svelte";
+import ErrorMessage from "../ui/ErrorMessage.svelte";
+import SectionHeader from "../ui/SectionHeader.svelte";
 
 let skills = $state<SharedSkill[]>([]);
 let defaults = $state<string[]>([]);

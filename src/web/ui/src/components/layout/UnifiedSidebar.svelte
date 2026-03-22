@@ -1,12 +1,12 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
-import { fetchMinds, startMind, stopMind } from "../lib/client";
-import { mindDotColor } from "../lib/format";
-import type { Selection } from "../lib/navigate";
-import { activeMinds, data, unreadCounts } from "../lib/stores.svelte";
+import { fetchMinds, startMind, stopMind } from "../../lib/client";
+import { mindDotColor } from "../../lib/format";
+import type { Selection } from "../../lib/navigate";
+import { activeMinds, data, unreadCounts } from "../../lib/stores.svelte";
+import ProfileHoverCard from "../ProfileHoverCard.svelte";
+import Icon from "../ui/Icon.svelte";
 import ConversationList from "./ConversationList.svelte";
-import ProfileHoverCard from "./ProfileHoverCard.svelte";
-import Icon from "./ui/Icon.svelte";
 
 let {
   minds,

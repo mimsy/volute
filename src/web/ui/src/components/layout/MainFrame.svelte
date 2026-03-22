@@ -1,12 +1,12 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
-import type { Selection } from "../lib/navigate";
-import Home from "../pages/Home.svelte";
-import MindPage from "../pages/MindPage.svelte";
-import SystemSettingsPage from "../pages/SystemSettingsPage.svelte";
-import Chat from "./chat/Chat.svelte";
-import PublicFiles from "./PublicFiles.svelte";
-import TurnTimeline from "./TurnTimeline.svelte";
+import type { Selection } from "../../lib/navigate";
+import Home from "../../pages/Home.svelte";
+import MindPage from "../../pages/MindPage.svelte";
+import SystemSettingsPage from "../../pages/SystemSettingsPage.svelte";
+import Chat from "../chat/Chat.svelte";
+import PublicFiles from "../system/PublicFiles.svelte";
+import TurnTimeline from "../TurnTimeline.svelte";
 
 let {
   selection,

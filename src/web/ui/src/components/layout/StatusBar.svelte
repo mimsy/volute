@@ -1,5 +1,5 @@
 <script lang="ts">
-import Dropdown from "./ui/Dropdown.svelte";
+import Dropdown from "../ui/Dropdown.svelte";
 
 let {
   username,

@@ -1,10 +1,10 @@
 <script lang="ts">
 import type { Mind } from "@volute/api";
 import Settings from "../../pages/Settings.svelte";
-import PublicFiles from "../PublicFiles.svelte";
-import SharedSkills from "../SharedSkills.svelte";
-import SystemLogs from "../SystemLogs.svelte";
-import UserManagement from "../UserManagement.svelte";
+import PublicFiles from "../system/PublicFiles.svelte";
+import SharedSkills from "../system/SharedSkills.svelte";
+import SystemLogs from "../system/SystemLogs.svelte";
+import UserManagement from "../system/UserManagement.svelte";
 import Modal from "../ui/Modal.svelte";
 import TabBar from "../ui/TabBar.svelte";
 

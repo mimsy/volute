@@ -8,9 +8,9 @@ import {
   saveEnabledImagegenModels,
   saveImagegenProviderConfig,
   searchImagegenModels,
-} from "../lib/client";
+} from "../../lib/client";
+import Modal from "../ui/Modal.svelte";
 import ModelSelect from "./ModelSelect.svelte";
-import Modal from "./ui/Modal.svelte";
 
 let providers = $state<ImagegenProvider[]>([]);
 let enabledModels = $state<string[]>([]);
