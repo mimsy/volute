@@ -43,7 +43,7 @@
   "scripts": {
     "dev": "tsx src/cli.ts",
     "build": "npm run build:ext && tsup && cp -r skills dist/skills && npm run build:web",
-    "build:ext": "npm run build:ui --workspace=packages/extensions/notes && npm run build:ui --workspace=packages/extensions/pages",
+    "build:ext": "npm run build:ext-theme --workspace=packages/ui && cp packages/ui/dist/ext-theme.css src/web/ui/public/ext-theme.css && npm run build:ui --workspace=packages/extensions/notes && npm run build:ui --workspace=packages/extensions/pages",
     "build:web": "vite build --config src/web/ui/vite.config.ts",
     "dev:web": "vite --config src/web/ui/vite.config.ts",
     "test": "node --import tsx --import ./test/setup.ts --test --test-force-exit --test-concurrency=4 $(find test -name '*.test.ts' ! -name 'daemon-e2e.test.ts' | sort)",

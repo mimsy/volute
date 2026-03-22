@@ -1,4 +1,5 @@
 <script lang="ts">
+import { Modal } from "@volute/ui";
 import {
   fetchImagegenModels,
   fetchImagegenProviders,
@@ -9,7 +10,6 @@ import {
   saveImagegenProviderConfig,
   searchImagegenModels,
 } from "../../lib/client";
-import Modal from "../ui/Modal.svelte";
 import ModelSelect from "./ModelSelect.svelte";
 
 let providers = $state<ImagegenProvider[]>([]);

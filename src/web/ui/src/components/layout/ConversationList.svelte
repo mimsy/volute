@@ -1,9 +1,9 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
+import { Dropdown } from "@volute/ui";
 import { setConversationPrivate } from "../../lib/client";
 import { getConversationLabel, mindDotColor } from "../../lib/format";
 import { activeMinds, unreadCounts } from "../../lib/stores.svelte";
-import Dropdown from "../ui/Dropdown.svelte";
 
 let {
   conversations,

@@ -1,5 +1,5 @@
 <script lang="ts">
-import EnvVarList from "../ui/EnvVarList.svelte";
+import EnvVarList from "./EnvVarList.svelte";
 
 let { name }: { name: string } = $props();
 </script>

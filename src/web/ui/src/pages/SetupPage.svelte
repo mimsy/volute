@@ -1,6 +1,6 @@
 <script lang="ts">
+import { Input } from "@volute/ui";
 import AiProviders from "../components/system/AiProviders.svelte";
-import Input from "../components/ui/Input.svelte";
 import { fetchMe } from "../lib/auth";
 import type { AiModel } from "../lib/client";
 import { auth, handleAuth } from "../lib/stores.svelte";

@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { ChannelInfo, Conversation } from "@volute/api";
+import { Input, Modal } from "@volute/ui";
 import { onMount } from "svelte";
 import {
   createVoluteChannel,
@@ -7,8 +8,6 @@ import {
   joinVoluteChannel,
   leaveVoluteChannel,
 } from "../../lib/client";
-import Input from "../ui/Input.svelte";
-import Modal from "../ui/Modal.svelte";
 
 let {
   onClose,

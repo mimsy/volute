@@ -1,9 +1,9 @@
 <script lang="ts">
 import type { Mind } from "@volute/api";
+import { SectionHeader } from "@volute/ui";
 import { onMount } from "svelte";
 import { fetchMinds } from "../../lib/client";
 import { data } from "../../lib/stores.svelte";
-import SectionHeader from "../ui/SectionHeader.svelte";
 import MindSettingsCognition from "./MindSettingsCognition.svelte";
 import MindSettingsEnv from "./MindSettingsEnv.svelte";
 import MindSettingsProfile from "./MindSettingsProfile.svelte";

@@ -1,6 +1,6 @@
 <script lang="ts">
+import { Input } from "@volute/ui";
 import { type AuthUser, login, register } from "../lib/auth";
-import Input from "./ui/Input.svelte";
 
 let { onAuth }: { onAuth: (user: AuthUser) => void } = $props();
 

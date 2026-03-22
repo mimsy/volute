@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { SharedSkill } from "@volute/api";
+import { Input, Modal } from "@volute/ui";
 import { onMount } from "svelte";
 import {
   type AiModel,
@@ -9,8 +10,6 @@ import {
   fetchSharedSkills,
   startMind,
 } from "../../lib/client";
-import Input from "../ui/Input.svelte";
-import Modal from "../ui/Modal.svelte";
 
 const SEED_DEFAULTS = ["orientation", "memory"];
 

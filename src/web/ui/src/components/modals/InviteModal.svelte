@@ -1,9 +1,9 @@
 <script lang="ts">
 import type { AvailableUser, Mind } from "@volute/api";
+import { Modal } from "@volute/ui";
 import { fetchAvailableUsers, inviteToChannel } from "../../lib/client";
 import { mindDotColor } from "../../lib/format";
 import { activeMinds, onlineBrains, reconnectActivity } from "../../lib/stores.svelte";
-import Modal from "../ui/Modal.svelte";
 
 let {
   channelName,

@@ -1,5 +1,7 @@
 <script lang="ts">
 import type { Conversation, Mind } from "@volute/api";
+import { Icon, Modal } from "@volute/ui";
+import { icons } from "@volute/ui/icons";
 import { onMount } from "svelte";
 import ChannelMembersPanel from "./components/ChannelMembersPanel.svelte";
 import LoginPage from "./components/LoginPage.svelte";
@@ -13,11 +15,8 @@ import UserSettingsModal from "./components/modals/UserSettingsModal.svelte";
 import PublicFiles from "./components/system/PublicFiles.svelte";
 import UpdateBanner from "./components/system/UpdateBanner.svelte";
 import TurnTimeline from "./components/TurnTimeline.svelte";
-import Icon from "./components/ui/Icon.svelte";
-import Modal from "./components/ui/Modal.svelte";
 import { type AuthUser, fetchMe } from "./lib/auth";
 import { deleteConversation } from "./lib/client";
-import { icons } from "./lib/icons";
 import { navigate, parseSelection, type Selection, selectionToPath } from "./lib/navigate";
 import { requestNotificationPermission } from "./lib/notifications";
 import {

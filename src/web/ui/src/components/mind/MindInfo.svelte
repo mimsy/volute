@@ -1,5 +1,15 @@
 <script lang="ts">
 import type { Mind, MindConfig } from "@volute/api";
+import {
+  Button,
+  EmptyState,
+  ErrorMessage,
+  Input,
+  Select,
+  SettingRow,
+  SettingsSection,
+  StatusBadge,
+} from "@volute/ui";
 import { onMount } from "svelte";
 import {
   fetchMindConfig,
@@ -10,15 +20,7 @@ import {
 } from "../../lib/client";
 import { getDisplayStatus } from "../../lib/format";
 import { data } from "../../lib/stores.svelte";
-import Button from "../ui/Button.svelte";
-import EmptyState from "../ui/EmptyState.svelte";
-import EnvVarList from "../ui/EnvVarList.svelte";
-import ErrorMessage from "../ui/ErrorMessage.svelte";
-import Input from "../ui/Input.svelte";
-import Select from "../ui/Select.svelte";
-import SettingRow from "../ui/SettingRow.svelte";
-import SettingsSection from "../ui/SettingsSection.svelte";
-import StatusBadge from "../ui/StatusBadge.svelte";
+import EnvVarList from "./EnvVarList.svelte";
 
 let { mind }: { mind: Mind } = $props();
 let name = $derived(mind.name);

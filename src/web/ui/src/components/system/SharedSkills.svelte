@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { SharedSkill } from "@volute/api";
+import { Button, EmptyState, ErrorMessage, SectionHeader } from "@volute/ui";
 import { onMount } from "svelte";
 import {
   addDefaultSkill,
@@ -9,10 +10,6 @@ import {
   removeSharedSkill,
   uploadSkillZip,
 } from "../../lib/client";
-import Button from "../ui/Button.svelte";
-import EmptyState from "../ui/EmptyState.svelte";
-import ErrorMessage from "../ui/ErrorMessage.svelte";
-import SectionHeader from "../ui/SectionHeader.svelte";
 
 let skills = $state<SharedSkill[]>([]);
 let defaults = $state<string[]>([]);

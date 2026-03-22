@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { MindSkillInfo } from "@volute/api";
+import { Button, EmptyState, ErrorMessage, SectionHeader } from "@volute/ui";
 import { onMount } from "svelte";
 import {
   fetchMindSkills,
@@ -8,10 +9,6 @@ import {
   updateMindSkill,
 } from "../../lib/client";
 import AddSkillModal from "../modals/AddSkillModal.svelte";
-import Button from "../ui/Button.svelte";
-import EmptyState from "../ui/EmptyState.svelte";
-import ErrorMessage from "../ui/ErrorMessage.svelte";
-import SectionHeader from "../ui/SectionHeader.svelte";
 
 let { name }: { name: string } = $props();
 

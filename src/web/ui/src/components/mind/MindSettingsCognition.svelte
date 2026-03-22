@@ -1,11 +1,8 @@
 <script lang="ts">
 import type { MindConfig } from "@volute/api";
+import { ErrorMessage, Input, Select, SettingRow } from "@volute/ui";
 import { onMount } from "svelte";
 import { type AiModel, fetchAiModels, fetchMindConfig, updateMindConfig } from "../../lib/client";
-import ErrorMessage from "../ui/ErrorMessage.svelte";
-import Input from "../ui/Input.svelte";
-import Select from "../ui/Select.svelte";
-import SettingRow from "../ui/SettingRow.svelte";
 
 let { name, template }: { name: string; template?: string } = $props();
 

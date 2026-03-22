@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { MindEnv } from "@volute/api";
+import { Button, EmptyState, ErrorMessage, Input, SettingsSection } from "@volute/ui";
 import { onMount } from "svelte";
 import { SvelteSet } from "svelte/reactivity";
 import {
@@ -8,11 +9,6 @@ import {
   fetchMindEnv,
   setMindEnvVar,
 } from "../../lib/client";
-import Button from "./Button.svelte";
-import EmptyState from "./EmptyState.svelte";
-import ErrorMessage from "./ErrorMessage.svelte";
-import Input from "./Input.svelte";
-import SettingsSection from "./SettingsSection.svelte";
 
 let { name }: { name: string } = $props();
 

@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { Mind } from "@volute/api";
-import StatusBadge from "../ui/StatusBadge.svelte";
+import { StatusBadge } from "@volute/ui";
 
 let { mind }: { mind: Mind } = $props();
 </script>

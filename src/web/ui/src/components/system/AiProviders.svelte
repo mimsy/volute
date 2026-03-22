@@ -1,4 +1,5 @@
 <script lang="ts">
+import { Modal } from "@volute/ui";
 import {
   type AiModel,
   type AiProvider,
@@ -11,7 +12,6 @@ import {
   startAiOAuth,
   submitAiOAuthCode,
 } from "../../lib/client";
-import Modal from "../ui/Modal.svelte";
 import ModelSelect from "./ModelSelect.svelte";
 
 let {

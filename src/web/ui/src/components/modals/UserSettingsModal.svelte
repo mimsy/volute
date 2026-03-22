@@ -1,6 +1,6 @@
 <script lang="ts">
+import { Modal } from "@volute/ui";
 import { changePassword, deleteAvatar, fetchMe, updateProfile, uploadAvatar } from "../../lib/auth";
-import Modal from "../ui/Modal.svelte";
 
 let { onClose }: { onClose: () => void } = $props();
 
