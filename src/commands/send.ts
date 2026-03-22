@@ -5,6 +5,7 @@ import { getClient, urlOf } from "../lib/api-client.js";
 import type { ImageAttachment } from "../lib/channels.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { formatFileSize } from "../lib/file-sharing.js";
+import { isCompact } from "../lib/format-cli.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { parseTarget } from "../lib/parse-target.js";
 import { readStdin } from "../lib/read-stdin.js";
@@ -314,7 +315,13 @@ export async function run(args: string[]) {
           `Warning: could not read outboundId from response: ${(err as Error).message}`,
         );
       }
-      console.log(`Message sent.${outboundId != null ? `\n[volute:outbound:${outboundId}]` : ""}`);
+      if (isCompact()) {
+        if (outboundId != null) console.log(`[volute:outbound:${outboundId}]`);
+      } else {
+        console.log(
+          `Message sent.${outboundId != null ? `\n[volute:outbound:${outboundId}]` : ""}`,
+        );
+      }
     }
   } else if (!parsed.isDM && parsed.platform === "volute") {
     // Bare names without # are ambiguous — require explicit sigil
@@ -374,7 +381,11 @@ export async function run(args: string[]) {
     } catch (err) {
       console.error(`Warning: could not read outboundId from response: ${(err as Error).message}`);
     }
-    console.log(`Message sent.${outboundId != null ? `\n[volute:outbound:${outboundId}]` : ""}`);
+    if (isCompact()) {
+      if (outboundId != null) console.log(`[volute:outbound:${outboundId}]`);
+    } else {
+      console.log(`Message sent.${outboundId != null ? `\n[volute:outbound:${outboundId}]` : ""}`);
+    }
   } else {
     // Non-volute targets (discord:..., slack:..., etc.) are no longer supported directly.
     // With the bridge architecture, minds send to volute channels and bridges handle external routing.

@@ -3,17 +3,25 @@ import { loadPrompts } from "../startup.js";
 
 export function createReplyInstructionsHook(
   messageChannels: Map<string, { channel: string; sender?: string }>,
+  sessionState: {
+    replyInstructionsFired: boolean;
+    replyInstructionsMode: "once" | "always" | "never";
+  },
 ) {
-  let fired = false;
   const prompts = loadPrompts();
 
   const hook: HookCallback = async () => {
-    if (fired) return {};
+    // "never" suppresses reply instructions entirely
+    if (sessionState.replyInstructionsMode === "never") return {};
+
+    // "once" only fires on first message per session
+    if (sessionState.replyInstructionsMode === "once" && sessionState.replyInstructionsFired)
+      return {};
 
     const entry = messageChannels.values().next().value;
     if (!entry) return {};
 
-    fired = true;
+    sessionState.replyInstructionsFired = true;
 
     // System messages don't need reply instructions
     if (entry.sender === "volute") {

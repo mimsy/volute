@@ -1,4 +1,5 @@
 import { daemonFetch } from "../../lib/daemon-client.js";
+import { compactTime, isCompact } from "../../lib/format-cli.js";
 import { parseArgs } from "../../lib/parse-args.js";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";
 
@@ -91,6 +92,7 @@ export async function run(args: string[]) {
     process.exit(1);
   }
 
+  const compact = isCompact();
   for (const msg of data.items) {
     const sender = msg.sender_name ?? msg.role;
     const text = Array.isArray(msg.content)
@@ -99,9 +101,14 @@ export async function run(args: string[]) {
           .map((b) => b.text)
           .join("")
       : msg.content;
-    const time = new Date(
-      msg.created_at.endsWith("Z") ? msg.created_at : `${msg.created_at}Z`,
-    ).toLocaleString();
-    console.log(`[${time}] ${sender}: ${text}`);
+    if (compact) {
+      const time = compactTime(msg.created_at);
+      console.log(`[${time}] ${sender}: ${text}`);
+    } else {
+      const time = new Date(
+        msg.created_at.endsWith("Z") ? msg.created_at : `${msg.created_at}Z`,
+      ).toLocaleString();
+      console.log(`[${time}] ${sender}: ${text}`);
+    }
   }
 }
