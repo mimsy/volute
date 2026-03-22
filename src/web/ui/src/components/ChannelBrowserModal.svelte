@@ -8,6 +8,7 @@ import {
   leaveVoluteChannel,
 } from "../lib/client";
 import Modal from "./Modal.svelte";
+import Input from "./ui/Input.svelte";
 
 let {
   onClose,
@@ -121,11 +122,11 @@ function handleKeyDown(e: KeyboardEvent) {
   </div>
 
   <div class="create-section">
-    <input
+    <Input
       type="text"
       bind:value={newName}
       placeholder="new-channel-name"
-      class="name-input"
+      style="flex:1"
       onkeydown={handleKeyDown}
     />
     <button class="create-btn" onclick={handleCreate} disabled={!newName.trim()}>Create</button>
@@ -200,22 +201,6 @@ function handleKeyDown(e: KeyboardEvent) {
     gap: 8px;
     padding: 12px 16px;
     border-top: 1px solid var(--border);
-  }
-
-  .name-input {
-    flex: 1;
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 8px 10px;
-    color: var(--text-0);
-    font-size: 13px;
-    font-family: inherit;
-    outline: none;
-  }
-
-  .name-input:focus {
-    border-color: var(--border-bright);
   }
 
   .create-btn {

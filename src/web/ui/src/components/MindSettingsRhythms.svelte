@@ -14,6 +14,8 @@ import { formatCron } from "../lib/clock-format";
 import Button from "./ui/Button.svelte";
 import EmptyState from "./ui/EmptyState.svelte";
 import ErrorMessage from "./ui/ErrorMessage.svelte";
+import Input from "./ui/Input.svelte";
+import Select from "./ui/Select.svelte";
 import TimePicker from "./ui/TimePicker.svelte";
 import Toggle from "./ui/Toggle.svelte";
 
@@ -352,14 +354,14 @@ async function handleDeleteSchedule(id: string) {
       </div>
       <div class="cron-row">
         <span class="cron-label">Sleep at</span>
-        <input type="text" class="input cron-input" bind:value={editSleepCron} onblur={saveSleepTime} placeholder="0 0 * * *" />
+        <Input variant="mono" style="flex:1" bind:value={editSleepCron} onblur={saveSleepTime} placeholder="0 0 * * *" />
       </div>
       {#if editSleepCron}
         <div class="cron-preview">{formatCron(editSleepCron)}</div>
       {/if}
       <div class="cron-row">
         <span class="cron-label">Wake at</span>
-        <input type="text" class="input cron-input" bind:value={editWakeCron} onblur={saveSleepTime} placeholder="0 8 * * *" />
+        <Input variant="mono" style="flex:1" bind:value={editWakeCron} onblur={saveSleepTime} placeholder="0 8 * * *" />
       </div>
       {#if editWakeCron}
         <div class="cron-preview">{formatCron(editWakeCron)}</div>
@@ -383,9 +385,9 @@ async function handleDeleteSchedule(id: string) {
       </div>
       <div class="trigger-row">
         <span class="trigger-text">Channels</span>
-        <input
+        <Input
           type="text"
-          class="input flex"
+          style="flex:1"
           bind:value={wakeChannels}
           placeholder="channel1, channel2"
           onblur={saveWakeTriggers}
@@ -393,9 +395,9 @@ async function handleDeleteSchedule(id: string) {
       </div>
       <div class="trigger-row">
         <span class="trigger-text">Senders</span>
-        <input
+        <Input
           type="text"
-          class="input flex"
+          style="flex:1"
           bind:value={wakeSenders}
           placeholder="user1, user2"
           onblur={saveWakeTriggers}
@@ -416,21 +418,21 @@ async function handleDeleteSchedule(id: string) {
     <div class="schedule-form">
       <div class="form-row">
         <span class="form-label">Name</span>
-        <input type="text" class="input flex" bind:value={newName} placeholder="e.g. heartbeat" />
+        <Input type="text" style="flex:1" bind:value={newName} placeholder="e.g. heartbeat" />
       </div>
       <div class="form-row">
         <span class="form-label">Frequency</span>
-        <select class="input" bind:value={newFreqType}>
+        <Select bind:value={newFreqType}>
           <option value="hours">Every few hours</option>
           <option value="daily">Daily at a time</option>
           <option value="cron">Custom cron</option>
-        </select>
+        </Select>
       </div>
       {#if newFreqType === "hours"}
         <div class="form-row">
           <span class="form-label"></span>
           <span class="form-hint">Every</span>
-          <input type="number" class="input tiny" min="1" max="24" bind:value={newFreqHours} />
+          <Input type="number" width="50px" style="text-align:center" min="1" max="24" bind:value={newFreqHours} />
           <span class="form-hint">hours</span>
         </div>
       {:else if newFreqType === "daily"}
@@ -442,20 +444,20 @@ async function handleDeleteSchedule(id: string) {
       {:else}
         <div class="form-row">
           <span class="form-label"></span>
-          <input type="text" class="input flex" bind:value={newCron} placeholder="*/30 * * * *" />
+          <Input type="text" style="flex:1" bind:value={newCron} placeholder="*/30 * * * *" />
         </div>
       {/if}
       <div class="form-row">
         <span class="form-label">Message</span>
-        <input type="text" class="input flex" bind:value={newMessage} placeholder="What to tell the mind" />
+        <Input type="text" style="flex:1" bind:value={newMessage} placeholder="What to tell the mind" />
       </div>
       <div class="form-row">
         <span class="form-label">If sleeping</span>
-        <select class="input" bind:value={newIfSleeping}>
+        <Select bind:value={newIfSleeping}>
           <option value="skip">Skip it</option>
           <option value="queue">Save for when awake</option>
           <option value="trigger-wake">Wake up for it</option>
-        </select>
+        </Select>
       </div>
       <div class="form-actions">
         <Button variant="primary" onclick={handleAddSchedule} disabled={saving !== null || !newName.trim()}>
@@ -475,17 +477,17 @@ async function handleDeleteSchedule(id: string) {
           <div class="schedule-card editing">
             <div class="form-row">
               <span class="form-label">Frequency</span>
-              <select class="input" bind:value={editFreqType}>
+              <Select bind:value={editFreqType}>
                 <option value="hours">Every few hours</option>
                 <option value="daily">Daily at a time</option>
                 <option value="cron">Custom cron</option>
-              </select>
+              </Select>
             </div>
             {#if editFreqType === "hours"}
               <div class="form-row">
                 <span class="form-label"></span>
                 <span class="form-hint">Every</span>
-                <input type="number" class="input tiny" min="1" max="24" bind:value={editFreqHours} />
+                <Input type="number" width="50px" style="text-align:center" min="1" max="24" bind:value={editFreqHours} />
                 <span class="form-hint">hours</span>
               </div>
             {:else if editFreqType === "daily"}
@@ -497,20 +499,20 @@ async function handleDeleteSchedule(id: string) {
             {:else}
               <div class="form-row">
                 <span class="form-label"></span>
-                <input type="text" class="input flex" bind:value={editCron} placeholder="*/30 * * * *" />
+                <Input type="text" style="flex:1" bind:value={editCron} placeholder="*/30 * * * *" />
               </div>
             {/if}
             <div class="form-row">
               <span class="form-label">Message</span>
-              <input type="text" class="input flex" bind:value={editMessage} placeholder="What to tell the mind" />
+              <Input type="text" style="flex:1" bind:value={editMessage} placeholder="What to tell the mind" />
             </div>
             <div class="form-row">
               <span class="form-label">If sleeping</span>
-              <select class="input" bind:value={editIfSleeping}>
+              <Select bind:value={editIfSleeping}>
                 <option value="skip">Skip it</option>
                 <option value="queue">Save for when awake</option>
                 <option value="trigger-wake">Wake up for it</option>
-              </select>
+              </Select>
             </div>
             <div class="form-actions">
               <Button variant="primary" onclick={saveScheduleEdit} disabled={saving !== null}>
@@ -623,38 +625,6 @@ async function handleDeleteSchedule(id: string) {
     color: var(--text-1);
     width: 70px;
     flex-shrink: 0;
-  }
-
-  /* Inputs */
-  .input {
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 4px 8px;
-    font-size: 13px;
-    font-family: inherit;
-    color: var(--text-0);
-  }
-
-  .input:focus {
-    border-color: var(--accent);
-    outline: none;
-  }
-
-  .input.flex {
-    flex: 1;
-  }
-
-  .input.tiny {
-    width: 50px;
-    flex: 0 0 50px;
-    text-align: center;
-  }
-
-  .input.cron-input {
-    flex: 1;
-    font-family: var(--mono);
-    font-size: 12px;
   }
 
   /* Schedule form */

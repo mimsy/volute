@@ -1,5 +1,6 @@
 <script lang="ts">
 import { reportTyping } from "../lib/client";
+import Dropdown from "./ui/Dropdown.svelte";
 
 let {
   sending,
@@ -32,19 +33,6 @@ let showAttach = $state(false);
 function toggleAttachMenu() {
   showAttach = !showAttach;
 }
-
-function handleClickOutside(e: MouseEvent) {
-  if (!showAttach) return;
-  const target = e.target as Element | null;
-  if (!target?.closest(".attach-menu") && !target?.closest(".inline-btn.attach")) {
-    showAttach = false;
-  }
-}
-
-$effect(() => {
-  document.addEventListener("click", handleClickOutside);
-  return () => document.removeEventListener("click", handleClickOutside);
-});
 
 function handleSend() {
   const message = input.trim();
@@ -187,12 +175,10 @@ $effect(() => {
     <button class="inline-btn attach" title="Attach image or file" onclick={toggleAttachMenu}>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     </button>
-    {#if showAttach}
-      <div class="attach-menu">
-        <button onclick={() => { showAttach = false; fileEl?.click(); }}>Image</button>
-        <button onclick={() => { showAttach = false; attachFileEl?.click(); }}>File</button>
-      </div>
-    {/if}
+    <Dropdown open={showAttach} onclose={() => (showAttach = false)} direction="up">
+      <button onclick={() => { showAttach = false; fileEl?.click(); }}>Image</button>
+      <button onclick={() => { showAttach = false; attachFileEl?.click(); }}>File</button>
+    </Dropdown>
     <textarea
       bind:this={inputEl}
       bind:value={input}
@@ -354,22 +340,7 @@ $effect(() => {
     background: transparent;
   }
 
-  .attach-menu {
-    position: absolute;
-    bottom: calc(100% + 6px);
-    left: 4px;
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    z-index: 10;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  }
-
-  .attach-menu button {
+  .input-box :global(.dropdown button) {
     background: transparent;
     border: none;
     color: var(--text-1);
@@ -381,7 +352,7 @@ $effect(() => {
     white-space: nowrap;
   }
 
-  .attach-menu button:hover {
+  .input-box :global(.dropdown button:hover) {
     background: var(--bg-3);
   }
 

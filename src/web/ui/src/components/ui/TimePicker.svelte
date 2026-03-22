@@ -1,4 +1,6 @@
 <script lang="ts">
+import Select from "./Select.svelte";
+
 let {
   hour = $bindable(),
   minute = $bindable(),
@@ -35,13 +37,13 @@ function handleMinuteChange(e: Event) {
   {#if label}
     <span class="time-label">{label}</span>
   {/if}
-  <select class="input time-select" value={hour} onchange={handleHourChange}>
+  <Select class="time-select" value={hour} onchange={handleHourChange}>
     {#each HOURS as h}<option value={h}>{fmtHour(h)}</option>{/each}
-  </select>
+  </Select>
   <span class="time-sep">:</span>
-  <select class="input time-select narrow" value={minute} onchange={handleMinuteChange}>
+  <Select class="time-select narrow" value={minute} onchange={handleMinuteChange}>
     {#each MINUTES as m}<option value={m}>{String(m).padStart(2, "0")}</option>{/each}
-  </select>
+  </Select>
 </div>
 
 <style>
@@ -64,26 +66,11 @@ function handleMinuteChange(e: Event) {
     color: var(--text-2);
   }
 
-  .input {
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 4px 8px;
-    font-size: 13px;
-    font-family: inherit;
-    color: var(--text-0);
-  }
-
-  .input:focus {
-    border-color: var(--accent);
-    outline: none;
-  }
-
-  .time-select {
+  :global(.time-select) {
     width: auto;
   }
 
-  .time-select.narrow {
+  :global(.time-select.narrow) {
     width: 55px;
   }
 </style>

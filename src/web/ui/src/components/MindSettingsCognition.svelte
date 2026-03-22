@@ -3,6 +3,8 @@ import type { MindConfig } from "@volute/api";
 import { onMount } from "svelte";
 import { type AiModel, fetchAiModels, fetchMindConfig, updateMindConfig } from "../lib/client";
 import ErrorMessage from "./ui/ErrorMessage.svelte";
+import Input from "./ui/Input.svelte";
+import Select from "./ui/Select.svelte";
 import SettingRow from "./ui/SettingRow.svelte";
 
 let { name, template }: { name: string; template?: string } = $props();
@@ -74,7 +76,7 @@ function loadEditFields(c: MindConfig) {
 function parseBudgetInt(val: string): number | null {
   if (!val.trim()) return null;
   const n = parseInt(val, 10);
-  return isNaN(n) ? null : n;
+  return Number.isNaN(n) ? null : n;
 }
 
 async function saveField(field: string, fn: () => Promise<void>) {
@@ -166,8 +168,7 @@ onMount(async () => {
 
   <SettingRow label="Model">
     {#if isOtherModel}
-      <input
-        class="setting-input"
+      <Input
         type="text"
         bind:value={editModel}
         onblur={() => saveModel(editModel)}
@@ -181,13 +182,13 @@ onMount(async () => {
         }}>back</button
       >
     {:else}
-      <select class="setting-select" value={editModel} onchange={handleModelSelect}>
+      <Select value={editModel} onchange={handleModelSelect}>
         <option value="">--</option>
         {#each enabledModels as model (model.id)}
           <option value={model.id}>{model.name}</option>
         {/each}
         <option value="__other__">other...</option>
-      </select>
+      </Select>
     {/if}
   </SettingRow>
 
@@ -208,9 +209,9 @@ onMount(async () => {
 
   {#if showMaxThinking}
     <SettingRow label="Max tokens">
-      <input
-        class="setting-input narrow"
+      <Input
         type="number"
+        width="80px"
         bind:value={editMaxThinking}
         onblur={saveMaxThinking}
         placeholder="default"
@@ -219,17 +220,17 @@ onMount(async () => {
   {/if}
 
   <SettingRow label="Budget">
-    <input
-      class="setting-input narrow"
+    <Input
       type="number"
+      width="80px"
       bind:value={editBudget}
       onblur={saveBudget}
       placeholder="tokens"
     />
     <span class="setting-hint">per</span>
-    <input
-      class="setting-input narrow"
+    <Input
       type="number"
+      width="80px"
       bind:value={editPeriod}
       onblur={savePeriod}
       placeholder="min"
@@ -238,9 +239,9 @@ onMount(async () => {
   </SettingRow>
 
   <SettingRow label="Context">
-    <input
-      class="setting-input narrow"
+    <Input
       type="number"
+      width="80px"
       bind:value={editCompaction}
       onblur={saveCompaction}
       placeholder="150000"
@@ -252,30 +253,6 @@ onMount(async () => {
 {/if}
 
 <style>
-  .setting-input,
-  .setting-select {
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 4px 8px;
-    font-size: 14px;
-    font-family: inherit;
-    color: inherit;
-  }
-
-  .setting-input {
-    width: 100%;
-  }
-
-  .setting-input.narrow {
-    width: 80px;
-    flex: 0 0 80px;
-  }
-
-  .setting-select {
-    width: 100%;
-  }
-
   .setting-hint {
     font-size: 13px;
     color: var(--text-2);

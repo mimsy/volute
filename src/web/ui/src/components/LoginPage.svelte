@@ -1,5 +1,6 @@
 <script lang="ts">
 import { type AuthUser, login, register } from "../lib/auth";
+import Input from "./ui/Input.svelte";
 
 let { onAuth }: { onAuth: (user: AuthUser) => void } = $props();
 
@@ -65,17 +66,16 @@ async function handleSubmit(e: Event) {
       </div>
 
       <form onsubmit={handleSubmit}>
-        <input
+        <Input
           type="text"
           placeholder="username"
           bind:value={username}
-          class="input"
         />
-        <input
+        <Input
           type="password"
           placeholder="password"
           bind:value={password}
-          class="input mt-8"
+          style="margin-top:8px"
         />
         {#if error}
           <div class="error">{error}</div>
@@ -185,26 +185,6 @@ async function handleSubmit(e: Event) {
     66%  { background: #fbbf24; }
     83%  { background: #34d399; }
     100% { background: #4ade80; }
-  }
-
-  .input {
-    width: 100%;
-    padding: 10px 12px;
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    color: var(--text-0);
-    font-family: inherit;
-    font-size: 14px;
-    outline: none;
-  }
-
-  .input:focus {
-    border-color: var(--border-bright);
-  }
-
-  .mt-8 {
-    margin-top: 8px;
   }
 
   .error {

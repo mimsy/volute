@@ -1,4 +1,6 @@
 <script lang="ts">
+import Dropdown from "./ui/Dropdown.svelte";
+
 let {
   username,
   systemName,
@@ -31,18 +33,7 @@ function toggleUserMenu() {
   showUserMenu = !showUserMenu;
   showSystemMenu = false;
 }
-
-function handleClickOutside(e: MouseEvent) {
-  const target = e.target as HTMLElement;
-  if (!target.closest(".menu-anchor")) {
-    showSystemMenu = false;
-    showUserMenu = false;
-  }
-}
 </script>
-
-<svelte:document onclick={handleClickOutside} />
-<svelte:window onblur={() => { showSystemMenu = false; showUserMenu = false; }} />
 
 <div class="status-bar">
   <div class="status-left">
@@ -55,30 +46,28 @@ function handleClickOutside(e: MouseEvent) {
           daemon
         {/if}
       </button>
-      {#if showSystemMenu}
-        <div class="dropdown">
+      <Dropdown open={showSystemMenu} onclose={() => (showSystemMenu = false)} direction="up">
+        <button
+          class="dropdown-item"
+          onclick={() => {
+            showSystemMenu = false;
+            onRestart();
+          }}
+        >
+          Restart
+        </button>
+        {#if isAdmin}
           <button
             class="dropdown-item"
             onclick={() => {
               showSystemMenu = false;
-              onRestart();
+              onAdminClick();
             }}
           >
-            Restart
+            Settings
           </button>
-          {#if isAdmin}
-            <button
-              class="dropdown-item"
-              onclick={() => {
-                showSystemMenu = false;
-                onAdminClick();
-              }}
-            >
-              Settings
-            </button>
-          {/if}
-        </div>
-      {/if}
+        {/if}
+      </Dropdown>
     </div>
   </div>
   <div class="status-right">
@@ -86,28 +75,26 @@ function handleClickOutside(e: MouseEvent) {
       <button class="status-btn username-btn" onclick={toggleUserMenu}>
         {username}
       </button>
-      {#if showUserMenu}
-        <div class="dropdown right">
-          <button
-            class="dropdown-item"
-            onclick={() => {
-              showUserMenu = false;
-              onUserSettings();
-            }}
-          >
-            User Settings
-          </button>
-          <button
-            class="dropdown-item"
-            onclick={() => {
-              showUserMenu = false;
-              onLogout();
-            }}
-          >
-            Logout
-          </button>
-        </div>
-      {/if}
+      <Dropdown open={showUserMenu} onclose={() => (showUserMenu = false)} direction="up" align="right">
+        <button
+          class="dropdown-item"
+          onclick={() => {
+            showUserMenu = false;
+            onUserSettings();
+          }}
+        >
+          User Settings
+        </button>
+        <button
+          class="dropdown-item"
+          onclick={() => {
+            showUserMenu = false;
+            onLogout();
+          }}
+        >
+          Logout
+        </button>
+      </Dropdown>
     </div>
   </div>
 </div>
@@ -169,24 +156,6 @@ function handleClickOutside(e: MouseEvent) {
 
   .username-btn {
     color: var(--text-1);
-  }
-
-  .dropdown {
-    position: absolute;
-    bottom: calc(100% + 4px);
-    left: 0;
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    min-width: 120px;
-    padding: 4px 0;
-    z-index: var(--z-dropdown);
-    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.3);
-  }
-
-  .dropdown.right {
-    left: auto;
-    right: 0;
   }
 
   .dropdown-item {

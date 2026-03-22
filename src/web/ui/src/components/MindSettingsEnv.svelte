@@ -6,6 +6,7 @@ import { deleteMindEnvVar, deleteSharedEnvVar, fetchMindEnv, setMindEnvVar } fro
 import Button from "./ui/Button.svelte";
 import EmptyState from "./ui/EmptyState.svelte";
 import ErrorMessage from "./ui/ErrorMessage.svelte";
+import Input from "./ui/Input.svelte";
 import SettingsSection from "./ui/SettingsSection.svelte";
 
 let { name }: { name: string } = $props();
@@ -122,16 +123,18 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
 
   {#if addingEnv}
     <div class="env-add-row">
-      <input
+      <Input
+        variant="mono"
         type="text"
-        class="env-input key"
+        width="120px"
         bind:value={newEnvKey}
         placeholder="KEY"
         onkeydown={(e) => handleKeydown(e, addEnvVar)}
       />
-      <input
+      <Input
+        variant="mono"
         type="text"
-        class="env-input value"
+        style="flex:1"
         bind:value={newEnvValue}
         placeholder="value"
         onkeydown={(e) => handleKeydown(e, addEnvVar)}
@@ -151,9 +154,10 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
         <div class="env-row">
           {#if editingEnvKey === entry.key}
             <span class="env-key">{entry.key}</span>
-            <input
+            <Input
+              variant="mono"
               type="text"
-              class="env-input value"
+              style="flex:1"
               bind:value={editingEnvValue}
               onkeydown={(e) => handleKeydown(e, saveEnvEdit)}
             />
@@ -260,22 +264,4 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
     color: var(--text-2);
   }
 
-  .env-input {
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 4px 8px;
-    font-size: 13px;
-    color: var(--text-0);
-    font-family: var(--mono);
-  }
-
-  .env-input.key {
-    width: 120px;
-    flex-shrink: 0;
-  }
-
-  .env-input.value {
-    flex: 1;
-  }
 </style>

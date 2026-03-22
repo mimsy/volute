@@ -10,6 +10,7 @@ import {
   startMind,
 } from "../lib/client";
 import Modal from "./Modal.svelte";
+import Input from "./ui/Input.svelte";
 
 const SEED_DEFAULTS = ["orientation", "memory"];
 
@@ -20,7 +21,6 @@ let description = $state("");
 let model = $state("");
 let loading = $state(false);
 let error = $state("");
-let nameInput: HTMLInputElement;
 let showAdvanced = $state(false);
 let seedSoul = $state("");
 let defaultSeedSoul = $state("");
@@ -49,7 +49,6 @@ let modelSuggestions = $derived(
 let canSubmit = $derived(!loading && !!name.trim());
 
 onMount(() => {
-  nameInput?.focus();
   fetchPrompts()
     .then((prompts) => {
       const p = prompts.find((p) => p.key === "seed_soul");
@@ -116,22 +115,20 @@ async function handleSubmit() {
 
     <label class="field">
       <span class="label">Name</span>
-      <input
-        bind:this={nameInput}
+      <Input
+        autofocus
         bind:value={name}
         placeholder="e.g. luna"
         onkeydown={(e) => e.key === "Enter" && handleSubmit()}
-        class="input"
       />
     </label>
 
     <label class="field">
       <span class="label">Description (optional)</span>
-      <input
+      <Input
         bind:value={description}
         placeholder="A curious mind who loves poetry..."
         onkeydown={(e) => e.key === "Enter" && handleSubmit()}
-        class="input"
       />
     </label>
 
@@ -146,9 +143,8 @@ async function handleSubmit() {
           </button>
         {:else}
           <div class="model-picker">
-            <input
+            <Input
               type="text"
-              class="input"
               placeholder="Search models..."
               bind:value={modelSearch}
               onfocus={() => { showModelPicker = true; }}
@@ -178,7 +174,7 @@ async function handleSubmit() {
         <span class="label">Seed SOUL template</span>
         <textarea
           bind:value={seedSoul}
-          class="input textarea"
+          class="textarea"
           rows="6"
           placeholder="SOUL.md template for this seed..."
         ></textarea>
@@ -245,17 +241,6 @@ async function handleSubmit() {
   .label {
     color: var(--text-2);
     font-size: 12px;
-  }
-
-  .input {
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 8px 10px;
-    color: var(--text-0);
-    font-size: 14px;
-    outline: none;
-    font-family: inherit;
   }
 
   /* --- Model picker --- */
@@ -397,6 +382,13 @@ async function handleSubmit() {
   }
 
   .textarea {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 10px;
+    color: var(--text-0);
+    font-family: inherit;
+    outline: none;
     resize: vertical;
     min-height: 80px;
     font-size: 13px;

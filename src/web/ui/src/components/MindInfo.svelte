@@ -19,6 +19,8 @@ import StatusBadge from "./StatusBadge.svelte";
 import Button from "./ui/Button.svelte";
 import EmptyState from "./ui/EmptyState.svelte";
 import ErrorMessage from "./ui/ErrorMessage.svelte";
+import Input from "./ui/Input.svelte";
+import Select from "./ui/Select.svelte";
 import SettingRow from "./ui/SettingRow.svelte";
 import SettingsSection from "./ui/SettingsSection.svelte";
 
@@ -272,10 +274,9 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
 
   <SettingsSection title="Settings">
     <SettingRow label="Model">
-      <input
+      <Input
         id="model-input"
         type="text"
-        class="setting-input"
         bind:value={editModel}
         onkeydown={(e) => handleKeydown(e, handleModelSave)}
         placeholder="e.g. claude-sonnet-4-6"
@@ -286,9 +287,8 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
     </SettingRow>
 
     <SettingRow label="Thinking">
-      <select
+      <Select
         id="thinking-select"
-        class="setting-select"
         value={editThinking}
         onchange={handleThinkingChange}
         disabled={saving !== null}
@@ -296,23 +296,23 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
         {#each THINKING_LEVELS as level (level)}
           <option value={level}>{level}</option>
         {/each}
-      </select>
+      </Select>
     </SettingRow>
 
     <SettingRow label="Token budget">
-      <input
+      <Input
         id="budget-input"
         type="number"
-        class="setting-input narrow"
+        width="80px"
         bind:value={editBudget}
         onkeydown={(e) => handleKeydown(e, handleBudgetSave)}
         placeholder="tokens"
       />
       <span class="setting-hint">per</span>
-      <input
+      <Input
         id="period-input"
         type="number"
-        class="setting-input narrow"
+        width="80px"
         bind:value={editPeriod}
         onkeydown={(e) => handleKeydown(e, handleBudgetSave)}
         placeholder="60"
@@ -331,16 +331,18 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
 
     {#if addingEnv}
       <div class="env-add-row">
-        <input
+        <Input
+          variant="mono"
           type="text"
-          class="env-input key"
+          width="120px"
           bind:value={newEnvKey}
           placeholder="KEY"
           onkeydown={(e) => handleKeydown(e, addEnvVar)}
         />
-        <input
+        <Input
+          variant="mono"
           type="text"
-          class="env-input value"
+          style="flex:1"
           bind:value={newEnvValue}
           placeholder="value"
           onkeydown={(e) => handleKeydown(e, addEnvVar)}
@@ -360,9 +362,10 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
           <div class="env-row">
             {#if editingEnvKey === entry.key}
               <span class="env-key">{entry.key}</span>
-              <input
+              <Input
+                variant="mono"
                 type="text"
-                class="env-input value"
+                style="flex:1"
                 bind:value={editingEnvValue}
                 onkeydown={(e) => handleKeydown(e, saveEnvEdit)}
               />
@@ -433,37 +436,6 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
     opacity: 0.5;
   }
 
-  .setting-input {
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 4px 8px;
-    font-size: 14px;
-    color: var(--text-0);
-    flex: 1;
-    font-family: inherit;
-  }
-
-  .setting-input.narrow {
-    width: 80px;
-    flex: 0 0 80px;
-  }
-
-  .setting-input:focus {
-    border-color: var(--accent);
-    outline: none;
-  }
-
-  .setting-select {
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 4px 8px;
-    font-size: 14px;
-    color: var(--text-0);
-    font-family: inherit;
-  }
-
   .setting-hint {
     font-size: 13px;
     color: var(--text-2);
@@ -531,22 +503,4 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
     color: var(--text-2);
   }
 
-  .env-input {
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 4px 8px;
-    font-size: 13px;
-    color: var(--text-0);
-    font-family: var(--mono);
-  }
-
-  .env-input.key {
-    width: 120px;
-    flex-shrink: 0;
-  }
-
-  .env-input.value {
-    flex: 1;
-  }
 </style>

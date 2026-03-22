@@ -3,6 +3,7 @@ import type { ConversationWithParticipants, Mind } from "@volute/api";
 import { setConversationPrivate } from "../lib/client";
 import { getConversationLabel, mindDotColor } from "../lib/format";
 import { activeMinds, unreadCounts } from "../lib/stores.svelte";
+import Dropdown from "./ui/Dropdown.svelte";
 
 let {
   conversations,
@@ -31,10 +32,7 @@ let {
 let channels = $derived(conversations.filter((c) => c.type === "channel"));
 let directMessages = $derived(conversations.filter((c) => c.type !== "channel"));
 
-// Context menu state
-let menuConvId = $state<string | null>(null);
-let menuX = $state(0);
-let menuY = $state(0);
+let contextMenu = $state<{ id: string; x: number; y: number } | null>(null);
 
 function getDmInfo(conv: ConversationWithParticipants): {
   isMindDm: boolean;
@@ -55,28 +53,9 @@ function openMenu(e: MouseEvent, convId: string) {
   e.stopPropagation();
   const btn = e.currentTarget as HTMLElement;
   const rect = btn.getBoundingClientRect();
-  menuX = rect.right + 4;
-  menuY = rect.top;
-  menuConvId = convId;
+  contextMenu = { id: convId, x: rect.right + 4, y: rect.top };
 }
-
-function closeMenu() {
-  menuConvId = null;
-}
-
-$effect(() => {
-  if (menuConvId) {
-    const handler = (_e: MouseEvent) => closeMenu();
-    // Delay to avoid closing immediately from the same click
-    requestAnimationFrame(() => {
-      document.addEventListener("click", handler, { once: true });
-    });
-    return () => document.removeEventListener("click", handler);
-  }
-});
 </script>
-
-<svelte:window onblur={closeMenu} />
 
 <div class="conv-list">
   {#if mode !== "dms"}
@@ -161,7 +140,7 @@ $effect(() => {
           </div>
           <button
             class="menu-btn"
-            class:visible={conv.id === activeId || conv.id === menuConvId}
+            class:visible={conv.id === activeId || conv.id === contextMenu?.id}
             onclick={(e) => openMenu(e, conv.id)}
           >...</button>
           {#if unread > 0}
@@ -179,17 +158,18 @@ $effect(() => {
   {/if}
 </div>
 
-{#if menuConvId}
-  {@const menuConv = conversations.find((c) => c.id === menuConvId)}
+{#if contextMenu}
+  {@const menuId = contextMenu.id}
+  {@const menuConv = conversations.find((c) => c.id === menuId)}
   {@const menuDmInfo = menuConv ? getDmInfo(menuConv) : { isMindDm: false }}
-  <div class="context-menu" role="menu" tabindex="-1" style:left="{menuX}px" style:top="{menuY}px" onclick={(e) => e.stopPropagation()} onkeydown={(e) => { if (e.key === "Escape") closeMenu(); }}>
+  <Dropdown open={!!contextMenu} onclose={() => (contextMenu = null)} position={{ x: contextMenu.x, y: contextMenu.y }}>
     {#if menuDmInfo.isMindDm && menuDmInfo.mind}
-      <button class="context-item" onclick={() => { onOpenMind(menuDmInfo.mind!); closeMenu(); }}>
+      <button class="context-item" onclick={() => { onOpenMind(menuDmInfo.mind!); contextMenu = null; }}>
         Open mind
       </button>
     {/if}
     <button class="context-item" onclick={async () => {
-      const id = menuConvId!;
+      const id = contextMenu!.id;
       const conv = conversations.find((c) => c.id === id);
       if (conv) {
         const newPrivate = conv.private !== 1;
@@ -200,16 +180,16 @@ $effect(() => {
           console.error("Failed to update conversation privacy:", err);
         }
       }
-      closeMenu();
+      contextMenu = null;
     }}>
       {menuConv?.private === 1 ? "Make public" : "Make private"}
     </button>
     {#if onHide}
-      <button class="context-item" onclick={() => { onHide(menuConvId!); closeMenu(); }}>
+      <button class="context-item" onclick={() => { onHide(contextMenu!.id); contextMenu = null; }}>
         Close chat
       </button>
     {/if}
-  </div>
+  </Dropdown>
 {/if}
 
 <style>
@@ -420,17 +400,6 @@ $effect(() => {
     font-size: 12px;
     padding: 8px 12px;
     text-align: center;
-  }
-
-  .context-menu {
-    position: fixed;
-    background: var(--bg-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 4px 0;
-    z-index: var(--z-modal);
-    min-width: 120px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   }
 
   .context-item {
