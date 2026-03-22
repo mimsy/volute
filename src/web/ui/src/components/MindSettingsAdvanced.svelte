@@ -6,8 +6,8 @@ import { data } from "../lib/stores.svelte";
 import StatusBadge from "./StatusBadge.svelte";
 import Button from "./ui/Button.svelte";
 import ErrorMessage from "./ui/ErrorMessage.svelte";
-import SectionHeader from "./ui/SectionHeader.svelte";
 import SettingRow from "./ui/SettingRow.svelte";
+import SettingsSection from "./ui/SettingsSection.svelte";
 
 let { mind }: { mind: Mind } = $props();
 let name = $derived(mind.name);
@@ -61,8 +61,7 @@ function formatDate(dateStr: string): string {
 }
 </script>
 
-<div class="section">
-  <SectionHeader title="Status" />
+<SettingsSection title="Status">
   <div class="status-row">
     <StatusBadge status={getDisplayStatus(mind)} />
     {#if mind.status === "stopped"}
@@ -80,23 +79,18 @@ function formatDate(dateStr: string): string {
     {/if}
   </div>
   <ErrorMessage message={actionError} />
-</div>
+</SettingsSection>
 
-<div class="section">
-  <SectionHeader title="Info" />
+<SettingsSection title="Info">
   <SettingRow label="Template">
     <span class="info-value">{mind.template ?? "\u2014"}</span>
   </SettingRow>
   <SettingRow label="Created">
     <span class="info-value">{mind.created ? formatDate(mind.created) : "\u2014"}</span>
   </SettingRow>
-</div>
+</SettingsSection>
 
 <style>
-  .section {
-    margin-bottom: 24px;
-  }
-
   .status-row {
     display: flex;
     align-items: center;

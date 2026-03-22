@@ -19,8 +19,8 @@ import StatusBadge from "./StatusBadge.svelte";
 import Button from "./ui/Button.svelte";
 import EmptyState from "./ui/EmptyState.svelte";
 import ErrorMessage from "./ui/ErrorMessage.svelte";
-import SectionHeader from "./ui/SectionHeader.svelte";
 import SettingRow from "./ui/SettingRow.svelte";
+import SettingsSection from "./ui/SettingsSection.svelte";
 
 let { mind }: { mind: Mind } = $props();
 let name = $derived(mind.name);
@@ -246,8 +246,7 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
 {:else}
   <ErrorMessage message={error} />
 
-  <div class="section">
-    <SectionHeader title="Status" />
+  <SettingsSection title="Status">
     <div class="status-row">
       <StatusBadge status={getDisplayStatus(mind)} />
       {#if mind.status === "stopped"}
@@ -269,11 +268,9 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
       {/if}
     </div>
     <ErrorMessage message={actionError} />
-  </div>
+  </SettingsSection>
 
-  <div class="section">
-    <SectionHeader title="Settings" />
-
+  <SettingsSection title="Settings">
     <SettingRow label="Model">
       <input
         id="model-input"
@@ -325,14 +322,12 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
         {saving === "budget" ? "..." : "Save"}
       </Button>
     </SettingRow>
-  </div>
+  </SettingsSection>
 
-  <div class="section">
-    <SectionHeader title="Environment Variables">
-      {#snippet action()}
-        <Button variant="primary" onclick={() => (addingEnv = true)}>Add</Button>
-      {/snippet}
-    </SectionHeader>
+  <SettingsSection title="Environment Variables">
+    {#snippet action()}
+      <Button variant="primary" onclick={() => (addingEnv = true)}>Add</Button>
+    {/snippet}
 
     {#if addingEnv}
       <div class="env-add-row">
@@ -410,13 +405,10 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
         {/each}
       </div>
     {/if}
-  </div>
+  </SettingsSection>
 {/if}
 
 <style>
-  .section {
-    margin-bottom: 24px;
-  }
 
   .status-row {
     display: flex;

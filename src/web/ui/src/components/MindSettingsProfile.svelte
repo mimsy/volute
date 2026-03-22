@@ -3,7 +3,7 @@ import type { Mind } from "@volute/api";
 import { fetchMinds, updateMindProfile, uploadMindAvatar } from "../lib/client";
 import { data } from "../lib/stores.svelte";
 import { useSavedFeedback } from "../lib/useSavedFeedback.svelte";
-import SectionHeader from "./ui/SectionHeader.svelte";
+import SettingsSection from "./ui/SettingsSection.svelte";
 
 let {
   mind,
@@ -52,8 +52,7 @@ async function saveDescription() {
 }
 </script>
 
-<div class="section">
-  <SectionHeader title="Profile" subtitle="Avatar, display name, and description" />
+<SettingsSection title="Profile" subtitle="Avatar, display name, and description">
 
   <div class="profile-fields">
     <div class="field-row">
@@ -111,13 +110,9 @@ async function saveDescription() {
       </div>
     </div>
   </div>
-</div>
+</SettingsSection>
 
 <style>
-  .section {
-    margin-bottom: 32px;
-  }
-
   .profile-fields {
     display: flex;
     flex-direction: column;

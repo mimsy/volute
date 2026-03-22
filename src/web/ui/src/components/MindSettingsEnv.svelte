@@ -6,7 +6,7 @@ import { deleteMindEnvVar, deleteSharedEnvVar, fetchMindEnv, setMindEnvVar } fro
 import Button from "./ui/Button.svelte";
 import EmptyState from "./ui/EmptyState.svelte";
 import ErrorMessage from "./ui/ErrorMessage.svelte";
-import SectionHeader from "./ui/SectionHeader.svelte";
+import SettingsSection from "./ui/SettingsSection.svelte";
 
 let { name }: { name: string } = $props();
 
@@ -113,12 +113,10 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
 }
 </script>
 
-<div class="section">
-  <SectionHeader title="Environment Variables">
-    {#snippet action()}
-      <Button variant="primary" onclick={() => (addingEnv = true)}>Add</Button>
-    {/snippet}
-  </SectionHeader>
+<SettingsSection title="Environment Variables">
+  {#snippet action()}
+    <Button variant="primary" onclick={() => (addingEnv = true)}>Add</Button>
+  {/snippet}
 
   <ErrorMessage message={error} />
 
@@ -198,13 +196,9 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
       {/each}
     </div>
   {/if}
-</div>
+</SettingsSection>
 
 <style>
-  .section {
-    margin-bottom: 24px;
-  }
-
   .env-list {
     display: flex;
     flex-direction: column;
