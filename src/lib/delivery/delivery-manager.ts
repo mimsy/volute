@@ -840,8 +840,16 @@ export class DeliveryManager {
         try {
           const sharpMod = await import("sharp");
           imageData = await sharpMod.default(data).resize(128, 128, { fit: "cover" }).toBuffer();
-        } catch {
-          // Fall back to original image if sharp unavailable or resize fails
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND") {
+            dlog.debug("sharp not available, sending full-size avatar");
+          } else {
+            dlog.warn(
+              `avatar resize failed for ${p.username}, sending original`,
+              log.errorData(err),
+            );
+          }
         }
         blocks.push(
           { type: "text", text: `[Avatar for ${p.username}]` },

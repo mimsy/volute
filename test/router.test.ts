@@ -551,6 +551,42 @@ describe("router", () => {
     assert.ok(text.includes("hello"), "should still include original message");
   });
 
+  it("prepends session instructions only on first message per session", async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, "routes.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        rules: [{ channel: "discord:*", session: "discord" }],
+        sessions: { discord: { instructions: "Brief responses only." } },
+      }),
+    );
+
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
+
+    await waitForDone(router, [{ type: "text", text: "first" }], { channel: "discord:general" });
+    await waitForDone(router, [{ type: "text", text: "second" }], { channel: "discord:general" });
+
+    assert.equal(mind.calls.length, 2);
+    const firstText = mind.calls[0].content
+      .filter((p: any) => p.type === "text")
+      .map((p: any) => p.text)
+      .join("");
+    const secondText = mind.calls[1].content
+      .filter((p: any) => p.type === "text")
+      .map((p: any) => p.text)
+      .join("");
+    assert.ok(
+      firstText.includes("[Session instructions: Brief responses only.]"),
+      "first message should have instructions",
+    );
+    assert.ok(
+      !secondText.includes("[Session instructions:"),
+      "second message should NOT have instructions",
+    );
+  });
+
   it("mention mode: skips messages not mentioning the mind", async () => {
     const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
