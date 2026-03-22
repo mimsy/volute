@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.34.0](https://github.com/mimsy/volute/compare/volute-v0.33.0...volute-v0.34.0) (2026-03-22)
+
+
+### Features
+
+* redesign mind settings, sidebar, and schedule UI ([#250](https://github.com/mimsy/volute/issues/250)) ([44aa646](https://github.com/mimsy/volute/commit/44aa646b1d04470e928d6a7aad743a4902cfc213))
+* reduce mind token usage across prompts, messages, skills, and CLI ([#252](https://github.com/mimsy/volute/issues/252)) ([1c0747c](https://github.com/mimsy/volute/commit/1c0747c710fef7899de7d8b2f0c41c20afccda2d))
+
 ## [0.33.0](https://github.com/mimsy/volute/compare/volute-v0.32.0...volute-v0.33.0) (2026-03-21)
 
 
