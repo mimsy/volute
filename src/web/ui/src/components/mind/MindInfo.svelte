@@ -171,13 +171,13 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
           {actionLoading ? "Starting..." : "Start"}
         </Button>
       {:else}
-        <button
+        <Button
+          variant="danger"
           onclick={handleStop}
           disabled={actionLoading}
-          class="action-btn stop-btn"
         >
           {actionLoading ? "Stopping..." : "Stop"}
-        </button>
+        </Button>
       {/if}
     </div>
     <ErrorMessage message={actionError} />
@@ -244,23 +244,6 @@ function handleKeydown(e: KeyboardEvent, action: () => void) {
     display: flex;
     align-items: center;
     gap: 10px;
-  }
-
-  .action-btn {
-    padding: 4px 12px;
-    border-radius: var(--radius);
-    font-size: 12px;
-    font-weight: 500;
-    transition: opacity 0.15s;
-  }
-
-  .stop-btn {
-    background: var(--red-dim);
-    color: var(--red);
-  }
-
-  .action-btn:disabled {
-    opacity: 0.5;
   }
 
   .setting-hint {
