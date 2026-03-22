@@ -76,7 +76,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
     })
 
     // Log progress on a plan
-    .post("/:id/log", async (c) => {
+    .post("/:id{[0-9]+}/log", async (c) => {
       const actor = resolveUserId(c);
       if (!actor) return c.json({ error: "Unauthorized" }, 401);
 
@@ -100,7 +100,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
     })
 
     // Complete the current plan
-    .patch("/:id/complete", async (c) => {
+    .patch("/:id{[0-9]+}/complete", async (c) => {
       const actor = resolveUserId(c);
       if (!actor) return c.json({ error: "Unauthorized" }, 401);
       if (actor.role !== "admin" && actor.user_type !== "mind") {
