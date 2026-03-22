@@ -48,8 +48,8 @@ async function refresh() {
   try {
     env = await fetchMindEnv(name);
     error = "";
-  } catch {
-    error = "Failed to load environment";
+  } catch (e) {
+    error = e instanceof Error ? e.message : "Failed to load environment";
   }
 }
 

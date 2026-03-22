@@ -29,7 +29,7 @@ function handleClickOutside(e: MouseEvent) {
 }
 
 function handleKeydown(e: KeyboardEvent) {
-  if (e.key === "Escape") {
+  if (open && e.key === "Escape") {
     e.preventDefault();
     onclose();
   }
