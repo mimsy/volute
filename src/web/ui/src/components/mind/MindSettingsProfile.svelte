@@ -1,9 +1,9 @@
 <script lang="ts">
 import type { Mind } from "@volute/api";
-import { fetchMinds, updateMindProfile, uploadMindAvatar } from "../lib/client";
-import { data } from "../lib/stores.svelte";
-import { useSavedFeedback } from "../lib/useSavedFeedback.svelte";
-import SettingsSection from "./ui/SettingsSection.svelte";
+import { fetchMinds, updateMindProfile, uploadMindAvatar } from "../../lib/client";
+import { data } from "../../lib/stores.svelte";
+import { useSavedFeedback } from "../../lib/useSavedFeedback.svelte";
+import SettingsSection from "../ui/SettingsSection.svelte";
 
 let {
   mind,

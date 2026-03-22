@@ -1,13 +1,13 @@
 <script lang="ts">
 import type { Mind } from "@volute/api";
-import { fetchMinds, startMind, stopMind } from "../lib/client";
-import { getDisplayStatus } from "../lib/format";
-import { data } from "../lib/stores.svelte";
-import Button from "./ui/Button.svelte";
-import ErrorMessage from "./ui/ErrorMessage.svelte";
-import SettingRow from "./ui/SettingRow.svelte";
-import SettingsSection from "./ui/SettingsSection.svelte";
-import StatusBadge from "./ui/StatusBadge.svelte";
+import { fetchMinds, startMind, stopMind } from "../../lib/client";
+import { getDisplayStatus } from "../../lib/format";
+import { data } from "../../lib/stores.svelte";
+import Button from "../ui/Button.svelte";
+import ErrorMessage from "../ui/ErrorMessage.svelte";
+import SettingRow from "../ui/SettingRow.svelte";
+import SettingsSection from "../ui/SettingsSection.svelte";
+import StatusBadge from "../ui/StatusBadge.svelte";
 
 let { mind }: { mind: Mind } = $props();
 let name = $derived(mind.name);

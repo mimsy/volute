@@ -1,14 +1,14 @@
 <script lang="ts">
 import type { Mind } from "@volute/api";
 import { onMount } from "svelte";
-import { fetchMinds } from "../lib/client";
-import { data } from "../lib/stores.svelte";
+import { fetchMinds } from "../../lib/client";
+import { data } from "../../lib/stores.svelte";
+import SectionHeader from "../ui/SectionHeader.svelte";
 import MindSettingsCognition from "./MindSettingsCognition.svelte";
 import MindSettingsEnv from "./MindSettingsEnv.svelte";
 import MindSettingsProfile from "./MindSettingsProfile.svelte";
 import MindSettingsRhythms from "./MindSettingsRhythms.svelte";
 import MindSkills from "./MindSkills.svelte";
-import SectionHeader from "./ui/SectionHeader.svelte";
 
 let { mind: initialMind }: { mind: Mind } = $props();
 

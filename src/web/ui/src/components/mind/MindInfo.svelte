@@ -1,18 +1,24 @@
 <script lang="ts">
 import type { Mind, MindConfig } from "@volute/api";
 import { onMount } from "svelte";
-import { fetchMindConfig, fetchMinds, startMind, stopMind, updateMindConfig } from "../lib/client";
-import { getDisplayStatus } from "../lib/format";
-import { data } from "../lib/stores.svelte";
-import Button from "./ui/Button.svelte";
-import EmptyState from "./ui/EmptyState.svelte";
-import EnvVarList from "./ui/EnvVarList.svelte";
-import ErrorMessage from "./ui/ErrorMessage.svelte";
-import Input from "./ui/Input.svelte";
-import Select from "./ui/Select.svelte";
-import SettingRow from "./ui/SettingRow.svelte";
-import SettingsSection from "./ui/SettingsSection.svelte";
-import StatusBadge from "./ui/StatusBadge.svelte";
+import {
+  fetchMindConfig,
+  fetchMinds,
+  startMind,
+  stopMind,
+  updateMindConfig,
+} from "../../lib/client";
+import { getDisplayStatus } from "../../lib/format";
+import { data } from "../../lib/stores.svelte";
+import Button from "../ui/Button.svelte";
+import EmptyState from "../ui/EmptyState.svelte";
+import EnvVarList from "../ui/EnvVarList.svelte";
+import ErrorMessage from "../ui/ErrorMessage.svelte";
+import Input from "../ui/Input.svelte";
+import Select from "../ui/Select.svelte";
+import SettingRow from "../ui/SettingRow.svelte";
+import SettingsSection from "../ui/SettingsSection.svelte";
+import StatusBadge from "../ui/StatusBadge.svelte";
 
 let { mind }: { mind: Mind } = $props();
 let name = $derived(mind.name);

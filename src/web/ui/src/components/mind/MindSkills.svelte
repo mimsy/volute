@@ -6,12 +6,12 @@ import {
   publishMindSkill,
   uninstallMindSkill,
   updateMindSkill,
-} from "../lib/client";
-import AddSkillModal from "./AddSkillModal.svelte";
-import Button from "./ui/Button.svelte";
-import EmptyState from "./ui/EmptyState.svelte";
-import ErrorMessage from "./ui/ErrorMessage.svelte";
-import SectionHeader from "./ui/SectionHeader.svelte";
+} from "../../lib/client";
+import AddSkillModal from "../AddSkillModal.svelte";
+import Button from "../ui/Button.svelte";
+import EmptyState from "../ui/EmptyState.svelte";
+import ErrorMessage from "../ui/ErrorMessage.svelte";
+import SectionHeader from "../ui/SectionHeader.svelte";
 
 let { name }: { name: string } = $props();
 

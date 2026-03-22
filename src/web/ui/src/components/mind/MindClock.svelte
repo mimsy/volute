@@ -1,7 +1,7 @@
 <script lang="ts">
-import { type ClockStatus, fetchClockStatus } from "../lib/client";
-import { activeMinds } from "../lib/stores.svelte";
-import Icon from "./ui/Icon.svelte";
+import { type ClockStatus, fetchClockStatus } from "../../lib/client";
+import { activeMinds } from "../../lib/stores.svelte";
+import Icon from "../ui/Icon.svelte";
 
 type IconKind = "heartbeat" | "dream" | "sleep" | "clock";
 

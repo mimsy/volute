@@ -9,15 +9,15 @@ import {
   type SleepConfig,
   updateSchedule,
   updateSleepConfig,
-} from "../lib/client";
-import { formatCron } from "../lib/clock-format";
-import Button from "./ui/Button.svelte";
-import EmptyState from "./ui/EmptyState.svelte";
-import ErrorMessage from "./ui/ErrorMessage.svelte";
-import Input from "./ui/Input.svelte";
-import Select from "./ui/Select.svelte";
-import TimePicker from "./ui/TimePicker.svelte";
-import Toggle from "./ui/Toggle.svelte";
+} from "../../lib/client";
+import { formatCron } from "../../lib/clock-format";
+import Button from "../ui/Button.svelte";
+import EmptyState from "../ui/EmptyState.svelte";
+import ErrorMessage from "../ui/ErrorMessage.svelte";
+import Input from "../ui/Input.svelte";
+import Select from "../ui/Select.svelte";
+import TimePicker from "../ui/TimePicker.svelte";
+import Toggle from "../ui/Toggle.svelte";
 
 let { name }: { name: string } = $props();
 
