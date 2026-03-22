@@ -3,19 +3,21 @@ import type { HTMLInputAttributes } from "svelte/elements";
 
 let {
   variant = "default",
+  inputSize = "sm",
   width,
   value = $bindable(),
   class: className,
   ...rest
 }: HTMLInputAttributes & {
   variant?: "default" | "mono";
+  inputSize?: "sm" | "md";
   width?: string;
   class?: string;
 } = $props();
 </script>
 
 <input
-	class="input {variant} {className ?? ''}"
+	class="input {variant} {inputSize} {className ?? ''}"
 	style:width={width}
 	style:flex={width ? `0 0 ${width}` : undefined}
 	bind:value
@@ -40,6 +42,11 @@ let {
 
 	.input:disabled {
 		opacity: 0.5;
+	}
+
+	.md {
+		padding: 10px 12px;
+		width: 100%;
 	}
 
 	.mono {

@@ -67,11 +67,13 @@ async function handleSubmit(e: Event) {
 
       <form onsubmit={handleSubmit}>
         <Input
+          inputSize="md"
           type="text"
           placeholder="username"
           bind:value={username}
         />
         <Input
+          inputSize="md"
           type="password"
           placeholder="password"
           bind:value={password}

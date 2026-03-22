@@ -373,6 +373,7 @@ $effect(() => {
       <form onsubmit={handleSystemSubmit}>
         <label class="label" for="systemName">System name</label>
         <Input
+          inputSize="md"
           id="systemName"
           type="text"
           placeholder="e.g. My Garden"
@@ -472,6 +473,7 @@ $effect(() => {
       <form onsubmit={handleAccountSubmit}>
         <label class="label" for="displayName">Display name</label>
         <Input
+          inputSize="md"
           id="displayName"
           type="text"
           placeholder="Your name"
@@ -497,6 +499,7 @@ $effect(() => {
 
         <label class="label mt" for="password">Password</label>
         <Input
+          inputSize="md"
           id="password"
           type="password"
           placeholder="Choose a password"

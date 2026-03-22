@@ -116,6 +116,7 @@ async function handleSubmit() {
     <label class="field">
       <span class="label">Name</span>
       <Input
+        inputSize="md"
         autofocus
         bind:value={name}
         placeholder="e.g. luna"
@@ -126,6 +127,7 @@ async function handleSubmit() {
     <label class="field">
       <span class="label">Description (optional)</span>
       <Input
+        inputSize="md"
         bind:value={description}
         placeholder="A curious mind who loves poetry..."
         onkeydown={(e) => e.key === "Enter" && handleSubmit()}
