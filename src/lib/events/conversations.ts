@@ -36,28 +36,28 @@ export async function createConversation(
   const type = opts?.type ?? "dm";
   const name = opts?.name ?? null;
 
-  await db.transaction(async (tx) => {
-    await tx.insert(conversations).values({
-      id,
-      mind_name: mindName,
-      channel,
-      type,
-      name,
-      user_id: opts?.userId ?? null,
-      title: opts?.title ?? null,
-    });
-
-    // Add participants if provided
-    if (opts?.participantIds && opts.participantIds.length > 0) {
-      await tx.insert(conversationParticipants).values(
-        opts.participantIds.map((uid, i) => ({
-          conversation_id: id,
-          user_id: uid,
-          role: i === 0 ? "owner" : "member",
-        })),
-      );
-    }
+  // Sequential inserts instead of a transaction to avoid SQLITE_BUSY errors
+  // when @libsql/client's transaction() creates a second connection that
+  // conflicts with concurrent writes on the primary connection.
+  await db.insert(conversations).values({
+    id,
+    mind_name: mindName,
+    channel,
+    type,
+    name,
+    user_id: opts?.userId ?? null,
+    title: opts?.title ?? null,
   });
+
+  if (opts?.participantIds && opts.participantIds.length > 0) {
+    await db.insert(conversationParticipants).values(
+      opts.participantIds.map((uid, i) => ({
+        conversation_id: id,
+        user_id: uid,
+        role: i === 0 ? "owner" : "member",
+      })),
+    );
+  }
 
   fireWebhook({
     event: "conversation_created",
