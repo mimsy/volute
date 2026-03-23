@@ -14,6 +14,7 @@ import { formatRelativeTime } from "../lib/format";
 import { navigate } from "../lib/navigate";
 import { activeMinds } from "../lib/stores.svelte";
 import { groupToolEvents } from "../lib/tool-groups";
+import { getCategoryColor, getCategoryIcon } from "../lib/tool-names";
 import ToolGroupComponent from "./chat/ToolGroup.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
 import ReadOnlyChatModal from "./modals/ReadOnlyChatModal.svelte";
@@ -524,7 +525,14 @@ function jumpToLatest() {
                         {@const groups = groupToolEvents(events)}
                         {#each groups as item (item.kind === "tool-group" ? `tg-${item.toolUse.id}` : `ev-${item.event.id}`)}
                           {#if item.kind === "tool-group"}
-                            <ToolGroupComponent group={item} mindName={turn.mind} turnStatus="active" />
+                            {@const catColor = getCategoryColor(item.category)}
+                            {@const catIcon = getCategoryIcon(item.category)}
+                            <div class="event" style:--type-color={catColor}>
+                              <div class="marker marker-icon" style:color={catColor}>
+                                <Icon kind={catIcon} />
+                              </div>
+                              <ToolGroupComponent group={item} mindName={turn.mind} turnStatus="active" />
+                            </div>
                           {:else}
                             <HistoryEvent event={item.event} mindName={turn.mind} />
                           {/if}
