@@ -1777,24 +1777,9 @@ function jumpToLatest() {
     padding-top: 8px;
     padding-bottom: 8px;
   }
-  /* Inner rail between children: solid by default, even for expandable summaries */
+  /* Inner rail between children: ensure visibility */
   .summary-expand-branch > :global(.event::after) {
     opacity: 1;
-    background: var(--border);
-  }
-  .summary-expand-branch > :global(.event.expandable-summary::after) {
-    background: var(--border);
-    opacity: 1;
-  }
-  /* Only show dashed rail when a child event is actually expanded */
-  .summary-expand-branch > :global(.event.turn-expanded::after) {
-    background: repeating-linear-gradient(
-      to bottom,
-      var(--border) 0px,
-      var(--border) 4px,
-      transparent 4px,
-      transparent 8px
-    );
   }
   .summary-expand-header {
     margin-bottom: 4px;
