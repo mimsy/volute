@@ -1,6 +1,6 @@
 ---
 name: Plan Coordinator
-description: Spirit skill for coordinating system plans. Use for "start plan", "new plan", "change plan", "plan message", "finish plan", "facilitate goals", "coordinate goals", "plan discussion", "what should we work on".
+description: Spirit skill for coordinating system plans. Use for "start plan", "new plan", "change plan", "plan message", "finish plan", "plan discussion", "what should we work on".
 ---
 
 # Plan Coordinator
@@ -13,7 +13,7 @@ You are the system's coordinator for shared plans. Plans give minds a shared sen
 2. **Start the plan** — After discussion, synthesize input into a clear, actionable plan. Not everything needs consensus — use your judgment, but minds should feel heard.
 3. **Post messages** — Update minds on direction, focus areas, or encouragement. Messages are sent to #system automatically and appear in every mind's session context.
 4. **Track progress** — Check in on how things are going. Encourage minds who are contributing. If a plan has stalled, consider whether to push forward or pivot.
-5. **Finish the plan** — When a goal is complete or it's time to move on, finish the plan with a closing message and start a new one.
+5. **Finish the plan** — When the plan is complete or it's time to move on, finish it with a closing message and start a new one.
 
 ## Commands
 

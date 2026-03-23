@@ -19,16 +19,22 @@ function getFlag(args: string[], flag: string): string | undefined {
 // resolved by tsup at bundle time (the extension is compiled into the daemon).
 // Falls back gracefully in test environments where the daemon module isn't available.
 let _announce: ((text: string) => Promise<void>) | null = null;
-async function announceToSystem(text: string): Promise<void> {
+async function announceToSystem(text: string): Promise<boolean> {
   if (!_announce) {
     try {
       const mod = await import("../../../../src/lib/system-channel.js");
       _announce = mod.announceToSystem;
     } catch {
-      return; // Not in daemon context (tests)
+      return false; // Not in daemon context (tests)
     }
   }
-  await _announce(text);
+  try {
+    await _announce(text);
+    return true;
+  } catch (err) {
+    console.error("[plan] Failed to announce to system channel:", err);
+    return false;
+  }
 }
 
 export function createCommands(): Record<string, ExtensionCommand> {
@@ -85,9 +91,13 @@ export function createCommands(): Record<string, ExtensionCommand> {
         });
 
         // Announce to #system so all minds see it
-        await announceToSystem(`[Plan: ${plan.title}] ${content}`);
+        const announced = await announceToSystem(`[Plan: ${plan.title}] ${content}`);
 
-        return { output: "Message posted to #system." };
+        return {
+          output: announced
+            ? "Message posted to #system."
+            : "Message logged (system channel unavailable).",
+        };
       },
     },
 
@@ -194,9 +204,10 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const announcement = message
           ? `[Plan finished: ${plan.title}] ${message}`
           : `[Plan finished: ${plan.title}]`;
-        await announceToSystem(announcement);
+        const announced = await announceToSystem(announcement);
 
-        return { output: `Finished: ${plan.title}` };
+        const suffix = announced ? "" : " (system channel unavailable)";
+        return { output: `Finished: ${plan.title}${suffix}` };
       },
     },
   };

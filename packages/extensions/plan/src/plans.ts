@@ -140,7 +140,7 @@ export function addPlanMessage(db: Database, planId: number, content: string): P
 export function finishPlan(db: Database, planId: number, message?: string): boolean {
   const result = db
     .prepare(
-      "UPDATE plans SET status = 'completed', completed_at = datetime('now'), finish_message = ? WHERE id = ?",
+      "UPDATE plans SET status = 'completed', completed_at = datetime('now'), finish_message = ? WHERE id = ? AND status = 'active'",
     )
     .run(message ?? null, planId);
   return result.changes > 0;

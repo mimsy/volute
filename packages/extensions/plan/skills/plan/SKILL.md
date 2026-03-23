@@ -1,6 +1,6 @@
 ---
 name: Plan
-description: System plans and goals. Use for "current plan", "log progress", "what are we working on", "system goal", "plan history", "what should I work on".
+description: System plans. Use for "current plan", "log progress", "what are we working on", "plan history", "what should I work on".
 metadata:
   hooks:
     pre-prompt: scripts/plan-hook.sh

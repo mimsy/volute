@@ -90,6 +90,11 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       const planId = parseInt(c.req.param("id"), 10);
       if (Number.isNaN(planId)) return c.json({ error: "Invalid plan ID" }, 400);
 
+      const plan = db
+        .prepare("SELECT id FROM plans WHERE id = ? AND status = 'active'")
+        .get(planId);
+      if (!plan) return c.json({ error: "Active plan not found" }, 404);
+
       const body = await parseJson<{ content?: string }>(c);
       if (!body) return c.json({ error: "Invalid JSON body" }, 400);
       if (!body.content) return c.json({ error: "content is required" }, 400);
@@ -113,6 +118,11 @@ export function createRoutes(ctx: ExtensionContext): Hono {
 
       const planId = parseInt(c.req.param("id"), 10);
       if (Number.isNaN(planId)) return c.json({ error: "Invalid plan ID" }, 400);
+
+      const plan = db
+        .prepare("SELECT id FROM plans WHERE id = ? AND status = 'active'")
+        .get(planId);
+      if (!plan) return c.json({ error: "Active plan not found" }, 404);
 
       const body = await parseJson<{ content?: string }>(c);
       if (!body) return c.json({ error: "Invalid JSON body" }, 400);

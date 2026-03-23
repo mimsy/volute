@@ -54,7 +54,7 @@ onMount(() => {
   {:else if !plan}
     <div class="empty">
       <p>No active plan.</p>
-      <p class="hint">The spirit can set a plan with <code>volute plan set "title" "description"</code></p>
+      <p class="hint">The spirit can start a plan with <code>volute plan start "title" "description"</code></p>
     </div>
   {:else}
     <div class="plan-card">

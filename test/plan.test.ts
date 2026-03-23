@@ -170,4 +170,30 @@ describe("plan extension", () => {
     const plans = await listPlans(db, getUser);
     assert.equal(plans[0].set_by_username, "admin-human");
   });
+
+  it("finishPlan only finishes active plans", async () => {
+    const plan = await startPlan(db, getUser, spiritId, "Plan A", "");
+    finishPlan(db, plan.id, "Done");
+
+    // Finishing an already-completed plan should return false
+    const ok = finishPlan(db, plan.id, "Done again");
+    assert.equal(ok, false);
+  });
+
+  it("finishPlan does not finish archived plans", async () => {
+    const plan = await startPlan(db, getUser, spiritId, "Old Plan", "");
+    // Starting a new plan archives the old one
+    await startPlan(db, getUser, spiritId, "New Plan", "");
+
+    const ok = finishPlan(db, plan.id, "Shouldn't work");
+    assert.equal(ok, false);
+  });
+
+  it("logProgress on invalid plan throws", async () => {
+    assert.throws(() => logProgress(db, 99999, "aria", "progress"));
+  });
+
+  it("addPlanMessage on invalid plan throws", async () => {
+    assert.throws(() => addPlanMessage(db, 99999, "message"));
+  });
 });
