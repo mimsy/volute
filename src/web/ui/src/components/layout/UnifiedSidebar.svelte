@@ -22,6 +22,7 @@ let {
   onSeed,
   onHideConversation,
   onSelectMindSection,
+  onSelectSystemSection,
 }: {
   minds: Mind[];
   conversations: ConversationWithParticipants[];
@@ -30,6 +31,7 @@ let {
   onHome: () => void;
   onSelectMind: (name: string) => void;
   onSelectMindSection: (name: string, section: string) => void;
+  onSelectSystemSection: (section: string) => void;
   onSelectConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
   onBrowseChannels: () => void;
@@ -92,25 +94,29 @@ let sortedMinds = $derived(
 let openMenu = $state<string | null>(null);
 let menuPos = $state({ top: 0, left: 0 });
 
-function handleDotsClick(e: MouseEvent, mindName: string) {
+function handleDotsClick(e: MouseEvent, key: string = "__system__") {
   e.stopPropagation();
-  if (openMenu === mindName) {
+  if (openMenu === key) {
     openMenu = null;
   } else {
     const btn = e.currentTarget as HTMLElement;
     const rect = btn.getBoundingClientRect();
     menuPos = { top: rect.bottom + 2, left: rect.left };
-    openMenu = mindName;
+    openMenu = key;
   }
 }
 
 function handleMenuAction(name: string, section: string) {
   openMenu = null;
-  onSelectMindSection(name, section);
+  if (name === "__system__") {
+    onSelectSystemSection(section);
+  } else {
+    onSelectMindSection(name, section);
+  }
 }
 
 function handleClickOutside(e: MouseEvent) {
-  if (openMenu && !(e.target as HTMLElement).closest(".mind-menu-container")) {
+  if (openMenu && !(e.target as HTMLElement).closest(".menu-container")) {
     openMenu = null;
   }
 }
@@ -155,7 +161,8 @@ let activeChannelId = $derived.by(() => {
 });
 
 let isSystemActive = $derived(
-  selection.kind === "home" ||
+  selection.kind === "system-history" ||
+    selection.kind === "system-chat" ||
     selection.kind === "settings" ||
     selection.kind === "extension" ||
     selection.kind === "shared-files",
@@ -164,7 +171,6 @@ let isSystemActive = $derived(
 
 <svelte:window onclick={handleClickOutside} onblur={handleWindowBlur} />
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="sidebar-inner">
   <div class="sections">
     <!-- System -->
@@ -178,6 +184,16 @@ let isSystemActive = $derived(
           <Icon kind="spiral" class="section-icon" />
           <span>System</span>
         </button>
+        <div class="menu-container">
+          <button
+            class="mind-dots-btn"
+            class:visible={openMenu === "__system__"}
+            onclick={(e) => handleDotsClick(e)}
+            title="More options"
+          >
+            <svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/></svg>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -224,7 +240,7 @@ let isSystemActive = $derived(
                   {/snippet}
                 </ProfileHoverCard>
               </button>
-              <div class="mind-menu-container">
+              <div class="menu-container">
                 <button
                   class="mind-dots-btn"
                   class:visible={openMenu === mind.name}
@@ -267,18 +283,35 @@ let isSystemActive = $derived(
   </div>
 </div>
 
-{#if openMenu}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
+{#if openMenu === "__system__"}
   <div
     class="mind-menu"
+    role="menu"
+    tabindex="-1"
     style:top="{menuPos.top}px"
     style:left="{menuPos.left}px"
     onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => { if (e.key === "Escape") openMenu = null; }}
   >
-    <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "history")}>
-      <Icon kind="history" class="menu-icon" />
-      History
+    <button class="mind-menu-item" onclick={() => handleMenuAction("__system__", "shared-files")}>
+      <Icon kind="folder" class="menu-icon" />
+      Shared Files
     </button>
+    <button class="mind-menu-item" onclick={() => handleMenuAction("__system__", "settings")}>
+      <Icon kind="gear" class="menu-icon" />
+      Settings
+    </button>
+  </div>
+{:else if openMenu}
+  <div
+    class="mind-menu"
+    role="menu"
+    tabindex="-1"
+    style:top="{menuPos.top}px"
+    style:left="{menuPos.left}px"
+    onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => { if (e.key === "Escape") openMenu = null; }}
+  >
     <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "files")}>
       <Icon kind="folder" class="menu-icon" />
       Files
@@ -394,7 +427,8 @@ let isSystemActive = $derived(
     height: 14px;
   }
 
-  .section-header-row:hover .section-action {
+  .section-header-row:hover .section-action,
+  .section-header-row:hover .mind-dots-btn {
     opacity: 1;
   }
 
@@ -459,7 +493,7 @@ let isSystemActive = $derived(
     min-width: 0;
   }
 
-  .mind-menu-container {
+  .menu-container {
     position: relative;
     flex-shrink: 0;
   }

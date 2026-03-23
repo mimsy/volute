@@ -14,6 +14,7 @@ import { formatRelativeTime } from "../lib/format";
 import { navigate } from "../lib/navigate";
 import { activeMinds } from "../lib/stores.svelte";
 import { groupToolEvents } from "../lib/tool-groups";
+import { getCategoryColor, getCategoryIcon } from "../lib/tool-names";
 import ToolGroupComponent from "./chat/ToolGroup.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
 import ReadOnlyChatModal from "./modals/ReadOnlyChatModal.svelte";
@@ -375,10 +376,11 @@ function jumpToLatest() {
               {/if}
               {formatRelativeTime(turn.created_at)}
             </div>
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
               class="turn-rail"
               class:turn-rail-expanded={expandedTurns.has(turn.id) || turn.status === "active"}
+              role="button"
+              tabindex="0"
               onclick={(e) => {
                 if (!turn.summary) return;
                 e.stopPropagation();
@@ -396,7 +398,6 @@ function jumpToLatest() {
                       <button class="peek-btn" aria-label="View conversation" onclick={(e) => e.stopPropagation()}>
                         <Icon kind="chat" />
                       </button>
-                      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
                       <div class="peek-popover" role="button" tabindex="0"
                         onclick={(e) => { e.stopPropagation(); openConversation(conv, turn); }}
                         onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); openConversation(conv, turn); } }}
@@ -524,7 +525,14 @@ function jumpToLatest() {
                         {@const groups = groupToolEvents(events)}
                         {#each groups as item (item.kind === "tool-group" ? `tg-${item.toolUse.id}` : `ev-${item.event.id}`)}
                           {#if item.kind === "tool-group"}
-                            <ToolGroupComponent group={item} mindName={turn.mind} turnStatus="active" />
+                            {@const catColor = getCategoryColor(item.category)}
+                            {@const catIcon = getCategoryIcon(item.category)}
+                            <div class="event" style:--type-color={catColor}>
+                              <div class="marker marker-icon" style:color={catColor}>
+                                <Icon kind={catIcon} />
+                              </div>
+                              <ToolGroupComponent group={item} mindName={turn.mind} turnStatus="active" />
+                            </div>
                           {:else}
                             <HistoryEvent event={item.event} mindName={turn.mind} />
                           {/if}
@@ -1038,6 +1046,40 @@ function jumpToLatest() {
     padding-left: 24px;
     padding-top: 8px;
     padding-bottom: 0;
+  }
+
+  .active-turn-branch .event {
+    position: relative;
+    padding: 6px 8px 6px 20px;
+  }
+
+  .active-turn-branch .marker {
+    position: absolute;
+    left: -5px;
+    top: 12px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    z-index: 1;
+  }
+
+  .active-turn-branch .marker-icon {
+    width: 22px;
+    height: 22px;
+    left: -12px;
+    top: 5px;
+    border-radius: var(--radius);
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 3;
+  }
+
+  .active-turn-branch .marker-icon :global(svg) {
+    width: 13px;
+    height: 13px;
   }
 
   .active-turn-header {

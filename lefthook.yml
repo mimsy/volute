@@ -12,6 +12,9 @@ pre-commit:
       run: npx svelte-check --tsconfig src/web/ui/tsconfig.json
 
 pre-push:
+  parallel: true
   commands:
     test:
       run: npm test
+    svelte-check:
+      run: npx svelte-check --tsconfig src/web/ui/tsconfig.json

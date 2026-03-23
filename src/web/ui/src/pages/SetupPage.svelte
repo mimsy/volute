@@ -82,7 +82,7 @@ let slugError = $derived(
 );
 
 // Step 4: Provider + Models
-let aiProvidersRef: AiProviders;
+let aiProvidersRef = $state<AiProviders>();
 let spiritModel = $state("");
 let utilityModel = $state("");
 let enabledModelIds = $state<string[]>([]);

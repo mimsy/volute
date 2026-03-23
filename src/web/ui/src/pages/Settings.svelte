@@ -8,8 +8,22 @@ import {
   systemLogin,
   systemLogout,
   systemRegister,
+  updateSystemName,
 } from "../lib/client";
 import { auth } from "../lib/stores.svelte";
+
+// System name
+let localName = $state(auth.localName ?? "");
+
+async function saveLocalName() {
+  const trimmed = localName.trim();
+  try {
+    await updateSystemName(trimmed);
+    auth.localName = trimmed || null;
+  } catch {
+    localName = auth.localName ?? "";
+  }
+}
 
 // System registration state
 let systemError = $state("");
@@ -76,11 +90,27 @@ async function handleSystemLogout() {
 </script>
 
 <div class="settings">
+  <!-- System Name -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Name</span>
+      <span class="section-subtitle">Displayed in the sidebar</span>
+    </div>
+    <input
+      type="text"
+      class="system-input"
+      bind:value={localName}
+      placeholder="e.g. My Garden"
+      onblur={saveLocalName}
+      onkeydown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+    />
+  </div>
+
   <!-- System Registration -->
   <div class="section">
     <div class="section-header">
-      <span class="section-title">System</span>
-      <span class="section-subtitle">Registration with volute.systems for pages and email</span>
+      <span class="section-title">Registration</span>
+      <span class="section-subtitle">volute.systems for pages and email</span>
     </div>
 
     {#if auth.systemName}

@@ -41,7 +41,6 @@ const app = new Hono<AuthEnv>()
 
     // Compute upcoming and previous schedule fires
     const now = new Date();
-    const in24h = new Date(now.getTime() + 24 * 60 * 60_000);
     const upcoming: { id: string; at: string; type: "cron" | "timer" }[] = [];
     const previous: { id: string; at: string }[] = [];
 
@@ -49,16 +48,14 @@ const app = new Hono<AuthEnv>()
       if (!s.enabled) continue;
       if (s.fireAt) {
         const fireDate = new Date(s.fireAt);
-        if (fireDate >= now && fireDate <= in24h) {
+        if (fireDate >= now) {
           upcoming.push({ id: s.id, at: fireDate.toISOString(), type: "timer" });
         }
       } else if (s.cron) {
         try {
           const interval = CronExpressionParser.parse(s.cron);
           const next = interval.next().toDate();
-          if (next <= in24h) {
-            upcoming.push({ id: s.id, at: next.toISOString(), type: "cron" });
-          }
+          upcoming.push({ id: s.id, at: next.toISOString(), type: "cron" });
         } catch {
           slog.warn(`invalid cron "${s.cron}" for schedule "${s.id}" of ${name}`);
         }
@@ -83,16 +80,15 @@ const app = new Hono<AuthEnv>()
       try {
         const sleepInterval = CronExpressionParser.parse(sleepConfig.schedule.sleep);
         const nextSleep = sleepInterval.next().toDate();
-        if (nextSleep <= in24h) {
-          upcoming.push({ id: "sleep", at: nextSleep.toISOString(), type: "cron" as const });
-        }
+        upcoming.push({ id: "sleep", at: nextSleep.toISOString(), type: "cron" as const });
       } catch {
         /* ignore */
       }
+      // Use wake cron for previous — shows when sleep ended, not when it started
       try {
-        const prevSleepInterval = CronExpressionParser.parse(sleepConfig.schedule.sleep);
-        const prevSleep = prevSleepInterval.prev().toDate();
-        previous.push({ id: "sleep", at: prevSleep.toISOString() });
+        const prevWakeInterval = CronExpressionParser.parse(sleepConfig.schedule.wake);
+        const prevWake = prevWakeInterval.prev().toDate();
+        previous.push({ id: "sleep", at: prevWake.toISOString() });
       } catch {
         /* ignore */
       }
@@ -104,14 +100,14 @@ const app = new Hono<AuthEnv>()
     return c.json({ sleep: sleepState, sleepConfig, schedules, upcoming, previous });
   })
   // Get sleep config
-  .get("/:name/sleep", async (c) => {
+  .get("/:name/sleep/config", async (c) => {
     const name = c.req.param("name");
     if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
     const config = readVoluteConfig(mindDir(name));
     return c.json(config?.sleep ?? { enabled: false });
   })
   // Update sleep config
-  .put("/:name/sleep", requireSelf(), async (c) => {
+  .put("/:name/sleep/config", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);

@@ -388,12 +388,16 @@ export function restartDaemon(): Promise<void> {
   return post(`${V1}/system/restart`);
 }
 
-export async function fetchSystemInfo(): Promise<{ system: string | null }> {
+export async function fetchSystemInfo(): Promise<{ system: string | null; name: string | null }> {
   try {
-    return await get<{ system: string | null }>(`${V1}/system/info`);
+    return await get<{ system: string | null; name: string | null }>(`${V1}/system/info`);
   } catch {
-    return { system: null };
+    return { system: null, name: null };
   }
+}
+
+export async function updateSystemName(name: string): Promise<void> {
+  await put(`${V1}/system/info`, { name });
 }
 
 export function systemRegister(name: string): Promise<{ system: string }> {
@@ -599,11 +603,11 @@ export type ScheduleEntry = {
 };
 
 export function fetchSleepConfig(name: string): Promise<SleepConfig> {
-  return get(`${V1}/minds/${enc(name)}/sleep`);
+  return get(`${V1}/minds/${enc(name)}/sleep/config`);
 }
 
 export function updateSleepConfig(name: string, config: Partial<SleepConfig>): Promise<void> {
-  return put(`${V1}/minds/${enc(name)}/sleep`, config);
+  return put(`${V1}/minds/${enc(name)}/sleep/config`, config);
 }
 
 export function fetchSchedules(name: string): Promise<ScheduleEntry[]> {

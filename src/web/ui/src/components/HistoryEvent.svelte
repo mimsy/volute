@@ -184,16 +184,15 @@ async function handleClick() {
 }
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div
   class="event"
   class:collapsible
   class:expandable-summary={event.type === "summary" && expandable}
   class:turn-expanded={event.type === "summary" && turnExpanded}
-  role={collapsible ? "button" : undefined}
-  tabindex={collapsible ? 0 : undefined}
+  role="button"
+  tabindex="0"
   onclick={handleClick}
-  onkeydown={collapsible ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick(); } } : undefined}
+  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick(); } }}
   style:--type-color={color}
   bind:this={eventEl}
 >
@@ -271,9 +270,7 @@ async function handleClick() {
     {/if}
     <div class="event-body">
       {#if expandable && turnExpanded}
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-        <div class="turn-branch" role="group" onclick={(e) => e.stopPropagation()}>
+        <div class="turn-branch" role="presentation" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
           {#if turnLoading}
             <div class="turn-loading">loading turn...</div>
           {:else if turnError}
@@ -494,6 +491,7 @@ async function handleClick() {
     overflow: hidden;
     display: -webkit-box;
     -webkit-line-clamp: 4;
+    line-clamp: 4;
     -webkit-box-orient: vertical;
     white-space: pre-wrap;
     word-break: break-word;
@@ -501,6 +499,7 @@ async function handleClick() {
   }
   .inline-text-expanded {
     -webkit-line-clamp: unset;
+    line-clamp: unset;
     display: block;
     max-height: 400px;
     overflow: auto;
