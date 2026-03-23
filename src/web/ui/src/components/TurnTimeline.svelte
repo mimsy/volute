@@ -764,23 +764,27 @@ function jumpToLatest() {
                               {/if}
                             {:else}
                               {@const childTurn = child as TurnRow}
-                              <HistoryEvent
-                                event={{
-                                  id: 0,
-                                  mind: childTurn.mind,
-                                  channel: "",
-                                  session: null,
-                                  sender: null,
-                                  message_id: null,
-                                  type: "summary",
-                                  content: childTurn.summary ?? "(no summary)",
-                                  metadata: childTurn.summary_meta ? JSON.stringify(childTurn.summary_meta) : null,
-                                  turn_id: childTurn.id,
-                                  created_at: childTurn.created_at,
-                                }}
-                                mindName={childTurn.mind}
-                                expandable
-                              />
+                              <!-- svelte-ignore a11y_click_events_have_key_events -->
+                              <!-- svelte-ignore a11y_no_static_element_interactions -->
+                              <div onclick={(e) => e.stopPropagation()}>
+                                <HistoryEvent
+                                  event={{
+                                    id: 0,
+                                    mind: childTurn.mind,
+                                    channel: "",
+                                    session: null,
+                                    sender: null,
+                                    message_id: null,
+                                    type: "summary",
+                                    content: childTurn.summary ?? "(no summary)",
+                                    metadata: childTurn.summary_meta ? JSON.stringify(childTurn.summary_meta) : null,
+                                    turn_id: childTurn.id,
+                                    created_at: childTurn.created_at,
+                                  }}
+                                  mindName={childTurn.mind}
+                                  expandable
+                                />
+                              </div>
                             {/if}
                           {/each}
                         {/if}
@@ -1603,7 +1607,7 @@ function jumpToLatest() {
     flex-direction: column;
     align-items: center;
     position: relative;
-    padding: 2px 0;
+    padding: 0;
   }
   .scale-break-slash {
     width: 14px;
@@ -1612,15 +1616,15 @@ function jumpToLatest() {
     transform: rotate(-30deg);
   }
   .scale-break-gap {
-    height: 1px;
+    height: 6px;
   }
   /* Inner scale break inside expanded branches */
   .inner-scale-break {
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 2px 0;
-    margin-left: -5px;
+    padding: 4px 0;
+    margin-left: -2px;
     width: 14px;
   }
 
