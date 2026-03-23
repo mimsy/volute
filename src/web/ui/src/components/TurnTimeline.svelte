@@ -1048,6 +1048,40 @@ function jumpToLatest() {
     padding-bottom: 0;
   }
 
+  .active-turn-branch .event {
+    position: relative;
+    padding: 6px 8px 6px 20px;
+  }
+
+  .active-turn-branch .marker {
+    position: absolute;
+    left: -5px;
+    top: 12px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    z-index: 1;
+  }
+
+  .active-turn-branch .marker-icon {
+    width: 22px;
+    height: 22px;
+    left: -12px;
+    top: 5px;
+    border-radius: var(--radius);
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 3;
+  }
+
+  .active-turn-branch .marker-icon :global(svg) {
+    width: 13px;
+    height: 13px;
+  }
+
   .active-turn-header {
     margin-bottom: 4px;
     margin-left: 14px;
