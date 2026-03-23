@@ -23,8 +23,8 @@ function refresh() {
       loading = false;
       error = "";
     })
-    .catch(() => {
-      error = "Failed to load extensions";
+    .catch((e) => {
+      error = e instanceof Error ? e.message : "Failed to load extensions";
       loading = false;
     });
 }
@@ -74,8 +74,10 @@ async function handleUninstall(ext: ExtensionManagementInfo) {
   actionLoading = null;
 }
 
-let builtinExts = $derived(extensions.filter((e) => e.source === "builtin"));
-let installedExts = $derived(extensions.filter((e) => e.source !== "builtin"));
+let sortedExts = $derived([
+  ...extensions.filter((e) => e.source === "builtin"),
+  ...extensions.filter((e) => e.source !== "builtin"),
+]);
 </script>
 
 {#if loading}
@@ -118,7 +120,7 @@ let installedExts = $derived(extensions.filter((e) => e.source !== "builtin"));
         <span class="column-label">Enabled</span>
       </div>
 
-      {#each builtinExts as ext (ext.id)}
+      {#each sortedExts as ext (ext.id)}
         <div class="ext-row">
           <label class="enabled-toggle" title={ext.enabled ? "Enabled" : "Disabled"}>
             <input
@@ -137,49 +139,22 @@ let installedExts = $derived(extensions.filter((e) => e.source !== "builtin"));
               <div class="ext-desc">{ext.description}</div>
             {/if}
             <div class="ext-meta">
-              {ext.id} &middot; v{ext.version} &middot; built-in
+              {ext.id} &middot; v{ext.version} &middot; {ext.source}
             </div>
           </div>
+          {#if ext.source === "npm" && ext.package}
+            <div class="ext-actions">
+              <Button
+                variant="danger"
+                onclick={() => handleUninstall(ext)}
+                disabled={actionLoading !== null}
+              >
+                {actionLoading === ext.id ? "..." : "Uninstall"}
+              </Button>
+            </div>
+          {/if}
         </div>
       {/each}
-
-      {#if installedExts.length > 0}
-        {#each installedExts as ext (ext.id)}
-          <div class="ext-row">
-            <label class="enabled-toggle" title={ext.enabled ? "Enabled" : "Disabled"}>
-              <input
-                type="checkbox"
-                checked={ext.enabled}
-                disabled={actionLoading !== null}
-                onchange={() => toggleEnabled(ext)}
-              />
-              <span class="toggle-track">
-                <span class="toggle-thumb"></span>
-              </span>
-            </label>
-            <div class="ext-info">
-              <div class="ext-name">{ext.name}</div>
-              {#if ext.description}
-                <div class="ext-desc">{ext.description}</div>
-              {/if}
-              <div class="ext-meta">
-                {ext.id} &middot; v{ext.version} &middot; {ext.source}
-              </div>
-            </div>
-            {#if ext.source === "npm" && ext.package}
-              <div class="ext-actions">
-                <Button
-                  variant="danger"
-                  onclick={() => handleUninstall(ext)}
-                  disabled={actionLoading !== null}
-                >
-                  {actionLoading === ext.id ? "..." : "Uninstall"}
-                </Button>
-              </div>
-            {/if}
-          </div>
-        {/each}
-      {/if}
     </div>
   {/if}
 {/if}

@@ -493,9 +493,7 @@ export async function loadAllExtensions(app: Hono, authMw: MiddlewareHandler): P
 
   const disabledIds = new Set(readGlobalConfig().disabledExtensions ?? []);
 
-  // Build tagged list for dedup
-  type Tagged = { manifest: ExtensionManifest; source: ExtensionSource; package?: string };
-  const all: Tagged[] = [
+  const all: DiscoveredExtension[] = [
     ...builtins.map((m) => ({ manifest: m, source: "builtin" as const })),
     ...installed.map((i) => ({ manifest: i.manifest, source: "npm" as const, package: i.package })),
     ...local.map((m) => ({ manifest: m, source: "local" as const })),
@@ -583,6 +581,9 @@ export function getAllDiscoveredExtensions(): DiscoveredExtensionInfo[] {
 }
 
 export function setExtensionEnabled(id: string, enabled: boolean): void {
+  if (!discovered.find((d) => d.manifest.id === id)) {
+    throw new Error(`Extension "${id}" not found`);
+  }
   const config = readGlobalConfig();
   const disabled = new Set(config.disabledExtensions ?? []);
   if (enabled) {
@@ -616,7 +617,12 @@ function writeExtensionsConfig(packages: string[]): void {
   writeFileSync(configPath, `${JSON.stringify(packages, null, 2)}\n`);
 }
 
+const VALID_NPM_PACKAGE = /^(@[a-z0-9-~][a-z0-9._-~]*\/)?[a-z0-9-~][a-z0-9._-~]*(@[^\s]+)?$/;
+
 export async function installNpmExtension(pkg: string): Promise<void> {
+  if (!VALID_NPM_PACKAGE.test(pkg)) {
+    throw new Error(`Invalid package name: "${pkg}"`);
+  }
   const packages = readExtensionsConfig();
   if (packages.includes(pkg)) {
     throw new Error(`Extension "${pkg}" is already installed`);
@@ -676,8 +682,8 @@ async function cleanupExtensionSkills(pkg: string): Promise<void> {
       try {
         await removeSharedSkill(skillId);
         log.info(`removed skill "${skillId}" from extension ${pkg}`);
-      } catch {
-        // Skill may not exist in shared pool — that's fine
+      } catch (err) {
+        log.warn(`failed to remove skill "${skillId}" for extension ${pkg}`, log.errorData(err));
       }
     }
   } catch (err) {

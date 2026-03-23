@@ -26,7 +26,11 @@ const app = new Hono<AuthEnv>()
     if (typeof body.enabled !== "boolean") {
       return c.json({ error: "enabled must be a boolean" }, 400);
     }
-    setExtensionEnabled(id, body.enabled);
+    try {
+      setExtensionEnabled(id, body.enabled);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 404);
+    }
     return c.json({ ok: true, requiresRestart: true });
   })
 
@@ -41,7 +45,10 @@ const app = new Hono<AuthEnv>()
       await installNpmExtension(pkg);
       return c.json({ ok: true, requiresRestart: true });
     } catch (err) {
-      return c.json({ error: (err as Error).message }, 400);
+      const message = (err as Error).message;
+      const isValidation =
+        message.includes("already installed") || message.includes("Invalid package");
+      return c.json({ error: message }, isValidation ? 400 : 500);
     }
   })
 
@@ -52,7 +59,9 @@ const app = new Hono<AuthEnv>()
       await uninstallNpmExtension(pkg);
       return c.json({ ok: true, requiresRestart: true });
     } catch (err) {
-      return c.json({ error: (err as Error).message }, 400);
+      const message = (err as Error).message;
+      const isValidation = message.includes("not installed");
+      return c.json({ error: message }, isValidation ? 400 : 500);
     }
   });
 

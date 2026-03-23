@@ -21,6 +21,7 @@ import type {
   Variant,
 } from "@volute/api";
 import type { CursorResponse } from "@volute/api/pagination";
+import type { ExtensionManagementInfo } from "./extensions";
 
 const V1 = "/api/v1";
 
@@ -658,8 +659,6 @@ export async function uploadMindAvatar(name: string, file: File): Promise<void> 
 }
 
 // --- Extensions management ---
-
-import type { ExtensionManagementInfo } from "./extensions";
 
 export function fetchAllExtensions(): Promise<ExtensionManagementInfo[]> {
   return get("/api/extensions/all");
