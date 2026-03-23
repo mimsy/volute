@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, type SQL, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import {
@@ -2809,7 +2809,49 @@ const app = new Hono<AuthEnv>()
 
     // Default "summary" preset reads from the unified summaries table
     if (!effectivePreset || effectivePreset === "summary") {
-      const sumConditions = [eq(summaries.mind, name), eq(summaries.period, "turn")];
+      const sumConditions: SQL[] = [eq(summaries.mind, name), eq(summaries.period, "turn")];
+
+      // Join through turns to filter by session/channel when requested
+      const needsJoin = !!(channel || session);
+      if (session) {
+        sumConditions.push(eq(turns.session, session));
+      }
+
+      if (needsJoin) {
+        const sumRows = await db
+          .select({
+            id: summaries.id,
+            mind: summaries.mind,
+            period: summaries.period,
+            period_key: summaries.period_key,
+            content: summaries.content,
+            metadata: summaries.metadata,
+            created_at: summaries.created_at,
+            session: turns.session,
+          })
+          .from(summaries)
+          .innerJoin(turns, eq(turns.id, summaries.period_key))
+          .where(and(...sumConditions))
+          .orderBy(desc(summaries.created_at))
+          .limit(limit)
+          .offset(offset);
+        return c.json(
+          sumRows.map((r) => ({
+            id: r.id,
+            mind: r.mind,
+            type: "summary",
+            channel: null,
+            session: r.session,
+            sender: null,
+            message_id: null,
+            content: r.content,
+            metadata: r.metadata,
+            turn_id: r.period_key,
+            created_at: r.created_at,
+          })),
+        );
+      }
+
       const sumRows = await db
         .select()
         .from(summaries)
@@ -2817,7 +2859,6 @@ const app = new Hono<AuthEnv>()
         .orderBy(desc(summaries.created_at))
         .limit(limit)
         .offset(offset);
-      // Format as HistoryMessage-compatible rows for the CLI
       return c.json(
         sumRows.map((r) => ({
           id: r.id,

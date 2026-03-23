@@ -9,16 +9,18 @@ import { messages, mindHistory, summaries, turns } from "../schema.js";
 
 const sLog = log.child("summarizer");
 
-export type Period = "turn" | "hour" | "day" | "week" | "month";
+/** Periods that participate in timer-driven periodic summarization */
+export type TimerPeriod = "hour" | "day" | "week" | "month";
+
+/** All summary periods including event-driven turn summaries */
+export type Period = "turn" | TimerPeriod;
 
 const SYSTEM_MIND = "_system";
 
 // ── Period key helpers (all UTC) ──
 
-export function getPeriodKey(date: Date, period: Period): string {
+export function getPeriodKey(date: Date, period: TimerPeriod): string {
   switch (period) {
-    case "turn":
-      throw new Error("Turn period keys are turn IDs, not date-derived");
     case "hour":
       return `${date.toISOString().slice(0, 10)}T${String(date.getUTCHours()).padStart(2, "0")}`;
     case "day":
@@ -38,10 +40,8 @@ function getISOWeekKey(date: Date): string {
   return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, "0")}`;
 }
 
-export function getPreviousPeriodKey(key: string, period: Period): string {
+export function getPreviousPeriodKey(key: string, period: TimerPeriod): string {
   switch (period) {
-    case "turn":
-      throw new Error("Cannot compute previous turn key");
     case "hour": {
       const d = new Date(`${key.slice(0, 10)}T${key.slice(11)}:00:00Z`);
       d.setUTCHours(d.getUTCHours() - 1);
@@ -76,10 +76,11 @@ function isoWeekToDate(weekKey: string): Date {
   return monday;
 }
 
-export function getTimeRange(periodKey: string, period: Period): { start: string; end: string } {
+export function getTimeRange(
+  periodKey: string,
+  period: TimerPeriod,
+): { start: string; end: string } {
   switch (period) {
-    case "turn":
-      throw new Error("Turn periods don't have time ranges");
     case "hour": {
       const start = `${periodKey.slice(0, 10)} ${periodKey.slice(11)}:00:00`;
       const d = new Date(`${periodKey.slice(0, 10)}T${periodKey.slice(11)}:00:00Z`);
@@ -388,6 +389,22 @@ export async function summarizeTurn(
       .onConflictDoNothing()
       .returning({ id: summaries.id });
     summaryId = result[0]?.id;
+
+    // If conflict (duplicate), look up existing row for linking
+    if (summaryId == null) {
+      const existing = await db
+        .select({ id: summaries.id })
+        .from(summaries)
+        .where(
+          and(
+            eq(summaries.mind, mind),
+            eq(summaries.period, "turn"),
+            eq(summaries.period_key, periodKey),
+          ),
+        )
+        .get();
+      summaryId = existing?.id;
+    }
   } catch (err) {
     sLog.error(
       `failed to persist turn summary for ${mind} (events ${fromId}-${toId})`,
@@ -426,9 +443,6 @@ async function setSummaryId(turnId: string, summaryId: number): Promise<void> {
 }
 
 // ── Periodic summarization (timer-driven) ──
-
-/** Periods that can be used with summarizePeriod (excludes "turn" which has its own flow) */
-export type TimerPeriod = "hour" | "day" | "week" | "month";
 
 function getChildPeriod(period: TimerPeriod): Period {
   switch (period) {
@@ -734,7 +748,11 @@ async function processHour(periodKey: string): Promise<void> {
   const { start, end } = getTimeRange(periodKey, "hour");
   const minds = await mindsWithTurnSummaries(start, end);
   for (const mind of minds) {
-    await summarizePeriod(mind, "hour", periodKey);
+    try {
+      await summarizePeriod(mind, "hour", periodKey);
+    } catch (err) {
+      sLog.error(`failed to summarize hour for ${mind} (${periodKey})`, log.errorData(err));
+    }
   }
   if (minds.length > 0) {
     await summarizeSystem("hour", periodKey);
@@ -744,7 +762,11 @@ async function processHour(periodKey: string): Promise<void> {
 async function processDay(periodKey: string): Promise<void> {
   const minds = await mindsWithSummaries("hour", `${periodKey}%`);
   for (const mind of minds) {
-    await summarizePeriod(mind, "day", periodKey);
+    try {
+      await summarizePeriod(mind, "day", periodKey);
+    } catch (err) {
+      sLog.error(`failed to summarize day for ${mind} (${periodKey})`, log.errorData(err));
+    }
   }
   if (minds.length > 0) {
     await summarizeSystem("day", periodKey);
@@ -757,7 +779,11 @@ async function processWeek(periodKey: string): Promise<void> {
   const endKey = end.slice(0, 10);
   const minds = await mindsWithDailySummariesInRange(startKey, endKey);
   for (const mind of minds) {
-    await summarizePeriod(mind, "week", periodKey);
+    try {
+      await summarizePeriod(mind, "week", periodKey);
+    } catch (err) {
+      sLog.error(`failed to summarize week for ${mind} (${periodKey})`, log.errorData(err));
+    }
   }
   if (minds.length > 0) {
     await summarizeSystem("week", periodKey);
@@ -767,7 +793,11 @@ async function processWeek(periodKey: string): Promise<void> {
 async function processMonth(periodKey: string): Promise<void> {
   const minds = await mindsWithSummaries("day", `${periodKey}%`);
   for (const mind of minds) {
-    await summarizePeriod(mind, "month", periodKey);
+    try {
+      await summarizePeriod(mind, "month", periodKey);
+    } catch (err) {
+      sLog.error(`failed to summarize month for ${mind} (${periodKey})`, log.errorData(err));
+    }
   }
   if (minds.length > 0) {
     await summarizeSystem("month", periodKey);
@@ -856,8 +886,8 @@ export class Summarizer {
   private async tick(): Promise<void> {
     try {
       if (!this.hasBackfilled) {
-        this.hasBackfilled = true;
         await backfill();
+        this.hasBackfilled = true;
       }
 
       const now = new Date();

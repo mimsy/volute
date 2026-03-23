@@ -145,7 +145,7 @@ function formatRowCompact(row: HistoryRow): string {
 type MetaSummaryRow = {
   id: number;
   mind: string;
-  period: string;
+  period: "hour" | "day" | "week" | "month";
   period_key: string;
   content: string;
   metadata: string | null;
@@ -228,7 +228,9 @@ export async function run(args: string[]) {
       try {
         const data = (await res.json()) as { error?: string };
         if (data.error) errorMsg = data.error;
-      } catch {}
+      } catch {
+        // JSON body may not be present; fall through to status-code message
+      }
       console.error(errorMsg);
       process.exit(1);
     }
