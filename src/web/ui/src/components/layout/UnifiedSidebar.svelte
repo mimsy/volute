@@ -325,10 +325,6 @@ let isSystemActive = $derived(
     style:left="{menuPos.left}px"
     onclick={(e) => e.stopPropagation()}
   >
-    <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "history")}>
-      <Icon kind="history" class="menu-icon" />
-      History
-    </button>
     <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "files")}>
       <Icon kind="folder" class="menu-icon" />
       Files

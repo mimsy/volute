@@ -203,9 +203,7 @@ let showRightPanelProfile = $derived(!!rightPanelMind);
 
 // Show right panel for mind chat views and channel views
 let hasRightPanel = $derived(
-  (selection.kind === "mind" &&
-    (!selection.section || selection.section === "chat") &&
-    !!rightPanelMind) ||
+  (selection.kind === "mind" && !!rightPanelMind) ||
     (selection.kind === "channel" && !!activeConv) ||
     !!(activeModal === "mind" && selectedModalMind),
 );
@@ -770,7 +768,7 @@ function handleGlobalClick(e: MouseEvent) {
               </div>
               {#if hasRightPanel && rightPanelCollapsed}
                 <button class="panel-reopen" onclick={toggleRightPanel} title="Show sidebar">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+                  <Icon kind="history" />
                 </button>
               {/if}
             </div>
@@ -1236,7 +1234,7 @@ function handleGlobalClick(e: MouseEvent) {
     background: var(--bg-2);
   }
 
-  .panel-reopen svg {
+  .panel-reopen :global(svg) {
     width: 16px;
     height: 16px;
   }
