@@ -15,6 +15,7 @@ import { formatRelativeTime } from "../lib/format";
 import { navigate } from "../lib/navigate";
 import { activeMinds } from "../lib/stores.svelte";
 import { groupToolEvents } from "../lib/tool-groups";
+import { getCategoryColor, getCategoryIcon } from "../lib/tool-names";
 import ToolGroupComponent from "./chat/ToolGroup.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
 import ReadOnlyChatModal from "./modals/ReadOnlyChatModal.svelte";
@@ -397,40 +398,50 @@ async function loadTurns(offset: number) {
   loading = false;
 }
 
-async function loadSummaries(oldestTurnTime: string) {
+async function loadSummaries() {
   try {
+    const now = new Date();
+
+    // Current hour boundary (start of current hour)
+    const currentHourStart = new Date(now);
+    currentHourStart.setMinutes(0, 0, 0);
+    const hourCutoff = currentHourStart.toISOString();
+
+    // Today boundary (start of today)
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const dayCutoff = todayStart.toISOString().slice(0, 10); // "2026-03-23"
+
+    // Week boundary (7 days ago)
+    const weekAgo = new Date(todayStart);
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const weekCutoff = weekAgo.toISOString().slice(0, 10);
+
+    // Load hours for today (before current hour)
     const hours = await fetchSummaries({
       mind: name,
       period: "hour",
-      to: oldestTurnTime,
-      limit: 48,
+      from: dayCutoff,
+      to: hourCutoff,
+      limit: 24,
     });
     hourSummaries = hours.sort((a, b) => a.period_key.localeCompare(b.period_key));
 
-    // Load from before the *earliest* hour, which is the first after sorting
-    const hourBoundary =
-      hours.length > 0
-        ? periodKeyToDate("hour", hours[0].period_key).toISOString()
-        : oldestTurnTime;
-
-    const days = await fetchSummaries({ mind: name, period: "day", to: hourBoundary, limit: 30 });
+    // Load days for last week (before today)
+    const days = await fetchSummaries({
+      mind: name,
+      period: "day",
+      from: weekCutoff,
+      to: dayCutoff,
+      limit: 7,
+    });
     daySummaries = days.sort((a, b) => a.period_key.localeCompare(b.period_key));
 
-    const dayBoundary =
-      days.length > 0 ? periodKeyToDate("day", days[0].period_key).toISOString() : hourBoundary;
-
-    const weeks = await fetchSummaries({ mind: name, period: "week", to: dayBoundary, limit: 12 });
+    // Load weeks (before last week)
+    const weeks = await fetchSummaries({ mind: name, period: "week", to: weekCutoff, limit: 12 });
     weekSummaries = weeks.sort((a, b) => a.period_key.localeCompare(b.period_key));
 
-    const weekBoundary =
-      weeks.length > 0 ? periodKeyToDate("week", weeks[0].period_key).toISOString() : dayBoundary;
-
-    const months = await fetchSummaries({
-      mind: name,
-      period: "month",
-      to: weekBoundary,
-      limit: 12,
-    });
+    // Load months (for everything)
+    const months = await fetchSummaries({ mind: name, period: "month", limit: 12 });
     monthSummaries = months.sort((a, b) => a.period_key.localeCompare(b.period_key));
 
     summariesLoaded = true;
@@ -488,47 +499,50 @@ async function toggleSummaryExpand(summary: SummaryRow) {
 // Build the combined timeline items list
 let timelineItems = $derived.by(() => {
   const items: TimelineItem[] = [];
+  const now = new Date();
 
-  // Month summaries first (oldest)
-  if (monthSummaries.length > 0) {
-    items.push({ kind: "separator", label: "Months" });
-    for (const s of monthSummaries) {
-      items.push({ kind: "summary", summary: s });
-    }
+  // Current hour start
+  const currentHourStart = new Date(now);
+  currentHourStart.setMinutes(0, 0, 0);
+  const hourCutoffMs = currentHourStart.getTime();
+
+  // Monthly summaries (oldest)
+  for (const s of monthSummaries) items.push({ kind: "summary", summary: s });
+
+  // Weekly summaries
+  for (const s of weekSummaries) items.push({ kind: "summary", summary: s });
+
+  // Separator if transitioning from week/month to day level
+  if ((monthSummaries.length > 0 || weekSummaries.length > 0) && daySummaries.length > 0) {
+    items.push({ kind: "separator", label: "Daily" });
   }
 
-  // Week summaries
-  if (weekSummaries.length > 0) {
-    items.push({ kind: "separator", label: "Weeks" });
-    for (const s of weekSummaries) {
-      items.push({ kind: "summary", summary: s });
-    }
+  // Daily summaries
+  for (const s of daySummaries) items.push({ kind: "summary", summary: s });
+
+  // Separator before hourly
+  if (daySummaries.length > 0 && hourSummaries.length > 0) {
+    items.push({ kind: "separator", label: "Earlier today" });
+  } else if (items.length > 0 && hourSummaries.length > 0) {
+    items.push({ kind: "separator", label: "Earlier today" });
   }
 
-  // Day summaries
-  if (daySummaries.length > 0) {
-    items.push({ kind: "separator", label: "Days" });
-    for (const s of daySummaries) {
-      items.push({ kind: "summary", summary: s });
-    }
+  // Hourly summaries
+  for (const s of hourSummaries) items.push({ kind: "summary", summary: s });
+
+  // Only turns from the current hour (or active turns)
+  const recentTurns = turnsData.filter((t) => {
+    const turnTime = new Date(t.created_at + (t.created_at.endsWith("Z") ? "" : "Z")).getTime();
+    return turnTime >= hourCutoffMs || t.status === "active" || streamingEvents.has(t.id);
+  });
+
+  // Separator before turns
+  if (items.length > 0 && recentTurns.length > 0) {
+    items.push({ kind: "separator", label: "Recent" });
   }
 
-  // Hour summaries
-  if (hourSummaries.length > 0) {
-    items.push({ kind: "separator", label: "Earlier" });
-    for (const s of hourSummaries) {
-      items.push({ kind: "summary", summary: s });
-    }
-  }
-
-  // Individual turns (most recent, at bottom)
-  if (turnsData.length > 0) {
-    if (items.length > 0) {
-      items.push({ kind: "separator", label: "Recent" });
-    }
-    for (const t of turnsData) {
-      items.push({ kind: "turn", turn: t });
-    }
+  for (const t of recentTurns) {
+    items.push({ kind: "turn", turn: t });
   }
 
   return items;
@@ -587,8 +601,7 @@ $effect(() => {
 // Load summaries once turns are available
 $effect(() => {
   if (turnsData.length > 0 && !summariesLoaded && !loading) {
-    const oldestTurn = turnsData[0];
-    loadSummaries(oldestTurn.created_at);
+    loadSummaries();
   }
 });
 
@@ -648,51 +661,81 @@ function jumpToLatest() {
           {:else if item.kind === "summary"}
             {@const summary = item.summary}
             {@const isExpanded = expandedSummaries.has(summary.id)}
-            {@const isLoading = loadingChildren.has(summary.id)}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div
-              class="turn-row summary-row"
-              class:summary-expanded={isExpanded}
-              onclick={() => toggleSummaryExpand(summary)}
-              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSummaryExpand(summary); } }}
-            >
-              <div class="turn-time turn-time-wide">
+            <div class="turn-row" data-summary-id={summary.id}>
+              <div class="turn-time">
                 {formatPeriodTime(summary.period, summary.period_key)}
               </div>
-              <div class="turn-rail">
+              <div
+                class="turn-rail"
+                class:turn-rail-expanded={isExpanded}
+                role="button"
+                tabindex="0"
+                onclick={(e) => { e.stopPropagation(); toggleSummaryExpand(summary); }}
+                onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSummaryExpand(summary); } }}
+              >
                 <div class="turn-dot summary-dot"></div>
               </div>
               <div class="turn-body">
-                <div class="summary-content">
-                  <span class="summary-period-badge">{summary.period}</span>
-                  <span class="summary-text">{summary.content}</span>
-                  {#if isLoading}
-                    <span class="summary-loading">loading...</span>
+                <div class="turn-summary">
+                  <HistoryEvent
+                    event={{
+                      id: summary.id,
+                      mind: summary.mind,
+                      channel: "",
+                      session: null,
+                      sender: null,
+                      message_id: null,
+                      type: "summary",
+                      content: summary.content,
+                      metadata: summary.metadata ? JSON.stringify(summary.metadata) : null,
+                      turn_id: null,
+                      created_at: summary.created_at,
+                    }}
+                    mindName={summary.mind}
+                    expandable
+                    compact
+                    onexpand={(expanded) => {
+                      if (expanded) toggleSummaryExpand(summary);
+                      else if (expandedSummaries.has(summary.id)) toggleSummaryExpand(summary);
+                    }}
+                  />
+                  {#if isExpanded}
+                    {@const children = expandedSummaries.get(summary.id) ?? []}
+                    {#if loadingChildren.has(summary.id)}
+                      <div class="turn-loading" style="padding: 8px 0 8px 16px; font-size: 12px; color: var(--text-2); font-style: italic;">loading...</div>
+                    {:else}
+                      {#each children as child (('period' in child) ? `s-${child.id}` : `t-${child.id}`)}
+                        {#if 'period' in child}
+                          {@const childSummary = child as SummaryRow}
+                          <div class="turn-row" style="padding-left: 20px;">
+                            <div class="turn-time" style="width: 60px;">
+                              {formatPeriodTime(childSummary.period, childSummary.period_key)}
+                            </div>
+                            <div class="turn-rail">
+                              <div class="turn-dot summary-dot"></div>
+                            </div>
+                            <div class="turn-body">
+                              <span style="font-size: 13px; color: var(--text-0);">{childSummary.content}</span>
+                            </div>
+                          </div>
+                        {:else}
+                          {@const childTurn = child as TurnRow}
+                          <div class="turn-row" style="padding-left: 20px;">
+                            <div class="turn-time" style="width: 60px;">
+                              {formatRelativeTime(childTurn.created_at)}
+                            </div>
+                            <div class="turn-rail">
+                              <div class="turn-dot"></div>
+                            </div>
+                            <div class="turn-body">
+                              <span style="font-size: 13px; color: var(--text-0);">{childTurn.summary ?? "(no summary)"}</span>
+                            </div>
+                          </div>
+                        {/if}
+                      {/each}
+                    {/if}
                   {/if}
                 </div>
-                {#if isExpanded}
-                  {@const children = expandedSummaries.get(summary.id) ?? []}
-                  <div class="summary-children">
-                    {#each children as child (('period' in child) ? `s-${child.id}` : `t-${child.id}`)}
-                      {#if 'period' in child}
-                        {@const childSummary = child as SummaryRow}
-                        <div class="summary-child-row">
-                          <span class="summary-child-time">{formatPeriodTime(childSummary.period, childSummary.period_key)}</span>
-                          <span class="summary-child-text">{childSummary.content}</span>
-                        </div>
-                      {:else}
-                        {@const childTurn = child as TurnRow}
-                        <div class="summary-child-row">
-                          <span class="summary-child-time">{formatRelativeTime(childTurn.created_at)}</span>
-                          <span class="summary-child-text">{childTurn.summary ?? childTurn.trigger?.content ?? "(no summary)"}</span>
-                        </div>
-                      {/if}
-                    {/each}
-                    {#if children.length === 0 && !isLoading}
-                      <div class="summary-child-empty">No details available</div>
-                    {/if}
-                  </div>
-                {/if}
               </div>
             </div>
           {:else}
@@ -705,10 +748,11 @@ function jumpToLatest() {
               {/if}
               {formatRelativeTime(turn.created_at)}
             </div>
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
               class="turn-rail"
               class:turn-rail-expanded={expandedTurns.has(turn.id) || turn.status === "active"}
+              role="button"
+              tabindex="0"
               onclick={(e) => {
                 if (!turn.summary) return;
                 e.stopPropagation();
@@ -726,7 +770,6 @@ function jumpToLatest() {
                       <button class="peek-btn" aria-label="View conversation" onclick={(e) => e.stopPropagation()}>
                         <Icon kind="chat" />
                       </button>
-                      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
                       <div class="peek-popover" role="button" tabindex="0"
                         onclick={(e) => { e.stopPropagation(); openConversation(conv, turn); }}
                         onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); openConversation(conv, turn); } }}
@@ -854,7 +897,14 @@ function jumpToLatest() {
                         {@const groups = groupToolEvents(events)}
                         {#each groups as groupItem (groupItem.kind === "tool-group" ? `tg-${groupItem.toolUse.id}` : `ev-${groupItem.event.id}`)}
                           {#if groupItem.kind === "tool-group"}
-                            <ToolGroupComponent group={groupItem} mindName={turn.mind} turnStatus="active" />
+                            {@const catColor = getCategoryColor(groupItem.category)}
+                            {@const catIcon = getCategoryIcon(groupItem.category)}
+                            <div class="event" style:--type-color={catColor}>
+                              <div class="marker marker-icon" style:color={catColor}>
+                                <Icon kind={catIcon} />
+                              </div>
+                              <ToolGroupComponent group={groupItem} mindName={turn.mind} turnStatus="active" />
+                            </div>
                           {:else}
                             <HistoryEvent event={groupItem.event} mindName={turn.mind} />
                           {/if}
@@ -1371,6 +1421,40 @@ function jumpToLatest() {
     padding-bottom: 0;
   }
 
+  .active-turn-branch .event {
+    position: relative;
+    padding: 6px 8px 6px 20px;
+  }
+
+  .active-turn-branch .marker {
+    position: absolute;
+    left: -5px;
+    top: 12px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    z-index: 1;
+  }
+
+  .active-turn-branch .marker-icon {
+    width: 22px;
+    height: 22px;
+    left: -12px;
+    top: 5px;
+    border-radius: var(--radius);
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 3;
+  }
+
+  .active-turn-branch .marker-icon :global(svg) {
+    width: 13px;
+    height: 13px;
+  }
+
   .active-turn-header {
     margin-bottom: 4px;
     margin-left: 14px;
@@ -1467,106 +1551,11 @@ function jumpToLatest() {
     letter-spacing: 0.5px;
   }
 
-  /* Summary rows */
-  .summary-row {
-    cursor: pointer;
-  }
-  .summary-row:hover {
-    background: var(--bg-1);
-    border-radius: var(--radius);
-  }
-
+  /* Summary dot style */
   .summary-dot {
     border: 2px solid var(--text-2);
-    background: var(--bg-1) !important;
-  }
-
-  .turn-time-wide {
-    width: 80px;
-  }
-
-  .summary-content {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding-top: 8px;
-    padding-bottom: 8px;
-    min-height: 0;
-  }
-
-  .summary-period-badge {
-    font-size: 10px;
-    color: var(--text-2);
-    background: var(--bg-2);
-    padding: 1px 5px;
-    border-radius: var(--radius);
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-    flex-shrink: 0;
-  }
-
-  .summary-text {
-    font-size: 13px;
-    color: var(--text-1);
-    line-height: 1.4;
-    min-width: 0;
-  }
-
-  .summary-loading {
-    font-size: 11px;
-    color: var(--text-2);
-    animation: pulse 1.5s infinite;
-    flex-shrink: 0;
-  }
-
-  /* Expanded summary children */
-  .summary-children {
-    padding: 4px 0 8px 20px;
-    border-left: 1px solid var(--border);
-    margin-left: 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .summary-child-row {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 2px 0;
-  }
-
-  .summary-child-time {
-    font-size: 11px;
-    color: var(--text-2);
-    white-space: nowrap;
-    flex-shrink: 0;
-    min-width: 60px;
-  }
-
-  .summary-child-text {
-    font-size: 12px;
-    color: var(--text-1);
-    line-height: 1.4;
-    min-width: 0;
-  }
-
-  .summary-child-empty {
-    font-size: 12px;
-    color: var(--text-2);
-    font-style: italic;
-    padding: 4px 0;
-  }
-
-  .summary-expanded {
     background: var(--bg-1);
-    border-radius: var(--radius);
-  }
-
-  @container (max-width: 400px) {
-    .turn-time-wide {
-      display: none;
-    }
+    box-sizing: border-box;
   }
 
   .empty-hint {

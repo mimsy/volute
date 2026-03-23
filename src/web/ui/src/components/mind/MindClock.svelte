@@ -286,7 +286,7 @@ let hasContent = $derived(
             <span class="summary-detail">{currentItem.detail}</span>
           </span>
         {/if}
-        {#if nextItem && (!currentItem || nextItem.label !== currentItem.label)}
+        {#if nextItem}
           {#if currentItem}
             <span class="summary-sep">&middot;</span>
           {/if}

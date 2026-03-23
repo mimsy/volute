@@ -203,9 +203,7 @@ let showRightPanelProfile = $derived(!!rightPanelMind);
 
 // Show right panel for mind chat views and channel views
 let hasRightPanel = $derived(
-  (selection.kind === "mind" &&
-    (!selection.section || selection.section === "chat") &&
-    !!rightPanelMind) ||
+  (selection.kind === "mind" && !!rightPanelMind) ||
     (selection.kind === "channel" && !!activeConv) ||
     !!(activeModal === "mind" && selectedModalMind),
 );
@@ -267,8 +265,7 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
     crumbs.push({ label: "system", action: handleSystemHome });
     crumbs.push({ label: "chat" });
   } else if (sel.kind === "system-history") {
-    crumbs.push({ label: "system", action: handleSystemHome });
-    crumbs.push({ label: "history" });
+    crumbs.push({ label: "system" });
   } else if (sel.kind === "settings") {
     crumbs.push({ label: "system", action: handleSystemHome });
     crumbs.push({ label: "settings" });
@@ -340,7 +337,7 @@ $effect(() => {
 $effect(() => {
   if (data.extensions.length > 0) {
     const fresh = parseSelection(data.extensions);
-    if (fresh.kind === "extension" && selection.kind === "home") {
+    if (fresh.kind === "extension" && selection.kind === "system-history") {
       selection = fresh;
     }
     if (
@@ -388,7 +385,7 @@ $effect(() => {
   const expected = selectionToPath(selection, data.extensions);
   const current = window.location.pathname + window.location.search;
   if (current !== expected) {
-    if (selection.kind === "home" && data.extensions.length === 0 && current !== "/") {
+    if (selection.kind === "system-history" && data.extensions.length === 0 && current !== "/") {
       // Skip — wait for extensions to load before deciding
     } else if (fromPopstate) {
       window.history.replaceState(null, "", expected);
@@ -474,7 +471,7 @@ async function handleDeleteConversation(id: string) {
   }
   reconnectActivity();
   if (activeConversationId === id) {
-    selection = { kind: "home" };
+    selection = { kind: "system-history" };
   }
 }
 
@@ -514,12 +511,12 @@ function onAuth(u: AuthUser) {
 function handleHideConversation(id: string) {
   hideConversation(id);
   if (activeConversationId === id) {
-    selection = { kind: "home" };
+    selection = { kind: "system-history" };
   }
 }
 
 function handleSystemHome() {
-  selection = { kind: "home" };
+  selection = { kind: "system-history" };
 }
 
 function handleSelectMind(name: string) {
@@ -651,7 +648,7 @@ function handleGlobalClick(e: MouseEvent) {
             <img src="/logo.png" alt="" class="sidebar-logo" />
             <span class="hover-dot"></span>
           </span>
-          <span class="sidebar-title">volute</span>
+          <span class="sidebar-title">{auth.localName || "volute"}</span>
         </button>
         <UnifiedSidebar
           minds={data.minds}
@@ -666,6 +663,10 @@ function handleGlobalClick(e: MouseEvent) {
             else if (section === "files") activeModal = "mindFiles";
             else if (section === "settings") activeModal = "mindSettings";
           }}
+          onSelectSystemSection={(section) => {
+            if (section === "shared-files") selection = { kind: "shared-files" };
+            else if (section === "settings") handleSelectSettings();
+          }}
           onSelectConversation={handleSelectConversation}
           onDeleteConversation={handleDeleteConversation}
           onBrowseChannels={() => (activeModal = "channelBrowser")}
@@ -677,7 +678,6 @@ function handleGlobalClick(e: MouseEvent) {
       {#if layout.sidebarOpen}
         <button class="sidebar-backdrop" aria-label="Close sidebar" onclick={closeSidebar}></button>
       {/if}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="resize-handle"
         role="separator"
@@ -720,19 +720,19 @@ function handleGlobalClick(e: MouseEvent) {
               <div class="mind-section-tabs">
                 <button
                   class="mind-section-tab"
-                  class:active={activeSystemSection === "system-chat"}
-                  onclick={() => { selection = { kind: "system-chat" }; }}
-                >
-                  <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg></span>
-                  <span class="tab-tooltip">Chat</span>
-                </button>
-                <button
-                  class="mind-section-tab"
                   class:active={activeSystemSection === "system-history"}
                   onclick={() => { selection = { kind: "system-history" }; }}
                 >
                   <span class="tab-icon">{@html icons.history}</span>
                   <span class="tab-tooltip">History</span>
+                </button>
+                <button
+                  class="mind-section-tab"
+                  class:active={activeSystemSection === "system-chat"}
+                  onclick={() => { selection = { kind: "system-chat" }; }}
+                >
+                  <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg></span>
+                  <span class="tab-tooltip">Chat</span>
                 </button>
                 {#each data.extensions as ext}
                   {#if ext.systemSection}
@@ -746,22 +746,6 @@ function handleGlobalClick(e: MouseEvent) {
                     </button>
                   {/if}
                 {/each}
-                <button
-                  class="mind-section-tab"
-                  class:active={activeSystemSection === "shared-files"}
-                  onclick={() => { selection = { kind: "shared-files" }; }}
-                >
-                  <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h5l2-2h5v11H2V4z"/></svg></span>
-                  <span class="tab-tooltip">Shared Files</span>
-                </button>
-                <button
-                  class="mind-section-tab"
-                  class:active={activeSystemSection === "settings"}
-                  onclick={handleSelectSettings}
-                >
-                  <span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M14 3.27A1.27 1.27 0 0 0 12.73 2h-1.46A1.27 1.27 0 0 0 10 3.27c0 .58-.4 1.07-.93 1.29a8 8 0 0 0-.26.1c-.53.23-1.16.16-1.57-.25a1.27 1.27 0 0 0-1.8 0l-1.03 1.03a1.27 1.27 0 0 0 0 1.8c.41.41.48 1.04.25 1.57a8 8 0 0 0-.1.25c-.22.54-.71.94-1.29.94A1.27 1.27 0 0 0 2 11.27v1.46A1.27 1.27 0 0 0 3.27 14c.58 0 1.07.4 1.29.93.03.09.07.17.1.26.23.53.16 1.16-.25 1.57a1.27 1.27 0 0 0 0 1.8l1.03 1.03a1.27 1.27 0 0 0 1.8 0c.41-.41 1.04-.48 1.57-.25.09.04.17.07.26.1.54.22.93.71.93 1.29A1.27 1.27 0 0 0 11.27 22h1.46A1.27 1.27 0 0 0 14 20.73c0-.58.4-1.07.93-1.29.09-.03.17-.07.26-.1.53-.23 1.16-.16 1.57.25a1.27 1.27 0 0 0 1.8 0l1.03-1.03a1.27 1.27 0 0 0 0-1.8c-.41-.41-.48-1.04-.25-1.57.04-.09.07-.17.1-.26.22-.54.71-.93 1.29-.93A1.27 1.27 0 0 0 22 12.73v-1.46A1.27 1.27 0 0 0 20.73 10c-.58 0-1.07-.4-1.29-.93a8 8 0 0 0-.1-.26c-.23-.53-.16-1.16.25-1.57a1.27 1.27 0 0 0 0-1.8l-1.03-1.03a1.27 1.27 0 0 0-1.8 0c-.41.41-1.04.48-1.57.25a8 8 0 0 0-.26-.1C14.4 4.34 14 3.85 14 3.27z"/></svg></span>
-                  <span class="tab-tooltip">Settings</span>
-                </button>
               </div>
             {/if}
             <div class="header-actions">
@@ -782,7 +766,7 @@ function handleGlobalClick(e: MouseEvent) {
               </div>
               {#if hasRightPanel && rightPanelCollapsed}
                 <button class="panel-reopen" onclick={toggleRightPanel} title="Show sidebar">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+                  <Icon kind="history" />
                 </button>
               {/if}
             </div>
@@ -807,7 +791,6 @@ function handleGlobalClick(e: MouseEvent) {
           {#if narrowViewport && rightPanelOpen}
             <button class="right-panel-backdrop" aria-label="Close panel" onclick={closeRightPanel}></button>
           {/if}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
             class="resize-handle right-resize-handle"
             role="separator"
@@ -825,9 +808,9 @@ function handleGlobalClick(e: MouseEvent) {
               {#key rightPanelMind.name}
                 <MindRightPanel
                   mind={rightPanelMind}
-                  onProfile={showRightPanelProfile ? () => {
-                    selection = { kind: "mind", name: rightPanelMind.name, section: "history" };
-                    if (activeModal === "mind") { activeModal = null; selectedModalMind = null; }
+                  onExpand={showRightPanelProfile ? () => {
+                    mindModalName = rightPanelMind.name;
+                    activeModal = "mindHistory";
                   } : undefined}
                   onChat={showRightPanelChat ? () => handleNewChatCreated(rightPanelMind.name) : undefined}
                 />
@@ -974,6 +957,12 @@ function handleGlobalClick(e: MouseEvent) {
     letter-spacing: 0.04em;
     margin-top: -4px;
     margin-left: -4px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.2;
   }
 
   @keyframes iridescent {
@@ -1243,7 +1232,7 @@ function handleGlobalClick(e: MouseEvent) {
     background: var(--bg-2);
   }
 
-  .panel-reopen svg {
+  .panel-reopen :global(svg) {
     width: 16px;
     height: 16px;
   }

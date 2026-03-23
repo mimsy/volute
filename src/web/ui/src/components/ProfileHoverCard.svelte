@@ -76,12 +76,14 @@ function handleMouseLeave() {
 }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
 <span
   class="hover-wrapper"
+  role="group"
   bind:this={wrapperEl}
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
+  onfocusin={handleMouseEnter}
+  onfocusout={handleMouseLeave}
 >
   {@render children()}
 </span>

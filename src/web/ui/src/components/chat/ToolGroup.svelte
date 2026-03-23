@@ -65,11 +65,12 @@ function formatArgs(args: unknown): string {
 }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="tool-group"
   class:expanded
   style:--cat-color={categoryColor}
+  role="button"
+  tabindex="0"
   onclick={() => { expanded = !expanded; }}
   onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); expanded = !expanded; } }}
 >
@@ -122,6 +123,7 @@ function formatArgs(args: unknown): string {
     line-height: 1.5;
     display: -webkit-box;
     -webkit-line-clamp: 4;
+    line-clamp: 4;
     -webkit-box-orient: vertical;
     overflow: hidden;
     white-space: pre-wrap;

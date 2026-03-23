@@ -7,7 +7,7 @@ import { daemonEmit, daemonRestart, type EventType } from "./lib/daemon-client.j
 import { runHooks } from "./lib/hook-loader.js";
 import { log, warn } from "./lib/logger.js";
 import { createSessionStore } from "./lib/session-store.js";
-import { loadPrompts, loadSystemPrompt } from "./lib/startup.js";
+import { getStartupContext, loadPrompts, loadSystemPrompt } from "./lib/startup.js";
 import { filterEvent, loadTransparencyPreset } from "./lib/transparency.js";
 import type {
   HandlerMeta,
@@ -76,6 +76,7 @@ export function createMind(options: {
 
   const sessionStore = createSessionStore(resolvePath(options.mindDir, ".mind/codex-sessions"));
   const hooksDir = resolvePath(options.cwd, ".local/hooks");
+  const startupContextPromise = getStartupContext().catch(() => null);
 
   // Write system prompt to file for Codex model_instructions_file
   const promptPath = resolvePath(options.mindDir, ".mind/system-prompt.md");
@@ -111,6 +112,9 @@ export function createMind(options: {
       },
     },
   });
+
+  // Track which sessions have received startup context
+  const startupContextInjected = new Set<string>();
 
   // --- Session lifecycle ---
 
@@ -197,6 +201,20 @@ export function createMind(options: {
 
     // Refresh system prompt before each turn (picks up MEMORY.md changes)
     refreshSystemPrompt();
+
+    // Inject startup context on the first turn of each session
+    if (!startupContextInjected.has(session.name)) {
+      startupContextInjected.add(session.name);
+      const startupContext = await startupContextPromise;
+      if (startupContext) {
+        emit(session, {
+          type: "context",
+          content: startupContext,
+          metadata: { source: "startup-context" },
+        });
+        text = `${startupContext}\n\n${text}`;
+      }
+    }
 
     // Run pre-prompt hooks
     try {

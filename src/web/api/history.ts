@@ -3,7 +3,15 @@ import { Hono } from "hono";
 import { getDb } from "../../lib/db.js";
 import { subscribeAll, subscribe as subscribeMindEvent } from "../../lib/events/mind-events.js";
 import log from "../../lib/logger.js";
-import { activity, mindHistory, summaries, turns } from "../../lib/schema.js";
+import {
+  activity,
+  conversationParticipants,
+  conversations,
+  mindHistory,
+  summaries,
+  turns,
+  users,
+} from "../../lib/schema.js";
 
 const history = new Hono()
   .get("/turns", async (c) => {
@@ -153,14 +161,121 @@ const history = new Hono()
       for (const r of triggerRows) triggerMap.set(r.id, r);
     }
 
-    // 6. Assemble response
+    // 6. Resolve channel slugs to conversation UUIDs
+    const allChannelSlugs = new Set<string>();
+    for (const [, channels] of msgsByTurnChannel) {
+      for (const ch of channels.keys()) allChannelSlugs.add(ch);
+    }
+
+    // Collect which minds use which DM slugs (needed to verify both participants)
+    const dmSlugMinds = new Map<string, Set<string>>();
+    for (const [turnId, channels] of msgsByTurnChannel) {
+      const mindName = turnMindMap.get(turnId);
+      if (!mindName) continue;
+      for (const ch of channels.keys()) {
+        if (ch.startsWith("@")) {
+          let minds = dmSlugMinds.get(ch);
+          if (!minds) {
+            minds = new Set();
+            dmSlugMinds.set(ch, minds);
+          }
+          minds.add(mindName);
+        }
+      }
+    }
+
+    const channelIdMap = new Map<string, string>();
+    try {
+      if (allChannelSlugs.size > 0) {
+        // Resolve channel conversations by name (strip # prefix, platform prefix)
+        const channelNames = [...allChannelSlugs]
+          .filter((s) => !s.startsWith("@"))
+          .map((s) => {
+            let name = s;
+            if (name.startsWith("#")) name = name.slice(1);
+            const colonIdx = name.indexOf(":");
+            if (colonIdx >= 0) name = name.substring(colonIdx + 1);
+            return { slug: s, name };
+          });
+        if (channelNames.length > 0) {
+          const channelRows = await db
+            .select({ id: conversations.id, name: conversations.name })
+            .from(conversations)
+            .where(
+              and(
+                eq(conversations.type, "channel"),
+                inArray(
+                  conversations.name,
+                  channelNames.map((c) => c.name),
+                ),
+              ),
+            );
+          const nameToId = new Map(channelRows.map((r) => [r.name, r.id]));
+          for (const { slug, name } of channelNames) {
+            const id = nameToId.get(name);
+            if (id) channelIdMap.set(slug, id);
+          }
+        }
+
+        // Resolve DM conversations by participant username, verifying the mind is also a participant
+        const dmSlugs = [...dmSlugMinds.keys()];
+        if (dmSlugs.length > 0) {
+          const targetNames = dmSlugs.map((s) => s.slice(1));
+          const cp2 = db.$with("cp2").as(
+            db
+              .select({
+                conversation_id: conversationParticipants.conversation_id,
+                username: users.username,
+              })
+              .from(conversationParticipants)
+              .innerJoin(users, eq(conversationParticipants.user_id, users.id)),
+          );
+          const dmRows = await db
+            .with(cp2)
+            .select({
+              id: conversations.id,
+              targetUsername: users.username,
+            })
+            .from(conversations)
+            .innerJoin(
+              conversationParticipants,
+              eq(conversations.id, conversationParticipants.conversation_id),
+            )
+            .innerJoin(users, eq(conversationParticipants.user_id, users.id))
+            .where(and(eq(conversations.type, "dm"), inArray(users.username, targetNames)));
+          for (const row of dmRows) {
+            const slug = `@${row.targetUsername}`;
+            const mindNames = dmSlugMinds.get(slug);
+            if (mindNames && !channelIdMap.has(slug)) {
+              // Verify the mind is also a participant in this conversation
+              const mindCheck = await db
+                .select({ id: conversationParticipants.user_id })
+                .from(conversationParticipants)
+                .innerJoin(users, eq(conversationParticipants.user_id, users.id))
+                .where(
+                  and(
+                    eq(conversationParticipants.conversation_id, row.id),
+                    inArray(users.username, [...mindNames]),
+                  ),
+                )
+                .get();
+              if (mindCheck) channelIdMap.set(slug, row.id);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      log.warn("Failed to resolve channel slugs to conversation IDs", log.errorData(err));
+    }
+
+    // 7. Assemble response
     const result = turnRows.map((t) => {
       const summary = summaryByTurn.get(t.id);
       const turnChannels = msgsByTurnChannel.get(t.id) ?? new Map<string, ConvEvent[]>();
       const convEntries = [...turnChannels.entries()].map(([channel, evts]) => {
         const { label, type } = getChannelLabel(channel);
         return {
-          id: channel,
+          id: channelIdMap.get(channel) ?? channel,
           label,
           type,
           messages: evts.map((m) => ({

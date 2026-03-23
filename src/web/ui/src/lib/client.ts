@@ -16,6 +16,7 @@ import type {
   Participant,
   Prompt,
   SharedSkill,
+  SummaryRow,
   TurnRow,
   UpdateResult,
   Variant,
@@ -250,6 +251,22 @@ export function fetchTurns(opts?: {
   return get(`${V1}/history/turns${qs ? `?${qs}` : ""}`);
 }
 
+export function fetchSummaries(opts: {
+  mind?: string;
+  period: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}): Promise<SummaryRow[]> {
+  const params = new URLSearchParams();
+  if (opts.mind) params.set("mind", opts.mind);
+  params.set("period", opts.period);
+  if (opts.from) params.set("from", opts.from);
+  if (opts.to) params.set("to", opts.to);
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  return get(`${V1}/history/summaries?${params}`);
+}
+
 // --- Variants ---
 
 export function fetchVariants(name: string): Promise<Variant[]> {
@@ -388,12 +405,16 @@ export function restartDaemon(): Promise<void> {
   return post(`${V1}/system/restart`);
 }
 
-export async function fetchSystemInfo(): Promise<{ system: string | null }> {
+export async function fetchSystemInfo(): Promise<{ system: string | null; name: string | null }> {
   try {
-    return await get<{ system: string | null }>(`${V1}/system/info`);
+    return await get<{ system: string | null; name: string | null }>(`${V1}/system/info`);
   } catch {
-    return { system: null };
+    return { system: null, name: null };
   }
+}
+
+export async function updateSystemName(name: string): Promise<void> {
+  await put(`${V1}/system/info`, { name });
 }
 
 export function systemRegister(name: string): Promise<{ system: string }> {
@@ -599,11 +620,11 @@ export type ScheduleEntry = {
 };
 
 export function fetchSleepConfig(name: string): Promise<SleepConfig> {
-  return get(`${V1}/minds/${enc(name)}/sleep`);
+  return get(`${V1}/minds/${enc(name)}/sleep/config`);
 }
 
 export function updateSleepConfig(name: string, config: Partial<SleepConfig>): Promise<void> {
-  return put(`${V1}/minds/${enc(name)}/sleep`, config);
+  return put(`${V1}/minds/${enc(name)}/sleep/config`, config);
 }
 
 export function fetchSchedules(name: string): Promise<ScheduleEntry[]> {

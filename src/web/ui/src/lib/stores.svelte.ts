@@ -13,6 +13,7 @@ export const auth = $state({
   user: null as AuthUser | null,
   checked: false,
   systemName: null as string | null,
+  localName: null as string | null,
   setupComplete: true,
   setupChecked: false,
   setupProgress: null as { hasSystem?: boolean; hasAccount?: boolean } | null,
@@ -48,6 +49,7 @@ export async function checkAuth() {
     if (u) {
       const info = await fetchSystemInfo();
       auth.systemName = info.system;
+      auth.localName = info.name;
     }
   } catch {
     auth.checked = true;
@@ -68,6 +70,7 @@ export async function handleAuth(u: AuthUser) {
   try {
     const info = await fetchSystemInfo();
     auth.systemName = info.system;
+    auth.localName = info.name;
   } catch {
     // systemName remains null — non-critical
   }

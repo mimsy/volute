@@ -165,8 +165,7 @@ function getConvLabel(conv: ConversationWithDetails): string {
                   Chat
                 </button>
               </div>
-              <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <div class="feed-card-body chat-body" bind:this={scrollEls[conv.id]} onscroll={(e) => {
+              <div class="feed-card-body chat-body" role="log" bind:this={scrollEls[conv.id]} onscroll={(e) => {
                 const el = e.currentTarget;
                 if (el.scrollTop < 10) el.scrollTop = 10;
               }}>
