@@ -409,35 +409,42 @@ async function loadSummaries() {
   try {
     const now = new Date();
 
-    // Current hour boundary (start of current hour)
-    // Period keys are UTC. Build cutoffs in UTC period_key format.
-    const utcDate = now.toISOString().slice(0, 10); // "2026-03-23" UTC
-    const utcHour = now.toISOString().slice(0, 13).replace(":", ""); // "2026-03-23T17"
-    // hourCutoff: current UTC hour key (don't show the in-progress hour)
-    const hourCutoff = `${utcDate}T${String(now.getUTCHours()).padStart(2, "0")}`;
-    const dayCutoff = utcDate;
+    // Period keys are UTC. We need boundaries based on local time concepts
+    // ("today", "yesterday") expressed as UTC period keys.
 
-    // Week boundary (7 days ago in UTC)
-    const weekAgo = new Date(now);
-    weekAgo.setUTCDate(weekAgo.getUTCDate() - 7);
+    // "Start of today" in local time → UTC ISO for period_key comparison.
+    // Period keys are UTC strings, so we compare directly against the ISO representation.
+    const todayLocalStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayUtcIso = todayLocalStart.toISOString(); // e.g. "2026-03-24T07:00:00.000Z"
+    // Hour keys are "YYYY-MM-DDTHH" — use the ISO prefix for from/to comparison
+    const todayHourFrom = `${todayUtcIso.slice(0, 10)}T${todayUtcIso.slice(11, 13)}`;
+    // Current UTC hour key (don't show the in-progress hour)
+    const hourCutoff = `${now.toISOString().slice(0, 10)}T${String(now.getUTCHours()).padStart(2, "0")}`;
+    // "Yesterday" boundary for daily summaries — use today's UTC ISO date
+    // (daily period keys that are < todayDayKey are definitely "yesterday" or earlier)
+    const todayDayKey = todayUtcIso.slice(0, 10);
+
+    // Week boundary (7 days ago)
+    const weekAgo = new Date(todayLocalStart);
+    weekAgo.setDate(weekAgo.getDate() - 7);
     const weekCutoff = weekAgo.toISOString().slice(0, 10);
 
-    // Load hours for today (before current hour)
+    // Load hours for today (from local start-of-day to current hour, in UTC keys)
     const hours = await fetchSummaries({
       mind: name,
       period: "hour",
-      from: dayCutoff,
+      from: todayHourFrom,
       to: hourCutoff,
       limit: 24,
     });
     hourSummaries = hours.sort((a, b) => a.period_key.localeCompare(b.period_key));
 
-    // Load days for last week (before today)
+    // Load days for last week (before today's day key)
     const days = await fetchSummaries({
       mind: name,
       period: "day",
       from: weekCutoff,
-      to: dayCutoff,
+      to: todayDayKey,
       limit: 7,
     });
     daySummaries = days.sort((a, b) => a.period_key.localeCompare(b.period_key));
@@ -520,10 +527,14 @@ let timelineItems = $derived.by(() => {
   const items: TimelineItem[] = [];
   const now = new Date();
 
-  // Current UTC hour start — turns before this are covered by hourly summaries
+  // Turns from the current hour onward are shown individually;
+  // older turns are covered by hourly summaries
   const currentHourStart = new Date(now);
   currentHourStart.setUTCMinutes(0, 0, 0);
   const hourCutoffMs = currentHourStart.getTime();
+
+  // But also include any turns from today that don't have an hourly summary yet
+  // (i.e., turns from the current in-progress hour)
 
   // Monthly summaries (oldest)
   for (const s of monthSummaries) items.push({ kind: "summary", summary: s });
@@ -708,7 +719,9 @@ function jumpToLatest() {
                     <div class="summary-expand-wrapper">
                       <div class="summary-expand-connector"></div>
                       <div class="summary-expand-branch">
-                        <div class="summary-expand-header">
+                        <!-- svelte-ignore a11y_click_events_have_key_events -->
+                        <!-- svelte-ignore a11y_no_static_element_interactions -->
+                        <div class="summary-expand-header" onclick={(e) => { e.stopPropagation(); toggleSummaryExpand(summary); }}>
                           <span class="active-turn-time">{formatPeriodTime(summary.period, summary.period_key)}</span>
                         </div>
                         {#if isLoading}
@@ -1669,9 +1682,18 @@ function jumpToLatest() {
     box-sizing: border-box;
   }
 
+  /* All summary text uses mono font */
+  .summary-text {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-0);
+    line-height: 1.5;
+  }
+
   /* Collapsed summary with inline timestamp and clamped text */
   .summary-collapsed {
     cursor: pointer;
+    padding: 4px 0;
   }
   .summary-collapsed-time {
     display: block;
@@ -1689,7 +1711,7 @@ function jumpToLatest() {
   /* Child summary items inside expanded branch */
   .summary-child-item {
     position: relative;
-    padding: 6px 8px 6px 20px;
+    padding: 8px 8px 8px 20px;
     cursor: pointer;
   }
   .summary-child-item:hover {
@@ -1735,7 +1757,7 @@ function jumpToLatest() {
   .summary-expand-connector {
     position: absolute;
     top: 16px;
-    left: 22px;
+    left: 14px;
     width: 2px;
     bottom: 12px;
     background: var(--border);
@@ -1744,25 +1766,43 @@ function jumpToLatest() {
     content: "";
     position: absolute;
     top: 0;
-    left: -35px;
-    width: 35px;
+    left: -27px;
+    width: 27px;
     height: 2px;
     background: var(--border);
   }
   .summary-expand-branch {
     position: relative;
-    padding-left: 24px;
+    padding-left: 16px;
     padding-top: 8px;
     padding-bottom: 8px;
   }
-  /* Inner rail between children should be solid */
+  /* Inner rail between children: solid by default, even for expandable summaries */
   .summary-expand-branch > :global(.event::after) {
     opacity: 1;
     background: var(--border);
   }
+  .summary-expand-branch > :global(.event.expandable-summary::after) {
+    background: var(--border);
+    opacity: 1;
+  }
+  /* Only show dashed rail when a child event is actually expanded */
+  .summary-expand-branch > :global(.event.turn-expanded::after) {
+    background: repeating-linear-gradient(
+      to bottom,
+      var(--border) 0px,
+      var(--border) 4px,
+      transparent 4px,
+      transparent 8px
+    );
+  }
   .summary-expand-header {
     margin-bottom: 4px;
-    margin-left: 14px;
+    margin-left: 6px;
+    cursor: pointer;
+  }
+  .summary-expand-header:hover .active-turn-time {
+    color: var(--text-0);
   }
   .summary-expand-loading {
     font-size: 12px;
@@ -1797,8 +1837,8 @@ function jumpToLatest() {
   .summary-expand-return {
     position: absolute;
     bottom: 6px;
-    left: -11px;
-    width: 35px;
+    left: -19px;
+    width: 27px;
     height: 2px;
     background: var(--border);
   }
