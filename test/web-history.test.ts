@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq, sql } from "drizzle-orm";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
-import { mindHistory, turns, users } from "../src/lib/schema.js";
+import { mindHistory, summaries, turns, users } from "../src/lib/schema.js";
 import { createSession, deleteSession } from "../src/web/middleware/auth.js";
 
 const TEST_USERNAME = "history-test-admin";
@@ -13,7 +13,8 @@ let sessionId: string;
 async function cleanup() {
   const db = await getDb();
   await db.delete(users).where(eq(users.username, TEST_USERNAME));
-  // Clean up test turns and history
+  // Clean up test turns, history, and summaries
+  await db.delete(summaries).where(sql`mind LIKE 'test-history-%'`);
   await db.delete(turns).where(sql`mind LIKE 'test-history-%'`);
   await db.delete(mindHistory).where(sql`mind LIKE 'test-history-%'`);
 }
@@ -121,12 +122,11 @@ describe("web history routes", () => {
       mind: "test-history-mind1",
       status: "complete",
     });
-    await db.insert(mindHistory).values({
+    await db.insert(summaries).values({
       mind: "test-history-mind1",
-      type: "summary",
+      period: "turn",
+      period_key: turnId,
       content: "Test summary content",
-      turn_id: turnId,
-      channel: "",
     });
 
     const res = await app.request(`/api/v1/history/turns?turnId=${turnId}`, {

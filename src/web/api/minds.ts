@@ -30,8 +30,8 @@ import {
   startMindFull as startMindFullService,
   stopMindFull as stopMindFullService,
 } from "../../lib/daemon/mind-service.js";
+import { summarizeTurn } from "../../lib/daemon/summarizer.js";
 import { getTokenBudget } from "../../lib/daemon/token-budget.js";
-import { summarizeTurn } from "../../lib/daemon/turn-summarizer.js";
 import {
   assignSession,
   completeTurn,
@@ -96,7 +96,7 @@ import {
   stateDir,
   validateMindName,
 } from "../../lib/registry.js";
-import { conversations, mindHistory } from "../../lib/schema.js";
+import { conversations, mindHistory, summaries, turns } from "../../lib/schema.js";
 import { addSharedWorktree, removeSharedWorktree } from "../../lib/shared.js";
 import { getStandardSkillsWithExtensions, installSkill, SEED_SKILLS } from "../../lib/skills.js";
 import { announceToSystem } from "../../lib/system-channel.js";
@@ -2746,25 +2746,26 @@ const app = new Hono<AuthEnv>()
       sinceTimestamp = new Date(Date.now() - 3600_000).toISOString().replace("T", " ").slice(0, 19);
     }
 
-    // Query summaries from other sessions since the timestamp
+    // Query turn summaries from other sessions since the timestamp
     const conditions = [
-      eq(mindHistory.mind, name),
-      eq(mindHistory.type, "summary"),
-      sql`${mindHistory.created_at} > ${sinceTimestamp}`,
+      eq(summaries.mind, name),
+      eq(summaries.period, "turn"),
+      sql`${summaries.created_at} > ${sinceTimestamp}`,
     ];
     if (currentSession) {
-      conditions.push(sql`${mindHistory.session} != ${currentSession}`);
+      conditions.push(sql`${turns.session} != ${currentSession}`);
     }
 
     const rows = await db
       .select({
-        session: mindHistory.session,
-        content: mindHistory.content,
-        created_at: mindHistory.created_at,
+        session: turns.session,
+        content: summaries.content,
+        created_at: summaries.created_at,
       })
-      .from(mindHistory)
+      .from(summaries)
+      .innerJoin(turns, eq(turns.id, summaries.period_key))
       .where(and(...conditions))
-      .orderBy(desc(mindHistory.created_at))
+      .orderBy(desc(summaries.created_at))
       .limit(50);
 
     if (rows.length === 0) {
@@ -2805,20 +2806,46 @@ const app = new Hono<AuthEnv>()
 
     // Preset-based type filtering
     const effectivePreset = full ? "all" : preset;
+
+    // Default "summary" preset reads from the unified summaries table
+    if (!effectivePreset || effectivePreset === "summary") {
+      const sumConditions = [eq(summaries.mind, name), eq(summaries.period, "turn")];
+      const sumRows = await db
+        .select()
+        .from(summaries)
+        .where(and(...sumConditions))
+        .orderBy(desc(summaries.created_at))
+        .limit(limit)
+        .offset(offset);
+      // Format as HistoryMessage-compatible rows for the CLI
+      return c.json(
+        sumRows.map((r) => ({
+          id: r.id,
+          mind: r.mind,
+          type: "summary",
+          channel: null,
+          session: null,
+          sender: null,
+          message_id: null,
+          content: r.content,
+          metadata: r.metadata,
+          turn_id: r.period_key,
+          created_at: r.created_at,
+        })),
+      );
+    }
+
     switch (effectivePreset) {
       case "all":
         // No type filter
         break;
       case "conversation":
-        conditions.push(sql`${mindHistory.type} IN ('summary','inbound','outbound','tool_use')`);
+        conditions.push(sql`${mindHistory.type} IN ('inbound','outbound','tool_use')`);
         break;
       case "detailed":
         conditions.push(
-          sql`${mindHistory.type} IN ('summary','inbound','outbound','tool_use','tool_result','text','thinking')`,
+          sql`${mindHistory.type} IN ('inbound','outbound','tool_use','tool_result','text','thinking')`,
         );
-        break;
-      default:
-        conditions.push(sql`${mindHistory.type} IN ('summary')`);
         break;
     }
 

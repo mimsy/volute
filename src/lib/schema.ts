@@ -65,6 +65,7 @@ export const turns = sqliteTable(
     session: text("session"),
     trigger_event_id: integer("trigger_event_id"),
     summary_event_id: integer("summary_event_id"),
+    summary_id: integer("summary_id"),
     status: text("status").notNull().default("active"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
   },
@@ -176,8 +177,8 @@ export const activity = sqliteTable(
   ],
 );
 
-export const metaSummaries = sqliteTable(
-  "meta_summaries",
+export const summaries = sqliteTable(
+  "summaries",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     mind: text("mind").notNull(),
@@ -188,8 +189,8 @@ export const metaSummaries = sqliteTable(
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
   },
   (table) => [
-    uniqueIndex("idx_meta_summaries_unique").on(table.mind, table.period, table.period_key),
-    index("idx_meta_summaries_mind_period").on(table.mind, table.period),
+    uniqueIndex("idx_summaries_unique").on(table.mind, table.period, table.period_key),
+    index("idx_summaries_mind_period").on(table.mind, table.period),
   ],
 );
 

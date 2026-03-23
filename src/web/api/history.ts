@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { getDb } from "../../lib/db.js";
 import { subscribeAll, subscribe as subscribeMindEvent } from "../../lib/events/mind-events.js";
 import log from "../../lib/logger.js";
-import { activity, metaSummaries, mindHistory, turns } from "../../lib/schema.js";
+import { activity, mindHistory, summaries, turns } from "../../lib/schema.js";
 
 const history = new Hono()
   .get("/turns", async (c) => {
@@ -30,15 +30,14 @@ const history = new Hono()
 
     const turnIds = turnRows.map((t) => t.id);
 
-    // 2. Get summaries
+    // 2. Get summaries from the unified summaries table
     const summaryRows = await db
       .select()
-      .from(mindHistory)
-      .where(and(eq(mindHistory.type, "summary"), inArray(mindHistory.turn_id, turnIds)));
+      .from(summaries)
+      .where(and(eq(summaries.period, "turn"), inArray(summaries.period_key, turnIds)));
     const summaryByTurn = new Map<string, { content: string; metadata: string | null }>();
     for (const s of summaryRows) {
-      if (s.turn_id)
-        summaryByTurn.set(s.turn_id, { content: s.content ?? "", metadata: s.metadata });
+      summaryByTurn.set(s.period_key, { content: s.content, metadata: s.metadata });
     }
 
     // 3. Get inbound/outbound events from mind_history for these turns.
@@ -294,24 +293,24 @@ const history = new Hono()
     }
 
     const db = await getDb();
-    const conditions = [eq(metaSummaries.mind, mind), eq(metaSummaries.period, period)];
+    const conditions = [eq(summaries.mind, mind), eq(summaries.period, period)];
 
-    if (from) conditions.push(gte(metaSummaries.period_key, from));
-    if (to) conditions.push(sql`${metaSummaries.period_key} <= ${to}`);
+    if (from) conditions.push(gte(summaries.period_key, from));
+    if (to) conditions.push(sql`${summaries.period_key} <= ${to}`);
 
     const rows = await db
       .select({
-        id: metaSummaries.id,
-        mind: metaSummaries.mind,
-        period: metaSummaries.period,
-        period_key: metaSummaries.period_key,
-        content: metaSummaries.content,
-        metadata: metaSummaries.metadata,
-        created_at: metaSummaries.created_at,
+        id: summaries.id,
+        mind: summaries.mind,
+        period: summaries.period,
+        period_key: summaries.period_key,
+        content: summaries.content,
+        metadata: summaries.metadata,
+        created_at: summaries.created_at,
       })
-      .from(metaSummaries)
+      .from(summaries)
       .where(and(...conditions))
-      .orderBy(desc(metaSummaries.period_key))
+      .orderBy(desc(summaries.period_key))
       .limit(limit);
 
     const result = rows.map((r) => {
