@@ -396,6 +396,10 @@ export async function fetchSystemInfo(): Promise<{ system: string | null; name: 
   }
 }
 
+export async function updateSystemName(name: string): Promise<void> {
+  await put(`${V1}/system/info`, { name });
+}
+
 export function systemRegister(name: string): Promise<{ system: string }> {
   return post(`${V1}/system/register`, { name });
 }

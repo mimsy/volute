@@ -22,6 +22,7 @@ let {
   onSeed,
   onHideConversation,
   onSelectMindSection,
+  onSelectSystemSection,
 }: {
   minds: Mind[];
   conversations: ConversationWithParticipants[];
@@ -30,6 +31,7 @@ let {
   onHome: () => void;
   onSelectMind: (name: string) => void;
   onSelectMindSection: (name: string, section: string) => void;
+  onSelectSystemSection: (section: string) => void;
   onSelectConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
   onBrowseChannels: () => void;
@@ -109,8 +111,29 @@ function handleMenuAction(name: string, section: string) {
   onSelectMindSection(name, section);
 }
 
+function handleSystemDotsClick(e: MouseEvent) {
+  e.stopPropagation();
+  if (openMenu === "__system__") {
+    openMenu = null;
+  } else {
+    const btn = e.currentTarget as HTMLElement;
+    const rect = btn.getBoundingClientRect();
+    menuPos = { top: rect.bottom + 2, left: rect.left };
+    openMenu = "__system__";
+  }
+}
+
+function handleSystemMenuAction(section: string) {
+  openMenu = null;
+  onSelectSystemSection(section);
+}
+
 function handleClickOutside(e: MouseEvent) {
-  if (openMenu && !(e.target as HTMLElement).closest(".mind-menu-container")) {
+  if (
+    openMenu &&
+    !(e.target as HTMLElement).closest(".mind-menu-container") &&
+    !(e.target as HTMLElement).closest(".system-menu-container")
+  ) {
     openMenu = null;
   }
 }
@@ -178,6 +201,16 @@ let isSystemActive = $derived(
           <Icon kind="spiral" class="section-icon" />
           <span>System</span>
         </button>
+        <div class="system-menu-container">
+          <button
+            class="mind-dots-btn"
+            class:visible={openMenu === "__system__"}
+            onclick={handleSystemDotsClick}
+            title="More options"
+          >
+            <svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/></svg>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -267,7 +300,24 @@ let isSystemActive = $derived(
   </div>
 </div>
 
-{#if openMenu}
+{#if openMenu === "__system__"}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="mind-menu"
+    style:top="{menuPos.top}px"
+    style:left="{menuPos.left}px"
+    onclick={(e) => e.stopPropagation()}
+  >
+    <button class="mind-menu-item" onclick={() => handleSystemMenuAction("shared-files")}>
+      <Icon kind="folder" class="menu-icon" />
+      Shared Files
+    </button>
+    <button class="mind-menu-item" onclick={() => handleSystemMenuAction("settings")}>
+      <Icon kind="gear" class="menu-icon" />
+      Settings
+    </button>
+  </div>
+{:else if openMenu}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="mind-menu"
@@ -394,7 +444,8 @@ let isSystemActive = $derived(
     height: 14px;
   }
 
-  .section-header-row:hover .section-action {
+  .section-header-row:hover .section-action,
+  .section-header-row:hover .mind-dots-btn {
     opacity: 1;
   }
 

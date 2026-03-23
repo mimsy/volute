@@ -83,6 +83,16 @@ const app = new Hono<AuthEnv>()
     const globalConfig = readGlobalConfig();
     return c.json({ system: config?.system ?? null, name: globalConfig.name ?? null });
   })
+  .put("/info", requireAdmin, async (c) => {
+    const body = (await c.req.json()) as { name?: string };
+    if (body.name !== undefined) {
+      const config = readGlobalConfig();
+      config.name = body.name.trim() || undefined;
+      writeGlobalConfig(config);
+    }
+    const globalConfig = readGlobalConfig();
+    return c.json({ name: globalConfig.name ?? null });
+  })
   .post(
     "/register",
     requireAdmin,
