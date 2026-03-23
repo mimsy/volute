@@ -34,57 +34,66 @@ const CHILD_PERIOD: Record<string, SummaryPeriod | "turn"> = {
   month: "week",
 };
 
-function parseISOWeek(weekKey: string): { start: Date; end: Date } {
-  // weekKey format: "2026-W12"
+function parseISOWeek(weekKey: string): Date {
+  // weekKey format: "2026-W12" — returns the Monday of that week
   const [yearStr, weekStr] = weekKey.split("-W");
   const year = parseInt(yearStr, 10);
   const week = parseInt(weekStr, 10);
   // Jan 4 is always in week 1
-  const jan4 = new Date(year, 0, 4);
-  const dayOfWeek = jan4.getDay() || 7; // Monday=1
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const dayOfWeek = jan4.getUTCDay() || 7; // Monday=1
   const monday = new Date(jan4);
-  monday.setDate(jan4.getDate() - dayOfWeek + 1 + (week - 1) * 7);
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  return { start: monday, end: sunday };
+  monday.setUTCDate(jan4.getUTCDate() - dayOfWeek + 1 + (week - 1) * 7);
+  return monday;
+}
+
+// Period keys are UTC. Convert to local Date for display.
+function periodKeyToDate(period: string, periodKey: string): Date {
+  if (period === "hour")
+    return new Date(`${periodKey.slice(0, 10)}T${periodKey.slice(11, 13)}:00:00Z`);
+  if (period === "day") return new Date(`${periodKey}T00:00:00Z`);
+  if (period === "week") return parseISOWeek(periodKey);
+  if (period === "month") return new Date(`${periodKey}-01T00:00:00Z`);
+  return new Date(periodKey);
 }
 
 function formatPeriodTime(period: string, periodKey: string): string {
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
+  const todayLocal = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterdayLocal = new Date(todayLocal);
+  yesterdayLocal.setDate(todayLocal.getDate() - 1);
 
   if (period === "hour") {
-    // periodKey: "2026-03-22T14"
-    const startHour = parseInt(periodKey.slice(11, 13), 10);
-    const dateStr = periodKey.slice(0, 10);
-    const startDate = new Date(`${dateStr}T00:00:00`);
-    const endHour = (startHour + 1) % 24;
+    // Convert UTC hour to local time
+    const utcStart = periodKeyToDate("hour", periodKey);
+    const utcEnd = new Date(utcStart.getTime() + 3600000);
 
-    const fmtHour = (h: number) => {
-      const ampm = h >= 12 ? "PM" : "AM";
-      const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-      return `${h12}:00 ${ampm}`;
-    };
+    const fmtTime = (d: Date) =>
+      d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 
-    const isToday = startDate.getTime() === today.getTime();
+    const startDay = new Date(utcStart.getFullYear(), utcStart.getMonth(), utcStart.getDate());
+    const isToday = startDay.getTime() === todayLocal.getTime();
     if (isToday) {
-      return `${fmtHour(startHour)} \u2013 ${fmtHour(endHour)}`;
+      return `${fmtTime(utcStart)} \u2013 ${fmtTime(utcEnd)}`;
     }
-    const monthDay = startDate.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    return `${monthDay}, ${fmtHour(startHour)} \u2013 ${fmtHour(endHour)}`;
+    const monthDay = utcStart.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return `${monthDay}, ${fmtTime(utcStart)} \u2013 ${fmtTime(utcEnd)}`;
   }
 
   if (period === "day") {
-    const d = new Date(`${periodKey}T00:00:00`);
-    if (d.getTime() === today.getTime()) return "Today";
-    if (d.getTime() === yesterday.getTime()) return "Yesterday";
+    // Day keys are UTC dates — convert to local for "today"/"yesterday" check
+    const d = periodKeyToDate("day", periodKey);
+    const dLocal = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    // Check against local date (the UTC day may straddle local days, but this is close enough)
+    if (dLocal.getTime() === todayLocal.getTime()) return "Today";
+    if (dLocal.getTime() === yesterdayLocal.getTime()) return "Yesterday";
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   }
 
   if (period === "week") {
-    const { start, end } = parseISOWeek(periodKey);
+    const start = parseISOWeek(periodKey);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
     const fmtDate = (d: Date) =>
       d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
     if (start.getFullYear() !== now.getFullYear()) {
@@ -102,15 +111,6 @@ function formatPeriodTime(period: string, periodKey: string): string {
   return periodKey;
 }
 
-function periodKeyToDate(period: string, periodKey: string): Date {
-  if (period === "hour")
-    return new Date(`${periodKey.slice(0, 10)}T${periodKey.slice(11, 13)}:00:00`);
-  if (period === "day") return new Date(`${periodKey}T00:00:00`);
-  if (period === "week") return parseISOWeek(periodKey).start;
-  if (period === "month") return new Date(`${periodKey}-01T00:00:00`);
-  return new Date(periodKey);
-}
-
 function periodEndDate(period: string, periodKey: string): Date {
   if (period === "hour") {
     const d = periodKeyToDate(period, periodKey);
@@ -122,7 +122,12 @@ function periodEndDate(period: string, periodKey: string): Date {
     d.setDate(d.getDate() + 1);
     return d;
   }
-  if (period === "week") return parseISOWeek(periodKey).end;
+  if (period === "week") {
+    const monday = parseISOWeek(periodKey);
+    const sunday = new Date(monday);
+    sunday.setUTCDate(monday.getUTCDate() + 7);
+    return sunday;
+  }
   if (period === "month") {
     const d = periodKeyToDate(period, periodKey);
     d.setMonth(d.getMonth() + 1);
@@ -405,17 +410,16 @@ async function loadSummaries() {
     const now = new Date();
 
     // Current hour boundary (start of current hour)
-    const currentHourStart = new Date(now);
-    currentHourStart.setMinutes(0, 0, 0);
-    const hourCutoff = currentHourStart.toISOString();
+    // Period keys are UTC. Build cutoffs in UTC period_key format.
+    const utcDate = now.toISOString().slice(0, 10); // "2026-03-23" UTC
+    const utcHour = now.toISOString().slice(0, 13).replace(":", ""); // "2026-03-23T17"
+    // hourCutoff: current UTC hour key (don't show the in-progress hour)
+    const hourCutoff = `${utcDate}T${String(now.getUTCHours()).padStart(2, "0")}`;
+    const dayCutoff = utcDate;
 
-    // Today boundary (start of today)
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const dayCutoff = todayStart.toISOString().slice(0, 10); // "2026-03-23"
-
-    // Week boundary (7 days ago)
-    const weekAgo = new Date(todayStart);
-    weekAgo.setDate(weekAgo.getDate() - 7);
+    // Week boundary (7 days ago in UTC)
+    const weekAgo = new Date(now);
+    weekAgo.setUTCDate(weekAgo.getUTCDate() - 7);
     const weekCutoff = weekAgo.toISOString().slice(0, 10);
 
     // Load hours for today (before current hour)
@@ -516,9 +520,9 @@ let timelineItems = $derived.by(() => {
   const items: TimelineItem[] = [];
   const now = new Date();
 
-  // Current hour start
+  // Current UTC hour start — turns before this are covered by hourly summaries
   const currentHourStart = new Date(now);
-  currentHourStart.setMinutes(0, 0, 0);
+  currentHourStart.setUTCMinutes(0, 0, 0);
   const hourCutoffMs = currentHourStart.getTime();
 
   // Monthly summaries (oldest)
@@ -688,7 +692,6 @@ function jumpToLatest() {
                 {#if !name && summary.mind !== "_system"}
                   <button class="mind-badge" onclick={() => navigate(`/minds/${summary.mind}/history`)}>{summary.mind}</button>
                 {/if}
-                {formatPeriodTime(summary.period, summary.period_key)}
               </div>
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
@@ -1666,20 +1669,21 @@ function jumpToLatest() {
     box-sizing: border-box;
   }
 
-  /* Collapsed summary with inline timestamp */
+  /* Collapsed summary with inline timestamp and clamped text */
   .summary-collapsed {
     cursor: pointer;
   }
   .summary-collapsed-time {
-    display: none;
+    display: block;
     font-size: 11px;
     color: var(--text-2);
     margin-bottom: 2px;
   }
-  @container (max-width: 400px) {
-    .summary-collapsed-time {
-      display: block;
-    }
+  .summary-collapsed .summary-text {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   /* Child summary items inside expanded branch */
