@@ -449,13 +449,22 @@ async function loadSummaries() {
     });
     daySummaries = days.sort((a, b) => a.period_key.localeCompare(b.period_key));
 
-    // Load weeks (before last week)
+    // Load weeks (before last week). Exclude current week.
     const weeks = await fetchSummaries({ mind: name, period: "week", to: weekCutoff, limit: 12 });
     weekSummaries = weeks.sort((a, b) => a.period_key.localeCompare(b.period_key));
 
-    // Load months (for everything)
-    const months = await fetchSummaries({ mind: name, period: "month", limit: 12 });
-    monthSummaries = months.sort((a, b) => a.period_key.localeCompare(b.period_key));
+    // Load months (exclude current month — it's still in progress)
+    const currentMonth = now.toISOString().slice(0, 7); // "2026-03"
+    const months = await fetchSummaries({
+      mind: name,
+      period: "month",
+      to: currentMonth,
+      limit: 12,
+    });
+    // Filter out the current month in case the boundary comparison includes it
+    monthSummaries = months
+      .filter((m) => m.period_key < currentMonth)
+      .sort((a, b) => a.period_key.localeCompare(b.period_key));
 
     summariesLoaded = true;
   } catch (e) {
@@ -478,17 +487,17 @@ async function toggleSummaryExpand(summary: SummaryRow) {
 
   try {
     const childPeriod = CHILD_PERIOD[summary.period];
-    const from = periodKeyToDate(summary.period, summary.period_key).toISOString();
-    const to = periodEndDate(summary.period, summary.period_key).toISOString();
 
     if (childPeriod === "turn") {
-      // Load turns for this time range
-      const fromMs = new Date(from).getTime();
-      const toMs = new Date(to).getTime();
-      const allTurns = await fetchTurns({ mind: name, limit: 200 });
+      // Load turns for this time range using timestamps
+      const fromDate = periodKeyToDate(summary.period, summary.period_key);
+      const toDate = periodEndDate(summary.period, summary.period_key);
+      // Fetch turns for this specific mind (not all minds)
+      const mindFilter = summary.mind === "_system" ? undefined : summary.mind;
+      const allTurns = await fetchTurns({ mind: mindFilter ?? name, limit: 200 });
       const filtered = allTurns.filter((t) => {
         const ts = new Date(t.created_at + (t.created_at.endsWith("Z") ? "" : "Z")).getTime();
-        return ts >= fromMs && ts < toMs;
+        return ts >= fromDate.getTime() && ts < toDate.getTime();
       });
 
       // Single turn: expand directly to raw events
@@ -501,6 +510,30 @@ async function toggleSummaryExpand(summary: SummaryRow) {
         expandedSummaries = new SvelteMap(expandedSummaries);
       }
     } else {
+      // For summary children, use period_key-format boundaries (not ISO timestamps)
+      // to avoid string comparison issues with colons in ISO strings.
+      let from: string;
+      let to: string;
+      if (summary.period === "day") {
+        // Day "2026-03-19" → hours with keys starting with "2026-03-19"
+        from = summary.period_key;
+        to = `${summary.period_key}T99`; // all hours within this date
+      } else if (summary.period === "week") {
+        // Week → days within the week's date range
+        const monday = parseISOWeek(summary.period_key);
+        const sunday = new Date(monday);
+        sunday.setUTCDate(monday.getUTCDate() + 6);
+        from = monday.toISOString().slice(0, 10);
+        to = sunday.toISOString().slice(0, 10);
+      } else if (summary.period === "month") {
+        // Month "2026-03" → weeks/days within
+        from = `${summary.period_key}-01`;
+        to = `${summary.period_key}-31`;
+      } else {
+        from = summary.period_key;
+        to = summary.period_key;
+      }
+
       const children = await fetchSummaries({
         mind: name,
         period: childPeriod,
