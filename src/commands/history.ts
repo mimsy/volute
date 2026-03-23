@@ -142,6 +142,56 @@ function formatRowCompact(row: HistoryRow): string {
   }
 }
 
+type MetaSummaryRow = {
+  id: number;
+  mind: string;
+  period: string;
+  period_key: string;
+  content: string;
+  metadata: string | null;
+  created_at: string;
+};
+
+const PERIOD_LABELS: Record<string, string> = {
+  hour: "Hourly",
+  day: "Daily",
+  week: "Weekly",
+  month: "Monthly",
+};
+
+function formatMetaSummary(row: MetaSummaryRow): string {
+  const label = PERIOD_LABELS[row.period] ?? row.period;
+  return `\n=== ${row.period_key} (${label}) ===\n${row.content ?? ""}\n`;
+}
+
+function getDefaultRange(period: string): string {
+  const now = new Date();
+  switch (period) {
+    case "hour": {
+      const d = new Date(now);
+      d.setUTCDate(d.getUTCDate() - 1);
+      return d.toISOString().slice(0, 10);
+    }
+    case "day": {
+      const d = new Date(now);
+      d.setUTCDate(d.getUTCDate() - 7);
+      return d.toISOString().slice(0, 10);
+    }
+    case "week": {
+      const d = new Date(now);
+      d.setUTCDate(d.getUTCDate() - 28);
+      return d.toISOString().slice(0, 10);
+    }
+    case "month": {
+      const d = new Date(now);
+      d.setUTCMonth(d.getUTCMonth() - 6);
+      return d.toISOString().slice(0, 7);
+    }
+    default:
+      return "";
+  }
+}
+
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
     mind: { type: "string" },
@@ -150,7 +200,46 @@ export async function run(args: string[]) {
     preset: { type: "string" },
     limit: { type: "string" },
     full: { type: "boolean" },
+    period: { type: "string" },
+    from: { type: "string" },
+    to: { type: "string" },
   });
+
+  // Meta-summary mode: --period hour|day|week|month
+  if (flags.period) {
+    const validPeriods = ["hour", "day", "week", "month"];
+    if (!validPeriods.includes(flags.period)) {
+      console.error(`Invalid period: ${flags.period}. Must be one of: ${validPeriods.join(", ")}`);
+      process.exit(1);
+    }
+
+    const name = resolveMindName(flags);
+    const params = new URLSearchParams();
+    params.set("mind", name);
+    params.set("period", flags.period);
+    if (flags.from) params.set("from", flags.from);
+    else params.set("from", getDefaultRange(flags.period));
+    if (flags.to) params.set("to", flags.to);
+    if (flags.limit) params.set("limit", flags.limit);
+
+    const res = await daemonFetch(`/api/v1/history/summaries?${params}`);
+    if (!res.ok) {
+      let errorMsg = `Failed to get summaries: ${res.status}`;
+      try {
+        const data = (await res.json()) as { error?: string };
+        if (data.error) errorMsg = data.error;
+      } catch {}
+      console.error(errorMsg);
+      process.exit(1);
+    }
+
+    const rows = (await res.json()) as MetaSummaryRow[];
+    // Display in chronological order (API returns newest first)
+    for (const row of rows.reverse()) {
+      console.log(formatMetaSummary(row));
+    }
+    return;
+  }
 
   const name = resolveMindName(flags);
   const client = getClient();

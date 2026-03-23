@@ -176,6 +176,23 @@ export const activity = sqliteTable(
   ],
 );
 
+export const metaSummaries = sqliteTable(
+  "meta_summaries",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    mind: text("mind").notNull(),
+    period: text("period").notNull(),
+    period_key: text("period_key").notNull(),
+    content: text("content").notNull(),
+    metadata: text("metadata"),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    uniqueIndex("idx_meta_summaries_unique").on(table.mind, table.period, table.period_key),
+    index("idx_meta_summaries_mind_period").on(table.mind, table.period),
+  ],
+);
+
 export const conversationReads = sqliteTable(
   "conversation_reads",
   {

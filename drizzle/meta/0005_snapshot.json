@@ -1,0 +1,7 @@
+{
+  "id": "0005_meta_summaries",
+  "prevId": "0004_spirits",
+  "version": "6",
+  "dialect": "sqlite",
+  "tables": {}
+}

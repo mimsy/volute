@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { format } from "node:util";
 import { initBridgeManager } from "./lib/daemon/bridge-manager.js";
 import { initMailPoller } from "./lib/daemon/mail-poller.js";
+import { initMetaSummarizer } from "./lib/daemon/meta-summarizer.js";
 import { initMindManager } from "./lib/daemon/mind-manager.js";
 import { startMindFull } from "./lib/daemon/mind-service.js";
 import { initScheduler } from "./lib/daemon/scheduler.js";
@@ -199,6 +200,8 @@ export async function startDaemon(opts: {
   tokenBudget.start();
   const sleepManager = initSleepManager();
   sleepManager.start();
+  const metaSummarizer = initMetaSummarizer();
+  metaSummarizer.start();
   const unsubscribeWebhook = initWebhook();
 
   // Clean up any turns left active from a previous daemon session
@@ -347,6 +350,7 @@ export async function startDaemon(opts: {
       safe("scheduler.saveState", () => scheduler.saveState());
       safe("mailPoller.stop", () => mailPoller.stop());
       safe("tokenBudget.stop", () => tokenBudget.stop());
+      safe("metaSummarizer.stop", () => metaSummarizer.stop());
       safe("stopApiKeyRefresh", stopApiKeyRefresh);
       safe("delivery.dispose", () => delivery.dispose());
       await safe("bridgeManager.stopAll", () => bridgeManager.stopAll());

@@ -1,9 +1,9 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../../lib/db.js";
 import { subscribeAll, subscribe as subscribeMindEvent } from "../../lib/events/mind-events.js";
 import log from "../../lib/logger.js";
-import { activity, mindHistory, turns } from "../../lib/schema.js";
+import { activity, metaSummaries, mindHistory, turns } from "../../lib/schema.js";
 
 const history = new Hono()
   .get("/turns", async (c) => {
@@ -281,6 +281,52 @@ const history = new Hono()
         Connection: "keep-alive",
       },
     });
+  })
+  .get("/summaries", async (c) => {
+    const mind = c.req.query("mind") ?? "_system";
+    const period = c.req.query("period");
+    const from = c.req.query("from");
+    const to = c.req.query("to");
+    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
+
+    if (!period || !["hour", "day", "week", "month"].includes(period)) {
+      return c.json({ error: "period is required (hour, day, week, month)" }, 400);
+    }
+
+    const db = await getDb();
+    const conditions = [eq(metaSummaries.mind, mind), eq(metaSummaries.period, period)];
+
+    if (from) conditions.push(gte(metaSummaries.period_key, from));
+    if (to) conditions.push(sql`${metaSummaries.period_key} <= ${to}`);
+
+    const rows = await db
+      .select({
+        id: metaSummaries.id,
+        mind: metaSummaries.mind,
+        period: metaSummaries.period,
+        period_key: metaSummaries.period_key,
+        content: metaSummaries.content,
+        metadata: metaSummaries.metadata,
+        created_at: metaSummaries.created_at,
+      })
+      .from(metaSummaries)
+      .where(and(...conditions))
+      .orderBy(desc(metaSummaries.period_key))
+      .limit(limit);
+
+    const result = rows.map((r) => {
+      let metadata: Record<string, unknown> | null = null;
+      if (r.metadata) {
+        try {
+          metadata = JSON.parse(r.metadata);
+        } catch (err) {
+          log.debug(`malformed meta_summary metadata for id ${r.id}`, log.errorData(err));
+        }
+      }
+      return { ...r, metadata };
+    });
+
+    return c.json(result);
   });
 
 export default history;
