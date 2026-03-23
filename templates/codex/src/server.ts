@@ -4,7 +4,6 @@ import { createFileHandlerResolver } from "./lib/file-handler.js";
 import { log, setLevel } from "./lib/logger.js";
 import { createRouter } from "./lib/router.js";
 import {
-  handleStartupContext,
   loadConfig,
   loadPackageInfo,
   loadSystemPrompt,
@@ -51,9 +50,6 @@ server.listen(port, async () => {
   const addr = server.address();
   const actualPort = typeof addr === "object" && addr ? addr.port : port;
   log("server", `listening on :${actualPort}`);
-  await handleStartupContext((content) =>
-    router.route([{ type: "text", text: content }], { channel: "system" }),
-  );
 });
 
 setupShutdown();

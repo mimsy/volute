@@ -295,28 +295,32 @@ export async function tagUntaggedInbound(
   }: { limit?: number; setTrigger?: boolean; channel?: string } = {},
 ): Promise<void> {
   const db = await getDb();
-  // Tag recent untagged inbound events in mind_history
-  const historyConditions = [
-    eq(mindHistory.mind, mind),
-    eq(mindHistory.type, "inbound"),
-    sql`${mindHistory.turn_id} IS NULL`,
-    sql`${mindHistory.created_at} > datetime('now', '-60 seconds')`,
-  ];
-  if (channel) historyConditions.push(eq(mindHistory.channel, channel));
-  const recentInbounds = await db
-    .select({ id: mindHistory.id })
-    .from(mindHistory)
-    .where(and(...historyConditions))
-    .orderBy(desc(mindHistory.id))
-    .limit(limit);
-  if (recentInbounds.length > 0) {
-    const ids = recentInbounds.map((r) => r.id);
-    await db.update(mindHistory).set({ turn_id: turnId }).where(inArray(mindHistory.id, ids));
-    if (setTrigger) {
-      await db
-        .update(turns)
-        .set({ trigger_event_id: recentInbounds[0].id })
-        .where(eq(turns.id, turnId));
+  // Tag recent untagged inbound events in mind_history.
+  // Channel is required to prevent cross-session tagging: without it, a turn on
+  // one session can steal inbound events meant for a different session/channel.
+  if (channel) {
+    const historyConditions = [
+      eq(mindHistory.mind, mind),
+      eq(mindHistory.type, "inbound"),
+      sql`${mindHistory.turn_id} IS NULL`,
+      sql`${mindHistory.created_at} > datetime('now', '-60 seconds')`,
+      eq(mindHistory.channel, channel),
+    ];
+    const recentInbounds = await db
+      .select({ id: mindHistory.id })
+      .from(mindHistory)
+      .where(and(...historyConditions))
+      .orderBy(desc(mindHistory.id))
+      .limit(limit);
+    if (recentInbounds.length > 0) {
+      const ids = recentInbounds.map((r) => r.id);
+      await db.update(mindHistory).set({ turn_id: turnId }).where(inArray(mindHistory.id, ids));
+      if (setTrigger) {
+        await db
+          .update(turns)
+          .set({ trigger_event_id: recentInbounds[0].id })
+          .where(eq(turns.id, turnId));
+      }
     }
   }
   // Tag recent untagged conversation messages (only inbound, i.e. not sent by the mind itself)

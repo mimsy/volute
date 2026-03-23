@@ -15,7 +15,7 @@ import { runHooks } from "./lib/hook-loader.js";
 import { log } from "./lib/logger.js";
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
-import { loadPrompts, type SubagentConfig } from "./lib/startup.js";
+import { getStartupContext, loadPrompts, type SubagentConfig } from "./lib/startup.js";
 import { createSubagentExtension, type SubagentDefinition } from "./lib/subagents.js";
 import type {
   HandlerMeta,
@@ -109,13 +109,35 @@ export function createMind(options: {
       ? createSubagentExtension(subagents, { cwd: options.cwd, model, authStorage, modelRegistry })
       : undefined;
 
+  // --- Startup context (loaded once, injected on first turn per session) ---
+
+  const startupContextPromise = getStartupContext().catch(() => null);
+
   // --- Dynamic hook extension ---
 
   const hooksDir = resolvePath(options.cwd, ".local/hooks");
 
   function createDynamicHookExtension(session: PiSession): ExtensionFactory {
+    let startupContextInjected = false;
+
     return (pi) => {
       pi.on("before_agent_start", async () => {
+        const parts: string[] = [];
+
+        // Inject startup context on the first turn of each session
+        if (!startupContextInjected) {
+          startupContextInjected = true;
+          const startupContext = await startupContextPromise;
+          if (startupContext) {
+            emit(session, {
+              type: "context",
+              content: startupContext,
+              metadata: { source: "startup-context" },
+            });
+            parts.push(startupContext);
+          }
+        }
+
         try {
           const result = await runHooks(hooksDir, "pre-prompt", {
             event: "pre-prompt",
@@ -127,16 +149,20 @@ export function createMind(options: {
               content: result.additionalContext,
               metadata: { source: "dynamic:pre-prompt", ...result.metadata },
             });
-            return {
-              message: {
-                customType: "dynamic-hook",
-                content: result.additionalContext,
-                display: true,
-              },
-            };
+            parts.push(result.additionalContext);
           }
         } catch (err) {
           log("mind", "dynamic pre-prompt hook failed:", err);
+        }
+
+        if (parts.length > 0) {
+          return {
+            message: {
+              customType: "dynamic-hook",
+              content: parts.join("\n\n"),
+              display: true,
+            },
+          };
         }
         return {};
       });

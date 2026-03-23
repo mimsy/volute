@@ -77,12 +77,16 @@ export function loadPackageInfo(): { name: string; version: string } {
   }
 }
 
-export async function handleStartupContext(sendMessage: (content: string) => void): Promise<void> {
+/**
+ * Run the startup-context hook and return the generated context string.
+ * Returns null if no hook is found or it produces no output.
+ */
+export async function getStartupContext(): Promise<string | null> {
   // Prefer .ts, fall back to .sh for backwards compatibility
   const tsPath = resolve("home/.local/hooks/startup-context.ts");
   const shPath = resolve("home/.local/hooks/startup-context.sh");
   const scriptPath = existsSync(tsPath) ? tsPath : existsSync(shPath) ? shPath : null;
-  if (!scriptPath) return;
+  if (!scriptPath) return null;
 
   const isTs = scriptPath.endsWith(".ts");
 
@@ -112,12 +116,10 @@ export async function handleStartupContext(sendMessage: (content: string) => voi
       context = stdout.trim();
     }
 
-    if (context) {
-      sendMessage(`[system] ${context}`);
-      log("server", "sent startup context");
-    }
+    return context || null;
   } catch (e) {
     log("server", "failed to run startup context hook:", e);
+    return null;
   }
 }
 
