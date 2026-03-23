@@ -137,11 +137,11 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
   if (path === "/chat") {
     const mind = search.get("mind");
     if (mind) return { kind: "mind", name: mind };
-    return { kind: "home" };
+    return { kind: "system-history" };
   }
 
-  // Default: home
-  return { kind: "home" };
+  // Default: history landing page
+  return { kind: "system-history" };
 }
 
 /**
@@ -152,6 +152,7 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
 export function selectionToPath(selection: Selection, extensions: ExtensionInfo[] = []): string {
   switch (selection.kind) {
     case "home":
+    case "system-history":
       return "/";
     case "mind": {
       let section = selection.section;
@@ -184,8 +185,7 @@ export function selectionToPath(selection: Selection, extensions: ExtensionInfo[
       return "/shared-files";
     case "system-chat":
       return "/system/chat";
-    case "system-history":
-      return "/history";
+    // system-history handled above with home → "/"
     case "channel": {
       // Don't serialize backwards-compat conv IDs to URL
       if (selection.slug.startsWith("__conv:")) {

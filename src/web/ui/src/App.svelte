@@ -83,7 +83,7 @@ let onSystemPage = $derived(selection.kind !== "mind" && selection.kind !== "cha
 let activeSystemSection = $derived.by((): string | null => {
   if (!onSystemPage) return null;
   if (selection.kind === "system-chat") return "system-chat";
-  if (selection.kind === "system-history") return "system-history";
+  if (selection.kind === "system-history" || selection.kind === "home") return "system-history";
   if (selection.kind === "extension") return `ext:${selection.extensionId}`;
   if (selection.kind === "settings") return "settings";
   if (selection.kind === "shared-files") return "shared-files";
@@ -265,8 +265,7 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
     crumbs.push({ label: "system", action: handleSystemHome });
     crumbs.push({ label: "chat" });
   } else if (sel.kind === "system-history") {
-    crumbs.push({ label: "system", action: handleSystemHome });
-    crumbs.push({ label: "history" });
+    crumbs.push({ label: "system" });
   } else if (sel.kind === "settings") {
     crumbs.push({ label: "system", action: handleSystemHome });
     crumbs.push({ label: "settings" });
@@ -338,7 +337,10 @@ $effect(() => {
 $effect(() => {
   if (data.extensions.length > 0) {
     const fresh = parseSelection(data.extensions);
-    if (fresh.kind === "extension" && selection.kind === "home") {
+    if (
+      fresh.kind === "extension" &&
+      (selection.kind === "home" || selection.kind === "system-history")
+    ) {
       selection = fresh;
     }
     if (
@@ -386,7 +388,11 @@ $effect(() => {
   const expected = selectionToPath(selection, data.extensions);
   const current = window.location.pathname + window.location.search;
   if (current !== expected) {
-    if (selection.kind === "home" && data.extensions.length === 0 && current !== "/") {
+    if (
+      (selection.kind === "home" || selection.kind === "system-history") &&
+      data.extensions.length === 0 &&
+      current !== "/"
+    ) {
       // Skip — wait for extensions to load before deciding
     } else if (fromPopstate) {
       window.history.replaceState(null, "", expected);
@@ -472,7 +478,7 @@ async function handleDeleteConversation(id: string) {
   }
   reconnectActivity();
   if (activeConversationId === id) {
-    selection = { kind: "home" };
+    selection = { kind: "system-history" };
   }
 }
 
@@ -512,12 +518,12 @@ function onAuth(u: AuthUser) {
 function handleHideConversation(id: string) {
   hideConversation(id);
   if (activeConversationId === id) {
-    selection = { kind: "home" };
+    selection = { kind: "system-history" };
   }
 }
 
 function handleSystemHome() {
-  selection = { kind: "home" };
+  selection = { kind: "system-history" };
 }
 
 function handleSelectMind(name: string) {
@@ -722,19 +728,19 @@ function handleGlobalClick(e: MouseEvent) {
               <div class="mind-section-tabs">
                 <button
                   class="mind-section-tab"
-                  class:active={activeSystemSection === "system-chat"}
-                  onclick={() => { selection = { kind: "system-chat" }; }}
-                >
-                  <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg></span>
-                  <span class="tab-tooltip">Chat</span>
-                </button>
-                <button
-                  class="mind-section-tab"
                   class:active={activeSystemSection === "system-history"}
                   onclick={() => { selection = { kind: "system-history" }; }}
                 >
                   <span class="tab-icon">{@html icons.history}</span>
                   <span class="tab-tooltip">History</span>
+                </button>
+                <button
+                  class="mind-section-tab"
+                  class:active={activeSystemSection === "system-chat"}
+                  onclick={() => { selection = { kind: "system-chat" }; }}
+                >
+                  <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg></span>
+                  <span class="tab-tooltip">Chat</span>
                 </button>
                 {#each data.extensions as ext}
                   {#if ext.systemSection}

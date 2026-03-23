@@ -179,6 +179,8 @@ let activeChannelId = $derived.by(() => {
 
 let isSystemActive = $derived(
   selection.kind === "home" ||
+    selection.kind === "system-history" ||
+    selection.kind === "system-chat" ||
     selection.kind === "settings" ||
     selection.kind === "extension" ||
     selection.kind === "shared-files",
