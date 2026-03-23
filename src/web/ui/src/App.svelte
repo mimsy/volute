@@ -678,7 +678,6 @@ function handleGlobalClick(e: MouseEvent) {
       {#if layout.sidebarOpen}
         <button class="sidebar-backdrop" aria-label="Close sidebar" onclick={closeSidebar}></button>
       {/if}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="resize-handle"
         role="separator"
@@ -792,7 +791,6 @@ function handleGlobalClick(e: MouseEvent) {
           {#if narrowViewport && rightPanelOpen}
             <button class="right-panel-backdrop" aria-label="Close panel" onclick={closeRightPanel}></button>
           {/if}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
             class="resize-handle right-resize-handle"
             role="separator"
@@ -961,6 +959,7 @@ function handleGlobalClick(e: MouseEvent) {
     margin-left: -4px;
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
     line-height: 1.2;

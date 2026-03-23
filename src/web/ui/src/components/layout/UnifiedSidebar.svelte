@@ -171,7 +171,6 @@ let isSystemActive = $derived(
 
 <svelte:window onclick={handleClickOutside} onblur={handleWindowBlur} />
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="sidebar-inner">
   <div class="sections">
     <!-- System -->
@@ -285,12 +284,14 @@ let isSystemActive = $derived(
 </div>
 
 {#if openMenu === "__system__"}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="mind-menu"
+    role="menu"
+    tabindex="-1"
     style:top="{menuPos.top}px"
     style:left="{menuPos.left}px"
     onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => { if (e.key === "Escape") openMenu = null; }}
   >
     <button class="mind-menu-item" onclick={() => handleMenuAction("__system__", "shared-files")}>
       <Icon kind="folder" class="menu-icon" />
@@ -302,12 +303,14 @@ let isSystemActive = $derived(
     </button>
   </div>
 {:else if openMenu}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="mind-menu"
+    role="menu"
+    tabindex="-1"
     style:top="{menuPos.top}px"
     style:left="{menuPos.left}px"
     onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => { if (e.key === "Escape") openMenu = null; }}
   >
     <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "files")}>
       <Icon kind="folder" class="menu-icon" />

@@ -376,10 +376,11 @@ function jumpToLatest() {
               {/if}
               {formatRelativeTime(turn.created_at)}
             </div>
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
               class="turn-rail"
               class:turn-rail-expanded={expandedTurns.has(turn.id) || turn.status === "active"}
+              role="button"
+              tabindex="0"
               onclick={(e) => {
                 if (!turn.summary) return;
                 e.stopPropagation();
@@ -397,7 +398,6 @@ function jumpToLatest() {
                       <button class="peek-btn" aria-label="View conversation" onclick={(e) => e.stopPropagation()}>
                         <Icon kind="chat" />
                       </button>
-                      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
                       <div class="peek-popover" role="button" tabindex="0"
                         onclick={(e) => { e.stopPropagation(); openConversation(conv, turn); }}
                         onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); openConversation(conv, turn); } }}
