@@ -657,6 +657,26 @@ export async function uploadMindAvatar(name: string, file: File): Promise<void> 
   }
 }
 
+// --- Extensions management ---
+
+import type { ExtensionManagementInfo } from "./extensions";
+
+export function fetchAllExtensions(): Promise<ExtensionManagementInfo[]> {
+  return get("/api/extensions/all");
+}
+
+export async function setExtensionEnabled(id: string, enabled: boolean): Promise<void> {
+  await put(`/api/extensions/${enc(id)}/enabled`, { enabled });
+}
+
+export async function installExtension(pkg: string): Promise<void> {
+  await post("/api/extensions/install", { package: pkg });
+}
+
+export async function uninstallExtension(pkg: string): Promise<void> {
+  await del(`/api/extensions/uninstall/${enc(pkg)}`);
+}
+
 // --- Helpers ---
 
 function enc(s: string): string {
