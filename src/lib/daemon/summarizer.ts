@@ -576,6 +576,37 @@ export async function summarizePeriod(
   const sources = await gatherChildSummaries(mind, period, periodKey);
   if (sources.texts.length === 0) return false;
 
+  // If there's only one child summary, promote it directly instead of
+  // generating a redundant wrapper. E.g. an hour with one turn doesn't
+  // need a separate hourly summary — the turn summary *is* the hourly summary.
+  if (sources.texts.length === 1) {
+    try {
+      await db
+        .insert(summaries)
+        .values({
+          mind,
+          period,
+          period_key: periodKey,
+          content: sources.texts[0],
+          metadata: JSON.stringify({
+            deterministic: false,
+            promoted: true,
+            source_count: 1,
+            source_ids: sources.sourceIds,
+          }),
+        })
+        .onConflictDoNothing();
+    } catch (err) {
+      sLog.error(
+        `failed to persist promoted ${period} summary for ${mind} (${periodKey})`,
+        log.errorData(err),
+      );
+      return false;
+    }
+    sLog.info(`promoted single-child ${period} summary for ${mind} (${periodKey})`);
+    return true;
+  }
+
   const promptKey = `meta_summary_${period}` as const;
   const scopeInstruction = getScopeInstruction(mind);
   const systemPrompt = await getPrompt(promptKey, { scope_instruction: scopeInstruction });
