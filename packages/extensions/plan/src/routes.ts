@@ -1,7 +1,14 @@
 import type { ExtensionContext } from "@volute/extensions";
 import { Hono } from "hono";
 
-import { completePlan, getActivePlan, listPlans, logProgress, setActivePlan } from "./plans.js";
+import {
+  addPlanMessage,
+  finishPlan,
+  getActivePlan,
+  listPlans,
+  logProgress,
+  startPlan,
+} from "./plans.js";
 
 function resolveUserId(c: {
   get: (key: string) => unknown;
@@ -27,7 +34,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
   const { getUser } = ctx;
 
   const app = new Hono()
-    // Get current active plan + logs
+    // Get current active plan + logs + messages
     .get("/current", async (c) => {
       const plan = await getActivePlan(db, getUser);
       if (!plan) return c.json(null);
@@ -51,28 +58,52 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       return c.json(plans);
     })
 
-    // Set new active plan (spirit/admin only)
+    // Start new plan (spirit/admin only)
     .post("/", async (c) => {
       const actor = resolveUserId(c);
       if (!actor) return c.json({ error: "Unauthorized" }, 401);
       if (actor.role !== "admin" && actor.user_type !== "mind") {
-        return c.json({ error: "Only spirit or admin can set plans" }, 403);
+        return c.json({ error: "Only spirit or admin can start plans" }, 403);
       }
 
       const body = await parseJson<{ title?: string; description?: string }>(c);
       if (!body) return c.json({ error: "Invalid JSON body" }, 400);
       if (!body.title) return c.json({ error: "title is required" }, 400);
 
-      const plan = await setActivePlan(db, getUser, actor.id, body.title, body.description ?? "");
+      const plan = await startPlan(db, getUser, actor.id, body.title, body.description ?? "");
 
       ctx.publishActivity({
-        type: "plan_set",
+        type: "plan_started",
         mind: actor.username,
-        summary: `${actor.username} set plan: "${body.title}"`,
+        summary: `${actor.username} started plan: "${body.title}"`,
         metadata: { planId: plan.id, title: body.title },
       });
 
       return c.json(plan, 201);
+    })
+
+    // Post a plan message
+    .post("/:id{[0-9]+}/message", async (c) => {
+      const actor = resolveUserId(c);
+      if (!actor) return c.json({ error: "Unauthorized" }, 401);
+
+      const planId = parseInt(c.req.param("id"), 10);
+      if (Number.isNaN(planId)) return c.json({ error: "Invalid plan ID" }, 400);
+
+      const body = await parseJson<{ content?: string }>(c);
+      if (!body) return c.json({ error: "Invalid JSON body" }, 400);
+      if (!body.content) return c.json({ error: "content is required" }, 400);
+
+      const msg = addPlanMessage(db, planId, body.content);
+
+      ctx.publishActivity({
+        type: "plan_message",
+        mind: actor.username,
+        summary: `Plan message: "${body.content.slice(0, 100)}"`,
+        metadata: { planId, messageId: msg.id },
+      });
+
+      return c.json(msg, 201);
     })
 
     // Log progress on a plan
@@ -99,24 +130,27 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       return c.json(log, 201);
     })
 
-    // Complete the current plan
-    .patch("/:id{[0-9]+}/complete", async (c) => {
+    // Finish the current plan
+    .patch("/:id{[0-9]+}/finish", async (c) => {
       const actor = resolveUserId(c);
       if (!actor) return c.json({ error: "Unauthorized" }, 401);
       if (actor.role !== "admin" && actor.user_type !== "mind") {
-        return c.json({ error: "Only spirit or admin can complete plans" }, 403);
+        return c.json({ error: "Only spirit or admin can finish plans" }, 403);
       }
 
       const planId = parseInt(c.req.param("id"), 10);
       if (Number.isNaN(planId)) return c.json({ error: "Invalid plan ID" }, 400);
 
-      const ok = completePlan(db, planId);
+      const body = await parseJson<{ message?: string }>(c);
+      const message = body?.message;
+
+      const ok = finishPlan(db, planId, message);
       if (!ok) return c.json({ error: "Plan not found" }, 404);
 
       ctx.publishActivity({
-        type: "plan_completed",
+        type: "plan_finished",
         mind: actor.username,
-        summary: `${actor.username} completed a plan`,
+        summary: `${actor.username} finished a plan`,
         metadata: { planId },
       });
 

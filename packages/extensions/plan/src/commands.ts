@@ -1,6 +1,13 @@
 import type { ExtensionCommand } from "@volute/extensions";
 
-import { completePlan, getActivePlan, listPlans, logProgress, setActivePlan } from "./plans.js";
+import {
+  addPlanMessage,
+  finishPlan,
+  getActivePlan,
+  listPlans,
+  logProgress,
+  startPlan,
+} from "./plans.js";
 
 function getFlag(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -8,11 +15,27 @@ function getFlag(args: string[], flag: string): string | undefined {
   return undefined;
 }
 
+// Lazy-load announceToSystem from daemon internals. This dynamic import is
+// resolved by tsup at bundle time (the extension is compiled into the daemon).
+// Falls back gracefully in test environments where the daemon module isn't available.
+let _announce: ((text: string) => Promise<void>) | null = null;
+async function announceToSystem(text: string): Promise<void> {
+  if (!_announce) {
+    try {
+      const mod = await import("../../../../src/lib/system-channel.js");
+      _announce = mod.announceToSystem;
+    } catch {
+      return; // Not in daemon context (tests)
+    }
+  }
+  await _announce(text);
+}
+
 export function createCommands(): Record<string, ExtensionCommand> {
   return {
-    set: {
-      description: "Set the active system plan",
-      usage: 'volute plan set "title" ["description"]  (description can be piped via stdin)',
+    start: {
+      description: "Start a new system plan",
+      usage: 'volute plan start "title" "description"  (description can be piped via stdin)',
       handler: async (args, ctx) => {
         if (!ctx.db) return { error: "Plan extension requires a database" };
         const mindName = ctx.mindName;
@@ -23,18 +46,48 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
         const title = args[0];
         const description = args[1] ?? ctx.stdin ?? "";
-        if (!title) return { error: 'Usage: volute plan set "title" ["description"]' };
+        if (!title) return { error: 'Usage: volute plan start "title" "description"' };
 
-        const plan = await setActivePlan(ctx.db, ctx.getUser, user.id, title, description);
+        const plan = await startPlan(ctx.db, ctx.getUser, user.id, title, description);
 
         ctx.publishActivity({
-          type: "plan_set",
+          type: "plan_started",
           mind: user.username,
-          summary: `${user.username} set plan: "${title}"`,
+          summary: `${user.username} started plan: "${title}"`,
           metadata: { planId: plan.id, title },
         });
 
-        return { output: `Plan set: ${plan.title}` };
+        return { output: `Plan started: ${plan.title}` };
+      },
+    },
+
+    message: {
+      description: "Post a message about the current plan (sent to #system)",
+      usage: 'volute plan message "today\'s focus: ..."  (content can be piped via stdin)',
+      handler: async (args, ctx) => {
+        if (!ctx.db) return { error: "Plan extension requires a database" };
+        const mindName = ctx.mindName;
+        if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
+
+        const content = args[0] ?? ctx.stdin;
+        if (!content) return { error: 'Usage: volute plan message "your message"' };
+
+        const plan = await getActivePlan(ctx.db, ctx.getUser);
+        if (!plan) return { error: "No active plan" };
+
+        const msg = addPlanMessage(ctx.db, plan.id, content);
+
+        ctx.publishActivity({
+          type: "plan_message",
+          mind: mindName,
+          summary: `Plan message: "${content.slice(0, 100)}"`,
+          metadata: { planId: plan.id, messageId: msg.id },
+        });
+
+        // Announce to #system so all minds see it
+        await announceToSystem(`[Plan: ${plan.title}] ${content}`);
+
+        return { output: "Message posted to #system." };
       },
     },
 
@@ -82,6 +135,9 @@ export function createCommands(): Record<string, ExtensionCommand> {
         if (plan.description) {
           lines.push("", plan.description);
         }
+        if (plan.latestMessage) {
+          lines.push("", `## Latest message`, "", plan.latestMessage);
+        }
         if (plan.logs.length > 0) {
           lines.push("", "## Progress");
           for (const log of plan.logs) {
@@ -113,10 +169,10 @@ export function createCommands(): Record<string, ExtensionCommand> {
       },
     },
 
-    complete: {
-      description: "Mark the current plan as completed",
-      usage: "volute plan complete",
-      handler: async (_args, ctx) => {
+    finish: {
+      description: "Finish the current plan with a closing message",
+      usage: 'volute plan finish "closing message"  (message can be piped via stdin)',
+      handler: async (args, ctx) => {
         if (!ctx.db) return { error: "Plan extension requires a database" };
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
@@ -124,16 +180,23 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const plan = await getActivePlan(ctx.db, ctx.getUser);
         if (!plan) return { error: "No active plan" };
 
-        completePlan(ctx.db, plan.id);
+        const message = args[0] ?? ctx.stdin ?? "";
+        finishPlan(ctx.db, plan.id, message);
 
         ctx.publishActivity({
-          type: "plan_completed",
+          type: "plan_finished",
           mind: mindName,
-          summary: `${mindName} completed plan: "${plan.title}"`,
+          summary: `${mindName} finished plan: "${plan.title}"`,
           metadata: { planId: plan.id },
         });
 
-        return { output: `Completed: ${plan.title}` };
+        // Announce to #system
+        const announcement = message
+          ? `[Plan finished: ${plan.title}] ${message}`
+          : `[Plan finished: ${plan.title}]`;
+        await announceToSystem(announcement);
+
+        return { output: `Finished: ${plan.title}` };
       },
     },
   };

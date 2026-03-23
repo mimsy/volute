@@ -9,7 +9,8 @@ export function initDb(db: Database): void {
       status TEXT NOT NULL DEFAULT 'active',
       set_by INTEGER NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      completed_at TEXT
+      completed_at TEXT,
+      finish_message TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_plans_status ON plans(status);
     CREATE INDEX IF NOT EXISTS idx_plans_created_at ON plans(created_at);
@@ -22,5 +23,13 @@ export function initDb(db: Database): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_plan_logs_plan_id ON plan_logs(plan_id);
+
+    CREATE TABLE IF NOT EXISTS plan_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      plan_id INTEGER NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_plan_messages_plan_id ON plan_messages(plan_id);
   `);
 }

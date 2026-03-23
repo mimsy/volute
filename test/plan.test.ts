@@ -4,11 +4,12 @@ import type { Database as ExtDb, User } from "@volute/extensions";
 import Database from "libsql";
 import { initDb } from "../packages/extensions/plan/src/db.js";
 import {
-  completePlan,
+  addPlanMessage,
+  finishPlan,
   getActivePlan,
   listPlans,
   logProgress,
-  setActivePlan,
+  startPlan,
 } from "../packages/extensions/plan/src/plans.js";
 
 let db: ExtDb;
@@ -43,14 +44,8 @@ describe("plan extension", () => {
   });
   afterEach(() => db.close());
 
-  it("setActivePlan creates a plan", async () => {
-    const plan = await setActivePlan(
-      db,
-      getUser,
-      spiritId,
-      "Build a story",
-      "Collaborative fiction",
-    );
+  it("startPlan creates a plan", async () => {
+    const plan = await startPlan(db, getUser, spiritId, "Build a story", "Collaborative fiction");
     assert.equal(plan.title, "Build a story");
     assert.equal(plan.description, "Collaborative fiction");
     assert.equal(plan.status, "active");
@@ -62,23 +57,25 @@ describe("plan extension", () => {
     assert.equal(plan, null);
   });
 
-  it("getActivePlan returns active plan with logs", async () => {
-    const created = await setActivePlan(db, getUser, spiritId, "Test Plan", "Description");
+  it("getActivePlan returns active plan with logs and messages", async () => {
+    const created = await startPlan(db, getUser, spiritId, "Test Plan", "Description");
     logProgress(db, created.id, "aria", "Started work on chapter 1");
     logProgress(db, created.id, "sol", "Drew some illustrations");
+    addPlanMessage(db, created.id, "Focus on connecting your wings today");
 
     const plan = await getActivePlan(db, getUser);
     assert.ok(plan);
     assert.equal(plan.title, "Test Plan");
     assert.equal(plan.logs.length, 2);
-    // Logs are returned newest first
     assert.ok(plan.logs.some((l) => l.mind_name === "aria"));
     assert.ok(plan.logs.some((l) => l.mind_name === "sol"));
+    assert.equal(plan.messages.length, 1);
+    assert.equal(plan.latestMessage, "Focus on connecting your wings today");
   });
 
-  it("setting a new plan archives the previous one", async () => {
-    const first = await setActivePlan(db, getUser, spiritId, "Plan A", "");
-    await setActivePlan(db, getUser, spiritId, "Plan B", "");
+  it("starting a new plan archives the previous one", async () => {
+    const first = await startPlan(db, getUser, spiritId, "Plan A", "");
+    await startPlan(db, getUser, spiritId, "Plan B", "");
 
     const active = await getActivePlan(db, getUser);
     assert.ok(active);
@@ -92,37 +89,38 @@ describe("plan extension", () => {
   });
 
   it("only one active plan at a time", async () => {
-    await setActivePlan(db, getUser, spiritId, "Plan 1", "");
-    await setActivePlan(db, getUser, spiritId, "Plan 2", "");
-    await setActivePlan(db, getUser, spiritId, "Plan 3", "");
+    await startPlan(db, getUser, spiritId, "Plan 1", "");
+    await startPlan(db, getUser, spiritId, "Plan 2", "");
+    await startPlan(db, getUser, spiritId, "Plan 3", "");
 
     const activeRows = (db as any).prepare("SELECT * FROM plans WHERE status = 'active'").all();
     assert.equal(activeRows.length, 1);
     assert.equal(activeRows[0].title, "Plan 3");
   });
 
-  it("completePlan changes status", async () => {
-    const plan = await setActivePlan(db, getUser, spiritId, "To Complete", "");
-    const ok = completePlan(db, plan.id);
+  it("finishPlan changes status and stores message", async () => {
+    const plan = await startPlan(db, getUser, spiritId, "To Finish", "");
+    const ok = finishPlan(db, plan.id, "Great work everyone!");
     assert.ok(ok);
 
     const active = await getActivePlan(db, getUser);
     assert.equal(active, null);
 
     const all = await listPlans(db, getUser);
-    const completed = all.find((p) => p.id === plan.id);
-    assert.ok(completed);
-    assert.equal(completed.status, "completed");
-    assert.ok(completed.completed_at);
+    const finished = all.find((p) => p.id === plan.id);
+    assert.ok(finished);
+    assert.equal(finished.status, "completed");
+    assert.ok(finished.completed_at);
+    assert.equal(finished.finish_message, "Great work everyone!");
   });
 
-  it("completePlan returns false for nonexistent plan", () => {
-    const ok = completePlan(db, 999);
+  it("finishPlan returns false for nonexistent plan", () => {
+    const ok = finishPlan(db, 999);
     assert.equal(ok, false);
   });
 
   it("logProgress adds entries", async () => {
-    const plan = await setActivePlan(db, getUser, spiritId, "With Logs", "");
+    const plan = await startPlan(db, getUser, spiritId, "With Logs", "");
     const log1 = logProgress(db, plan.id, "aria", "Did thing 1");
     const log2 = logProgress(db, plan.id, "sol", "Did thing 2");
 
@@ -131,9 +129,20 @@ describe("plan extension", () => {
     assert.equal(log2.mind_name, "sol");
   });
 
+  it("addPlanMessage tracks messages", async () => {
+    const plan = await startPlan(db, getUser, spiritId, "With Messages", "");
+    addPlanMessage(db, plan.id, "First focus area");
+    addPlanMessage(db, plan.id, "Updated focus area");
+
+    const active = await getActivePlan(db, getUser);
+    assert.ok(active);
+    assert.equal(active.messages.length, 2);
+    assert.equal(active.latestMessage, "Updated focus area");
+  });
+
   it("listPlans filters by status", async () => {
-    await setActivePlan(db, getUser, spiritId, "Old Plan", "");
-    await setActivePlan(db, getUser, spiritId, "Current Plan", "");
+    await startPlan(db, getUser, spiritId, "Old Plan", "");
+    await startPlan(db, getUser, spiritId, "Current Plan", "");
 
     const archived = await listPlans(db, getUser, { status: "archived" });
     assert.equal(archived.length, 1);
@@ -145,9 +154,9 @@ describe("plan extension", () => {
   });
 
   it("listPlans respects limit and offset", async () => {
-    await setActivePlan(db, getUser, spiritId, "Plan 1", "");
-    await setActivePlan(db, getUser, spiritId, "Plan 2", "");
-    await setActivePlan(db, getUser, spiritId, "Plan 3", "");
+    await startPlan(db, getUser, spiritId, "Plan 1", "");
+    await startPlan(db, getUser, spiritId, "Plan 2", "");
+    await startPlan(db, getUser, spiritId, "Plan 3", "");
 
     const page = await listPlans(db, getUser, { limit: 1, offset: 1 });
     assert.equal(page.length, 1);
@@ -156,7 +165,7 @@ describe("plan extension", () => {
 
   it("listPlans enriches with user info", async () => {
     registerUser(2, "admin-human");
-    await setActivePlan(db, getUser, 2, "Admin Plan", "");
+    await startPlan(db, getUser, 2, "Admin Plan", "");
 
     const plans = await listPlans(db, getUser);
     assert.equal(plans[0].set_by_username, "admin-human");

@@ -16,12 +16,13 @@ exec node --input-type=module -e "
     if (!res.ok) { console.log('{}'); process.exit(0); }
     const plan = await res.json();
     if (!plan || !plan.title) { console.log('{}'); process.exit(0); }
+    const parts = ['Current system plan: ' + plan.title];
+    if (plan.description) parts.push(plan.description);
+    if (plan.latestMessage) parts.push('Latest message from coordinator: ' + plan.latestMessage);
     const logs = (plan.logs || []).slice(0, 5).map(l =>
       '  - ' + l.mind_name + ': ' + l.content.slice(0, 200)
     ).join('\n');
-    const ctx = 'Current system plan: ' + plan.title +
-      (plan.description ? '\n' + plan.description : '') +
-      (logs ? '\n\nRecent progress:\n' + logs : '');
-    console.log(JSON.stringify({ additionalContext: ctx }));
+    if (logs) parts.push('Recent progress:\n' + logs);
+    console.log(JSON.stringify({ additionalContext: parts.join('\n\n') }));
   } catch { console.log('{}'); }
 "

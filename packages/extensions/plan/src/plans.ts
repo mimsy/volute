@@ -10,6 +10,7 @@ export type Plan = {
   set_by_display_name: string | null;
   created_at: string;
   completed_at: string | null;
+  finish_message: string | null;
 };
 
 export type PlanLog = {
@@ -20,13 +21,22 @@ export type PlanLog = {
   created_at: string;
 };
 
-export type PlanWithLogs = Plan & {
+export type PlanMessage = {
+  id: number;
+  plan_id: number;
+  content: string;
+  created_at: string;
+};
+
+export type PlanWithDetails = Plan & {
   logs: PlanLog[];
+  messages: PlanMessage[];
+  latestMessage: string | null;
 };
 
 type UserLookup = ExtensionContext["getUser"];
 
-export async function setActivePlan(
+export async function startPlan(
   db: Database,
   getUser: UserLookup,
   userId: number,
@@ -52,6 +62,7 @@ export async function setActivePlan(
     set_by: number;
     created_at: string;
     completed_at: string | null;
+    finish_message: string | null;
   };
 
   const user = await getUser(userId);
@@ -65,7 +76,7 @@ export async function setActivePlan(
 export async function getActivePlan(
   db: Database,
   getUser: UserLookup,
-): Promise<PlanWithLogs | null> {
+): Promise<PlanWithDetails | null> {
   const row = db.prepare("SELECT * FROM plans WHERE status = 'active' LIMIT 1").get() as
     | {
         id: number;
@@ -75,6 +86,7 @@ export async function getActivePlan(
         set_by: number;
         created_at: string;
         completed_at: string | null;
+        finish_message: string | null;
       }
     | undefined;
 
@@ -84,12 +96,19 @@ export async function getActivePlan(
   const logs = db
     .prepare("SELECT * FROM plan_logs WHERE plan_id = ? ORDER BY created_at DESC LIMIT 20")
     .all(row.id) as PlanLog[];
+  const messages = db
+    .prepare("SELECT * FROM plan_messages WHERE plan_id = ? ORDER BY id DESC LIMIT 10")
+    .all(row.id) as PlanMessage[];
+
+  const latestMessage = messages.length > 0 ? messages[0].content : null;
 
   return {
     ...row,
     set_by_username: user?.username ?? "unknown",
     set_by_display_name: user?.display_name ?? null,
     logs,
+    messages,
+    latestMessage,
   };
 }
 
@@ -108,10 +127,22 @@ export function logProgress(
     .get(planId, mindName, content) as PlanLog;
 }
 
-export function completePlan(db: Database, planId: number): boolean {
+export function addPlanMessage(db: Database, planId: number, content: string): PlanMessage {
+  return db
+    .prepare(
+      `INSERT INTO plan_messages (plan_id, content)
+       VALUES (?, ?)
+       RETURNING *`,
+    )
+    .get(planId, content) as PlanMessage;
+}
+
+export function finishPlan(db: Database, planId: number, message?: string): boolean {
   const result = db
-    .prepare("UPDATE plans SET status = 'completed', completed_at = datetime('now') WHERE id = ?")
-    .run(planId);
+    .prepare(
+      "UPDATE plans SET status = 'completed', completed_at = datetime('now'), finish_message = ? WHERE id = ?",
+    )
+    .run(message ?? null, planId);
   return result.changes > 0;
 }
 
