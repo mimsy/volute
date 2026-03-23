@@ -1,7 +1,7 @@
 FROM node:24-slim
 
-# git needed for mind git init + variants; procps/lsof for process management
-RUN apt-get update && apt-get install -y --no-install-recommends git procps lsof ca-certificates \
+# git needed for mind git init + variants; procps/lsof for process management; curl for hooks/scripts
+RUN apt-get update && apt-get install -y --no-install-recommends git procps lsof ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && git config --system user.name "Volute" \
     && git config --system user.email "volute@localhost"
@@ -17,6 +17,8 @@ COPY packages/extensions/notes/dist/ui/ packages/extensions/notes/dist/ui/
 COPY packages/extensions/notes/skills/ packages/extensions/notes/skills/
 COPY packages/extensions/pages/dist/ui/ packages/extensions/pages/dist/ui/
 COPY packages/extensions/pages/skills/ packages/extensions/pages/skills/
+COPY packages/extensions/plan/dist/ui/ packages/extensions/plan/dist/ui/
+COPY packages/extensions/plan/skills/ packages/extensions/plan/skills/
 
 # Make volute CLI available in PATH for minds and operators
 RUN ln -s /opt/volute/dist/cli.js /usr/local/bin/volute

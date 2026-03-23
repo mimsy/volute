@@ -10,6 +10,7 @@ import type {
 } from "@volute/extensions";
 import extNotes from "@volute/notes";
 import extPages from "@volute/pages";
+import extPlan from "@volute/plan";
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import type { AuthEnv } from "../web/middleware/auth.js";
 import { getUser, getUserByUsername } from "./auth.js";
@@ -361,7 +362,7 @@ function resolveSkillsDir(manifest: ExtensionManifest): string | null {
 
 function discoverBuiltinExtensions(): ExtensionManifest[] {
   // Built-in extensions imported statically so tsup bundles them
-  return [extNotes, extPages];
+  return [extNotes, extPages, extPlan];
 }
 
 async function discoverInstalledExtensions(): Promise<ExtensionManifest[]> {

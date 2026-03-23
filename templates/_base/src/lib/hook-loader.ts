@@ -55,13 +55,14 @@ export function executeHook(
   scriptPath: string,
   input: object,
   timeout = DEFAULT_TIMEOUT,
+  cwd?: string,
 ): Promise<HookResult> {
   return new Promise((resolve) => {
     const { cmd, args } = getRunner(scriptPath);
     const child = spawn(cmd, args, {
       timeout,
       stdio: ["pipe", "pipe", "pipe"],
-      cwd: process.cwd(),
+      cwd: cwd ?? process.cwd(),
       env: process.env,
     });
 
@@ -130,12 +131,17 @@ export async function runHooks(
   const scripts = discoverHooks(hooksDir, event);
   if (scripts.length === 0) return { metadata: {}, blocked: false };
 
+  // Hook shim scripts use paths relative to the mind's home directory
+  // (e.g. .claude/skills/<id>/scripts/<script>). hooksDir is <home>/.local/hooks,
+  // so resolving ../.. gives the home directory.
+  const homeDir = resolve(hooksDir, "../..");
+
   const contextParts: string[] = [];
   const metadata: Record<string, unknown> = {};
   let blocked = false;
 
   for (const script of scripts) {
-    const result = await executeHook(script, input, timeout);
+    const result = await executeHook(script, input, timeout, homeDir);
     if (result.additionalContext) {
       contextParts.push(result.additionalContext);
     }

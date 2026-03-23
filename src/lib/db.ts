@@ -1,6 +1,7 @@
 import { chmodSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
 import { voluteSystemDir } from "./registry.js";
@@ -25,6 +26,11 @@ export async function getDb(): Promise<DbInstance> {
     try {
       const dbPath = process.env.VOLUTE_DB_PATH || resolve(voluteSystemDir(), "volute.db");
       const instance = drizzle({ connection: { url: `file:${dbPath}` }, schema });
+      // WAL mode allows concurrent reads during writes; busy_timeout prevents
+      // immediate SQLITE_BUSY failures when the DB is briefly locked.
+      await instance.run(sql.raw("PRAGMA journal_mode=WAL"));
+      await instance.run(sql.raw("PRAGMA busy_timeout=5000"));
+      await instance.run(sql.raw("PRAGMA foreign_keys=ON"));
       await migrate(instance, { migrationsFolder });
       // Restrict database file permissions to owner only
       try {
