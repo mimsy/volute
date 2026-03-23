@@ -651,7 +651,7 @@ function handleGlobalClick(e: MouseEvent) {
             <img src="/logo.png" alt="" class="sidebar-logo" />
             <span class="hover-dot"></span>
           </span>
-          <span class="sidebar-title">volute</span>
+          <span class="sidebar-title">{auth.localName || "volute"}</span>
         </button>
         <UnifiedSidebar
           minds={data.minds}
@@ -974,6 +974,11 @@ function handleGlobalClick(e: MouseEvent) {
     letter-spacing: 0.04em;
     margin-top: -4px;
     margin-left: -4px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.2;
   }
 
   @keyframes iridescent {

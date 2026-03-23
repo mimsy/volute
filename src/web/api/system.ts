@@ -80,7 +80,8 @@ const app = new Hono<AuthEnv>()
   })
   .get("/info", (c) => {
     const config = readSystemsConfig();
-    return c.json({ system: config?.system ?? null });
+    const globalConfig = readGlobalConfig();
+    return c.json({ system: config?.system ?? null, name: globalConfig.name ?? null });
   })
   .post(
     "/register",

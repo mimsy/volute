@@ -388,11 +388,11 @@ export function restartDaemon(): Promise<void> {
   return post(`${V1}/system/restart`);
 }
 
-export async function fetchSystemInfo(): Promise<{ system: string | null }> {
+export async function fetchSystemInfo(): Promise<{ system: string | null; name: string | null }> {
   try {
-    return await get<{ system: string | null }>(`${V1}/system/info`);
+    return await get<{ system: string | null; name: string | null }>(`${V1}/system/info`);
   } catch {
-    return { system: null };
+    return { system: null, name: null };
   }
 }
 
