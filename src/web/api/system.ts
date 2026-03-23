@@ -83,15 +83,12 @@ const app = new Hono<AuthEnv>()
     const globalConfig = readGlobalConfig();
     return c.json({ system: config?.system ?? null, name: globalConfig.name ?? null });
   })
-  .put("/info", requireAdmin, async (c) => {
-    const body = (await c.req.json()) as { name?: string };
-    if (body.name !== undefined) {
-      const config = readGlobalConfig();
-      config.name = body.name.trim() || undefined;
-      writeGlobalConfig(config);
-    }
-    const globalConfig = readGlobalConfig();
-    return c.json({ name: globalConfig.name ?? null });
+  .put("/info", requireAdmin, zValidator("json", z.object({ name: z.string() })), (c) => {
+    const { name } = c.req.valid("json");
+    const config = readGlobalConfig();
+    config.name = name.trim() || undefined;
+    writeGlobalConfig(config);
+    return c.json({ name: config.name ?? null });
   })
   .post(
     "/register",

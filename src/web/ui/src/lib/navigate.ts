@@ -1,7 +1,6 @@
 import type { ExtensionInfo } from "./extensions";
 
 export type Selection =
-  | { kind: "home" }
   | {
       kind: "mind";
       name: string;
@@ -151,7 +150,6 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
  */
 export function selectionToPath(selection: Selection, extensions: ExtensionInfo[] = []): string {
   switch (selection.kind) {
-    case "home":
     case "system-history":
       return "/";
     case "mind": {
@@ -185,7 +183,6 @@ export function selectionToPath(selection: Selection, extensions: ExtensionInfo[
       return "/shared-files";
     case "system-chat":
       return "/system/chat";
-    // system-history handled above with home → "/"
     case "channel": {
       // Don't serialize backwards-compat conv IDs to URL
       if (selection.slug.startsWith("__conv:")) {

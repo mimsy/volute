@@ -94,46 +94,29 @@ let sortedMinds = $derived(
 let openMenu = $state<string | null>(null);
 let menuPos = $state({ top: 0, left: 0 });
 
-function handleDotsClick(e: MouseEvent, mindName: string) {
+function handleDotsClick(e: MouseEvent, key: string = "__system__") {
   e.stopPropagation();
-  if (openMenu === mindName) {
+  if (openMenu === key) {
     openMenu = null;
   } else {
     const btn = e.currentTarget as HTMLElement;
     const rect = btn.getBoundingClientRect();
     menuPos = { top: rect.bottom + 2, left: rect.left };
-    openMenu = mindName;
+    openMenu = key;
   }
 }
 
 function handleMenuAction(name: string, section: string) {
   openMenu = null;
-  onSelectMindSection(name, section);
-}
-
-function handleSystemDotsClick(e: MouseEvent) {
-  e.stopPropagation();
-  if (openMenu === "__system__") {
-    openMenu = null;
+  if (name === "__system__") {
+    onSelectSystemSection(section);
   } else {
-    const btn = e.currentTarget as HTMLElement;
-    const rect = btn.getBoundingClientRect();
-    menuPos = { top: rect.bottom + 2, left: rect.left };
-    openMenu = "__system__";
+    onSelectMindSection(name, section);
   }
 }
 
-function handleSystemMenuAction(section: string) {
-  openMenu = null;
-  onSelectSystemSection(section);
-}
-
 function handleClickOutside(e: MouseEvent) {
-  if (
-    openMenu &&
-    !(e.target as HTMLElement).closest(".mind-menu-container") &&
-    !(e.target as HTMLElement).closest(".system-menu-container")
-  ) {
+  if (openMenu && !(e.target as HTMLElement).closest(".menu-container")) {
     openMenu = null;
   }
 }
@@ -178,8 +161,7 @@ let activeChannelId = $derived.by(() => {
 });
 
 let isSystemActive = $derived(
-  selection.kind === "home" ||
-    selection.kind === "system-history" ||
+  selection.kind === "system-history" ||
     selection.kind === "system-chat" ||
     selection.kind === "settings" ||
     selection.kind === "extension" ||
@@ -203,11 +185,11 @@ let isSystemActive = $derived(
           <Icon kind="spiral" class="section-icon" />
           <span>System</span>
         </button>
-        <div class="system-menu-container">
+        <div class="menu-container">
           <button
             class="mind-dots-btn"
             class:visible={openMenu === "__system__"}
-            onclick={handleSystemDotsClick}
+            onclick={(e) => handleDotsClick(e)}
             title="More options"
           >
             <svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/></svg>
@@ -259,7 +241,7 @@ let isSystemActive = $derived(
                   {/snippet}
                 </ProfileHoverCard>
               </button>
-              <div class="mind-menu-container">
+              <div class="menu-container">
                 <button
                   class="mind-dots-btn"
                   class:visible={openMenu === mind.name}
@@ -310,11 +292,11 @@ let isSystemActive = $derived(
     style:left="{menuPos.left}px"
     onclick={(e) => e.stopPropagation()}
   >
-    <button class="mind-menu-item" onclick={() => handleSystemMenuAction("shared-files")}>
+    <button class="mind-menu-item" onclick={() => handleMenuAction("__system__", "shared-files")}>
       <Icon kind="folder" class="menu-icon" />
       Shared Files
     </button>
-    <button class="mind-menu-item" onclick={() => handleSystemMenuAction("settings")}>
+    <button class="mind-menu-item" onclick={() => handleMenuAction("__system__", "settings")}>
       <Icon kind="gear" class="menu-icon" />
       Settings
     </button>
@@ -508,7 +490,7 @@ let isSystemActive = $derived(
     min-width: 0;
   }
 
-  .mind-menu-container {
+  .menu-container {
     position: relative;
     flex-shrink: 0;
   }

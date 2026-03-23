@@ -167,55 +167,105 @@ const history = new Hono()
       for (const ch of channels.keys()) allChannelSlugs.add(ch);
     }
 
-    const channelIdMap = new Map<string, string>();
-    if (allChannelSlugs.size > 0) {
-      // Resolve channel conversations by name (strip # prefix, platform prefix)
-      const channelNames = [...allChannelSlugs]
-        .filter((s) => !s.startsWith("@"))
-        .map((s) => {
-          let name = s;
-          if (name.startsWith("#")) name = name.slice(1);
-          const colonIdx = name.indexOf(":");
-          if (colonIdx >= 0) name = name.substring(colonIdx + 1);
-          return { slug: s, name };
-        });
-      if (channelNames.length > 0) {
-        const channelRows = await db
-          .select({ id: conversations.id, name: conversations.name })
-          .from(conversations)
-          .where(
-            and(
-              eq(conversations.type, "channel"),
-              inArray(
-                conversations.name,
-                channelNames.map((c) => c.name),
-              ),
-            ),
-          );
-        const nameToId = new Map(channelRows.map((r) => [r.name, r.id]));
-        for (const { slug, name } of channelNames) {
-          const id = nameToId.get(name);
-          if (id) channelIdMap.set(slug, id);
+    // Collect which minds use which DM slugs (needed to verify both participants)
+    const dmSlugMinds = new Map<string, Set<string>>();
+    for (const [turnId, channels] of msgsByTurnChannel) {
+      const mindName = turnMindMap.get(turnId);
+      if (!mindName) continue;
+      for (const ch of channels.keys()) {
+        if (ch.startsWith("@")) {
+          let minds = dmSlugMinds.get(ch);
+          if (!minds) {
+            minds = new Set();
+            dmSlugMinds.set(ch, minds);
+          }
+          minds.add(mindName);
         }
       }
+    }
 
-      // Resolve DM conversations by participant username
-      const dmSlugs = [...allChannelSlugs].filter((s) => s.startsWith("@"));
-      for (const slug of dmSlugs) {
-        const targetName = slug.slice(1);
-        // Find the DM conversation where both the mind and the target are participants
-        const dmRow = await db
-          .select({ id: conversations.id })
-          .from(conversations)
-          .innerJoin(
-            conversationParticipants,
-            eq(conversations.id, conversationParticipants.conversation_id),
-          )
-          .innerJoin(users, eq(conversationParticipants.user_id, users.id))
-          .where(and(eq(conversations.type, "dm"), eq(users.username, targetName)))
-          .get();
-        if (dmRow) channelIdMap.set(slug, dmRow.id);
+    const channelIdMap = new Map<string, string>();
+    try {
+      if (allChannelSlugs.size > 0) {
+        // Resolve channel conversations by name (strip # prefix, platform prefix)
+        const channelNames = [...allChannelSlugs]
+          .filter((s) => !s.startsWith("@"))
+          .map((s) => {
+            let name = s;
+            if (name.startsWith("#")) name = name.slice(1);
+            const colonIdx = name.indexOf(":");
+            if (colonIdx >= 0) name = name.substring(colonIdx + 1);
+            return { slug: s, name };
+          });
+        if (channelNames.length > 0) {
+          const channelRows = await db
+            .select({ id: conversations.id, name: conversations.name })
+            .from(conversations)
+            .where(
+              and(
+                eq(conversations.type, "channel"),
+                inArray(
+                  conversations.name,
+                  channelNames.map((c) => c.name),
+                ),
+              ),
+            );
+          const nameToId = new Map(channelRows.map((r) => [r.name, r.id]));
+          for (const { slug, name } of channelNames) {
+            const id = nameToId.get(name);
+            if (id) channelIdMap.set(slug, id);
+          }
+        }
+
+        // Resolve DM conversations by participant username, verifying the mind is also a participant
+        const dmSlugs = [...dmSlugMinds.keys()];
+        if (dmSlugs.length > 0) {
+          const targetNames = dmSlugs.map((s) => s.slice(1));
+          const cp2 = db.$with("cp2").as(
+            db
+              .select({
+                conversation_id: conversationParticipants.conversation_id,
+                username: users.username,
+              })
+              .from(conversationParticipants)
+              .innerJoin(users, eq(conversationParticipants.user_id, users.id)),
+          );
+          const dmRows = await db
+            .with(cp2)
+            .select({
+              id: conversations.id,
+              targetUsername: users.username,
+            })
+            .from(conversations)
+            .innerJoin(
+              conversationParticipants,
+              eq(conversations.id, conversationParticipants.conversation_id),
+            )
+            .innerJoin(users, eq(conversationParticipants.user_id, users.id))
+            .where(and(eq(conversations.type, "dm"), inArray(users.username, targetNames)));
+          for (const row of dmRows) {
+            const slug = `@${row.targetUsername}`;
+            const mindNames = dmSlugMinds.get(slug);
+            if (mindNames && !channelIdMap.has(slug)) {
+              // Verify the mind is also a participant in this conversation
+              const mindCheck = await db
+                .select({ id: conversationParticipants.user_id })
+                .from(conversationParticipants)
+                .innerJoin(users, eq(conversationParticipants.user_id, users.id))
+                .where(
+                  and(
+                    eq(conversationParticipants.conversation_id, row.id),
+                    inArray(users.username, [...mindNames]),
+                  ),
+                )
+                .get();
+              if (mindCheck) channelIdMap.set(slug, row.id);
+            }
+          }
+        }
       }
+    } catch (err) {
+      log.warn("Failed to resolve channel slugs to conversation IDs", log.errorData(err));
     }
 
     // 7. Assemble response

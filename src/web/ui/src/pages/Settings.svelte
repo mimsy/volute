@@ -21,7 +21,7 @@ async function saveLocalName() {
     await updateSystemName(trimmed);
     auth.localName = trimmed || null;
   } catch {
-    // best effort
+    localName = auth.localName ?? "";
   }
 }
 

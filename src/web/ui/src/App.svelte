@@ -83,7 +83,7 @@ let onSystemPage = $derived(selection.kind !== "mind" && selection.kind !== "cha
 let activeSystemSection = $derived.by((): string | null => {
   if (!onSystemPage) return null;
   if (selection.kind === "system-chat") return "system-chat";
-  if (selection.kind === "system-history" || selection.kind === "home") return "system-history";
+  if (selection.kind === "system-history") return "system-history";
   if (selection.kind === "extension") return `ext:${selection.extensionId}`;
   if (selection.kind === "settings") return "settings";
   if (selection.kind === "shared-files") return "shared-files";
@@ -337,10 +337,7 @@ $effect(() => {
 $effect(() => {
   if (data.extensions.length > 0) {
     const fresh = parseSelection(data.extensions);
-    if (
-      fresh.kind === "extension" &&
-      (selection.kind === "home" || selection.kind === "system-history")
-    ) {
+    if (fresh.kind === "extension" && selection.kind === "system-history") {
       selection = fresh;
     }
     if (
@@ -388,11 +385,7 @@ $effect(() => {
   const expected = selectionToPath(selection, data.extensions);
   const current = window.location.pathname + window.location.search;
   if (current !== expected) {
-    if (
-      (selection.kind === "home" || selection.kind === "system-history") &&
-      data.extensions.length === 0 &&
-      current !== "/"
-    ) {
+    if (selection.kind === "system-history" && data.extensions.length === 0 && current !== "/") {
       // Skip — wait for extensions to load before deciding
     } else if (fromPopstate) {
       window.history.replaceState(null, "", expected);
