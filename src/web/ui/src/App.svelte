@@ -811,9 +811,9 @@ function handleGlobalClick(e: MouseEvent) {
               {#key rightPanelMind.name}
                 <MindRightPanel
                   mind={rightPanelMind}
-                  onProfile={showRightPanelProfile ? () => {
-                    selection = { kind: "mind", name: rightPanelMind.name, section: "history" };
-                    if (activeModal === "mind") { activeModal = null; selectedModalMind = null; }
+                  onExpand={showRightPanelProfile ? () => {
+                    mindModalName = rightPanelMind.name;
+                    activeModal = "mindHistory";
                   } : undefined}
                   onChat={showRightPanelChat ? () => handleNewChatCreated(rightPanelMind.name) : undefined}
                 />

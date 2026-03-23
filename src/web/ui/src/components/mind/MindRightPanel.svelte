@@ -8,11 +8,11 @@ import MindClock from "./MindClock.svelte";
 
 let {
   mind: initialMind,
-  onProfile,
+  onExpand,
   onChat,
 }: {
   mind: Mind;
-  onProfile?: () => void;
+  onExpand?: () => void;
   onChat?: () => void;
 } = $props();
 
@@ -21,7 +21,7 @@ let isActive = $derived(activeMinds.has(mind.name));
 </script>
 
 <div class="mind-panel">
-  {#if onChat || onProfile}
+  {#if onChat || onExpand}
     <div class="floating-btns">
       {#if onChat}
         <button class="floating-btn" onclick={onChat}>
@@ -29,10 +29,10 @@ let isActive = $derived(activeMinds.has(mind.name));
           <span class="btn-tooltip">Chat</span>
         </button>
       {/if}
-      {#if onProfile}
-        <button class="floating-btn" onclick={onProfile}>
-          <Icon kind="history" class="history-icon" />
-          <span class="btn-tooltip">History</span>
+      {#if onExpand}
+        <button class="floating-btn" onclick={onExpand}>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2h4M2 2v4M14 14h-4M14 14v-4"/></svg>
+          <span class="btn-tooltip">Expand</span>
         </button>
       {/if}
     </div>
