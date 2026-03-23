@@ -150,6 +150,8 @@ let monthSummaries = $state<SummaryRow[]>([]);
 let summariesLoaded = $state(false);
 let expandedSummaries = $state(new SvelteMap<number, SummaryRow[] | TurnRow[]>());
 let loadingChildren = $state(new Set<number>());
+// For single-turn hours: expand directly to raw events instead of showing the turn summary
+let directEventsSummaries = $state(new SvelteMap<number, HistoryMessage[]>());
 
 // --- Streaming events for active turns ---
 let streamingEvents = $state(new SvelteMap<string, HistoryMessage[]>());
@@ -452,9 +454,11 @@ async function loadSummaries() {
 }
 
 async function toggleSummaryExpand(summary: SummaryRow) {
-  if (expandedSummaries.has(summary.id)) {
+  if (expandedSummaries.has(summary.id) || directEventsSummaries.has(summary.id)) {
     expandedSummaries.delete(summary.id);
+    directEventsSummaries.delete(summary.id);
     expandedSummaries = new SvelteMap(expandedSummaries);
+    directEventsSummaries = new SvelteMap(directEventsSummaries);
     return;
   }
 
@@ -475,7 +479,16 @@ async function toggleSummaryExpand(summary: SummaryRow) {
         const ts = new Date(t.created_at + (t.created_at.endsWith("Z") ? "" : "Z")).getTime();
         return ts >= fromMs && ts < toMs;
       });
-      expandedSummaries.set(summary.id, filtered.reverse());
+
+      // Single turn: expand directly to raw events
+      if (filtered.length === 1 && filtered[0].id) {
+        const events = await fetchTurnEvents(filtered[0].mind, { turnId: filtered[0].id });
+        directEventsSummaries.set(summary.id, events);
+        directEventsSummaries = new SvelteMap(directEventsSummaries);
+      } else {
+        expandedSummaries.set(summary.id, filtered.reverse());
+        expandedSummaries = new SvelteMap(expandedSummaries);
+      }
     } else {
       const children = await fetchSummaries({
         mind: name,
@@ -595,6 +608,7 @@ $effect(() => {
     monthSummaries = [];
     summariesLoaded = false;
     expandedSummaries = new SvelteMap();
+    directEventsSummaries = new SvelteMap();
     startScrollToBottom();
     loadTurns(0);
   }
@@ -666,8 +680,9 @@ function jumpToLatest() {
             </div>
           {:else if item.kind === "summary"}
             {@const summary = item.summary}
-            {@const isExpanded = expandedSummaries.has(summary.id)}
+            {@const isExpanded = expandedSummaries.has(summary.id) || directEventsSummaries.has(summary.id)}
             {@const isLoading = loadingChildren.has(summary.id)}
+            {@const directEvents = directEventsSummaries.get(summary.id)}
             <div class="turn-row" data-summary-id={summary.id}>
               <div class="turn-time">
                 {#if !name && summary.mind !== "_system"}
@@ -695,6 +710,22 @@ function jumpToLatest() {
                         </div>
                         {#if isLoading}
                           <div class="summary-expand-loading">loading...</div>
+                        {:else if directEvents}
+                          {@const groups = groupToolEvents(directEvents)}
+                          {#each groups as groupItem (groupItem.kind === "tool-group" ? `tg-${groupItem.toolUse.id}` : `ev-${groupItem.event.id}`)}
+                            {#if groupItem.kind === "tool-group"}
+                              {@const catColor = getCategoryColor(groupItem.category)}
+                              {@const catIcon = getCategoryIcon(groupItem.category)}
+                              <div class="event" style:--type-color={catColor}>
+                                <div class="marker marker-icon" style:color={catColor}>
+                                  <Icon kind={catIcon} />
+                                </div>
+                                <ToolGroupComponent group={groupItem} mindName={summary.mind} turnStatus="complete" />
+                              </div>
+                            {:else}
+                              <HistoryEvent event={groupItem.event} mindName={summary.mind} />
+                            {/if}
+                          {/each}
                         {:else}
                           {@const children = expandedSummaries.get(summary.id) ?? []}
                           {#each children as child (('period' in child) ? `s-${child.id}` : `t-${child.id}`)}
