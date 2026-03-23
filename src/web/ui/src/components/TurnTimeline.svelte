@@ -468,10 +468,12 @@ async function toggleSummaryExpand(summary: SummaryRow) {
 
     if (childPeriod === "turn") {
       // Load turns for this time range
-      const turns = await fetchTurns({ mind: name, limit: 200 });
-      const filtered = turns.filter((t) => {
-        const ts = new Date(t.created_at).getTime();
-        return ts >= new Date(from).getTime() && ts < new Date(to).getTime();
+      const fromMs = new Date(from).getTime();
+      const toMs = new Date(to).getTime();
+      const allTurns = await fetchTurns({ mind: name, limit: 200 });
+      const filtered = allTurns.filter((t) => {
+        const ts = new Date(t.created_at + (t.created_at.endsWith("Z") ? "" : "Z")).getTime();
+        return ts >= fromMs && ts < toMs;
       });
       expandedSummaries.set(summary.id, filtered.reverse());
     } else {
@@ -653,87 +655,151 @@ function jumpToLatest() {
       <div class="turn-track">
         {#each timelineItems as item (item.kind === "turn" ? `turn-${item.turn.id}` : item.kind === "summary" ? `summary-${item.summary.id}` : `sep-${item.label}`)}
           {#if item.kind === "separator"}
-            <div class="level-separator">
-              <div class="level-separator-line"></div>
-              <span class="level-separator-label">{item.label}</span>
-              <div class="level-separator-line"></div>
+            <div class="turn-row scale-break-row">
+              <div class="turn-time"></div>
+              <div class="scale-break-rail">
+                <div class="scale-break-slash"></div>
+                <div class="scale-break-gap"></div>
+                <div class="scale-break-slash"></div>
+              </div>
+              <div class="turn-body"></div>
             </div>
           {:else if item.kind === "summary"}
             {@const summary = item.summary}
             {@const isExpanded = expandedSummaries.has(summary.id)}
+            {@const isLoading = loadingChildren.has(summary.id)}
             <div class="turn-row" data-summary-id={summary.id}>
               <div class="turn-time">
+                {#if !name && summary.mind !== "_system"}
+                  <button class="mind-badge" onclick={() => navigate(`/minds/${summary.mind}/history`)}>{summary.mind}</button>
+                {/if}
                 {formatPeriodTime(summary.period, summary.period_key)}
               </div>
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
                 class="turn-rail"
                 class:turn-rail-expanded={isExpanded}
-                role="button"
-                tabindex="0"
-                onclick={(e) => { e.stopPropagation(); toggleSummaryExpand(summary); }}
+                onclick={() => toggleSummaryExpand(summary)}
                 onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSummaryExpand(summary); } }}
               >
                 <div class="turn-dot summary-dot"></div>
               </div>
               <div class="turn-body">
                 <div class="turn-summary">
-                  <HistoryEvent
-                    event={{
-                      id: summary.id,
-                      mind: summary.mind,
-                      channel: "",
-                      session: null,
-                      sender: null,
-                      message_id: null,
-                      type: "summary",
-                      content: summary.content,
-                      metadata: summary.metadata ? JSON.stringify(summary.metadata) : null,
-                      turn_id: null,
-                      created_at: summary.created_at,
-                    }}
-                    mindName={summary.mind}
-                    expandable
-                    compact
-                    onexpand={(expanded) => {
-                      if (expanded) toggleSummaryExpand(summary);
-                      else if (expandedSummaries.has(summary.id)) toggleSummaryExpand(summary);
-                    }}
-                  />
                   {#if isExpanded}
-                    {@const children = expandedSummaries.get(summary.id) ?? []}
-                    {#if loadingChildren.has(summary.id)}
-                      <div class="turn-loading" style="padding: 8px 0 8px 16px; font-size: 12px; color: var(--text-2); font-style: italic;">loading...</div>
-                    {:else}
-                      {#each children as child (('period' in child) ? `s-${child.id}` : `t-${child.id}`)}
-                        {#if 'period' in child}
-                          {@const childSummary = child as SummaryRow}
-                          <div class="turn-row" style="padding-left: 20px;">
-                            <div class="turn-time" style="width: 60px;">
-                              {formatPeriodTime(childSummary.period, childSummary.period_key)}
-                            </div>
-                            <div class="turn-rail">
-                              <div class="turn-dot summary-dot"></div>
-                            </div>
-                            <div class="turn-body">
-                              <span style="font-size: 13px; color: var(--text-0);">{childSummary.content}</span>
-                            </div>
-                          </div>
+                    <div class="summary-expand-wrapper">
+                      <div class="summary-expand-connector"></div>
+                      <div class="summary-expand-branch">
+                        <div class="summary-expand-header">
+                          <span class="active-turn-time">{formatPeriodTime(summary.period, summary.period_key)}</span>
+                        </div>
+                        {#if isLoading}
+                          <div class="summary-expand-loading">loading...</div>
                         {:else}
-                          {@const childTurn = child as TurnRow}
-                          <div class="turn-row" style="padding-left: 20px;">
-                            <div class="turn-time" style="width: 60px;">
-                              {formatRelativeTime(childTurn.created_at)}
-                            </div>
-                            <div class="turn-rail">
-                              <div class="turn-dot"></div>
-                            </div>
-                            <div class="turn-body">
-                              <span style="font-size: 13px; color: var(--text-0);">{childTurn.summary ?? "(no summary)"}</span>
-                            </div>
-                          </div>
+                          {@const children = expandedSummaries.get(summary.id) ?? []}
+                          {#each children as child (('period' in child) ? `s-${child.id}` : `t-${child.id}`)}
+                            {#if 'period' in child}
+                              {@const childSummary = child as SummaryRow}
+                              <HistoryEvent
+                                event={{
+                                  id: childSummary.id,
+                                  mind: childSummary.mind,
+                                  channel: "",
+                                  session: null,
+                                  sender: null,
+                                  message_id: null,
+                                  type: "summary",
+                                  content: childSummary.content,
+                                  metadata: childSummary.metadata ? JSON.stringify(childSummary.metadata) : null,
+                                  turn_id: null,
+                                  created_at: childSummary.created_at,
+                                }}
+                                mindName={childSummary.mind}
+                                expandable
+                                onexpand={(expanded) => {
+                                  if (expanded && !expandedSummaries.has(childSummary.id)) toggleSummaryExpand(childSummary);
+                                  else if (!expanded && expandedSummaries.has(childSummary.id)) toggleSummaryExpand(childSummary);
+                                }}
+                              />
+                              {#if expandedSummaries.has(childSummary.id)}
+                                {@const grandchildren = expandedSummaries.get(childSummary.id) ?? []}
+                                {#if loadingChildren.has(childSummary.id)}
+                                  <div class="summary-expand-loading">loading...</div>
+                                {:else}
+                                  {#each grandchildren as gc (('period' in gc) ? `s-${gc.id}` : `t-${gc.id}`)}
+                                    {#if 'period' in gc}
+                                      {@const gcSummary = gc as SummaryRow}
+                                      <HistoryEvent
+                                        event={{
+                                          id: gcSummary.id,
+                                          mind: gcSummary.mind,
+                                          channel: "",
+                                          session: null,
+                                          sender: null,
+                                          message_id: null,
+                                          type: "summary",
+                                          content: gcSummary.content,
+                                          metadata: gcSummary.metadata ? JSON.stringify(gcSummary.metadata) : null,
+                                          turn_id: null,
+                                          created_at: gcSummary.created_at,
+                                        }}
+                                        mindName={gcSummary.mind}
+                                      />
+                                    {:else}
+                                      {@const gcTurn = gc as TurnRow}
+                                      <HistoryEvent
+                                        event={{
+                                          id: 0,
+                                          mind: gcTurn.mind,
+                                          channel: "",
+                                          session: null,
+                                          sender: null,
+                                          message_id: null,
+                                          type: "summary",
+                                          content: gcTurn.summary ?? "(no summary)",
+                                          metadata: gcTurn.summary_meta ? JSON.stringify(gcTurn.summary_meta) : null,
+                                          turn_id: gcTurn.id,
+                                          created_at: gcTurn.created_at,
+                                        }}
+                                        mindName={gcTurn.mind}
+                                        expandable
+                                      />
+                                    {/if}
+                                  {/each}
+                                {/if}
+                              {/if}
+                            {:else}
+                              {@const childTurn = child as TurnRow}
+                              <HistoryEvent
+                                event={{
+                                  id: 0,
+                                  mind: childTurn.mind,
+                                  channel: "",
+                                  session: null,
+                                  sender: null,
+                                  message_id: null,
+                                  type: "summary",
+                                  content: childTurn.summary ?? "(no summary)",
+                                  metadata: childTurn.summary_meta ? JSON.stringify(childTurn.summary_meta) : null,
+                                  turn_id: childTurn.id,
+                                  created_at: childTurn.created_at,
+                                }}
+                                mindName={childTurn.mind}
+                                expandable
+                              />
+                            {/if}
+                          {/each}
                         {/if}
-                      {/each}
-                    {/if}
+                        <button class="summary-expand-collapse" onclick={() => toggleSummaryExpand(summary)}>
+                          <span class="summary-text">{summary.content}</span>
+                        </button>
+                        <div class="summary-expand-return"></div>
+                      </div>
+                    </div>
+                  {:else}
+                    <!-- svelte-ignore a11y_click_events_have_key_events -->
+                    <!-- svelte-ignore a11y_no_static_element_interactions -->
+                    <span class="summary-text" style="cursor: pointer;" onclick={() => toggleSummaryExpand(summary)}>{summary.content}</span>
                   {/if}
                 </div>
               </div>
@@ -1529,26 +1595,27 @@ function jumpToLatest() {
     100% { background: #4ade80; }
   }
 
-  /* Level separators between summary tiers */
-  .level-separator {
+  /* Scale break: two diagonal slashes on the rail with a gap */
+  .scale-break-row {
+    min-height: 0 !important;
+  }
+  .scale-break-rail {
+    width: 2px;
+    flex-shrink: 0;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 8px;
-    padding: 12px 0 8px;
-    max-width: 720px;
-    margin: 0 auto;
+    position: relative;
+    padding: 4px 0;
   }
-  .level-separator-line {
-    flex: 1;
-    height: 1px;
-    background: var(--border);
+  .scale-break-slash {
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--text-2);
+    transform: rotate(30deg);
   }
-  .level-separator-label {
-    font-size: 11px;
-    color: var(--text-2);
-    white-space: nowrap;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+  .scale-break-gap {
+    height: 4px;
   }
 
   /* Summary dot style */
@@ -1556,6 +1623,87 @@ function jumpToLatest() {
     border: 2px solid var(--text-2);
     background: var(--bg-1);
     box-sizing: border-box;
+  }
+
+  /* Summary expansion: branch pattern matching HistoryEvent's turn expansion */
+  .summary-expand-wrapper {
+    position: relative;
+  }
+  .summary-expand-connector {
+    position: absolute;
+    top: 16px;
+    left: 22px;
+    width: 2px;
+    bottom: 12px;
+    background: var(--border);
+  }
+  .summary-expand-connector::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -35px;
+    width: 35px;
+    height: 2px;
+    background: var(--border);
+  }
+  .summary-expand-branch {
+    position: relative;
+    padding-left: 24px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+  /* Inner rail between children should be solid */
+  .summary-expand-branch > :global(.event::after) {
+    opacity: 1;
+    background: var(--border);
+  }
+  .summary-expand-header {
+    margin-bottom: 4px;
+    margin-left: 14px;
+  }
+  .summary-expand-loading {
+    font-size: 12px;
+    color: var(--text-2);
+    font-style: italic;
+    padding: 8px 0 8px 14px;
+  }
+  .summary-expand-collapse {
+    position: relative;
+    padding: 6px 8px 6px 20px;
+    cursor: pointer;
+    width: 100%;
+    background: none;
+    border: none;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+  }
+  .summary-expand-collapse::before {
+    content: "";
+    position: absolute;
+    left: -5px;
+    top: 12px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 2px solid var(--text-2);
+    background: var(--bg-1);
+    box-sizing: border-box;
+    z-index: 3;
+  }
+  .summary-expand-return {
+    position: absolute;
+    bottom: 6px;
+    left: -11px;
+    width: 35px;
+    height: 2px;
+    background: var(--border);
+  }
+  /* Highlight connectors on hover */
+  .summary-expand-wrapper:has(.summary-expand-header:hover, .summary-expand-collapse:hover) .summary-expand-connector,
+  .summary-expand-wrapper:has(.summary-expand-header:hover, .summary-expand-collapse:hover) .summary-expand-connector::after,
+  .summary-expand-wrapper:has(.summary-expand-header:hover, .summary-expand-collapse:hover) .summary-expand-return {
+    background: var(--text-0);
   }
 
   .empty-hint {
