@@ -1,7 +1,7 @@
 <script lang="ts">
 import { onMount } from "svelte";
-import AiProviders from "../components/AiProviders.svelte";
-import ImagegenProviders from "../components/ImagegenProviders.svelte";
+import AiProviders from "../components/system/AiProviders.svelte";
+import ImagegenProviders from "../components/system/ImagegenProviders.svelte";
 import {
   fetchAiDefaults,
   saveAiDefaults,

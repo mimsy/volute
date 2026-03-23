@@ -1,6 +1,11 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { formatPrefix, formatTypingSuffix } from "./format-prefix.js";
+import {
+  compactTime,
+  compactTimestamp,
+  formatPrefix,
+  formatTypingSuffix,
+} from "./format-prefix.js";
 import { log, warn } from "./logger.js";
 import {
   type BatchConfig,
@@ -55,7 +60,7 @@ function generateMessageId(): string {
 }
 
 function applyPrefix(content: VoluteContentPart[], meta: ChannelMeta): VoluteContentPart[] {
-  const time = new Date().toLocaleString();
+  const time = compactTimestamp();
   const prefix = formatPrefix(meta, time);
   if (!prefix) return content;
 
@@ -129,7 +134,7 @@ function formatInviteNotification(
   filePath: string,
   messageText: string,
 ): string {
-  const time = new Date().toLocaleString();
+  const time = compactTimestamp();
   const prompts = loadPrompts();
 
   const headerLines: string[] = [];
@@ -172,6 +177,18 @@ export function createRouter(options: {
 }): Router {
   const batchBuffers = new Map<string, BatchBuffer>();
   const pendingChannels = new Set<string>();
+  const instructedSessions = new Set<string>();
+
+  /** Prepend session instructions only on the first message per session. */
+  function prependInstructionsOnce(
+    content: VoluteContentPart[],
+    instructions: string | undefined,
+    sessionName: string,
+  ): VoluteContentPart[] {
+    if (!instructions || instructedSessions.has(sessionName)) return content;
+    instructedSessions.add(sessionName);
+    return prependInstructions(content, instructions);
+  }
 
   function flushBatch(key: string) {
     const buffer = batchBuffers.get(key);
@@ -191,16 +208,22 @@ export function createRouter(options: {
       const uri = msg.channel ?? "unknown";
       channelCounts.set(uri, (channelCounts.get(uri) ?? 0) + 1);
     }
-    const channelLabels = [...channelCounts.entries()].map(([uri, n]) => {
+    let header: string;
+    if (channelCounts.size === 1) {
+      const [uri] = [...channelCounts.keys()];
       const msg = messages.find((m) => m.channel === uri);
-      const display = msg?.channelName
-        ? `#${msg.channelName}${msg.serverName ? ` in ${msg.serverName}` : ""} (${uri})`
-        : uri;
-      return `${n} from ${display}`;
-    });
-    const summary = channelLabels.join(", ");
-
-    const header = `[Batch: ${messages.length} message${messages.length === 1 ? "" : "s"} — ${summary}]`;
+      const display = msg?.channelName ? `#${msg.channelName}` : uri;
+      header = `[Batch: ${messages.length} message${messages.length === 1 ? "" : "s"} from ${display}]`;
+    } else {
+      const channelLabels = [...channelCounts.entries()].map(([uri, n]) => {
+        const msg = messages.find((m) => m.channel === uri);
+        const display = msg?.channelName
+          ? `#${msg.channelName}${msg.serverName ? ` in ${msg.serverName}` : ""}`
+          : uri;
+        return `${n} from ${display}`;
+      });
+      header = `[Batch: ${messages.length} messages — ${channelLabels.join(", ")}]`;
+    }
     // Include channel URI per message when batch spans multiple channels
     const multiChannel = channelCounts.size > 1;
     const body = messages
@@ -222,7 +245,7 @@ export function createRouter(options: {
     // Resolve session config for instructions
     const config = options.configPath ? loadRoutingConfig(options.configPath) : {};
     const sessionConfig = resolveSessionConfig(config, buffer.sessionName);
-    content = prependInstructions(content, sessionConfig.instructions);
+    content = prependInstructionsOnce(content, sessionConfig.instructions, buffer.sessionName);
 
     const messageId = generateMessageId();
     const handler = options.mindHandler(buffer.sessionName);
@@ -296,13 +319,23 @@ export function createRouter(options: {
     // Resolve session config for instructions
     const config = options.configPath ? loadRoutingConfig(options.configPath) : {};
     const sessionConfig = resolveSessionConfig(config, session);
-    const withInstructions = prependInstructions(withTyping, sessionConfig.instructions);
+    const withInstructions = prependInstructionsOnce(
+      withTyping,
+      sessionConfig.instructions,
+      session,
+    );
 
     const handler = options.mindHandler(session);
     const interrupt = (meta as any).interrupt ?? sessionConfig.interrupt;
     const unsubscribe = handler.handle(
       withInstructions,
-      { ...meta, sessionName: session, messageId, interrupt },
+      {
+        ...meta,
+        sessionName: session,
+        messageId,
+        interrupt,
+        replyInstructions: sessionConfig.replyInstructions,
+      },
       safeListener,
     );
     return { messageId, unsubscribe };
@@ -423,10 +456,7 @@ export function createRouter(options: {
         channel: meta.channel,
         channelName: meta.channelName,
         serverName: meta.serverName,
-        timestamp: new Date().toLocaleTimeString("en-US", {
-          hour: "numeric",
-          minute: "2-digit",
-        }),
+        timestamp: compactTime(),
         typing: meta.typing,
       });
 
@@ -444,7 +474,11 @@ export function createRouter(options: {
     // Direct dispatch to mind
     const formatted = applyPrefix(content, { ...meta, sessionName });
     const withTyping = appendTypingSuffix(formatted, meta.typing);
-    const withInstructions = prependInstructions(withTyping, sessionConfig.instructions);
+    const withInstructions = prependInstructionsOnce(
+      withTyping,
+      sessionConfig.instructions,
+      sessionName,
+    );
     const handler = options.mindHandler(sessionName);
     const unsubscribe = handler.handle(
       withInstructions,
@@ -453,6 +487,7 @@ export function createRouter(options: {
         sessionName,
         messageId,
         interrupt: sessionConfig.interrupt,
+        replyInstructions: sessionConfig.replyInstructions,
       },
       safeListener,
     );
@@ -482,10 +517,14 @@ export function createRouter(options: {
     for (const msg of allMessages) {
       channelCounts.set(msg.channel, (channelCounts.get(msg.channel) ?? 0) + 1);
     }
-    const channelLabels = [...channelCounts.entries()].map(([ch, n]) => `${n} from ${ch}`);
-    const summary = channelLabels.join(", ");
-
-    const header = `[Batch: ${allMessages.length} message${allMessages.length === 1 ? "" : "s"} — ${summary}]`;
+    let header: string;
+    if (channelCounts.size === 1) {
+      const [ch] = [...channelCounts.keys()];
+      header = `[Batch: ${allMessages.length} message${allMessages.length === 1 ? "" : "s"} from ${ch}]`;
+    } else {
+      const channelLabels = [...channelCounts.entries()].map(([ch, n]) => `${n} from ${ch}`);
+      header = `[Batch: ${allMessages.length} messages — ${channelLabels.join(", ")}]`;
+    }
     const multiChannel = channelCounts.size > 1;
 
     const body = allMessages
@@ -500,10 +539,7 @@ export function createRouter(options: {
                   .map((p) => p.text)
                   .join("\n")
               : JSON.stringify(m.payload.content);
-        const time = new Date().toLocaleTimeString("en-US", {
-          hour: "numeric",
-          minute: "2-digit",
-        });
+        const time = compactTime();
         const prefix = multiChannel
           ? `[${sender} in ${m.channel} — ${time}]`
           : `[${sender} — ${time}]`;
@@ -516,7 +552,7 @@ export function createRouter(options: {
     // Resolve session config for instructions
     const config = options.configPath ? loadRoutingConfig(options.configPath) : {};
     const sessionConfig = resolveSessionConfig(config, session);
-    const withInstructions = prependInstructions(content, sessionConfig.instructions);
+    const withInstructions = prependInstructionsOnce(content, sessionConfig.instructions, session);
 
     const messageId = generateMessageId();
     const handler = options.mindHandler(session);

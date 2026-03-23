@@ -527,4 +527,25 @@ describe("resolveSessionConfig", () => {
     assert.equal(r.interrupt, true);
     assert.equal(r.batch, undefined);
   });
+
+  it("defaults replyInstructions to 'once'", () => {
+    const r = resolveSessionConfig({}, "main");
+    assert.equal(r.replyInstructions, "once");
+  });
+
+  it("passes through configured replyInstructions value", () => {
+    const config: RoutingConfig = {
+      sessions: { discord: { replyInstructions: "always" } },
+    };
+    const r = resolveSessionConfig(config, "discord");
+    assert.equal(r.replyInstructions, "always");
+  });
+
+  it("passes through replyInstructions 'never'", () => {
+    const config: RoutingConfig = {
+      sessions: { discord: { replyInstructions: "never" } },
+    };
+    const r = resolveSessionConfig(config, "discord");
+    assert.equal(r.replyInstructions, "never");
+  });
 });

@@ -23,12 +23,14 @@ export type SessionConfig = {
   batch?: number | BatchConfig;
   interrupt?: boolean;
   instructions?: string;
+  replyInstructions?: "once" | "always" | "never";
 };
 
 export type ResolvedSessionConfig = {
   batch?: BatchConfig;
   interrupt: boolean;
   instructions?: string;
+  replyInstructions: "once" | "always" | "never";
 };
 
 export type RoutingConfig = {
@@ -154,7 +156,7 @@ export function resolveSessionConfig(
   config: RoutingConfig,
   sessionName: string,
 ): ResolvedSessionConfig {
-  const defaults: ResolvedSessionConfig = { interrupt: true };
+  const defaults: ResolvedSessionConfig = { interrupt: true, replyInstructions: "once" };
 
   if (!config.sessions) return defaults;
 
@@ -165,6 +167,7 @@ export function resolveSessionConfig(
         batch,
         interrupt: sessionConfig.interrupt ?? true,
         instructions: sessionConfig.instructions,
+        replyInstructions: sessionConfig.replyInstructions ?? "once",
       };
     }
   }

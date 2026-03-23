@@ -1,5 +1,6 @@
 import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
+import { isCompact } from "../lib/format-cli.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
 
@@ -87,7 +88,8 @@ async function listSkills(args: string[]) {
       return;
     }
 
-    console.log(`Skills for ${mindName}:\n`);
+    const compact = isCompact();
+    console.log(`Skills for ${mindName}:${compact ? "" : "\n"}`);
     for (const s of skills) {
       const update = s.updateAvailable ? " (update available)" : "";
       const source = s.upstream ? ` [shared:${s.upstream.source} v${s.upstream.version}]` : "";
@@ -118,10 +120,11 @@ async function listSkills(args: string[]) {
       return;
     }
 
-    console.log("Shared skills:\n");
+    const compact = isCompact();
+    console.log(`Shared skills:${compact ? "" : "\n"}`);
     for (const s of skills) {
       console.log(`  ${s.id} — ${s.name} (v${s.version}, by ${s.author})`);
-      if (s.description) console.log(`    ${s.description}`);
+      if (s.description && !compact) console.log(`    ${s.description}`);
     }
   }
 }

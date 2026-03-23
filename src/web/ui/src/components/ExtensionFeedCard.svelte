@@ -1,6 +1,6 @@
 <script lang="ts">
+import { renderMarkdown } from "@volute/ui/markdown";
 import { formatRelativeTime } from "../lib/format";
-import { renderMarkdown } from "../lib/markdown";
 
 let {
   title,

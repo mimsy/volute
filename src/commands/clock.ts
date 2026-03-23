@@ -1,6 +1,7 @@
 import { CronExpressionParser } from "cron-parser";
 import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
+import { compactDateTime, isCompact } from "../lib/format-cli.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
 import type { Schedule } from "../lib/volute-config.js";
@@ -98,20 +99,18 @@ async function clockStatus(args: string[]) {
   }
 
   const status = (await res.json()) as ClockStatus;
+  const compact = isCompact();
+  const fmtTime = (s: string) => (compact ? compactDateTime(s) : new Date(s).toLocaleString());
 
   // Sleep state
   if (status.sleep?.sleeping) {
-    const since = status.sleep.sleepingSince
-      ? new Date(status.sleep.sleepingSince).toLocaleString()
-      : "unknown";
+    const since = status.sleep.sleepingSince ? fmtTime(status.sleep.sleepingSince) : "unknown";
     console.log(`Sleep: sleeping since ${since}`);
     if (status.sleep.scheduledWakeAt) {
-      console.log(`  Wake at: ${new Date(status.sleep.scheduledWakeAt).toLocaleString()}`);
+      console.log(`  Wake at: ${fmtTime(status.sleep.scheduledWakeAt)}`);
     }
     if (status.sleep.voluntaryWakeAt) {
-      console.log(
-        `  Voluntary wake at: ${new Date(status.sleep.voluntaryWakeAt).toLocaleString()}`,
-      );
+      console.log(`  Voluntary wake at: ${fmtTime(status.sleep.voluntaryWakeAt)}`);
     }
     if (status.sleep.queuedMessageCount > 0) {
       console.log(`  Queued messages: ${status.sleep.queuedMessageCount}`);
@@ -129,18 +128,22 @@ async function clockStatus(args: string[]) {
 
   // Upcoming
   if (status.upcoming.length > 0) {
-    console.log("\nUpcoming (next 24h):");
+    if (!compact) console.log("");
+    console.log("Upcoming (next 24h):");
     for (const u of status.upcoming) {
-      const time = new Date(u.at).toLocaleString();
+      const time = fmtTime(u.at);
       const label = u.type === "timer" ? "[timer]" : "[cron]";
       console.log(`  ${u.id.padEnd(20)} ${label}  ${time}`);
     }
   } else {
-    console.log("\nNo upcoming events in next 24h.");
+    if (!compact) console.log("");
+    console.log("No upcoming events in next 24h.");
   }
 
   // Schedule count
-  console.log(`\n${status.schedules.length} schedule(s) configured.`);
+  if (!compact) {
+    console.log(`\n${status.schedules.length} schedule(s) configured.`);
+  }
 }
 
 async function listSchedules(args: string[]) {
@@ -166,16 +169,23 @@ async function listSchedules(args: string[]) {
     return;
   }
 
-  const idW = Math.max(2, ...schedules.map((s) => s.id.length));
-  const schedW = Math.max(8, ...schedules.map((s) => (s.cron ?? s.fireAt ?? "").length));
   const actionLabel = (s: Schedule) => (s.script ? `[script] ${s.script}` : (s.message ?? ""));
 
-  console.log(`${"ID".padEnd(idW)}  ${"SCHEDULE".padEnd(schedW)}  ENABLED  ACTION`);
-  for (const s of schedules) {
-    const sched = s.cron ?? (s.fireAt ? `at ${s.fireAt}` : "");
-    console.log(
-      `${s.id.padEnd(idW)}  ${sched.padEnd(schedW)}  ${String(s.enabled).padEnd(7)}  ${actionLabel(s)}`,
-    );
+  if (isCompact()) {
+    for (const s of schedules) {
+      const sched = s.cron ?? (s.fireAt ? `at ${s.fireAt}` : "");
+      console.log(`${s.id}  ${sched}  ${actionLabel(s)}`);
+    }
+  } else {
+    const idW = Math.max(2, ...schedules.map((s) => s.id.length));
+    const schedW = Math.max(8, ...schedules.map((s) => (s.cron ?? s.fireAt ?? "").length));
+    console.log(`${"ID".padEnd(idW)}  ${"SCHEDULE".padEnd(schedW)}  ENABLED  ACTION`);
+    for (const s of schedules) {
+      const sched = s.cron ?? (s.fireAt ? `at ${s.fireAt}` : "");
+      console.log(
+        `${s.id.padEnd(idW)}  ${sched.padEnd(schedW)}  ${String(s.enabled).padEnd(7)}  ${actionLabel(s)}`,
+      );
+    }
   }
 }
 

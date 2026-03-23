@@ -1,5 +1,5 @@
 <script lang="ts">
-import { renderMarkdown } from "../lib/markdown";
+import { renderMarkdown } from "@volute/ui/markdown";
 
 interface Comment {
   id: number;

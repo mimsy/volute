@@ -1,4 +1,5 @@
 <script lang="ts">
+import { Button, EmptyState, ErrorMessage, PageShell, SectionHeader } from "@volute/ui";
 import { onMount } from "svelte";
 import { type ApiPlan, fetchCurrentPlan } from "../lib/api";
 
@@ -39,21 +40,20 @@ onMount(() => {
 });
 </script>
 
-<div class="plan-page">
-  <div class="page-header">
-    <h2 class="page-title">System Plan</h2>
-    <button class="btn btn-secondary" onclick={onViewHistory}>History</button>
-  </div>
+<PageShell>
+  <SectionHeader title="System Plan">
+    {#snippet action()}
+      <Button onclick={onViewHistory}>History</Button>
+    {/snippet}
+  </SectionHeader>
 
-  {#if error}
-    <div class="error">{error}</div>
-  {/if}
+  <ErrorMessage message={error} />
 
   {#if loading}
-    <div class="loading">Loading...</div>
+    <EmptyState message="Loading..." />
   {:else if !plan}
     <div class="empty">
-      <p>No active plan.</p>
+      <EmptyState message="No active plan." />
       <p class="hint">The spirit can start a plan with <code>volute plan start "title" "description"</code></p>
     </div>
   {:else}
@@ -68,7 +68,7 @@ onMount(() => {
     </div>
 
     {#if plan.logs && plan.logs.length > 0}
-      <h3 class="section-title">Progress</h3>
+      <SectionHeader title="Progress" />
       <div class="log-list">
         {#each plan.logs as log (log.id)}
           <div class="log-entry">
@@ -81,49 +81,12 @@ onMount(() => {
         {/each}
       </div>
     {:else}
-      <div class="empty-logs">No progress logged yet.</div>
+      <EmptyState message="No progress logged yet." />
     {/if}
   {/if}
-</div>
+</PageShell>
 
 <style>
-  .plan-page {
-    max-width: 700px;
-    margin: 0 auto;
-  }
-
-  .page-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 24px;
-  }
-
-  .page-title {
-    font-family: var(--display);
-    font-size: 22px;
-    font-weight: 400;
-    color: var(--text-0);
-    margin: 0;
-  }
-
-  .btn {
-    font-size: 13px;
-    padding: 6px 14px;
-    border-radius: var(--radius);
-    cursor: pointer;
-    border: 1px solid transparent;
-    transition: opacity 0.15s;
-  }
-
-  .btn-secondary {
-    background: var(--bg-3);
-    color: var(--text-1);
-    border-color: var(--border);
-  }
-
-  .btn-secondary:hover { border-color: var(--text-2); }
-
   .plan-card {
     background: var(--bg-2);
     border: 1px solid var(--border);
@@ -151,14 +114,6 @@ onMount(() => {
   .plan-meta {
     color: var(--text-2);
     font-size: 12px;
-  }
-
-  .section-title {
-    font-family: var(--display);
-    font-size: 15px;
-    font-weight: 400;
-    color: var(--text-1);
-    margin: 0 0 12px;
   }
 
   .log-list {
@@ -198,20 +153,12 @@ onMount(() => {
     line-height: 1.4;
   }
 
-  .error {
-    color: var(--red);
-    font-size: 13px;
-    margin-bottom: 16px;
-  }
-
-  .loading, .empty, .empty-logs {
-    color: var(--text-2);
-    font-size: 13px;
-    padding: 40px 0;
+  .empty {
     text-align: center;
   }
 
   .hint {
+    color: var(--text-2);
     font-size: 12px;
     margin-top: 8px;
   }

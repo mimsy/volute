@@ -1,7 +1,7 @@
 <script lang="ts">
-import SharedSkills from "../components/SharedSkills.svelte";
-import SystemLogs from "../components/SystemLogs.svelte";
-import UserManagement from "../components/UserManagement.svelte";
+import SharedSkills from "../components/system/SharedSkills.svelte";
+import SystemLogs from "../components/system/SystemLogs.svelte";
+import UserManagement from "../components/system/UserManagement.svelte";
 import { restartDaemon } from "../lib/client";
 import { navigate } from "../lib/navigate";
 import { data } from "../lib/stores.svelte";

@@ -1,4 +1,5 @@
 <script lang="ts">
+import { Button, EmptyState, ErrorMessage, PageShell, SectionHeader } from "@volute/ui";
 import { onMount } from "svelte";
 import { type ApiPlan, fetchPlans } from "../lib/api";
 
@@ -28,33 +29,26 @@ onMount(() => {
 });
 </script>
 
-<div class="history-page">
-  <div class="page-header">
-    <button class="btn btn-back" onclick={onBack}>&larr; Current Plan</button>
-    <h2 class="page-title">Plan History</h2>
-  </div>
+<PageShell>
+  <SectionHeader title="Plan History">
+    {#snippet action()}
+      <Button onclick={onBack}>&larr; Current</Button>
+    {/snippet}
+  </SectionHeader>
 
-  {#if error}
-    <div class="error">{error}</div>
-  {/if}
+  <ErrorMessage message={error} />
 
   {#if loading}
-    <div class="loading">Loading...</div>
+    <EmptyState message="Loading..." />
   {:else if plans.length === 0}
-    <div class="empty">No plans yet.</div>
+    <EmptyState message="No plans yet." />
   {:else}
     <div class="plans-list">
       {#each plans as plan (plan.id)}
         <div class="plan-row" class:active={plan.status === "active"}>
           <div class="plan-info">
             <span class="plan-title">{plan.title}</span>
-            {#if plan.status === "active"}
-              <span class="badge active">active</span>
-            {:else if plan.status === "completed"}
-              <span class="badge completed">completed</span>
-            {:else}
-              <span class="badge archived">archived</span>
-            {/if}
+            <span class="badge {plan.status}">{plan.status}</span>
           </div>
           <div class="plan-meta">
             {plan.set_by_display_name || plan.set_by_username} &middot; {formatDate(plan.created_at)}
@@ -63,45 +57,9 @@ onMount(() => {
       {/each}
     </div>
   {/if}
-</div>
+</PageShell>
 
 <style>
-  .history-page {
-    max-width: 700px;
-    margin: 0 auto;
-  }
-
-  .page-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 24px;
-  }
-
-  .page-title {
-    font-family: var(--display);
-    font-size: 22px;
-    font-weight: 400;
-    color: var(--text-0);
-    margin: 0;
-  }
-
-  .btn {
-    font-size: 13px;
-    padding: 6px 14px;
-    border-radius: var(--radius);
-    cursor: pointer;
-    border: 1px solid transparent;
-  }
-
-  .btn-back {
-    background: var(--bg-3);
-    color: var(--text-1);
-    border-color: var(--border);
-  }
-
-  .btn-back:hover { border-color: var(--text-2); }
-
   .plans-list {
     display: flex;
     flex-direction: column;
@@ -138,6 +96,7 @@ onMount(() => {
     border-radius: var(--radius);
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    font-weight: 500;
   }
 
   .badge.active {
@@ -158,18 +117,5 @@ onMount(() => {
   .plan-meta {
     font-size: 12px;
     color: var(--text-2);
-  }
-
-  .error {
-    color: var(--red);
-    font-size: 13px;
-    margin-bottom: 16px;
-  }
-
-  .loading, .empty {
-    color: var(--text-2);
-    font-size: 13px;
-    padding: 40px 0;
-    text-align: center;
   }
 </style>
