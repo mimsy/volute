@@ -2,13 +2,14 @@
 import type {
   ConversationWithParticipants,
   HistoryMessage,
+  SummaryRow,
   TurnConversation,
   TurnRow,
 } from "@volute/api";
 import { Icon } from "@volute/ui";
 import { renderMarkdown } from "@volute/ui/markdown";
 import { SvelteMap } from "svelte/reactivity";
-import { fetchHistory, fetchTurnEvents, fetchTurns } from "../lib/client";
+import { fetchHistory, fetchSummaries, fetchTurnEvents, fetchTurns } from "../lib/client";
 import { extractTextContent } from "../lib/feed-utils";
 import { formatRelativeTime } from "../lib/format";
 import { navigate } from "../lib/navigate";
@@ -17,6 +18,117 @@ import { groupToolEvents } from "../lib/tool-groups";
 import ToolGroupComponent from "./chat/ToolGroup.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
 import ReadOnlyChatModal from "./modals/ReadOnlyChatModal.svelte";
+
+type TimelineItem =
+  | { kind: "turn"; turn: TurnRow }
+  | { kind: "summary"; summary: SummaryRow }
+  | { kind: "separator"; label: string };
+
+type SummaryPeriod = "hour" | "day" | "week" | "month";
+
+const CHILD_PERIOD: Record<string, SummaryPeriod | "turn"> = {
+  hour: "turn",
+  day: "hour",
+  week: "day",
+  month: "week",
+};
+
+function parseISOWeek(weekKey: string): { start: Date; end: Date } {
+  // weekKey format: "2026-W12"
+  const [yearStr, weekStr] = weekKey.split("-W");
+  const year = parseInt(yearStr, 10);
+  const week = parseInt(weekStr, 10);
+  // Jan 4 is always in week 1
+  const jan4 = new Date(year, 0, 4);
+  const dayOfWeek = jan4.getDay() || 7; // Monday=1
+  const monday = new Date(jan4);
+  monday.setDate(jan4.getDate() - dayOfWeek + 1 + (week - 1) * 7);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return { start: monday, end: sunday };
+}
+
+function formatPeriodTime(period: string, periodKey: string): string {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+
+  if (period === "hour") {
+    // periodKey: "2026-03-22T14"
+    const startHour = parseInt(periodKey.slice(11, 13), 10);
+    const dateStr = periodKey.slice(0, 10);
+    const startDate = new Date(`${dateStr}T00:00:00`);
+    const endHour = (startHour + 1) % 24;
+
+    const fmtHour = (h: number) => {
+      const ampm = h >= 12 ? "PM" : "AM";
+      const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+      return `${h12}:00 ${ampm}`;
+    };
+
+    const isToday = startDate.getTime() === today.getTime();
+    if (isToday) {
+      return `${fmtHour(startHour)} \u2013 ${fmtHour(endHour)}`;
+    }
+    const monthDay = startDate.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return `${monthDay}, ${fmtHour(startHour)} \u2013 ${fmtHour(endHour)}`;
+  }
+
+  if (period === "day") {
+    const d = new Date(`${periodKey}T00:00:00`);
+    if (d.getTime() === today.getTime()) return "Today";
+    if (d.getTime() === yesterday.getTime()) return "Yesterday";
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+
+  if (period === "week") {
+    const { start, end } = parseISOWeek(periodKey);
+    const fmtDate = (d: Date) =>
+      d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    if (start.getFullYear() !== now.getFullYear()) {
+      return `${fmtDate(start)} \u2013 ${fmtDate(end)}, ${start.getFullYear()}`;
+    }
+    return `${fmtDate(start)} \u2013 ${fmtDate(end)}`;
+  }
+
+  if (period === "month") {
+    const [year, month] = periodKey.split("-");
+    const d = new Date(parseInt(year, 10), parseInt(month, 10) - 1, 1);
+    return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  }
+
+  return periodKey;
+}
+
+function periodKeyToDate(period: string, periodKey: string): Date {
+  if (period === "hour")
+    return new Date(`${periodKey.slice(0, 10)}T${periodKey.slice(11, 13)}:00:00`);
+  if (period === "day") return new Date(`${periodKey}T00:00:00`);
+  if (period === "week") return parseISOWeek(periodKey).start;
+  if (period === "month") return new Date(`${periodKey}-01T00:00:00`);
+  return new Date(periodKey);
+}
+
+function periodEndDate(period: string, periodKey: string): Date {
+  if (period === "hour") {
+    const d = periodKeyToDate(period, periodKey);
+    d.setHours(d.getHours() + 1);
+    return d;
+  }
+  if (period === "day") {
+    const d = periodKeyToDate(period, periodKey);
+    d.setDate(d.getDate() + 1);
+    return d;
+  }
+  if (period === "week") return parseISOWeek(periodKey).end;
+  if (period === "month") {
+    const d = periodKeyToDate(period, periodKey);
+    d.setMonth(d.getMonth() + 1);
+    return d;
+  }
+  return new Date(periodKey);
+}
 
 let { name, mindStatus }: { name?: string; mindStatus?: string } = $props();
 
@@ -28,6 +140,15 @@ let loading = $state(false);
 let historyError = $state("");
 
 let readOnlyConv = $state<ConversationWithParticipants | null>(null);
+
+// --- Summaries data ---
+let hourSummaries = $state<SummaryRow[]>([]);
+let daySummaries = $state<SummaryRow[]>([]);
+let weekSummaries = $state<SummaryRow[]>([]);
+let monthSummaries = $state<SummaryRow[]>([]);
+let summariesLoaded = $state(false);
+let expandedSummaries = $state(new SvelteMap<number, SummaryRow[] | TurnRow[]>());
+let loadingChildren = $state(new Set<number>());
 
 // --- Streaming events for active turns ---
 let streamingEvents = $state(new SvelteMap<string, HistoryMessage[]>());
@@ -276,6 +397,143 @@ async function loadTurns(offset: number) {
   loading = false;
 }
 
+async function loadSummaries(oldestTurnTime: string) {
+  try {
+    const hours = await fetchSummaries({
+      mind: name,
+      period: "hour",
+      to: oldestTurnTime,
+      limit: 48,
+    });
+    hourSummaries = hours.sort((a, b) => a.period_key.localeCompare(b.period_key));
+
+    // Load from before the *earliest* hour, which is the first after sorting
+    const hourBoundary =
+      hours.length > 0
+        ? periodKeyToDate("hour", hours[0].period_key).toISOString()
+        : oldestTurnTime;
+
+    const days = await fetchSummaries({ mind: name, period: "day", to: hourBoundary, limit: 30 });
+    daySummaries = days.sort((a, b) => a.period_key.localeCompare(b.period_key));
+
+    const dayBoundary =
+      days.length > 0 ? periodKeyToDate("day", days[0].period_key).toISOString() : hourBoundary;
+
+    const weeks = await fetchSummaries({ mind: name, period: "week", to: dayBoundary, limit: 12 });
+    weekSummaries = weeks.sort((a, b) => a.period_key.localeCompare(b.period_key));
+
+    const weekBoundary =
+      weeks.length > 0 ? periodKeyToDate("week", weeks[0].period_key).toISOString() : dayBoundary;
+
+    const months = await fetchSummaries({
+      mind: name,
+      period: "month",
+      to: weekBoundary,
+      limit: 12,
+    });
+    monthSummaries = months.sort((a, b) => a.period_key.localeCompare(b.period_key));
+
+    summariesLoaded = true;
+  } catch (e) {
+    console.warn("[TurnTimeline] Failed to load summaries:", e);
+    summariesLoaded = true; // still mark loaded so we don't block the UI
+  }
+}
+
+async function toggleSummaryExpand(summary: SummaryRow) {
+  if (expandedSummaries.has(summary.id)) {
+    expandedSummaries.delete(summary.id);
+    expandedSummaries = new SvelteMap(expandedSummaries);
+    return;
+  }
+
+  loadingChildren.add(summary.id);
+  loadingChildren = new Set(loadingChildren);
+
+  try {
+    const childPeriod = CHILD_PERIOD[summary.period];
+    const from = periodKeyToDate(summary.period, summary.period_key).toISOString();
+    const to = periodEndDate(summary.period, summary.period_key).toISOString();
+
+    if (childPeriod === "turn") {
+      // Load turns for this time range
+      const turns = await fetchTurns({ mind: name, limit: 200 });
+      const filtered = turns.filter((t) => {
+        const ts = new Date(t.created_at).getTime();
+        return ts >= new Date(from).getTime() && ts < new Date(to).getTime();
+      });
+      expandedSummaries.set(summary.id, filtered.reverse());
+    } else {
+      const children = await fetchSummaries({
+        mind: name,
+        period: childPeriod,
+        from,
+        to,
+        limit: 100,
+      });
+      expandedSummaries.set(
+        summary.id,
+        children.sort((a, b) => a.period_key.localeCompare(b.period_key)),
+      );
+    }
+    expandedSummaries = new SvelteMap(expandedSummaries);
+  } catch (e) {
+    console.warn("[TurnTimeline] Failed to load summary children:", e);
+  }
+
+  loadingChildren.delete(summary.id);
+  loadingChildren = new Set(loadingChildren);
+}
+
+// Build the combined timeline items list
+let timelineItems = $derived.by(() => {
+  const items: TimelineItem[] = [];
+
+  // Month summaries first (oldest)
+  if (monthSummaries.length > 0) {
+    items.push({ kind: "separator", label: "Months" });
+    for (const s of monthSummaries) {
+      items.push({ kind: "summary", summary: s });
+    }
+  }
+
+  // Week summaries
+  if (weekSummaries.length > 0) {
+    items.push({ kind: "separator", label: "Weeks" });
+    for (const s of weekSummaries) {
+      items.push({ kind: "summary", summary: s });
+    }
+  }
+
+  // Day summaries
+  if (daySummaries.length > 0) {
+    items.push({ kind: "separator", label: "Days" });
+    for (const s of daySummaries) {
+      items.push({ kind: "summary", summary: s });
+    }
+  }
+
+  // Hour summaries
+  if (hourSummaries.length > 0) {
+    items.push({ kind: "separator", label: "Earlier" });
+    for (const s of hourSummaries) {
+      items.push({ kind: "summary", summary: s });
+    }
+  }
+
+  // Individual turns (most recent, at bottom)
+  if (turnsData.length > 0) {
+    if (items.length > 0) {
+      items.push({ kind: "separator", label: "Recent" });
+    }
+    for (const t of turnsData) {
+      items.push({ kind: "turn", turn: t });
+    }
+  }
+
+  return items;
+});
+
 // Scroll to bottom on initial load -- keep nudging for a few seconds
 let scrollTimer: ReturnType<typeof setInterval> | null = null;
 let scrollTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -315,8 +573,22 @@ $effect(() => {
     streamingEvents = new SvelteMap();
     nextSyntheticId = -1;
     pendingInbounds = [];
+    hourSummaries = [];
+    daySummaries = [];
+    weekSummaries = [];
+    monthSummaries = [];
+    summariesLoaded = false;
+    expandedSummaries = new SvelteMap();
     startScrollToBottom();
     loadTurns(0);
+  }
+});
+
+// Load summaries once turns are available
+$effect(() => {
+  if (turnsData.length > 0 && !summariesLoaded && !loading) {
+    const oldestTurn = turnsData[0];
+    loadSummaries(oldestTurn.created_at);
   }
 });
 
@@ -362,11 +634,69 @@ function jumpToLatest() {
 
     {#if historyError}
       <div class="error-hint">{historyError}</div>
-    {:else if turnsData.length === 0 && !loading}
+    {:else if timelineItems.length === 0 && !loading}
       <div class="empty-hint">No activity yet.</div>
     {:else}
       <div class="turn-track">
-        {#each turnsData as turn (turn.id)}
+        {#each timelineItems as item (item.kind === "turn" ? `turn-${item.turn.id}` : item.kind === "summary" ? `summary-${item.summary.id}` : `sep-${item.label}`)}
+          {#if item.kind === "separator"}
+            <div class="level-separator">
+              <div class="level-separator-line"></div>
+              <span class="level-separator-label">{item.label}</span>
+              <div class="level-separator-line"></div>
+            </div>
+          {:else if item.kind === "summary"}
+            {@const summary = item.summary}
+            {@const isExpanded = expandedSummaries.has(summary.id)}
+            {@const isLoading = loadingChildren.has(summary.id)}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="turn-row summary-row"
+              class:summary-expanded={isExpanded}
+              onclick={() => toggleSummaryExpand(summary)}
+              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSummaryExpand(summary); } }}
+            >
+              <div class="turn-time turn-time-wide">
+                {formatPeriodTime(summary.period, summary.period_key)}
+              </div>
+              <div class="turn-rail">
+                <div class="turn-dot summary-dot"></div>
+              </div>
+              <div class="turn-body">
+                <div class="summary-content">
+                  <span class="summary-period-badge">{summary.period}</span>
+                  <span class="summary-text">{summary.content}</span>
+                  {#if isLoading}
+                    <span class="summary-loading">loading...</span>
+                  {/if}
+                </div>
+                {#if isExpanded}
+                  {@const children = expandedSummaries.get(summary.id) ?? []}
+                  <div class="summary-children">
+                    {#each children as child (('period' in child) ? `s-${child.id}` : `t-${child.id}`)}
+                      {#if 'period' in child}
+                        {@const childSummary = child as SummaryRow}
+                        <div class="summary-child-row">
+                          <span class="summary-child-time">{formatPeriodTime(childSummary.period, childSummary.period_key)}</span>
+                          <span class="summary-child-text">{childSummary.content}</span>
+                        </div>
+                      {:else}
+                        {@const childTurn = child as TurnRow}
+                        <div class="summary-child-row">
+                          <span class="summary-child-time">{formatRelativeTime(childTurn.created_at)}</span>
+                          <span class="summary-child-text">{childTurn.summary ?? childTurn.trigger?.content ?? "(no summary)"}</span>
+                        </div>
+                      {/if}
+                    {/each}
+                    {#if children.length === 0 && !isLoading}
+                      <div class="summary-child-empty">No details available</div>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+            </div>
+          {:else}
+            {@const turn = item.turn}
           {@const peekCount = (!expandedTurns.has(turn.id) && turn.status !== "active") ? turn.conversations.length + turn.activities.length : 0}
           <div class="turn-row" data-turn-id={turn.id} style:min-height={peekCount > 0 ? `${36 + peekCount * 48}px` : undefined}>
             <div class="turn-time">
@@ -522,11 +852,11 @@ function jumpToLatest() {
                       </div>
                       {#if events.length > 0}
                         {@const groups = groupToolEvents(events)}
-                        {#each groups as item (item.kind === "tool-group" ? `tg-${item.toolUse.id}` : `ev-${item.event.id}`)}
-                          {#if item.kind === "tool-group"}
-                            <ToolGroupComponent group={item} mindName={turn.mind} turnStatus="active" />
+                        {#each groups as groupItem (groupItem.kind === "tool-group" ? `tg-${groupItem.toolUse.id}` : `ev-${groupItem.event.id}`)}
+                          {#if groupItem.kind === "tool-group"}
+                            <ToolGroupComponent group={groupItem} mindName={turn.mind} turnStatus="active" />
                           {:else}
-                            <HistoryEvent event={item.event} mindName={turn.mind} />
+                            <HistoryEvent event={groupItem.event} mindName={turn.mind} />
                           {/if}
                         {/each}
                       {/if}
@@ -539,6 +869,7 @@ function jumpToLatest() {
               </div>
             </div>
           </div>
+          {/if}
         {/each}
         {#if pendingInbounds.length > 0}
           <div class="turn-row">
@@ -1112,6 +1443,130 @@ function jumpToLatest() {
     66%  { background: #fbbf24; }
     83%  { background: #34d399; }
     100% { background: #4ade80; }
+  }
+
+  /* Level separators between summary tiers */
+  .level-separator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 0 8px;
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  .level-separator-line {
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+  .level-separator-label {
+    font-size: 11px;
+    color: var(--text-2);
+    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* Summary rows */
+  .summary-row {
+    cursor: pointer;
+  }
+  .summary-row:hover {
+    background: var(--bg-1);
+    border-radius: var(--radius);
+  }
+
+  .summary-dot {
+    border: 2px solid var(--text-2);
+    background: var(--bg-1) !important;
+  }
+
+  .turn-time-wide {
+    width: 80px;
+  }
+
+  .summary-content {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    min-height: 0;
+  }
+
+  .summary-period-badge {
+    font-size: 10px;
+    color: var(--text-2);
+    background: var(--bg-2);
+    padding: 1px 5px;
+    border-radius: var(--radius);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    flex-shrink: 0;
+  }
+
+  .summary-text {
+    font-size: 13px;
+    color: var(--text-1);
+    line-height: 1.4;
+    min-width: 0;
+  }
+
+  .summary-loading {
+    font-size: 11px;
+    color: var(--text-2);
+    animation: pulse 1.5s infinite;
+    flex-shrink: 0;
+  }
+
+  /* Expanded summary children */
+  .summary-children {
+    padding: 4px 0 8px 20px;
+    border-left: 1px solid var(--border);
+    margin-left: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .summary-child-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 2px 0;
+  }
+
+  .summary-child-time {
+    font-size: 11px;
+    color: var(--text-2);
+    white-space: nowrap;
+    flex-shrink: 0;
+    min-width: 60px;
+  }
+
+  .summary-child-text {
+    font-size: 12px;
+    color: var(--text-1);
+    line-height: 1.4;
+    min-width: 0;
+  }
+
+  .summary-child-empty {
+    font-size: 12px;
+    color: var(--text-2);
+    font-style: italic;
+    padding: 4px 0;
+  }
+
+  .summary-expanded {
+    background: var(--bg-1);
+    border-radius: var(--radius);
+  }
+
+  @container (max-width: 400px) {
+    .turn-time-wide {
+      display: none;
+    }
   }
 
   .empty-hint {
