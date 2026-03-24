@@ -55,7 +55,7 @@
     "lint:fix": "biome check --write src/ test/",
     "format": "biome format --write src/ test/",
     "typecheck": "tsc --noEmit",
-    "typecheck:templates": "tsc --noEmit -p templates/claude/tsconfig.json && tsc --noEmit -p templates/pi/tsconfig.json",
+    "typecheck:templates": "tsx scripts/typecheck-templates.ts",
     "lint:templates": "biome check templates/",
     "typecheck:web": "svelte-check --tsconfig src/web/ui/tsconfig.json",
     "prepare": "lefthook install",

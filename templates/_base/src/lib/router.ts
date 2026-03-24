@@ -16,6 +16,12 @@ import {
 import { loadPrompts } from "./startup.js";
 import type { ChannelMeta, HandlerResolver, Listener, VoluteContentPart } from "./types.js";
 
+/** Shape of a single message in a batch payload (subset of daemon DeliveryPayload). */
+export type BatchMessage = {
+  sender?: string | null;
+  content: unknown;
+};
+
 export type Router = {
   route(
     content: VoluteContentPart[],
@@ -30,7 +36,7 @@ export type Router = {
     listener?: Listener,
   ): { messageId: string; unsubscribe: () => void };
   dispatchBatch(
-    batch: { channels: Record<string, any[]> },
+    batch: { channels: Record<string, BatchMessage[]> },
     session: string,
     meta: ChannelMeta,
   ): void;
@@ -326,7 +332,7 @@ export function createRouter(options: {
     );
 
     const handler = options.mindHandler(session);
-    const interrupt = (meta as any).interrupt ?? sessionConfig.interrupt;
+    const interrupt = meta.interrupt ?? sessionConfig.interrupt;
     const unsubscribe = handler.handle(
       withInstructions,
       {
@@ -499,11 +505,11 @@ export function createRouter(options: {
    * Formats messages grouped by channel into a single SDK message.
    */
   function dispatchBatch(
-    batch: { channels: Record<string, any[]> },
+    batch: { channels: Record<string, BatchMessage[]> },
     session: string,
     _meta: ChannelMeta,
   ): void {
-    const allMessages: { channel: string; payload: any }[] = [];
+    const allMessages: { channel: string; payload: BatchMessage }[] = [];
     for (const [channel, messages] of Object.entries(batch.channels)) {
       for (const msg of messages) {
         allMessages.push({ channel, payload: msg });

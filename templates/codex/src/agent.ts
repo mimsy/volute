@@ -63,7 +63,7 @@ export function createMind(options: {
   cwd: string;
   mindDir: string;
   model?: string;
-  reasoningEffort?: string;
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   maxContextTokens?: number;
 }): { resolve: HandlerResolver } {
   const sessions = new Map<string, CodexSession>();
@@ -151,7 +151,7 @@ export function createMind(options: {
           session.thread = codex.resumeThread(savedThreadId, {
             workingDirectory: options.cwd,
             model: options.model,
-            modelReasoningEffort: options.reasoningEffort as any,
+            modelReasoningEffort: options.reasoningEffort,
             skipGitRepoCheck: true,
             sandboxMode: "danger-full-access",
           });
@@ -166,7 +166,7 @@ export function createMind(options: {
       session.thread = codex.startThread({
         workingDirectory: options.cwd,
         model: options.model,
-        modelReasoningEffort: options.reasoningEffort as any,
+        modelReasoningEffort: options.reasoningEffort,
         skipGitRepoCheck: true,
         sandboxMode: "danger-full-access",
       });

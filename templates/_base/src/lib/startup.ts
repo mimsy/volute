@@ -23,13 +23,19 @@ export type SubagentConfig = {
   maxTurns?: number;
 };
 
-export function loadConfig(): {
+export type MindConfig = {
   model?: string;
   logLevel?: "error" | "warn" | "info" | "debug";
   compactionMessage?: string;
   compaction?: { maxContextTokens?: number };
   subagents?: Record<string, SubagentConfig>;
-} {
+  // Template-specific config fields (claude, pi, codex)
+  maxThinkingTokens?: number;
+  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+};
+
+export function loadConfig(): MindConfig {
   try {
     return JSON.parse(readFileSync(resolve("home/.config/config.json"), "utf-8"));
   } catch (err: any) {

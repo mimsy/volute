@@ -28,7 +28,7 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npx svelte-check --workspace src/web/ui --fail-on-warnings false
-      - run: npx tsc --noEmit -p templates/_base/tsconfig.json
+      - run: npx tsx scripts/typecheck-templates.ts
 
   test:
     runs-on: ubuntu-latest
