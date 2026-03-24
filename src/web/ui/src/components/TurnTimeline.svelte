@@ -730,16 +730,14 @@ function jumpToLatest() {
             <div class="turn-row scale-break-row">
               <div class="turn-time"></div>
               <div class="scale-break-container">
-                <div class="scale-break-label-row">
+                <div class="scale-break-slash"></div>
+                <div class="scale-break-gap"></div>
+                <div class="scale-break-slash"></div>
+                <div class="scale-break-label scale-break-label-above">
                   <svg class="scale-break-arrow" viewBox="0 0 8 5"><path d="M4 0L8 5H0z" fill="currentColor"/></svg>
                   <span>{item.above}</span>
                 </div>
-                <div class="scale-break-marks">
-                  <div class="scale-break-slash"></div>
-                  <div class="scale-break-gap"></div>
-                  <div class="scale-break-slash"></div>
-                </div>
-                <div class="scale-break-label-row">
+                <div class="scale-break-label scale-break-label-below">
                   <svg class="scale-break-arrow" viewBox="0 0 8 5"><path d="M4 5L0 0h8z" fill="currentColor"/></svg>
                   <span>{item.below}</span>
                 </div>
@@ -1720,11 +1718,6 @@ function jumpToLatest() {
     align-items: center;
     position: relative;
   }
-  .scale-break-marks {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-  }
   .scale-break-slash {
     width: 14px;
     height: 2px;
@@ -1734,23 +1727,25 @@ function jumpToLatest() {
   .scale-break-gap {
     height: 6px;
   }
-  .scale-break-label-row {
+  .scale-break-label {
+    position: absolute;
+    left: 14px;
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
     font-size: 10px;
     color: var(--text-2);
     white-space: nowrap;
-    padding: 6px 0 2px;
-    position: relative;
-    left: 10px;
   }
-  .scale-break-label-row:first-child {
-    padding: 2px 0 6px;
+  .scale-break-label-above {
+    top: -1px;
+  }
+  .scale-break-label-below {
+    bottom: -1px;
   }
   .scale-break-arrow {
-    width: 7px;
-    height: 5px;
+    width: 6px;
+    height: 4px;
     flex-shrink: 0;
   }
   /* Nested expansion (hour→turn inside day→hour) */
