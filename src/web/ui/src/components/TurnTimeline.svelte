@@ -586,8 +586,8 @@ let timelineItems = $derived.by(() => {
 
   // Separator if transitioning from week/month to day level
   if ((monthSummaries.length > 0 || weekSummaries.length > 0) && daySummaries.length > 0) {
-    const aboveLabel = weekSummaries.length > 0 ? "weekly" : "monthly";
-    items.push({ kind: "separator", above: aboveLabel, below: "daily" });
+    const aboveLabel = weekSummaries.length > 0 ? "earlier" : "earlier";
+    items.push({ kind: "separator", above: aboveLabel, below: "this week" });
   }
 
   // Daily summaries
@@ -595,9 +595,7 @@ let timelineItems = $derived.by(() => {
 
   // Separator before hourly
   if ((daySummaries.length > 0 || items.length > 0) && hourSummaries.length > 0) {
-    const aboveLabel =
-      daySummaries.length > 0 ? "daily" : weekSummaries.length > 0 ? "weekly" : "monthly";
-    items.push({ kind: "separator", above: aboveLabel, below: "hourly" });
+    items.push({ kind: "separator", above: "earlier this week", below: "today" });
   }
 
   // Hourly summaries
@@ -611,7 +609,7 @@ let timelineItems = $derived.by(() => {
 
   // Separator before turns
   if (items.length > 0 && recentTurns.length > 0) {
-    items.push({ kind: "separator", above: "hourly", below: "now" });
+    items.push({ kind: "separator", above: "earlier today", below: "this hour" });
   }
 
   for (const t of recentTurns) {
@@ -801,11 +799,13 @@ function jumpToLatest() {
                               {@const childExpanded = expandedSummaries.has(childSummary.id)}
                               <!-- svelte-ignore a11y_click_events_have_key_events -->
                               <!-- svelte-ignore a11y_no_static_element_interactions -->
-                              <div class="summary-child-item" class:summary-child-expanded={childExpanded} onclick={(e) => { e.stopPropagation(); toggleSummaryExpand(childSummary); }}>
+                              <div class="summary-child-item" class:summary-child-expanded={childExpanded} class:summary-child-collapsed={!childExpanded} onclick={(e) => { e.stopPropagation(); toggleSummaryExpand(childSummary); }}>
                                 <div class="summary-child-dot" class:summary-dot={true}></div>
                                 <div class="summary-child-body">
-                                  <span class="summary-child-time">{formatPeriodTime(childSummary.period, childSummary.period_key)}</span>
-                                  <span class="summary-text">{childSummary.content}</span>
+                                  {#if !childExpanded}
+                                    <span class="summary-child-time">{formatPeriodTime(childSummary.period, childSummary.period_key)}</span>
+                                    <span class="summary-text">{childSummary.content}</span>
+                                  {/if}
                                 </div>
                               </div>
                               {#if childExpanded}
@@ -1308,12 +1308,13 @@ function jumpToLatest() {
     cursor: pointer;
   }
 
-  /* Extend HistoryEvent connectors to bridge the .turn-body padding gap */
-  .turn-summary :global(.turn-connector::after) {
+  /* Extend HistoryEvent connectors to bridge the .turn-body padding gap.
+     Only apply to the top-level summary, not nested expansion branches. */
+  .turn-summary > :global(.event .turn-connector::after) {
     left: -35px;
     width: 35px;
   }
-  .turn-summary :global(.branch-return) {
+  .turn-summary > :global(.event .branch-return) {
     left: -28px;
     width: 36px;
   }
@@ -1732,11 +1733,11 @@ function jumpToLatest() {
   }
   .scale-break-container::before {
     top: 0;
-    bottom: calc(50% + 5px);
+    bottom: calc(50% + 8px);
   }
   .scale-break-container::after {
     bottom: 0;
-    top: calc(50% + 5px);
+    top: calc(50% + 8px);
   }
   .scale-break-slash {
     width: 14px;
@@ -1753,7 +1754,7 @@ function jumpToLatest() {
     display: flex;
     align-items: center;
     gap: 4px;
-    font-size: 11px;
+    font-size: 14px;
     color: var(--timeline-rail);
     white-space: nowrap;
   }
@@ -1836,7 +1837,7 @@ function jumpToLatest() {
   /* Collapsed summary with inline timestamp and clamped text */
   .summary-collapsed {
     cursor: pointer;
-    padding: 4px 0;
+    padding: 6px 0;
   }
   .summary-collapsed-time {
     display: block;
