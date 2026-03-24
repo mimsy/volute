@@ -530,7 +530,6 @@ $effect(() => {
       <AiProviders
         bind:this={aiProvidersRef}
         showModelDefaults
-        bind:spiritModel
         bind:utilityModel
         onLoad={handleProviderLoad}
       />

@@ -38,7 +38,7 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Invalid file type (png, jpg, gif, webp only)" }, 400);
     }
 
-    const dir = mindDir(name);
+    const dir = entry.dir ?? mindDir(name);
     const homeDir = resolve(dir, "home");
     const filename = `avatar${ext}`;
     const avatarPath = resolve(homeDir, filename);
@@ -72,7 +72,7 @@ const app = new Hono<AuthEnv>()
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    const dir = mindDir(name);
+    const dir = entry.dir ?? mindDir(name);
     const config = readVoluteConfig(dir);
     if (!config?.profile?.avatar) return c.json({ error: "No avatar configured" }, 404);
 

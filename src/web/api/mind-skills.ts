@@ -17,7 +17,7 @@ const app = new Hono<AuthEnv>()
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    const dir = mindDir(name);
+    const dir = entry.dir ?? mindDir(name);
     const skills = await listMindSkills(dir);
     return c.json(skills);
   })
@@ -31,7 +31,7 @@ const app = new Hono<AuthEnv>()
       if (!entry) return c.json({ error: "Mind not found" }, 404);
 
       const { skillId } = c.req.valid("json");
-      const dir = mindDir(name);
+      const dir = entry.dir ?? mindDir(name);
 
       try {
         const result = await installSkill(name, dir, skillId);
@@ -52,7 +52,7 @@ const app = new Hono<AuthEnv>()
       if (!entry) return c.json({ error: "Mind not found" }, 404);
 
       const { skillId } = c.req.valid("json");
-      const dir = mindDir(name);
+      const dir = entry.dir ?? mindDir(name);
 
       try {
         const result = await updateSkill(name, dir, skillId);
@@ -73,7 +73,7 @@ const app = new Hono<AuthEnv>()
       if (!entry) return c.json({ error: "Mind not found" }, 404);
 
       const { skillId } = c.req.valid("json");
-      const dir = mindDir(name);
+      const dir = entry.dir ?? mindDir(name);
 
       try {
         const skill = await publishSkill(name, dir, skillId);
@@ -90,7 +90,7 @@ const app = new Hono<AuthEnv>()
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    const dir = mindDir(name);
+    const dir = entry.dir ?? mindDir(name);
 
     try {
       await uninstallSkill(name, dir, skillName);

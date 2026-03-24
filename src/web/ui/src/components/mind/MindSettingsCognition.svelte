@@ -4,7 +4,11 @@ import { ErrorMessage, Input, Select, SettingRow } from "@volute/ui";
 import { onMount } from "svelte";
 import { type AiModel, fetchAiModels, fetchMindConfig, updateMindConfig } from "../../lib/client";
 
-let { name, template }: { name: string; template?: string } = $props();
+let {
+  name,
+  template,
+  hideBudget = false,
+}: { name: string; template?: string; hideBudget?: boolean } = $props();
 
 let config: MindConfig | null = $state(null);
 let models: AiModel[] = $state([]);
@@ -216,35 +220,37 @@ onMount(async () => {
     </SettingRow>
   {/if}
 
-  <SettingRow label="Budget">
-    <Input
-      type="number"
-      width="80px"
-      bind:value={editBudget}
-      onblur={saveBudget}
-      placeholder="tokens"
-    />
-    <span class="setting-hint">per</span>
-    <Input
-      type="number"
-      width="80px"
-      bind:value={editPeriod}
-      onblur={savePeriod}
-      placeholder="min"
-    />
-    <span class="setting-hint">min</span>
-  </SettingRow>
+  {#if !hideBudget}
+    <SettingRow label="Budget">
+      <Input
+        type="number"
+        width="80px"
+        bind:value={editBudget}
+        onblur={saveBudget}
+        placeholder="tokens"
+      />
+      <span class="setting-hint">per</span>
+      <Input
+        type="number"
+        width="80px"
+        bind:value={editPeriod}
+        onblur={savePeriod}
+        placeholder="min"
+      />
+      <span class="setting-hint">min</span>
+    </SettingRow>
 
-  <SettingRow label="Context">
-    <Input
-      type="number"
-      width="80px"
-      bind:value={editCompaction}
-      onblur={saveCompaction}
-      placeholder="150000"
-    />
-    <span class="setting-hint">tokens</span>
-  </SettingRow>
+    <SettingRow label="Context">
+      <Input
+        type="number"
+        width="80px"
+        bind:value={editCompaction}
+        onblur={saveCompaction}
+        placeholder="150000"
+      />
+      <span class="setting-hint">tokens</span>
+    </SettingRow>
+  {/if}
 
   <ErrorMessage message={error} />
 {/if}
