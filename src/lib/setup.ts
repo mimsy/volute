@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { voluteSystemDir } from "./registry.js";
+import type { CognitionConfig, Schedule, SleepConfig } from "./volute-config.js";
 
 export type SetupType = "local" | "system";
 export type IsolationMode = "sandbox" | "user" | "none";
@@ -57,6 +58,18 @@ export type GlobalConfig = {
   imagegen?: ImagegenConfig;
   /** Extension IDs that are installed but should not load on daemon start */
   disabledExtensions?: string[];
+  /** Default settings applied when creating new minds */
+  mindDefaults?: MindDefaults;
+};
+
+export type MindDefaultsCognition = CognitionConfig & {
+  compaction?: { maxContextTokens?: number };
+};
+
+export type MindDefaults = {
+  cognition?: MindDefaultsCognition;
+  sleep?: SleepConfig;
+  schedules?: Schedule[];
 };
 
 export function configPath(): string {

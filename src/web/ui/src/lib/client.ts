@@ -479,6 +479,39 @@ export function saveAiDefaults(defaults: AiDefaults): Promise<void> {
   return put(`${V1}/system/ai/defaults`, defaults);
 }
 
+// --- Mind Defaults ---
+// Mirrors CognitionConfig from volute-config.ts + compaction from SDK config
+export type MindDefaultsCognition = {
+  model?: string;
+  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  maxThinkingTokens?: number;
+  tokenBudget?: number;
+  tokenBudgetPeriodMinutes?: number;
+  compaction?: { maxContextTokens?: number };
+};
+
+// UI-relevant subset of ScheduleEntry (omits deprecated channel, fireAt timers)
+export type MindDefaultsSchedule = Pick<
+  ScheduleEntry,
+  "id" | "cron" | "message" | "script" | "session" | "enabled"
+> & {
+  whileSleeping?: "skip" | "queue" | "trigger-wake";
+};
+
+export type MindDefaults = {
+  cognition?: MindDefaultsCognition;
+  sleep?: SleepConfig;
+  schedules?: MindDefaultsSchedule[];
+};
+
+export function fetchMindDefaults(): Promise<MindDefaults> {
+  return get(`${V1}/system/mind-defaults`);
+}
+
+export function saveMindDefaults(defaults: MindDefaults): Promise<void> {
+  return put(`${V1}/system/mind-defaults`, defaults);
+}
+
 // --- Imagegen ---
 
 export type ImagegenProvider = {

@@ -1073,4 +1073,61 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     // Stop mind
     await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
   });
+
+  it("mind defaults: GET returns empty object when not configured", async () => {
+    const res = await daemonRequest("/api/v1/system/mind-defaults");
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepStrictEqual(body, {});
+  });
+
+  it("mind defaults: PUT saves and GET returns saved values", async () => {
+    const defaults = {
+      cognition: {
+        model: "claude-sonnet-4-20250514",
+        thinkingLevel: "medium" as const,
+        tokenBudget: 50000,
+        tokenBudgetPeriodMinutes: 60,
+      },
+      sleep: {
+        enabled: true,
+        schedule: { sleep: "0 23 * * *", wake: "0 7 * * *" },
+        wakeTriggers: { mentions: true, dms: false },
+      },
+      schedules: [
+        {
+          id: "morning",
+          cron: "0 9 * * *",
+          message: "Good morning",
+          enabled: true,
+          whileSleeping: "skip" as const,
+        },
+      ],
+    };
+    const putRes = await daemonRequest("/api/v1/system/mind-defaults", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(defaults),
+    });
+    assert.equal(putRes.status, 200);
+
+    const getRes = await daemonRequest("/api/v1/system/mind-defaults");
+    assert.equal(getRes.status, 200);
+    const saved = await getRes.json();
+    assert.equal(saved.cognition.model, "claude-sonnet-4-20250514");
+    assert.equal(saved.cognition.thinkingLevel, "medium");
+    assert.equal(saved.cognition.tokenBudget, 50000);
+    assert.equal(saved.sleep.enabled, true);
+    assert.equal(saved.sleep.schedule.sleep, "0 23 * * *");
+    assert.equal(saved.sleep.wakeTriggers.mentions, true);
+    assert.equal(saved.schedules.length, 1);
+    assert.equal(saved.schedules[0].id, "morning");
+
+    // Clean up: reset to empty
+    await daemonRequest("/api/v1/system/mind-defaults", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+  });
 });

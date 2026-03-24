@@ -1,5 +1,6 @@
 <script lang="ts">
 import ExtensionManager from "../components/system/ExtensionManager.svelte";
+import MindDefaults from "../components/system/MindDefaults.svelte";
 import SharedSkills from "../components/system/SharedSkills.svelte";
 import SystemLogs from "../components/system/SystemLogs.svelte";
 import UserManagement from "../components/system/UserManagement.svelte";
@@ -9,11 +10,20 @@ import { data } from "../lib/stores.svelte";
 import Prompts from "./Prompts.svelte";
 import Settings from "./Settings.svelte";
 
-const TABS = ["settings", "prompts", "skills", "extensions", "logs", "users"] as const;
+const TABS = [
+  "settings",
+  "mind-defaults",
+  "prompts",
+  "skills",
+  "extensions",
+  "logs",
+  "users",
+] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
   settings: "Settings",
+  "mind-defaults": "Mind Defaults",
   prompts: "Prompts",
   skills: "Skills",
   extensions: "Extensions",
@@ -71,6 +81,8 @@ async function handleRestart() {
   <div class="settings-body">
     {#if activeTab === "settings"}
       <Settings />
+    {:else if activeTab === "mind-defaults"}
+      <MindDefaults />
     {:else if activeTab === "prompts"}
       <Prompts />
     {:else if activeTab === "skills"}
