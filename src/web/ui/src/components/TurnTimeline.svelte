@@ -25,6 +25,8 @@ import { getCategoryColor, getCategoryIcon } from "../lib/tool-names";
 import ToolGroupComponent from "./chat/ToolGroup.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
 import ReadOnlyChatModal from "./modals/ReadOnlyChatModal.svelte";
+import SummaryNode from "./SummaryNode.svelte";
+import TimelineBranch from "./TimelineBranch.svelte";
 
 type TimelineItem =
   | { kind: "turn"; turn: TurnRow }
@@ -766,8 +768,6 @@ function jumpToLatest() {
           {:else if item.kind === "summary"}
             {@const summary = item.summary}
             {@const isExpanded = expandedSummaries.has(summary.id) || directEventsSummaries.has(summary.id)}
-            {@const isLoading = loadingChildren.has(summary.id)}
-            {@const directEvents = directEventsSummaries.get(summary.id)}
             <div class="turn-row" data-summary-id={summary.id}>
               <div class="turn-time">
                 {#if !name && summary.mind !== "_system"}
@@ -785,154 +785,14 @@ function jumpToLatest() {
               </div>
               <div class="turn-body">
                 <div class="turn-summary">
-                  {#if isExpanded}
-                    <div class="summary-expand-wrapper">
-                      <div class="summary-expand-connector"></div>
-                      <div class="summary-expand-branch">
-                        <!-- svelte-ignore a11y_click_events_have_key_events -->
-                        <!-- svelte-ignore a11y_no_static_element_interactions -->
-                        <div class="summary-expand-header" onclick={(e) => { e.stopPropagation(); toggleSummaryExpand(summary); }}>
-                          <span class="active-turn-time">{formatPeriodTime(summary.period, summary.period_key)}</span>
-                        </div>
-                        {#if isLoading}
-                          <div class="summary-expand-loading">loading...</div>
-                        {:else if directEvents}
-                          {@const groups = groupToolEvents(directEvents)}
-                          {#each groups as groupItem (groupItem.kind === "tool-group" ? `tg-${groupItem.toolUse.id}` : `ev-${groupItem.event.id}`)}
-                            {#if groupItem.kind === "tool-group"}
-                              {@const catColor = getCategoryColor(groupItem.category)}
-                              {@const catIcon = getCategoryIcon(groupItem.category)}
-                              <div class="event" style:--type-color={catColor}>
-                                <div class="marker marker-icon" style:color={catColor}>
-                                  <Icon kind={catIcon} />
-                                </div>
-                                <ToolGroupComponent group={groupItem} mindName={summary.mind} turnStatus="complete" />
-                              </div>
-                            {:else}
-                              <HistoryEvent event={groupItem.event} mindName={summary.mind} />
-                            {/if}
-                          {/each}
-                        {:else}
-                          {@const children = expandedSummaries.get(summary.id) ?? []}
-                          {#each children as child (('period' in child) ? `s-${child.id}` : `t-${child.id}`)}
-                            {#if 'period' in child}
-                              {@const childSummary = child as SummaryRow}
-                              {@const childExpanded = expandedSummaries.has(childSummary.id)}
-                              <!-- svelte-ignore a11y_click_events_have_key_events -->
-                              <!-- svelte-ignore a11y_no_static_element_interactions -->
-                              <div class="summary-child-item" class:summary-child-expanded={childExpanded} class:summary-child-collapsed={!childExpanded} onclick={(e) => { e.stopPropagation(); toggleSummaryExpand(childSummary); }}>
-                                <div class="summary-child-dot" class:summary-dot={true}></div>
-                                <div class="summary-child-body">
-                                  {#if !childExpanded}
-                                    <span class="summary-child-time">{formatPeriodTime(childSummary.period, childSummary.period_key)}</span>
-                                    <span class="summary-text">{childSummary.content}</span>
-                                  {/if}
-                                </div>
-                              </div>
-                              {#if childExpanded}
-                                {@const childDirectEvents = directEventsSummaries.get(childSummary.id)}
-                                <div class="summary-nested-wrapper">
-                                  <div class="summary-nested-connector"></div>
-                                  <div class="summary-nested-branch">
-                                    <!-- svelte-ignore a11y_click_events_have_key_events -->
-                                    <!-- svelte-ignore a11y_no_static_element_interactions -->
-                                    <div class="summary-expand-header" onclick={(e) => { e.stopPropagation(); toggleSummaryExpand(childSummary); }}>
-                                      <span class="active-turn-time">{formatPeriodTime(childSummary.period, childSummary.period_key)}</span>
-                                    </div>
-                                    {#if loadingChildren.has(childSummary.id)}
-                                      <div class="summary-expand-loading">loading...</div>
-                                    {:else if childDirectEvents}
-                                      {@const groups = groupToolEvents(childDirectEvents)}
-                                      {#each groups as groupItem (groupItem.kind === "tool-group" ? `tg-${groupItem.toolUse.id}` : `ev-${groupItem.event.id}`)}
-                                        {#if groupItem.kind === "tool-group"}
-                                          {@const catColor = getCategoryColor(groupItem.category)}
-                                          {@const catIcon = getCategoryIcon(groupItem.category)}
-                                          <div class="event" style:--type-color={catColor}>
-                                            <div class="marker marker-icon" style:color={catColor}>
-                                              <Icon kind={catIcon} />
-                                            </div>
-                                            <ToolGroupComponent group={groupItem} mindName={childSummary.mind} turnStatus="complete" />
-                                          </div>
-                                        {:else}
-                                          <HistoryEvent event={groupItem.event} mindName={childSummary.mind} />
-                                        {/if}
-                                      {/each}
-                                    {:else}
-                                      {@const grandchildren = expandedSummaries.get(childSummary.id) ?? []}
-                                      {#each grandchildren as gc (('period' in gc) ? `s-${gc.id}` : `t-${gc.id}`)}
-                                        {#if !('period' in gc)}
-                                          {@const gcTurn = gc as TurnRow}
-                                          <!-- svelte-ignore a11y_click_events_have_key_events -->
-                                          <!-- svelte-ignore a11y_no_static_element_interactions -->
-                                          <div onclick={(e) => e.stopPropagation()}>
-                                            <HistoryEvent
-                                              event={{
-                                                id: 0,
-                                                mind: gcTurn.mind,
-                                                channel: "",
-                                                session: null,
-                                                sender: null,
-                                                message_id: null,
-                                                type: "summary",
-                                                content: gcTurn.summary ?? "(no summary)",
-                                                metadata: gcTurn.summary_meta ? JSON.stringify(gcTurn.summary_meta) : null,
-                                                turn_id: gcTurn.id,
-                                                created_at: gcTurn.created_at,
-                                              }}
-                                              mindName={gcTurn.mind}
-                                              expandable
-                                            />
-                                          </div>
-                                        {/if}
-                                      {/each}
-                                    {/if}
-                                    <button class="summary-expand-collapse" onclick={(e) => { e.stopPropagation(); toggleSummaryExpand(childSummary); }}>
-                                      <span class="summary-text">{childSummary.content}</span>
-                                    </button>
-                                    <div class="summary-nested-return"></div>
-                                  </div>
-                                </div>
-                              {/if}
-                            {:else}
-                              {@const childTurn = child as TurnRow}
-                              <!-- svelte-ignore a11y_click_events_have_key_events -->
-                              <!-- svelte-ignore a11y_no_static_element_interactions -->
-                              <div onclick={(e) => e.stopPropagation()}>
-                                <HistoryEvent
-                                  event={{
-                                    id: 0,
-                                    mind: childTurn.mind,
-                                    channel: "",
-                                    session: null,
-                                    sender: null,
-                                    message_id: null,
-                                    type: "summary",
-                                    content: childTurn.summary ?? "(no summary)",
-                                    metadata: childTurn.summary_meta ? JSON.stringify(childTurn.summary_meta) : null,
-                                    turn_id: childTurn.id,
-                                    created_at: childTurn.created_at,
-                                  }}
-                                  mindName={childTurn.mind}
-                                  expandable
-                                />
-                              </div>
-                            {/if}
-                          {/each}
-                        {/if}
-                        <button class="summary-expand-collapse" onclick={() => toggleSummaryExpand(summary)}>
-                          <span class="summary-text">{summary.content}</span>
-                        </button>
-                        <div class="summary-expand-return"></div>
-                      </div>
-                    </div>
-                  {:else}
-                    <!-- svelte-ignore a11y_click_events_have_key_events -->
-                    <!-- svelte-ignore a11y_no_static_element_interactions -->
-                    <div class="summary-collapsed" onclick={() => toggleSummaryExpand(summary)}>
-                      <span class="summary-collapsed-time">{formatPeriodTime(summary.period, summary.period_key)}</span>
-                      <span class="summary-text">{summary.content}</span>
-                    </div>
-                  {/if}
+                  <SummaryNode
+                    {summary}
+                    {expandedSummaries}
+                    {directEventsSummaries}
+                    {loadingChildren}
+                    {toggleSummaryExpand}
+                    {formatPeriodTime}
+                  />
                 </div>
               </div>
             </div>
@@ -1085,12 +945,13 @@ function jumpToLatest() {
                 {:else}
                   {@const events = streamingEvents.get(turn.id) ?? []}
                   {@const startTime = new Date(turn.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                  <div class="active-turn-wrapper">
-                    <div class="active-turn-connector"></div>
-                    <div class="active-turn-branch">
+                  <TimelineBranch gap={24} reach={13} noReturn>
+                    {#snippet header()}
                       <div class="active-turn-header">
                         <span class="active-turn-time">{startTime} – now</span>
                       </div>
+                    {/snippet}
+                    {#snippet children()}
                       {#if events.length > 0}
                         {@const groups = groupToolEvents(events)}
                         {#each groups as groupItem (groupItem.kind === "tool-group" ? `tg-${groupItem.toolUse.id}` : `ev-${groupItem.event.id}`)}
@@ -1111,8 +972,8 @@ function jumpToLatest() {
                       <div class="active-indicator">
                         <div class="active-dot"></div>
                       </div>
-                    </div>
-                  </div>
+                    {/snippet}
+                  </TimelineBranch>
                 {/if}
               </div>
             </div>
@@ -1129,20 +990,21 @@ function jumpToLatest() {
             </div>
             <div class="turn-body">
               <div class="turn-summary">
-                <div class="active-turn-wrapper">
-                  <div class="active-turn-connector"></div>
-                  <div class="active-turn-branch">
+                <TimelineBranch gap={24} reach={13} noReturn>
+                  {#snippet header()}
                     <div class="active-turn-header">
                       <span class="active-turn-time">{new Date(pendingInbounds[0].created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} – now</span>
                     </div>
+                  {/snippet}
+                  {#snippet children()}
                     {#each pendingInbounds as ev (ev.id)}
                       <HistoryEvent event={ev} mindName={ev.mind || name || ""} />
                     {/each}
                     <div class="active-indicator">
                       <div class="active-dot"></div>
                     </div>
-                  </div>
-                </div>
+                  {/snippet}
+                </TimelineBranch>
               </div>
             </div>
           </div>
@@ -1341,25 +1203,6 @@ function jumpToLatest() {
     left: -28px;
     width: 36px;
   }
-  /* Inside summary-expand-branch, inner rail to parent rail gap is ~26px */
-  .summary-expand-branch :global(.turn-connector::after) {
-    left: -26px;
-    width: 26px;
-  }
-  .summary-expand-branch :global(.branch-return) {
-    left: -19px;
-    width: 27px;
-  }
-  /* Inside summary-nested-branch, gap is ~19px */
-  .summary-nested-branch :global(.turn-connector::after) {
-    left: -19px;
-    width: 19px;
-  }
-  .summary-nested-branch :global(.branch-return) {
-    left: -12px;
-    width: 20px;
-  }
-
   .turn-dot {
     position: absolute;
     top: 12px;
@@ -1606,47 +1449,12 @@ function jumpToLatest() {
 
 
 
-  /* Active turn: branching inner rail matching expanded turns.
-     Connector at left:22px matches HistoryEvent's .turn-connector position.
-     Horizontal line at top:16px aligns with the turn-dot center (8px dot at top:12px). */
-  .active-turn-wrapper {
-    position: relative;
-  }
-  .active-turn-connector {
-    position: absolute;
-    top: 16px;
-    left: 22px;
-    width: 2px;
-    bottom: 0;
-    background: var(--border);
-  }
-  /* Horizontal connector from main rail to inner rail */
-  .active-turn-connector::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: -35px;
-    width: 35px;
-    height: 2px;
-    background: var(--border);
-  }
-  /* Branch container: padding-left positions events so their markers land on the rail.
-     Rail center = 22 + 1 = 23px from wrapper.
-     Marker icons are 22px wide at left:-12px, center at (padLeft - 12 + 11).
-     Solve: padLeft - 1 = 23 → padLeft = 24. */
-  .active-turn-branch {
-    position: relative;
-    padding-left: 24px;
-    padding-top: 8px;
-    padding-bottom: 0;
-  }
-
-  .active-turn-branch .event {
+  /* Inline event styling for active-turn tool groups */
+  .event {
     position: relative;
     padding: 6px 8px 6px 20px;
   }
-
-  .active-turn-branch .marker {
+  .marker {
     position: absolute;
     left: -5px;
     top: 12px;
@@ -1655,8 +1463,7 @@ function jumpToLatest() {
     border-radius: 50%;
     z-index: 1;
   }
-
-  .active-turn-branch .marker-icon {
+  .marker-icon {
     width: 22px;
     height: 22px;
     left: -12px;
@@ -1669,8 +1476,7 @@ function jumpToLatest() {
     justify-content: center;
     z-index: 3;
   }
-
-  .active-turn-branch .marker-icon :global(svg) {
+  .marker-icon :global(svg) {
     width: 13px;
     height: 13px;
   }
@@ -1810,213 +1616,11 @@ function jumpToLatest() {
     height: 5px;
     flex-shrink: 0;
   }
-  /* Nested expansion (hour→turn inside day→hour) */
-  .summary-nested-wrapper {
-    position: relative;
-    margin-left: 8px;
-  }
-  .summary-nested-connector {
-    position: absolute;
-    top: 4px;
-    left: 10px;
-    width: 2px;
-    bottom: 12px;
-    background: var(--border);
-  }
-  .summary-nested-connector::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: -19px;
-    width: 19px;
-    height: 2px;
-    background: var(--border);
-  }
-  .summary-nested-branch {
-    position: relative;
-    padding-left: 12px;
-    padding-top: 4px;
-    padding-bottom: 8px;
-  }
-  .summary-nested-branch > :global(.event::after) {
-    opacity: 1;
-  }
-  .summary-nested-return {
-    position: absolute;
-    bottom: 10px;
-    left: -11px;
-    width: 19px;
-    height: 2px;
-    background: var(--border);
-  }
-
-  /* Inner scale break inside expanded branches */
-  .inner-scale-break {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 4px 0;
-    margin-left: -2px;
-    width: 14px;
-  }
-
   /* Summary dot style */
   .summary-dot {
     border: 2px solid var(--text-2);
     background: var(--bg-1);
     box-sizing: border-box;
-  }
-
-  /* All summary text uses mono font */
-  .summary-text {
-    font-family: var(--mono);
-    font-size: 13px;
-    color: var(--text-0);
-    line-height: 1.5;
-  }
-
-  /* Collapsed summary with inline timestamp and clamped text */
-  .summary-collapsed {
-    cursor: pointer;
-    padding: 6px 0;
-  }
-  .summary-collapsed-time {
-    display: block;
-    font-size: 11px;
-    color: var(--text-2);
-    margin-bottom: 2px;
-  }
-  .summary-collapsed .summary-text {
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
-  /* Child summary items inside expanded branch */
-  .summary-child-item {
-    position: relative;
-    padding: 8px 8px 8px 20px;
-    cursor: pointer;
-  }
-  .summary-child-item:hover {
-    background: color-mix(in srgb, var(--text-2) 5%, transparent);
-    border-radius: var(--radius);
-  }
-  .summary-child-dot {
-    position: absolute;
-    left: -5px;
-    top: 12px;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    z-index: 1;
-  }
-  .summary-child-body {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .summary-child-time {
-    font-size: 11px;
-    color: var(--text-2);
-  }
-  /* Solid rail between child items */
-  .summary-child-item::after {
-    content: "";
-    position: absolute;
-    left: -2px;
-    top: 20px;
-    bottom: -6px;
-    width: 2px;
-    background: var(--border);
-  }
-  .summary-child-item:last-of-type::after {
-    display: none;
-  }
-
-  /* Summary expansion: branch pattern matching HistoryEvent's turn expansion */
-  .summary-expand-wrapper {
-    position: relative;
-  }
-  .summary-expand-connector {
-    position: absolute;
-    top: 16px;
-    left: 14px;
-    width: 2px;
-    bottom: 12px;
-    background: var(--border);
-  }
-  .summary-expand-connector::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: -26px;
-    width: 26px;
-    height: 2px;
-    background: var(--border);
-  }
-  .summary-expand-branch {
-    position: relative;
-    padding-left: 16px;
-    padding-top: 8px;
-    padding-bottom: 8px;
-  }
-  /* Inner rail between children: ensure visibility */
-  .summary-expand-branch > :global(.event::after) {
-    opacity: 1;
-  }
-  .summary-expand-header {
-    margin-bottom: 4px;
-    margin-left: 6px;
-    cursor: pointer;
-  }
-  .summary-expand-header:hover .active-turn-time {
-    color: var(--text-0);
-  }
-  .summary-expand-loading {
-    font-size: 12px;
-    color: var(--text-2);
-    font-style: italic;
-    padding: 8px 0 8px 14px;
-  }
-  .summary-expand-collapse {
-    position: relative;
-    padding: 6px 8px 6px 20px;
-    cursor: pointer;
-    width: 100%;
-    background: none;
-    border: none;
-    text-align: left;
-    font: inherit;
-    color: inherit;
-  }
-  .summary-expand-collapse::before {
-    content: "";
-    position: absolute;
-    left: -5px;
-    top: 12px;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    border: 2px solid var(--text-2);
-    background: var(--bg-1);
-    box-sizing: border-box;
-    z-index: 3;
-  }
-  .summary-expand-return {
-    position: absolute;
-    bottom: 10px;
-    left: -12px;
-    width: 28px;
-    height: 2px;
-    background: var(--border);
-  }
-  /* Highlight connectors on hover — only direct children, not nested branches */
-  .summary-expand-wrapper:has(> .summary-expand-branch > .summary-expand-header:hover, > .summary-expand-branch > .summary-expand-collapse:hover) > .summary-expand-connector,
-  .summary-expand-wrapper:has(> .summary-expand-branch > .summary-expand-header:hover, > .summary-expand-branch > .summary-expand-collapse:hover) > .summary-expand-connector::after,
-  .summary-expand-wrapper:has(> .summary-expand-branch > .summary-expand-header:hover, > .summary-expand-branch > .summary-expand-collapse:hover) > .summary-expand-branch > .summary-expand-return {
-    background: var(--text-0);
   }
 
   .empty-hint {
