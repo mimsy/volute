@@ -7,7 +7,12 @@ import { daemonEmit, daemonRestart, type EventType } from "./lib/daemon-client.j
 import { runHooks } from "./lib/hook-loader.js";
 import { log, warn } from "./lib/logger.js";
 import { createSessionStore } from "./lib/session-store.js";
-import { getStartupContext, loadPrompts, loadSystemPrompt } from "./lib/startup.js";
+import {
+  getStartupContext,
+  getSystemPromptSizes,
+  loadPrompts,
+  loadSystemPrompt,
+} from "./lib/startup.js";
 import { filterEvent, loadTransparencyPreset } from "./lib/transparency.js";
 import type {
   HandlerMeta,
@@ -17,6 +22,7 @@ import type {
   VoluteContentPart,
   VoluteEvent,
 } from "./lib/types.js";
+import type { ContextInfo } from "./lib/volute-server.js";
 
 /** Minimal interface for a Codex SDK thread — typed to the methods we actually use */
 type CodexThread = {
@@ -65,7 +71,7 @@ export function createMind(options: {
   model?: string;
   reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   maxContextTokens?: number;
-}): { resolve: HandlerResolver } {
+}): { resolve: HandlerResolver; getContextInfo: () => ContextInfo } {
   const sessions = new Map<string, CodexSession>();
   const prompts = loadPrompts();
   const maxContextTokens = options.maxContextTokens;
@@ -581,5 +587,25 @@ export function createMind(options: {
     return handler;
   }
 
-  return { resolve };
+  const CHARS_PER_TOKEN = 3.5;
+  function getContextInfo(): ContextInfo {
+    const sizes = getSystemPromptSizes();
+    const toTokens = (chars: number) => Math.round(chars / CHARS_PER_TOKEN);
+    return {
+      sessions: Array.from(sessions.values()).map((s) => ({
+        name: s.name,
+        contextTokens: s.cumulativeInputTokens,
+      })),
+      systemPrompt: {
+        total: toTokens(sizes.soul + sizes.volute + sizes.memory),
+        components: {
+          soul: toTokens(sizes.soul),
+          volute: toTokens(sizes.volute),
+          memory: toTokens(sizes.memory),
+        },
+      },
+    };
+  }
+
+  return { resolve, getContextInfo };
 }

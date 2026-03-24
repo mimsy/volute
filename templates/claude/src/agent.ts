@@ -13,7 +13,7 @@ import { createReplyInstructionsHook } from "./lib/hooks/reply-instructions.js";
 import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
 import { createSessionStore } from "./lib/session-store.js";
-import { loadPrompts, type SubagentConfig } from "./lib/startup.js";
+import { getSystemPromptSizes, loadPrompts, type SubagentConfig } from "./lib/startup.js";
 import { consumeStream } from "./lib/stream-consumer.js";
 import type {
   HandlerMeta,
@@ -23,6 +23,7 @@ import type {
   VoluteContentPart,
   VoluteEvent,
 } from "./lib/types.js";
+import type { ContextInfo } from "./lib/volute-server.js";
 
 type Session = {
   name: string;
@@ -34,6 +35,7 @@ type Session = {
   messageChannels: Map<string, { channel: string; sender?: string }>;
   replyInstructionsFired: boolean;
   replyInstructionsMode: "once" | "always" | "never";
+  contextTokens: number;
 };
 
 export function createMind(options: {
@@ -47,7 +49,11 @@ export function createMind(options: {
   maxContextTokens?: number;
   subagents?: Record<string, SubagentConfig>;
   onIdentityReload?: () => Promise<void>;
-}): { resolve: HandlerResolver; waitForCommits: () => Promise<void> } {
+}): {
+  resolve: HandlerResolver;
+  waitForCommits: () => Promise<void>;
+  getContextInfo: () => ContextInfo;
+} {
   const autoCommit = createAutoCommitHook(options.cwd);
   const identityReload = createIdentityReloadHook(options.cwd);
   const sessionStore = createSessionStore(options.sessionsDir);
@@ -286,27 +292,30 @@ export function createMind(options: {
             options.onIdentityReload?.();
           }
         },
-        onContextTokens: maxContextTokens
-          ? (tokens: number) => {
-              if (tokens >= maxContextTokens && !compactionTriggered.get(session.name)) {
-                compactionTriggered.set(session.name, true);
-                log(
-                  "mind",
-                  `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — triggering compaction`,
-                );
-                session.messageIds.push(undefined);
-                session.channel.push({
-                  type: "user",
-                  session_id: "",
-                  message: {
-                    role: "user",
-                    content: [{ type: "text", text: compactionMessage }],
-                  },
-                  parent_tool_use_id: null,
-                });
-              }
-            }
-          : undefined,
+        onContextTokens: (tokens: number) => {
+          session.contextTokens = tokens;
+          if (
+            maxContextTokens &&
+            tokens >= maxContextTokens &&
+            !compactionTriggered.get(session.name)
+          ) {
+            compactionTriggered.set(session.name, true);
+            log(
+              "mind",
+              `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — triggering compaction`,
+            );
+            session.messageIds.push(undefined);
+            session.channel.push({
+              type: "user",
+              session_id: "",
+              message: {
+                role: "user",
+                content: [{ type: "text", text: compactionMessage }],
+              },
+              parent_tool_use_id: null,
+            });
+          }
+        },
       };
 
       async function runCompact(sessionId: string) {
@@ -436,6 +445,7 @@ export function createMind(options: {
       messageChannels: new Map(),
       replyInstructionsFired: false,
       replyInstructionsMode: "once",
+      contextTokens: 0,
     };
     sessions.set(name, session);
 
@@ -514,5 +524,25 @@ export function createMind(options: {
     return handler;
   }
 
-  return { resolve, waitForCommits: autoCommit.waitForCommits };
+  const CHARS_PER_TOKEN = 3.5;
+  function getContextInfo(): ContextInfo {
+    const sizes = getSystemPromptSizes();
+    const toTokens = (chars: number) => Math.round(chars / CHARS_PER_TOKEN);
+    return {
+      sessions: Array.from(sessions.values()).map((s) => ({
+        name: s.name,
+        contextTokens: s.contextTokens,
+      })),
+      systemPrompt: {
+        total: toTokens(sizes.soul + sizes.volute + sizes.memory),
+        components: {
+          soul: toTokens(sizes.soul),
+          volute: toTokens(sizes.volute),
+          memory: toTokens(sizes.memory),
+        },
+      },
+    };
+  }
+
+  return { resolve, waitForCommits: autoCommit.waitForCommits, getContextInfo };
 }

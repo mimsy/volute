@@ -95,11 +95,25 @@ async function verifyRequest(body: VoluteRequest): Promise<boolean | undefined> 
   return verifySignature(publicKey, text, body.signatureTimestamp, body.signature);
 }
 
+export type SessionContextInfo = {
+  name: string;
+  contextTokens: number;
+};
+
+export type ContextInfo = {
+  sessions: SessionContextInfo[];
+  systemPrompt: {
+    total: number;
+    components: { soul: number; volute: number; memory: number };
+  };
+};
+
 export function createVoluteServer(options: {
   router: Router;
   port: number;
   name: string;
   version: string;
+  getContextInfo?: () => ContextInfo;
 }): Server {
   const { router, port, name, version } = options;
 
@@ -109,6 +123,17 @@ export function createVoluteServer(options: {
     if (req.method === "GET" && url.pathname === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: "ok", name, version }));
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/context") {
+      if (!options.getContextInfo) {
+        res.writeHead(404);
+        res.end("Not Found");
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(options.getContextInfo()));
       return;
     }
 

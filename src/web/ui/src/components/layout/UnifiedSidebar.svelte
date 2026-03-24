@@ -320,6 +320,12 @@ let isSystemActive = $derived(
       <Icon kind="gear" class="menu-icon" />
       Settings
     </button>
+    {#if menuMind?.status === "running"}
+      <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "context")}>
+        <Icon kind="document-lines" class="menu-icon" />
+        Context
+      </button>
+    {/if}
     <div class="mind-menu-divider"></div>
     {#if menuMind?.status === "stopped"}
       <button class="mind-menu-item" onclick={handleMindStart}>

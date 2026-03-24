@@ -77,6 +77,18 @@ export function fetchMind(name: string): Promise<Mind> {
   return get(`${V1}/minds/${enc(name)}`);
 }
 
+export type ContextInfo = {
+  sessions: Array<{ name: string; contextTokens: number }>;
+  systemPrompt: {
+    total: number;
+    components: { soul: number; volute: number; memory: number };
+  };
+};
+
+export function fetchMindContext(name: string): Promise<ContextInfo> {
+  return get(`${V1}/minds/${enc(name)}/context`);
+}
+
 export function startMind(name: string): Promise<void> {
   return post(`${V1}/minds/${enc(name)}/start`);
 }

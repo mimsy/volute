@@ -74,6 +74,15 @@ export function loadSystemPrompt(): string {
   return promptParts.join("\n\n---\n\n");
 }
 
+/** Returns character counts for each system prompt component file. */
+export function getSystemPromptSizes(): { soul: number; volute: number; memory: number } {
+  return {
+    soul: loadFile(resolve("home/SOUL.md")).length,
+    volute: loadFile(resolve("home/VOLUTE.md")).length,
+    memory: loadFile(resolve("home/MEMORY.md")).length,
+  };
+}
+
 export function loadPackageInfo(): { name: string; version: string } {
   try {
     const pkg = JSON.parse(readFileSync(resolve("package.json"), "utf-8"));

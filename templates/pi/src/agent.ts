@@ -15,7 +15,12 @@ import { runHooks } from "./lib/hook-loader.js";
 import { log } from "./lib/logger.js";
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
-import { getStartupContext, loadPrompts, type SubagentConfig } from "./lib/startup.js";
+import {
+  getStartupContext,
+  getSystemPromptSizes,
+  loadPrompts,
+  type SubagentConfig,
+} from "./lib/startup.js";
 import { createSubagentExtension, type SubagentDefinition } from "./lib/subagents.js";
 import type {
   HandlerMeta,
@@ -25,6 +30,7 @@ import type {
   VoluteContentPart,
   VoluteEvent,
 } from "./lib/types.js";
+import type { ContextInfo } from "./lib/volute-server.js";
 
 type PiAgentSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
 
@@ -37,6 +43,7 @@ type PiSession = {
   messageIds: (string | undefined)[];
   currentMessageId?: string;
   messageChannels: Map<string, { channel: string; sender?: string }>;
+  contextTokens: number;
 };
 
 export function createMind(options: {
@@ -48,7 +55,7 @@ export function createMind(options: {
   compactionMessage?: string;
   maxContextTokens?: number;
   subagents?: Record<string, SubagentConfig>;
-}): { resolve: HandlerResolver } {
+}): { resolve: HandlerResolver; getContextInfo: () => ContextInfo } {
   const sessions = new Map<string, PiSession>();
   const prompts = loadPrompts();
   const today = new Date().toLocaleDateString("en-CA");
@@ -208,6 +215,7 @@ export function createMind(options: {
       listeners: new Set(),
       messageIds: [],
       messageChannels: new Map(),
+      contextTokens: 0,
     };
     sessions.set(name, session);
 
@@ -313,29 +321,33 @@ export function createMind(options: {
       createEventHandler(session, {
         cwd: options.cwd,
         broadcast: (event) => broadcast(session, event),
-        onContextTokens: maxContextTokens
-          ? (tokens: number) => {
-              if (tokens >= maxContextTokens && !compactionTriggered && !compactionInProgress) {
-                if (!session.agentSession) {
-                  log(
-                    "mind",
-                    `session "${session.name}": compaction threshold hit but session not ready`,
-                  );
-                  return;
-                }
-                compactionTriggered = true;
-                log(
-                  "mind",
-                  `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — triggering compaction`,
-                );
-                // Send compaction warning; compaction will follow after the mind finishes its response turn
-                session.messageIds.push(undefined);
-                session.agentSession.prompt(compactionMessage, {
-                  streamingBehavior: "followUp",
-                });
-              }
+        onContextTokens: (tokens: number) => {
+          session.contextTokens = tokens;
+          if (
+            maxContextTokens &&
+            tokens >= maxContextTokens &&
+            !compactionTriggered &&
+            !compactionInProgress
+          ) {
+            if (!session.agentSession) {
+              log(
+                "mind",
+                `session "${session.name}": compaction threshold hit but session not ready`,
+              );
+              return;
             }
-          : undefined,
+            compactionTriggered = true;
+            log(
+              "mind",
+              `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — triggering compaction`,
+            );
+            // Send compaction warning; compaction will follow after the mind finishes its response turn
+            session.messageIds.push(undefined);
+            session.agentSession.prompt(compactionMessage, {
+              streamingBehavior: "followUp",
+            });
+          }
+        },
         onTurnEnd: maxContextTokens
           ? () => {
               try {
@@ -469,5 +481,25 @@ export function createMind(options: {
     return handler;
   }
 
-  return { resolve };
+  const CHARS_PER_TOKEN = 3.5;
+  function getContextInfo(): ContextInfo {
+    const sizes = getSystemPromptSizes();
+    const toTokens = (chars: number) => Math.round(chars / CHARS_PER_TOKEN);
+    return {
+      sessions: Array.from(sessions.values()).map((s) => ({
+        name: s.name,
+        contextTokens: s.contextTokens,
+      })),
+      systemPrompt: {
+        total: toTokens(sizes.soul + sizes.volute + sizes.memory),
+        components: {
+          soul: toTokens(sizes.soul),
+          volute: toTokens(sizes.volute),
+          memory: toTokens(sizes.memory),
+        },
+      },
+    };
+  }
+
+  return { resolve, getContextInfo };
 }
