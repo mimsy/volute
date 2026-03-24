@@ -1732,11 +1732,11 @@ function jumpToLatest() {
   }
   .scale-break-container::before {
     top: 0;
-    bottom: calc(50% + 13px);
+    bottom: calc(50% + 5px);
   }
   .scale-break-container::after {
     bottom: 0;
-    top: calc(50% + 13px);
+    top: calc(50% + 5px);
   }
   .scale-break-slash {
     width: 14px;
@@ -1754,7 +1754,7 @@ function jumpToLatest() {
     align-items: center;
     gap: 4px;
     font-size: 11px;
-    color: var(--text-2);
+    color: var(--timeline-rail);
     white-space: nowrap;
   }
   .scale-break-label-above {
@@ -1964,7 +1964,7 @@ function jumpToLatest() {
   }
   .summary-expand-return {
     position: absolute;
-    bottom: 6px;
+    bottom: 10px;
     left: -19px;
     width: 27px;
     height: 2px;
