@@ -543,19 +543,22 @@ export function createMind(options: {
 
     return {
       sessions: Array.from(sessions.values()).map((s) => {
-        // Try to get detailed breakdown from JSONL
-        const sessionId = sessionStore.load(s.name);
-        const jsonlPath = sessionId ? findClaudeSessionFile(options.cwd, sessionId) : null;
-        const parsed = jsonlPath
-          ? parseClaudeSessionJSONL(jsonlPath, systemPromptTokens, skills.total)
-          : null;
+        try {
+          const sessionId = sessionStore.load(s.name);
+          const jsonlPath = sessionId ? findClaudeSessionFile(options.cwd, sessionId) : null;
+          const parsed = jsonlPath
+            ? parseClaudeSessionJSONL(jsonlPath, systemPromptTokens, skills.total)
+            : null;
 
-        return {
-          name: s.name,
-          contextTokens: parsed?.contextTokens ?? s.contextTokens,
-          contextWindow: s.contextWindow,
-          breakdown: parsed?.breakdown,
-        };
+          return {
+            name: s.name,
+            contextTokens: parsed?.contextTokens ?? s.contextTokens,
+            contextWindow: s.contextWindow,
+            breakdown: parsed?.breakdown,
+          };
+        } catch {
+          return { name: s.name, contextTokens: s.contextTokens, contextWindow: s.contextWindow };
+        }
       }),
       systemPrompt: {
         total: systemPromptTokens,

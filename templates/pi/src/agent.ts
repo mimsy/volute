@@ -494,17 +494,20 @@ export function createMind(options: {
 
     return {
       sessions: Array.from(sessions.values()).map((s) => {
-        // Try to get detailed breakdown from Pi JSONL
-        const jsonlPath = findPiSessionFile(piSessionsDir, s.name);
-        const parsed = jsonlPath
-          ? parsePiSessionJSONL(jsonlPath, systemPromptTokens, skills.total)
-          : null;
+        try {
+          const jsonlPath = findPiSessionFile(piSessionsDir, s.name);
+          const parsed = jsonlPath
+            ? parsePiSessionJSONL(jsonlPath, systemPromptTokens, skills.total)
+            : null;
 
-        return {
-          name: s.name,
-          contextTokens: parsed?.contextTokens ?? s.contextTokens,
-          breakdown: parsed?.breakdown,
-        };
+          return {
+            name: s.name,
+            contextTokens: parsed?.contextTokens ?? s.contextTokens,
+            breakdown: parsed?.breakdown,
+          };
+        } catch {
+          return { name: s.name, contextTokens: s.contextTokens };
+        }
       }),
       systemPrompt: {
         total: systemPromptTokens,

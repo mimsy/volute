@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { log } from "./logger.js";
 
@@ -97,8 +97,8 @@ export function getSkillsSizes(skillsDir: string): {
       if (!entry.isDirectory()) continue;
       const skillMd = resolve(skillsDir, entry.name, "SKILL.md");
       try {
-        const size = statSync(skillMd).size;
-        items.push({ name: entry.name, tokens: Math.round(size / CHARS_PER_TOKEN) });
+        const content = readFileSync(skillMd, "utf-8");
+        items.push({ name: entry.name, tokens: Math.round(content.length / CHARS_PER_TOKEN) });
       } catch {
         // No SKILL.md — skip
       }

@@ -45,7 +45,8 @@ export function parseClaudeSessionJSONL(
   let data: string;
   try {
     data = readFileSync(filePath, "utf-8");
-  } catch {
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") console.warn(`context-breakdown: ${filePath}:`, err?.message);
     return null;
   }
 
@@ -134,7 +135,8 @@ export function parseCodexSessionJSONL(
   let data: string;
   try {
     data = readFileSync(filePath, "utf-8");
-  } catch {
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") console.warn(`context-breakdown: ${filePath}:`, err?.message);
     return null;
   }
 
@@ -223,7 +225,8 @@ export function parsePiSessionJSONL(
   let data: string;
   try {
     data = readFileSync(filePath, "utf-8");
-  } catch {
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") console.warn(`context-breakdown: ${filePath}:`, err?.message);
     return null;
   }
 

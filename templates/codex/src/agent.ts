@@ -594,23 +594,26 @@ export function createMind(options: {
     const sizes = getSystemPromptSizes();
     const toTokens = (chars: number) => Math.round(chars / CHARS_PER_TOKEN);
     const systemPromptTokens = toTokens(sizes.soul + sizes.volute + sizes.memory);
-    const skills = getSkillsSizes(resolvePath(options.cwd, ".claude/skills"));
+    const skills = getSkillsSizes(resolvePath(options.cwd, ".agents/skills"));
 
     return {
       sessions: Array.from(sessions.values()).map((s) => {
-        // Try to get accurate context from Codex JSONL
-        const threadId = sessionStore.load(s.name);
-        const jsonlPath = threadId ? findCodexSessionFile(threadId) : null;
-        const parsed = jsonlPath
-          ? parseCodexSessionJSONL(jsonlPath, systemPromptTokens, skills.total)
-          : null;
+        try {
+          const threadId = sessionStore.load(s.name);
+          const jsonlPath = threadId ? findCodexSessionFile(threadId) : null;
+          const parsed = jsonlPath
+            ? parseCodexSessionJSONL(jsonlPath, systemPromptTokens, skills.total)
+            : null;
 
-        return {
-          name: s.name,
-          contextTokens: parsed?.contextTokens ?? s.cumulativeInputTokens,
-          contextWindow: parsed?.contextWindow,
-          breakdown: parsed?.breakdown,
-        };
+          return {
+            name: s.name,
+            contextTokens: parsed?.contextTokens ?? s.cumulativeInputTokens,
+            contextWindow: parsed?.contextWindow,
+            breakdown: parsed?.breakdown,
+          };
+        } catch {
+          return { name: s.name, contextTokens: s.cumulativeInputTokens };
+        }
       }),
       systemPrompt: {
         total: systemPromptTokens,
