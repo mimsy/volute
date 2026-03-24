@@ -1,7 +1,7 @@
 <script lang="ts">
 import { Modal } from "@volute/ui";
 import { onMount } from "svelte";
-import { type ContextInfo, fetchMindContext } from "../../lib/client";
+import { type ContextBreakdown, type ContextInfo, fetchMindContext } from "../../lib/client";
 
 let { mindName, onClose }: { mindName: string; onClose: () => void } = $props();
 
@@ -23,9 +23,43 @@ function formatTokens(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
   return String(n);
 }
+
+type Segment = { label: string; tokens: number; color: string };
+
+function getSegments(breakdown: ContextBreakdown): Segment[] {
+  return [
+    { label: "System Prompt", tokens: breakdown.systemPrompt, color: "var(--ctx-system, #6366f1)" },
+    { label: "Skills", tokens: breakdown.skills, color: "var(--ctx-skills, #8b5cf6)" },
+    {
+      label: "User Messages",
+      tokens: breakdown.conversation.userText,
+      color: "var(--ctx-user, #3b82f6)",
+    },
+    {
+      label: "Assistant Text",
+      tokens: breakdown.conversation.assistantText,
+      color: "var(--ctx-assistant, #22c55e)",
+    },
+    {
+      label: "Thinking",
+      tokens: breakdown.conversation.thinking,
+      color: "var(--ctx-thinking, #f59e0b)",
+    },
+    {
+      label: "Tool Calls",
+      tokens: breakdown.conversation.toolUse,
+      color: "var(--ctx-tool-use, #ec4899)",
+    },
+    {
+      label: "Tool Results",
+      tokens: breakdown.conversation.toolResult,
+      color: "var(--ctx-tool-result, #f97316)",
+    },
+  ].filter((s) => s.tokens > 0);
+}
 </script>
 
-<Modal title="Context — {mindName}" {onClose} size="480px">
+<Modal title="Context — {mindName}" {onClose} size="520px">
   {#if loading}
     <div class="loading">Loading context info...</div>
   {:else if error}
@@ -38,23 +72,23 @@ function formatTokens(n: number): string {
         <div class="breakdown">
           <div class="breakdown-row">
             <span class="label">SOUL.md</span>
-            <span class="value">{formatTokens(contextInfo.systemPrompt.components.soul)} tokens</span>
+            <span class="value">{formatTokens(contextInfo.systemPrompt.components.soul)}</span>
           </div>
           {#if contextInfo.systemPrompt.components.volute > 0}
             <div class="breakdown-row">
               <span class="label">VOLUTE.md</span>
-              <span class="value">{formatTokens(contextInfo.systemPrompt.components.volute)} tokens</span>
+              <span class="value">{formatTokens(contextInfo.systemPrompt.components.volute)}</span>
             </div>
           {/if}
           {#if contextInfo.systemPrompt.components.memory > 0}
             <div class="breakdown-row">
               <span class="label">MEMORY.md</span>
-              <span class="value">{formatTokens(contextInfo.systemPrompt.components.memory)} tokens</span>
+              <span class="value">{formatTokens(contextInfo.systemPrompt.components.memory)}</span>
             </div>
           {/if}
           <div class="breakdown-row total">
             <span class="label">Total</span>
-            <span class="value">{formatTokens(contextInfo.systemPrompt.total)} tokens</span>
+            <span class="value">{formatTokens(contextInfo.systemPrompt.total)}</span>
           </div>
         </div>
       </section>
@@ -66,12 +100,12 @@ function formatTokens(n: number): string {
             {#each contextInfo.skills.items as skill (skill.name)}
               <div class="breakdown-row">
                 <span class="label">{skill.name}</span>
-                <span class="value">{formatTokens(skill.tokens)} tokens</span>
+                <span class="value">{formatTokens(skill.tokens)}</span>
               </div>
             {/each}
             <div class="breakdown-row total">
               <span class="label">Total</span>
-              <span class="value">{formatTokens(contextInfo.skills.total)} tokens</span>
+              <span class="value">{formatTokens(contextInfo.skills.total)}</span>
             </div>
           </div>
         </section>
@@ -85,59 +119,61 @@ function formatTokens(n: number): string {
           <div class="sessions">
             {#each contextInfo.sessions as session (session.name)}
               {@const contextWindow = session.contextWindow ?? 200000}
-              <div class="session-row">
-                <span class="session-name">{session.name}</span>
-                <span class="session-tokens">
-                  {#if session.contextTokens > 0}
-                    {formatTokens(session.contextTokens)}{#if session.contextWindow} / {formatTokens(session.contextWindow)}{/if} tokens
-                  {:else}
-                    <span class="no-data">no data yet</span>
-                  {/if}
-                </span>
-              </div>
-              {#if session.contextTokens > 0}
-                <div class="token-bar">
-                  <div class="token-bar-fill" style:width="{Math.min(100, (session.contextTokens / contextWindow) * 100)}%"></div>
+              {@const segments = session.breakdown ? getSegments(session.breakdown) : []}
+              {@const segmentTotal = segments.reduce((sum, s) => sum + s.tokens, 0)}
+
+              <div class="session-block">
+                <div class="session-header">
+                  <span class="session-name">{session.name}</span>
+                  <span class="session-tokens">
+                    {#if session.contextTokens > 0}
+                      {formatTokens(session.contextTokens)}{#if session.contextWindow}&nbsp;/&nbsp;{formatTokens(session.contextWindow)}{/if}
+                    {:else}
+                      <span class="no-data">no data yet</span>
+                    {/if}
+                  </span>
                 </div>
-                {#if session.breakdown}
-                  <div class="session-breakdown">
-                    <div class="breakdown-row sub">
-                      <span class="label">System Prompt</span>
-                      <span class="value">{formatTokens(session.breakdown.systemPrompt)} tokens</span>
+
+                {#if session.contextTokens > 0}
+                  {#if segments.length > 0}
+                    <!-- Stacked breakdown bar -->
+                    <div class="stacked-bar" title="{formatTokens(session.contextTokens)} tokens used">
+                      {#each segments as seg}
+                        <div
+                          class="stacked-segment"
+                          style:width="{Math.max(1, (seg.tokens / contextWindow) * 100)}%"
+                          style:background={seg.color}
+                          title="{seg.label}: {formatTokens(seg.tokens)}"
+                        ></div>
+                      {/each}
                     </div>
-                    <div class="breakdown-row sub">
-                      <span class="label">Skills</span>
-                      <span class="value">{formatTokens(session.breakdown.skills)} tokens</span>
+
+                    <!-- Legend -->
+                    <div class="legend">
+                      {#each segments as seg}
+                        <div class="legend-item">
+                          <span class="legend-dot" style:background={seg.color}></span>
+                          <span class="legend-label">{seg.label}</span>
+                          <span class="legend-value">{formatTokens(seg.tokens)}</span>
+                        </div>
+                      {/each}
+                      {#if segmentTotal < session.contextTokens}
+                        {@const other = session.contextTokens - segmentTotal}
+                        <div class="legend-item">
+                          <span class="legend-dot" style:background="var(--text-3)"></span>
+                          <span class="legend-label">Other</span>
+                          <span class="legend-value">{formatTokens(other)}</span>
+                        </div>
+                      {/if}
                     </div>
-                    <div class="breakdown-row sub">
-                      <span class="label">User Messages</span>
-                      <span class="value">{formatTokens(session.breakdown.conversation.userText)} tokens</span>
+                  {:else}
+                    <!-- Simple bar when no breakdown available -->
+                    <div class="token-bar">
+                      <div class="token-bar-fill" style:width="{Math.min(100, (session.contextTokens / contextWindow) * 100)}%"></div>
                     </div>
-                    <div class="breakdown-row sub">
-                      <span class="label">Assistant Text</span>
-                      <span class="value">{formatTokens(session.breakdown.conversation.assistantText)} tokens</span>
-                    </div>
-                    {#if session.breakdown.conversation.thinking > 0}
-                      <div class="breakdown-row sub">
-                        <span class="label">Thinking</span>
-                        <span class="value">{formatTokens(session.breakdown.conversation.thinking)} tokens</span>
-                      </div>
-                    {/if}
-                    {#if session.breakdown.conversation.toolUse > 0}
-                      <div class="breakdown-row sub">
-                        <span class="label">Tool Calls</span>
-                        <span class="value">{formatTokens(session.breakdown.conversation.toolUse)} tokens</span>
-                      </div>
-                    {/if}
-                    {#if session.breakdown.conversation.toolResult > 0}
-                      <div class="breakdown-row sub">
-                        <span class="label">Tool Results</span>
-                        <span class="value">{formatTokens(session.breakdown.conversation.toolResult)} tokens</span>
-                      </div>
-                    {/if}
-                  </div>
+                  {/if}
                 {/if}
-              {/if}
+              </div>
             {/each}
           </div>
         {/if}
@@ -208,19 +244,6 @@ function formatTokens(n: number): string {
     font-weight: 600;
   }
 
-  .breakdown-row.sub {
-    font-size: 12px;
-    padding: 2px 8px;
-  }
-
-  .breakdown-row.sub .label {
-    color: var(--text-2);
-  }
-
-  .breakdown-row.sub .value {
-    color: var(--text-3);
-  }
-
   .label {
     color: var(--text-1);
   }
@@ -230,13 +253,21 @@ function formatTokens(n: number): string {
     font-variant-numeric: tabular-nums;
   }
 
+  /* Sessions */
+
   .sessions {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 16px;
   }
 
-  .session-row {
+  .session-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .session-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -258,6 +289,64 @@ function formatTokens(n: number): string {
     font-style: italic;
   }
 
+  /* Stacked breakdown bar */
+
+  .stacked-bar {
+    display: flex;
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: var(--bg-2);
+    gap: 1px;
+  }
+
+  .stacked-segment {
+    height: 100%;
+    min-width: 2px;
+    transition: width 0.3s ease;
+  }
+
+  .stacked-segment:first-child {
+    border-radius: 4px 0 0 4px;
+  }
+
+  .stacked-segment:last-child {
+    border-radius: 0 4px 4px 0;
+  }
+
+  /* Legend */
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 12px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+  }
+
+  .legend-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .legend-label {
+    color: var(--text-2);
+  }
+
+  .legend-value {
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Simple bar fallback */
+
   .token-bar {
     height: 4px;
     background: var(--bg-2);
@@ -270,14 +359,5 @@ function formatTokens(n: number): string {
     background: var(--accent);
     border-radius: 2px;
     transition: width 0.3s ease;
-  }
-
-  .session-breakdown {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding-left: 8px;
-    margin-top: 4px;
-    border-left: 2px solid var(--border);
   }
 </style>
