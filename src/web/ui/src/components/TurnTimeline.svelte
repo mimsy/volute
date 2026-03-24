@@ -1233,6 +1233,9 @@ function jumpToLatest() {
     border: none;
     padding: 0;
     cursor: pointer;
+    /* Extend through parent row padding to keep rail continuous */
+    margin-top: -6px;
+    margin-bottom: -6px;
   }
 
   .turn-rail-expanded {
@@ -1720,7 +1723,13 @@ function jumpToLatest() {
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
     position: relative;
+    align-self: stretch;
+    /* Extend through parent row padding */
+    margin-top: -12px;
+    margin-bottom: -12px;
+    background: var(--timeline-rail);
   }
   .scale-break-slash {
     width: 14px;
