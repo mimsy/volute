@@ -16,7 +16,6 @@ export type StreamCallbacks = {
   broadcast: (event: VoluteEvent) => void;
   onTurnEnd?: () => void;
   onContextTokens?: (tokens: number) => void;
-  onContextWindow?: (contextWindow: number) => void;
 };
 
 // Loaded once at startup — mind restarts on config changes
@@ -127,10 +126,7 @@ export async function consumeStream(
           }
         }
       }
-      const result = msg as {
-        usage?: { input_tokens?: number; output_tokens?: number };
-        modelUsage?: Record<string, { contextWindow?: number }>;
-      };
+      const result = msg as { usage?: { input_tokens?: number; output_tokens?: number } };
       if (result.usage) {
         const usage = {
           input_tokens: result.usage.input_tokens ?? 0,
@@ -138,15 +134,6 @@ export async function consumeStream(
         };
         callbacks.broadcast({ type: "usage", ...usage });
         emit(session, { type: "usage", metadata: usage });
-      }
-      // Extract context window from model usage
-      if (result.modelUsage) {
-        for (const model of Object.values(result.modelUsage)) {
-          if (model.contextWindow) {
-            callbacks.onContextWindow?.(model.contextWindow);
-            break;
-          }
-        }
       }
       callbacks.broadcast({ type: "done" });
       emit(session, { type: "done" });

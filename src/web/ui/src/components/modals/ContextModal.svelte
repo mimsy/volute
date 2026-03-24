@@ -118,16 +118,17 @@ function getSegments(breakdown: ContextBreakdown): Segment[] {
         {:else}
           <div class="sessions">
             {#each contextInfo.sessions as session (session.name)}
-              {@const contextWindow = session.contextWindow ?? 200000}
               {@const segments = session.breakdown ? getSegments(session.breakdown) : []}
               {@const segmentTotal = segments.reduce((sum, s) => sum + s.tokens, 0)}
+              {@const barMax = session.contextWindow ?? session.contextTokens}
+              {@const overLimit = session.contextWindow ? session.contextTokens > session.contextWindow : false}
 
               <div class="session-block">
                 <div class="session-header">
                   <span class="session-name">{session.name}</span>
                   <span class="session-tokens">
                     {#if session.contextTokens > 0}
-                      {formatTokens(session.contextTokens)}{#if session.contextWindow}&nbsp;/&nbsp;{formatTokens(session.contextWindow)}{/if}
+                      <span class:over-limit={overLimit}>{formatTokens(session.contextTokens)}</span>{#if session.contextWindow}&nbsp;/&nbsp;{formatTokens(session.contextWindow)}{/if}
                     {:else}
                       <span class="no-data">no data yet</span>
                     {/if}
@@ -137,11 +138,11 @@ function getSegments(breakdown: ContextBreakdown): Segment[] {
                 {#if session.contextTokens > 0}
                   {#if segments.length > 0}
                     <!-- Stacked breakdown bar -->
-                    <div class="stacked-bar" title="{formatTokens(session.contextTokens)} tokens used">
+                    <div class="stacked-bar" class:over-limit={overLimit} title="{formatTokens(session.contextTokens)} tokens used">
                       {#each segments as seg}
                         <div
                           class="stacked-segment"
-                          style:width="{Math.max(1, (seg.tokens / contextWindow) * 100)}%"
+                          style:width="{Math.max(1, (seg.tokens / barMax) * 100)}%"
                           style:background={seg.color}
                           title="{seg.label}: {formatTokens(seg.tokens)}"
                         ></div>
@@ -168,8 +169,8 @@ function getSegments(breakdown: ContextBreakdown): Segment[] {
                     </div>
                   {:else}
                     <!-- Simple bar when no breakdown available -->
-                    <div class="token-bar">
-                      <div class="token-bar-fill" style:width="{Math.min(100, (session.contextTokens / contextWindow) * 100)}%"></div>
+                    <div class="token-bar" class:over-limit={overLimit}>
+                      <div class="token-bar-fill" style:width="{Math.min(100, (session.contextTokens / barMax) * 100)}%"></div>
                     </div>
                   {/if}
                 {/if}
@@ -287,6 +288,10 @@ function getSegments(breakdown: ContextBreakdown): Segment[] {
   .no-data {
     color: var(--text-3);
     font-style: italic;
+  }
+
+  .over-limit {
+    color: var(--danger, #e53e3e);
   }
 
   /* Stacked breakdown bar */

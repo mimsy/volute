@@ -608,11 +608,15 @@ export function createMind(options: {
           return {
             name: s.name,
             contextTokens: parsed?.contextTokens ?? s.cumulativeInputTokens,
-            contextWindow: parsed?.contextWindow,
+            contextWindow: maxContextTokens,
             breakdown: parsed?.breakdown,
           };
         } catch {
-          return { name: s.name, contextTokens: s.cumulativeInputTokens };
+          return {
+            name: s.name,
+            contextTokens: s.cumulativeInputTokens,
+            contextWindow: maxContextTokens,
+          };
         }
       }),
       systemPrompt: {

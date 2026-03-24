@@ -42,7 +42,6 @@ type Session = {
   replyInstructionsFired: boolean;
   replyInstructionsMode: "once" | "always" | "never";
   contextTokens: number;
-  contextWindow?: number;
 };
 
 export function createMind(options: {
@@ -299,9 +298,6 @@ export function createMind(options: {
             options.onIdentityReload?.();
           }
         },
-        onContextWindow: (contextWindow: number) => {
-          session.contextWindow = contextWindow;
-        },
         onContextTokens: (tokens: number) => {
           session.contextTokens = tokens;
           if (
@@ -553,11 +549,11 @@ export function createMind(options: {
           return {
             name: s.name,
             contextTokens: parsed?.contextTokens ?? s.contextTokens,
-            contextWindow: s.contextWindow,
+            contextWindow: maxContextTokens,
             breakdown: parsed?.breakdown,
           };
         } catch {
-          return { name: s.name, contextTokens: s.contextTokens, contextWindow: s.contextWindow };
+          return { name: s.name, contextTokens: s.contextTokens, contextWindow: maxContextTokens };
         }
       }),
       systemPrompt: {
