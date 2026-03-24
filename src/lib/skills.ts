@@ -14,7 +14,7 @@ import { eq, sql } from "drizzle-orm";
 import { getDb } from "./db.js";
 import { exec, gitExec } from "./exec.js";
 import log from "./logger.js";
-import { mindDir, readAllMinds, voluteHome } from "./registry.js";
+import { mindDir, readRegistry, voluteHome } from "./registry.js";
 import { sharedSkills } from "./schema.js";
 import { readGlobalConfig, writeGlobalConfig } from "./setup.js";
 
@@ -746,11 +746,11 @@ export function isAutoUpdateSkillsEnabled(): boolean {
  * Skips minds with conflicts or errors (non-fatal).
  */
 export async function autoUpdateMindSkills(): Promise<void> {
-  const allMinds = await readAllMinds();
+  const baseMinds = await readRegistry();
   const shared = await listSharedSkills();
   const sharedMap = new Map(shared.map((s) => [s.id, s]));
 
-  for (const mind of allMinds) {
+  for (const mind of baseMinds) {
     const dir = mind.dir ?? mindDir(mind.name);
     const skillsDir = mindSkillsDir(dir);
     if (!existsSync(skillsDir)) continue;
@@ -774,7 +774,7 @@ export async function autoUpdateMindSkills(): Promise<void> {
           );
         }
       } catch (err) {
-        log.warn(`failed to auto-update skill ${entry.name} for ${mind.name}`, log.errorData(err));
+        log.error(`failed to auto-update skill ${entry.name} for ${mind.name}`, log.errorData(err));
       }
     }
   }

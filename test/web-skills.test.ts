@@ -386,4 +386,46 @@ describe("auto-update setting", () => {
     });
     assert.equal(res3.status, 200);
   });
+
+  it("PUT /skills/auto-update returns 400 for non-boolean body", async () => {
+    const app = createApp();
+    const res = await app.request("/skills/auto-update", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Cookie: adminCookie },
+      body: JSON.stringify({ enabled: "yes" }),
+    });
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error: string };
+    assert.ok(body.error);
+  });
+
+  it("PUT /skills/auto-update requires admin", async () => {
+    const db = await getDb();
+    const [viewer] = await db
+      .insert(users)
+      .values({ username: "autoupdate-viewer", password_hash: "x", role: "viewer" })
+      .onConflictDoNothing()
+      .returning();
+
+    if (viewer) {
+      const viewerSessionId = crypto.randomUUID();
+      await db
+        .insert(sessions)
+        .values({ id: viewerSessionId, userId: viewer.id, createdAt: Date.now() });
+
+      const app = createApp();
+      const res = await app.request("/skills/auto-update", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `volute_session=${viewerSessionId}`,
+        },
+        body: JSON.stringify({ enabled: false }),
+      });
+      assert.equal(res.status, 403);
+
+      // Cleanup
+      await db.delete(users).where(eq(users.username, "autoupdate-viewer"));
+    }
+  });
 });
