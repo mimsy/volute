@@ -1,3 +1,4 @@
+import type { SummaryRow } from "@volute/api";
 import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { compactTime, isCompact } from "../lib/format-cli.js";
@@ -142,16 +143,6 @@ function formatRowCompact(row: HistoryRow): string {
   }
 }
 
-type MetaSummaryRow = {
-  id: number;
-  mind: string;
-  period: "hour" | "day" | "week" | "month";
-  period_key: string;
-  content: string;
-  metadata: string | null;
-  created_at: string;
-};
-
 const PERIOD_LABELS: Record<string, string> = {
   hour: "Hourly",
   day: "Daily",
@@ -159,7 +150,7 @@ const PERIOD_LABELS: Record<string, string> = {
   month: "Monthly",
 };
 
-function formatMetaSummary(row: MetaSummaryRow): string {
+function formatMetaSummary(row: SummaryRow): string {
   const label = PERIOD_LABELS[row.period] ?? row.period;
   return `\n=== ${row.period_key} (${label}) ===\n${row.content ?? ""}\n`;
 }
@@ -235,7 +226,7 @@ export async function run(args: string[]) {
       process.exit(1);
     }
 
-    const rows = (await res.json()) as MetaSummaryRow[];
+    const rows = (await res.json()) as SummaryRow[];
     // Display in chronological order (API returns newest first)
     for (const row of rows.reverse()) {
       console.log(formatMetaSummary(row));

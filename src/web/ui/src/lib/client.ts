@@ -242,12 +242,14 @@ export function fetchTurns(opts?: {
   limit?: number;
   offset?: number;
   turnId?: string;
+  turnIds?: string[];
 }): Promise<TurnRow[]> {
   const params = new URLSearchParams();
   if (opts?.mind) params.set("mind", opts.mind);
   if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
   if (opts?.offset !== undefined) params.set("offset", String(opts.offset));
   if (opts?.turnId) params.set("turnId", opts.turnId);
+  if (opts?.turnIds?.length) params.set("turnIds", opts.turnIds.join(","));
   const qs = params.toString();
   return get(`${V1}/history/turns${qs ? `?${qs}` : ""}`);
 }

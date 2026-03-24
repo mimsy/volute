@@ -15,7 +15,7 @@ export type TimerPeriod = "hour" | "day" | "week" | "month";
 /** All summary periods including event-driven turn summaries */
 export type Period = "turn" | TimerPeriod;
 
-const SYSTEM_MIND = "_system";
+export const SYSTEM_MIND = "_system";
 
 // ── Period key helpers (local time) ──
 // Period keys use local time so summaries align with the user's day/hour boundaries.
@@ -580,22 +580,9 @@ export async function summarizePeriod(
   period: TimerPeriod,
   periodKey: string,
 ): Promise<boolean> {
+  if (await summaryExists(mind, period, periodKey)) return false;
+
   const db = await getDb();
-
-  // Idempotency check
-  const existing = await db
-    .select({ id: summaries.id })
-    .from(summaries)
-    .where(
-      and(
-        eq(summaries.mind, mind),
-        eq(summaries.period, period),
-        eq(summaries.period_key, periodKey),
-      ),
-    )
-    .get();
-  if (existing) return false;
-
   const sources = await gatherChildSummaries(mind, period, periodKey);
   if (sources.texts.length === 0) return false;
 
@@ -680,22 +667,10 @@ export async function summarizePeriod(
 
 // ── System-level summaries ──
 
-async function summarizeSystem(period: TimerPeriod, periodKey: string): Promise<void> {
+export async function summarizeSystem(period: TimerPeriod, periodKey: string): Promise<void> {
+  if (await summaryExists(SYSTEM_MIND, period, periodKey)) return;
+
   const db = await getDb();
-
-  const existing = await db
-    .select({ id: summaries.id })
-    .from(summaries)
-    .where(
-      and(
-        eq(summaries.mind, SYSTEM_MIND),
-        eq(summaries.period, period),
-        eq(summaries.period_key, periodKey),
-      ),
-    )
-    .get();
-  if (existing) return;
-
   const rows = await db
     .select({ mind: summaries.mind, content: summaries.content })
     .from(summaries)

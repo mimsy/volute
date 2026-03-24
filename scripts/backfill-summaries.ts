@@ -10,13 +10,13 @@ import { and, eq, sql } from "drizzle-orm";
 import {
   getPeriodKey,
   getTimeRange,
+  SYSTEM_MIND,
   summarizePeriod,
+  summarizeSystem,
   type TimerPeriod,
 } from "../src/lib/daemon/summarizer.js";
 import { getDb } from "../src/lib/db.js";
 import { mindHistory, summaries, turns } from "../src/lib/schema.js";
-
-const SYSTEM_MIND = "_system";
 
 async function migrateTurnSummaries() {
   const db = await getDb();
@@ -181,77 +181,6 @@ async function getMindsForPeriod(period: TimerPeriod, periodKey: string): Promis
   return rows.map((r) => r.mind);
 }
 
-async function summarizeSystemPeriod(period: TimerPeriod, periodKey: string): Promise<void> {
-  const db = await getDb();
-
-  // Check if already exists
-  const existing = await db
-    .select({ id: summaries.id })
-    .from(summaries)
-    .where(
-      and(
-        eq(summaries.mind, SYSTEM_MIND),
-        eq(summaries.period, period),
-        eq(summaries.period_key, periodKey),
-      ),
-    )
-    .get();
-  if (existing) return;
-
-  // Delegate to the real summarizePeriod with _system mind name
-  // Actually, summarizePeriod gathers child summaries for a specific mind.
-  // For system summaries we need to aggregate across minds.
-  // Let's import and use the same AI logic directly.
-  const { aiCompleteUtility } = await import("../src/lib/ai-service.js");
-  const { getPrompt } = await import("../src/lib/prompts.js");
-
-  const rows = await db
-    .select({ mind: summaries.mind, content: summaries.content })
-    .from(summaries)
-    .where(
-      and(
-        eq(summaries.period, period),
-        eq(summaries.period_key, periodKey),
-        sql`${summaries.mind} != ${SYSTEM_MIND}`,
-      ),
-    )
-    .orderBy(summaries.mind);
-
-  if (rows.length === 0) return;
-
-  const minds = [...new Set(rows.map((r) => r.mind))];
-  const texts = rows.map((r) => `[${r.mind}] ${r.content}`);
-
-  const promptKey = `meta_summary_${period}` as const;
-  const scopeInstruction =
-    'Write in third person, describing what the minds in the system did (e.g. "Alice explored...", "The system saw activity in..."). Reference minds by name.';
-  const systemPrompt = await getPrompt(promptKey, { scope_instruction: scopeInstruction });
-  const userMessage = texts.join("\n\n---\n\n");
-
-  let content: string;
-  let deterministic: boolean;
-
-  const aiResult = await aiCompleteUtility(systemPrompt, userMessage);
-  if (aiResult) {
-    content = aiResult;
-    deterministic = false;
-  } else {
-    content = `${period} system summary for ${periodKey}: ${texts.join(" ")}`;
-    deterministic = true;
-  }
-
-  await db
-    .insert(summaries)
-    .values({
-      mind: SYSTEM_MIND,
-      period,
-      period_key: periodKey,
-      content,
-      metadata: JSON.stringify({ deterministic, minds, source_count: rows.length }),
-    })
-    .onConflictDoNothing();
-}
-
 async function generatePeriodSummaries(period: TimerPeriod): Promise<void> {
   const keys = await discoverPeriodKeys(period);
   console.log(`\n${period}: ${keys.length} period keys to check`);
@@ -278,7 +207,7 @@ async function generatePeriodSummaries(period: TimerPeriod): Promise<void> {
     // Generate system-level summary if any mind summaries were created for this period
     if (anyGenerated) {
       try {
-        await summarizeSystemPeriod(period, key);
+        await summarizeSystem(period, key);
         process.stdout.write(`  ${period} ${key} [_system] ✓\n`);
       } catch (err) {
         console.error(`  ${period} ${key} [_system] failed:`, err);

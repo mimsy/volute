@@ -17,6 +17,7 @@ const history = new Hono()
   .get("/turns", async (c) => {
     const mindFilter = c.req.query("mind");
     const turnIdFilter = c.req.query("turnId");
+    const turnIdsFilter = c.req.query("turnIds");
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
     const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
 
@@ -26,6 +27,10 @@ const history = new Hono()
     const conditions = [];
     if (mindFilter) conditions.push(eq(turns.mind, mindFilter));
     if (turnIdFilter) conditions.push(eq(turns.id, turnIdFilter));
+    if (turnIdsFilter) {
+      const ids = turnIdsFilter.split(",").filter(Boolean);
+      if (ids.length > 0) conditions.push(inArray(turns.id, ids));
+    }
     const turnRows = await db
       .select()
       .from(turns)

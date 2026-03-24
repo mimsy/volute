@@ -33,9 +33,7 @@ type TimelineItem =
   | { kind: "summary"; summary: SummaryRow }
   | { kind: "separator"; above: string; below: string };
 
-type SummaryPeriod = "hour" | "day" | "week" | "month";
-
-const CHILD_PERIOD: Record<string, SummaryPeriod | "turn"> = {
+const CHILD_PERIOD: Record<string, "turn" | "hour" | "day" | "week" | "month"> = {
   hour: "turn",
   day: "hour",
   week: "day",
@@ -524,11 +522,7 @@ async function toggleSummaryExpand(summary: SummaryRow) {
           directEventsSummaries.set(summary.id, events);
           directEventsSummaries = new SvelteMap(directEventsSummaries);
         } else if (turnIds.length > 0) {
-          const turns: TurnRow[] = [];
-          for (const tid of turnIds) {
-            const rows = await fetchTurns({ turnId: tid });
-            turns.push(...rows);
-          }
+          const turns: TurnRow[] = await fetchTurns({ turnIds: turnIds });
           turns.sort((a, b) => a.created_at.localeCompare(b.created_at));
           expandedSummaries.set(summary.id, turns);
           expandedSummaries = new SvelteMap(expandedSummaries);
@@ -609,8 +603,7 @@ let timelineItems = $derived.by(() => {
 
   // Separator if transitioning from week/month to day level
   if ((monthSummaries.length > 0 || weekSummaries.length > 0) && daySummaries.length > 0) {
-    const aboveLabel = weekSummaries.length > 0 ? "earlier" : "earlier";
-    items.push({ kind: "separator", above: aboveLabel, below: "this week" });
+    items.push({ kind: "separator", above: "earlier", below: "this week" });
   }
 
   // Daily summaries
