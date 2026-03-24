@@ -5,10 +5,13 @@ pre-commit:
       glob: "*.{ts,tsx,svelte,json}"
       run: npx biome check --write {staged_files} && git add {staged_files}
     typecheck:
+      glob: "src/**/*.ts"
       run: npx tsc --noEmit
     typecheck-templates:
+      glob: "templates/**/*.ts"
       run: npx tsx scripts/typecheck-templates.ts
     typecheck-frontend:
+      glob: "src/web/ui/**/*.{ts,svelte}"
       run: npx svelte-check --tsconfig src/web/ui/tsconfig.json
 
 pre-push:
