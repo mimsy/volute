@@ -17,3 +17,14 @@ export async function fetchExtensions(): Promise<ExtensionInfo[]> {
   }
   return res.json();
 }
+
+export type ExtensionManagementInfo = {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  icon?: string;
+  source: "builtin" | "npm" | "local";
+  enabled: boolean;
+  package?: string;
+};

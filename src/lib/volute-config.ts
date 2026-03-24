@@ -32,14 +32,16 @@ export type MindProfile = {
   avatar?: string; // relative path from home/, e.g. "avatar.png"
 };
 
-export type VoluteConfig = {
+export type CognitionConfig = {
   model?: string;
-  maxThinkingTokens?: number;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-  schedules?: Schedule[];
-
+  maxThinkingTokens?: number;
   tokenBudget?: number;
   tokenBudgetPeriodMinutes?: number;
+};
+
+export type VoluteConfig = CognitionConfig & {
+  schedules?: Schedule[];
   identity?: { privateKey: string; publicKey: string };
   profile?: MindProfile;
   sleep?: SleepConfig;

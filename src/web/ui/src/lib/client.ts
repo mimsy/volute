@@ -22,6 +22,7 @@ import type {
   Variant,
 } from "@volute/api";
 import type { CursorResponse } from "@volute/api/pagination";
+import type { ExtensionManagementInfo } from "./extensions";
 
 const V1 = "/api/v1";
 
@@ -490,7 +491,7 @@ export function saveEnabledModels(models: string[]): Promise<void> {
   return put(`${V1}/system/ai/models`, { models });
 }
 
-export type AiDefaults = { spiritModel: string | null; utilityModel: string | null };
+export type AiDefaults = { spiritModel?: string | null; utilityModel: string | null };
 
 export function fetchAiDefaults(): Promise<AiDefaults> {
   return get(`${V1}/system/ai/defaults`);
@@ -498,6 +499,39 @@ export function fetchAiDefaults(): Promise<AiDefaults> {
 
 export function saveAiDefaults(defaults: AiDefaults): Promise<void> {
   return put(`${V1}/system/ai/defaults`, defaults);
+}
+
+// --- Mind Defaults ---
+// Mirrors CognitionConfig from volute-config.ts + compaction from SDK config
+export type MindDefaultsCognition = {
+  model?: string;
+  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  maxThinkingTokens?: number;
+  tokenBudget?: number;
+  tokenBudgetPeriodMinutes?: number;
+  compaction?: { maxContextTokens?: number };
+};
+
+// UI-relevant subset of ScheduleEntry (omits deprecated channel, fireAt timers)
+export type MindDefaultsSchedule = Pick<
+  ScheduleEntry,
+  "id" | "cron" | "message" | "script" | "session" | "enabled"
+> & {
+  whileSleeping?: "skip" | "queue" | "trigger-wake";
+};
+
+export type MindDefaults = {
+  cognition?: MindDefaultsCognition;
+  sleep?: SleepConfig;
+  schedules?: MindDefaultsSchedule[];
+};
+
+export function fetchMindDefaults(): Promise<MindDefaults> {
+  return get(`${V1}/system/mind-defaults`);
+}
+
+export function saveMindDefaults(defaults: MindDefaults): Promise<void> {
+  return put(`${V1}/system/mind-defaults`, defaults);
 }
 
 // --- Imagegen ---
@@ -677,6 +711,24 @@ export async function uploadMindAvatar(name: string, file: File): Promise<void> 
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error || "Failed to upload avatar");
   }
+}
+
+// --- Extensions management ---
+
+export function fetchAllExtensions(): Promise<ExtensionManagementInfo[]> {
+  return get("/api/extensions/all");
+}
+
+export async function setExtensionEnabled(id: string, enabled: boolean): Promise<void> {
+  await put(`/api/extensions/${enc(id)}/enabled`, { enabled });
+}
+
+export async function installExtension(pkg: string): Promise<void> {
+  await post("/api/extensions/install", { package: pkg });
+}
+
+export async function uninstallExtension(pkg: string): Promise<void> {
+  await del(`/api/extensions/uninstall/${enc(pkg)}`);
 }
 
 // --- Helpers ---

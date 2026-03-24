@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type {
   Database,
@@ -17,7 +17,8 @@ import { getUser, getUserByUsername } from "./auth.js";
 import { publish } from "./events/activity-events.js";
 import log from "./logger.js";
 import { mindDir, voluteHome, voluteSystemDir } from "./registry.js";
-import { hashSkillDir, importSkillFromDir, sharedSkillsDir } from "./skills.js";
+import { readGlobalConfig, writeGlobalConfig } from "./setup.js";
+import { hashSkillDir, importSkillFromDir, removeSharedSkill, sharedSkillsDir } from "./skills.js";
 import { readSystemsConfig } from "./systems-config.js";
 
 const VALID_EXTENSION_ID = /^[a-z0-9][a-z0-9_-]*$/;
@@ -28,6 +29,29 @@ type LoadedExtension = {
 };
 
 const loaded: LoadedExtension[] = [];
+
+export type ExtensionSource = "builtin" | "npm" | "local";
+
+type DiscoveredExtension = {
+  manifest: ExtensionManifest;
+  source: ExtensionSource;
+  /** npm package name (only for npm-installed extensions) */
+  package?: string;
+};
+
+const discovered: DiscoveredExtension[] = [];
+
+export type DiscoveredExtensionInfo = {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  icon?: string;
+  source: ExtensionSource;
+  enabled: boolean;
+  /** npm package name (only for npm-installed extensions) */
+  package?: string;
+};
 
 export type ExtensionCommandInfo = {
   description: string;
@@ -365,8 +389,10 @@ function discoverBuiltinExtensions(): ExtensionManifest[] {
   return [extNotes, extPages, extPlan];
 }
 
-async function discoverInstalledExtensions(): Promise<ExtensionManifest[]> {
-  const manifests: ExtensionManifest[] = [];
+type InstalledExtension = { manifest: ExtensionManifest; package: string };
+
+async function discoverInstalledExtensions(): Promise<InstalledExtension[]> {
+  const results: InstalledExtension[] = [];
   const packages = readExtensionsConfig();
   // Extensions are installed under ~/.volute/extensions/_npm/node_modules/
   const npmDir = resolve(voluteHome(), "extensions", "_npm");
@@ -386,13 +412,13 @@ async function discoverInstalledExtensions(): Promise<ExtensionManifest[]> {
       const mod = await import(resolved);
       const manifest = mod.default ?? mod.extension ?? mod;
       if (!validateManifest(manifest, `package ${pkg}`)) continue;
-      manifests.push(manifest);
+      results.push({ manifest, package: pkg });
     } catch (err) {
       log.error(`failed to load extension package: ${pkg}`, log.errorData(err));
     }
   }
 
-  return manifests;
+  return results;
 }
 
 function validateManifest(manifest: unknown, source: string): manifest is ExtensionManifest {
@@ -464,16 +490,31 @@ export async function loadAllExtensions(app: Hono, authMw: MiddlewareHandler): P
   const builtins = discoverBuiltinExtensions();
   const installed = await discoverInstalledExtensions();
   const local = await discoverLocalExtensions();
-  const all = [...builtins, ...installed, ...local];
 
-  // Deduplicate by ID
+  const disabledIds = new Set(readGlobalConfig().disabledExtensions ?? []);
+
+  const all: DiscoveredExtension[] = [
+    ...builtins.map((m) => ({ manifest: m, source: "builtin" as const })),
+    ...installed.map((i) => ({ manifest: i.manifest, source: "npm" as const, package: i.package })),
+    ...local.map((m) => ({ manifest: m, source: "local" as const })),
+  ];
+
+  // Deduplicate by ID, populate discovered, load enabled
   const seen = new Set<string>();
-  for (const manifest of all) {
+  for (const entry of all) {
+    const { manifest } = entry;
     if (seen.has(manifest.id)) {
       log.warn(`duplicate extension ID: ${manifest.id}, skipping`);
       continue;
     }
     seen.add(manifest.id);
+    discovered.push(entry);
+
+    if (disabledIds.has(manifest.id)) {
+      log.info(`extension disabled, skipping: ${manifest.id}`);
+      continue;
+    }
+
     try {
       await loadExtension(manifest, app, authMw);
     } catch (err) {
@@ -525,6 +566,131 @@ export function getLoadedExtensions(): ExtensionInfo[] {
   });
 }
 
+export function getAllDiscoveredExtensions(): DiscoveredExtensionInfo[] {
+  const disabledIds = new Set(readGlobalConfig().disabledExtensions ?? []);
+  return discovered.map((d) => ({
+    id: d.manifest.id,
+    name: d.manifest.name,
+    version: d.manifest.version,
+    description: d.manifest.description,
+    icon: d.manifest.icon,
+    source: d.source,
+    enabled: !disabledIds.has(d.manifest.id),
+    package: d.package,
+  }));
+}
+
+export function setExtensionEnabled(id: string, enabled: boolean): void {
+  if (!discovered.find((d) => d.manifest.id === id)) {
+    throw new Error(`Extension "${id}" not found`);
+  }
+  const config = readGlobalConfig();
+  const disabled = new Set(config.disabledExtensions ?? []);
+  if (enabled) {
+    disabled.delete(id);
+  } else {
+    disabled.add(id);
+  }
+  config.disabledExtensions = disabled.size > 0 ? [...disabled] : undefined;
+  writeGlobalConfig(config);
+}
+
+// --- npm extension install/uninstall helpers ---
+
+function extensionsNpmDir(): string {
+  return resolve(voluteHome(), "extensions", "_npm");
+}
+
+function ensureExtensionsNpmDir(): string {
+  const dir = extensionsNpmDir();
+  mkdirSync(dir, { recursive: true });
+  const pkgPath = resolve(dir, "package.json");
+  if (!existsSync(pkgPath)) {
+    writeFileSync(pkgPath, '{"private":true,"dependencies":{}}\n');
+  }
+  return dir;
+}
+
+function writeExtensionsConfig(packages: string[]): void {
+  const configPath = extensionsConfigPath();
+  mkdirSync(resolve(configPath, ".."), { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(packages, null, 2)}\n`);
+}
+
+const VALID_NPM_PACKAGE = /^(@[a-z0-9-~][a-z0-9._-~]*\/)?[a-z0-9-~][a-z0-9._-~]*(@[^\s]+)?$/;
+
+export async function installNpmExtension(pkg: string): Promise<void> {
+  if (!VALID_NPM_PACKAGE.test(pkg)) {
+    throw new Error(`Invalid package name: "${pkg}"`);
+  }
+  const packages = readExtensionsConfig();
+  if (packages.includes(pkg)) {
+    throw new Error(`Extension "${pkg}" is already installed`);
+  }
+
+  const dir = ensureExtensionsNpmDir();
+  const { exec } = await import("./exec.js");
+  await exec("npm", ["install", pkg], { cwd: dir });
+
+  packages.push(pkg);
+  writeExtensionsConfig(packages);
+  log.info(`installed extension package: ${pkg}`);
+}
+
+export async function uninstallNpmExtension(pkg: string): Promise<void> {
+  const packages = readExtensionsConfig();
+  const idx = packages.indexOf(pkg);
+  if (idx === -1) {
+    throw new Error(`Extension "${pkg}" is not installed`);
+  }
+
+  // Try to clean up contributed skills before removing the package
+  await cleanupExtensionSkills(pkg);
+
+  packages.splice(idx, 1);
+  writeExtensionsConfig(packages);
+
+  try {
+    const { exec } = await import("./exec.js");
+    await exec("npm", ["uninstall", pkg], { cwd: extensionsNpmDir() });
+  } catch (err) {
+    log.warn(
+      `npm uninstall failed for "${pkg}" (may have been manually removed)`,
+      log.errorData(err),
+    );
+  }
+
+  log.info(`uninstalled extension package: ${pkg}`);
+}
+
+async function cleanupExtensionSkills(pkg: string): Promise<void> {
+  try {
+    const pkgDir = resolve(extensionsNpmDir(), "node_modules", pkg);
+    if (!existsSync(pkgDir)) return;
+
+    const { createRequire } = await import("node:module");
+    const require = createRequire(resolve(extensionsNpmDir(), "noop.js"));
+    const mod = require(pkg);
+    const manifest = mod.default ?? mod.extension ?? mod;
+    if (!manifest?.skillsDir || !existsSync(manifest.skillsDir)) return;
+
+    const skillDirs = readdirSync(manifest.skillsDir, { withFileTypes: true })
+      .filter((d: import("node:fs").Dirent) => d.isDirectory())
+      .map((d: import("node:fs").Dirent) => d.name);
+
+    for (const skillId of skillDirs) {
+      try {
+        await removeSharedSkill(skillId);
+        log.info(`removed skill "${skillId}" from extension ${pkg}`);
+      } catch (err) {
+        log.warn(`failed to remove skill "${skillId}" for extension ${pkg}`, log.errorData(err));
+      }
+    }
+  } catch (err) {
+    log.warn(`could not clean up skills for "${pkg}"`, log.errorData(err));
+  }
+}
+
 export function getExtensionStandardSkills(): string[] {
   const skills: string[] = [];
   for (const { manifest } of loaded) {
@@ -566,6 +732,7 @@ export function notifyExtensionsDaemonStop(): void {
     }
   }
   loaded.length = 0;
+  discovered.length = 0;
 }
 
 export function notifyExtensionsMindStart(mindName: string): void {

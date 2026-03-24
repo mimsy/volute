@@ -363,15 +363,17 @@ const app = new Hono<AuthEnv>()
     zValidator(
       "json",
       z.object({
-        spiritModel: z.string().nullable(),
+        spiritModel: z.string().nullable().optional(),
         utilityModel: z.string().nullable(),
       }),
     ),
     (c) => {
       const { spiritModel, utilityModel } = c.req.valid("json");
       const config = readGlobalConfig();
-      config.spiritModel = spiritModel ?? undefined;
-      writeGlobalConfig(config);
+      if (spiritModel !== undefined) {
+        config.spiritModel = spiritModel ?? undefined;
+        writeGlobalConfig(config);
+      }
       setUtilityModel(utilityModel ?? undefined);
       return c.json({ ok: true });
     },
@@ -513,7 +515,64 @@ const app = new Hono<AuthEnv>()
       setTimeout(() => oauthFlows.delete(flowId), 30_000);
     }
     return c.json(result);
-  });
+  })
+  .get("/mind-defaults", requireAdmin, (c) => {
+    const config = readGlobalConfig();
+    return c.json(config.mindDefaults ?? {});
+  })
+  .put(
+    "/mind-defaults",
+    requireAdmin,
+    zValidator(
+      "json",
+      z.object({
+        cognition: z
+          .object({
+            model: z.string().optional(),
+            thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
+            maxThinkingTokens: z.number().nonnegative().optional(),
+            tokenBudget: z.number().nonnegative().optional(),
+            tokenBudgetPeriodMinutes: z.number().positive().optional(),
+            compaction: z.object({ maxContextTokens: z.number().positive().optional() }).optional(),
+          })
+          .optional(),
+        sleep: z
+          .object({
+            enabled: z.boolean().optional(),
+            schedule: z.object({ sleep: z.string(), wake: z.string() }).optional(),
+            wakeTriggers: z
+              .object({
+                mentions: z.boolean().optional(),
+                dms: z.boolean().optional(),
+                channels: z.array(z.string()).optional(),
+                senders: z.array(z.string()).optional(),
+              })
+              .optional(),
+          })
+          .optional(),
+        schedules: z
+          .array(
+            z.object({
+              id: z.string().min(1),
+              cron: z.string().optional(),
+              message: z.string().optional(),
+              script: z.string().optional(),
+              session: z.string().optional(),
+              enabled: z.boolean(),
+              whileSleeping: z.enum(["skip", "queue", "trigger-wake"]).optional(),
+            }),
+          )
+          .optional(),
+      }),
+    ),
+    (c) => {
+      const mindDefaults = c.req.valid("json");
+      const config = readGlobalConfig();
+      config.mindDefaults = mindDefaults;
+      writeGlobalConfig(config);
+      return c.json({ ok: true });
+    },
+  );
 
 // In-memory OAuth flow tracking
 type OAuthFlow = {

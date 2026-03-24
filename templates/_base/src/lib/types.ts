@@ -22,6 +22,7 @@ export type ChannelMeta = {
   participantProfiles?: ParticipantProfile[];
   typing?: string[];
   replyInstructions?: "once" | "always" | "never";
+  interrupt?: boolean;
   signature?: string;
   signatureTimestamp?: string;
   signerFingerprint?: string;
@@ -31,7 +32,6 @@ export type ChannelMeta = {
 /** ChannelMeta enriched by the router with dispatch info. */
 export type HandlerMeta = ChannelMeta & {
   messageId: string;
-  interrupt?: boolean;
 };
 
 export type VoluteRequest = {

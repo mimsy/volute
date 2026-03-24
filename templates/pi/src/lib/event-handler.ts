@@ -1,8 +1,23 @@
+import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import { flushFileChanges, trackFileChange } from "./auto-commit.js";
 import { daemonEmit, type EventType } from "./daemon-client.js";
 import { log, warn } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
 import type { VoluteEvent } from "./types.js";
+
+/** Minimal shape of the messages in an agent_end event (subset of AgentMessage). */
+type AgentEndMessage = {
+  role?: string;
+  errorMessage?: string;
+  usage?: {
+    input?: number;
+    output?: number;
+    cacheWrite?: number;
+    cache_creation?: number;
+    cacheRead?: number;
+    cache_read?: number;
+  };
+};
 
 export type EventSession = {
   name: string;
@@ -38,7 +53,7 @@ export function emit(
 }
 
 export function createEventHandler(session: EventSession, options: EventHandlerOptions) {
-  const toolArgs = new Map<string, any>();
+  const toolArgs = new Map<string, Record<string, unknown>>();
   let textBuf = "";
   let thinkingBuf = "";
 
@@ -63,7 +78,7 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
 
   let sessionStarted = false;
 
-  return (event: any) => {
+  return (event: AgentSessionEvent) => {
     try {
       if (!sessionStarted && event.type === "agent_start") {
         sessionStarted = true;
@@ -108,7 +123,7 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         // Auto-commit file changes in home/
         if ((event.toolName === "edit" || event.toolName === "write") && !event.isError) {
           const args = toolArgs.get(event.toolCallId);
-          const filePath = (args as { path?: string })?.path;
+          const filePath = typeof args?.path === "string" ? args.path : undefined;
           if (filePath) {
             trackFileChange(filePath, options.cwd);
           }
@@ -124,7 +139,7 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         log("mind", `session "${session.name}": turn done`);
         // Log any error messages from the agent
         if (event.messages) {
-          for (const msg of event.messages as any[]) {
+          for (const msg of event.messages as AgentEndMessage[]) {
             if (msg.errorMessage) {
               warn("mind", `session "${session.name}": agent error: ${msg.errorMessage}`);
             }
@@ -136,7 +151,7 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
           let inputTokens = 0;
           let outputTokens = 0;
           let lastInputTokens = 0;
-          for (const msg of event.messages as any[]) {
+          for (const msg of event.messages as AgentEndMessage[]) {
             if (msg.role === "assistant" && msg.usage) {
               inputTokens += msg.usage.input ?? 0;
               outputTokens += msg.usage.output ?? 0;

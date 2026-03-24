@@ -119,8 +119,13 @@ export function createMind(options: {
 
   function createDynamicHookExtension(session: PiSession): ExtensionFactory {
     let startupContextInjected = false;
+    const pendingToolArgs = new Map<string, Record<string, unknown>>();
 
     return (pi) => {
+      pi.on("tool_execution_start", (event) => {
+        pendingToolArgs.set(event.toolCallId, event.args);
+      });
+
       pi.on("before_agent_start", async () => {
         const parts: string[] = [];
 
@@ -167,12 +172,14 @@ export function createMind(options: {
         return {};
       });
 
-      pi.on("tool_execution_end", async (event: any) => {
+      pi.on("tool_execution_end", async (event) => {
+        const toolInput = pendingToolArgs.get(event.toolCallId);
+        pendingToolArgs.delete(event.toolCallId);
         try {
           const result = await runHooks(hooksDir, "post-tool-use", {
             event: "post-tool-use",
             tool_name: event.toolName,
-            tool_input: event.args,
+            tool_input: toolInput,
           });
           if (result.additionalContext) {
             emit(session, {
