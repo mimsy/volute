@@ -1191,8 +1191,7 @@ function jumpToLatest() {
   .turn-row {
     display: flex;
     align-items: flex-start;
-    padding-top: 6px;
-    padding-bottom: 6px;
+    min-height: 48px;
   }
 
   .turn-time {
@@ -1233,9 +1232,6 @@ function jumpToLatest() {
     border: none;
     padding: 0;
     cursor: pointer;
-    /* Extend through parent row padding to keep rail continuous */
-    margin-top: -6px;
-    margin-bottom: -6px;
   }
 
   .turn-rail-expanded {
@@ -1713,9 +1709,7 @@ function jumpToLatest() {
 
   /* Scale break: two diagonal lines on the rail with labels */
   .scale-break-row {
-    min-height: 0 !important;
-    padding-top: 12px !important;
-    padding-bottom: 12px !important;
+    min-height: 60px !important;
   }
   .scale-break-container {
     width: 2px;
@@ -1726,10 +1720,23 @@ function jumpToLatest() {
     justify-content: center;
     position: relative;
     align-self: stretch;
-    /* Extend through parent row padding */
-    margin-top: -12px;
-    margin-bottom: -12px;
+  }
+  /* Rail segments above and below the slashes, with a gap for the marks */
+  .scale-break-container::before,
+  .scale-break-container::after {
+    content: "";
+    position: absolute;
+    width: 2px;
     background: var(--timeline-rail);
+    left: 0;
+  }
+  .scale-break-container::before {
+    top: 0;
+    bottom: calc(50% + 13px);
+  }
+  .scale-break-container::after {
+    bottom: 0;
+    top: calc(50% + 13px);
   }
   .scale-break-slash {
     width: 14px;
