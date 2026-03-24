@@ -36,12 +36,18 @@ let childItems = $derived(expandedSummaries.get(summary.id) ?? []);
 let branchGap = $derived(depth === 0 ? 16 : 12);
 let branchReach = $derived(depth === 0 ? 10 : 7);
 let branchHeConnectorWidth = $derived(depth === 0 ? 26 : 19);
+let anyChildExpanded = $derived(
+  childItems.some(
+    (c) => "period" in c && (expandedSummaries.has(c.id) || directEventsSummaries.has(c.id)),
+  ),
+);
 </script>
 
 {#if isExpanded}
   <TimelineBranch
     gap={branchGap}
     reach={branchReach}
+    dashed={anyChildExpanded}
     heConnectorWidth={branchHeConnectorWidth}
     onheaderclick={() => toggleSummaryExpand(summary)}
     onfooterclick={() => toggleSummaryExpand(summary)}
@@ -254,17 +260,9 @@ let branchHeConnectorWidth = $derived(depth === 0 ? 26 : 19);
   .summary-child-item:last-of-type::after {
     display: none;
   }
-  /* Dashed rail when child is expanded — use opaque bg-1 in gaps
-     to mask the solid branch-connector underneath at the same position */
+  /* Hide the child's own ::after rail when expanded — the branch connector handles the rail */
   .summary-child-expanded::after {
-    background: repeating-linear-gradient(
-      to bottom,
-      var(--border) 0px,
-      var(--border) 4px,
-      var(--bg-1) 4px,
-      var(--bg-1) 8px
-    );
-    z-index: 2;
+    display: none;
   }
 
   /* Offset nested branches to match original summary-nested-wrapper margin */

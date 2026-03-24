@@ -5,6 +5,7 @@ let {
   gap = 16,
   reach = 10,
   noReturn = false,
+  dashed = false,
   heConnectorWidth,
   header,
   footer,
@@ -15,6 +16,7 @@ let {
   gap?: number;
   reach?: number;
   noReturn?: boolean;
+  dashed?: boolean;
   heConnectorWidth?: number;
   header?: Snippet;
   footer?: Snippet;
@@ -25,7 +27,7 @@ let {
 </script>
 
 <div class="branch-wrapper" class:no-return={noReturn} style:--branch-gap="{gap}px" style:--branch-reach="{reach}px" style:--he-cw={heConnectorWidth ? `${heConnectorWidth}px` : undefined}>
-  <div class="branch-connector"></div>
+  <div class="branch-connector" class:branch-connector-dashed={dashed}></div>
   <div class="branch-content">
     {#if header}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -64,6 +66,18 @@ let {
   }
   .no-return > .branch-connector {
     bottom: 0;
+  }
+  .branch-connector-dashed {
+    background:
+      linear-gradient(to bottom, var(--border) 15px, transparent 15px),
+      linear-gradient(to top, var(--border) 15px, transparent 15px),
+      repeating-linear-gradient(
+        to bottom,
+        var(--border) 0px,
+        var(--border) 4px,
+        transparent 4px,
+        transparent 8px
+      );
   }
 
   /* Horizontal connector from parent rail to inner rail */
