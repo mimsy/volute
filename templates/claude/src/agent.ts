@@ -166,7 +166,7 @@ export function createMind(options: {
         const result = await runHooks(hooksDir, event, input as Record<string, unknown>);
         if (result.additionalContext || Object.keys(result.metadata).length > 0) {
           const channel = session.currentMessageId
-            ? session.messageChannels.get(session.currentMessageId)
+            ? session.messageChannels.get(session.currentMessageId)?.channel
             : undefined;
           try {
             daemonEmit({
