@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { voluteSystemDir } from "./registry.js";
-import type { Schedule, SleepConfig } from "./volute-config.js";
+import type { CognitionConfig, Schedule, SleepConfig } from "./volute-config.js";
 
 export type SetupType = "local" | "system";
 export type IsolationMode = "sandbox" | "user" | "none";
@@ -62,12 +62,7 @@ export type GlobalConfig = {
   mindDefaults?: MindDefaults;
 };
 
-export type MindDefaultsCognition = {
-  model?: string;
-  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-  maxThinkingTokens?: number;
-  tokenBudget?: number;
-  tokenBudgetPeriodMinutes?: number;
+export type MindDefaultsCognition = CognitionConfig & {
   compaction?: { maxContextTokens?: number };
 };
 

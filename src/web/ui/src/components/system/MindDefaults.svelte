@@ -75,6 +75,8 @@ let editEnabled = $state(true);
 let error = $state("");
 let loading = $state(true);
 let loadFailed = $state(false);
+let saveStatus = $state<"idle" | "saving" | "saved">("idle");
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
 let enabledModels = $derived(models.filter((m) => m.enabled));
 let isOtherModel = $derived(editModel !== "" && !enabledModels.some((m) => m.id === editModel));
@@ -147,8 +149,17 @@ function parseBudgetInt(val: string): number | null {
   return Number.isNaN(n) ? null : n;
 }
 
+function splitList(val: string): string[] | undefined {
+  const items = val
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return items.length ? items : undefined;
+}
+
 async function save() {
-  error = "";
+  saveStatus = "saving";
+  clearTimeout(saveTimer);
   try {
     await saveMindDefaults({
       cognition: {
@@ -175,31 +186,21 @@ async function save() {
           ? {
               mentions: wakeOnMentions || undefined,
               dms: wakeOnDms || undefined,
-              channels: wakeChannels
-                .split(",")
-                .map((s) => s.trim())
-                .filter(Boolean).length
-                ? wakeChannels
-                    .split(",")
-                    .map((s) => s.trim())
-                    .filter(Boolean)
-                : undefined,
-              senders: wakeSenders
-                .split(",")
-                .map((s) => s.trim())
-                .filter(Boolean).length
-                ? wakeSenders
-                    .split(",")
-                    .map((s) => s.trim())
-                    .filter(Boolean)
-                : undefined,
+              channels: splitList(wakeChannels),
+              senders: splitList(wakeSenders),
             }
           : undefined,
       },
       schedules: schedules.length > 0 ? schedules : undefined,
     });
+    error = "";
+    saveStatus = "saved";
+    saveTimer = setTimeout(() => {
+      saveStatus = "idle";
+    }, 1500);
   } catch (e) {
     error = e instanceof Error ? e.message : "Save failed";
+    saveStatus = "idle";
   }
 }
 
@@ -648,7 +649,15 @@ onMount(async () => {
       </div>
     </SettingsSection>
 
-    <ErrorMessage message={error} />
+    <div class="status-bar">
+      {#if error}
+        <ErrorMessage message={error} />
+      {:else if saveStatus === "saving"}
+        <span class="save-status">Saving...</span>
+      {:else if saveStatus === "saved"}
+        <span class="save-status saved">Saved</span>
+      {/if}
+    </div>
   {/if}
 </div>
 
@@ -656,6 +665,19 @@ onMount(async () => {
   .mind-defaults {
     max-width: 720px;
     margin: 0 auto;
+  }
+
+  .status-bar {
+    min-height: 24px;
+  }
+
+  .save-status {
+    font-size: 12px;
+    color: var(--text-2);
+  }
+
+  .save-status.saved {
+    color: var(--green, #4ade80);
   }
 
   .loading-text {

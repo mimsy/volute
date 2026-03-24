@@ -480,7 +480,7 @@ export function saveAiDefaults(defaults: AiDefaults): Promise<void> {
 }
 
 // --- Mind Defaults ---
-
+// Mirrors CognitionConfig from volute-config.ts + compaction from SDK config
 export type MindDefaultsCognition = {
   model?: string;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -490,28 +490,17 @@ export type MindDefaultsCognition = {
   compaction?: { maxContextTokens?: number };
 };
 
-export type MindDefaultsSleep = {
-  enabled?: boolean;
-  schedule?: { sleep: string; wake: string };
-  wakeTriggers?: {
-    mentions?: boolean;
-    dms?: boolean;
-    channels?: string[];
-    senders?: string[];
-  };
-};
-
-export type MindDefaultsSchedule = {
-  id: string;
-  cron?: string;
-  message?: string;
-  enabled: boolean;
+// UI-relevant subset of ScheduleEntry (omits deprecated channel, fireAt timers)
+export type MindDefaultsSchedule = Pick<
+  ScheduleEntry,
+  "id" | "cron" | "message" | "script" | "session" | "enabled"
+> & {
   whileSleeping?: "skip" | "queue" | "trigger-wake";
 };
 
 export type MindDefaults = {
   cognition?: MindDefaultsCognition;
-  sleep?: MindDefaultsSleep;
+  sleep?: SleepConfig;
   schedules?: MindDefaultsSchedule[];
 };
 
