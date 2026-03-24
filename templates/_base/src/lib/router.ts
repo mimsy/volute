@@ -17,9 +17,9 @@ import { loadPrompts } from "./startup.js";
 import type { ChannelMeta, HandlerResolver, Listener, VoluteContentPart } from "./types.js";
 
 /** Shape of a single message in a batch payload (subset of daemon DeliveryPayload). */
-type BatchMessage = {
+export type BatchMessage = {
   sender?: string | null;
-  content: VoluteContentPart[] | string | unknown;
+  content: unknown;
 };
 
 export type Router = {

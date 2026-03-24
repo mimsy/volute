@@ -1,7 +1,7 @@
 import { createHash, verify } from "node:crypto";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { log } from "./logger.js";
-import type { Router } from "./router.js";
+import type { BatchMessage, Router } from "./router.js";
 import type { VoluteContentPart, VoluteRequest } from "./types.js";
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -28,14 +28,16 @@ function normalizeContent(content: unknown): VoluteContentPart[] {
     return content.map((item): VoluteContentPart => {
       if (typeof item === "object" && item !== null && "type" in item) {
         const obj = item as Record<string, unknown>;
-        if (
-          obj.type === "image" &&
-          typeof obj.media_type === "string" &&
-          typeof obj.data === "string"
-        ) {
-          return { type: "image", media_type: obj.media_type, data: obj.data };
+        if (obj.type === "image") {
+          if (typeof obj.media_type === "string" && typeof obj.data === "string") {
+            return { type: "image", media_type: obj.media_type, data: obj.data };
+          }
+          log("server", "image content part missing required fields, coercing to text");
         }
         if (typeof obj.text === "string") return { type: "text", text: obj.text };
+      }
+      if (typeof item !== "string") {
+        log("server", `unexpected content type (${typeof item}), coercing to text`);
       }
       return { type: "text", text: typeof item === "string" ? item : JSON.stringify(item) };
     });
@@ -126,7 +128,7 @@ export function createVoluteServer(options: {
 
         // Handle batch payloads from delivery manager
         const bodyWithBatch = body as VoluteRequest & {
-          batch?: { channels: Record<string, { sender?: string | null; content: unknown }[]> };
+          batch?: { channels: Record<string, BatchMessage[]> };
         };
         if (bodyWithBatch.batch) {
           router.dispatchBatch(bodyWithBatch.batch, body.session ?? "main", body);

@@ -32,7 +32,6 @@ export type ChannelMeta = {
 /** ChannelMeta enriched by the router with dispatch info. */
 export type HandlerMeta = ChannelMeta & {
   messageId: string;
-  interrupt?: boolean;
 };
 
 export type VoluteRequest = {

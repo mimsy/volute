@@ -75,10 +75,18 @@ export function createSubagentExtension(
               session.subscribe((event) => {
                 if (event.type === "agent_end") {
                   clearTimeout(timeout);
+                  // Check for error messages first
                   for (const msg of event.messages ?? []) {
-                    if ("role" in msg && msg.role === "assistant" && "content" in msg) {
-                      const content = msg.content as { type: string; text?: string }[];
-                      for (const block of content) {
+                    const m = msg as { errorMessage?: string };
+                    if (m.errorMessage) {
+                      reject(new Error(`Subagent "${name}" error: ${m.errorMessage}`));
+                      return;
+                    }
+                  }
+                  for (const msg of event.messages ?? []) {
+                    const m = msg as { role?: string; content?: { type: string; text?: string }[] };
+                    if (m.role === "assistant" && m.content) {
+                      for (const block of m.content) {
                         if (block.type === "text" && block.text) textParts.push(block.text);
                       }
                     }

@@ -10,7 +10,14 @@ import { resolve } from "node:path";
 import { composeTemplate, findTemplatesRoot } from "../src/lib/template.js";
 
 const ALL_TEMPLATES = ["claude", "pi", "codex"];
-const templatesRoot = findTemplatesRoot();
+
+let templatesRoot: string;
+try {
+  templatesRoot = findTemplatesRoot();
+} catch {
+  console.error("Could not find templates directory. Run from the repo root.");
+  process.exit(1);
+}
 
 const requested = process.argv.slice(2).filter((a) => !a.startsWith("-"));
 const templates = requested.length > 0 ? requested : ALL_TEMPLATES;
@@ -19,7 +26,16 @@ let failed = false;
 
 for (const name of templates) {
   console.log(`\n--- typechecking template: ${name} ---`);
-  const { composedDir, manifest } = composeTemplate(templatesRoot, name);
+
+  let composedDir: string;
+  let manifest: { rename: Record<string, string>; substitute: string[] };
+  try {
+    ({ composedDir, manifest } = composeTemplate(templatesRoot, name));
+  } catch (err: any) {
+    console.error(`  ✗ ${name} failed to compose: ${err?.message ?? err}`);
+    failed = true;
+    continue;
+  }
 
   // Apply renames (e.g. package.json.tmpl → package.json) in-place
   for (const [from, to] of Object.entries(manifest.rename)) {
@@ -53,6 +69,9 @@ for (const name of templates) {
 
     console.log(`  ✓ ${name} passed`);
   } catch (err: any) {
+    if (err?.stderr?.length) {
+      console.error(err.stderr.toString());
+    }
     console.error(`  ✗ ${name} failed`);
     failed = true;
   } finally {
