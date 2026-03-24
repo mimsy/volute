@@ -14,7 +14,7 @@ import { eq, sql } from "drizzle-orm";
 import { getDb } from "./db.js";
 import { exec, gitExec } from "./exec.js";
 import log from "./logger.js";
-import { voluteHome } from "./registry.js";
+import { mindDir, readAllMinds, voluteHome } from "./registry.js";
 import { sharedSkills } from "./schema.js";
 import { readGlobalConfig, writeGlobalConfig } from "./setup.js";
 
@@ -734,6 +734,50 @@ export function hashSkillDir(dir: string): string {
     hash.update(readFileSync(join(dir, file)));
   }
   return hash.digest("hex");
+}
+
+/** Whether auto-update is enabled (defaults to true). */
+export function isAutoUpdateSkillsEnabled(): boolean {
+  return readGlobalConfig().autoUpdateSkills !== false;
+}
+
+/**
+ * Auto-update skills for all minds that have outdated upstream-tracked skills.
+ * Skips minds with conflicts or errors (non-fatal).
+ */
+export async function autoUpdateMindSkills(): Promise<void> {
+  const allMinds = await readAllMinds();
+  const shared = await listSharedSkills();
+  const sharedMap = new Map(shared.map((s) => [s.id, s]));
+
+  for (const mind of allMinds) {
+    const dir = mind.dir ?? mindDir(mind.name);
+    const skillsDir = mindSkillsDir(dir);
+    if (!existsSync(skillsDir)) continue;
+
+    const entries = readdirSync(skillsDir, { withFileTypes: true }).filter((e) => e.isDirectory());
+
+    for (const entry of entries) {
+      const upstream = readUpstream(join(skillsDir, entry.name));
+      if (!upstream) continue;
+
+      const sharedSkill = sharedMap.get(upstream.source);
+      if (!sharedSkill || sharedSkill.version <= upstream.version) continue;
+
+      try {
+        const result = await updateSkill(mind.name, dir, entry.name);
+        if (result.status === "updated") {
+          log.info(`auto-updated skill ${entry.name} for ${mind.name} (v${sharedSkill.version})`);
+        } else if (result.status === "conflict") {
+          log.warn(
+            `auto-update conflict for skill ${entry.name} in ${mind.name}: ${result.conflictFiles.join(", ")}`,
+          );
+        }
+      } catch (err) {
+        log.warn(`failed to auto-update skill ${entry.name} for ${mind.name}`, log.errorData(err));
+      }
+    }
+  }
 }
 
 /**

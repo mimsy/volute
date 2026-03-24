@@ -9,6 +9,7 @@ import {
   getSharedSkill,
   getStandardSkillsWithExtensions,
   importSkillFromDir,
+  isAutoUpdateSkillsEnabled,
   listFilesRecursive,
   listSharedSkills,
   removeSharedSkill,
@@ -74,6 +75,18 @@ const app = new Hono<AuthEnv>()
     removed.add(skill);
     writeGlobalConfig({ ...config, defaultSkills: updated, removedDefaultSkills: [...removed] });
     return c.json({ skills: updated });
+  })
+  .get("/auto-update", (c) => {
+    return c.json({ enabled: isAutoUpdateSkillsEnabled() });
+  })
+  .put("/auto-update", requireAdmin, async (c) => {
+    const body = await c.req.json<{ enabled: boolean }>();
+    if (typeof body.enabled !== "boolean") {
+      return c.json({ error: "body.enabled must be a boolean" }, 400);
+    }
+    const config = readGlobalConfig();
+    writeGlobalConfig({ ...config, autoUpdateSkills: body.enabled });
+    return c.json({ enabled: body.enabled });
   })
   .post("/upload", requireAdmin, async (c) => {
     const body = await c.req.parseBody();

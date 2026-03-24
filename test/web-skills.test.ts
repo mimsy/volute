@@ -344,3 +344,46 @@ describe("web skills API — mind skills", () => {
     assert.equal(res.status, 403);
   });
 });
+
+describe("auto-update setting", () => {
+  before(setupAuth);
+
+  it("GET /skills/auto-update returns enabled by default", async () => {
+    const app = createApp();
+    const res = await app.request("/skills/auto-update", {
+      headers: { Cookie: adminCookie },
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { enabled: boolean };
+    assert.equal(body.enabled, true);
+  });
+
+  it("PUT /skills/auto-update toggles the setting", async () => {
+    const app = createApp();
+
+    // Disable
+    const res1 = await app.request("/skills/auto-update", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Cookie: adminCookie },
+      body: JSON.stringify({ enabled: false }),
+    });
+    assert.equal(res1.status, 200);
+    const body1 = (await res1.json()) as { enabled: boolean };
+    assert.equal(body1.enabled, false);
+
+    // Verify
+    const res2 = await app.request("/skills/auto-update", {
+      headers: { Cookie: adminCookie },
+    });
+    const body2 = (await res2.json()) as { enabled: boolean };
+    assert.equal(body2.enabled, false);
+
+    // Re-enable (cleanup)
+    const res3 = await app.request("/skills/auto-update", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Cookie: adminCookie },
+      body: JSON.stringify({ enabled: true }),
+    });
+    assert.equal(res3.status, 200);
+  });
+});

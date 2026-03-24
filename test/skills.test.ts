@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import { getDb } from "../src/lib/db.js";
 import { exec } from "../src/lib/exec.js";
-import { voluteHome } from "../src/lib/registry.js";
-import { sharedSkills } from "../src/lib/schema.js";
+import { addMind, voluteHome } from "../src/lib/registry.js";
+import { minds, sharedSkills } from "../src/lib/schema.js";
 import {
+  autoUpdateMindSkills,
   getSharedSkill,
   importSkillFromDir,
   installBinShim,
@@ -731,5 +733,75 @@ describe("mindSkillsDir template detection", () => {
     assert.ok(result.endsWith(join("home", ".agents", "skills")));
 
     rmSync(dir, { recursive: true });
+  });
+});
+
+describe("autoUpdateMindSkills", () => {
+  const testMindName = "test-auto-update-mind";
+  let testMindDir: string;
+
+  beforeEach(async () => {
+    await cleanup();
+    testMindDir = join(voluteHome(), "minds", testMindName);
+    await createMindGitRepo(testMindDir);
+  });
+
+  afterEach(async () => {
+    await cleanup();
+    const db = await getDb();
+    await db.delete(minds).where(eq(minds.name, testMindName));
+    if (existsSync(testMindDir)) rmSync(testMindDir, { recursive: true });
+  });
+
+  it("updates outdated skills on registered minds", async () => {
+    // 1. Create and import a shared skill v1
+    const source = createSkillSource("auto-test-skill", "A test skill");
+    await importSkillFromDir(source, "volute");
+
+    // 2. Register mind in DB and install the skill
+    await addMind(testMindName, 4999);
+    await installSkill(testMindName, testMindDir, "auto-test-skill");
+
+    // Verify installed at v1
+    const skillsBefore = await listMindSkills(testMindDir);
+    const before = skillsBefore.find((s) => s.id === "auto-test-skill");
+    assert.ok(before);
+    assert.equal(before.upstream?.version, 1);
+    assert.equal(before.updateAvailable, false);
+
+    // 3. Update the shared skill to v2
+    writeFileSync(
+      join(source, "SKILL.md"),
+      "---\nname: auto-test-skill\ndescription: Updated\n---\n\nUpdated content.\n",
+    );
+    await importSkillFromDir(source, "volute");
+
+    // Verify update is available
+    const skillsMid = await listMindSkills(testMindDir);
+    const mid = skillsMid.find((s) => s.id === "auto-test-skill");
+    assert.ok(mid);
+    assert.equal(mid.updateAvailable, true);
+
+    // 4. Run auto-update
+    await autoUpdateMindSkills();
+
+    // 5. Verify the skill was updated
+    const skillsAfter = await listMindSkills(testMindDir);
+    const after = skillsAfter.find((s) => s.id === "auto-test-skill");
+    assert.ok(after);
+    assert.equal(after.upstream?.version, 2);
+    assert.equal(after.updateAvailable, false);
+  });
+
+  it("skips minds without skills directories", async () => {
+    // Register mind with no skills dir
+    await addMind(testMindName, 4999);
+
+    // Remove skills dir
+    const skillsDir = mindSkillsDir(testMindDir);
+    if (existsSync(skillsDir)) rmSync(skillsDir, { recursive: true });
+
+    // Should not throw
+    await autoUpdateMindSkills();
   });
 });

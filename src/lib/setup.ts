@@ -56,6 +56,8 @@ export type GlobalConfig = {
   setupCompleted?: boolean;
   /** Image generation configuration */
   imagegen?: ImagegenConfig;
+  /** Auto-update skills installed on minds when shared pool versions change (default: true) */
+  autoUpdateSkills?: boolean;
   /** Extension IDs that are installed but should not load on daemon start */
   disabledExtensions?: string[];
   /** Default settings applied when creating new minds */

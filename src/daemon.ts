@@ -30,7 +30,12 @@ import {
 } from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
 import { ensureSharedRepo } from "./lib/shared.js";
-import { initDefaultSkills, syncBuiltinSkills } from "./lib/skills.js";
+import {
+  autoUpdateMindSkills,
+  initDefaultSkills,
+  isAutoUpdateSkillsEnabled,
+  syncBuiltinSkills,
+} from "./lib/skills.js";
 import { ensureSystemChannel } from "./lib/system-channel.js";
 import { initWebhook } from "./lib/webhook.js";
 import { startApiKeyRefresh, stopApiKeyRefresh } from "./web/api/system.js";
@@ -125,6 +130,15 @@ export async function startDaemon(opts: {
 
   // Initialize default skills config if not set (after extensions load so their skills are included)
   await initDefaultSkills();
+
+  // Auto-update skills for all minds (non-fatal)
+  if (isAutoUpdateSkillsEnabled()) {
+    try {
+      await autoUpdateMindSkills();
+    } catch (err) {
+      log.error("failed to auto-update mind skills", log.errorData(err));
+    }
+  }
 
   // Ensure #system channel exists (non-fatal)
   try {
