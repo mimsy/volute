@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { log } from "./logger.js";
 
@@ -81,6 +81,33 @@ export function getSystemPromptSizes(): { soul: number; volute: number; memory: 
     volute: loadFile(resolve("home/VOLUTE.md")).length,
     memory: loadFile(resolve("home/MEMORY.md")).length,
   };
+}
+
+const CHARS_PER_TOKEN = 3.5;
+
+/** Returns estimated token sizes for each installed skill. */
+export function getSkillsSizes(skillsDir: string): {
+  total: number;
+  items: Array<{ name: string; tokens: number }>;
+} {
+  const items: Array<{ name: string; tokens: number }> = [];
+  try {
+    const entries = readdirSync(skillsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const skillMd = resolve(skillsDir, entry.name, "SKILL.md");
+      try {
+        const size = statSync(skillMd).size;
+        items.push({ name: entry.name, tokens: Math.round(size / CHARS_PER_TOKEN) });
+      } catch {
+        // No SKILL.md — skip
+      }
+    }
+  } catch {
+    // Skills dir doesn't exist
+  }
+  const total = items.reduce((sum, s) => sum + s.tokens, 0);
+  return { total, items };
 }
 
 export function loadPackageInfo(): { name: string; version: string } {

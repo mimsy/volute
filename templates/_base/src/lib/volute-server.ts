@@ -95,9 +95,28 @@ async function verifyRequest(body: VoluteRequest): Promise<boolean | undefined> 
   return verifySignature(publicKey, text, body.signatureTimestamp, body.signature);
 }
 
+export type ContextBreakdown = {
+  systemPrompt: number;
+  skills: number;
+  conversation: {
+    userText: number;
+    assistantText: number;
+    thinking: number;
+    toolUse: number;
+    toolResult: number;
+  };
+};
+
+export type SkillInfo = {
+  name: string;
+  tokens: number;
+};
+
 export type SessionContextInfo = {
   name: string;
   contextTokens: number;
+  contextWindow?: number;
+  breakdown?: ContextBreakdown;
 };
 
 export type ContextInfo = {
@@ -106,6 +125,7 @@ export type ContextInfo = {
     total: number;
     components: { soul: number; volute: number; memory: number };
   };
+  skills?: { total: number; items: SkillInfo[] };
 };
 
 export function createVoluteServer(options: {
@@ -113,7 +133,7 @@ export function createVoluteServer(options: {
   port: number;
   name: string;
   version: string;
-  getContextInfo?: () => ContextInfo;
+  getContextInfo?: () => ContextInfo | Promise<ContextInfo>;
 }): Server {
   const { router, port, name, version } = options;
 
@@ -132,8 +152,15 @@ export function createVoluteServer(options: {
         res.end("Not Found");
         return;
       }
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(options.getContextInfo()));
+      try {
+        const info = await options.getContextInfo();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(info));
+      } catch (err) {
+        log("server", "error in /context:", err);
+        res.writeHead(500);
+        res.end("Internal Server Error");
+      }
       return;
     }
 

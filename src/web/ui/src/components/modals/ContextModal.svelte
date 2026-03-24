@@ -23,15 +23,11 @@ function formatTokens(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
   return String(n);
 }
-
-let totalContextTokens = $derived(
-  contextInfo ? contextInfo.sessions.reduce((sum, s) => Math.max(sum, s.contextTokens), 0) : 0,
-);
 </script>
 
 <Modal title="Context — {mindName}" {onClose} size="480px">
   {#if loading}
-    <div class="loading">Loading context info…</div>
+    <div class="loading">Loading context info...</div>
   {:else if error}
     <div class="error">{error}</div>
   {:else if contextInfo}
@@ -63,18 +59,37 @@ let totalContextTokens = $derived(
         </div>
       </section>
 
+      {#if contextInfo.skills && contextInfo.skills.items.length > 0}
+        <section class="section">
+          <h3 class="section-title">Skills</h3>
+          <div class="breakdown">
+            {#each contextInfo.skills.items as skill (skill.name)}
+              <div class="breakdown-row">
+                <span class="label">{skill.name}</span>
+                <span class="value">{formatTokens(skill.tokens)} tokens</span>
+              </div>
+            {/each}
+            <div class="breakdown-row total">
+              <span class="label">Total</span>
+              <span class="value">{formatTokens(contextInfo.skills.total)} tokens</span>
+            </div>
+          </div>
+        </section>
+      {/if}
+
       <section class="section">
         <h3 class="section-title">Sessions</h3>
         {#if contextInfo.sessions.length === 0}
           <div class="empty">No active sessions</div>
         {:else}
           <div class="sessions">
-            {#each contextInfo.sessions as session}
+            {#each contextInfo.sessions as session (session.name)}
+              {@const contextWindow = session.contextWindow ?? 200000}
               <div class="session-row">
                 <span class="session-name">{session.name}</span>
                 <span class="session-tokens">
                   {#if session.contextTokens > 0}
-                    {formatTokens(session.contextTokens)} tokens
+                    {formatTokens(session.contextTokens)}{#if session.contextWindow} / {formatTokens(session.contextWindow)}{/if} tokens
                   {:else}
                     <span class="no-data">no data yet</span>
                   {/if}
@@ -82,20 +97,51 @@ let totalContextTokens = $derived(
               </div>
               {#if session.contextTokens > 0}
                 <div class="token-bar">
-                  <div class="token-bar-fill" style:width="{Math.min(100, (session.contextTokens / 200000) * 100)}%"></div>
+                  <div class="token-bar-fill" style:width="{Math.min(100, (session.contextTokens / contextWindow) * 100)}%"></div>
                 </div>
+                {#if session.breakdown}
+                  <div class="session-breakdown">
+                    <div class="breakdown-row sub">
+                      <span class="label">System Prompt</span>
+                      <span class="value">{formatTokens(session.breakdown.systemPrompt)} tokens</span>
+                    </div>
+                    <div class="breakdown-row sub">
+                      <span class="label">Skills</span>
+                      <span class="value">{formatTokens(session.breakdown.skills)} tokens</span>
+                    </div>
+                    <div class="breakdown-row sub">
+                      <span class="label">User Messages</span>
+                      <span class="value">{formatTokens(session.breakdown.conversation.userText)} tokens</span>
+                    </div>
+                    <div class="breakdown-row sub">
+                      <span class="label">Assistant Text</span>
+                      <span class="value">{formatTokens(session.breakdown.conversation.assistantText)} tokens</span>
+                    </div>
+                    {#if session.breakdown.conversation.thinking > 0}
+                      <div class="breakdown-row sub">
+                        <span class="label">Thinking</span>
+                        <span class="value">{formatTokens(session.breakdown.conversation.thinking)} tokens</span>
+                      </div>
+                    {/if}
+                    {#if session.breakdown.conversation.toolUse > 0}
+                      <div class="breakdown-row sub">
+                        <span class="label">Tool Calls</span>
+                        <span class="value">{formatTokens(session.breakdown.conversation.toolUse)} tokens</span>
+                      </div>
+                    {/if}
+                    {#if session.breakdown.conversation.toolResult > 0}
+                      <div class="breakdown-row sub">
+                        <span class="label">Tool Results</span>
+                        <span class="value">{formatTokens(session.breakdown.conversation.toolResult)} tokens</span>
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
               {/if}
             {/each}
           </div>
         {/if}
       </section>
-
-      {#if totalContextTokens > 0}
-        <section class="section">
-          <h3 class="section-title">Largest Session Context</h3>
-          <div class="total-tokens">{formatTokens(totalContextTokens)} tokens</div>
-        </section>
-      {/if}
     </div>
   {/if}
 </Modal>
@@ -162,6 +208,19 @@ let totalContextTokens = $derived(
     font-weight: 600;
   }
 
+  .breakdown-row.sub {
+    font-size: 12px;
+    padding: 2px 8px;
+  }
+
+  .breakdown-row.sub .label {
+    color: var(--text-2);
+  }
+
+  .breakdown-row.sub .value {
+    color: var(--text-3);
+  }
+
   .label {
     color: var(--text-1);
   }
@@ -213,10 +272,12 @@ let totalContextTokens = $derived(
     transition: width 0.3s ease;
   }
 
-  .total-tokens {
-    font-size: 20px;
-    font-weight: 600;
-    color: var(--text-0);
-    font-variant-numeric: tabular-nums;
+  .session-breakdown {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-left: 8px;
+    margin-top: 4px;
+    border-left: 2px solid var(--border);
   }
 </style>

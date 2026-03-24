@@ -77,12 +77,30 @@ export function fetchMind(name: string): Promise<Mind> {
   return get(`${V1}/minds/${enc(name)}`);
 }
 
+export type ContextBreakdown = {
+  systemPrompt: number;
+  skills: number;
+  conversation: {
+    userText: number;
+    assistantText: number;
+    thinking: number;
+    toolUse: number;
+    toolResult: number;
+  };
+};
+
 export type ContextInfo = {
-  sessions: Array<{ name: string; contextTokens: number }>;
+  sessions: Array<{
+    name: string;
+    contextTokens: number;
+    contextWindow?: number;
+    breakdown?: ContextBreakdown;
+  }>;
   systemPrompt: {
     total: number;
     components: { soul: number; volute: number; memory: number };
   };
+  skills?: { total: number; items: Array<{ name: string; tokens: number }> };
 };
 
 export function fetchMindContext(name: string): Promise<ContextInfo> {

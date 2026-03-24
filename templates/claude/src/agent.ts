@@ -3,6 +3,7 @@ import { resolve as resolvePath } from "node:path";
 import type { HookCallback, SyncHookJSONOutput } from "@anthropic-ai/claude-agent-sdk";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { toSDKContent } from "./lib/content.js";
+import { findClaudeSessionFile, parseClaudeSessionJSONL } from "./lib/context-breakdown.js";
 import { daemonEmit } from "./lib/daemon-client.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { createAutoCommitHook } from "./lib/hooks/auto-commit.js";
@@ -13,7 +14,12 @@ import { createReplyInstructionsHook } from "./lib/hooks/reply-instructions.js";
 import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
 import { createSessionStore } from "./lib/session-store.js";
-import { getSystemPromptSizes, loadPrompts, type SubagentConfig } from "./lib/startup.js";
+import {
+  getSkillsSizes,
+  getSystemPromptSizes,
+  loadPrompts,
+  type SubagentConfig,
+} from "./lib/startup.js";
 import { consumeStream } from "./lib/stream-consumer.js";
 import type {
   HandlerMeta,
@@ -36,6 +42,7 @@ type Session = {
   replyInstructionsFired: boolean;
   replyInstructionsMode: "once" | "always" | "never";
   contextTokens: number;
+  contextWindow?: number;
 };
 
 export function createMind(options: {
@@ -292,6 +299,9 @@ export function createMind(options: {
             options.onIdentityReload?.();
           }
         },
+        onContextWindow: (contextWindow: number) => {
+          session.contextWindow = contextWindow;
+        },
         onContextTokens: (tokens: number) => {
           session.contextTokens = tokens;
           if (
@@ -528,19 +538,34 @@ export function createMind(options: {
   function getContextInfo(): ContextInfo {
     const sizes = getSystemPromptSizes();
     const toTokens = (chars: number) => Math.round(chars / CHARS_PER_TOKEN);
+    const systemPromptTokens = toTokens(sizes.soul + sizes.volute + sizes.memory);
+    const skills = getSkillsSizes(resolvePath(options.cwd, ".claude/skills"));
+
     return {
-      sessions: Array.from(sessions.values()).map((s) => ({
-        name: s.name,
-        contextTokens: s.contextTokens,
-      })),
+      sessions: Array.from(sessions.values()).map((s) => {
+        // Try to get detailed breakdown from JSONL
+        const sessionId = sessionStore.load(s.name);
+        const jsonlPath = sessionId ? findClaudeSessionFile(options.cwd, sessionId) : null;
+        const parsed = jsonlPath
+          ? parseClaudeSessionJSONL(jsonlPath, systemPromptTokens, skills.total)
+          : null;
+
+        return {
+          name: s.name,
+          contextTokens: parsed?.contextTokens ?? s.contextTokens,
+          contextWindow: s.contextWindow,
+          breakdown: parsed?.breakdown,
+        };
+      }),
       systemPrompt: {
-        total: toTokens(sizes.soul + sizes.volute + sizes.memory),
+        total: systemPromptTokens,
         components: {
           soul: toTokens(sizes.soul),
           volute: toTokens(sizes.volute),
           memory: toTokens(sizes.memory),
         },
       },
+      skills,
     };
   }
 

@@ -10,12 +10,14 @@ import {
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
 import { extractImages, extractText } from "./lib/content.js";
+import { findPiSessionFile, parsePiSessionJSONL } from "./lib/context-breakdown.js";
 import { createEventHandler, emit } from "./lib/event-handler.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { log } from "./lib/logger.js";
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
 import {
+  getSkillsSizes,
   getStartupContext,
   getSystemPromptSizes,
   loadPrompts,
@@ -482,22 +484,37 @@ export function createMind(options: {
   }
 
   const CHARS_PER_TOKEN = 3.5;
+  const piSessionsDir = resolvePath(options.mindDir, ".mind/pi-sessions");
+
   function getContextInfo(): ContextInfo {
     const sizes = getSystemPromptSizes();
     const toTokens = (chars: number) => Math.round(chars / CHARS_PER_TOKEN);
+    const systemPromptTokens = toTokens(sizes.soul + sizes.volute + sizes.memory);
+    const skills = getSkillsSizes(resolvePath(options.cwd, ".pi/skills"));
+
     return {
-      sessions: Array.from(sessions.values()).map((s) => ({
-        name: s.name,
-        contextTokens: s.contextTokens,
-      })),
+      sessions: Array.from(sessions.values()).map((s) => {
+        // Try to get detailed breakdown from Pi JSONL
+        const jsonlPath = findPiSessionFile(piSessionsDir, s.name);
+        const parsed = jsonlPath
+          ? parsePiSessionJSONL(jsonlPath, systemPromptTokens, skills.total)
+          : null;
+
+        return {
+          name: s.name,
+          contextTokens: parsed?.contextTokens ?? s.contextTokens,
+          breakdown: parsed?.breakdown,
+        };
+      }),
       systemPrompt: {
-        total: toTokens(sizes.soul + sizes.volute + sizes.memory),
+        total: systemPromptTokens,
         components: {
           soul: toTokens(sizes.soul),
           volute: toTokens(sizes.volute),
           memory: toTokens(sizes.memory),
         },
       },
+      skills,
     };
   }
 

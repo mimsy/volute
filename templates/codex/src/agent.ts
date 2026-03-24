@@ -3,11 +3,13 @@ import { resolve as resolvePath } from "node:path";
 import { Codex } from "@openai/codex-sdk";
 import { flushFileChanges, trackFileChange } from "./lib/auto-commit.js";
 import { extractText } from "./lib/content.js";
+import { findCodexSessionFile, parseCodexSessionJSONL } from "./lib/context-breakdown.js";
 import { daemonEmit, daemonRestart, type EventType } from "./lib/daemon-client.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { log, warn } from "./lib/logger.js";
 import { createSessionStore } from "./lib/session-store.js";
 import {
+  getSkillsSizes,
   getStartupContext,
   getSystemPromptSizes,
   loadPrompts,
@@ -591,19 +593,34 @@ export function createMind(options: {
   function getContextInfo(): ContextInfo {
     const sizes = getSystemPromptSizes();
     const toTokens = (chars: number) => Math.round(chars / CHARS_PER_TOKEN);
+    const systemPromptTokens = toTokens(sizes.soul + sizes.volute + sizes.memory);
+    const skills = getSkillsSizes(resolvePath(options.cwd, ".claude/skills"));
+
     return {
-      sessions: Array.from(sessions.values()).map((s) => ({
-        name: s.name,
-        contextTokens: s.cumulativeInputTokens,
-      })),
+      sessions: Array.from(sessions.values()).map((s) => {
+        // Try to get accurate context from Codex JSONL
+        const threadId = sessionStore.load(s.name);
+        const jsonlPath = threadId ? findCodexSessionFile(threadId) : null;
+        const parsed = jsonlPath
+          ? parseCodexSessionJSONL(jsonlPath, systemPromptTokens, skills.total)
+          : null;
+
+        return {
+          name: s.name,
+          contextTokens: parsed?.contextTokens ?? s.cumulativeInputTokens,
+          contextWindow: parsed?.contextWindow,
+          breakdown: parsed?.breakdown,
+        };
+      }),
       systemPrompt: {
-        total: toTokens(sizes.soul + sizes.volute + sizes.memory),
+        total: systemPromptTokens,
         components: {
           soul: toTokens(sizes.soul),
           volute: toTokens(sizes.volute),
           memory: toTokens(sizes.memory),
         },
       },
+      skills,
     };
   }
 
