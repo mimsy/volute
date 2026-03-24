@@ -530,10 +530,10 @@ const app = new Hono<AuthEnv>()
           .object({
             model: z.string().optional(),
             thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
-            maxThinkingTokens: z.number().optional(),
-            tokenBudget: z.number().optional(),
-            tokenBudgetPeriodMinutes: z.number().optional(),
-            compaction: z.object({ maxContextTokens: z.number().optional() }).optional(),
+            maxThinkingTokens: z.number().nonnegative().optional(),
+            tokenBudget: z.number().nonnegative().optional(),
+            tokenBudgetPeriodMinutes: z.number().positive().optional(),
+            compaction: z.object({ maxContextTokens: z.number().positive().optional() }).optional(),
           })
           .optional(),
         sleep: z
@@ -553,9 +553,11 @@ const app = new Hono<AuthEnv>()
         schedules: z
           .array(
             z.object({
-              id: z.string(),
+              id: z.string().min(1),
               cron: z.string().optional(),
               message: z.string().optional(),
+              script: z.string().optional(),
+              session: z.string().optional(),
               enabled: z.boolean(),
               whileSleeping: z.enum(["skip", "queue", "trigger-wake"]).optional(),
             }),

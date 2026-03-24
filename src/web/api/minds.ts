@@ -802,11 +802,13 @@ const app = new Hono<AuthEnv>()
         // Apply cognition defaults
         const cog = mindDefaults?.cognition;
         if (cog) {
-          if (cog.thinkingLevel && !config.thinkingLevel) config.thinkingLevel = cog.thinkingLevel;
-          if (cog.maxThinkingTokens && !config.maxThinkingTokens)
+          if (cog.thinkingLevel != null && !config.thinkingLevel)
+            config.thinkingLevel = cog.thinkingLevel;
+          if (cog.maxThinkingTokens != null && config.maxThinkingTokens == null)
             config.maxThinkingTokens = cog.maxThinkingTokens;
-          if (cog.tokenBudget && !config.tokenBudget) config.tokenBudget = cog.tokenBudget;
-          if (cog.tokenBudgetPeriodMinutes && !config.tokenBudgetPeriodMinutes)
+          if (cog.tokenBudget != null && config.tokenBudget == null)
+            config.tokenBudget = cog.tokenBudget;
+          if (cog.tokenBudgetPeriodMinutes != null && config.tokenBudgetPeriodMinutes == null)
             config.tokenBudgetPeriodMinutes = cog.tokenBudgetPeriodMinutes;
         }
         writeVoluteConfig(dest, config);

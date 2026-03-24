@@ -74,6 +74,7 @@ let editEnabled = $state(true);
 // General
 let error = $state("");
 let loading = $state(true);
+let loadFailed = $state(false);
 
 let enabledModels = $derived(models.filter((m) => m.enabled));
 let isOtherModel = $derived(editModel !== "" && !enabledModels.some((m) => m.id === editModel));
@@ -344,6 +345,7 @@ onMount(async () => {
     }
   } catch (e) {
     error = e instanceof Error ? e.message : "Failed to load defaults";
+    loadFailed = true;
   }
   loading = false;
 });
@@ -352,6 +354,8 @@ onMount(async () => {
 <div class="mind-defaults">
   {#if loading}
     <p class="loading-text">Loading...</p>
+  {:else if loadFailed}
+    <ErrorMessage message={error} />
   {:else}
     <SettingsSection title="Model">
       <SettingRow label="Model">
