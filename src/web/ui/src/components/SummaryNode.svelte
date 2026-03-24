@@ -34,23 +34,30 @@ let isLoading = $derived(loadingChildren.has(summary.id));
 let directEvents = $derived(directEventsSummaries.get(summary.id));
 let childItems = $derived(expandedSummaries.get(summary.id) ?? []);
 let branchGap = $derived(depth === 0 ? 16 : 12);
-let branchReach = $derived(depth === 0 ? 10 : 7);
-let branchHeConnectorWidth = $derived(depth === 0 ? 26 : 19);
+let branchReach = 8;
+let branchRailTop = $derived(depth === 0 ? 15 : 13);
 let anyChildExpanded = $derived(
   childItems.some(
     (c) => "period" in c && (expandedSummaries.has(c.id) || directEventsSummaries.has(c.id)),
   ),
 );
+function collapseExpandedChild() {
+  const expanded = childItems.find(
+    (c) => "period" in c && (expandedSummaries.has(c.id) || directEventsSummaries.has(c.id)),
+  );
+  if (expanded && "period" in expanded) toggleSummaryExpand(expanded as SummaryRow);
+}
 </script>
 
 {#if isExpanded}
   <TimelineBranch
     gap={branchGap}
     reach={branchReach}
+    railTop={branchRailTop}
     dashed={anyChildExpanded}
-    heConnectorWidth={branchHeConnectorWidth}
     onheaderclick={() => toggleSummaryExpand(summary)}
     onfooterclick={() => toggleSummaryExpand(summary)}
+    onrailclick={collapseExpandedChild}
   >
     {#snippet header()}
       <div class="summary-expand-header">
@@ -252,10 +259,13 @@ let anyChildExpanded = $derived(
     content: "";
     position: absolute;
     left: -2px;
-    top: 20px;
-    bottom: -6px;
+    top: 16px;
+    bottom: -10px;
     width: 2px;
     background: var(--border);
+  }
+  .summary-child-item:hover::after {
+    background: var(--text-0);
   }
   .summary-child-item:last-of-type::after {
     display: none;
@@ -263,6 +273,11 @@ let anyChildExpanded = $derived(
   /* Hide the child's own ::after rail when expanded — the branch connector handles the rail */
   .summary-child-expanded::after {
     display: none;
+  }
+  /* Collapse vertical space when expanded so the nested branch starts near the dot */
+  .summary-child-expanded {
+    padding-top: 2px;
+    padding-bottom: 0;
   }
 
   /* Offset nested branches to match original summary-nested-wrapper margin */
@@ -300,5 +315,21 @@ let anyChildExpanded = $derived(
   .marker-icon :global(svg) {
     width: 13px;
     height: 13px;
+  }
+  /* Rail between inline events (tool groups) — mirrors HistoryEvent .event::after */
+  .event::after {
+    content: "";
+    position: absolute;
+    left: -2px;
+    top: 12px;
+    bottom: -20px;
+    width: 2px;
+    background: var(--type-color);
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 1;
+  }
+  .event:hover::after {
+    opacity: 1;
   }
 </style>

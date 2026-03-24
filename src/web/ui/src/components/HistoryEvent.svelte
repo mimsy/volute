@@ -405,10 +405,10 @@ async function handleClick() {
     );
     opacity: 1;
   }
-  .event.expandable-summary:hover::after {
+  .event.expandable-summary:hover:not(:has(.turn-branch:hover))::after {
     background: var(--type-color);
   }
-  .event.turn-expanded:hover::after {
+  .event.turn-expanded:hover:not(:has(.turn-branch:hover))::after {
     background: repeating-linear-gradient(
       to bottom,
       var(--type-color) 0px,
