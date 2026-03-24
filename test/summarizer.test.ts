@@ -80,10 +80,14 @@ describe("summarizer", () => {
   });
 
   describe("getTimeRange", () => {
-    it("returns correct hour range", () => {
+    it("returns correct hour range (local → UTC)", () => {
       const { start, end } = getTimeRange("2026-03-22T14", "hour");
-      assert.equal(start, "2026-03-22 14:00:00");
-      assert.equal(end, "2026-03-22 15:00:00");
+      // Period key is local time; getTimeRange converts to UTC for DB queries
+      const localStart = new Date("2026-03-22T14:00:00");
+      const localEnd = new Date("2026-03-22T15:00:00");
+      const utcFmt = (d: Date) => d.toISOString().replace("T", " ").slice(0, 19);
+      assert.equal(start, utcFmt(localStart));
+      assert.equal(end, utcFmt(localEnd));
     });
 
     it("returns correct day range", () => {
@@ -274,14 +278,13 @@ describe("summarizer", () => {
 
     it("generates hourly summary from turn summaries", async () => {
       const mind = "test-hourly-sum";
-      await insertSummary(
-        mind,
-        "turn",
-        "turn-a",
-        "I read a file and responded.",
-        "2026-03-22 14:05:00",
-      );
-      await insertSummary(mind, "turn", "turn-b", "I updated the journal.", "2026-03-22 14:30:00");
+      // created_at must be UTC (matching datetime('now') format).
+      // Period key "2026-03-22T14" = 2 PM local → convert to UTC for DB.
+      const utcFmt = (d: Date) => d.toISOString().replace("T", " ").slice(0, 19);
+      const turnATime = utcFmt(new Date("2026-03-22T14:05:00"));
+      const turnBTime = utcFmt(new Date("2026-03-22T14:30:00"));
+      await insertSummary(mind, "turn", "turn-a", "I read a file and responded.", turnATime);
+      await insertSummary(mind, "turn", "turn-b", "I updated the journal.", turnBTime);
 
       const result = await summarizePeriod(mind, "hour", "2026-03-22T14");
       assert.equal(result, true, "should generate summary");

@@ -595,7 +595,7 @@ let timelineItems = $derived.by(() => {
   // Turns from the current hour onward are shown individually;
   // older turns are covered by hourly summaries
   const currentHourStart = new Date(now);
-  currentHourStart.setUTCMinutes(0, 0, 0);
+  currentHourStart.setMinutes(0, 0, 0);
   const hourCutoffMs = currentHourStart.getTime();
 
   // But also include any turns from today that don't have an hourly summary yet

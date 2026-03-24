@@ -97,20 +97,23 @@ function localDateStr(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+/** Format a Date as "YYYY-MM-DD HH:MM:SS" in UTC (matching SQLite datetime('now') format) */
+function utcDateTimeStr(d: Date): string {
+  return d.toISOString().replace("T", " ").slice(0, 19);
+}
+
 export function getTimeRange(
   periodKey: string,
   period: TimerPeriod,
 ): { start: string; end: string } {
-  // Time ranges use local-time period keys. The returned start/end are
-  // formatted as "YYYY-MM-DD HH:MM:SS" in local time for DB comparison
-  // against created_at (which is stored as UTC but compared as strings).
+  // Hour: convert local period key to UTC for comparison against created_at
+  // (stored as UTC via datetime('now')). Other periods return local-time
+  // strings for comparison against period_key columns (which are local).
   switch (period) {
     case "hour": {
       const d = new Date(`${periodKey.slice(0, 10)}T${periodKey.slice(11)}:00:00`);
-      const start = `${periodKey.slice(0, 10)} ${periodKey.slice(11)}:00:00`;
       const dEnd = new Date(d.getTime() + 3600000);
-      const end = `${localDateStr(dEnd)} ${String(dEnd.getHours()).padStart(2, "0")}:00:00`;
-      return { start, end };
+      return { start: utcDateTimeStr(d), end: utcDateTimeStr(dEnd) };
     }
     case "day":
       return { start: `${periodKey} 00:00:00`, end: `${periodKey} 23:59:59` };
@@ -954,7 +957,7 @@ export class Summarizer {
       this.lastHourKey = currentHourKey;
 
       const yesterday = new Date(now);
-      yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+      yesterday.setDate(yesterday.getDate() - 1);
       const yesterdayKey = getPeriodKey(yesterday, "day");
       if (!(await summaryExists(SYSTEM_MIND, "day", yesterdayKey))) {
         await processDay(yesterdayKey);
