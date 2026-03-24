@@ -143,4 +143,121 @@ describe("web history routes", () => {
     const res = await app.request("/api/v1/history/turns");
     assert.equal(res.status, 401);
   });
+
+  // ── Summaries endpoint tests ──
+
+  it("GET /api/v1/history/summaries — requires period param", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../src/web/app.js");
+
+    const res = await app.request("/api/v1/history/summaries", {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.ok((body as { error: string }).error.includes("period"));
+  });
+
+  it("GET /api/v1/history/summaries — rejects invalid period", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../src/web/app.js");
+
+    const res = await app.request("/api/v1/history/summaries?period=invalid", {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it("GET /api/v1/history/summaries — returns summaries by period", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../src/web/app.js");
+    const db = await getDb();
+
+    await db.insert(summaries).values({
+      mind: "test-history-sum1",
+      period: "hour",
+      period_key: "2026-03-22T14",
+      content: "Hourly summary content",
+      metadata: JSON.stringify({ deterministic: true }),
+    });
+
+    const res = await app.request("/api/v1/history/summaries?period=hour&mind=test-history-sum1", {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Array<{ content: string; period_key: string }>;
+    assert.ok(body.length >= 1);
+    assert.equal(body[0].content, "Hourly summary content");
+    assert.equal(body[0].period_key, "2026-03-22T14");
+  });
+
+  it("GET /api/v1/history/summaries — fetches by IDs", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../src/web/app.js");
+    const db = await getDb();
+
+    const result = await db
+      .insert(summaries)
+      .values({
+        mind: "test-history-sum2",
+        period: "turn",
+        period_key: "some-turn-id",
+        content: "ID-based fetch test",
+      })
+      .returning({ id: summaries.id });
+    const id = result[0].id;
+
+    const res = await app.request(`/api/v1/history/summaries?ids=${id}`, {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Array<{ id: number; content: string }>;
+    assert.equal(body.length, 1);
+    assert.equal(body[0].id, id);
+    assert.equal(body[0].content, "ID-based fetch test");
+  });
+
+  it("GET /api/v1/history/summaries — respects from/to range", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../src/web/app.js");
+    const db = await getDb();
+
+    await db.insert(summaries).values([
+      {
+        mind: "test-history-range",
+        period: "hour",
+        period_key: "2026-03-20T10",
+        content: "Early",
+      },
+      {
+        mind: "test-history-range",
+        period: "hour",
+        period_key: "2026-03-22T14",
+        content: "Later",
+      },
+    ]);
+
+    const res = await app.request(
+      "/api/v1/history/summaries?period=hour&mind=test-history-range&from=2026-03-21&to=2026-03-23",
+      { headers: { Cookie: `volute_session=${cookie}` } },
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Array<{ period_key: string }>;
+    assert.equal(body.length, 1);
+    assert.equal(body[0].period_key, "2026-03-22T14");
+  });
+
+  it("GET /api/v1/history/summaries — caps limit at 200", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../src/web/app.js");
+
+    const res = await app.request(
+      "/api/v1/history/summaries?period=hour&mind=test-history-cap&limit=999",
+      { headers: { Cookie: `volute_session=${cookie}` } },
+    );
+    assert.equal(res.status, 200);
+    // We can't directly check the SQL limit, but we verify the endpoint doesn't error
+    const body = await res.json();
+    assert.ok(Array.isArray(body));
+  });
 });

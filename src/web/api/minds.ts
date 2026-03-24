@@ -2314,8 +2314,8 @@ const app = new Hono<AuthEnv>()
           const globalConfig = readGlobalConfig();
           globalConfig.spiritModel = body.model;
           writeGlobalConfig(globalConfig);
-        } catch {
-          // Don't fail the request — the mind config was already saved
+        } catch (err) {
+          log.warn("failed to sync spirit model to global config", log.errorData(err));
         }
       }
 
@@ -2843,13 +2843,13 @@ const app = new Hono<AuthEnv>()
     if (!effectivePreset || effectivePreset === "summary") {
       const sumConditions: SQL[] = [eq(summaries.mind, name), eq(summaries.period, "turn")];
 
-      // Join through turns to filter by session/channel when requested
-      const needsJoin = !!(channel || session);
+      // Join through turns to filter by session when requested
+      // (channel filtering not supported for summaries — turns lack a channel column)
       if (session) {
         sumConditions.push(eq(turns.session, session));
       }
 
-      if (needsJoin) {
+      if (session) {
         const sumRows = await db
           .select({
             id: summaries.id,

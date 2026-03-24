@@ -22,8 +22,8 @@ const app = new Hono<AuthEnv>()
   // Toggle enable/disable
   .put("/:id/enabled", async (c) => {
     const { id } = c.req.param();
-    const body = await c.req.json<{ enabled: boolean }>();
-    if (typeof body.enabled !== "boolean") {
+    const body = await c.req.json<{ enabled: boolean }>().catch(() => null);
+    if (!body || typeof body.enabled !== "boolean") {
       return c.json({ error: "enabled must be a boolean" }, 400);
     }
     try {

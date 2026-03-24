@@ -461,12 +461,8 @@ export async function summarizeTurn(
 
 /** Update a turn's summary_id. */
 async function setSummaryId(turnId: string, summaryId: number): Promise<void> {
-  try {
-    const db = await getDb();
-    await db.update(turns).set({ summary_id: summaryId }).where(eq(turns.id, turnId));
-  } catch (err) {
-    sLog.error(`failed to set summary_id for turn ${turnId}`, log.errorData(err));
-  }
+  const db = await getDb();
+  await db.update(turns).set({ summary_id: summaryId }).where(eq(turns.id, turnId));
 }
 
 // ── Periodic summarization (timer-driven) ──
@@ -886,38 +882,54 @@ async function backfill(): Promise<void> {
   const now = new Date();
 
   for (let i = 1; i <= 48; i++) {
-    const d = new Date(now);
-    d.setUTCHours(d.getUTCHours() - i);
-    const key = getPeriodKey(d, "hour");
-    if (!(await summaryExists(SYSTEM_MIND, "hour", key))) {
-      await processHour(key);
+    try {
+      const d = new Date(now);
+      d.setHours(d.getHours() - i);
+      const key = getPeriodKey(d, "hour");
+      if (!(await summaryExists(SYSTEM_MIND, "hour", key))) {
+        await processHour(key);
+      }
+    } catch (err) {
+      sLog.error(`backfill failed for hour -${i}`, log.errorData(err));
     }
   }
 
   for (let i = 1; i <= 7; i++) {
-    const d = new Date(now);
-    d.setUTCDate(d.getUTCDate() - i);
-    const key = getPeriodKey(d, "day");
-    if (!(await summaryExists(SYSTEM_MIND, "day", key))) {
-      await processDay(key);
+    try {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const key = getPeriodKey(d, "day");
+      if (!(await summaryExists(SYSTEM_MIND, "day", key))) {
+        await processDay(key);
+      }
+    } catch (err) {
+      sLog.error(`backfill failed for day -${i}`, log.errorData(err));
     }
   }
 
   for (let i = 1; i <= 4; i++) {
-    const d = new Date(now);
-    d.setUTCDate(d.getUTCDate() - i * 7);
-    const key = getPeriodKey(d, "week");
-    if (!(await summaryExists(SYSTEM_MIND, "week", key))) {
-      await processWeek(key);
+    try {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i * 7);
+      const key = getPeriodKey(d, "week");
+      if (!(await summaryExists(SYSTEM_MIND, "week", key))) {
+        await processWeek(key);
+      }
+    } catch (err) {
+      sLog.error(`backfill failed for week -${i}`, log.errorData(err));
     }
   }
 
   for (let i = 1; i <= 3; i++) {
-    const d = new Date(now);
-    d.setUTCMonth(d.getUTCMonth() - i);
-    const key = getPeriodKey(d, "month");
-    if (!(await summaryExists(SYSTEM_MIND, "month", key))) {
-      await processMonth(key);
+    try {
+      const d = new Date(now);
+      d.setMonth(d.getMonth() - i);
+      const key = getPeriodKey(d, "month");
+      if (!(await summaryExists(SYSTEM_MIND, "month", key))) {
+        await processMonth(key);
+      }
+    } catch (err) {
+      sLog.error(`backfill failed for month -${i}`, log.errorData(err));
     }
   }
 }

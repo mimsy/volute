@@ -373,6 +373,37 @@ describe("summarizer", () => {
       assert.equal(meta.source_count, 3);
     });
 
+    it("promotes single child summary directly", async () => {
+      const mind = "test-promote-sum";
+      const utcFmt = (d: Date) => d.toISOString().replace("T", " ").slice(0, 19);
+      const turnTime = utcFmt(new Date("2026-03-22T14:10:00"));
+      await insertSummary(mind, "turn", "turn-solo", "I processed a single request.", turnTime);
+
+      const result = await summarizePeriod(mind, "hour", "2026-03-22T14");
+      assert.equal(result, true, "should promote single child");
+
+      const db = await getDb();
+      const row = await db
+        .select()
+        .from(summaries)
+        .where(
+          and(
+            eq(summaries.mind, mind),
+            eq(summaries.period, "hour"),
+            eq(summaries.period_key, "2026-03-22T14"),
+          ),
+        )
+        .get();
+
+      assert.ok(row, "promoted summary should exist");
+      assert.equal(row!.content, "I processed a single request.", "content should match source");
+      const meta = JSON.parse(row!.metadata!);
+      assert.equal(meta.promoted, true);
+      assert.equal(meta.source_count, 1);
+      assert.ok(Array.isArray(meta.source_ids));
+      assert.equal(meta.source_ids.length, 1);
+    });
+
     it("generates monthly summary from daily summaries", async () => {
       const mind = "test-monthly-sum";
       await insertSummary(mind, "day", "2026-02-01", "First day of Feb.");

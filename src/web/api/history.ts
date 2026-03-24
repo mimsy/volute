@@ -418,8 +418,8 @@ const history = new Hono()
         if (r.metadata) {
           try {
             metadata = JSON.parse(r.metadata);
-          } catch {
-            /* skip */
+          } catch (err) {
+            log.debug(`malformed summary metadata for id ${r.id}`, log.errorData(err));
           }
         }
         return { ...r, metadata };
