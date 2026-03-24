@@ -945,7 +945,7 @@ function jumpToLatest() {
                 {:else}
                   {@const events = streamingEvents.get(turn.id) ?? []}
                   {@const startTime = new Date(turn.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                  <TimelineBranch gap={24} reach={13} noReturn>
+                  <TimelineBranch gap={24} reach={11} noReturn>
                     {#snippet header()}
                       <div class="active-turn-header">
                         <span class="active-turn-time">{startTime} – now</span>
@@ -990,7 +990,7 @@ function jumpToLatest() {
             </div>
             <div class="turn-body">
               <div class="turn-summary">
-                <TimelineBranch gap={24} reach={13} noReturn>
+                <TimelineBranch gap={24} reach={11} noReturn>
                   {#snippet header()}
                     <div class="active-turn-header">
                       <span class="active-turn-time">{new Date(pendingInbounds[0].created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} – now</span>

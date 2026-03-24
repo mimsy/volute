@@ -34,7 +34,7 @@ let isLoading = $derived(loadingChildren.has(summary.id));
 let directEvents = $derived(directEventsSummaries.get(summary.id));
 let childItems = $derived(expandedSummaries.get(summary.id) ?? []);
 let branchGap = $derived(depth === 0 ? 16 : 12);
-let branchReach = $derived(depth === 0 ? 13 : 8);
+let branchReach = $derived(depth === 0 ? 10 : 7);
 let branchHeConnectorWidth = $derived(depth === 0 ? 26 : 19);
 </script>
 
@@ -251,6 +251,16 @@ let branchHeConnectorWidth = $derived(depth === 0 ? 26 : 19);
   }
   .summary-child-item:last-of-type::after {
     display: none;
+  }
+  /* Dashed rail when child is expanded */
+  .summary-child-expanded::after {
+    background: repeating-linear-gradient(
+      to bottom,
+      var(--border) 0px,
+      var(--border) 4px,
+      transparent 4px,
+      transparent 8px
+    );
   }
 
   /* Marker/event styles for direct events rendered inline */
