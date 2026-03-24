@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../../lib/db.js";
 import { subscribeAll, subscribe as subscribeMindEvent } from "../../lib/events/mind-events.js";
@@ -8,6 +8,7 @@ import {
   conversationParticipants,
   conversations,
   mindHistory,
+  summaries,
   turns,
   users,
 } from "../../lib/schema.js";
@@ -16,6 +17,7 @@ const history = new Hono()
   .get("/turns", async (c) => {
     const mindFilter = c.req.query("mind");
     const turnIdFilter = c.req.query("turnId");
+    const turnIdsFilter = c.req.query("turnIds");
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
     const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
 
@@ -25,6 +27,10 @@ const history = new Hono()
     const conditions = [];
     if (mindFilter) conditions.push(eq(turns.mind, mindFilter));
     if (turnIdFilter) conditions.push(eq(turns.id, turnIdFilter));
+    if (turnIdsFilter) {
+      const ids = turnIdsFilter.split(",").filter(Boolean);
+      if (ids.length > 0) conditions.push(inArray(turns.id, ids));
+    }
     const turnRows = await db
       .select()
       .from(turns)
@@ -37,15 +43,14 @@ const history = new Hono()
 
     const turnIds = turnRows.map((t) => t.id);
 
-    // 2. Get summaries
+    // 2. Get summaries from the unified summaries table
     const summaryRows = await db
       .select()
-      .from(mindHistory)
-      .where(and(eq(mindHistory.type, "summary"), inArray(mindHistory.turn_id, turnIds)));
+      .from(summaries)
+      .where(and(eq(summaries.period, "turn"), inArray(summaries.period_key, turnIds)));
     const summaryByTurn = new Map<string, { content: string; metadata: string | null }>();
     for (const s of summaryRows) {
-      if (s.turn_id)
-        summaryByTurn.set(s.turn_id, { content: s.content ?? "", metadata: s.metadata });
+      summaryByTurn.set(s.period_key, { content: s.content, metadata: s.metadata });
     }
 
     // 3. Get inbound/outbound events from mind_history for these turns.
@@ -395,6 +400,76 @@ const history = new Hono()
         Connection: "keep-alive",
       },
     });
+  })
+  .get("/summaries", async (c) => {
+    const mind = c.req.query("mind") ?? "_system";
+    const period = c.req.query("period");
+    const ids = c.req.query("ids"); // comma-separated summary IDs
+    const from = c.req.query("from");
+    const to = c.req.query("to");
+    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
+
+    // If fetching by IDs, skip other filters
+    if (ids) {
+      const db = await getDb();
+      const idList = ids
+        .split(",")
+        .map((s) => parseInt(s, 10))
+        .filter((n) => !isNaN(n));
+      if (idList.length === 0) return c.json([]);
+      const rows = await db.select().from(summaries).where(inArray(summaries.id, idList));
+      const result = rows.map((r) => {
+        let metadata: Record<string, unknown> | null = null;
+        if (r.metadata) {
+          try {
+            metadata = JSON.parse(r.metadata);
+          } catch (err) {
+            log.debug(`malformed summary metadata for id ${r.id}`, log.errorData(err));
+          }
+        }
+        return { ...r, metadata };
+      });
+      return c.json(result);
+    }
+
+    if (!period || !["turn", "hour", "day", "week", "month"].includes(period)) {
+      return c.json({ error: "period is required (turn, hour, day, week, month)" }, 400);
+    }
+
+    const db = await getDb();
+    const conditions = [eq(summaries.mind, mind), eq(summaries.period, period)];
+
+    if (from) conditions.push(gte(summaries.period_key, from));
+    if (to) conditions.push(sql`${summaries.period_key} <= ${to}`);
+
+    const rows = await db
+      .select({
+        id: summaries.id,
+        mind: summaries.mind,
+        period: summaries.period,
+        period_key: summaries.period_key,
+        content: summaries.content,
+        metadata: summaries.metadata,
+        created_at: summaries.created_at,
+      })
+      .from(summaries)
+      .where(and(...conditions))
+      .orderBy(desc(summaries.period_key))
+      .limit(limit);
+
+    const result = rows.map((r) => {
+      let metadata: Record<string, unknown> | null = null;
+      if (r.metadata) {
+        try {
+          metadata = JSON.parse(r.metadata);
+        } catch (err) {
+          log.debug(`malformed meta_summary metadata for id ${r.id}`, log.errorData(err));
+        }
+      }
+      return { ...r, metadata };
+    });
+
+    return c.json(result);
   });
 
 export default history;

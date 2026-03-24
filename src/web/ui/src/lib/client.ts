@@ -16,6 +16,7 @@ import type {
   Participant,
   Prompt,
   SharedSkill,
+  SummaryRow,
   TurnRow,
   UpdateResult,
   Variant,
@@ -241,14 +242,37 @@ export function fetchTurns(opts?: {
   limit?: number;
   offset?: number;
   turnId?: string;
+  turnIds?: string[];
 }): Promise<TurnRow[]> {
   const params = new URLSearchParams();
   if (opts?.mind) params.set("mind", opts.mind);
   if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
   if (opts?.offset !== undefined) params.set("offset", String(opts.offset));
   if (opts?.turnId) params.set("turnId", opts.turnId);
+  if (opts?.turnIds?.length) params.set("turnIds", opts.turnIds.join(","));
   const qs = params.toString();
   return get(`${V1}/history/turns${qs ? `?${qs}` : ""}`);
+}
+
+export function fetchSummaries(opts: {
+  mind?: string;
+  period: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}): Promise<SummaryRow[]> {
+  const params = new URLSearchParams();
+  if (opts.mind) params.set("mind", opts.mind);
+  params.set("period", opts.period);
+  if (opts.from) params.set("from", opts.from);
+  if (opts.to) params.set("to", opts.to);
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  return get(`${V1}/history/summaries?${params}`);
+}
+
+export function fetchSummaryByIds(ids: number[]): Promise<SummaryRow[]> {
+  if (ids.length === 0) return Promise.resolve([]);
+  return get(`${V1}/history/summaries?ids=${ids.join(",")}`);
 }
 
 // --- Variants ---

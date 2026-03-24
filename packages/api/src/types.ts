@@ -263,3 +263,15 @@ export type TurnRow = {
   conversations: TurnConversation[];
   activities: TurnActivity[];
 };
+
+export type SummaryPeriod = "turn" | "hour" | "day" | "week" | "month";
+
+export type SummaryRow = {
+  id: number;
+  mind: string;
+  period: SummaryPeriod;
+  period_key: string;
+  content: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+};

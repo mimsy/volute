@@ -8,7 +8,6 @@ import {
   createTurn,
   getActiveTurnId,
   getLastToolUseEventId,
-  setSummaryEventId,
   trackToolUse,
 } from "../src/lib/daemon/turn-tracker.js";
 import { getDb } from "../src/lib/db.js";
@@ -96,17 +95,6 @@ describe("turn-tracker", () => {
   it("completeTurn returns undefined when no active turn", async () => {
     const result = await completeTurn("nonexistent-mind");
     assert.equal(result, undefined);
-  });
-
-  it("sets summary_event_id", async () => {
-    const turnId = await createTurn(mind);
-    await setSummaryEventId(turnId, 123);
-
-    const db = await getDb();
-    const row = await db.select().from(turns).where(eq(turns.id, turnId)).get();
-    assert.equal(row!.summary_event_id, 123);
-
-    await clearMind(mind);
   });
 
   it("clearMind removes all entries for the mind", async () => {

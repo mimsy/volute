@@ -388,8 +388,12 @@ async function handleClick() {
   .event:hover::after {
     opacity: 1;
   }
-  /* Expandable summaries: dashed rail */
-  .event.expandable-summary::after,
+  /* Expandable summaries: solid rail when collapsed, dashed when expanded */
+  .event.expandable-summary::after {
+    top: 20px;
+    background: var(--timeline-rail);
+    opacity: 1;
+  }
   .event.turn-expanded::after {
     top: 20px;
     background: repeating-linear-gradient(
@@ -401,8 +405,10 @@ async function handleClick() {
     );
     opacity: 1;
   }
-  .event.expandable-summary:hover::after,
-  .event.turn-expanded:hover::after {
+  .event.expandable-summary:hover:not(:has(.turn-branch:hover))::after {
+    background: var(--type-color);
+  }
+  .event.turn-expanded:hover:not(:has(.turn-branch:hover))::after {
     background: repeating-linear-gradient(
       to bottom,
       var(--type-color) 0px,

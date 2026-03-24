@@ -9,6 +9,7 @@ import { initMindManager } from "./lib/daemon/mind-manager.js";
 import { startMindFull } from "./lib/daemon/mind-service.js";
 import { initScheduler } from "./lib/daemon/scheduler.js";
 import { initSleepManager } from "./lib/daemon/sleep-manager.js";
+import { initSummarizer } from "./lib/daemon/summarizer.js";
 import { initTokenBudget } from "./lib/daemon/token-budget.js";
 import { completeOrphanedTurns } from "./lib/daemon/turn-tracker.js";
 import { initDeliveryManager } from "./lib/delivery/delivery-manager.js";
@@ -199,6 +200,8 @@ export async function startDaemon(opts: {
   tokenBudget.start();
   const sleepManager = initSleepManager();
   sleepManager.start();
+  const summarizer = initSummarizer();
+  summarizer.start();
   const unsubscribeWebhook = initWebhook();
 
   // Clean up any turns left active from a previous daemon session
@@ -347,6 +350,7 @@ export async function startDaemon(opts: {
       safe("scheduler.saveState", () => scheduler.saveState());
       safe("mailPoller.stop", () => mailPoller.stop());
       safe("tokenBudget.stop", () => tokenBudget.stop());
+      safe("summarizer.stop", () => summarizer.stop());
       safe("stopApiKeyRefresh", stopApiKeyRefresh);
       safe("delivery.dispose", () => delivery.dispose());
       await safe("bridgeManager.stopAll", () => bridgeManager.stopAll());
