@@ -35,25 +35,24 @@ const CHILD_PERIOD: Record<string, SummaryPeriod | "turn"> = {
 };
 
 function parseISOWeek(weekKey: string): Date {
-  // weekKey format: "2026-W12" — returns the Monday of that week
+  // weekKey format: "2026-W12" — returns the Monday of that week (local time)
   const [yearStr, weekStr] = weekKey.split("-W");
   const year = parseInt(yearStr, 10);
   const week = parseInt(weekStr, 10);
-  // Jan 4 is always in week 1
-  const jan4 = new Date(Date.UTC(year, 0, 4));
-  const dayOfWeek = jan4.getUTCDay() || 7; // Monday=1
+  const jan4 = new Date(year, 0, 4);
+  const dayOfWeek = jan4.getDay() || 7;
   const monday = new Date(jan4);
-  monday.setUTCDate(jan4.getUTCDate() - dayOfWeek + 1 + (week - 1) * 7);
+  monday.setDate(jan4.getDate() - dayOfWeek + 1 + (week - 1) * 7);
   return monday;
 }
 
-// Period keys are UTC. Convert to local Date for display.
+// Period keys are local time. Parse without Z suffix.
 function periodKeyToDate(period: string, periodKey: string): Date {
   if (period === "hour")
-    return new Date(`${periodKey.slice(0, 10)}T${periodKey.slice(11, 13)}:00:00Z`);
-  if (period === "day") return new Date(`${periodKey}T00:00:00Z`);
+    return new Date(`${periodKey.slice(0, 10)}T${periodKey.slice(11, 13)}:00:00`);
+  if (period === "day") return new Date(`${periodKey}T00:00:00`);
   if (period === "week") return parseISOWeek(periodKey);
-  if (period === "month") return new Date(`${periodKey}-01T00:00:00Z`);
+  if (period === "month") return new Date(`${periodKey}-01T00:00:00`);
   return new Date(periodKey);
 }
 
@@ -64,29 +63,27 @@ function formatPeriodTime(period: string, periodKey: string): string {
   yesterdayLocal.setDate(todayLocal.getDate() - 1);
 
   if (period === "hour") {
-    // Convert UTC hour to local time
-    const utcStart = periodKeyToDate("hour", periodKey);
-    const utcEnd = new Date(utcStart.getTime() + 3600000);
+    // Period keys are local time — parse directly
+    const start = periodKeyToDate("hour", periodKey);
+    const end = new Date(start.getTime() + 3600000);
 
     const fmtTime = (d: Date) =>
       d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 
-    const startDay = new Date(utcStart.getFullYear(), utcStart.getMonth(), utcStart.getDate());
+    const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
     const isToday = startDay.getTime() === todayLocal.getTime();
     if (isToday) {
-      return `${fmtTime(utcStart)} \u2013 ${fmtTime(utcEnd)}`;
+      return `${fmtTime(start)} \u2013 ${fmtTime(end)}`;
     }
-    const monthDay = utcStart.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    return `${monthDay}, ${fmtTime(utcStart)} \u2013 ${fmtTime(utcEnd)}`;
+    const monthDay = start.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return `${monthDay}, ${fmtTime(start)} \u2013 ${fmtTime(end)}`;
   }
 
   if (period === "day") {
-    // Day keys are UTC dates — convert to local for "today"/"yesterday" check
+    // Period keys are local dates — direct comparison
     const d = periodKeyToDate("day", periodKey);
-    const dLocal = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-    // Check against local date (the UTC day may straddle local days, but this is close enough)
-    if (dLocal.getTime() === todayLocal.getTime()) return "Today";
-    if (dLocal.getTime() === yesterdayLocal.getTime()) return "Yesterday";
+    if (d.getTime() === todayLocal.getTime()) return "Today";
+    if (d.getTime() === yesterdayLocal.getTime()) return "Yesterday";
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   }
 
@@ -125,7 +122,7 @@ function periodEndDate(period: string, periodKey: string): Date {
   if (period === "week") {
     const monday = parseISOWeek(periodKey);
     const sunday = new Date(monday);
-    sunday.setUTCDate(monday.getUTCDate() + 7);
+    sunday.setDate(monday.getDate() + 7);
     return sunday;
   }
   if (period === "month") {
@@ -409,25 +406,16 @@ async function loadSummaries() {
   try {
     const now = new Date();
 
-    // Period keys are UTC. We need boundaries based on local time concepts
-    // ("today", "yesterday") expressed as UTC period keys.
-
-    // "Start of today" in local time → UTC ISO for period_key comparison.
-    // Period keys are UTC strings, so we compare directly against the ISO representation.
-    const todayLocalStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const todayUtcIso = todayLocalStart.toISOString(); // e.g. "2026-03-24T07:00:00.000Z"
-    // Hour keys are "YYYY-MM-DDTHH" — use the ISO prefix for from/to comparison
-    const todayHourFrom = `${todayUtcIso.slice(0, 10)}T${todayUtcIso.slice(11, 13)}`;
-    // Current UTC hour key (don't show the in-progress hour)
-    const hourCutoff = `${now.toISOString().slice(0, 10)}T${String(now.getUTCHours()).padStart(2, "0")}`;
-    // "Yesterday" boundary for daily summaries — use today's UTC ISO date
-    // (daily period keys that are < todayDayKey are definitely "yesterday" or earlier)
-    const todayDayKey = todayUtcIso.slice(0, 10);
+    // Period keys are local time. Build boundaries directly.
+    const pad2 = (n: number) => String(n).padStart(2, "0");
+    const todayKey = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+    const hourCutoff = `${todayKey}T${pad2(now.getHours())}`;
+    const todayHourFrom = `${todayKey}T00`;
+    const todayDayKey = todayKey;
 
     // Week boundary (7 days ago)
-    const weekAgo = new Date(todayLocalStart);
-    weekAgo.setDate(weekAgo.getDate() - 7);
-    const weekCutoff = weekAgo.toISOString().slice(0, 10);
+    const weekAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+    const weekCutoff = `${weekAgo.getFullYear()}-${pad2(weekAgo.getMonth() + 1)}-${pad2(weekAgo.getDate())}`;
 
     // Load hours for today (from local start-of-day to current hour, in UTC keys)
     const hours = await fetchSummaries({
@@ -454,7 +442,7 @@ async function loadSummaries() {
     weekSummaries = weeks.sort((a, b) => a.period_key.localeCompare(b.period_key));
 
     // Load months (exclude current month — it's still in progress)
-    const currentMonth = now.toISOString().slice(0, 7); // "2026-03"
+    const currentMonth = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`;
     const months = await fetchSummaries({
       mind: name,
       period: "month",
