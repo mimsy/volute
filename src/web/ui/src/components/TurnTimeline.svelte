@@ -441,7 +441,10 @@ async function loadSummaries() {
       to: todayDayKey,
       limit: 7,
     });
-    daySummaries = days.sort((a, b) => a.period_key.localeCompare(b.period_key));
+    // Exclude today — it's covered by hourly summaries
+    daySummaries = days
+      .filter((d) => d.period_key < todayDayKey)
+      .sort((a, b) => a.period_key.localeCompare(b.period_key));
 
     // Load weeks (before last week). Exclude current week.
     const weeks = await fetchSummaries({ mind: name, period: "week", to: weekCutoff, limit: 12 });
@@ -583,7 +586,8 @@ let timelineItems = $derived.by(() => {
 
   // Separator if transitioning from week/month to day level
   if ((monthSummaries.length > 0 || weekSummaries.length > 0) && daySummaries.length > 0) {
-    items.push({ kind: "separator", above: "this week", below: "this week" });
+    const aboveLabel = weekSummaries.length > 0 ? "weekly" : "monthly";
+    items.push({ kind: "separator", above: aboveLabel, below: "daily" });
   }
 
   // Daily summaries
@@ -591,7 +595,9 @@ let timelineItems = $derived.by(() => {
 
   // Separator before hourly
   if ((daySummaries.length > 0 || items.length > 0) && hourSummaries.length > 0) {
-    items.push({ kind: "separator", above: "yesterday", below: "today" });
+    const aboveLabel =
+      daySummaries.length > 0 ? "daily" : weekSummaries.length > 0 ? "weekly" : "monthly";
+    items.push({ kind: "separator", above: aboveLabel, below: "hourly" });
   }
 
   // Hourly summaries
@@ -605,7 +611,7 @@ let timelineItems = $derived.by(() => {
 
   // Separator before turns
   if (items.length > 0 && recentTurns.length > 0) {
-    items.push({ kind: "separator", above: "earlier", below: "now" });
+    items.push({ kind: "separator", above: "hourly", below: "now" });
   }
 
   for (const t of recentTurns) {
@@ -723,12 +729,20 @@ function jumpToLatest() {
           {#if item.kind === "separator"}
             <div class="turn-row scale-break-row">
               <div class="turn-time"></div>
-              <div class="scale-break-rail">
-                <span class="scale-break-label scale-break-above">{item.above} ^</span>
-                <div class="scale-break-slash"></div>
-                <div class="scale-break-gap"></div>
-                <div class="scale-break-slash"></div>
-                <span class="scale-break-label scale-break-below">{item.below} v</span>
+              <div class="scale-break-container">
+                <div class="scale-break-label-row">
+                  <svg class="scale-break-arrow" viewBox="0 0 8 5"><path d="M4 0L8 5H0z" fill="currentColor"/></svg>
+                  <span>{item.above}</span>
+                </div>
+                <div class="scale-break-marks">
+                  <div class="scale-break-slash"></div>
+                  <div class="scale-break-gap"></div>
+                  <div class="scale-break-slash"></div>
+                </div>
+                <div class="scale-break-label-row">
+                  <svg class="scale-break-arrow" viewBox="0 0 8 5"><path d="M4 5L0 0h8z" fill="currentColor"/></svg>
+                  <span>{item.below}</span>
+                </div>
               </div>
               <div class="turn-body"></div>
             </div>
@@ -1694,19 +1708,22 @@ function jumpToLatest() {
     100% { background: #4ade80; }
   }
 
-  /* Scale break: two horizontal diagonal lines cutting across the vertical rail */
+  /* Scale break: two diagonal lines on the rail with labels */
   .scale-break-row {
     min-height: 0 !important;
-    padding: 12px 0;
   }
-  .scale-break-rail {
+  .scale-break-container {
     width: 2px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
     position: relative;
-    padding: 0;
+  }
+  .scale-break-marks {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
   .scale-break-slash {
     width: 14px;
@@ -1717,18 +1734,24 @@ function jumpToLatest() {
   .scale-break-gap {
     height: 6px;
   }
-  .scale-break-label {
+  .scale-break-label-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     font-size: 10px;
     color: var(--text-2);
     white-space: nowrap;
-    position: absolute;
-    left: calc(100% + 8px);
+    padding: 6px 0 2px;
+    position: relative;
+    left: 10px;
   }
-  .scale-break-above {
-    top: -2px;
+  .scale-break-label-row:first-child {
+    padding: 2px 0 6px;
   }
-  .scale-break-below {
-    bottom: -2px;
+  .scale-break-arrow {
+    width: 7px;
+    height: 5px;
+    flex-shrink: 0;
   }
   /* Nested expansion (hour→turn inside day→hour) */
   .summary-nested-wrapper {
