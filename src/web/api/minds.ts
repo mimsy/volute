@@ -2289,10 +2289,14 @@ const app = new Hono<AuthEnv>()
 
       // Sync spirit model to global config so syncSpiritTemplate() stays consistent
       if (entry.mindType === "spirit" && body.model !== undefined) {
-        const { readGlobalConfig, writeGlobalConfig } = await import("../../lib/setup.js");
-        const globalConfig = readGlobalConfig();
-        globalConfig.spiritModel = body.model;
-        writeGlobalConfig(globalConfig);
+        try {
+          const { readGlobalConfig, writeGlobalConfig } = await import("../../lib/setup.js");
+          const globalConfig = readGlobalConfig();
+          globalConfig.spiritModel = body.model;
+          writeGlobalConfig(globalConfig);
+        } catch {
+          // Don't fail the request — the mind config was already saved
+        }
       }
 
       return c.json({ ok: true });
