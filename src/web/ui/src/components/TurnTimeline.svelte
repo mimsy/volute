@@ -1191,6 +1191,8 @@ function jumpToLatest() {
   .turn-row {
     display: flex;
     align-items: flex-start;
+    padding-top: 6px;
+    padding-bottom: 6px;
   }
 
   .turn-time {
@@ -1709,6 +1711,8 @@ function jumpToLatest() {
   /* Scale break: two diagonal lines on the rail with labels */
   .scale-break-row {
     min-height: 0 !important;
+    padding-top: 12px !important;
+    padding-bottom: 12px !important;
   }
   .scale-break-container {
     width: 2px;
@@ -1725,27 +1729,27 @@ function jumpToLatest() {
     transform: rotate(-30deg);
   }
   .scale-break-gap {
-    height: 6px;
+    height: 14px;
   }
   .scale-break-label {
     position: absolute;
-    left: 14px;
+    left: 16px;
     display: flex;
     align-items: center;
-    gap: 3px;
-    font-size: 10px;
+    gap: 4px;
+    font-size: 11px;
     color: var(--text-2);
     white-space: nowrap;
   }
   .scale-break-label-above {
-    top: -1px;
+    top: 0;
   }
   .scale-break-label-below {
-    bottom: -1px;
+    bottom: 0;
   }
   .scale-break-arrow {
-    width: 6px;
-    height: 4px;
+    width: 7px;
+    height: 5px;
     flex-shrink: 0;
   }
   /* Nested expansion (hour→turn inside day→hour) */
