@@ -483,11 +483,31 @@ async function toggleSummaryExpand(summary: SummaryRow) {
   loadingChildren = new Set(loadingChildren);
 
   try {
+    const isSystem = summary.mind === "_system";
     const childPeriod = CHILD_PERIOD[summary.period];
 
-    if (childPeriod === "turn") {
-      // Fetch child turn summaries by their IDs (stored in metadata.source_ids),
-      // then use their period_key (= turn UUID) to fetch full turn rows.
+    if (isSystem && childPeriod === "turn") {
+      // System-level hourly summaries don't have source_ids to turns.
+      // Instead, fetch per-mind summaries at the same period (hour).
+      // Their metadata will have source_ids pointing to turn summaries.
+      const minds: string[] =
+        ((summary.metadata as Record<string, unknown>)?.minds as string[]) ?? [];
+      const perMindSummaries: SummaryRow[] = [];
+      for (const mind of minds) {
+        const rows = await fetchSummaries({
+          mind,
+          period: summary.period,
+          from: summary.period_key,
+          to: summary.period_key,
+          limit: 1,
+        });
+        perMindSummaries.push(...rows);
+      }
+      perMindSummaries.sort((a, b) => a.mind.localeCompare(b.mind));
+      expandedSummaries.set(summary.id, perMindSummaries);
+      expandedSummaries = new SvelteMap(expandedSummaries);
+    } else if (childPeriod === "turn") {
+      // Per-mind hourly summaries have source_ids pointing to turn summaries.
       const sourceIds: number[] =
         ((summary.metadata as Record<string, unknown>)?.source_ids as number[]) ?? [];
 
@@ -531,9 +551,10 @@ async function toggleSummaryExpand(summary: SummaryRow) {
         // Week → days within the week's date range
         const monday = parseISOWeek(summary.period_key);
         const sunday = new Date(monday);
-        sunday.setUTCDate(monday.getUTCDate() + 6);
-        from = monday.toISOString().slice(0, 10);
-        to = sunday.toISOString().slice(0, 10);
+        sunday.setDate(monday.getDate() + 6);
+        const pad2 = (n: number) => String(n).padStart(2, "0");
+        from = `${monday.getFullYear()}-${pad2(monday.getMonth() + 1)}-${pad2(monday.getDate())}`;
+        to = `${sunday.getFullYear()}-${pad2(sunday.getMonth() + 1)}-${pad2(sunday.getDate())}`;
       } else if (summary.period === "month") {
         // Month "2026-03" → weeks/days within
         from = `${summary.period_key}-01`;
@@ -1308,36 +1329,33 @@ function jumpToLatest() {
     cursor: pointer;
   }
 
-  /* Extend HistoryEvent connectors to bridge the .turn-body padding gap.
-     Use :global to reach into HistoryEvent's scoped styles.
-     These only need to apply at the top level (turn-body > turn-summary),
-     not inside nested summary-expand-branch or summary-nested-branch. */
-  .turn-body > .turn-summary > :global(.event .turn-connector::after),
-  .turn-body > .turn-summary > :global(.active-turn-wrapper .active-turn-connector::after) {
+  /* Extend HistoryEvent connectors to bridge the .turn-body padding gap (12px).
+     HistoryEvent's default connector is left:-23px, width:23px.
+     At top level, the gap is wider (12px body padding + 14px branch padding = 26px from inner rail to main rail).
+     At nested levels, the gap is narrower. */
+  .turn-summary :global(.turn-connector::after) {
     left: -35px;
     width: 35px;
   }
-  .turn-body > .turn-summary > :global(.event .branch-return) {
+  .turn-summary :global(.branch-return) {
     left: -28px;
     width: 36px;
   }
-  /* Inside summary-expand-branch, connectors bridge a shorter gap */
-  .summary-expand-branch :global(.event .turn-connector::after),
-  .summary-expand-branch :global(.active-turn-wrapper .active-turn-connector::after) {
-    left: -23px;
-    width: 23px;
+  /* Inside summary-expand-branch, inner rail to parent rail gap is ~26px */
+  .summary-expand-branch :global(.turn-connector::after) {
+    left: -26px;
+    width: 26px;
   }
-  .summary-expand-branch :global(.event .branch-return) {
-    left: -16px;
-    width: 24px;
+  .summary-expand-branch :global(.branch-return) {
+    left: -19px;
+    width: 27px;
   }
-  /* Inside summary-nested-branch, same shorter gap */
-  .summary-nested-branch :global(.event .turn-connector::after),
-  .summary-nested-branch :global(.active-turn-wrapper .active-turn-connector::after) {
+  /* Inside summary-nested-branch, gap is ~19px */
+  .summary-nested-branch :global(.turn-connector::after) {
     left: -19px;
     width: 19px;
   }
-  .summary-nested-branch :global(.event .branch-return) {
+  .summary-nested-branch :global(.branch-return) {
     left: -12px;
     width: 20px;
   }
@@ -1799,7 +1817,7 @@ function jumpToLatest() {
   }
   .summary-nested-connector {
     position: absolute;
-    top: 8px;
+    top: 4px;
     left: 10px;
     width: 2px;
     bottom: 12px;
@@ -1923,7 +1941,7 @@ function jumpToLatest() {
   }
   .summary-expand-connector {
     position: absolute;
-    top: 8px;
+    top: 16px;
     left: 14px;
     width: 2px;
     bottom: 12px;
@@ -1989,8 +2007,8 @@ function jumpToLatest() {
   .summary-expand-return {
     position: absolute;
     bottom: 10px;
-    left: -19px;
-    width: 27px;
+    left: -12px;
+    width: 28px;
     height: 2px;
     background: var(--border);
   }
