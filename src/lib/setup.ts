@@ -55,6 +55,8 @@ export type GlobalConfig = {
   setupCompleted?: boolean;
   /** Image generation configuration */
   imagegen?: ImagegenConfig;
+  /** Extension IDs that are installed but should not load on daemon start */
+  disabledExtensions?: string[];
 };
 
 export function configPath(): string {

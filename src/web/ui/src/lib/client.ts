@@ -21,6 +21,7 @@ import type {
   Variant,
 } from "@volute/api";
 import type { CursorResponse } from "@volute/api/pagination";
+import type { ExtensionManagementInfo } from "./extensions";
 
 const V1 = "/api/v1";
 
@@ -655,6 +656,24 @@ export async function uploadMindAvatar(name: string, file: File): Promise<void> 
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error || "Failed to upload avatar");
   }
+}
+
+// --- Extensions management ---
+
+export function fetchAllExtensions(): Promise<ExtensionManagementInfo[]> {
+  return get("/api/extensions/all");
+}
+
+export async function setExtensionEnabled(id: string, enabled: boolean): Promise<void> {
+  await put(`/api/extensions/${enc(id)}/enabled`, { enabled });
+}
+
+export async function installExtension(pkg: string): Promise<void> {
+  await post("/api/extensions/install", { package: pkg });
+}
+
+export async function uninstallExtension(pkg: string): Promise<void> {
+  await del(`/api/extensions/uninstall/${enc(pkg)}`);
 }
 
 // --- Helpers ---
