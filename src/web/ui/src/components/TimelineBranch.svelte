@@ -3,7 +3,7 @@ import type { Snippet } from "svelte";
 
 let {
   gap = 16,
-  reach = 13,
+  reach = 10,
   noReturn = false,
   heConnectorWidth,
   header,
@@ -43,7 +43,7 @@ let {
       </div>
     {/if}
     {#if !noReturn}
-      <div class="branch-return"></div>
+      <div class="tb-return"></div>
     {/if}
   </div>
 </div>
@@ -91,7 +91,7 @@ let {
 
   /* Return line from inner rail back to parent rail — extends 2px past the
      wrapper edge to match the top horizontal connector's alignment */
-  .branch-return {
+  .tb-return {
     position: absolute;
     bottom: 10px;
     left: calc(-1 * var(--branch-reach) - 2px);
@@ -103,7 +103,7 @@ let {
   /* Highlight connectors on header/footer hover */
   .branch-wrapper:has(> .branch-content > .branch-header:hover, > .branch-content > .branch-footer:hover) > .branch-connector,
   .branch-wrapper:has(> .branch-content > .branch-header:hover, > .branch-content > .branch-footer:hover) > .branch-connector::after,
-  .branch-wrapper:has(> .branch-content > .branch-header:hover, > .branch-content > .branch-footer:hover) > .branch-content > .branch-return {
+  .branch-wrapper:has(> .branch-content > .branch-header:hover, > .branch-content > .branch-footer:hover) > .branch-content > .tb-return {
     background: var(--text-0);
   }
 
