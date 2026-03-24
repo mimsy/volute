@@ -1,7 +1,7 @@
 <script lang="ts">
 import type { Mind } from "@volute/api";
 import { SectionHeader } from "@volute/ui";
-import { onMount } from "svelte";
+import { onMount, tick } from "svelte";
 import MindSettingsCognition from "../components/mind/MindSettingsCognition.svelte";
 import MindSettingsEnv from "../components/mind/MindSettingsEnv.svelte";
 import MindSettingsProfile from "../components/mind/MindSettingsProfile.svelte";
@@ -25,12 +25,13 @@ let manualClick = false;
 
 onMount(() => {
   loadSpirit();
-  setupObserver();
 });
 
 async function loadSpirit() {
   try {
     mind = await fetchMind("volute");
+    await tick();
+    setupObserver();
   } catch (e) {
     error = e instanceof Error ? e.message : "Failed to load spirit";
   }

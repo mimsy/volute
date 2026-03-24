@@ -468,7 +468,7 @@ export function saveEnabledModels(models: string[]): Promise<void> {
   return put(`${V1}/system/ai/models`, { models });
 }
 
-export type AiDefaults = { spiritModel: string | null; utilityModel: string | null };
+export type AiDefaults = { spiritModel?: string | null; utilityModel: string | null };
 
 export function fetchAiDefaults(): Promise<AiDefaults> {
   return get(`${V1}/system/ai/defaults`);

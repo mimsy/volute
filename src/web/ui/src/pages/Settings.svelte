@@ -52,7 +52,7 @@ onMount(async () => {
 $effect(() => {
   const u = utilityModel;
   if (!defaultsLoaded) return;
-  saveAiDefaults({ spiritModel: null, utilityModel: u || null }).catch(() => {});
+  saveAiDefaults({ utilityModel: u || null }).catch(() => {});
 });
 
 async function handleSystemAction() {

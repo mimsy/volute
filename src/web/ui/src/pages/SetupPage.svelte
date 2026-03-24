@@ -89,6 +89,10 @@ let enabledModelIds = $state<string[]>([]);
 
 function handleProviderLoad(enabledModels: AiModel[]) {
   enabledModelIds = enabledModels.map((m) => m.id);
+  // Clear spirit model if it was removed, auto-select first available
+  if (spiritModel && !enabledModelIds.includes(spiritModel)) {
+    spiritModel = "";
+  }
   if (enabledModels.length > 0 && !spiritModel) {
     spiritModel = enabledModels[0].id;
   }

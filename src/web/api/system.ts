@@ -363,15 +363,17 @@ const app = new Hono<AuthEnv>()
     zValidator(
       "json",
       z.object({
-        spiritModel: z.string().nullable(),
+        spiritModel: z.string().nullable().optional(),
         utilityModel: z.string().nullable(),
       }),
     ),
     (c) => {
       const { spiritModel, utilityModel } = c.req.valid("json");
       const config = readGlobalConfig();
-      config.spiritModel = spiritModel ?? undefined;
-      writeGlobalConfig(config);
+      if (spiritModel !== undefined) {
+        config.spiritModel = spiritModel ?? undefined;
+        writeGlobalConfig(config);
+      }
       setUtilityModel(utilityModel ?? undefined);
       return c.json({ ok: true });
     },
