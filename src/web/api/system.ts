@@ -515,7 +515,62 @@ const app = new Hono<AuthEnv>()
       setTimeout(() => oauthFlows.delete(flowId), 30_000);
     }
     return c.json(result);
-  });
+  })
+  .get("/mind-defaults", requireAdmin, (c) => {
+    const config = readGlobalConfig();
+    return c.json(config.mindDefaults ?? {});
+  })
+  .put(
+    "/mind-defaults",
+    requireAdmin,
+    zValidator(
+      "json",
+      z.object({
+        cognition: z
+          .object({
+            model: z.string().optional(),
+            thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
+            maxThinkingTokens: z.number().optional(),
+            tokenBudget: z.number().optional(),
+            tokenBudgetPeriodMinutes: z.number().optional(),
+            compaction: z.object({ maxContextTokens: z.number().optional() }).optional(),
+          })
+          .optional(),
+        sleep: z
+          .object({
+            enabled: z.boolean().optional(),
+            schedule: z.object({ sleep: z.string(), wake: z.string() }).optional(),
+            wakeTriggers: z
+              .object({
+                mentions: z.boolean().optional(),
+                dms: z.boolean().optional(),
+                channels: z.array(z.string()).optional(),
+                senders: z.array(z.string()).optional(),
+              })
+              .optional(),
+          })
+          .optional(),
+        schedules: z
+          .array(
+            z.object({
+              id: z.string(),
+              cron: z.string().optional(),
+              message: z.string().optional(),
+              enabled: z.boolean(),
+              whileSleeping: z.enum(["skip", "queue", "trigger-wake"]).optional(),
+            }),
+          )
+          .optional(),
+      }),
+    ),
+    (c) => {
+      const mindDefaults = c.req.valid("json");
+      const config = readGlobalConfig();
+      config.mindDefaults = mindDefaults;
+      writeGlobalConfig(config);
+      return c.json({ ok: true });
+    },
+  );
 
 // In-memory OAuth flow tracking
 type OAuthFlow = {

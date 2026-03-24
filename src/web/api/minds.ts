@@ -772,21 +772,23 @@ const app = new Hono<AuthEnv>()
       // Generate Ed25519 keypair for mind identity
       const { publicKeyPem } = generateIdentity(dest);
 
-      // Merge default schedules, sleep config, and description into volute.json
+      // Merge default settings into volute.json and config.json
       {
+        const { readGlobalConfig: readGlobal } = await import("../../lib/setup.js");
+        const mindDefaults = readGlobal().mindDefaults;
         const config = readVoluteConfig(dest);
         if (!config) throw new Error("Failed to read volute.json after identity generation");
         if (body.description) {
           config.profile = { ...config.profile, description: body.description };
         }
         if (!config.sleep) {
-          config.sleep = {
+          config.sleep = mindDefaults?.sleep ?? {
             enabled: true,
             schedule: { sleep: "0 0 * * *", wake: "0 8 * * *" },
           };
         }
         if (!config.schedules || config.schedules.length === 0) {
-          config.schedules = [
+          config.schedules = mindDefaults?.schedules ?? [
             {
               id: "heartbeat",
               cron: "0 12,16,20 * * *",
@@ -797,18 +799,34 @@ const app = new Hono<AuthEnv>()
             },
           ];
         }
+        // Apply cognition defaults
+        const cog = mindDefaults?.cognition;
+        if (cog) {
+          if (cog.thinkingLevel && !config.thinkingLevel) config.thinkingLevel = cog.thinkingLevel;
+          if (cog.maxThinkingTokens && !config.maxThinkingTokens)
+            config.maxThinkingTokens = cog.maxThinkingTokens;
+          if (cog.tokenBudget && !config.tokenBudget) config.tokenBudget = cog.tokenBudget;
+          if (cog.tokenBudgetPeriodMinutes && !config.tokenBudgetPeriodMinutes)
+            config.tokenBudgetPeriodMinutes = cog.tokenBudgetPeriodMinutes;
+        }
         writeVoluteConfig(dest, config);
-      }
 
-      if (body.model) {
-        const configPath = resolve(dest, "home/.config/config.json");
-        const existing = existsSync(configPath)
-          ? JSON.parse(readFileSync(configPath, "utf-8"))
-          : {};
-        // Pi template needs provider:model format; other templates need bare model ID
-        existing.model =
-          template === "pi" ? qualifyModelId(body.model) : unqualifyModelId(body.model);
-        writeFileSync(configPath, `${JSON.stringify(existing, null, 2)}\n`);
+        // Apply model (and compaction) to SDK config.json
+        const modelId = body.model ?? cog?.model;
+        const sdkConfigPath = resolve(dest, "home/.config/config.json");
+        if (modelId || cog?.compaction) {
+          const existing = existsSync(sdkConfigPath)
+            ? JSON.parse(readFileSync(sdkConfigPath, "utf-8"))
+            : {};
+          if (modelId) {
+            existing.model =
+              template === "pi" ? qualifyModelId(modelId) : unqualifyModelId(modelId);
+          }
+          if (cog?.compaction && !existing.compaction) {
+            existing.compaction = cog.compaction;
+          }
+          writeFileSync(sdkConfigPath, `${JSON.stringify(existing, null, 2)}\n`);
+        }
       }
 
       // Stamp prompts.json with current DB defaults

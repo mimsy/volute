@@ -479,6 +479,50 @@ export function saveAiDefaults(defaults: AiDefaults): Promise<void> {
   return put(`${V1}/system/ai/defaults`, defaults);
 }
 
+// --- Mind Defaults ---
+
+export type MindDefaultsCognition = {
+  model?: string;
+  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  maxThinkingTokens?: number;
+  tokenBudget?: number;
+  tokenBudgetPeriodMinutes?: number;
+  compaction?: { maxContextTokens?: number };
+};
+
+export type MindDefaultsSleep = {
+  enabled?: boolean;
+  schedule?: { sleep: string; wake: string };
+  wakeTriggers?: {
+    mentions?: boolean;
+    dms?: boolean;
+    channels?: string[];
+    senders?: string[];
+  };
+};
+
+export type MindDefaultsSchedule = {
+  id: string;
+  cron?: string;
+  message?: string;
+  enabled: boolean;
+  whileSleeping?: "skip" | "queue" | "trigger-wake";
+};
+
+export type MindDefaults = {
+  cognition?: MindDefaultsCognition;
+  sleep?: MindDefaultsSleep;
+  schedules?: MindDefaultsSchedule[];
+};
+
+export function fetchMindDefaults(): Promise<MindDefaults> {
+  return get(`${V1}/system/mind-defaults`);
+}
+
+export function saveMindDefaults(defaults: MindDefaults): Promise<void> {
+  return put(`${V1}/system/mind-defaults`, defaults);
+}
+
 // --- Imagegen ---
 
 export type ImagegenProvider = {
