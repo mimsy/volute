@@ -1309,14 +1309,37 @@ function jumpToLatest() {
   }
 
   /* Extend HistoryEvent connectors to bridge the .turn-body padding gap.
-     Only apply to the top-level summary, not nested expansion branches. */
-  .turn-summary > :global(.event .turn-connector::after) {
+     Use :global to reach into HistoryEvent's scoped styles.
+     These only need to apply at the top level (turn-body > turn-summary),
+     not inside nested summary-expand-branch or summary-nested-branch. */
+  .turn-body > .turn-summary > :global(.event .turn-connector::after),
+  .turn-body > .turn-summary > :global(.active-turn-wrapper .active-turn-connector::after) {
     left: -35px;
     width: 35px;
   }
-  .turn-summary > :global(.event .branch-return) {
+  .turn-body > .turn-summary > :global(.event .branch-return) {
     left: -28px;
     width: 36px;
+  }
+  /* Inside summary-expand-branch, connectors bridge a shorter gap */
+  .summary-expand-branch :global(.event .turn-connector::after),
+  .summary-expand-branch :global(.active-turn-wrapper .active-turn-connector::after) {
+    left: -23px;
+    width: 23px;
+  }
+  .summary-expand-branch :global(.event .branch-return) {
+    left: -16px;
+    width: 24px;
+  }
+  /* Inside summary-nested-branch, same shorter gap */
+  .summary-nested-branch :global(.event .turn-connector::after),
+  .summary-nested-branch :global(.active-turn-wrapper .active-turn-connector::after) {
+    left: -19px;
+    width: 19px;
+  }
+  .summary-nested-branch :global(.event .branch-return) {
+    left: -12px;
+    width: 20px;
   }
 
   .turn-dot {
@@ -1776,7 +1799,7 @@ function jumpToLatest() {
   }
   .summary-nested-connector {
     position: absolute;
-    top: 16px;
+    top: 8px;
     left: 10px;
     width: 2px;
     bottom: 12px;
@@ -1786,15 +1809,15 @@ function jumpToLatest() {
     content: "";
     position: absolute;
     top: 0;
-    left: -18px;
-    width: 18px;
+    left: -19px;
+    width: 19px;
     height: 2px;
     background: var(--border);
   }
   .summary-nested-branch {
     position: relative;
     padding-left: 12px;
-    padding-top: 8px;
+    padding-top: 4px;
     padding-bottom: 8px;
   }
   .summary-nested-branch > :global(.event::after) {
@@ -1802,9 +1825,9 @@ function jumpToLatest() {
   }
   .summary-nested-return {
     position: absolute;
-    bottom: 6px;
-    left: -10px;
-    width: 18px;
+    bottom: 10px;
+    left: -11px;
+    width: 19px;
     height: 2px;
     background: var(--border);
   }
@@ -1900,7 +1923,7 @@ function jumpToLatest() {
   }
   .summary-expand-connector {
     position: absolute;
-    top: 16px;
+    top: 8px;
     left: 14px;
     width: 2px;
     bottom: 12px;
@@ -1910,8 +1933,8 @@ function jumpToLatest() {
     content: "";
     position: absolute;
     top: 0;
-    left: -27px;
-    width: 27px;
+    left: -26px;
+    width: 26px;
     height: 2px;
     background: var(--border);
   }
@@ -1971,10 +1994,10 @@ function jumpToLatest() {
     height: 2px;
     background: var(--border);
   }
-  /* Highlight connectors on hover */
-  .summary-expand-wrapper:has(.summary-expand-header:hover, .summary-expand-collapse:hover) .summary-expand-connector,
-  .summary-expand-wrapper:has(.summary-expand-header:hover, .summary-expand-collapse:hover) .summary-expand-connector::after,
-  .summary-expand-wrapper:has(.summary-expand-header:hover, .summary-expand-collapse:hover) .summary-expand-return {
+  /* Highlight connectors on hover — only direct children, not nested branches */
+  .summary-expand-wrapper:has(> .summary-expand-branch > .summary-expand-header:hover, > .summary-expand-branch > .summary-expand-collapse:hover) > .summary-expand-connector,
+  .summary-expand-wrapper:has(> .summary-expand-branch > .summary-expand-header:hover, > .summary-expand-branch > .summary-expand-collapse:hover) > .summary-expand-connector::after,
+  .summary-expand-wrapper:has(> .summary-expand-branch > .summary-expand-header:hover, > .summary-expand-branch > .summary-expand-collapse:hover) > .summary-expand-branch > .summary-expand-return {
     background: var(--text-0);
   }
 
