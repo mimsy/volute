@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
-import type { HookCallback } from "@anthropic-ai/claude-agent-sdk";
+import type { HookCallback, SyncHookJSONOutput } from "@anthropic-ai/claude-agent-sdk";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { toSDKContent } from "./lib/content.js";
 import { daemonEmit } from "./lib/daemon-client.js";
@@ -137,8 +137,13 @@ export function createMind(options: {
   function wrapHookWithEmit(hook: HookCallback, source: string, session: Session): HookCallback {
     return async (...args) => {
       const result = await hook(...args);
-      const additionalContext = (result as any)?.hookSpecificOutput?.additionalContext;
-      const decision = (result as any)?.decision;
+      const syncResult = result as SyncHookJSONOutput;
+      const hookOutput = syncResult?.hookSpecificOutput;
+      const additionalContext =
+        hookOutput && "additionalContext" in hookOutput
+          ? (hookOutput.additionalContext as string | undefined)
+          : undefined;
+      const decision = syncResult?.decision;
       if (additionalContext || decision) {
         const channel = session.currentMessageId
           ? session.messageChannels.get(session.currentMessageId)?.channel

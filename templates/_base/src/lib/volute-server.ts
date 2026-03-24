@@ -21,10 +21,25 @@ function extractText(content: VoluteContentPart[] | string): string {
     .join("\n");
 }
 
-/** Normalize content to VoluteContentPart[] — connectors may send plain strings. */
+/** Normalize content to VoluteContentPart[] — connectors may send plain strings or mixed arrays. */
 function normalizeContent(content: unknown): VoluteContentPart[] {
-  if (Array.isArray(content)) return content as VoluteContentPart[];
   if (typeof content === "string") return [{ type: "text", text: content }];
+  if (Array.isArray(content)) {
+    return content.map((item): VoluteContentPart => {
+      if (typeof item === "object" && item !== null && "type" in item) {
+        const obj = item as Record<string, unknown>;
+        if (
+          obj.type === "image" &&
+          typeof obj.media_type === "string" &&
+          typeof obj.data === "string"
+        ) {
+          return { type: "image", media_type: obj.media_type, data: obj.data };
+        }
+        if (typeof obj.text === "string") return { type: "text", text: obj.text };
+      }
+      return { type: "text", text: typeof item === "string" ? item : JSON.stringify(item) };
+    });
+  }
   return [{ type: "text", text: JSON.stringify(content) }];
 }
 
@@ -110,11 +125,11 @@ export function createVoluteServer(options: {
         body.content = normalizeContent(body.content);
 
         // Handle batch payloads from delivery manager
-        if ((body as any).batch) {
-          const batch = (body as any).batch as {
-            channels: Record<string, any[]>;
-          };
-          router.dispatchBatch(batch, body.session ?? "main", body);
+        const bodyWithBatch = body as VoluteRequest & {
+          batch?: { channels: Record<string, { sender?: string | null; content: unknown }[]> };
+        };
+        if (bodyWithBatch.batch) {
+          router.dispatchBatch(bodyWithBatch.batch, body.session ?? "main", body);
         } else {
           // Pre-routed by daemon delivery manager — dispatch directly
           router.dispatch(body.content, body.session ?? "main", body);

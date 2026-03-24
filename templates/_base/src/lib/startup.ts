@@ -32,7 +32,7 @@ export type MindConfig = {
   // Template-specific config fields (claude, pi, codex)
   maxThinkingTokens?: number;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-  reasoningEffort?: string;
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
 };
 
 export function loadConfig(): MindConfig {

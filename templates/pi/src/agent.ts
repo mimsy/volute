@@ -167,12 +167,11 @@ export function createMind(options: {
         return {};
       });
 
-      pi.on("tool_execution_end", async (event: any) => {
+      pi.on("tool_execution_end", async (event) => {
         try {
           const result = await runHooks(hooksDir, "post-tool-use", {
             event: "post-tool-use",
             tool_name: event.toolName,
-            tool_input: event.args,
           });
           if (result.additionalContext) {
             emit(session, {

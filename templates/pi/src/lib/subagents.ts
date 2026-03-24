@@ -72,12 +72,18 @@ export function createSubagentExtension(
                 reject(new Error(`Subagent "${name}" timed out after 5 minutes`));
               }, 300_000);
 
-              session.subscribe((event: any) => {
-                if (event.type === "agent_error") {
+              session.subscribe((event) => {
+                if (event.type === "agent_end") {
                   clearTimeout(timeout);
-                  reject(
-                    new Error(`Subagent "${name}" error: ${event.error?.message ?? "unknown"}`),
-                  );
+                  for (const msg of event.messages ?? []) {
+                    if ("role" in msg && msg.role === "assistant" && "content" in msg) {
+                      const content = msg.content as { type: string; text?: string }[];
+                      for (const block of content) {
+                        if (block.type === "text" && block.text) textParts.push(block.text);
+                      }
+                    }
+                  }
+                  resolve();
                   return;
                 }
                 if (event.type === "turn_end") {
@@ -85,17 +91,6 @@ export function createSubagentExtension(
                   if (def.maxTurns && turnCount >= def.maxTurns) {
                     session.abort();
                   }
-                }
-                if (event.type === "agent_end") {
-                  clearTimeout(timeout);
-                  for (const msg of event.messages ?? []) {
-                    if (msg.role === "assistant" && msg.content) {
-                      for (const block of msg.content) {
-                        if (block.type === "text") textParts.push(block.text);
-                      }
-                    }
-                  }
-                  resolve();
                 }
               });
             });
@@ -122,7 +117,7 @@ export function createSubagentExtension(
   };
 }
 
-const TOOL_MAP: Record<string, any> = {
+const TOOL_MAP: Record<string, (typeof codingTools)[number]> = {
   Read: readTool,
   Write: writeTool,
   Bash: bashTool,
