@@ -18,32 +18,33 @@ describe("summarizer", () => {
 
   describe("getPeriodKey", () => {
     it("returns correct hour key", () => {
-      const d = new Date("2026-03-22T14:30:00Z");
+      // getPeriodKey uses local time
+      const d = new Date(2026, 2, 22, 14, 30, 0);
       assert.equal(getPeriodKey(d, "hour"), "2026-03-22T14");
     });
 
     it("returns correct day key", () => {
-      const d = new Date("2026-03-22T14:30:00Z");
+      const d = new Date(2026, 2, 22, 14, 30, 0);
       assert.equal(getPeriodKey(d, "day"), "2026-03-22");
     });
 
     it("returns correct month key", () => {
-      const d = new Date("2026-03-22T14:30:00Z");
+      const d = new Date(2026, 2, 22, 14, 30, 0);
       assert.equal(getPeriodKey(d, "month"), "2026-03");
     });
 
     it("returns correct week key", () => {
-      const d = new Date("2026-03-22T14:30:00Z");
+      const d = new Date(2026, 2, 22, 14, 30, 0);
       assert.equal(getPeriodKey(d, "week"), "2026-W12");
     });
 
     it("pads hour with leading zero", () => {
-      const d = new Date("2026-03-22T03:00:00Z");
+      const d = new Date(2026, 2, 22, 3, 0, 0);
       assert.equal(getPeriodKey(d, "hour"), "2026-03-22T03");
     });
 
     it("pads week number with leading zero", () => {
-      const d = new Date("2026-01-05T00:00:00Z");
+      const d = new Date(2026, 0, 5, 12, 0, 0);
       assert.equal(getPeriodKey(d, "week"), "2026-W02");
     });
   });

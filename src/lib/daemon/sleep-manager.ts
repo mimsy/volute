@@ -253,12 +253,15 @@ export class SleepManager {
     this.transitioning.add(name);
 
     try {
-      // Start the mind process
-      try {
-        await wakeMind(name);
-      } catch (err) {
-        slog.error(`failed to wake ${name}`, log.errorData(err));
-        return;
+      // Start the mind process (skip if already running — e.g. process wasn't stopped during sleep)
+      const manager = getMindManager();
+      if (!manager.isRunning(name)) {
+        try {
+          await wakeMind(name);
+        } catch (err) {
+          slog.error(`failed to wake ${name}`, log.errorData(err));
+          return;
+        }
       }
 
       // Wait for health check
