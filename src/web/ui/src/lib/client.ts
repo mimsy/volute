@@ -267,6 +267,11 @@ export function fetchSummaries(opts: {
   return get(`${V1}/history/summaries?${params}`);
 }
 
+export function fetchSummaryByIds(ids: number[]): Promise<SummaryRow[]> {
+  if (ids.length === 0) return Promise.resolve([]);
+  return get(`${V1}/history/summaries?ids=${ids.join(",")}`);
+}
+
 // --- Variants ---
 
 export function fetchVariants(name: string): Promise<Variant[]> {

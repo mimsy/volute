@@ -9,7 +9,13 @@ import type {
 import { Icon } from "@volute/ui";
 import { renderMarkdown } from "@volute/ui/markdown";
 import { SvelteMap } from "svelte/reactivity";
-import { fetchHistory, fetchSummaries, fetchTurnEvents, fetchTurns } from "../lib/client";
+import {
+  fetchHistory,
+  fetchSummaries,
+  fetchSummaryByIds,
+  fetchTurnEvents,
+  fetchTurns,
+} from "../lib/client";
 import { extractTextContent } from "../lib/feed-utils";
 import { formatRelativeTime } from "../lib/format";
 import { navigate } from "../lib/navigate";
@@ -477,24 +483,36 @@ async function toggleSummaryExpand(summary: SummaryRow) {
     const childPeriod = CHILD_PERIOD[summary.period];
 
     if (childPeriod === "turn") {
-      // Load turns for this time range using timestamps
-      const fromDate = periodKeyToDate(summary.period, summary.period_key);
-      const toDate = periodEndDate(summary.period, summary.period_key);
-      // Fetch turns for this specific mind (not all minds)
-      const mindFilter = summary.mind === "_system" ? undefined : summary.mind;
-      const allTurns = await fetchTurns({ mind: mindFilter ?? name, limit: 200 });
-      const filtered = allTurns.filter((t) => {
-        const ts = new Date(t.created_at + (t.created_at.endsWith("Z") ? "" : "Z")).getTime();
-        return ts >= fromDate.getTime() && ts < toDate.getTime();
-      });
+      // Fetch child turn summaries by their IDs (stored in metadata.source_ids),
+      // then use their period_key (= turn UUID) to fetch full turn rows.
+      const sourceIds: number[] =
+        ((summary.metadata as Record<string, unknown>)?.source_ids as number[]) ?? [];
 
-      // Single turn: expand directly to raw events
-      if (filtered.length === 1 && filtered[0].id) {
-        const events = await fetchTurnEvents(filtered[0].mind, { turnId: filtered[0].id });
-        directEventsSummaries.set(summary.id, events);
-        directEventsSummaries = new SvelteMap(directEventsSummaries);
+      if (sourceIds.length > 0) {
+        const turnSummaryRows = await fetchSummaryByIds(sourceIds);
+        const turnIds = turnSummaryRows.map((s) => s.period_key);
+
+        if (turnIds.length === 1) {
+          const events = await fetchTurnEvents(turnSummaryRows[0].mind, {
+            turnId: turnIds[0],
+          });
+          directEventsSummaries.set(summary.id, events);
+          directEventsSummaries = new SvelteMap(directEventsSummaries);
+        } else if (turnIds.length > 0) {
+          const turns: TurnRow[] = [];
+          for (const tid of turnIds) {
+            const rows = await fetchTurns({ turnId: tid });
+            turns.push(...rows);
+          }
+          turns.sort((a, b) => a.created_at.localeCompare(b.created_at));
+          expandedSummaries.set(summary.id, turns);
+          expandedSummaries = new SvelteMap(expandedSummaries);
+        } else {
+          expandedSummaries.set(summary.id, []);
+          expandedSummaries = new SvelteMap(expandedSummaries);
+        }
       } else {
-        expandedSummaries.set(summary.id, filtered.reverse());
+        expandedSummaries.set(summary.id, []);
         expandedSummaries = new SvelteMap(expandedSummaries);
       }
     } else {

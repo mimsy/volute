@@ -399,12 +399,36 @@ const history = new Hono()
   .get("/summaries", async (c) => {
     const mind = c.req.query("mind") ?? "_system";
     const period = c.req.query("period");
+    const ids = c.req.query("ids"); // comma-separated summary IDs
     const from = c.req.query("from");
     const to = c.req.query("to");
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
 
-    if (!period || !["hour", "day", "week", "month"].includes(period)) {
-      return c.json({ error: "period is required (hour, day, week, month)" }, 400);
+    // If fetching by IDs, skip other filters
+    if (ids) {
+      const db = await getDb();
+      const idList = ids
+        .split(",")
+        .map((s) => parseInt(s, 10))
+        .filter((n) => !isNaN(n));
+      if (idList.length === 0) return c.json([]);
+      const rows = await db.select().from(summaries).where(inArray(summaries.id, idList));
+      const result = rows.map((r) => {
+        let metadata: Record<string, unknown> | null = null;
+        if (r.metadata) {
+          try {
+            metadata = JSON.parse(r.metadata);
+          } catch {
+            /* skip */
+          }
+        }
+        return { ...r, metadata };
+      });
+      return c.json(result);
+    }
+
+    if (!period || !["turn", "hour", "day", "week", "month"].includes(period)) {
+      return c.json({ error: "period is required (turn, hour, day, week, month)" }, 400);
     }
 
     const db = await getDb();
