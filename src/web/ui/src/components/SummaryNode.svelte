@@ -87,15 +87,17 @@ let branchHeConnectorWidth = $derived(depth === 0 ? 26 : 19);
               </div>
             </div>
             {#if childExpanded}
-              <SummaryNode
-                summary={childSummary}
-                depth={depth + 1}
-                {expandedSummaries}
-                {directEventsSummaries}
-                {loadingChildren}
-                {toggleSummaryExpand}
-                {formatPeriodTime}
-              />
+              <div class="nested-branch-wrapper">
+                <SummaryNode
+                  summary={childSummary}
+                  depth={depth + 1}
+                  {expandedSummaries}
+                  {directEventsSummaries}
+                  {loadingChildren}
+                  {toggleSummaryExpand}
+                  {formatPeriodTime}
+                />
+              </div>
             {/if}
           {:else}
             {@const childTurn = child as TurnRow}
@@ -252,15 +254,22 @@ let branchHeConnectorWidth = $derived(depth === 0 ? 26 : 19);
   .summary-child-item:last-of-type::after {
     display: none;
   }
-  /* Dashed rail when child is expanded */
+  /* Dashed rail when child is expanded — use opaque bg-1 in gaps
+     to mask the solid branch-connector underneath at the same position */
   .summary-child-expanded::after {
     background: repeating-linear-gradient(
       to bottom,
       var(--border) 0px,
       var(--border) 4px,
-      transparent 4px,
-      transparent 8px
+      var(--bg-1) 4px,
+      var(--bg-1) 8px
     );
+    z-index: 2;
+  }
+
+  /* Offset nested branches to match original summary-nested-wrapper margin */
+  .nested-branch-wrapper {
+    margin-left: 8px;
   }
 
   /* Marker/event styles for direct events rendered inline */
