@@ -9,6 +9,7 @@ export type Selection =
     }
   | { kind: "extension"; extensionId: string; path: string }
   | { kind: "settings"; section?: string }
+  | { kind: "spirit-settings" }
   | { kind: "shared-files" }
   | { kind: "system-chat" }
   | { kind: "system-history" }
@@ -88,6 +89,7 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
   if (path === "/shared-files") return { kind: "shared-files" };
   if (path === "/system/chat") return { kind: "system-chat" };
   if (path === "/history") return { kind: "system-history" };
+  if (path === "/system/settings") return { kind: "spirit-settings" };
   if (path === "/settings") return { kind: "settings" };
 
   const settingsSectionMatch = path.match(/^\/settings\/(.+)$/);
@@ -177,6 +179,8 @@ export function selectionToPath(selection: Selection, extensions: ExtensionInfo[
         ? `/ext/${selection.extensionId}/${selection.path}`
         : `/ext/${selection.extensionId}`;
     }
+    case "spirit-settings":
+      return "/system/settings";
     case "settings":
       return selection.section ? `/settings/${selection.section}` : "/settings";
     case "shared-files":

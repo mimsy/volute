@@ -86,6 +86,7 @@ let activeSystemSection = $derived.by((): string | null => {
   if (selection.kind === "system-history") return "system-history";
   if (selection.kind === "extension") return `ext:${selection.extensionId}`;
   if (selection.kind === "settings") return "settings";
+  if (selection.kind === "spirit-settings") return "spirit-settings";
   if (selection.kind === "shared-files") return "shared-files";
   return null;
 });
@@ -269,6 +270,9 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
   } else if (sel.kind === "settings") {
     crumbs.push({ label: "system", action: handleSystemHome });
     crumbs.push({ label: "settings" });
+  } else if (sel.kind === "spirit-settings") {
+    crumbs.push({ label: "system", action: handleSystemHome });
+    crumbs.push({ label: "spirit settings" });
   } else if (sel.kind === "shared-files") {
     crumbs.push({ label: "system", action: handleSystemHome });
     crumbs.push({ label: "shared files" });
@@ -733,6 +737,14 @@ function handleGlobalClick(e: MouseEvent) {
                 >
                   <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg></span>
                   <span class="tab-tooltip">Chat</span>
+                </button>
+                <button
+                  class="mind-section-tab"
+                  class:active={activeSystemSection === "spirit-settings"}
+                  onclick={() => { selection = { kind: "spirit-settings" }; }}
+                >
+                  <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg></span>
+                  <span class="tab-tooltip">Spirit</span>
                 </button>
                 {#each data.extensions as ext}
                   {#if ext.systemSection}

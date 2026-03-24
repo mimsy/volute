@@ -16,12 +16,10 @@ import ModelSelect from "./ModelSelect.svelte";
 
 let {
   showModelDefaults = false,
-  spiritModel = $bindable(""),
   utilityModel = $bindable(""),
   onLoad,
 }: {
   showModelDefaults?: boolean;
-  spiritModel?: string;
   utilityModel?: string;
   onLoad?: (enabledModels: AiModel[]) => void;
 } = $props();
@@ -168,10 +166,9 @@ async function handleProviderRemove(providerId: string) {
   error = "";
   try {
     await removeProviderConfig(providerId);
-    // Clear spirit/utility if they belonged to this provider
+    // Clear utility model if it belonged to this provider
     const removedModels = aiModels.filter((m) => m.provider === providerId && m.enabled);
     for (const m of removedModels) {
-      if (spiritModel === m.id) spiritModel = "";
       if (utilityModel === m.id) utilityModel = "";
     }
     await load();
@@ -270,7 +267,6 @@ async function addModel(modelId: string) {
     aiModels = aiModels.map((m) => (m.id === modelId ? { ...m, enabled: true } : m));
     modelSearch = "";
     showModelSearch = false;
-    if (!spiritModel) spiritModel = modelId;
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to add model";
   }
@@ -281,7 +277,6 @@ async function removeModel(modelId: string) {
   try {
     await saveEnabledModels(updated);
     aiModels = aiModels.map((m) => (m.id === modelId ? { ...m, enabled: false } : m));
-    if (spiritModel === modelId) spiritModel = "";
     if (utilityModel === modelId) utilityModel = "";
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to remove model";
@@ -334,16 +329,7 @@ async function removeModel(modelId: string) {
   <!-- System / utility model selection -->
   {#if showModelDefaults && enabledModels.length > 0}
     <div class="model-defaults">
-      <span class="label">System model</span>
-      <ModelSelect
-        items={enabledModels.map((m) => ({ id: m.id, label: m.name }))}
-        bind:value={spiritModel}
-        placeholder="Search models..."
-        emptyLabel="Select a model"
-      />
-      <div class="hint">Used by the system spirit and as the default for new minds.</div>
-
-      <span class="label mt">Utility model <span class="optional">(optional)</span></span>
+      <span class="label">Utility model <span class="optional">(optional)</span></span>
       <ModelSelect
         items={enabledModels.map((m) => ({ id: m.id, label: m.name }))}
         bind:value={utilityModel}
@@ -861,8 +847,6 @@ async function removeModel(modelId: string) {
     color: var(--text-2);
     font-weight: 400;
   }
-
-  .mt { margin-top: 14px; }
 
   .hint {
     color: var(--text-2);

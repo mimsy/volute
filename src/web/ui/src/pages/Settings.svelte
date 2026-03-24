@@ -32,7 +32,6 @@ let systemInput = $state("");
 let systemSaving = $state(false);
 
 // AI defaults
-let spiritModel = $state("");
 let utilityModel = $state("");
 let defaultsLoaded = $state(false);
 
@@ -42,7 +41,6 @@ onMount(async () => {
   aiProvidersRef.load();
   try {
     const defaults = await fetchAiDefaults();
-    spiritModel = defaults.spiritModel ?? "";
     utilityModel = defaults.utilityModel ?? "";
   } catch {
     // will show via AiProviders load error
@@ -52,10 +50,9 @@ onMount(async () => {
 
 // Auto-save when defaults change (after initial load)
 $effect(() => {
-  const s = spiritModel;
   const u = utilityModel;
   if (!defaultsLoaded) return;
-  saveAiDefaults({ spiritModel: s || null, utilityModel: u || null }).catch(() => {});
+  saveAiDefaults({ utilityModel: u || null }).catch(() => {});
 });
 
 async function handleSystemAction() {
@@ -174,7 +171,6 @@ async function handleSystemLogout() {
     <AiProviders
       bind:this={aiProvidersRef}
       showModelDefaults
-      bind:spiritModel
       bind:utilityModel
     />
   </div>

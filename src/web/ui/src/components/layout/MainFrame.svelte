@@ -3,6 +3,7 @@ import type { ConversationWithParticipants, Mind } from "@volute/api";
 import type { Selection } from "../../lib/navigate";
 import Home from "../../pages/Home.svelte";
 import MindPage from "../../pages/MindPage.svelte";
+import SpiritSettings from "../../pages/SpiritSettings.svelte";
 import SystemSettingsPage from "../../pages/SystemSettingsPage.svelte";
 import Chat from "../chat/Chat.svelte";
 import PublicFiles from "../system/PublicFiles.svelte";
@@ -142,6 +143,10 @@ let contextLabel = $derived.by(() => {
   {:else if selection.kind === "system-history"}
     <div class="frame-content mind-frame">
       <TurnTimeline />
+    </div>
+  {:else if selection.kind === "spirit-settings"}
+    <div class="frame-content">
+      <SpiritSettings />
     </div>
   {:else if selection.kind === "settings"}
     <div class="frame-content">

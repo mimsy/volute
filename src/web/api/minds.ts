@@ -2073,7 +2073,7 @@ const app = new Hono<AuthEnv>()
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    const dir = mindDir(name);
+    const dir = entry.dir ?? mindDir(name);
     if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
 
     // Read volute config (handles both claude and pi templates)
@@ -2161,7 +2161,7 @@ const app = new Hono<AuthEnv>()
       const entry = await findMind(name);
       if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-      const dir = mindDir(name);
+      const dir = entry.dir ?? mindDir(name);
       if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
 
       const body = c.req.valid("json");
@@ -2285,6 +2285,18 @@ const app = new Hono<AuthEnv>()
         }
 
         writeFileSync(configJsonPath, `${JSON.stringify(templateConfig, null, 2)}\n`);
+      }
+
+      // Sync spirit model to global config so syncSpiritTemplate() stays consistent
+      if (entry.mindType === "spirit" && body.model !== undefined) {
+        try {
+          const { readGlobalConfig, writeGlobalConfig } = await import("../../lib/setup.js");
+          const globalConfig = readGlobalConfig();
+          globalConfig.spiritModel = body.model;
+          writeGlobalConfig(globalConfig);
+        } catch {
+          // Don't fail the request — the mind config was already saved
+        }
       }
 
       return c.json({ ok: true });
