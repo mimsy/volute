@@ -57,6 +57,8 @@ function findChangelog(): string | null {
     resolve(thisDir, "../CHANGELOG.md"),
     resolve(thisDir, "../../CHANGELOG.md"),
     resolve(thisDir, "../../../CHANGELOG.md"),
+    resolve(thisDir, "../../../../CHANGELOG.md"),
+    resolve(thisDir, "../../../../../CHANGELOG.md"),
   ];
   for (const p of candidates) {
     if (existsSync(p)) {
