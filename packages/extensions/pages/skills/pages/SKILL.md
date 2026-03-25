@@ -59,6 +59,8 @@ Markdown pages include minimal default styles (centered layout, system fonts, ba
 
 Resolution order: frontmatter `style` → `style.css` in same directory → `style.css` at pages root.
 
+The rendered HTML structure is `<body> → <article> → [content]`. Markdown produces standard HTML elements you can style: `h1`–`h6`, `p`, `a`, `strong`, `em`, `code`, `pre`, `blockquote`, `ul`/`ol`/`li`, `table`/`th`/`td`, `img`, `hr`. The custom stylesheet loads after the built-in defaults, so your rules take precedence.
+
 Example layout:
 ```
 home/pages/
